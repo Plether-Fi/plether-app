@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useAccount } from 'wagmi'
 import { Alert, InfoTooltip } from '../components/ui'
+import { TokenInput } from '../components/TokenInput'
 import { PortfolioCard } from '../components/PortfolioCard'
 import { PositionCard } from '../components/PositionCard'
 import { AdjustPositionModal } from '../components/AdjustPositionModal'
@@ -313,32 +314,13 @@ export function Dashboard() {
 
                   {/* Input amount */}
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-cyber-text-secondary">{mode === 'buy' ? 'You pay' : 'You sell'}</span>
-                        <span className="text-cyber-text-secondary">
-                          Balance: <span className="text-cyber-text-primary">{formatUsd(inputBalance)}</span>
-                        </span>
-                      </div>
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={inputAmount}
-                          onChange={(e) => setInputAmount(e.target.value)}
-                          placeholder="0.00"
-                          className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
-                        />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                          <button
-                            onClick={() => setInputAmount((Number(inputBalance) / 1e6).toString())}
-                            className="text-xs font-semibold text-cyber-bright-blue hover:text-cyber-bright-blue/80 px-2 py-1 bg-cyber-bright-blue/10 shadow-sm shadow-cyber-bright-blue/10"
-                          >
-                            MAX
-                          </button>
-                          <span className="font-medium text-cyber-text-secondary">{inputToken.symbol}</span>
-                        </div>
-                      </div>
-                    </div>
+                    <TokenInput
+                      label={mode === 'buy' ? 'You pay' : 'You sell'}
+                      value={inputAmount}
+                      onChange={setInputAmount}
+                      token={inputToken}
+                      balance={inputBalance}
+                    />
 
                     {/* Arrow divider */}
                     <div className="flex justify-center -my-2 z-10 relative">
@@ -442,32 +424,13 @@ export function Dashboard() {
                   </div>
 
                   {/* Collateral input */}
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-cyber-text-secondary">Collateral (USDC)</span>
-                      <span className="text-cyber-text-secondary">
-                        Balance: <span className="text-cyber-text-primary">{formatUsd(usdcBalance)}</span>
-                      </span>
-                    </div>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={collateralAmount}
-                        onChange={(e) => setCollateralAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
-                      />
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                        <button
-                          onClick={() => setCollateralAmount((Number(usdcBalance) / 1e6).toString())}
-                          className="text-xs font-semibold text-cyber-electric-fuchsia hover:text-cyber-electric-fuchsia/80 px-2 py-1 bg-cyber-electric-fuchsia/10 shadow-sm shadow-cyber-electric-fuchsia/10"
-                        >
-                          MAX
-                        </button>
-                        <span className="font-medium text-cyber-text-secondary">USDC</span>
-                      </div>
-                    </div>
-                  </div>
+                  <TokenInput
+                    label="Collateral (USDC)"
+                    value={collateralAmount}
+                    onChange={setCollateralAmount}
+                    token={{ symbol: 'USDC', decimals: 6 }}
+                    balance={usdcBalance}
+                  />
 
                   {/* Leverage slider */}
                   <div>
@@ -578,18 +541,11 @@ export function Dashboard() {
                       </button>
                     </div>
                     <div className="space-y-4">
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={supplyAmount}
-                          onChange={(e) => setSupplyAmount(e.target.value)}
-                          placeholder="0.00"
-                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30  py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
-                        />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                          <span className="font-medium text-cyber-text-secondary">USDC</span>
-                        </div>
-                      </div>
+                      <TokenInput
+                        value={supplyAmount}
+                        onChange={setSupplyAmount}
+                        token={{ symbol: 'USDC', decimals: 6 }}
+                      />
                       <button
                         disabled={!supplyAmount || parseFloat(supplyAmount) <= 0}
                         className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
@@ -628,18 +584,11 @@ export function Dashboard() {
                       </button>
                     </div>
                     <div className="space-y-4">
-                      <div className="relative">
-                        <input
-                          type="number"
-                          value={borrowAmount}
-                          onChange={(e) => setBorrowAmount(e.target.value)}
-                          placeholder="0.00"
-                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30  py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
-                        />
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2">
-                          <span className="font-medium text-cyber-text-secondary">USDC</span>
-                        </div>
-                      </div>
+                      <TokenInput
+                        value={borrowAmount}
+                        onChange={setBorrowAmount}
+                        token={{ symbol: 'USDC', decimals: 6 }}
+                      />
                       {borrowMode === 'borrow' && (
                         <p className="text-xs text-cyber-text-secondary">
                           Borrowing requires staked collateral (sDXY-BEAR or sDXY-BULL)
