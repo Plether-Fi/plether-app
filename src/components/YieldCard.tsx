@@ -37,24 +37,53 @@ export function YieldCard({
     console.log(`${borrowMode}:`, { amount: borrowAmount })
   }
 
+  const formatMaxAmount = (amount: bigint, decimals: number) => {
+    const value = Number(amount) / 10 ** decimals
+    return value > 0 ? value.toString() : ''
+  }
+
+  const handleSuppliedClick = () => {
+    setSupplyMode('withdraw')
+    setSupplyAmount(formatMaxAmount(suppliedBalance, 6))
+  }
+
+  const handleBorrowedClick = () => {
+    setBorrowMode('repay')
+    setBorrowAmount(formatMaxAmount(borrowedAmount, 6))
+  }
+
+  const handleAvailableClick = () => {
+    setBorrowMode('borrow')
+    setBorrowAmount(formatMaxAmount(availableToBorrow, 6))
+  }
+
   return (
     <div className="max-w-xl mx-auto space-y-6">
       <div className="grid grid-cols-3 gap-4">
-        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+        <button
+          onClick={handleSuppliedClick}
+          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-neon-green/50 hover:shadow-md hover:shadow-cyber-neon-green/10"
+        >
           <p className="text-xs text-cyber-text-secondary">Supplied</p>
           <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(suppliedAmount)}</p>
           <p className="text-xs text-cyber-neon-green">+{formatPercent(supplyApy)} APY</p>
-        </div>
-        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+        </button>
+        <button
+          onClick={handleBorrowedClick}
+          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-warning-text/50 hover:shadow-md hover:shadow-cyber-warning-text/10"
+        >
           <p className="text-xs text-cyber-text-secondary">Borrowed</p>
           <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(borrowedAmount)}</p>
           <p className="text-xs text-cyber-warning-text">-{formatPercent(borrowApy)} APY</p>
-        </div>
-        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+        </button>
+        <button
+          onClick={handleAvailableClick}
+          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-bright-blue/50 hover:shadow-md hover:shadow-cyber-bright-blue/10"
+        >
           <p className="text-xs text-cyber-text-secondary">Available</p>
           <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(availableToBorrow)}</p>
           <p className="text-xs text-cyber-text-secondary">to borrow</p>
-        </div>
+        </button>
       </div>
 
       <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
