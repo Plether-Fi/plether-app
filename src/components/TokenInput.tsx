@@ -1,6 +1,5 @@
 import { type ChangeEvent } from 'react'
 import { formatAmount } from '../utils/formatters'
-import { Button } from './ui'
 
 interface TokenInputProps {
   value: string
@@ -26,7 +25,6 @@ export function TokenInput({
 }: TokenInputProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
-    // Only allow valid number inputs
     if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
       onChange(newValue)
     }
@@ -42,7 +40,7 @@ export function TokenInput({
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-gray-300 mb-1.5">
+        <label className="block text-sm font-medium text-cyber-text-secondary mb-1.5">
           {label}
         </label>
       )}
@@ -55,40 +53,38 @@ export function TokenInput({
           disabled={disabled}
           placeholder="0.00"
           className={`
-            w-full px-4 py-4 pr-32 bg-surface-200 border rounded-lg text-white text-xl
-            placeholder-gray-500 focus:outline-none focus:ring-2
-            focus:ring-primary-500 focus:border-transparent
+            w-full px-4 py-4 pr-32 bg-cyber-surface-light border rounded-xl text-cyber-text-primary text-xl
+            placeholder-cyber-text-secondary/50 focus:outline-none focus:ring-1
+            focus:ring-cyber-bright-blue focus:border-cyber-bright-blue
             disabled:opacity-50 disabled:cursor-not-allowed
-            ${error ? 'border-red-500' : 'border-gray-700'}
+            transition-all shadow-sm shadow-cyber-border-glow/10
+            ${error ? 'border-cyber-electric-fuchsia' : 'border-cyber-border-glow/30'}
           `}
         />
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
           {balance !== undefined && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <button
               onClick={handleMax}
               disabled={disabled}
-              className="text-primary-500 hover:text-primary-400"
+              className="text-xs font-semibold text-cyber-neon-green hover:text-cyber-neon-green/80 px-2 py-1 rounded bg-cyber-neon-green/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               MAX
-            </Button>
+            </button>
           )}
-          <span className="text-gray-300 font-medium">{token.symbol}</span>
+          <span className="text-cyber-text-secondary font-medium">{token.symbol}</span>
         </div>
       </div>
 
-      {/* Balance display */}
       {balance !== undefined && (
         <div className="flex justify-between mt-2 text-sm">
-          <span className="text-gray-400">Balance:</span>
-          <span className="text-gray-300">
+          <span className="text-cyber-text-secondary">Balance:</span>
+          <span className="text-cyber-text-primary">
             {formatAmount(balance, token.decimals)} {token.symbol}
           </span>
         </div>
       )}
 
-      {error && <p className="mt-1 text-sm text-red-500">{error}</p>}
+      {error && <p className="mt-1 text-sm text-cyber-electric-fuchsia">{error}</p>}
     </div>
   )
 }

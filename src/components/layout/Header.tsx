@@ -17,9 +17,7 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-10">
           <Link to="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-cyber-bright-blue rounded-full flex items-center justify-center shadow-lg shadow-cyber-bright-blue/30">
-              <span className="material-symbols-outlined text-cyber-text-primary text-lg">token</span>
-            </div>
+            <img src="/icon.svg" alt="Plether" className="w-12 h-12 -my-2" />
             <span className="text-xl font-semibold tracking-wide text-cyber-neon-green">Plether</span>
           </Link>
 
