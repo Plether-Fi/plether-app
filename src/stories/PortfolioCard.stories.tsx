@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { MemoryRouter, Link } from 'react-router-dom'
-import { Skeleton } from '../components/ui'
+import { MemoryRouter } from 'react-router-dom'
+import { PortfolioCard } from '../components/PortfolioCard'
 
 interface PortfolioCardArgs {
   title: string
@@ -41,43 +41,8 @@ const meta: Meta<PortfolioCardArgs> = {
 export default meta
 type Story = StoryObj<PortfolioCardArgs>
 
-function formatUsd(value: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
-}
-
-function SkeletonCard() {
-  return (
-    <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 shadow-md h-full">
-      <Skeleton className="h-3 w-24 mb-3" />
-      <Skeleton className="h-8 w-32 mb-2" />
-      <Skeleton className="h-3 w-40" />
-    </div>
-  )
-}
-
-interface PortfolioCardProps {
-  title: string
-  value: number
-  description: string
-  link: string
-  isLoading?: boolean
-  colorClass: string
-}
-
-function PortfolioCard({ title, value, description, link, isLoading, colorClass }: PortfolioCardProps) {
-  if (isLoading) {
-    return <SkeletonCard />
-  }
-
-  return (
-    <Link to={link}>
-      <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 shadow-md hover:border-cyber-bright-blue/50 transition-colors cursor-pointer h-full">
-        <p className="text-xs text-cyber-text-secondary uppercase tracking-wider font-medium mb-2">{title}</p>
-        <div className={`text-2xl font-bold mb-1 ${colorClass}`}>{formatUsd(value)}</div>
-        <p className="text-xs text-cyber-text-secondary truncate">{description}</p>
-      </div>
-    </Link>
-  )
+function toUsdBigint(value: number): bigint {
+  return BigInt(Math.floor(value * 1e6))
 }
 
 export const SpotHoldings: Story = {
@@ -91,7 +56,14 @@ export const SpotHoldings: Story = {
   render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard {...args} link="/" />
+        <PortfolioCard
+          title={args.title}
+          value={toUsdBigint(args.value)}
+          description={args.description}
+          link="/"
+          isLoading={args.isLoading ?? false}
+          colorClass={args.colorClass}
+        />
       </div>
     </MemoryRouter>
   ),
@@ -108,7 +80,14 @@ export const StakedTokens: Story = {
   render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard {...args} link="/stake" />
+        <PortfolioCard
+          title={args.title}
+          value={toUsdBigint(args.value)}
+          description={args.description}
+          link="/stake"
+          isLoading={args.isLoading ?? false}
+          colorClass={args.colorClass}
+        />
       </div>
     </MemoryRouter>
   ),
@@ -125,7 +104,14 @@ export const LeveragePositions: Story = {
   render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard {...args} link="/leverage" />
+        <PortfolioCard
+          title={args.title}
+          value={toUsdBigint(args.value)}
+          description={args.description}
+          link="/leverage"
+          isLoading={args.isLoading ?? false}
+          colorClass={args.colorClass}
+        />
       </div>
     </MemoryRouter>
   ),
@@ -142,7 +128,14 @@ export const Loading: Story = {
   render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard {...args} link="/" />
+        <PortfolioCard
+          title={args.title}
+          value={toUsdBigint(args.value)}
+          description={args.description}
+          link="/"
+          isLoading={args.isLoading ?? false}
+          colorClass={args.colorClass}
+        />
       </div>
     </MemoryRouter>
   ),
@@ -154,23 +147,26 @@ export const AllCards: Story = {
       <div className="grid grid-cols-3 gap-4">
         <PortfolioCard
           title="Spot Holdings"
-          value={12500}
+          value={toUsdBigint(12500)}
           description="5,000 DXY-BEAR • 7,500 DXY-BULL"
           link="/"
+          isLoading={false}
           colorClass="text-cyber-bright-blue"
         />
         <PortfolioCard
           title="Staked"
-          value={8000}
+          value={toUsdBigint(8000)}
           description="3,000 sDXY-BEAR • 5,000 sDXY-BULL"
           link="/stake"
+          isLoading={false}
           colorClass="text-cyber-bright-blue"
         />
         <PortfolioCard
           title="Leverage"
-          value={25000}
+          value={toUsdBigint(25000)}
           description="2 active positions"
           link="/leverage"
+          isLoading={false}
           colorClass="text-cyber-electric-fuchsia"
         />
       </div>
