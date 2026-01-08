@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { TokenIcon } from './ui'
+import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
 
 type StakeMode = 'stake' | 'unstake'
@@ -71,33 +72,13 @@ export function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardPr
           </button>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-cyber-text-secondary">
-              {mode === 'stake' ? `DXY-${side} to stake` : `sDXY-${side} to unstake`}
-            </span>
-            <span className="text-cyber-text-secondary">
-              Balance: <span className="text-cyber-text-primary">{formatAmount(balance, 18)}</span>
-            </span>
-          </div>
-          <div className="relative">
-            <input
-              type="number"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="0.00"
-              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
-            />
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <button
-                onClick={() => setAmount((Number(balance) / 1e18).toString())}
-                className={`text-xs font-semibold ${textColor} hover:opacity-80 px-2 py-1 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}
-              >
-                MAX
-              </button>
-            </div>
-          </div>
-        </div>
+        <TokenInput
+          label={mode === 'stake' ? `DXY-${side} to stake` : `sDXY-${side} to unstake`}
+          value={amount}
+          onChange={setAmount}
+          token={{ symbol: mode === 'stake' ? `DXY-${side}` : `sDXY-${side}`, decimals: 18 }}
+          balance={balance}
+        />
 
         <button
           onClick={handleAction}
