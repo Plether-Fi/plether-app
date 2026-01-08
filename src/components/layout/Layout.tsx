@@ -12,7 +12,7 @@ export function Layout({ children }: LayoutProps) {
   const { isConnected } = useAccount()
 
   return (
-    <div className="min-h-screen bg-surface-200 flex flex-col">
+    <div className="min-h-screen flex flex-col">
       {/* Wrong network warning */}
       {isConnected && <WrongNetworkBanner />}
 

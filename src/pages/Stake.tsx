@@ -13,7 +13,7 @@ export function Stake() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-white">Stake</h1>
-        <p className="text-gray-400">Stake your tokens to earn rewards</p>
+        <p className="text-gray-400">Stake your tokens to use as collateral</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
@@ -22,7 +22,6 @@ export function Stake() {
           side="BEAR"
           tokenBalance={500n * 10n ** 18n}
           stakedBalance={200n * 10n ** 18n}
-          pendingRewards={5n * 10n ** 18n}
           isConnected={isConnected}
         />
 
@@ -31,7 +30,6 @@ export function Stake() {
           side="BULL"
           tokenBalance={500n * 10n ** 18n}
           stakedBalance={150n * 10n ** 18n}
-          pendingRewards={3n * 10n ** 18n}
           isConnected={isConnected}
         />
       </div>
@@ -43,7 +41,6 @@ interface StakingCardProps {
   side: 'BEAR' | 'BULL'
   tokenBalance: bigint
   stakedBalance: bigint
-  pendingRewards: bigint
   isConnected: boolean
 }
 
@@ -51,7 +48,6 @@ function StakingCard({
   side,
   tokenBalance,
   stakedBalance,
-  pendingRewards,
   isConnected,
 }: StakingCardProps) {
   const [mode, setMode] = useState<StakeMode>('stake')
@@ -69,44 +65,22 @@ function StakingCard({
     console.log('Unstake:', { side, amount })
   }
 
-  const handleClaimRewards = async () => {
-    console.log('Claim rewards:', { side })
-  }
-
   return (
     <Card>
       <CardHeader
         title={`DXY-${side} Staking`}
-        subtitle={`Stake DXY-${side} to earn rewards`}
+        subtitle={`Stake DXY-${side} to use as collateral`}
       />
 
       {/* Staking stats */}
-      <div className={`${bgClass} ${borderClass} border rounded-lg p-4 mb-4 space-y-2`}>
+      <div className={`${bgClass} ${borderClass} border rounded-lg p-4 mb-4`}>
         <div className="flex justify-between">
           <span className="text-gray-400 text-sm">Staked Balance</span>
           <span className={`${colorClass} font-medium`}>
             {formatAmount(stakedBalance, 18)} sDXY-{side}
           </span>
         </div>
-        <div className="flex justify-between">
-          <span className="text-gray-400 text-sm">Pending Rewards</span>
-          <span className="text-white font-medium">
-            {formatAmount(pendingRewards, 18)} DXY-{side}
-          </span>
-        </div>
       </div>
-
-      {/* Claim rewards button */}
-      {isConnected && pendingRewards > 0n && (
-        <Button
-          variant="secondary"
-          size="sm"
-          className="w-full mb-4"
-          onClick={handleClaimRewards}
-        >
-          Claim Rewards
-        </Button>
-      )}
 
       {/* Stake/Unstake tabs */}
       <Tabs

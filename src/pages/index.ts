@@ -1,8 +1,4 @@
 export { Dashboard } from './Dashboard'
-export { Trade } from './Trade'
 export { Mint } from './Mint'
 export { Stake } from './Stake'
-export { Leverage } from './Leverage'
-export { Positions } from './Positions'
-export { Lend } from './Lend'
 export { History } from './History'

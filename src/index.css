@@ -1,17 +1,17 @@
 @import "tailwindcss";
 
 @theme {
-  /* Primary brand colors */
-  --color-primary-50: #f0fdf4;
-  --color-primary-100: #dcfce7;
-  --color-primary-200: #bbf7d0;
-  --color-primary-300: #86efac;
-  --color-primary-400: #4ade80;
-  --color-primary-500: #22c55e;
-  --color-primary-600: #16a34a;
-  --color-primary-700: #15803d;
-  --color-primary-800: #166534;
-  --color-primary-900: #14532d;
+  /* Primary brand colors - Blue */
+  --color-primary-50: #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb;
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
 
   /* Accent for BEAR (bearish/red) */
   --color-bear: #ef4444;
@@ -23,12 +23,12 @@
   --color-bull-light: #86efac;
   --color-bull-dark: #15803d;
 
-  /* Dark theme surface colors */
-  --color-surface: #1a1a1a;
-  --color-surface-50: #2a2a2a;
-  --color-surface-100: #1f1f1f;
-  --color-surface-200: #171717;
-  --color-surface-300: #0f0f0f;
+  /* Dark navy theme surface colors */
+  --color-surface: #0f172a;
+  --color-surface-50: #1e293b;
+  --color-surface-100: #172033;
+  --color-surface-200: #0f172a;
+  --color-surface-300: #0a101e;
 }
 
 :root {
@@ -39,13 +39,14 @@
 }
 
 html {
-  background-color: var(--color-surface);
+  background-color: #000;
   color: white;
 }
 
 body {
   min-height: 100vh;
-  background-color: var(--color-surface-200);
+  background: linear-gradient(180deg, #000000 0%, #070b14 50%, #0c1524 100%);
+  background-attachment: fixed;
 }
 
 #root {
