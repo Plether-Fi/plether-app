@@ -5,7 +5,8 @@ import { TokenInput } from '../components/TokenInput'
 import { PortfolioCard } from '../components/PortfolioCard'
 import { PositionCard } from '../components/PositionCard'
 import { AdjustPositionModal } from '../components/AdjustPositionModal'
-import { formatUsd, formatPercent } from '../utils/formatters'
+import { YieldCard } from '../components/YieldCard'
+import { formatUsd } from '../utils/formatters'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { HEALTH_FACTOR_WARNING } from '../config/constants'
 import type { LeveragePosition } from '../types'
@@ -64,17 +65,6 @@ export function Dashboard() {
   const [selectedSide, setSelectedSide] = useState<TokenSide>('BEAR')
   const [collateralAmount, setCollateralAmount] = useState('')
   const [leverage, setLeverage] = useState(2)
-
-  const [supplyMode, setSupplyMode] = useState<'supply' | 'withdraw'>('supply')
-  const [borrowMode, setBorrowMode] = useState<'borrow' | 'repay'>('borrow')
-  const [supplyAmount, setSupplyAmount] = useState('')
-  const [borrowAmount, setBorrowAmount] = useState('')
-
-  const suppliedAmount = 5000n * 10n ** 6n
-  const borrowedAmount = 1000n * 10n ** 6n
-  const supplyApy = 3.5
-  const borrowApy = 5.2
-  const availableToBorrow = 3000n * 10n ** 6n
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
   const [adjustModalOpen, setAdjustModalOpen] = useState(false)
@@ -492,117 +482,15 @@ export function Dashboard() {
               )}
 
               {mainTab === 'yield' && (
-                <div className="max-w-xl mx-auto space-y-6">
-                  {/* Overview stats */}
-                  <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
-                      <p className="text-xs text-cyber-text-secondary">Supplied</p>
-                      <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(suppliedAmount)}</p>
-                      <p className="text-xs text-cyber-neon-green">+{formatPercent(supplyApy)} APY</p>
-                    </div>
-                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
-                      <p className="text-xs text-cyber-text-secondary">Borrowed</p>
-                      <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(borrowedAmount)}</p>
-                      <p className="text-xs text-cyber-warning-text">-{formatPercent(borrowApy)} APY</p>
-                    </div>
-                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
-                      <p className="text-xs text-cyber-text-secondary">Available</p>
-                      <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(availableToBorrow)}</p>
-                      <p className="text-xs text-cyber-text-secondary">to borrow</p>
-                    </div>
-                  </div>
-
-                  {/* Supply section */}
-                  <div className="bg-cyber-surface-light  p-4 border border-cyber-border-glow/30">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="font-medium text-cyber-text-primary">Supply USDC</h4>
-                      <span className="text-sm text-cyber-neon-green">{formatPercent(supplyApy)} APY</span>
-                    </div>
-                    <div className="bg-cyber-surface-dark p-1  flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
-                      <button
-                        onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
-                        className={`flex-1 py-2 px-4  transition-all ${
-                          supplyMode === 'supply'
-                            ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                            : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
-                        }`}
-                      >
-                        Supply
-                      </button>
-                      <button
-                        onClick={() => { setSupplyMode('withdraw'); setSupplyAmount('') }}
-                        className={`flex-1 py-2 px-4  transition-all ${
-                          supplyMode === 'withdraw'
-                            ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                            : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
-                        }`}
-                      >
-                        Withdraw
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      <TokenInput
-                        value={supplyAmount}
-                        onChange={setSupplyAmount}
-                        token={{ symbol: 'USDC', decimals: 6 }}
-                      />
-                      <button
-                        disabled={!supplyAmount || parseFloat(supplyAmount) <= 0}
-                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {supplyMode === 'supply' ? 'Supply' : 'Withdraw'} USDC
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Borrow section */}
-                  <div className="bg-cyber-surface-light  p-4 border border-cyber-border-glow/30">
-                    <div className="flex items-center justify-between mb-4">
-                      <h4 className="font-medium text-cyber-text-primary">Borrow USDC</h4>
-                      <span className="text-sm text-cyber-warning-text">{formatPercent(borrowApy)} APY</span>
-                    </div>
-                    <div className="bg-cyber-surface-dark p-1  flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
-                      <button
-                        onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
-                        className={`flex-1 py-2 px-4  transition-all ${
-                          borrowMode === 'borrow'
-                            ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                            : 'text-cyber-text-secondary hover:text-cyber-neon-green'
-                        }`}
-                      >
-                        Borrow
-                      </button>
-                      <button
-                        onClick={() => { setBorrowMode('repay'); setBorrowAmount('') }}
-                        className={`flex-1 py-2 px-4  transition-all ${
-                          borrowMode === 'repay'
-                            ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                            : 'text-cyber-text-secondary hover:text-cyber-neon-green'
-                        }`}
-                      >
-                        Repay
-                      </button>
-                    </div>
-                    <div className="space-y-4">
-                      <TokenInput
-                        value={borrowAmount}
-                        onChange={setBorrowAmount}
-                        token={{ symbol: 'USDC', decimals: 6 }}
-                      />
-                      {borrowMode === 'borrow' && (
-                        <p className="text-xs text-cyber-text-secondary">
-                          Borrowing requires staked collateral (sDXY-BEAR or sDXY-BULL)
-                        </p>
-                      )}
-                      <button
-                        disabled={!borrowAmount || parseFloat(borrowAmount) <= 0}
-                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                      >
-                        {borrowMode === 'borrow' ? 'Borrow' : 'Repay'} USDC
-                      </button>
-                    </div>
-                  </div>
-                </div>
+                <YieldCard
+                  suppliedAmount={5000n * 10n ** 6n}
+                  borrowedAmount={1000n * 10n ** 6n}
+                  availableToBorrow={3000n * 10n ** 6n}
+                  supplyApy={3.5}
+                  borrowApy={5.2}
+                  usdcBalance={usdcBalance}
+                  suppliedBalance={5000n * 10n ** 6n}
+                />
               )}
             </div>
           </div>
