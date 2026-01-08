@@ -36,7 +36,7 @@ export function MobileNav() {
               key={path}
               to={path}
               className={`
-                flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-colors
+                flex flex-col items-center gap-1 px-4 py-2  transition-colors
                 ${isActive
                   ? styles.active
                   : `text-cyber-text-secondary ${styles.hover}`

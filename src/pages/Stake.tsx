@@ -29,7 +29,7 @@ export function Stake() {
           />
         </div>
       ) : (
-        <div className="bg-cyber-surface-dark rounded-xl p-12 text-center border border-cyber-border-glow/30 shadow-lg">
+        <div className="bg-cyber-surface-dark  p-12 text-center border border-cyber-border-glow/30 shadow-lg">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-cyber-surface-light flex items-center justify-center">
             <span className="material-symbols-outlined text-3xl text-cyber-text-secondary">lock</span>
           </div>
@@ -66,7 +66,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
   const balance = mode === 'stake' ? tokenBalance : stakedBalance
 
   return (
-    <div className="bg-cyber-surface-dark rounded-xl border border-cyber-border-glow/30 shadow-lg overflow-hidden">
+    <div className="bg-cyber-surface-dark  border border-cyber-border-glow/30 shadow-lg overflow-hidden">
       {/* Header */}
       <div className={`px-6 py-4 border-b border-cyber-border-glow/30 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}>
         <div className="flex items-center gap-3">
@@ -80,7 +80,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
 
       <div className="p-6 space-y-6">
         {/* Staked balance */}
-        <div className={`bg-cyber-surface-light rounded-lg p-4 border ${isBear ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'}`}>
+        <div className={`bg-cyber-surface-light  p-4 border ${isBear ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'}`}>
           <div className="flex justify-between items-center">
             <span className="text-cyber-text-secondary text-sm">Staked Balance</span>
             <span className={`${textColor} font-semibold`}>
@@ -90,10 +90,10 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
         </div>
 
         {/* Stake/Unstake tabs */}
-        <div className="bg-cyber-surface-light p-1 rounded-lg flex text-sm font-medium border border-cyber-border-glow/30">
+        <div className="bg-cyber-surface-light p-1  flex text-sm font-medium border border-cyber-border-glow/30">
           <button
             onClick={() => { setMode('stake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 rounded-md transition-all ${
+            className={`flex-1 py-2 px-4  transition-all ${
               mode === 'stake'
                 ? `bg-cyber-surface-dark ${textColor} shadow-sm ${shadowColor}/10 border ${borderColor}/50`
                 : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -103,7 +103,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
           </button>
           <button
             onClick={() => { setMode('unstake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 rounded-md transition-all ${
+            className={`flex-1 py-2 px-4  transition-all ${
               mode === 'unstake'
                 ? `bg-cyber-surface-dark ${textColor} shadow-sm ${shadowColor}/10 border ${borderColor}/50`
                 : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -129,12 +129,12 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 rounded-xl py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
+              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
               <button
                 onClick={() => setAmount((Number(balance) / 1e18).toString())}
-                className={`text-xs font-semibold ${textColor} hover:opacity-80 px-2 py-1 rounded ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}
+                className={`text-xs font-semibold ${textColor} hover:opacity-80 px-2 py-1 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}
               >
                 MAX
               </button>
@@ -146,7 +146,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
         <button
           onClick={handleAction}
           disabled={!amount || parseFloat(amount) <= 0}
-          className={`w-full ${bgColor} hover:opacity-90 ${isBear ? 'text-cyber-text-primary' : 'text-cyber-bg'} font-semibold py-4 px-6 rounded-xl shadow-lg ${shadowColor}/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none`}
+          className={`w-full ${bgColor} hover:opacity-90 ${isBear ? 'text-cyber-text-primary' : 'text-cyber-bg'} font-semibold py-4 px-6  shadow-lg ${shadowColor}/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none`}
         >
           {mode === 'stake' ? 'Stake' : 'Unstake'} DXY-{side}
         </button>

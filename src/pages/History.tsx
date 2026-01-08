@@ -81,7 +81,7 @@ export function History() {
             key={option.id}
             onClick={() => setFilter(option.id)}
             className={`
-              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
+              flex items-center gap-2 px-4 py-2  text-sm font-medium transition-all
               ${filter === option.id
                 ? 'bg-cyber-neon-green/20 text-cyber-neon-green border border-cyber-neon-green/50 shadow-sm shadow-cyber-neon-green/20'
                 : 'bg-cyber-surface-dark text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue hover:border-cyber-bright-blue/50'
@@ -97,7 +97,7 @@ export function History() {
       {/* Transaction list */}
       {isConnected ? (
         filteredTransactions.length > 0 ? (
-          <div className="bg-cyber-surface-dark rounded-xl border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+          <div className="bg-cyber-surface-dark  border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
             <div className="divide-y divide-cyber-border-glow/20">
               {filteredTransactions.map((tx) => (
                 <TransactionRow key={tx.id} transaction={tx} />
@@ -105,13 +105,13 @@ export function History() {
             </div>
           </div>
         ) : (
-          <div className="bg-cyber-surface-dark rounded-xl p-12 text-center border border-cyber-border-glow/30">
+          <div className="bg-cyber-surface-dark  p-12 text-center border border-cyber-border-glow/30">
             <span className="material-symbols-outlined text-4xl text-cyber-text-secondary mb-4 block">search_off</span>
             <p className="text-cyber-text-secondary">No transactions found</p>
           </div>
         )
       ) : (
-        <div className="bg-cyber-surface-dark rounded-xl p-12 text-center border border-cyber-border-glow/30 shadow-lg">
+        <div className="bg-cyber-surface-dark  p-12 text-center border border-cyber-border-glow/30 shadow-lg">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-cyber-surface-light flex items-center justify-center">
             <span className="material-symbols-outlined text-3xl text-cyber-text-secondary">lock</span>
           </div>
@@ -194,7 +194,7 @@ function TransactionRow({ transaction }: TransactionRowProps) {
   return (
     <div className="flex items-center justify-between px-6 py-4 hover:bg-cyber-surface-light/50 transition-colors">
       <div className="flex items-center gap-4">
-        <div className={`w-10 h-10 rounded-lg ${getIconBg(transaction.type)} flex items-center justify-center`}>
+        <div className={`w-10 h-10  ${getIconBg(transaction.type)} flex items-center justify-center`}>
           <span className={`material-symbols-outlined ${getTypeColor(transaction.type)}`}>
             {typeIcons[transaction.type]}
           </span>

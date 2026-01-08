@@ -40,7 +40,7 @@ export function PriceDisplay({
             <span className="text-cyber-text-primary font-semibold">${price.toFixed(2)}</span>
           )}
         </div>
-        <span className={`px-2 py-0.5 rounded text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
+        <span className={`px-2 py-0.5 text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
           {status}
         </span>
       </div>
@@ -48,10 +48,10 @@ export function PriceDisplay({
   }
 
   return (
-    <div className="bg-cyber-surface-dark rounded-xl border border-cyber-border-glow/30 p-4 shadow-lg shadow-cyber-border-glow/10">
+    <div className="bg-cyber-surface-dark  border border-cyber-border-glow/30 p-4 shadow-lg shadow-cyber-border-glow/10">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-cyber-text-secondary text-sm">DXY Index Price</h3>
-        <span className={`px-2 py-0.5 rounded text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
+        <span className={`px-2 py-0.5 text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
           {status}
         </span>
       </div>

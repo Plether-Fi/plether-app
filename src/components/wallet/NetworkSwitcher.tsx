@@ -32,7 +32,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
               onClick={() => handleSwitch(chain.id)}
               disabled={isPending}
               className={`
-                w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all
+                w-full flex items-center gap-3 px-4 py-3  transition-all
                 ${isActive
                   ? 'bg-cyber-neon-green/20 border border-cyber-neon-green/50 shadow-sm shadow-cyber-neon-green/20'
                   : 'bg-cyber-surface-light border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 hover:bg-cyber-surface-light/80'
@@ -40,7 +40,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}
             >
-              <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isActive ? 'bg-cyber-neon-green/20' : 'bg-cyber-surface-dark'}`}>
+              <div className={`w-10 h-10  flex items-center justify-center ${isActive ? 'bg-cyber-neon-green/20' : 'bg-cyber-surface-dark'}`}>
                 <span className={`material-symbols-outlined text-xl ${isActive ? 'text-cyber-neon-green' : 'text-cyber-text-secondary'}`}>
                   {icon}
                 </span>
@@ -80,7 +80,7 @@ export function WrongNetworkBanner() {
         <button
           onClick={() => switchChain({ chainId: mainnet.id })}
           disabled={isPending}
-          className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyber-electric-fuchsia/20"
+          className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyber-electric-fuchsia/20"
         >
           {isPending ? (
             <>

@@ -30,7 +30,7 @@ export function Header() {
                   key={path}
                   to={path}
                   className={`
-                    px-4 py-2 rounded-lg text-sm font-semibold transition-colors
+                    px-4 py-2  text-sm font-semibold transition-colors
                     ${
                       isActive
                         ? 'bg-cyber-surface-light text-cyber-neon-green border border-cyber-neon-green/50 shadow-md shadow-cyber-neon-green/10'
@@ -46,7 +46,7 @@ export function Header() {
         </div>
 
         <div className="flex items-center gap-4 text-sm">
-          <div className="hidden lg:flex items-center gap-4 mr-4">
+          <div className="hidden lg:flex items-center gap-4">
             <PriceDisplay variant="compact" />
           </div>
           <PendingTxBadge />

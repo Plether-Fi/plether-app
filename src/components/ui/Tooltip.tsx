@@ -27,7 +27,7 @@ export function Tooltip({ content, children, position = 'top' }: TooltipProps) {
         <div
           className={`
             absolute z-50 px-3 py-2 text-sm text-cyber-text-primary bg-cyber-surface-dark
-            border border-cyber-border-glow/50 rounded-lg shadow-lg shadow-cyber-border-glow/20 whitespace-nowrap
+            border border-cyber-border-glow/50  shadow-lg shadow-cyber-border-glow/20 whitespace-nowrap
             ${positionStyles[position]}
           `}
         >

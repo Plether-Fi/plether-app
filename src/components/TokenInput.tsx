@@ -53,7 +53,7 @@ export function TokenInput({
           disabled={disabled}
           placeholder="0.00"
           className={`
-            w-full px-4 py-4 pr-32 bg-cyber-surface-light border rounded-xl text-cyber-text-primary text-xl
+            w-full px-4 py-4 pr-32 bg-cyber-surface-light border  text-cyber-text-primary text-xl
             placeholder-cyber-text-secondary/50 focus:outline-none focus:ring-1
             focus:ring-cyber-bright-blue focus:border-cyber-bright-blue
             disabled:opacity-50 disabled:cursor-not-allowed
@@ -66,7 +66,7 @@ export function TokenInput({
             <button
               onClick={handleMax}
               disabled={disabled}
-              className="text-xs font-semibold text-cyber-neon-green hover:text-cyber-neon-green/80 px-2 py-1 rounded bg-cyber-neon-green/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className="text-xs font-semibold text-cyber-neon-green hover:text-cyber-neon-green/80 px-2 py-1 bg-cyber-neon-green/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               MAX
             </button>

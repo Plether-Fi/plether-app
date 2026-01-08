@@ -129,7 +129,7 @@ export function Dashboard() {
               title="Spot Holdings"
               value={spotValue}
               description="USDC, DXY-BEAR, DXY-BULL"
-              link="/trade"
+              link="/"
               isLoading={isLoading}
               colorClass="text-cyber-neon-green"
             />
@@ -165,7 +165,7 @@ export function Dashboard() {
               <h2 className="text-xl font-semibold text-cyber-text-primary mb-4">Open Positions</h2>
 
               {hasLowHealth && (
-                <div className="mb-6 bg-cyber-warning-bg border border-cyber-warning-text/40 rounded-lg p-4 flex items-start gap-3 shadow-lg shadow-cyber-warning-text/10">
+                <div className="mb-6 bg-cyber-warning-bg border border-cyber-warning-text/40  p-4 flex items-start gap-3 shadow-lg shadow-cyber-warning-text/10">
                   <span className="material-symbols-outlined text-cyber-warning-text mt-0.5">warning</span>
                   <div>
                     <h3 className="font-medium text-cyber-warning-text text-sm">Low Health Factor Warning</h3>
@@ -192,7 +192,7 @@ export function Dashboard() {
           )}
 
           {/* Trade / Leverage / Yield widget */}
-          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 rounded-xl overflow-hidden shadow-lg shadow-cyber-border-glow/10">
+          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30  overflow-hidden shadow-lg shadow-cyber-border-glow/10">
             {/* Folder tabs */}
             <div className="flex flex-col sm:flex-row border-b border-cyber-border-glow/30">
               <button
@@ -205,7 +205,7 @@ export function Dashboard() {
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'trade' ? 'bg-cyber-bright-blue/20 text-cyber-bright-blue' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2  ${mainTab === 'trade' ? 'bg-cyber-bright-blue/20 text-cyber-bright-blue' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">security</span>
                 </div>
                 <div>
@@ -224,7 +224,7 @@ export function Dashboard() {
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'leverage' ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2  ${mainTab === 'leverage' ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">trending_up</span>
                 </div>
                 <div>
@@ -243,7 +243,7 @@ export function Dashboard() {
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'yield' ? 'bg-cyber-neon-green/20 text-cyber-neon-green' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2  ${mainTab === 'yield' ? 'bg-cyber-neon-green/20 text-cyber-neon-green' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">grass</span>
                 </div>
                 <div>
@@ -258,10 +258,10 @@ export function Dashboard() {
               {mainTab === 'trade' && (
                 <div className="max-w-xl mx-auto space-y-6">
                   {/* Buy/Sell tabs */}
-                  <div className="bg-cyber-surface-light p-1 rounded-lg flex text-sm font-medium mb-8 border border-cyber-border-glow/30">
+                  <div className="bg-cyber-surface-light p-1  flex text-sm font-medium mb-8 border border-cyber-border-glow/30">
                     <button
                       onClick={() => setMode('buy')}
-                      className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                      className={`flex-1 py-2 px-4  transition-all ${
                         mode === 'buy'
                           ? 'bg-cyber-surface-dark text-cyber-bright-blue shadow-sm shadow-cyber-bright-blue/10 border border-cyber-bright-blue/50'
                           : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -271,7 +271,7 @@ export function Dashboard() {
                     </button>
                     <button
                       onClick={() => setMode('sell')}
-                      className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                      className={`flex-1 py-2 px-4  transition-all ${
                         mode === 'sell'
                           ? 'bg-cyber-surface-dark text-cyber-bright-blue shadow-sm shadow-cyber-bright-blue/10 border border-cyber-bright-blue/50'
                           : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -287,7 +287,7 @@ export function Dashboard() {
                     <div className="grid grid-cols-2 gap-4">
                       <button
                         onClick={() => setSelectedToken('BEAR')}
-                        className={`relative p-4 rounded-xl text-center transition-all ${
+                        className={`relative p-4  text-center transition-all ${
                           selectedToken === 'BEAR'
                             ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
                             : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 opacity-60 hover:opacity-100'
@@ -298,7 +298,7 @@ export function Dashboard() {
                       </button>
                       <button
                         onClick={() => setSelectedToken('BULL')}
-                        className={`relative p-4 rounded-xl text-center transition-all ${
+                        className={`relative p-4  text-center transition-all ${
                           selectedToken === 'BULL'
                             ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
                             : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 opacity-60 hover:opacity-100'
@@ -325,12 +325,12 @@ export function Dashboard() {
                           value={inputAmount}
                           onChange={(e) => setInputAmount(e.target.value)}
                           placeholder="0.00"
-                          className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 rounded-xl py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
+                          className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
                         />
                         <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
                           <button
                             onClick={() => setInputAmount((Number(inputBalance) / 1e6).toString())}
-                            className="text-xs font-semibold text-cyber-bright-blue hover:text-cyber-bright-blue/80 px-2 py-1 rounded bg-cyber-bright-blue/10 shadow-sm shadow-cyber-bright-blue/10"
+                            className="text-xs font-semibold text-cyber-bright-blue hover:text-cyber-bright-blue/80 px-2 py-1 bg-cyber-bright-blue/10 shadow-sm shadow-cyber-bright-blue/10"
                           >
                             MAX
                           </button>
@@ -352,7 +352,7 @@ export function Dashboard() {
                         <span className="text-cyber-text-secondary">You receive</span>
                       </div>
                       <div className="relative">
-                        <div className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30 rounded-xl py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary flex items-center h-[62px] shadow-sm shadow-cyber-border-glow/10">
+                        <div className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary flex items-center h-[62px] shadow-sm shadow-cyber-border-glow/10">
                           {outputAmount}
                         </div>
                         <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -380,7 +380,7 @@ export function Dashboard() {
                   </div>
 
                   {showDetails && (
-                    <div className="bg-cyber-surface-light rounded-lg p-3 space-y-2 text-sm border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-light  p-3 space-y-2 text-sm border border-cyber-border-glow/30">
                       <div className="flex justify-between">
                         <span className="text-cyber-text-secondary">Route</span>
                         <span className="text-cyber-text-primary">
@@ -402,7 +402,7 @@ export function Dashboard() {
                   <button
                     onClick={handleSwap}
                     disabled={!inputAmount || parseFloat(inputAmount) <= 0}
-                    className="w-full bg-cyber-bright-blue hover:bg-cyber-bright-blue/90 text-cyber-bg font-semibold py-4 px-6 rounded-xl shadow-lg shadow-cyber-bright-blue/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                    className="w-full bg-cyber-bright-blue hover:bg-cyber-bright-blue/90 text-cyber-bg font-semibold py-4 px-6  shadow-lg shadow-cyber-bright-blue/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                   >
                     {mode === 'buy' ? 'Buy' : 'Sell'} DXY-{selectedToken}
                   </button>
@@ -417,7 +417,7 @@ export function Dashboard() {
                     <div className="grid grid-cols-2 gap-4">
                       <button
                         onClick={() => setSelectedSide('BEAR')}
-                        className={`relative p-4 rounded-xl text-center transition-all ${
+                        className={`relative p-4  text-center transition-all ${
                           selectedSide === 'BEAR'
                             ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
                             : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 opacity-60 hover:opacity-100'
@@ -428,7 +428,7 @@ export function Dashboard() {
                       </button>
                       <button
                         onClick={() => setSelectedSide('BULL')}
-                        className={`relative p-4 rounded-xl text-center transition-all ${
+                        className={`relative p-4  text-center transition-all ${
                           selectedSide === 'BULL'
                             ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
                             : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 opacity-60 hover:opacity-100'
@@ -454,12 +454,12 @@ export function Dashboard() {
                         value={collateralAmount}
                         onChange={(e) => setCollateralAmount(e.target.value)}
                         placeholder="0.00"
-                        className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 rounded-xl py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
+                        className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none transition-shadow shadow-sm shadow-cyber-border-glow/10"
                       />
                       <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
                         <button
                           onClick={() => setCollateralAmount((Number(usdcBalance) / 1e6).toString())}
-                          className="text-xs font-semibold text-cyber-electric-fuchsia hover:text-cyber-electric-fuchsia/80 px-2 py-1 rounded bg-cyber-electric-fuchsia/10 shadow-sm shadow-cyber-electric-fuchsia/10"
+                          className="text-xs font-semibold text-cyber-electric-fuchsia hover:text-cyber-electric-fuchsia/80 px-2 py-1 bg-cyber-electric-fuchsia/10 shadow-sm shadow-cyber-electric-fuchsia/10"
                         >
                           MAX
                         </button>
@@ -484,7 +484,7 @@ export function Dashboard() {
                       step="0.1"
                       value={leverage}
                       onChange={(e) => setLeverage(parseFloat(e.target.value))}
-                      className="w-full h-2 bg-cyber-surface-light rounded-lg appearance-none cursor-pointer accent-cyber-electric-fuchsia"
+                      className="w-full h-2 bg-cyber-surface-light  appearance-none cursor-pointer accent-cyber-electric-fuchsia"
                     />
                     <div className="flex justify-between text-xs text-cyber-text-secondary mt-1">
                       <span>1.1x</span>
@@ -493,7 +493,7 @@ export function Dashboard() {
                   </div>
 
                   {/* Position preview */}
-                  <div className="bg-cyber-surface-light rounded-lg p-4 space-y-3 border border-cyber-border-glow/30">
+                  <div className="bg-cyber-surface-light  p-4 space-y-3 border border-cyber-border-glow/30">
                     <h4 className="text-sm font-medium text-cyber-text-secondary">Position Preview</h4>
                     <div className="flex justify-between">
                       <span className="text-cyber-text-secondary text-sm">Position Size</span>
@@ -516,7 +516,7 @@ export function Dashboard() {
                   <button
                     onClick={handleOpenPosition}
                     disabled={!collateralAmount || parseFloat(collateralAmount) <= 0}
-                    className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-bg font-semibold py-4 px-6 rounded-xl shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                    className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-bg font-semibold py-4 px-6  shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                   >
                     Open {selectedSide} Position
                   </button>
@@ -531,17 +531,17 @@ export function Dashboard() {
                 <div className="max-w-xl mx-auto space-y-6">
                   {/* Overview stats */}
                   <div className="grid grid-cols-3 gap-4">
-                    <div className="bg-cyber-surface-light rounded-lg p-3 border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
                       <p className="text-xs text-cyber-text-secondary">Supplied</p>
                       <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(suppliedAmount)}</p>
                       <p className="text-xs text-cyber-neon-green">+{formatPercent(supplyApy)} APY</p>
                     </div>
-                    <div className="bg-cyber-surface-light rounded-lg p-3 border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
                       <p className="text-xs text-cyber-text-secondary">Borrowed</p>
                       <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(borrowedAmount)}</p>
                       <p className="text-xs text-cyber-warning-text">-{formatPercent(borrowApy)} APY</p>
                     </div>
-                    <div className="bg-cyber-surface-light rounded-lg p-3 border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-light  p-3 border border-cyber-border-glow/30">
                       <p className="text-xs text-cyber-text-secondary">Available</p>
                       <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(availableToBorrow)}</p>
                       <p className="text-xs text-cyber-text-secondary">to borrow</p>
@@ -549,15 +549,15 @@ export function Dashboard() {
                   </div>
 
                   {/* Supply section */}
-                  <div className="bg-cyber-surface-light rounded-lg p-4 border border-cyber-border-glow/30">
+                  <div className="bg-cyber-surface-light  p-4 border border-cyber-border-glow/30">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="font-medium text-cyber-text-primary">Supply USDC</h4>
                       <span className="text-sm text-cyber-neon-green">{formatPercent(supplyApy)} APY</span>
                     </div>
-                    <div className="bg-cyber-surface-dark p-1 rounded-lg flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-dark p-1  flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
                       <button
                         onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
-                        className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                        className={`flex-1 py-2 px-4  transition-all ${
                           supplyMode === 'supply'
                             ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
                             : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -567,7 +567,7 @@ export function Dashboard() {
                       </button>
                       <button
                         onClick={() => { setSupplyMode('withdraw'); setSupplyAmount('') }}
-                        className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                        className={`flex-1 py-2 px-4  transition-all ${
                           supplyMode === 'withdraw'
                             ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
                             : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
@@ -583,7 +583,7 @@ export function Dashboard() {
                           value={supplyAmount}
                           onChange={(e) => setSupplyAmount(e.target.value)}
                           placeholder="0.00"
-                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30 rounded-xl py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
+                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30  py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
                         />
                         <div className="absolute right-4 top-1/2 -translate-y-1/2">
                           <span className="font-medium text-cyber-text-secondary">USDC</span>
@@ -591,7 +591,7 @@ export function Dashboard() {
                       </div>
                       <button
                         disabled={!supplyAmount || parseFloat(supplyAmount) <= 0}
-                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 rounded-xl shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {supplyMode === 'supply' ? 'Supply' : 'Withdraw'} USDC
                       </button>
@@ -599,15 +599,15 @@ export function Dashboard() {
                   </div>
 
                   {/* Borrow section */}
-                  <div className="bg-cyber-surface-light rounded-lg p-4 border border-cyber-border-glow/30">
+                  <div className="bg-cyber-surface-light  p-4 border border-cyber-border-glow/30">
                     <div className="flex items-center justify-between mb-4">
                       <h4 className="font-medium text-cyber-text-primary">Borrow USDC</h4>
                       <span className="text-sm text-cyber-warning-text">{formatPercent(borrowApy)} APY</span>
                     </div>
-                    <div className="bg-cyber-surface-dark p-1 rounded-lg flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
+                    <div className="bg-cyber-surface-dark p-1  flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
                       <button
                         onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
-                        className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                        className={`flex-1 py-2 px-4  transition-all ${
                           borrowMode === 'borrow'
                             ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
                             : 'text-cyber-text-secondary hover:text-cyber-neon-green'
@@ -617,7 +617,7 @@ export function Dashboard() {
                       </button>
                       <button
                         onClick={() => { setBorrowMode('repay'); setBorrowAmount('') }}
-                        className={`flex-1 py-2 px-4 rounded-md transition-all ${
+                        className={`flex-1 py-2 px-4  transition-all ${
                           borrowMode === 'repay'
                             ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
                             : 'text-cyber-text-secondary hover:text-cyber-neon-green'
@@ -633,7 +633,7 @@ export function Dashboard() {
                           value={borrowAmount}
                           onChange={(e) => setBorrowAmount(e.target.value)}
                           placeholder="0.00"
-                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30 rounded-xl py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
+                          className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30  py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
                         />
                         <div className="absolute right-4 top-1/2 -translate-y-1/2">
                           <span className="font-medium text-cyber-text-secondary">USDC</span>
@@ -646,7 +646,7 @@ export function Dashboard() {
                       )}
                       <button
                         disabled={!borrowAmount || parseFloat(borrowAmount) <= 0}
-                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 rounded-xl shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {borrowMode === 'borrow' ? 'Borrow' : 'Repay'} USDC
                       </button>
@@ -680,7 +680,7 @@ export function Dashboard() {
           )}
         </>
       ) : (
-        <div className="bg-cyber-surface-dark rounded-xl p-12 text-center border border-cyber-border-glow/30 shadow-lg">
+        <div className="bg-cyber-surface-dark  p-12 text-center border border-cyber-border-glow/30 shadow-lg">
           <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-cyber-surface-light flex items-center justify-center">
             <span className="material-symbols-outlined text-3xl text-cyber-text-secondary">lock</span>
           </div>
@@ -714,7 +714,7 @@ function PortfolioCard({ title, value, description, link, isLoading, colorClass 
 
   return (
     <Link to={link}>
-      <div className="bg-cyber-surface-dark rounded-xl p-5 border border-cyber-border-glow/30 shadow-md hover:border-cyber-bright-blue/50 transition-colors cursor-pointer h-full">
+      <div className="bg-cyber-surface-dark  p-5 border border-cyber-border-glow/30 shadow-md hover:border-cyber-bright-blue/50 transition-colors cursor-pointer h-full">
         <p className="text-xs text-cyber-text-secondary uppercase tracking-wider font-medium mb-2">{title}</p>
         <div className={`text-2xl font-bold mb-1 ${colorClass}`}>{formatUsd(value)}</div>
         <p className="text-xs text-cyber-text-secondary truncate">{description}</p>
@@ -738,14 +738,14 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
       : 'text-cyber-electric-fuchsia'
 
   return (
-    <div className="bg-cyber-surface-dark rounded-lg p-4 border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 transition-all shadow-md">
+    <div className="bg-cyber-surface-dark  p-4 border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 transition-all shadow-md">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <TokenIcon side={position.side} />
           <div>
             <div className="flex items-center gap-2">
               <span className={`font-semibold ${sideColor}`}>DXY-{position.side}</span>
-              <span className="px-1.5 py-0.5 rounded bg-cyber-surface-light text-xs text-cyber-text-secondary font-medium border border-cyber-border-glow/30">
+              <span className="px-1.5 py-0.5 bg-cyber-surface-light text-xs text-cyber-text-secondary font-medium border border-cyber-border-glow/30">
                 {position.leverage}x
               </span>
             </div>
@@ -781,11 +781,11 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
           <div className="flex items-center gap-2 mt-2 md:mt-0">
             <button
               onClick={onAdjust}
-              className="px-3 py-1.5 rounded text-sm border border-cyber-border-glow/30 text-cyber-text-secondary hover:bg-cyber-surface-light hover:text-cyber-bright-blue transition-colors"
+              className="px-3 py-1.5 text-sm border border-cyber-border-glow/30 text-cyber-text-secondary hover:bg-cyber-surface-light hover:text-cyber-bright-blue transition-colors"
             >
               Adjust
             </button>
-            <button className="px-3 py-1.5 rounded text-sm bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary transition-colors shadow-md shadow-cyber-electric-fuchsia/20">
+            <button className="px-3 py-1.5 text-sm bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary transition-colors shadow-md shadow-cyber-electric-fuchsia/20">
               Close
             </button>
           </div>
@@ -811,7 +811,7 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
         <div className="flex gap-2">
           <button
             onClick={() => setAction('add')}
-            className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${
+            className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'add'
                 ? 'bg-cyber-neon-green/20 text-cyber-neon-green border border-cyber-neon-green/50'
                 : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue'
@@ -821,7 +821,7 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
           </button>
           <button
             onClick={() => setAction('remove')}
-            className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${
+            className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'remove'
                 ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border border-cyber-electric-fuchsia/50'
                 : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue'
@@ -831,7 +831,7 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
           </button>
           <button
             onClick={() => setAction('adjust')}
-            className={`flex-1 py-2 px-3 rounded text-sm font-medium transition-colors ${
+            className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'adjust'
                 ? 'bg-cyber-bright-blue/20 text-cyber-bright-blue border border-cyber-bright-blue/50'
                 : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue'
@@ -848,7 +848,7 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="0.00"
-              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 rounded-xl py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
+              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30  py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2">
               <span className="font-medium text-cyber-text-secondary">USDC</span>
@@ -865,12 +865,12 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
               max="5"
               step="0.1"
               defaultValue={position.leverage}
-              className="w-full h-2 bg-cyber-surface-light rounded-lg appearance-none cursor-pointer accent-cyber-bright-blue"
+              className="w-full h-2 bg-cyber-surface-light  appearance-none cursor-pointer accent-cyber-bright-blue"
             />
           </div>
         )}
 
-        <div className="bg-cyber-surface-light rounded-lg p-3 space-y-2 text-sm border border-cyber-border-glow/30">
+        <div className="bg-cyber-surface-light  p-3 space-y-2 text-sm border border-cyber-border-glow/30">
           <div className="flex justify-between">
             <span className="text-cyber-text-secondary">New Liquidation Price</span>
             <span className="text-cyber-warning-text">$92.50</span>
@@ -881,7 +881,7 @@ function AdjustPositionModal({ isOpen, onClose, position }: AdjustPositionModalP
           </div>
         </div>
 
-        <button className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 rounded-xl shadow-lg shadow-cyber-neon-green/40 transition-all">
+        <button className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all">
           Confirm {action === 'add' ? 'Add' : action === 'remove' ? 'Remove' : 'Adjust'}
         </button>
       </div>

@@ -21,7 +21,7 @@ export function TokenIcon({ side, size = 'md' }: TokenIconProps) {
   return (
     <div
       className={`
-        rounded-lg flex items-center justify-center font-bold shadow-md
+         flex items-center justify-center font-bold shadow-md
         ${sizeStyles[size]}
         ${colorStyles}
       `}

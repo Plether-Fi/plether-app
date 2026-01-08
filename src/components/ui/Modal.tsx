@@ -57,7 +57,7 @@ export function Modal({
       <div
         className={`
           relative w-full ${sizeStyles[size]} mx-4
-          bg-cyber-surface-dark rounded-xl border border-cyber-border-glow/50
+          bg-cyber-surface-dark  border border-cyber-border-glow/50
           shadow-2xl shadow-cyber-border-glow/20 animate-in fade-in zoom-in-95 duration-200
         `}
       >
