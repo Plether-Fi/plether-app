@@ -200,17 +200,17 @@ export function Dashboard() {
                 className={`
                   flex-1 flex items-center gap-3 px-6 py-5 text-left transition-colors
                   ${mainTab === 'trade'
-                    ? 'bg-cyber-surface-light border-b-2 border-cyber-neon-green shadow-md shadow-cyber-neon-green/10'
+                    ? 'bg-cyber-surface-light border-b-2 border-cyber-bright-blue shadow-md shadow-cyber-bright-blue/10'
                     : 'hover:bg-cyber-surface-light border-b-2 border-transparent opacity-60 hover:opacity-100 hover:border-cyber-bright-blue/50'
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'trade' ? 'bg-cyber-neon-green/20 text-cyber-neon-green' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2 rounded-lg ${mainTab === 'trade' ? 'bg-cyber-bright-blue/20 text-cyber-bright-blue' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">security</span>
                 </div>
                 <div>
-                  <div className={`font-semibold ${mainTab === 'trade' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'}`}>Hedge</div>
-                  <div className={`text-xs ${mainTab === 'trade' ? 'text-cyber-neon-green/70' : 'text-cyber-text-secondary'}`}>Spot trading</div>
+                  <div className={`font-semibold ${mainTab === 'trade' ? 'text-cyber-bright-blue' : 'text-cyber-text-primary'}`}>Dollar Hedge</div>
+                  <div className={`text-xs ${mainTab === 'trade' ? 'text-cyber-bright-blue/70' : 'text-cyber-text-secondary'}`}>Spot trading</div>
                 </div>
               </button>
 
@@ -219,17 +219,17 @@ export function Dashboard() {
                 className={`
                   flex-1 flex items-center gap-3 px-6 py-5 text-left transition-colors
                   ${mainTab === 'leverage'
-                    ? 'bg-cyber-surface-light border-b-2 border-cyber-bright-blue shadow-md shadow-cyber-bright-blue/10'
-                    : 'hover:bg-cyber-surface-light border-b-2 border-transparent opacity-60 hover:opacity-100 hover:border-cyber-bright-blue/50'
+                    ? 'bg-cyber-surface-light border-b-2 border-cyber-electric-fuchsia shadow-md shadow-cyber-electric-fuchsia/10'
+                    : 'hover:bg-cyber-surface-light border-b-2 border-transparent opacity-60 hover:opacity-100 hover:border-cyber-electric-fuchsia/50'
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'leverage' ? 'bg-cyber-bright-blue/20 text-cyber-bright-blue' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2 rounded-lg ${mainTab === 'leverage' ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">trending_up</span>
                 </div>
                 <div>
-                  <div className={`font-semibold ${mainTab === 'leverage' ? 'text-cyber-bright-blue' : 'text-cyber-text-primary'}`}>Leverage</div>
-                  <div className={`text-xs ${mainTab === 'leverage' ? 'text-cyber-bright-blue/70' : 'text-cyber-text-secondary'}`}>Margin trading</div>
+                  <div className={`font-semibold ${mainTab === 'leverage' ? 'text-cyber-electric-fuchsia' : 'text-cyber-text-primary'}`}>Leverage</div>
+                  <div className={`text-xs ${mainTab === 'leverage' ? 'text-cyber-electric-fuchsia/70' : 'text-cyber-text-secondary'}`}>Margin trading</div>
                 </div>
               </button>
 
@@ -238,17 +238,17 @@ export function Dashboard() {
                 className={`
                   flex-1 flex items-center gap-3 px-6 py-5 text-left transition-colors
                   ${mainTab === 'yield'
-                    ? 'bg-cyber-surface-light border-b-2 border-cyber-electric-fuchsia shadow-md shadow-cyber-electric-fuchsia/10'
-                    : 'hover:bg-cyber-surface-light border-b-2 border-transparent opacity-60 hover:opacity-100 hover:border-cyber-bright-blue/50'
+                    ? 'bg-cyber-surface-light border-b-2 border-cyber-neon-green shadow-md shadow-cyber-neon-green/10'
+                    : 'hover:bg-cyber-surface-light border-b-2 border-transparent opacity-60 hover:opacity-100 hover:border-cyber-neon-green/50'
                   }
                 `}
               >
-                <div className={`p-2 rounded-lg ${mainTab === 'yield' ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
+                <div className={`p-2 rounded-lg ${mainTab === 'yield' ? 'bg-cyber-neon-green/20 text-cyber-neon-green' : 'bg-cyber-text-secondary/20 text-cyber-text-secondary'}`}>
                   <span className="material-symbols-outlined text-xl">grass</span>
                 </div>
                 <div>
-                  <div className={`font-semibold ${mainTab === 'yield' ? 'text-cyber-electric-fuchsia' : 'text-cyber-text-primary'}`}>Yield</div>
-                  <div className={`text-xs ${mainTab === 'yield' ? 'text-cyber-electric-fuchsia/70' : 'text-cyber-text-secondary'}`}>Liquidity providing</div>
+                  <div className={`font-semibold ${mainTab === 'yield' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'}`}>Yield</div>
+                  <div className={`text-xs ${mainTab === 'yield' ? 'text-cyber-neon-green/70' : 'text-cyber-text-secondary'}`}>Liquidity providing</div>
                 </div>
               </button>
             </div>
