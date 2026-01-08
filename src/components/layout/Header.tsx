@@ -18,7 +18,7 @@ export function Header() {
         <div className="flex items-center gap-10">
           <Link to="/" className="flex items-center gap-2">
             <img src="/icon.svg" alt="Plether" className="w-12 h-12 -my-2" />
-            <span className="text-xl font-semibold tracking-wide text-cyber-neon-green">Plether</span>
+            <span className="text-xl font-semibold tracking-wide text-cyber-neon-green drop-shadow-[0_0_0px_var(--color-cyber-neon-green)] hover:drop-shadow-[0_0_8px_var(--color-cyber-neon-green)] transition-[filter] duration-300">Plether</span>
           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
