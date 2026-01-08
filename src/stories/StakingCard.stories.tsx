@@ -2,25 +2,45 @@ import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { TokenIcon } from '../components/ui'
 
-const meta: Meta = {
+interface StakingCardArgs {
+  side: 'BEAR' | 'BULL'
+  tokenBalance: number
+  stakedBalance: number
+}
+
+const meta: Meta<StakingCardArgs> = {
   title: 'Components/StakingCard',
   tags: ['autodocs'],
+  argTypes: {
+    side: {
+      control: 'radio',
+      options: ['BEAR', 'BULL'],
+      description: 'Token side to stake',
+    },
+    tokenBalance: {
+      control: { type: 'number', min: 0 },
+      description: 'Available token balance',
+    },
+    stakedBalance: {
+      control: { type: 'number', min: 0 },
+      description: 'Currently staked balance',
+    },
+  },
 }
 
 export default meta
-type Story = StoryObj
+type Story = StoryObj<StakingCardArgs>
 
 type StakeMode = 'stake' | 'unstake'
 
-function formatAmount(value: bigint, decimals: number): string {
-  const num = Number(value) / 10 ** decimals
-  return num.toLocaleString('en-US', { maximumFractionDigits: 4 })
+function formatAmount(value: number): string {
+  return value.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
 
 interface StakingCardProps {
   side: 'BEAR' | 'BULL'
-  tokenBalance: bigint
-  stakedBalance: bigint
+  tokenBalance: number
+  stakedBalance: number
 }
 
 function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
@@ -52,7 +72,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
           <div className="flex justify-between items-center">
             <span className="text-cyber-text-secondary text-sm">Staked Balance</span>
             <span className={`${textColor} font-semibold`}>
-              {formatAmount(stakedBalance, 18)} sDXY-{side}
+              {formatAmount(stakedBalance)} sDXY-{side}
             </span>
           </div>
         </div>
@@ -86,7 +106,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
               {mode === 'stake' ? `DXY-${side} to stake` : `sDXY-${side} to unstake`}
             </span>
             <span className="text-cyber-text-secondary">
-              Balance: <span className="text-cyber-text-primary">{formatAmount(balance, 18)}</span>
+              Balance: <span className="text-cyber-text-primary">{formatAmount(balance)}</span>
             </span>
           </div>
           <div className="relative">
@@ -99,7 +119,7 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
               <button
-                onClick={() => setAmount((Number(balance) / 1e18).toString())}
+                onClick={() => setAmount(balance.toString())}
                 className={`text-xs font-semibold ${textColor} hover:opacity-80 px-2 py-1 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}
               >
                 MAX
@@ -119,25 +139,27 @@ function StakingCard({ side, tokenBalance, stakedBalance }: StakingCardProps) {
 }
 
 export const BearStaking: Story = {
-  render: () => (
+  args: {
+    side: 'BEAR',
+    tokenBalance: 5000,
+    stakedBalance: 2500,
+  },
+  render: (args) => (
     <div className="max-w-md">
-      <StakingCard
-        side="BEAR"
-        tokenBalance={BigInt(5000 * 1e18)}
-        stakedBalance={BigInt(2500 * 1e18)}
-      />
+      <StakingCard {...args} />
     </div>
   ),
 }
 
 export const BullStaking: Story = {
-  render: () => (
+  args: {
+    side: 'BULL',
+    tokenBalance: 7500,
+    stakedBalance: 3000,
+  },
+  render: (args) => (
     <div className="max-w-md">
-      <StakingCard
-        side="BULL"
-        tokenBalance={BigInt(7500 * 1e18)}
-        stakedBalance={BigInt(3000 * 1e18)}
-      />
+      <StakingCard {...args} />
     </div>
   ),
 }
@@ -145,16 +167,8 @@ export const BullStaking: Story = {
 export const BothCards: Story = {
   render: () => (
     <div className="grid grid-cols-2 gap-6 max-w-4xl">
-      <StakingCard
-        side="BEAR"
-        tokenBalance={BigInt(5000 * 1e18)}
-        stakedBalance={BigInt(2500 * 1e18)}
-      />
-      <StakingCard
-        side="BULL"
-        tokenBalance={BigInt(7500 * 1e18)}
-        stakedBalance={BigInt(3000 * 1e18)}
-      />
+      <StakingCard side="BEAR" tokenBalance={5000} stakedBalance={2500} />
+      <StakingCard side="BULL" tokenBalance={7500} stakedBalance={3000} />
     </div>
   ),
 }

@@ -6,6 +6,28 @@ const meta: Meta<typeof TokenInput> = {
   title: 'Components/TokenInput',
   component: TokenInput,
   tags: ['autodocs'],
+  argTypes: {
+    label: {
+      control: 'text',
+      description: 'Label displayed above the input',
+    },
+    error: {
+      control: 'text',
+      description: 'Error message to display',
+    },
+    disabled: {
+      control: 'boolean',
+      description: 'Whether the input is disabled',
+    },
+    token: {
+      control: 'object',
+      description: 'Token info with symbol and decimals',
+    },
+    balance: {
+      control: 'text',
+      description: 'User balance (as bigint string)',
+    },
+  },
 }
 
 export default meta
@@ -24,40 +46,47 @@ function TokenInputWithState(props: Partial<Parameters<typeof TokenInput>[0]>) {
 }
 
 export const Default: Story = {
-  render: () => <TokenInputWithState />,
+  args: {
+    token: { symbol: 'USDC', decimals: 6 },
+  },
+  render: (args) => <TokenInputWithState {...args} />,
 }
 
 export const WithLabel: Story = {
-  render: () => <TokenInputWithState label="Amount to deposit" />,
+  args: {
+    label: 'Amount to deposit',
+    token: { symbol: 'USDC', decimals: 6 },
+  },
+  render: (args) => <TokenInputWithState {...args} />,
 }
 
 export const WithBalance: Story = {
-  render: () => (
-    <TokenInputWithState
-      label="Amount"
-      balance={1000000000n}
-    />
-  ),
+  args: {
+    label: 'Amount',
+    token: { symbol: 'USDC', decimals: 6 },
+    balance: 1000000000n,
+  },
+  render: (args) => <TokenInputWithState {...args} />,
 }
 
 export const WithError: Story = {
-  render: () => (
-    <TokenInputWithState
-      label="Amount"
-      balance={1000000000n}
-      error="Insufficient balance"
-    />
-  ),
+  args: {
+    label: 'Amount',
+    token: { symbol: 'USDC', decimals: 6 },
+    balance: 1000000000n,
+    error: 'Insufficient balance',
+  },
+  render: (args) => <TokenInputWithState {...args} />,
 }
 
 export const Disabled: Story = {
-  render: () => (
-    <TokenInputWithState
-      label="Amount"
-      balance={1000000000n}
-      disabled
-    />
-  ),
+  args: {
+    label: 'Amount',
+    token: { symbol: 'USDC', decimals: 6 },
+    balance: 1000000000n,
+    disabled: true,
+  },
+  render: (args) => <TokenInputWithState {...args} />,
 }
 
 export const DifferentTokens: Story = {

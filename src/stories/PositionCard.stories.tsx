@@ -1,49 +1,83 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { TokenIcon } from '../components/ui'
 
-const meta: Meta = {
+interface PositionCardArgs {
+  side: 'BEAR' | 'BULL'
+  leverage: number
+  size: number
+  collateral: number
+  pnl: number
+  pnlPercentage: number
+  healthFactor: number
+}
+
+const meta: Meta<PositionCardArgs> = {
   title: 'Components/PositionCard',
   tags: ['autodocs'],
+  argTypes: {
+    side: {
+      control: 'radio',
+      options: ['BEAR', 'BULL'],
+      description: 'Position side',
+    },
+    leverage: {
+      control: { type: 'number', min: 1, max: 10 },
+      description: 'Leverage multiplier',
+    },
+    size: {
+      control: { type: 'number', min: 0 },
+      description: 'Position size in USD',
+    },
+    collateral: {
+      control: { type: 'number', min: 0 },
+      description: 'Collateral amount in USD',
+    },
+    pnl: {
+      control: { type: 'number' },
+      description: 'Profit/Loss in USD (can be negative)',
+    },
+    pnlPercentage: {
+      control: { type: 'number', min: -100, max: 1000 },
+      description: 'PnL percentage',
+    },
+    healthFactor: {
+      control: { type: 'number', min: 0, max: 10, step: 0.1 },
+      description: 'Health factor (>1.5 healthy, >1.2 warning, <1.2 danger)',
+    },
+  },
 }
 
 export default meta
-type Story = StoryObj
+type Story = StoryObj<PositionCardArgs>
 
 const HEALTH_FACTOR_WARNING = 1.5
 const HEALTH_FACTOR_DANGER = 1.2
 
-function formatUsd(value: bigint): string {
-  const num = Number(value) / 1e6
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num)
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
 function formatPercent(value: number): string {
   return `${value.toFixed(2)}%`
 }
 
-interface LeveragePosition {
-  id: string
+interface PositionCardProps {
   side: 'BEAR' | 'BULL'
   leverage: number
-  size: bigint
-  collateral: bigint
-  pnl: bigint
+  size: number
+  collateral: number
+  pnl: number
   pnlPercentage: number
-  liquidationPrice: bigint
   healthFactor: number
-}
-
-interface PositionCardProps {
-  position: LeveragePosition
   onAdjust?: () => void
 }
 
-function PositionCard({ position, onAdjust }: PositionCardProps) {
-  const sideColor = position.side === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
-  const pnlColor = position.pnl >= 0n ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'
-  const healthColor = position.healthFactor >= HEALTH_FACTOR_WARNING
+function PositionCard({ side, leverage, size, collateral, pnl, pnlPercentage, healthFactor, onAdjust }: PositionCardProps) {
+  const sideColor = side === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
+  const pnlColor = pnl >= 0 ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'
+  const healthColor = healthFactor >= HEALTH_FACTOR_WARNING
     ? 'text-cyber-neon-green'
-    : position.healthFactor >= HEALTH_FACTOR_DANGER
+    : healthFactor >= HEALTH_FACTOR_DANGER
       ? 'text-cyber-warning-text'
       : 'text-cyber-electric-fuchsia'
 
@@ -51,16 +85,16 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
     <div className="bg-cyber-surface-dark p-4 border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 transition-all shadow-md">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
-          <TokenIcon side={position.side} />
+          <TokenIcon side={side} />
           <div>
             <div className="flex items-center gap-2">
-              <span className={`font-semibold ${sideColor}`}>DXY-{position.side}</span>
+              <span className={`font-semibold ${sideColor}`}>DXY-{side}</span>
               <span className="px-1.5 py-0.5 bg-cyber-surface-light text-xs text-cyber-text-secondary font-medium border border-cyber-border-glow/30">
-                {position.leverage}x
+                {leverage}x
               </span>
             </div>
             <div className="text-xs text-cyber-text-secondary mt-1">
-              Size: {formatUsd(position.size)} | Collateral: {formatUsd(position.collateral)}
+              Size: {formatUsd(size)} | Collateral: {formatUsd(collateral)}
             </div>
           </div>
         </div>
@@ -69,13 +103,13 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
           <div className="flex flex-col">
             <span className="text-xs text-cyber-text-secondary mb-1">PnL</span>
             <span className={`text-sm font-semibold ${pnlColor}`}>
-              {formatUsd(position.pnl)} ({position.pnlPercentage > 0 ? '+' : ''}{formatPercent(position.pnlPercentage)})
+              {formatUsd(pnl)} ({pnlPercentage > 0 ? '+' : ''}{formatPercent(pnlPercentage)})
             </span>
           </div>
           <div className="flex flex-col">
             <span className="text-xs text-cyber-text-secondary mb-1">Liq. Price</span>
             <span className="text-sm font-semibold text-cyber-text-primary">
-              ${(Number(position.liquidationPrice) / 1e6).toFixed(2)}
+              ${(side === 'BEAR' ? 115 : 95).toFixed(2)}
             </span>
           </div>
           <div className="flex flex-col">
@@ -84,7 +118,7 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
               <span className="material-symbols-outlined text-[10px] text-cyber-text-secondary">help</span>
             </div>
             <span className={`text-sm font-semibold ${healthColor}`}>
-              {position.healthFactor.toFixed(2)}
+              {healthFactor.toFixed(2)}
             </span>
           </div>
 
@@ -105,52 +139,43 @@ function PositionCard({ position, onAdjust }: PositionCardProps) {
   )
 }
 
-const bearPosition: LeveragePosition = {
-  id: '1',
-  side: 'BEAR',
-  leverage: 3,
-  size: BigInt(15000 * 1e6),
-  collateral: BigInt(5000 * 1e6),
-  pnl: BigInt(1250 * 1e6),
-  pnlPercentage: 25,
-  liquidationPrice: BigInt(115 * 1e6),
-  healthFactor: 2.1,
-}
-
-const bullPosition: LeveragePosition = {
-  id: '2',
-  side: 'BULL',
-  leverage: 2,
-  size: BigInt(10000 * 1e6),
-  collateral: BigInt(5000 * 1e6),
-  pnl: BigInt(-750 * 1e6),
-  pnlPercentage: -7.5,
-  liquidationPrice: BigInt(95 * 1e6),
-  healthFactor: 1.8,
-}
-
-const lowHealthPosition: LeveragePosition = {
-  id: '3',
-  side: 'BEAR',
-  leverage: 5,
-  size: BigInt(25000 * 1e6),
-  collateral: BigInt(5000 * 1e6),
-  pnl: BigInt(-2000 * 1e6),
-  pnlPercentage: -40,
-  liquidationPrice: BigInt(110 * 1e6),
-  healthFactor: 1.15,
-}
-
 export const BearPosition: Story = {
-  render: () => <PositionCard position={bearPosition} onAdjust={() => alert('Adjust clicked')} />,
+  args: {
+    side: 'BEAR',
+    leverage: 3,
+    size: 15000,
+    collateral: 5000,
+    pnl: 1250,
+    pnlPercentage: 25,
+    healthFactor: 2.1,
+  },
+  render: (args) => <PositionCard {...args} />,
 }
 
 export const BullPosition: Story = {
-  render: () => <PositionCard position={bullPosition} onAdjust={() => alert('Adjust clicked')} />,
+  args: {
+    side: 'BULL',
+    leverage: 2,
+    size: 10000,
+    collateral: 5000,
+    pnl: -750,
+    pnlPercentage: -7.5,
+    healthFactor: 1.8,
+  },
+  render: (args) => <PositionCard {...args} />,
 }
 
 export const LowHealthPosition: Story = {
-  render: () => <PositionCard position={lowHealthPosition} onAdjust={() => alert('Adjust clicked')} />,
+  args: {
+    side: 'BEAR',
+    leverage: 5,
+    size: 25000,
+    collateral: 5000,
+    pnl: -2000,
+    pnlPercentage: -40,
+    healthFactor: 1.15,
+  },
+  render: (args) => <PositionCard {...args} />,
 }
 
 export const AllPositions: Story = {
@@ -158,15 +183,15 @@ export const AllPositions: Story = {
     <div className="space-y-4">
       <div>
         <p className="text-cyber-text-secondary text-sm mb-2">Bear Position (Profitable):</p>
-        <PositionCard position={bearPosition} onAdjust={() => {}} />
+        <PositionCard side="BEAR" leverage={3} size={15000} collateral={5000} pnl={1250} pnlPercentage={25} healthFactor={2.1} />
       </div>
       <div>
         <p className="text-cyber-text-secondary text-sm mb-2">Bull Position (Loss):</p>
-        <PositionCard position={bullPosition} onAdjust={() => {}} />
+        <PositionCard side="BULL" leverage={2} size={10000} collateral={5000} pnl={-750} pnlPercentage={-7.5} healthFactor={1.8} />
       </div>
       <div>
         <p className="text-cyber-text-secondary text-sm mb-2">Low Health (Danger):</p>
-        <PositionCard position={lowHealthPosition} onAdjust={() => {}} />
+        <PositionCard side="BEAR" leverage={5} size={25000} collateral={5000} pnl={-2000} pnlPercentage={-40} healthFactor={1.15} />
       </div>
     </div>
   ),

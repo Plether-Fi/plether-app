@@ -2,17 +2,47 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { MemoryRouter, Link } from 'react-router-dom'
 import { Skeleton } from '../components/ui'
 
-const meta: Meta = {
+interface PortfolioCardArgs {
+  title: string
+  value: number
+  description: string
+  colorClass: string
+  isLoading?: boolean
+}
+
+const meta: Meta<PortfolioCardArgs> = {
   title: 'Components/PortfolioCard',
   tags: ['autodocs'],
+  argTypes: {
+    title: {
+      control: 'text',
+      description: 'Card title',
+    },
+    value: {
+      control: { type: 'number', min: 0 },
+      description: 'Value in USD',
+    },
+    description: {
+      control: 'text',
+      description: 'Description text below value',
+    },
+    colorClass: {
+      control: 'select',
+      options: ['text-cyber-bright-blue', 'text-cyber-electric-fuchsia', 'text-cyber-neon-green'],
+      description: 'Text color class for value',
+    },
+    isLoading: {
+      control: 'boolean',
+      description: 'Show loading skeleton',
+    },
+  },
 }
 
 export default meta
-type Story = StoryObj
+type Story = StoryObj<PortfolioCardArgs>
 
-function formatUsd(value: bigint): string {
-  const num = Number(value) / 1e6
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num)
+function formatUsd(value: number): string {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value)
 }
 
 function SkeletonCard() {
@@ -27,7 +57,7 @@ function SkeletonCard() {
 
 interface PortfolioCardProps {
   title: string
-  value: bigint
+  value: number
   description: string
   link: string
   isLoading?: boolean
@@ -51,65 +81,68 @@ function PortfolioCard({ title, value, description, link, isLoading, colorClass 
 }
 
 export const SpotHoldings: Story = {
-  render: () => (
+  args: {
+    title: 'Spot Holdings',
+    value: 12500,
+    description: '5,000 DXY-BEAR • 7,500 DXY-BULL',
+    colorClass: 'text-cyber-bright-blue',
+    isLoading: false,
+  },
+  render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard
-          title="Spot Holdings"
-          value={BigInt(12500 * 1e6)}
-          description="5,000 DXY-BEAR • 7,500 DXY-BULL"
-          link="/"
-          colorClass="text-cyber-bright-blue"
-        />
+        <PortfolioCard {...args} link="/" />
       </div>
     </MemoryRouter>
   ),
 }
 
 export const StakedTokens: Story = {
-  render: () => (
+  args: {
+    title: 'Staked',
+    value: 8000,
+    description: '3,000 sDXY-BEAR • 5,000 sDXY-BULL',
+    colorClass: 'text-cyber-bright-blue',
+    isLoading: false,
+  },
+  render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard
-          title="Staked"
-          value={BigInt(8000 * 1e6)}
-          description="3,000 sDXY-BEAR • 5,000 sDXY-BULL"
-          link="/stake"
-          colorClass="text-cyber-bright-blue"
-        />
+        <PortfolioCard {...args} link="/stake" />
       </div>
     </MemoryRouter>
   ),
 }
 
 export const LeveragePositions: Story = {
-  render: () => (
+  args: {
+    title: 'Leverage',
+    value: 25000,
+    description: '2 active positions',
+    colorClass: 'text-cyber-electric-fuchsia',
+    isLoading: false,
+  },
+  render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard
-          title="Leverage"
-          value={BigInt(25000 * 1e6)}
-          description="2 active positions"
-          link="/leverage"
-          colorClass="text-cyber-electric-fuchsia"
-        />
+        <PortfolioCard {...args} link="/leverage" />
       </div>
     </MemoryRouter>
   ),
 }
 
 export const Loading: Story = {
-  render: () => (
+  args: {
+    title: 'Spot Holdings',
+    value: 0,
+    description: '',
+    colorClass: 'text-cyber-bright-blue',
+    isLoading: true,
+  },
+  render: (args) => (
     <MemoryRouter>
       <div className="w-64">
-        <PortfolioCard
-          title="Spot Holdings"
-          value={BigInt(0)}
-          description=""
-          link="/"
-          isLoading
-          colorClass="text-cyber-bright-blue"
-        />
+        <PortfolioCard {...args} link="/" />
       </div>
     </MemoryRouter>
   ),
@@ -121,21 +154,21 @@ export const AllCards: Story = {
       <div className="grid grid-cols-3 gap-4">
         <PortfolioCard
           title="Spot Holdings"
-          value={BigInt(12500 * 1e6)}
+          value={12500}
           description="5,000 DXY-BEAR • 7,500 DXY-BULL"
           link="/"
           colorClass="text-cyber-bright-blue"
         />
         <PortfolioCard
           title="Staked"
-          value={BigInt(8000 * 1e6)}
+          value={8000}
           description="3,000 sDXY-BEAR • 5,000 sDXY-BULL"
           link="/stake"
           colorClass="text-cyber-bright-blue"
         />
         <PortfolioCard
           title="Leverage"
-          value={BigInt(25000 * 1e6)}
+          value={25000}
           description="2 active positions"
           link="/leverage"
           colorClass="text-cyber-electric-fuchsia"

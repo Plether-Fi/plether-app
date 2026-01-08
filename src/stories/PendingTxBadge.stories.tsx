@@ -1,20 +1,34 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-const meta: Meta = {
+interface PendingBadgeArgs {
+  count: number
+}
+
+const meta: Meta<PendingBadgeArgs> = {
   title: 'Components/PendingTxBadge',
   tags: ['autodocs'],
+  argTypes: {
+    count: {
+      control: { type: 'number', min: 0, max: 10 },
+      description: 'Number of pending transactions',
+    },
+  },
 }
 
 export default meta
-type Story = StoryObj
+type Story = StoryObj<PendingBadgeArgs>
 
-function MockPendingBadge({ count }: { count: number }) {
+interface MockPendingBadgeProps {
+  count: number
+}
+
+function MockPendingBadge({ count }: MockPendingBadgeProps) {
   if (count === 0) return <p className="text-cyber-text-secondary text-sm">No pending transactions</p>
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-cyber-bright-blue/20 border border-cyber-bright-blue/50 rounded-full shadow-sm shadow-cyber-bright-blue/20">
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-cyber-bright-blue/20 border border-cyber-bright-blue/50 shadow-sm shadow-cyber-bright-blue/20">
       <div className="w-4 h-4 relative">
-        <div className="absolute inset-0 rounded-full border-2 border-cyber-bright-blue/30 border-t-cyber-bright-blue animate-spin" />
+        <div className="absolute inset-0 border-2 border-cyber-bright-blue/30 border-t-cyber-bright-blue animate-spin" />
       </div>
       <span className="text-sm text-cyber-bright-blue font-medium">
         {count} pending
@@ -24,15 +38,24 @@ function MockPendingBadge({ count }: { count: number }) {
 }
 
 export const NoPending: Story = {
-  render: () => <MockPendingBadge count={0} />,
+  args: {
+    count: 0,
+  },
+  render: (args) => <MockPendingBadge {...args} />,
 }
 
 export const OnePending: Story = {
-  render: () => <MockPendingBadge count={1} />,
+  args: {
+    count: 1,
+  },
+  render: (args) => <MockPendingBadge {...args} />,
 }
 
 export const MultiplePending: Story = {
-  render: () => <MockPendingBadge count={3} />,
+  args: {
+    count: 3,
+  },
+  render: (args) => <MockPendingBadge {...args} />,
 }
 
 export const AllStates: Story = {

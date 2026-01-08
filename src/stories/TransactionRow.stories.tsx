@@ -1,13 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-const meta: Meta = {
-  title: 'Components/TransactionRow',
-  tags: ['autodocs'],
-}
-
-export default meta
-type Story = StoryObj
-
 type TransactionType =
   | 'mint' | 'burn'
   | 'swap_buy_bear' | 'swap_sell_bear'
@@ -17,13 +9,47 @@ type TransactionType =
   | 'leverage_open' | 'leverage_close' | 'leverage_adjust'
   | 'morpho_supply' | 'morpho_withdraw' | 'morpho_borrow' | 'morpho_repay'
 
-interface HistoricalTransaction {
-  hash: string
+const transactionTypes: TransactionType[] = [
+  'mint', 'burn',
+  'swap_buy_bear', 'swap_sell_bear',
+  'swap_buy_bull', 'swap_sell_bull',
+  'stake_bear', 'stake_bull',
+  'unstake_bear', 'unstake_bull',
+  'leverage_open', 'leverage_close', 'leverage_adjust',
+  'morpho_supply', 'morpho_withdraw', 'morpho_borrow', 'morpho_repay',
+]
+
+interface TransactionRowProps {
   type: TransactionType
-  amount: bigint
+  amount: number
   tokenSymbol: string
-  timestamp: Date
+  hash?: string
+  timestamp?: Date
 }
+
+const meta: Meta<TransactionRowProps> = {
+  title: 'Components/TransactionRow',
+  tags: ['autodocs'],
+  argTypes: {
+    type: {
+      control: 'select',
+      options: transactionTypes,
+      description: 'Transaction type',
+    },
+    amount: {
+      control: { type: 'number', min: 0 },
+      description: 'Transaction amount',
+    },
+    tokenSymbol: {
+      control: 'select',
+      options: ['USDC', 'DXY-BEAR', 'DXY-BULL'],
+      description: 'Token symbol',
+    },
+  },
+}
+
+export default meta
+type Story = StoryObj<TransactionRowProps>
 
 const typeLabels: Record<TransactionType, string> = {
   mint: 'Mint Pairs',
@@ -85,34 +111,33 @@ function getIconBg(type: TransactionType): string {
   return 'bg-cyber-surface-light'
 }
 
-function TransactionRow({ transaction }: { transaction: HistoricalTransaction }) {
-  const truncatedHash = `${transaction.hash.slice(0, 10)}...${transaction.hash.slice(-8)}`
-  const decimals = transaction.tokenSymbol === 'USDC' ? 6 : 18
-  const amount = (Number(transaction.amount) / 10 ** decimals).toFixed(decimals === 6 ? 2 : 4)
+function TransactionRow({ type, amount, tokenSymbol, hash = '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef', timestamp = new Date() }: TransactionRowProps) {
+  const truncatedHash = `${hash.slice(0, 10)}...${hash.slice(-8)}`
+  const decimals = tokenSymbol === 'USDC' ? 2 : 4
 
   return (
     <div className="flex items-center justify-between px-6 py-4 hover:bg-cyber-surface-light/50 transition-colors">
       <div className="flex items-center gap-4">
-        <div className={`w-10 h-10 ${getIconBg(transaction.type)} flex items-center justify-center`}>
-          <span className={`material-symbols-outlined ${getTypeColor(transaction.type)}`}>
-            {typeIcons[transaction.type]}
+        <div className={`w-10 h-10 ${getIconBg(type)} flex items-center justify-center`}>
+          <span className={`material-symbols-outlined ${getTypeColor(type)}`}>
+            {typeIcons[type]}
           </span>
         </div>
         <div>
-          <p className={`font-semibold ${getTypeColor(transaction.type)}`}>
-            {typeLabels[transaction.type]}
+          <p className={`font-semibold ${getTypeColor(type)}`}>
+            {typeLabels[type]}
           </p>
           <p className="text-xs text-cyber-text-secondary">
-            {transaction.timestamp.toLocaleDateString()} {transaction.timestamp.toLocaleTimeString()}
+            {timestamp.toLocaleDateString()} {timestamp.toLocaleTimeString()}
           </p>
         </div>
       </div>
       <div className="text-right">
         <p className="font-medium text-cyber-text-primary">
-          {amount} {transaction.tokenSymbol}
+          {amount.toFixed(decimals)} {tokenSymbol}
         </p>
         <a
-          href={`https://etherscan.io/tx/${transaction.hash}`}
+          href={`https://etherscan.io/tx/${hash}`}
           target="_blank"
           rel="noopener noreferrer"
           className="text-xs text-cyber-bright-blue hover:underline"
@@ -124,80 +149,67 @@ function TransactionRow({ transaction }: { transaction: HistoricalTransaction })
   )
 }
 
-const mockTransactions: HistoricalTransaction[] = [
-  {
-    hash: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-    type: 'swap_buy_bear',
-    amount: BigInt(1000 * 1e18),
-    tokenSymbol: 'DXY-BEAR',
-    timestamp: new Date('2024-01-15T10:30:00'),
-  },
-  {
-    hash: '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890',
-    type: 'swap_buy_bull',
-    amount: BigInt(500 * 1e18),
-    tokenSymbol: 'DXY-BULL',
-    timestamp: new Date('2024-01-14T15:45:00'),
-  },
-  {
-    hash: '0x9876543210fedcba9876543210fedcba9876543210fedcba9876543210fedcba',
-    type: 'stake_bear',
-    amount: BigInt(250 * 1e18),
-    tokenSymbol: 'DXY-BEAR',
-    timestamp: new Date('2024-01-13T09:00:00'),
-  },
-  {
-    hash: '0xfedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-    type: 'leverage_open',
-    amount: BigInt(5000 * 1e6),
-    tokenSymbol: 'USDC',
-    timestamp: new Date('2024-01-12T14:20:00'),
-  },
-  {
-    hash: '0x5555555555555555555555555555555555555555555555555555555555555555',
-    type: 'mint',
-    amount: BigInt(10000 * 1e6),
-    tokenSymbol: 'USDC',
-    timestamp: new Date('2024-01-11T11:00:00'),
-  },
-]
-
 export const BuyBear: Story = {
-  render: () => (
+  args: {
+    type: 'swap_buy_bear',
+    amount: 1000,
+    tokenSymbol: 'DXY-BEAR',
+  },
+  render: (args) => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
-      <TransactionRow transaction={mockTransactions[0]} />
+      <TransactionRow {...args} />
     </div>
   ),
 }
 
 export const BuyBull: Story = {
-  render: () => (
+  args: {
+    type: 'swap_buy_bull',
+    amount: 500,
+    tokenSymbol: 'DXY-BULL',
+  },
+  render: (args) => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
-      <TransactionRow transaction={mockTransactions[1]} />
+      <TransactionRow {...args} />
     </div>
   ),
 }
 
 export const StakeBear: Story = {
-  render: () => (
+  args: {
+    type: 'stake_bear',
+    amount: 250,
+    tokenSymbol: 'DXY-BEAR',
+  },
+  render: (args) => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
-      <TransactionRow transaction={mockTransactions[2]} />
+      <TransactionRow {...args} />
     </div>
   ),
 }
 
 export const LeverageOpen: Story = {
-  render: () => (
+  args: {
+    type: 'leverage_open',
+    amount: 5000,
+    tokenSymbol: 'USDC',
+  },
+  render: (args) => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
-      <TransactionRow transaction={mockTransactions[3]} />
+      <TransactionRow {...args} />
     </div>
   ),
 }
 
 export const Mint: Story = {
-  render: () => (
+  args: {
+    type: 'mint',
+    amount: 10000,
+    tokenSymbol: 'USDC',
+  },
+  render: (args) => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
-      <TransactionRow transaction={mockTransactions[4]} />
+      <TransactionRow {...args} />
     </div>
   ),
 }
@@ -205,9 +217,11 @@ export const Mint: Story = {
 export const TransactionList: Story = {
   render: () => (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 divide-y divide-cyber-border-glow/30">
-      {mockTransactions.map((tx) => (
-        <TransactionRow key={tx.hash} transaction={tx} />
-      ))}
+      <TransactionRow type="swap_buy_bear" amount={1000} tokenSymbol="DXY-BEAR" />
+      <TransactionRow type="swap_buy_bull" amount={500} tokenSymbol="DXY-BULL" />
+      <TransactionRow type="stake_bear" amount={250} tokenSymbol="DXY-BEAR" />
+      <TransactionRow type="leverage_open" amount={5000} tokenSymbol="USDC" />
+      <TransactionRow type="mint" amount={10000} tokenSymbol="USDC" />
     </div>
   ),
 }
