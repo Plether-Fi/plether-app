@@ -1,4 +1,5 @@
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useRef, useEffect } from 'react'
 import { type Address } from 'viem'
 import { ERC20_ABI } from '../contracts/abis'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -6,15 +7,31 @@ import { useTransactionStore } from '../stores/transactionStore'
 export function useApprove(tokenAddress: Address, spenderAddress: Address) {
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
   const approve = async (amount: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'approve',
@@ -37,11 +54,13 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 

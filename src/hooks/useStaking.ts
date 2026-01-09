@@ -1,4 +1,5 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useRef, useEffect } from 'react'
 import { STAKED_TOKEN_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -63,17 +64,33 @@ export function useStake(side: 'BEAR' | 'BULL') {
   const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
+
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
 
   const stake = async (amount: bigint) => {
     if (!address) return
 
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'stake',
@@ -96,11 +113,13 @@ export function useStake(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
@@ -121,17 +140,33 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
   const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
+
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
 
   const unstake = async (shares: bigint) => {
     if (!address) return
 
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'unstake',
@@ -154,11 +189,13 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 

@@ -1,4 +1,5 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useRef, useEffect } from 'react'
 import { PLETH_CORE_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -90,15 +91,31 @@ export function useMint() {
   const addresses = getAddresses(chainId ?? 1)
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
-  const mint = async (usdcAmount: bigint) => {
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
+  const mint = async (pairAmount: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'mint',
@@ -113,7 +130,7 @@ export function useMint() {
           address: addresses.PLETH_CORE,
           abi: PLETH_CORE_ABI,
           functionName: 'mint',
-          args: [usdcAmount],
+          args: [pairAmount],
         },
         {
           onSuccess: (hash) => {
@@ -121,11 +138,13 @@ export function useMint() {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
@@ -145,15 +164,31 @@ export function useBurn() {
   const addresses = getAddresses(chainId ?? 1)
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
   const burn = async (pairAmount: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'burn',
@@ -176,11 +211,13 @@ export function useBurn() {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 

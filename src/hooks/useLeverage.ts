@@ -1,4 +1,5 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useRef, useEffect } from 'react'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -82,15 +83,31 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
   const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
   const openPosition = async (principal: bigint, leverage: bigint, maxSlippageBps: bigint, deadline: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'leverage',
@@ -113,11 +130,13 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
@@ -138,15 +157,31 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
   const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
   const closePosition = async (debtToRepay: bigint, collateralToWithdraw: bigint, maxSlippageBps: bigint, deadline: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'leverage',
@@ -169,11 +204,13 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
@@ -194,15 +231,31 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
   const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
+  const txIdRef = useRef<string | null>(null)
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
 
+  useEffect(() => {
+    if (isSuccess && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'success' })
+      txIdRef.current = null
+    }
+  }, [isSuccess, updateTransaction])
+
+  useEffect(() => {
+    if (isError && txIdRef.current) {
+      updateTransaction(txIdRef.current, { status: 'failed' })
+      txIdRef.current = null
+    }
+  }, [isError, updateTransaction])
+
   const addCollateral = async (amount: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'leverage',
@@ -225,16 +278,19 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
   const removeCollateral = async (amount: bigint) => {
     const txId = crypto.randomUUID()
+    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'leverage',
@@ -257,11 +313,13 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
           },
           onError: () => {
             updateTransaction(txId, { status: 'failed' })
+            txIdRef.current = null
           },
         }
       )
     } catch {
       updateTransaction(txId, { status: 'failed' })
+      txIdRef.current = null
     }
   }
 
