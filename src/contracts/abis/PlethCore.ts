@@ -1,11 +1,22 @@
-// Placeholder ABI for PlethCore (mint/burn) - replace with actual ABI
+// SyntheticSplitter ABI - mint/burn DXY-BEAR + DXY-BULL pairs
 export const PLETH_CORE_ABI = [
   {
     type: 'function',
-    name: 'status',
+    name: 'currentStatus',
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint8', name: 'status' }], // 0=Active, 1=Paused, 2=Settled
+  },
+  {
+    type: 'function',
+    name: 'getSystemStatus',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { type: 'uint8', name: 'status' },
+      { type: 'uint256', name: 'totalSupply' },
+      { type: 'uint256', name: 'oraclePrice' },
+    ],
   },
   {
     type: 'function',
@@ -23,17 +34,38 @@ export const PLETH_CORE_ABI = [
   },
   {
     type: 'function',
-    name: 'getMintOutput',
+    name: 'previewMint',
     stateMutability: 'view',
     inputs: [{ name: 'usdcAmount', type: 'uint256' }],
     outputs: [{ type: 'uint256', name: 'pairAmount' }],
   },
   {
     type: 'function',
-    name: 'getBurnOutput',
+    name: 'previewBurn',
     stateMutability: 'view',
     inputs: [{ name: 'pairAmount', type: 'uint256' }],
     outputs: [{ type: 'uint256', name: 'usdcAmount' }],
+  },
+  {
+    type: 'function',
+    name: 'bearToken',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'bullToken',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'usdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
   },
   {
     type: 'event',

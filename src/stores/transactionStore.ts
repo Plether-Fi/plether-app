@@ -2,20 +2,24 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { STORAGE_KEYS } from '../config/constants'
 
-export type TransactionStatus = 'pending' | 'success' | 'failed'
+export type TransactionStatus = 'pending' | 'confirming' | 'success' | 'failed'
+export type TransactionType = 'mint' | 'burn' | 'swap' | 'stake' | 'unstake' | 'leverage' | 'lend' | 'approve'
 
 export interface PendingTransaction {
-  hash: string
-  type: 'mint' | 'burn' | 'swap' | 'stake' | 'unstake' | 'leverage' | 'lend' | 'approve'
+  id: string
+  hash?: string
+  type: TransactionType
+  status: TransactionStatus
   description: string
   timestamp: number
-  chainId: number
+  chainId?: number
 }
 
 interface TransactionState {
   pendingTransactions: PendingTransaction[]
   addTransaction: (tx: Omit<PendingTransaction, 'timestamp'>) => void
-  removeTransaction: (hash: string) => void
+  updateTransaction: (id: string, update: Partial<PendingTransaction>) => void
+  removeTransaction: (id: string) => void
   clearTransactions: () => void
 }
 
@@ -32,10 +36,17 @@ export const useTransactionStore = create<TransactionState>()(
           ],
         })),
 
-      removeTransaction: (hash) =>
+      updateTransaction: (id, update) =>
+        set((state) => ({
+          pendingTransactions: state.pendingTransactions.map((tx) =>
+            tx.id === id ? { ...tx, ...update } : tx
+          ),
+        })),
+
+      removeTransaction: (id) =>
         set((state) => ({
           pendingTransactions: state.pendingTransactions.filter(
-            (tx) => tx.hash !== hash
+            (tx) => tx.id !== id
           ),
         })),
 

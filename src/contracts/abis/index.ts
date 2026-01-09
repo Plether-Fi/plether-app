@@ -1,3 +1,7 @@
 export { ERC20_ABI } from './ERC20'
 export { BASKET_ORACLE_ABI } from './BasketOracle'
 export { PLETH_CORE_ABI } from './PlethCore'
+export { CURVE_POOL_ABI } from './CurvePool'
+export { ZAP_ROUTER_ABI } from './ZapRouter'
+export { STAKED_TOKEN_ABI } from './StakedToken'
+export { LEVERAGE_ROUTER_ABI } from './LeverageRouter'
