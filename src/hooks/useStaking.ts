@@ -3,6 +3,7 @@ import { useRef, useEffect } from 'react'
 import { STAKED_TOKEN_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
+import { parseTransactionError } from '../utils/errors'
 
 export function useStakedBalance(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
@@ -68,7 +69,7 @@ export function useStake(side: 'BEAR' | 'BULL') {
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
     hash,
   })
 
@@ -81,10 +82,13 @@ export function useStake(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'failed' })
+      updateTransaction(txIdRef.current, {
+        status: 'failed',
+        errorMessage: parseTransactionError(receiptError),
+      })
       txIdRef.current = null
     }
-  }, [isError, updateTransaction])
+  }, [isError, receiptError, updateTransaction])
 
   const stake = async (amount: bigint) => {
     if (!address) return
@@ -111,14 +115,20 @@ export function useStake(side: 'BEAR' | 'BULL') {
           onSuccess: (hash) => {
             updateTransaction(txId, { hash, status: 'confirming' })
           },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
+          onError: (err) => {
+            updateTransaction(txId, {
+              status: 'failed',
+              errorMessage: parseTransactionError(err),
+            })
             txIdRef.current = null
           },
         }
       )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
+    } catch (err) {
+      updateTransaction(txId, {
+        status: 'failed',
+        errorMessage: parseTransactionError(err),
+      })
       txIdRef.current = null
     }
   }
@@ -144,7 +154,7 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
     hash,
   })
 
@@ -157,10 +167,13 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'failed' })
+      updateTransaction(txIdRef.current, {
+        status: 'failed',
+        errorMessage: parseTransactionError(receiptError),
+      })
       txIdRef.current = null
     }
-  }, [isError, updateTransaction])
+  }, [isError, receiptError, updateTransaction])
 
   const unstake = async (shares: bigint) => {
     if (!address) return
@@ -187,14 +200,20 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
           onSuccess: (hash) => {
             updateTransaction(txId, { hash, status: 'confirming' })
           },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
+          onError: (err) => {
+            updateTransaction(txId, {
+              status: 'failed',
+              errorMessage: parseTransactionError(err),
+            })
             txIdRef.current = null
           },
         }
       )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
+    } catch (err) {
+      updateTransaction(txId, {
+        status: 'failed',
+        errorMessage: parseTransactionError(err),
+      })
       txIdRef.current = null
     }
   }

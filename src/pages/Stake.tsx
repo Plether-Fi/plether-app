@@ -1,9 +1,11 @@
 import { useAccount } from 'wagmi'
 import { StakingCard } from '../components/StakingCard'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
+import { useTokenBalances } from '../hooks'
 
 export function Stake() {
   const { isConnected } = useAccount()
+  const { bearBalance, bullBalance } = useTokenBalances()
 
   return (
     <div className="space-y-10">
@@ -16,13 +18,11 @@ export function Stake() {
         <div className="grid md:grid-cols-2 gap-6">
           <StakingCard
             side="BEAR"
-            tokenBalance={500n * 10n ** 18n}
-            stakedBalance={200n * 10n ** 18n}
+            tokenBalance={bearBalance}
           />
           <StakingCard
             side="BULL"
-            tokenBalance={500n * 10n ** 18n}
-            stakedBalance={150n * 10n ** 18n}
+            tokenBalance={bullBalance}
           />
         </div>
       ) : (
