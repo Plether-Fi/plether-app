@@ -16,6 +16,9 @@ export function Mint() {
   const [inputAmount, setInputAmount] = useState('')
   const [pendingAction, setPendingAction] = useState<PendingAction>(null)
   const pendingAmountRef = useRef<bigint>(0n)
+  const usdcApproveHandledRef = useRef(false)
+  const bearApproveHandledRef = useRef(false)
+  const bullApproveHandledRef = useRef(false)
 
   const addresses = getAddresses(chainId ?? 1)
   const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
@@ -59,26 +62,40 @@ export function Mint() {
   const { burn, isPending: burnPending, isSuccess: burnSuccess } = useBurn()
 
   useEffect(() => {
-    if (usdcApproveSuccess) {
+    if (usdcApproveSuccess && !usdcApproveHandledRef.current) {
+      usdcApproveHandledRef.current = true
       refetchUsdcAllowance()
       if (pendingAction === 'mint' && pendingAmountRef.current > 0n) {
         mint(pendingAmountRef.current)
+        pendingAmountRef.current = 0n
         setPendingAction(null)
       }
     }
   }, [usdcApproveSuccess, refetchUsdcAllowance, pendingAction, mint])
 
   useEffect(() => {
-    if (bearApproveSuccess) {
+    if (bearApproveSuccess && !bearApproveHandledRef.current) {
+      bearApproveHandledRef.current = true
       refetchBearAllowance()
+      if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
+        if (bullAllowance < pendingAmountRef.current) {
+          approveBull(pendingAmountRef.current)
+        } else {
+          burn(pendingAmountRef.current)
+          pendingAmountRef.current = 0n
+          setPendingAction(null)
+        }
+      }
     }
-  }, [bearApproveSuccess, refetchBearAllowance])
+  }, [bearApproveSuccess, refetchBearAllowance, pendingAction, bullAllowance, approveBull, burn])
 
   useEffect(() => {
-    if (bullApproveSuccess) {
+    if (bullApproveSuccess && !bullApproveHandledRef.current) {
+      bullApproveHandledRef.current = true
       refetchBullAllowance()
       if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
         burn(pendingAmountRef.current)
+        pendingAmountRef.current = 0n
         setPendingAction(null)
       }
     }
@@ -109,6 +126,7 @@ export function Mint() {
   const minBalance = bearBalance < bullBalance ? bearBalance : bullBalance
 
   const handleMint = async () => {
+    usdcApproveHandledRef.current = false
     if (needsUsdcApproval) {
       pendingAmountRef.current = pairAmountBigInt
       setPendingAction('mint')
@@ -119,7 +137,11 @@ export function Mint() {
   }
 
   const handleRedeem = async () => {
+    bearApproveHandledRef.current = false
+    bullApproveHandledRef.current = false
     if (needsBearApproval) {
+      pendingAmountRef.current = pairAmountBigInt
+      setPendingAction('burn')
       await approveBear(pairAmountBigInt)
       return
     }
