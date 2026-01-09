@@ -58,8 +58,8 @@ export function Mint() {
   const { approve: approveBear, isPending: bearApprovePending, isSuccess: bearApproveSuccess } = useApprove(addresses.DXY_BEAR, addresses.PLETH_CORE)
   const { approve: approveBull, isPending: bullApprovePending, isSuccess: bullApproveSuccess } = useApprove(addresses.DXY_BULL, addresses.PLETH_CORE)
 
-  const { mint, isPending: mintPending, isSuccess: mintSuccess } = useMint()
-  const { burn, isPending: burnPending, isSuccess: burnSuccess } = useBurn()
+  const { mint, isPending: mintPending, isSuccess: mintSuccess, reset: resetMint } = useMint()
+  const { burn, isPending: burnPending, isSuccess: burnSuccess, reset: resetBurn } = useBurn()
 
   useEffect(() => {
     if (usdcApproveSuccess && !usdcApproveHandledRef.current) {
@@ -102,11 +102,20 @@ export function Mint() {
   }, [bullApproveSuccess, refetchBullAllowance, pendingAction, burn])
 
   useEffect(() => {
-    if (mintSuccess || burnSuccess) {
+    if (mintSuccess) {
       refetchBalances()
       setInputAmount('')
+      resetMint()
     }
-  }, [mintSuccess, burnSuccess, refetchBalances])
+  }, [mintSuccess, refetchBalances, resetMint])
+
+  useEffect(() => {
+    if (burnSuccess) {
+      refetchBalances()
+      setInputAmount('')
+      resetBurn()
+    }
+  }, [burnSuccess, refetchBalances, resetBurn])
 
   const needsUsdcApproval = mode === 'mint' && usdcAmountBigInt > 0n && usdcAllowance < usdcAmountBigInt
   const needsBearApproval = mode === 'redeem' && pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt

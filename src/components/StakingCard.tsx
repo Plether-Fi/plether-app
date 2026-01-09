@@ -31,8 +31,8 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
 
   const { shares: stakedBalance, refetch: refetchStaked } = useStakedBalance(side)
-  const { stake, isPending: stakePending, isSuccess: stakeSuccess } = useStake(side)
-  const { unstake, isPending: unstakePending, isSuccess: unstakeSuccess } = useUnstake(side)
+  const { stake, isPending: stakePending, isSuccess: stakeSuccess, reset: resetStake } = useStake(side)
+  const { unstake, isPending: unstakePending, isSuccess: unstakeSuccess, reset: resetUnstake } = useUnstake(side)
   const { allowance, refetch: refetchAllowance } = useAllowance(tokenAddress, stakingAddress)
   const { approve, isPending: approvePending, isSuccess: approveSuccess } = useApprove(tokenAddress, stakingAddress)
 
@@ -62,11 +62,20 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   }, [approveSuccess, refetchAllowance, pendingStake, stake])
 
   useEffect(() => {
-    if (stakeSuccess || unstakeSuccess) {
+    if (stakeSuccess) {
       refetchStaked()
       setAmount('')
+      resetStake()
     }
-  }, [stakeSuccess, unstakeSuccess, refetchStaked])
+  }, [stakeSuccess, refetchStaked, resetStake])
+
+  useEffect(() => {
+    if (unstakeSuccess) {
+      refetchStaked()
+      setAmount('')
+      resetUnstake()
+    }
+  }, [unstakeSuccess, refetchStaked, resetUnstake])
 
   const handleStake = async () => {
     approveHandledRef.current = false
