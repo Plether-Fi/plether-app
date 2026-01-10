@@ -58,3 +58,8 @@ Defined in `src/index.css` via `@theme`:
 2. Add address to `src/contracts/addresses.ts` (both mainnet and sepolia)
 3. Create hook in `src/hooks/` using wagmi's `useReadContract`/`useWriteContract`
 4. Replace mock data in pages with actual hook calls
+
+### Testing
+- **NEVER reimplement application logic in tests.** Tests must import and test actual utility functions, not recreate them. If logic is inline in a component, extract it to `src/utils/` first, then test the extracted function.
+- Run tests: `npm test`
+- Tests live in `__tests__/` directories adjacent to the code they test

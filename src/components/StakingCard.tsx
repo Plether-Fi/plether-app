@@ -1,17 +1,14 @@
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAccount } from 'wagmi'
-import { parseUnits } from 'viem'
 import { TokenIcon } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
+import { parseStakingAmount, getStakingDecimals, SHARE_DECIMALS } from '../utils/staking'
 import { useStake, useUnstake, useStakedBalance } from '../hooks/useStaking'
 import { useAllowance, useApprove } from '../hooks'
 import { getAddresses } from '../contracts/addresses'
 
 type StakeMode = 'stake' | 'unstake'
-
-const ASSET_DECIMALS = 18
-const SHARE_DECIMALS = 21 // 18 + 3 offset for inflation attack protection
 
 export interface StakingCardProps {
   side: 'BEAR' | 'BULL'
@@ -36,16 +33,8 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   const { allowance, refetch: refetchAllowance } = useAllowance(tokenAddress, stakingAddress)
   const { approve, isPending: approvePending, isSuccess: approveSuccess } = useApprove(tokenAddress, stakingAddress)
 
-  const decimals = mode === 'stake' ? ASSET_DECIMALS : SHARE_DECIMALS
-
-  const amountBigInt = useMemo(() => {
-    if (!amount || isNaN(parseFloat(amount))) return 0n
-    try {
-      return parseUnits(amount, decimals)
-    } catch {
-      return 0n
-    }
-  }, [amount, decimals])
+  const decimals = getStakingDecimals(mode)
+  const amountBigInt = parseStakingAmount(amount, mode)
 
   const needsApproval = mode === 'stake' && amountBigInt > 0n && allowance < amountBigInt
 
