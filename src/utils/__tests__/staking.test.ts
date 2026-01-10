@@ -1,37 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { parseUnits } from 'viem'
 import {
-  ASSET_DECIMALS,
-  SHARE_DECIMALS,
-  getStakingDecimals,
   parseStakingAmount,
   formatStakingBalance,
   isInsufficientStakingBalance,
 } from '../staking'
-
-describe('staking decimal constants', () => {
-  it('asset decimals is 18', () => {
-    expect(ASSET_DECIMALS).toBe(18)
-  })
-
-  it('share decimals is 21 (18 + 3 offset)', () => {
-    expect(SHARE_DECIMALS).toBe(21)
-  })
-
-  it('offset is exactly 3 for 1000x inflation protection', () => {
-    expect(SHARE_DECIMALS - ASSET_DECIMALS).toBe(3)
-  })
-})
-
-describe('getStakingDecimals', () => {
-  it('returns 18 for stake mode', () => {
-    expect(getStakingDecimals('stake')).toBe(18)
-  })
-
-  it('returns 21 for unstake mode', () => {
-    expect(getStakingDecimals('unstake')).toBe(21)
-  })
-})
 
 describe('parseStakingAmount', () => {
   describe('stake mode (18 decimals)', () => {

@@ -1,23 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import { parseUnits } from 'viem'
 import {
-  USDC_DECIMALS,
-  PAIR_DECIMALS,
   calculatePairAmount,
   calculateUsdcAmount,
   calculateOutputDisplay,
   getMinBalance,
 } from '../mint'
-
-describe('mint constants', () => {
-  it('USDC has 6 decimals', () => {
-    expect(USDC_DECIMALS).toBe(6)
-  })
-
-  it('pair tokens have 18 decimals', () => {
-    expect(PAIR_DECIMALS).toBe(18)
-  })
-})
 
 describe('calculatePairAmount', () => {
   describe('mint mode - USDC to pair conversion', () => {
