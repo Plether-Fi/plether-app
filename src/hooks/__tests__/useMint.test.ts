@@ -1,14 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
-import { useMint } from '../usePlethCore'
 import { useTransactionStore } from '../../stores/transactionStore'
 
 const mockWriteContract = vi.fn()
 const mockReset = vi.fn()
 
-let mockIsSuccess = false
-let mockIsError = false
-let mockHash: string | undefined = undefined
+const mockUseWriteContract = vi.fn()
+const mockUseWaitForTransactionReceipt = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: vi.fn(() => ({
@@ -16,18 +14,8 @@ vi.mock('wagmi', () => ({
     address: '0x1234567890abcdef1234567890abcdef12345678',
     isConnected: true,
   })),
-  useWriteContract: vi.fn(() => ({
-    writeContract: mockWriteContract,
-    data: mockHash,
-    isPending: false,
-    error: null,
-    reset: mockReset,
-  })),
-  useWaitForTransactionReceipt: vi.fn(() => ({
-    isLoading: false,
-    isSuccess: mockIsSuccess,
-    isError: mockIsError,
-  })),
+  useWriteContract: () => mockUseWriteContract(),
+  useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
   useReadContract: vi.fn(() => ({
     data: undefined,
     isLoading: false,
@@ -36,13 +24,26 @@ vi.mock('wagmi', () => ({
   })),
 }))
 
+import { useMint } from '../usePlethCore'
+
 describe('useMint', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockIsSuccess = false
-    mockIsError = false
-    mockHash = undefined
     useTransactionStore.setState({ pendingTransactions: [] })
+
+    mockUseWriteContract.mockReturnValue({
+      writeContract: mockWriteContract,
+      data: undefined,
+      isPending: false,
+      error: null,
+      reset: mockReset,
+    })
+
+    mockUseWaitForTransactionReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: false,
+      isError: false,
+    })
   })
 
   it('adds a pending transaction when mint is called', async () => {
@@ -117,7 +118,11 @@ describe('useMint', () => {
 
     expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
 
-    mockIsSuccess = true
+    mockUseWaitForTransactionReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: true,
+      isError: false,
+    })
     rerender()
 
     await waitFor(() => {
@@ -139,7 +144,11 @@ describe('useMint', () => {
 
     expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
 
-    mockIsError = true
+    mockUseWaitForTransactionReceipt.mockReturnValue({
+      isLoading: false,
+      isSuccess: false,
+      isError: true,
+    })
     rerender()
 
     await waitFor(() => {
