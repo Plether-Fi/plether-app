@@ -1,11 +1,17 @@
-// Placeholder ABI for BasketOracle - replace with actual ABI
+// BasketOracle ABI - follows Chainlink AggregatorV3Interface
 export const BASKET_ORACLE_ABI = [
   {
     type: 'function',
-    name: 'latestPrice',
+    name: 'latestRoundData',
     stateMutability: 'view',
     inputs: [],
-    outputs: [{ type: 'uint256', name: 'price' }],
+    outputs: [
+      { name: 'roundId', type: 'uint80' },
+      { name: 'answer', type: 'int256' },
+      { name: 'startedAt', type: 'uint256' },
+      { name: 'updatedAt', type: 'uint256' },
+      { name: 'answeredInRound', type: 'uint80' },
+    ],
   },
   {
     type: 'function',
@@ -13,12 +19,5 @@ export const BASKET_ORACLE_ABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint8' }],
-  },
-  {
-    type: 'function',
-    name: 'lastUpdated',
-    stateMutability: 'view',
-    inputs: [],
-    outputs: [{ type: 'uint256' }],
   },
 ] as const

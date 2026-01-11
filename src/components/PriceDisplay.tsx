@@ -1,22 +1,29 @@
+import { formatUnits } from 'viem'
 import { Skeleton } from './ui'
+import { useBasketOraclePrice } from '../hooks'
+import { usePlethCoreStatus } from '../hooks'
 import type { ProtocolStatus } from '../config/constants'
 
 interface PriceDisplayProps {
-  price?: bigint
-  status?: ProtocolStatus
-  isLoading?: boolean
   variant?: 'compact' | 'detailed'
 }
 
-const mockPrice = 103.45
-const mockStatus: ProtocolStatus = 'Active'
-
 export function PriceDisplay({
-  isLoading = false,
   variant = 'compact',
 }: PriceDisplayProps) {
-  const price = mockPrice
-  const status = mockStatus
+  const { price: rawPrice, decimals, isLoading: priceLoading } = useBasketOraclePrice()
+  const { status: contractStatus, isLoading: statusLoading } = usePlethCoreStatus()
+
+  const isLoading = priceLoading || statusLoading
+  const price = rawPrice > 0n ? parseFloat(formatUnits(rawPrice, decimals)) : 0
+
+  const status: ProtocolStatus = contractStatus === 0
+    ? 'Active'
+    : contractStatus === 1
+      ? 'Paused'
+      : contractStatus === 2
+        ? 'Settled'
+        : 'Active'
 
   const getStatusStyles = (s: ProtocolStatus) => {
     switch (s) {

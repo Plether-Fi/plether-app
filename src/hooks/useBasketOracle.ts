@@ -1,0 +1,32 @@
+import { useAccount, useReadContract } from 'wagmi'
+import { BASKET_ORACLE_ABI } from '../contracts/abis'
+import { getAddresses } from '../contracts/addresses'
+
+export function useBasketOraclePrice() {
+  const { chainId } = useAccount()
+  const addresses = getAddresses(chainId ?? 11155111)
+
+  const { data: roundData, isLoading: priceLoading, error: priceError, refetch } = useReadContract({
+    address: addresses.BASKET_ORACLE,
+    abi: BASKET_ORACLE_ABI,
+    functionName: 'latestRoundData',
+  })
+
+  const { data: decimals } = useReadContract({
+    address: addresses.BASKET_ORACLE,
+    abi: BASKET_ORACLE_ABI,
+    functionName: 'decimals',
+  })
+
+  const price = roundData?.[1] ?? 0n
+  const updatedAt = roundData?.[3] ?? 0n
+
+  return {
+    price: price < 0n ? 0n : BigInt(price),
+    decimals: decimals ?? 8,
+    lastUpdated: updatedAt,
+    isLoading: priceLoading,
+    error: priceError,
+    refetch,
+  }
+}

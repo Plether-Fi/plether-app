@@ -11,34 +11,9 @@ import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { HEALTH_FACTOR_WARNING } from '../config/constants'
+import { useTokenBalances, useLeveragePosition, useCloseLeverage, useStakedBalance } from '../hooks'
+import { useSettingsStore } from '../stores/settingsStore'
 import type { LeveragePosition } from '../types'
-
-const mockPositions: LeveragePosition[] = [
-  {
-    id: '1',
-    side: 'BEAR',
-    size: 5000n * 10n ** 6n,
-    collateral: 2500n * 10n ** 6n,
-    leverage: 2,
-    entryPrice: 103n * 10n ** 6n,
-    liquidationPrice: 95n * 10n ** 6n,
-    healthFactor: 1.8,
-    pnl: 250n * 10n ** 6n,
-    pnlPercentage: 10,
-  },
-  {
-    id: '2',
-    side: 'BULL',
-    size: 3000n * 10n ** 6n,
-    collateral: 1000n * 10n ** 6n,
-    leverage: 3,
-    entryPrice: 102n * 10n ** 6n,
-    liquidationPrice: 110n * 10n ** 6n,
-    healthFactor: 1.3,
-    pnl: -100n * 10n ** 6n,
-    pnlPercentage: -10,
-  },
-]
 
 export function Dashboard() {
   const { isConnected } = useAccount()
@@ -59,18 +34,80 @@ export function Dashboard() {
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
   const [adjustModalOpen, setAdjustModalOpen] = useState(false)
-  const positions = mockPositions
-  const hasLowHealth = positions.some((p) => p.healthFactor < HEALTH_FACTOR_WARNING)
 
-  const usdcBalance = 10000n * 10n ** 6n
-  const bearBalance = 500n * 10n ** 18n
-  const bullBalance = 500n * 10n ** 18n
+  const {
+    usdcBalance,
+    bearBalance,
+    bullBalance,
+    isLoading: balancesLoading,
+    refetch: refetchBalances
+  } = useTokenBalances()
 
-  const isLoading = false
-  const spotValue = 5000n * 10n ** 6n
-  const stakedValue = 3000n * 10n ** 6n
-  const leverageValue = 1500n * 10n ** 6n
-  const lendingValue = 500n * 10n ** 6n
+  const { assets: stakedBearAssets, isLoading: stakedBearLoading } = useStakedBalance('BEAR')
+  const { assets: stakedBullAssets, isLoading: stakedBullLoading } = useStakedBalance('BULL')
+
+  const bearPosition = useLeveragePosition('BEAR')
+  const bullPosition = useLeveragePosition('BULL')
+
+  const slippage = useSettingsStore((s) => s.slippage)
+  const { closePosition: closeBearPosition, isPending: bearClosePending } = useCloseLeverage('BEAR')
+  const { closePosition: closeBullPosition, isPending: bullClosePending } = useCloseLeverage('BULL')
+
+  const handleClosePosition = async (position: LeveragePosition) => {
+    const slippageBps = BigInt(Math.floor(slippage * 100))
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+
+    if (position.side === 'BEAR') {
+      await closeBearPosition(bearPosition.debt, bearPosition.collateral, slippageBps, deadline)
+    } else {
+      await closeBullPosition(bullPosition.debt, bullPosition.collateral, slippageBps, deadline)
+    }
+
+    bearPosition.refetch()
+    bullPosition.refetch()
+    refetchBalances()
+  }
+
+  const positions: LeveragePosition[] = []
+
+  if (bearPosition.hasPosition) {
+    const leverageNum = Number(bearPosition.leverage) / 100
+    positions.push({
+      id: 'bear-position',
+      side: 'BEAR',
+      size: bearPosition.collateral * BigInt(Math.floor(leverageNum * 100)) / 100n,
+      collateral: bearPosition.collateral,
+      leverage: leverageNum,
+      entryPrice: 0n,
+      liquidationPrice: bearPosition.liquidationPrice,
+      healthFactor: Number(bearPosition.healthFactor) / 1e18,
+      pnl: 0n,
+      pnlPercentage: 0,
+    })
+  }
+
+  if (bullPosition.hasPosition) {
+    const leverageNum = Number(bullPosition.leverage) / 100
+    positions.push({
+      id: 'bull-position',
+      side: 'BULL',
+      size: bullPosition.collateral * BigInt(Math.floor(leverageNum * 100)) / 100n,
+      collateral: bullPosition.collateral,
+      leverage: leverageNum,
+      entryPrice: 0n,
+      liquidationPrice: bullPosition.liquidationPrice,
+      healthFactor: Number(bullPosition.healthFactor) / 1e18,
+      pnl: 0n,
+      pnlPercentage: 0,
+    })
+  }
+
+  const hasLowHealth = positions.some((p) => p.healthFactor > 0 && p.healthFactor < HEALTH_FACTOR_WARNING)
+
+  const spotValue = usdcBalance + (bearBalance * 1n) / 10n ** 12n + (bullBalance * 1n) / 10n ** 12n
+  const stakedValue = (stakedBearAssets * 1n) / 10n ** 12n + (stakedBullAssets * 1n) / 10n ** 12n
+  const leverageValue = positions.reduce((acc, p) => acc + p.collateral, 0n)
+  const lendingValue = 0n
 
   return (
     <div className="space-y-10">
@@ -89,7 +126,7 @@ export function Dashboard() {
               value={spotValue}
               description="USDC, DXY-BEAR, DXY-BULL"
               link="/"
-              isLoading={isLoading}
+              isLoading={balancesLoading}
               colorClass="text-cyber-bright-blue"
             />
             <PortfolioCard
@@ -97,7 +134,7 @@ export function Dashboard() {
               value={stakedValue}
               description="sDXY-BEAR, sDXY-BULL"
               link="/stake"
-              isLoading={isLoading}
+              isLoading={stakedBearLoading || stakedBullLoading}
               colorClass="text-cyber-bright-blue"
             />
             <PortfolioCard
@@ -105,7 +142,7 @@ export function Dashboard() {
               value={leverageValue}
               description="Open positions"
               link="/leverage"
-              isLoading={isLoading}
+              isLoading={bearPosition.isLoading || bullPosition.isLoading}
               colorClass="text-cyber-electric-fuchsia"
             />
             <PortfolioCard
@@ -113,7 +150,7 @@ export function Dashboard() {
               value={lendingValue}
               description="Morpho supplied"
               link="/yield"
-              isLoading={isLoading}
+              isLoading={false}
               colorClass="text-cyber-neon-green"
             />
           </div>
@@ -138,6 +175,8 @@ export function Dashboard() {
                       setSelectedPosition(position)
                       setAdjustModalOpen(true)
                     }}
+                    onClose={() => handleClosePosition(position)}
+                    isClosing={position.side === 'BEAR' ? bearClosePending : bullClosePending}
                   />
                 ))}
               </div>
@@ -155,11 +194,12 @@ export function Dashboard() {
                   usdcBalance={usdcBalance}
                   bearBalance={bearBalance}
                   bullBalance={bullBalance}
+                  refetchBalances={refetchBalances}
                 />
               )}
 
               {mainTab === 'leverage' && (
-                <LeverageCard usdcBalance={usdcBalance} />
+                <LeverageCard usdcBalance={usdcBalance} refetchBalances={refetchBalances} />
               )}
 
               {mainTab === 'yield' && (
@@ -195,6 +235,11 @@ export function Dashboard() {
                 setSelectedPosition(null)
               }}
               position={selectedPosition}
+              onSuccess={() => {
+                bearPosition.refetch()
+                bullPosition.refetch()
+                refetchBalances()
+              }}
             />
           )}
         </>

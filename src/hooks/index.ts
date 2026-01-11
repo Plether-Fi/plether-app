@@ -28,3 +28,4 @@ export {
   useCloseLeverage,
   useAdjustCollateral,
 } from './useLeverage'
+export { useBasketOraclePrice } from './useBasketOracle'
