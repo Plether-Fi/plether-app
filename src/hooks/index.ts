@@ -8,7 +8,6 @@ export {
   usePreviewBurn,
   useMint,
   useBurn,
-  useMintWithPermit,
 } from './usePlethCore'
 export {
   useCurveQuote,
@@ -33,6 +32,5 @@ export {
   useOpenLeverage,
   useCloseLeverage,
   useAdjustCollateral,
-  useOpenLeverageWithPermit,
 } from './useLeverage'
 export { useBasketOraclePrice } from './useBasketOracle'
