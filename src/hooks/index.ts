@@ -8,12 +8,15 @@ export {
   usePreviewBurn,
   useMint,
   useBurn,
+  useMintWithPermit,
 } from './usePlethCore'
 export {
   useCurveQuote,
   useCurveSwap,
   useZapQuote,
   useZapSwap,
+  useZapBuyWithPermit,
+  useZapSellWithPermit,
 } from './useTrading'
 export {
   useStakedBalance,
@@ -30,5 +33,6 @@ export {
   useOpenLeverage,
   useCloseLeverage,
   useAdjustCollateral,
+  useOpenLeverageWithPermit,
 } from './useLeverage'
 export { useBasketOraclePrice } from './useBasketOracle'
