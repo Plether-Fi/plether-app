@@ -138,7 +138,7 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
   })
 
   const amountOut = direction === 'buy'
-    ? (buyData ?? 0n)
+    ? (buyData?.[3] ?? 0n) // expectedTokensOut is index 3
     : (sellData?.[2] ?? 0n) // expectedUsdcOut is index 2
 
   return {

@@ -57,7 +57,13 @@ export const ZAP_ROUTER_ABI = [
     name: 'previewZapMint',
     stateMutability: 'view',
     inputs: [{ name: 'usdcAmount', type: 'uint256' }],
-    outputs: [{ type: 'uint256', name: 'bullAmount' }],
+    outputs: [
+      { type: 'uint256', name: 'flashAmount' },
+      { type: 'uint256', name: 'expectedSwapOut' },
+      { type: 'uint256', name: 'totalUSDC' },
+      { type: 'uint256', name: 'expectedTokensOut' },
+      { type: 'uint256', name: 'flashFee' },
+    ],
   },
   {
     type: 'function',
