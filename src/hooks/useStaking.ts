@@ -7,8 +7,8 @@ import { parseTransactionError } from '../utils/errors'
 
 export function useStakedBalance(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+  const addresses = chainId ? getAddresses(chainId) : null
+  const stakingAddress = side === 'BEAR' ? addresses?.STAKING_BEAR : addresses?.STAKING_BULL
 
   const { data: shares, isLoading: sharesLoading, refetch: refetchShares } = useReadContract({
     address: stakingAddress,
@@ -16,7 +16,7 @@ export function useStakedBalance(side: 'BEAR' | 'BULL') {
     functionName: 'balanceOf',
     args: [address!],
     query: {
-      enabled: !!address,
+      enabled: !!address && !!stakingAddress,
     },
   })
 
@@ -26,7 +26,7 @@ export function useStakedBalance(side: 'BEAR' | 'BULL') {
     functionName: 'convertToAssets',
     args: [shares ?? 0n],
     query: {
-      enabled: !!shares && shares > 0n,
+      enabled: !!stakingAddress && !!shares && shares > 0n,
     },
   })
 
@@ -43,13 +43,16 @@ export function useStakedBalance(side: 'BEAR' | 'BULL') {
 
 export function useStakingInfo(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+  const addresses = chainId ? getAddresses(chainId) : null
+  const stakingAddress = side === 'BEAR' ? addresses?.STAKING_BEAR : addresses?.STAKING_BULL
 
   const { data: totalAssets, isLoading, refetch } = useReadContract({
     address: stakingAddress,
     abi: STAKED_TOKEN_ABI,
     functionName: 'totalAssets',
+    query: {
+      enabled: !!stakingAddress,
+    },
   })
 
   return {
@@ -61,8 +64,8 @@ export function useStakingInfo(side: 'BEAR' | 'BULL') {
 
 export function useStake(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+  const addresses = chainId ? getAddresses(chainId) : null
+  const stakingAddress = side === 'BEAR' ? addresses?.STAKING_BEAR : addresses?.STAKING_BULL
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -91,7 +94,7 @@ export function useStake(side: 'BEAR' | 'BULL') {
   }, [isError, receiptError, updateTransaction])
 
   const stake = async (amount: bigint) => {
-    if (!address) return
+    if (!address || !stakingAddress) return
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId
@@ -146,8 +149,8 @@ export function useStake(side: 'BEAR' | 'BULL') {
 
 export function useUnstake(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
+  const addresses = chainId ? getAddresses(chainId) : null
+  const stakingAddress = side === 'BEAR' ? addresses?.STAKING_BEAR : addresses?.STAKING_BULL
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -176,7 +179,7 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
   }, [isError, receiptError, updateTransaction])
 
   const unstake = async (shares: bigint) => {
-    if (!address) return
+    if (!address || !stakingAddress) return
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId

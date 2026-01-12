@@ -7,12 +7,15 @@ import { parseTransactionError } from '../utils/errors'
 
 export function usePlethCoreStatus() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.PLETH_CORE,
+    address: addresses?.PLETH_CORE,
     abi: PLETH_CORE_ABI,
     functionName: 'currentStatus',
+    query: {
+      enabled: !!addresses,
+    },
   })
 
   return {
@@ -25,12 +28,15 @@ export function usePlethCoreStatus() {
 
 export function usePlethCoreSystemStatus() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.PLETH_CORE,
+    address: addresses?.PLETH_CORE,
     abi: PLETH_CORE_ABI,
     functionName: 'getSystemStatus',
+    query: {
+      enabled: !!addresses,
+    },
   })
 
   return {
@@ -45,15 +51,15 @@ export function usePlethCoreSystemStatus() {
 
 export function usePreviewMint(usdcAmount: bigint) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.PLETH_CORE,
+    address: addresses?.PLETH_CORE,
     abi: PLETH_CORE_ABI,
     functionName: 'previewMint',
     args: [usdcAmount],
     query: {
-      enabled: usdcAmount > 0n,
+      enabled: !!addresses && usdcAmount > 0n,
     },
   })
 
@@ -67,15 +73,15 @@ export function usePreviewMint(usdcAmount: bigint) {
 
 export function usePreviewBurn(pairAmount: bigint) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.PLETH_CORE,
+    address: addresses?.PLETH_CORE,
     abi: PLETH_CORE_ABI,
     functionName: 'previewBurn',
     args: [pairAmount],
     query: {
-      enabled: pairAmount > 0n,
+      enabled: !!addresses && pairAmount > 0n,
     },
   })
 
@@ -89,7 +95,7 @@ export function usePreviewBurn(pairAmount: bigint) {
 
 export function useMint() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -118,6 +124,7 @@ export function useMint() {
   }, [isError, receiptError, updateTransaction])
 
   const mint = async (pairAmount: bigint) => {
+    if (!addresses) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -131,7 +138,7 @@ export function useMint() {
     try {
       writeContract(
         {
-          address: addresses.PLETH_CORE,
+          address: addresses?.PLETH_CORE,
           abi: PLETH_CORE_ABI,
           functionName: 'mint',
           args: [pairAmount],
@@ -171,7 +178,7 @@ export function useMint() {
 
 export function useBurn() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -200,6 +207,7 @@ export function useBurn() {
   }, [isError, receiptError, updateTransaction])
 
   const burn = async (pairAmount: bigint) => {
+    if (!addresses) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -213,7 +221,7 @@ export function useBurn() {
     try {
       writeContract(
         {
-          address: addresses.PLETH_CORE,
+          address: addresses?.PLETH_CORE,
           abi: PLETH_CORE_ABI,
           functionName: 'burn',
           args: [pairAmount],

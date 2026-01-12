@@ -4,10 +4,10 @@ import { getAddresses } from '../contracts/addresses'
 
 export function useTokenBalances() {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContracts({
-    contracts: [
+    contracts: addresses ? [
       {
         address: addresses.USDC,
         abi: ERC20_ABI,
@@ -38,9 +38,9 @@ export function useTokenBalances() {
         functionName: 'balanceOf',
         args: [address!],
       },
-    ],
+    ] : [],
     query: {
-      enabled: !!address,
+      enabled: !!address && !!addresses,
     },
   })
 

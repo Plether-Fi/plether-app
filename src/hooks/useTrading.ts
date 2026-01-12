@@ -4,24 +4,24 @@ import { CURVE_POOL_ABI, ZAP_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
 
-// Curve pool indices: 0 = USDC, 1 = DXY-BEAR
+// Curve pool indices: USDC = 0, DXY-BEAR = 1
 const USDC_INDEX = 0n
 const BEAR_INDEX = 1n
 
 export function useCurveQuote(tokenIn: 'USDC' | 'BEAR', amountIn: bigint) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const i = tokenIn === 'USDC' ? USDC_INDEX : BEAR_INDEX
   const j = tokenIn === 'USDC' ? BEAR_INDEX : USDC_INDEX
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.CURVE_POOL,
+    address: addresses?.CURVE_POOL,
     abi: CURVE_POOL_ABI,
     functionName: 'get_dy',
     args: [i, j, amountIn],
     query: {
-      enabled: amountIn > 0n,
+      enabled: !!addresses && amountIn > 0n,
     },
   })
 
@@ -35,7 +35,7 @@ export function useCurveQuote(tokenIn: 'USDC' | 'BEAR', amountIn: bigint) {
 
 export function useCurveSwap() {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -61,7 +61,7 @@ export function useCurveSwap() {
   }, [isError, updateTransaction])
 
   const swap = async (tokenIn: 'USDC' | 'BEAR', amountIn: bigint, minAmountOut: bigint) => {
-    if (!address) return
+    if (!address || !addresses) return
 
     const i = tokenIn === 'USDC' ? USDC_INDEX : BEAR_INDEX
     const j = tokenIn === 'USDC' ? BEAR_INDEX : USDC_INDEX
@@ -113,17 +113,17 @@ export function useCurveSwap() {
 
 export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const functionName = direction === 'buy' ? 'previewZapMint' : 'previewZapBurn'
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses.ZAP_ROUTER,
+    address: addresses?.ZAP_ROUTER,
     abi: ZAP_ROUTER_ABI,
     functionName,
     args: [amount],
     query: {
-      enabled: amount > 0n,
+      enabled: !!addresses && amount > 0n,
     },
   })
 
@@ -137,7 +137,7 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
 
 export function useZapSwap() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = chainId ? getAddresses(chainId) : null
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -163,6 +163,7 @@ export function useZapSwap() {
   }, [isError, updateTransaction])
 
   const zapBuy = async (usdcAmount: bigint, minBullOut: bigint, maxSlippageBps: bigint, deadline: bigint) => {
+    if (!addresses) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -198,6 +199,7 @@ export function useZapSwap() {
   }
 
   const zapSell = async (bullAmount: bigint, minUsdcOut: bigint, deadline: bigint) => {
+    if (!addresses) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({

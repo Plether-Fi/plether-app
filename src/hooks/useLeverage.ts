@@ -6,8 +6,8 @@ import { useTransactionStore } from '../stores/transactionStore'
 
 export function useLeveragePosition(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const addresses = chainId ? getAddresses(chainId) : null
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
 
   const { data, isLoading, error, refetch } = useReadContract({
     address: routerAddress,
@@ -15,7 +15,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     functionName: 'getPosition',
     args: [address!],
     query: {
-      enabled: !!address,
+      enabled: !!address && !!routerAddress,
     },
   })
 
@@ -25,7 +25,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     functionName: 'getHealthFactor',
     args: [address!],
     query: {
-      enabled: !!address && !!data && data[0] > 0n,
+      enabled: !!address && !!routerAddress && !!data && data[0] > 0n,
     },
   })
 
@@ -35,7 +35,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     functionName: 'getLiquidationPrice',
     args: [address!],
     query: {
-      enabled: !!address && !!data && data[0] > 0n,
+      enabled: !!address && !!routerAddress && !!data && data[0] > 0n,
     },
   })
 
@@ -54,8 +54,8 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
 
 export function usePreviewOpenLeverage(side: 'BEAR' | 'BULL', principal: bigint, leverage: bigint) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const addresses = chainId ? getAddresses(chainId) : null
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
 
   const { data, isLoading, error, refetch } = useReadContract({
     address: routerAddress,
@@ -63,7 +63,7 @@ export function usePreviewOpenLeverage(side: 'BEAR' | 'BULL', principal: bigint,
     functionName: 'previewOpenLeverage',
     args: [principal, leverage],
     query: {
-      enabled: principal > 0n && leverage > 0n,
+      enabled: !!routerAddress && principal > 0n && leverage > 0n,
     },
   })
 
@@ -79,8 +79,8 @@ export function usePreviewOpenLeverage(side: 'BEAR' | 'BULL', principal: bigint,
 
 export function useOpenLeverage(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const addresses = chainId ? getAddresses(chainId) : null
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -106,6 +106,7 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
   }, [isError, updateTransaction])
 
   const openPosition = async (principal: bigint, leverage: bigint, maxSlippageBps: bigint, deadline: bigint) => {
+    if (!routerAddress) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -153,8 +154,8 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
 
 export function useCloseLeverage(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const addresses = chainId ? getAddresses(chainId) : null
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -180,6 +181,7 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
   }, [isError, updateTransaction])
 
   const closePosition = async (debtToRepay: bigint, collateralToWithdraw: bigint, maxSlippageBps: bigint, deadline: bigint) => {
+    if (!routerAddress) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -227,8 +229,8 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
 
 export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 1)
-  const routerAddress = side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const addresses = chainId ? getAddresses(chainId) : null
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
@@ -254,6 +256,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
   }, [isError, updateTransaction])
 
   const addCollateral = async (amount: bigint) => {
+    if (!routerAddress) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -289,6 +292,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
   }
 
   const removeCollateral = async (amount: bigint) => {
+    if (!routerAddress) return
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({

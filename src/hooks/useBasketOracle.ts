@@ -4,18 +4,24 @@ import { getAddresses } from '../contracts/addresses'
 
 export function useBasketOraclePrice() {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 11155111)
+  const addresses = chainId ? getAddresses(chainId) : null
 
   const { data: roundData, isLoading: priceLoading, error: priceError, refetch } = useReadContract({
-    address: addresses.BASKET_ORACLE,
+    address: addresses?.BASKET_ORACLE,
     abi: BASKET_ORACLE_ABI,
     functionName: 'latestRoundData',
+    query: {
+      enabled: !!addresses,
+    },
   })
 
   const { data: decimals } = useReadContract({
-    address: addresses.BASKET_ORACLE,
+    address: addresses?.BASKET_ORACLE,
     abi: BASKET_ORACLE_ABI,
     functionName: 'decimals',
+    query: {
+      enabled: !!addresses,
+    },
   })
 
   const price = roundData?.[1] ?? 0n
