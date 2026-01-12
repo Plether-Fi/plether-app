@@ -22,29 +22,36 @@ export const PLETH_CORE_ABI = [
     type: 'function',
     name: 'mint',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'usdcAmount', type: 'uint256' }],
-    outputs: [{ type: 'uint256', name: 'pairAmount' }],
+    inputs: [{ name: 'amount', type: 'uint256' }], // pair amount (18 decimals)
+    outputs: [],
   },
   {
     type: 'function',
     name: 'burn',
     stateMutability: 'nonpayable',
-    inputs: [{ name: 'pairAmount', type: 'uint256' }],
-    outputs: [{ type: 'uint256', name: 'usdcAmount' }],
+    inputs: [{ name: 'amount', type: 'uint256' }], // pair amount (18 decimals)
+    outputs: [],
   },
   {
     type: 'function',
     name: 'previewMint',
     stateMutability: 'view',
-    inputs: [{ name: 'usdcAmount', type: 'uint256' }],
-    outputs: [{ type: 'uint256', name: 'pairAmount' }],
+    inputs: [{ name: 'mintAmount', type: 'uint256' }], // pair amount (18 decimals)
+    outputs: [
+      { type: 'uint256', name: 'usdcRequired' },
+      { type: 'uint256', name: 'depositToAdapter' },
+      { type: 'uint256', name: 'keptInBuffer' },
+    ],
   },
   {
     type: 'function',
     name: 'previewBurn',
     stateMutability: 'view',
-    inputs: [{ name: 'pairAmount', type: 'uint256' }],
-    outputs: [{ type: 'uint256', name: 'usdcAmount' }],
+    inputs: [{ name: 'burnAmount', type: 'uint256' }], // pair amount (18 decimals)
+    outputs: [
+      { type: 'uint256', name: 'usdcToReturn' },
+      { type: 'uint256', name: 'withdrawnFromAdapter' },
+    ],
   },
   {
     type: 'function',

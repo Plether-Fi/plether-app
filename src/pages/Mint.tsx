@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAccount } from 'wagmi'
+import { parseUnits } from 'viem'
 import { formatAmount } from '../utils/formatters'
-import { calculatePairAmount, calculateUsdcAmount, getMinBalance } from '../utils/mint'
+import { getMinBalance } from '../utils/mint'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
 import { useTokenBalances, useMint, useBurn, usePreviewMint, usePreviewBurn, useAllowance, useApprove } from '../hooks'
@@ -9,6 +10,15 @@ import { getAddresses } from '../contracts/addresses'
 
 type MintMode = 'mint' | 'redeem'
 type PendingAction = 'mint' | 'burn' | null
+
+function parsePairAmount(input: string): bigint {
+  if (!input || isNaN(parseFloat(input))) return 0n
+  try {
+    return parseUnits(input, 18)
+  } catch {
+    return 0n
+  }
+}
 
 export function Mint() {
   const { isConnected, chainId } = useAccount()
@@ -23,8 +33,7 @@ export function Mint() {
   const addresses = getAddresses(chainId ?? 1)
   const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
 
-  const pairAmountBigInt = calculatePairAmount(inputAmount, mode)
-  const usdcAmountBigInt = calculateUsdcAmount(inputAmount)
+  const pairAmountBigInt = parsePairAmount(inputAmount)
 
   const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(addresses.USDC, addresses.PLETH_CORE)
   const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(addresses.DXY_BEAR, addresses.PLETH_CORE)
@@ -37,8 +46,8 @@ export function Mint() {
   const { mint, isPending: mintPending, isSuccess: mintSuccess, reset: resetMint } = useMint()
   const { burn, isPending: burnPending, isSuccess: burnSuccess, reset: resetBurn } = useBurn()
 
-  const { pairAmount: previewPairAmount, isLoading: previewMintLoading } = usePreviewMint(usdcAmountBigInt)
-  const { usdcAmount: previewUsdcAmount, isLoading: previewBurnLoading } = usePreviewBurn(pairAmountBigInt)
+  const { usdcRequired, isLoading: previewMintLoading } = usePreviewMint(pairAmountBigInt)
+  const { usdcToReturn, isLoading: previewBurnLoading } = usePreviewBurn(pairAmountBigInt)
 
   useEffect(() => {
     if (usdcApproveSuccess && !usdcApproveHandledRef.current) {
@@ -96,28 +105,27 @@ export function Mint() {
     }
   }, [burnSuccess, refetchBalances, resetBurn])
 
-  const needsUsdcApproval = mode === 'mint' && usdcAmountBigInt > 0n && usdcAllowance < usdcAmountBigInt
+  const needsUsdcApproval = mode === 'mint' && usdcRequired > 0n && usdcAllowance < usdcRequired
   const needsBearApproval = mode === 'redeem' && pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt
   const needsBullApproval = mode === 'redeem' && pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
 
   const isPreviewLoading = mode === 'mint' ? previewMintLoading : previewBurnLoading
-  const previewAmount = mode === 'mint' ? previewPairAmount : previewUsdcAmount
-  const previewDecimals = mode === 'mint' ? 18 : 6
+  const previewAmount = mode === 'mint' ? usdcRequired : usdcToReturn
   const outputDisplay = isPreviewLoading && parseFloat(inputAmount) > 0
     ? '...'
-    : formatAmount(previewAmount, previewDecimals)
+    : formatAmount(previewAmount, 6)
   const minBalance = getMinBalance(bearBalance, bullBalance)
 
   const handleMint = async () => {
-    if (previewPairAmount <= 0n) return
+    if (pairAmountBigInt <= 0n) return
     usdcApproveHandledRef.current = false
     if (needsUsdcApproval) {
-      pendingAmountRef.current = previewPairAmount
+      pendingAmountRef.current = pairAmountBigInt
       setPendingAction('mint')
-      await approveUsdc(usdcAmountBigInt)
+      await approveUsdc(usdcRequired)
       return
     }
-    await mint(previewPairAmount)
+    await mint(pairAmountBigInt)
   }
 
   const handleRedeem = async () => {
@@ -141,7 +149,7 @@ export function Mint() {
   const getMintButtonText = () => {
     if (mintPending) return 'Minting...'
     if (usdcApprovePending) return 'Approving USDC...'
-    if (usdcAmountBigInt > usdcBalance) return 'Insufficient USDC'
+    if (usdcRequired > usdcBalance) return 'Insufficient USDC'
     if (needsUsdcApproval) return 'Approve USDC'
     return 'Mint Pairs'
   }
@@ -157,7 +165,7 @@ export function Mint() {
   }
 
   const insufficientBalance = mode === 'mint'
-    ? usdcAmountBigInt > usdcBalance
+    ? usdcRequired > usdcBalance
     : pairAmountBigInt > minBalance
 
   const isActionDisabled = !inputAmount || parseFloat(inputAmount) <= 0 ||
@@ -206,11 +214,11 @@ export function Mint() {
               </Alert>
 
               <TokenInput
-                label="USDC to deposit"
+                label="Pairs to mint (of each token)"
                 value={inputAmount}
                 onChange={setInputAmount}
-                token={{ symbol: 'USDC', decimals: 6 }}
-                balance={usdcBalance}
+                token={{ symbol: 'PAIR', decimals: 18 }}
+                balance={undefined}
               />
 
               <div className="flex justify-center -my-2 z-10 relative">
@@ -219,21 +227,31 @@ export function Mint() {
                 </div>
               </div>
 
-              <div className="bg-cyber-surface-light  p-4 space-y-3 border border-cyber-border-glow/30">
+              <div className="bg-cyber-surface-light p-4 space-y-3 border border-cyber-border-glow/30">
                 <p className="text-sm text-cyber-text-secondary">You will receive:</p>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BEAR" size="sm" />
                     <span className="text-cyber-electric-fuchsia font-medium">DXY-BEAR</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{outputDisplay}</span>
+                  <span className="text-cyber-text-primary font-semibold">{inputAmount || '0'}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BULL" size="sm" />
                     <span className="text-cyber-neon-green font-medium">DXY-BULL</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{outputDisplay}</span>
+                  <span className="text-cyber-text-primary font-semibold">{inputAmount || '0'}</span>
+                </div>
+                <div className="border-t border-cyber-border-glow/30 pt-3 mt-3">
+                  <div className="flex justify-between items-center">
+                    <span className="text-cyber-text-secondary">USDC required</span>
+                    <span className="text-cyber-text-primary font-semibold text-lg">{outputDisplay} USDC</span>
+                  </div>
+                  <div className="flex justify-between items-center text-sm mt-1">
+                    <span className="text-cyber-text-secondary">Your balance</span>
+                    <span className="text-cyber-text-secondary">{formatAmount(usdcBalance, 6)} USDC</span>
+                  </div>
                 </div>
               </div>
 

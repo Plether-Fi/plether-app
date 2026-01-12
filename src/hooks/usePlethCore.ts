@@ -49,7 +49,7 @@ export function usePlethCoreSystemStatus() {
   }
 }
 
-export function usePreviewMint(usdcAmount: bigint) {
+export function usePreviewMint(pairAmount: bigint) {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
 
@@ -57,14 +57,14 @@ export function usePreviewMint(usdcAmount: bigint) {
     address: addresses?.PLETH_CORE,
     abi: PLETH_CORE_ABI,
     functionName: 'previewMint',
-    args: [usdcAmount],
+    args: [pairAmount],
     query: {
-      enabled: !!addresses && usdcAmount > 0n,
+      enabled: !!addresses && pairAmount > 0n,
     },
   })
 
   return {
-    pairAmount: data ?? 0n,
+    usdcRequired: data?.[0] ?? 0n,
     isLoading,
     error,
     refetch,
@@ -86,7 +86,7 @@ export function usePreviewBurn(pairAmount: bigint) {
   })
 
   return {
-    usdcAmount: data ?? 0n,
+    usdcToReturn: data?.[0] ?? 0n,
     isLoading,
     error,
     refetch,
@@ -125,6 +125,7 @@ export function useMint() {
 
   const mint = async (pairAmount: bigint) => {
     if (!addresses) return
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
