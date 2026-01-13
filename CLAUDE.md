@@ -59,6 +59,19 @@ Defined in `src/index.css` via `@theme`:
 3. Create hook in `src/hooks/` using wagmi's `useReadContract`/`useWriteContract`
 4. Replace mock data in pages with actual hook calls
 
+### Storybook
+- For interactive/animated stories, use Storybook's `play` function with `step()` to create named steps visible in the Interactions panel
+- Import from `storybook/test` (Storybook 10+)
+- Example pattern:
+  ```tsx
+  play: async ({ step }) => {
+    await step('Step name', async () => {
+      // action
+      await sleep(500)
+    })
+  }
+  ```
+
 ### Testing
 - **NEVER reimplement application logic in tests.** Tests must import and test actual utility functions, not recreate them. If logic is inline in a component, extract it to `src/utils/` first, then test the extracted function.
 - Run tests: `npm test`
