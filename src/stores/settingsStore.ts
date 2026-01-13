@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { devtools, persist } from 'zustand/middleware'
 import { STORAGE_KEYS, DEFAULT_SLIPPAGE, MAX_SLIPPAGE } from '../config/constants'
 
 interface SettingsState {
@@ -8,15 +8,18 @@ interface SettingsState {
 }
 
 export const useSettingsStore = create<SettingsState>()(
-  persist(
-    (set) => ({
-      slippage: DEFAULT_SLIPPAGE,
+  devtools(
+    persist(
+      (set) => ({
+        slippage: DEFAULT_SLIPPAGE,
 
-      setSlippage: (slippage) =>
-        set({ slippage: Math.min(slippage, MAX_SLIPPAGE) }),
-    }),
-    {
-      name: STORAGE_KEYS.SLIPPAGE,
-    }
+        setSlippage: (slippage) =>
+          set({ slippage: Math.min(slippage, MAX_SLIPPAGE) }),
+      }),
+      {
+        name: STORAGE_KEYS.SLIPPAGE,
+      }
+    ),
+    { name: 'SettingsStore' }
   )
 )

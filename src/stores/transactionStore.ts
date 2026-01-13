@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { devtools, persist } from 'zustand/middleware'
 import { STORAGE_KEYS } from '../config/constants'
 
 export type TransactionStatus = 'pending' | 'confirming' | 'success' | 'failed'
@@ -26,48 +26,51 @@ interface TransactionState {
 }
 
 export const useTransactionStore = create<TransactionState>()(
-  persist(
-    (set) => ({
-      pendingTransactions: [],
+  devtools(
+    persist(
+      (set) => ({
+        pendingTransactions: [],
 
-      addTransaction: (tx) =>
-        set((state) => ({
-          pendingTransactions: [
-            ...state.pendingTransactions,
-            { ...tx, timestamp: Date.now() },
-          ],
-        })),
+        addTransaction: (tx) =>
+          set((state) => ({
+            pendingTransactions: [
+              ...state.pendingTransactions,
+              { ...tx, timestamp: Date.now() },
+            ],
+          })),
 
-      updateTransaction: (id, update) =>
-        set((state) => ({
-          pendingTransactions: state.pendingTransactions.map((tx) =>
-            tx.id === id ? { ...tx, ...update } : tx
-          ),
-        })),
-
-      removeTransaction: (id) =>
-        set((state) => ({
-          pendingTransactions: state.pendingTransactions.filter(
-            (tx) => tx.id !== id
-          ),
-        })),
-
-      clearTransactions: () => set({ pendingTransactions: [] }),
-
-      cleanupOldTransactions: () =>
-        set((state) => {
-          const oneHourAgo = Date.now() - 60 * 60 * 1000
-          return {
-            pendingTransactions: state.pendingTransactions.filter(
-              (tx) =>
-                (tx.status === 'pending' || tx.status === 'confirming') &&
-                tx.timestamp > oneHourAgo
+        updateTransaction: (id, update) =>
+          set((state) => ({
+            pendingTransactions: state.pendingTransactions.map((tx) =>
+              tx.id === id ? { ...tx, ...update } : tx
             ),
-          }
-        }),
-    }),
-    {
-      name: STORAGE_KEYS.PENDING_TXS,
-    }
+          })),
+
+        removeTransaction: (id) =>
+          set((state) => ({
+            pendingTransactions: state.pendingTransactions.filter(
+              (tx) => tx.id !== id
+            ),
+          })),
+
+        clearTransactions: () => set({ pendingTransactions: [] }),
+
+        cleanupOldTransactions: () =>
+          set((state) => {
+            const oneHourAgo = Date.now() - 60 * 60 * 1000
+            return {
+              pendingTransactions: state.pendingTransactions.filter(
+                (tx) =>
+                  (tx.status === 'pending' || tx.status === 'confirming') &&
+                  tx.timestamp > oneHourAgo
+              ),
+            }
+          }),
+      }),
+      {
+        name: STORAGE_KEYS.PENDING_TXS,
+      }
+    ),
+    { name: 'TransactionStore' }
   )
 )

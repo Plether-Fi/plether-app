@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { devtools } from 'zustand/middleware'
 import { type LoadingStep } from '../components/ui/LoadingScreen'
 
 interface TransactionModalState {
@@ -22,7 +23,7 @@ interface TransactionModalState {
   reset: () => void
 }
 
-export const useTransactionModal = create<TransactionModalState>((set) => ({
+export const useTransactionModal = create<TransactionModalState>()(devtools((set) => ({
   isOpen: false,
   title: '',
   steps: [],
@@ -89,4 +90,4 @@ export const useTransactionModal = create<TransactionModalState>((set) => ({
       transactionHash: undefined,
       onRetry: undefined,
     }),
-}))
+}), { name: 'TransactionModal' }))
