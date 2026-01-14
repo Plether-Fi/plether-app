@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
+import { InfoTooltip } from './ui/Tooltip'
 import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useAllowance, useApprove, useTransactionModal } from '../hooks'
 import { getAddresses } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -336,6 +337,15 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             <span className="text-cyber-text-secondary">Estimated Gas</span>
             <span className="text-cyber-text-primary">~$2.50</span>
           </div>
+          {selectedToken === 'BULL' && mode === 'buy' && (
+            <div className="flex justify-between items-center">
+              <span className="text-cyber-text-secondary flex items-center gap-1">
+                Safety Buffer
+                <InfoTooltip content="Flash loan safety margin. You may receive up to 0.5% of output as BEAR instead of BULL, depending on slippage." />
+              </span>
+              <span className="text-cyber-text-primary">0.5%</span>
+            </div>
+          )}
         </div>
       )}
 

@@ -60,6 +60,7 @@ Defined in `src/index.css` via `@theme`:
 4. Replace mock data in pages with actual hook calls
 
 ### Storybook
+- After modifying a component, run `npm run build-storybook` to verify stories still render
 - For interactive/animated stories, use Storybook's `play` function with `step()` to create named steps visible in the Interactions panel
 - Import from `storybook/test` (Storybook 10+)
 - Example pattern:

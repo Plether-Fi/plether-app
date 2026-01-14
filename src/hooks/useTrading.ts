@@ -113,6 +113,12 @@ export function useCurveSwap() {
   }
 }
 
+/**
+ * ZapRouter applies SAFETY_BUFFER_BPS (50 bps = 0.5%) internally:
+ * - zapMint: flash amount reduced by 0.5% to avoid over-borrowing BEAR
+ * - flash loan repayment: USDC-to-swap increased by 0.5% to ensure enough BEAR is purchased
+ * Preview functions return values that already account for these buffers.
+ */
 export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
@@ -149,6 +155,12 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
   }
 }
 
+/**
+ * ZapRouter applies SAFETY_BUFFER_BPS (50 bps = 0.5%) internally:
+ * - zapMint: flash amount reduced by 0.5% to avoid over-borrowing BEAR
+ * - flash loan repayment: USDC-to-swap increased by 0.5% to ensure enough BEAR is purchased
+ * Excess BEAR from the buffer is swept to the user.
+ */
 export function useZapSwap() {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
@@ -260,6 +272,12 @@ export function useZapSwap() {
   }
 }
 
+/**
+ * ZapRouter applies SAFETY_BUFFER_BPS (50 bps = 0.5%) internally:
+ * - zapMint: flash amount reduced by 0.5% to avoid over-borrowing BEAR
+ * - flash loan repayment: USDC-to-swap increased by 0.5% to ensure enough BEAR is purchased
+ * Excess BEAR from the buffer is swept to the user.
+ */
 export function useZapBuyWithPermit() {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
