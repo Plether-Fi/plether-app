@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
-import { InfoTooltip } from './ui/Tooltip'
+import { InfoTooltip, OutputDisplay } from './ui'
 import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useAllowance, useApprove, useTransactionModal } from '../hooks'
 import { getAddresses } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -292,19 +292,12 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           </div>
         </div>
 
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-cyber-text-secondary">You receive</span>
-          </div>
-          <div className="relative">
-            <div className="w-full bg-cyber-surface-dark border border-cyber-border-glow/30 py-4 pl-4 pr-24 text-xl font-medium text-cyber-text-primary flex items-center h-[62px] shadow-sm shadow-cyber-border-glow/10">
-              {outputDisplay}
-            </div>
-            <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-              <span className="font-medium text-cyber-text-secondary">{outputToken.symbol}</span>
-            </div>
-          </div>
-        </div>
+        <OutputDisplay
+          label="You receive"
+          value={outputDisplay}
+          token={outputToken.symbol}
+          variant={mode === 'buy' ? selectedToken : 'neutral'}
+        />
       </div>
 
       <div className="flex items-center justify-end gap-2 text-xs text-cyber-text-secondary">
@@ -339,10 +332,6 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             }>
               {priceImpact > 0 ? `${priceImpact.toFixed(2)}%` : '-'}
             </span>
-          </div>
-          <div className="flex justify-between">
-            <span className="text-cyber-text-secondary">Estimated Gas</span>
-            <span className="text-cyber-text-primary">~$2.50</span>
           </div>
           {selectedToken === 'BULL' && mode === 'buy' && (
             <div className="flex justify-between items-center">
