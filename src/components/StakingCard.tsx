@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { TokenIcon } from './ui'
+import { TokenIcon, OutputDisplay } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
 import { parseStakingAmount, getStakingDecimals, SHARE_DECIMALS } from '../utils/staking'
@@ -197,17 +197,15 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
           balance={balance}
         />
 
-        <div className={`bg-cyber-surface-light p-3 border ${isBear ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'}`}>
-          <div className="flex justify-between items-center text-sm">
-            <span className="text-cyber-text-secondary">You will receive</span>
-            <span className={`${textColor} font-medium`}>
-              {mode === 'stake'
-                ? (previewDepositLoading ? '...' : formatAmount(previewShares, SHARE_DECIMALS))
-                : (previewRedeemLoading ? '...' : formatAmount(previewAssets, 18))
-              } {mode === 'stake' ? `sDXY-${side}` : `DXY-${side}`}
-            </span>
-          </div>
-        </div>
+        <OutputDisplay
+          label="You will receive"
+          value={mode === 'stake'
+            ? (previewDepositLoading ? '...' : formatAmount(previewShares, SHARE_DECIMALS))
+            : (previewRedeemLoading ? '...' : formatAmount(previewAssets, 18))
+          }
+          token={mode === 'stake' ? `sDXY-${side}` : `DXY-${side}`}
+          variant={side}
+        />
 
         <button
           onClick={handleAction}
