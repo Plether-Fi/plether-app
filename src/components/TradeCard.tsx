@@ -51,17 +51,18 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   const isBearTrade = selectedToken === 'BEAR'
 
-  const { amountOut: curveAmountOut, isLoading: curveQuoteLoading } = useCurveQuote(
+  const { amountOut: curveAmountOut, priceImpact: curvePriceImpact, isLoading: curveQuoteLoading } = useCurveQuote(
     mode === 'buy' ? 'USDC' : 'BEAR',
     isBearTrade ? inputAmountBigInt : 0n
   )
 
-  const { amountOut: zapAmountOut, isLoading: zapQuoteLoading } = useZapQuote(
+  const { amountOut: zapAmountOut, priceImpact: zapPriceImpact, isLoading: zapQuoteLoading } = useZapQuote(
     mode,
     !isBearTrade ? inputAmountBigInt : 0n
   )
 
   const quoteAmountOut = isBearTrade ? curveAmountOut : zapAmountOut
+  const priceImpact = isBearTrade ? curvePriceImpact : zapPriceImpact
   const isQuoteLoading = isBearTrade ? curveQuoteLoading : zapQuoteLoading
 
   const {
@@ -331,7 +332,13 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           </div>
           <div className="flex justify-between">
             <span className="text-cyber-text-secondary">Price Impact</span>
-            <span className="text-cyber-text-primary">~0.1%</span>
+            <span className={
+              priceImpact > 1 ? 'text-red-500' :
+              priceImpact > slippage ? 'text-cyber-warning-text' :
+              'text-cyber-text-primary'
+            }>
+              {priceImpact > 0 ? `${priceImpact.toFixed(2)}%` : '-'}
+            </span>
           </div>
           <div className="flex justify-between">
             <span className="text-cyber-text-secondary">Estimated Gas</span>

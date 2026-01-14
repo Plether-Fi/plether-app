@@ -17,6 +17,8 @@ export function useCurveQuote(tokenIn: 'USDC' | 'BEAR', amountIn: bigint) {
   const i = tokenIn === 'USDC' ? USDC_INDEX : BEAR_INDEX
   const j = tokenIn === 'USDC' ? BEAR_INDEX : USDC_INDEX
 
+  const refAmount = tokenIn === 'USDC' ? 1_000_000n : 1_000_000_000_000_000_000n // 1 USDC or 1 BEAR
+
   const { data, isLoading, error, refetch } = useReadContract({
     address: addresses?.CURVE_POOL,
     abi: CURVE_POOL_ABI,
@@ -27,8 +29,27 @@ export function useCurveQuote(tokenIn: 'USDC' | 'BEAR', amountIn: bigint) {
     },
   })
 
+  const { data: refData } = useReadContract({
+    address: addresses?.CURVE_POOL,
+    abi: CURVE_POOL_ABI,
+    functionName: 'get_dy',
+    args: [i, j, refAmount],
+    query: {
+      enabled: !!addresses && amountIn > 0n,
+    },
+  })
+
+  const amountOut = data ?? 0n
+  let priceImpact = 0
+  if (amountIn > 0n && amountOut > 0n && refData) {
+    const spotRate = Number(refData) / Number(refAmount)
+    const actualRate = Number(amountOut) / Number(amountIn)
+    priceImpact = ((spotRate - actualRate) / spotRate) * 100
+  }
+
   return {
-    amountOut: data ?? 0n,
+    amountOut,
+    priceImpact,
     isLoading,
     error,
     refetch,
@@ -123,11 +144,23 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
 
+  const refAmount = direction === 'buy' ? 1_000_000n : 1_000_000_000_000_000_000n // 1 USDC or 1 BULL
+
   const { data: buyData, isLoading: buyLoading, error: buyError, refetch: buyRefetch } = useReadContract({
     address: addresses?.ZAP_ROUTER,
     abi: ZAP_ROUTER_ABI,
     functionName: 'previewZapMint',
     args: [amount],
+    query: {
+      enabled: !!addresses && amount > 0n && direction === 'buy',
+    },
+  })
+
+  const { data: buyRefData } = useReadContract({
+    address: addresses?.ZAP_ROUTER,
+    abi: ZAP_ROUTER_ABI,
+    functionName: 'previewZapMint',
+    args: [refAmount],
     query: {
       enabled: !!addresses && amount > 0n && direction === 'buy',
     },
@@ -143,12 +176,34 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
     },
   })
 
+  const { data: sellRefData } = useReadContract({
+    address: addresses?.ZAP_ROUTER,
+    abi: ZAP_ROUTER_ABI,
+    functionName: 'previewZapBurn',
+    args: [refAmount],
+    query: {
+      enabled: !!addresses && amount > 0n && direction === 'sell',
+    },
+  })
+
   const amountOut = direction === 'buy'
     ? (buyData?.[3] ?? 0n) // expectedTokensOut is index 3
     : (sellData?.[2] ?? 0n) // expectedUsdcOut is index 2
 
+  let priceImpact = 0
+  if (direction === 'buy' && amount > 0n && buyData?.[3] && buyRefData?.[3]) {
+    const spotRate = Number(buyRefData[3]) / Number(refAmount)
+    const actualRate = Number(buyData[3]) / Number(amount)
+    priceImpact = ((spotRate - actualRate) / spotRate) * 100
+  } else if (direction === 'sell' && amount > 0n && sellData?.[2] && sellRefData?.[2]) {
+    const spotRate = Number(sellRefData[2]) / Number(refAmount)
+    const actualRate = Number(sellData[2]) / Number(amount)
+    priceImpact = ((spotRate - actualRate) / spotRate) * 100
+  }
+
   return {
     amountOut,
+    priceImpact,
     isLoading: direction === 'buy' ? buyLoading : sellLoading,
     error: direction === 'buy' ? buyError : sellError,
     refetch: direction === 'buy' ? buyRefetch : sellRefetch,
