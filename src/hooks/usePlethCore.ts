@@ -10,7 +10,7 @@ export function usePlethCoreStatus() {
   const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses?.PLETH_CORE,
+    address: addresses?.SYNTHETIC_SPLITTER,
     abi: PLETH_CORE_ABI,
     functionName: 'currentStatus',
     query: {
@@ -31,7 +31,7 @@ export function usePlethCoreSystemStatus() {
   const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses?.PLETH_CORE,
+    address: addresses?.SYNTHETIC_SPLITTER,
     abi: PLETH_CORE_ABI,
     functionName: 'getSystemStatus',
     query: {
@@ -54,7 +54,7 @@ export function usePreviewMint(pairAmount: bigint) {
   const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses?.PLETH_CORE,
+    address: addresses?.SYNTHETIC_SPLITTER,
     abi: PLETH_CORE_ABI,
     functionName: 'previewMint',
     args: [pairAmount],
@@ -76,7 +76,7 @@ export function usePreviewBurn(pairAmount: bigint) {
   const addresses = chainId ? getAddresses(chainId) : null
 
   const { data, isLoading, error, refetch } = useReadContract({
-    address: addresses?.PLETH_CORE,
+    address: addresses?.SYNTHETIC_SPLITTER,
     abi: PLETH_CORE_ABI,
     functionName: 'previewBurn',
     args: [pairAmount],
@@ -139,7 +139,7 @@ export function useMint() {
     try {
       writeContract(
         {
-          address: addresses?.PLETH_CORE,
+          address: addresses?.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
           functionName: 'mint',
           args: [pairAmount],
@@ -222,7 +222,7 @@ export function useBurn() {
     try {
       writeContract(
         {
-          address: addresses?.PLETH_CORE,
+          address: addresses?.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
           functionName: 'burn',
           args: [pairAmount],

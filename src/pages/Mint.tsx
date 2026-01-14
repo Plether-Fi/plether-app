@@ -39,9 +39,9 @@ export function Mint() {
 
   const pairAmountBigInt = parsePairAmount(inputAmount)
 
-  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(addresses.USDC, addresses.PLETH_CORE)
-  const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(addresses.DXY_BEAR, addresses.PLETH_CORE)
-  const { allowance: bullAllowance, refetch: refetchBullAllowance } = useAllowance(addresses.DXY_BULL, addresses.PLETH_CORE)
+  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER)
+  const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER)
+  const { allowance: bullAllowance, refetch: refetchBullAllowance } = useAllowance(addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER)
 
   const {
     approve: approveUsdc,
@@ -49,21 +49,21 @@ export function Mint() {
     isConfirming: usdcApproveConfirming,
     isSuccess: usdcApproveSuccess,
     error: usdcApproveError,
-  } = useApprove(addresses.USDC, addresses.PLETH_CORE)
+  } = useApprove(addresses.USDC, addresses.SYNTHETIC_SPLITTER)
   const {
     approve: approveBear,
     isPending: bearApprovePending,
     isConfirming: bearApproveConfirming,
     isSuccess: bearApproveSuccess,
     error: bearApproveError,
-  } = useApprove(addresses.DXY_BEAR, addresses.PLETH_CORE)
+  } = useApprove(addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER)
   const {
     approve: approveBull,
     isPending: bullApprovePending,
     isConfirming: bullApproveConfirming,
     isSuccess: bullApproveSuccess,
     error: bullApproveError,
-  } = useApprove(addresses.DXY_BULL, addresses.PLETH_CORE)
+  } = useApprove(addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER)
 
   const {
     mint,
