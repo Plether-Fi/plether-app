@@ -1,27 +1,42 @@
 import { useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
-import { SLIPPAGE_PRESETS, MAX_SLIPPAGE } from '../config/constants'
+import { SLIPPAGE_PRESETS, MAX_SLIPPAGE, PRICE_IMPACT_PRESETS, MAX_PRICE_IMPACT } from '../config/constants'
 import { Button, Modal, Input } from './ui'
 
 export function SlippageSelector() {
-  const { slippage, setSlippage } = useSettingsStore()
+  const { slippage, setSlippage, maxPriceImpact, setMaxPriceImpact } = useSettingsStore()
   const [isOpen, setIsOpen] = useState(false)
-  const [customValue, setCustomValue] = useState('')
+  const [customSlippage, setCustomSlippage] = useState('')
+  const [customPriceImpact, setCustomPriceImpact] = useState('')
 
-  const handlePresetClick = (value: number) => {
+  const handleSlippagePresetClick = (value: number) => {
     setSlippage(value)
-    setCustomValue('')
+    setCustomSlippage('')
   }
 
-  const handleCustomChange = (value: string) => {
-    setCustomValue(value)
+  const handleSlippageCustomChange = (value: string) => {
+    setCustomSlippage(value)
     const num = parseFloat(value)
     if (!isNaN(num) && num > 0 && num <= MAX_SLIPPAGE) {
       setSlippage(num)
     }
   }
 
-  const isCustom = !SLIPPAGE_PRESETS.includes(slippage as typeof SLIPPAGE_PRESETS[number])
+  const handlePriceImpactPresetClick = (value: number) => {
+    setMaxPriceImpact(value)
+    setCustomPriceImpact('')
+  }
+
+  const handlePriceImpactCustomChange = (value: string) => {
+    setCustomPriceImpact(value)
+    const num = parseFloat(value)
+    if (!isNaN(num) && num > 0 && num <= MAX_PRICE_IMPACT) {
+      setMaxPriceImpact(num)
+    }
+  }
+
+  const isSlippageCustom = !SLIPPAGE_PRESETS.includes(slippage as typeof SLIPPAGE_PRESETS[number])
+  const isPriceImpactCustom = !PRICE_IMPACT_PRESETS.includes(maxPriceImpact as typeof PRICE_IMPACT_PRESETS[number])
 
   return (
     <>
@@ -49,44 +64,72 @@ export function SlippageSelector() {
       <Modal
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
-        title="Slippage Settings"
+        title="Trade Settings"
         size="sm"
       >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-400">
-            Your transaction will revert if the price changes unfavorably by more
-            than this percentage.
-          </p>
-
-          {/* Preset buttons */}
-          <div className="flex gap-2">
-            {SLIPPAGE_PRESETS.map((preset) => (
-              <Button
-                key={preset}
-                variant={slippage === preset ? 'primary' : 'secondary'}
-                size="sm"
-                onClick={() => handlePresetClick(preset)}
-                className="flex-1"
-              >
-                {preset}%
-              </Button>
-            ))}
+        <div className="space-y-6">
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-cyber-text-primary">Slippage Tolerance</h3>
+            <p className="text-xs text-cyber-text-secondary">
+              Transaction reverts if price moves unfavorably by more than this.
+            </p>
+            <div className="flex gap-2">
+              {SLIPPAGE_PRESETS.map((preset) => (
+                <Button
+                  key={preset}
+                  variant={slippage === preset ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => handleSlippagePresetClick(preset)}
+                  className="flex-1"
+                >
+                  {preset}%
+                </Button>
+              ))}
+            </div>
+            <div>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={customSlippage}
+                onChange={(e) => handleSlippageCustomChange(e.target.value)}
+                placeholder={`Custom (max ${MAX_SLIPPAGE}%)`}
+                rightElement={<span className="text-gray-400">%</span>}
+                className={isSlippageCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
+              />
+            </div>
           </div>
 
-          {/* Custom input */}
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">
-              Custom (max {MAX_SLIPPAGE}%)
-            </label>
-            <Input
-              type="text"
-              inputMode="decimal"
-              value={customValue}
-              onChange={(e) => handleCustomChange(e.target.value)}
-              placeholder="0.5"
-              rightElement={<span className="text-gray-400">%</span>}
-              className={isCustom ? 'ring-2 ring-primary-500' : ''}
-            />
+          <div className="border-t border-cyber-border-glow/30" />
+
+          <div className="space-y-3">
+            <h3 className="text-sm font-medium text-cyber-text-primary">Max Price Impact</h3>
+            <p className="text-xs text-cyber-text-secondary">
+              Warns before trades with price impact exceeding this threshold.
+            </p>
+            <div className="flex gap-2">
+              {PRICE_IMPACT_PRESETS.map((preset) => (
+                <Button
+                  key={preset}
+                  variant={maxPriceImpact === preset ? 'primary' : 'secondary'}
+                  size="sm"
+                  onClick={() => handlePriceImpactPresetClick(preset)}
+                  className="flex-1"
+                >
+                  {preset}%
+                </Button>
+              ))}
+            </div>
+            <div>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={customPriceImpact}
+                onChange={(e) => handlePriceImpactCustomChange(e.target.value)}
+                placeholder={`Custom (max ${MAX_PRICE_IMPACT}%)`}
+                rightElement={<span className="text-gray-400">%</span>}
+                className={isPriceImpactCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
+              />
+            </div>
           </div>
 
           <Button

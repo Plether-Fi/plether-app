@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
-import { InfoTooltip, OutputDisplay } from './ui'
+import { InfoTooltip, OutputDisplay, Modal, Button } from './ui'
 import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useAllowance, useApprove, useTransactionModal } from '../hooks'
 import { getAddresses } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -23,11 +23,13 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   const { isConnected, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? 11155111)
   const slippage = useSettingsStore((s) => s.slippage)
+  const maxPriceImpact = useSettingsStore((s) => s.maxPriceImpact)
   const txModal = useTransactionModal()
 
   const [mode, setMode] = useState<TradeMode>('buy')
   const [selectedToken, setSelectedToken] = useState<TokenSide>('BEAR')
   const [inputAmount, setInputAmount] = useState('')
+  const [showPriceImpactWarning, setShowPriceImpactWarning] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [pendingSwap, setPendingSwap] = useState(false)
   const pendingAmountRef = useRef<bigint>(0n)
@@ -64,6 +66,12 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   const quoteAmountOut = isBearTrade ? curveAmountOut : zapAmountOut
   const priceImpact = isBearTrade ? curvePriceImpact : zapPriceImpact
   const isQuoteLoading = isBearTrade ? curveQuoteLoading : zapQuoteLoading
+
+  useEffect(() => {
+    if (priceImpact > 1) {
+      setShowDetails(true)
+    }
+  }, [priceImpact])
 
   const {
     swap: curveSwap,
@@ -171,9 +179,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     }
   }, [curvePending, zapPending, curveConfirming, zapConfirming, curveError, zapError, pendingSwap, approveSuccess])
 
-  const handleSwap = async () => {
-    if (!inputAmountBigInt || inputAmountBigInt <= 0n) return
-
+  const proceedWithSwap = async () => {
     approveHandledRef.current = false
     swapTriggeredRef.current = false
 
@@ -189,7 +195,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
           'Awaiting confirmation',
         ],
-        onRetry: handleSwap,
+        onRetry: proceedWithSwap,
       })
       pendingAmountRef.current = inputAmountBigInt
       setPendingSwap(true)
@@ -203,10 +209,26 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
         'Awaiting confirmation',
       ],
-      onRetry: handleSwap,
+      onRetry: proceedWithSwap,
     })
     swapTriggeredRef.current = true
     await executeSwap(inputAmountBigInt)
+  }
+
+  const handleSwap = async () => {
+    if (!inputAmountBigInt || inputAmountBigInt <= 0n) return
+
+    if (priceImpact > maxPriceImpact) {
+      setShowPriceImpactWarning(true)
+      return
+    }
+
+    await proceedWithSwap()
+  }
+
+  const handleConfirmHighImpact = async () => {
+    setShowPriceImpactWarning(false)
+    await proceedWithSwap()
   }
 
   const getButtonText = () => {
@@ -320,7 +342,9 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           <div className="flex justify-between">
             <span className="text-cyber-text-secondary">Route</span>
             <span className="text-cyber-text-primary">
-              {selectedToken === 'BEAR' ? 'USDC → Curve → DXY-BEAR' : 'USDC → ZapRouter → DXY-BULL'}
+              {selectedToken === 'BEAR'
+                ? (mode === 'buy' ? 'USDC → Curve → DXY-BEAR' : 'DXY-BEAR → Curve → USDC')
+                : (mode === 'buy' ? 'USDC → ZapRouter → DXY-BULL' : 'DXY-BULL → ZapRouter → USDC')}
             </span>
           </div>
           <div className="flex justify-between">
@@ -361,6 +385,46 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           Connect Wallet to Trade
         </button>
       )}
+
+      <Modal
+        isOpen={showPriceImpactWarning}
+        onClose={() => setShowPriceImpactWarning(false)}
+        title="High Price Impact"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="bg-red-500/10 border border-red-500/30 p-4 text-center">
+            <div className="text-3xl font-bold text-red-500">{priceImpact.toFixed(2)}%</div>
+            <div className="text-sm text-cyber-text-secondary mt-1">Price Impact</div>
+          </div>
+
+          <p className="text-sm text-cyber-text-secondary">
+            This trade has a price impact of <span className="text-red-500 font-medium">{priceImpact.toFixed(2)}%</span>,
+            which exceeds your maximum threshold of <span className="text-cyber-text-primary font-medium">{maxPriceImpact}%</span>.
+          </p>
+
+          <p className="text-sm text-cyber-text-secondary">
+            You will receive significantly less value than your input. Are you sure you want to proceed?
+          </p>
+
+          <div className="flex gap-3">
+            <Button
+              variant="secondary"
+              onClick={() => setShowPriceImpactWarning(false)}
+              className="flex-1"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              onClick={handleConfirmHighImpact}
+              className="flex-1 !bg-red-500 hover:!bg-red-600"
+            >
+              Swap Anyway
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
