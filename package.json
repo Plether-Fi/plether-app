@@ -12,6 +12,9 @@
     "test": "vitest run --project unit",
     "test:watch": "vitest --project unit",
     "test:coverage": "vitest run --project unit --coverage",
+    "test:integration": "vitest run --project integration",
+    "test:integration:watch": "vitest --project integration",
+    "anvil": "dotenv -- sh -c 'anvil --fork-url $SEPOLIA_RPC_URL --chain-id 31337 --port 8546'",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build"
   },
@@ -46,6 +49,7 @@
     "@vitest/browser-playwright": "^4.0.16",
     "@vitest/coverage-v8": "^4.0.16",
     "autoprefixer": "^10.4.23",
+    "dotenv-cli": "^11.0.0",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.4.24",

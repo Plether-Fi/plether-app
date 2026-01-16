@@ -33,8 +33,9 @@ function loadAddresses(filename: string): ContractAddresses | null {
 }
 
 const MAINNET_ADDRESSES = loadAddresses('addresses.mainnet.json')
-const SEPOLIA_ADDRESSES = loadAddresses('addresses.sepolia.json')
 const LOCAL_ADDRESSES = loadAddresses('addresses.local.json')
+
+export const SEPOLIA_ADDRESSES = loadAddresses('addresses.sepolia.json')!
 
 export function getAddresses(chainId: number): ContractAddresses {
   switch (chainId) {

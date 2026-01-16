@@ -21,6 +21,8 @@ npm run dev        # Dev server at http://localhost:5173
 npm run build      # TypeScript check + production build
 npm run lint       # ESLint
 npm test           # Unit tests
+npm run anvil      # Start Anvil fork (port 8546, requires SEPOLIA_RPC_URL)
+npm run test:integration  # Integration tests (requires Anvil)
 npm run storybook  # Component explorer at http://localhost:6006
 ```
 

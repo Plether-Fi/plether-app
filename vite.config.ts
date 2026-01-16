@@ -40,9 +40,21 @@ export default defineConfig({
           name: 'unit',
           environment: 'happy-dom',
           include: ['src/**/*.test.{ts,tsx}'],
-          exclude: ['src/**/*.stories.tsx'],
+          exclude: ['src/**/*.stories.tsx', 'src/**/*.integration.test.{ts,tsx}'],
           setupFiles: ['./src/test/setup.ts'],
           globals: true,
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'integration',
+          environment: 'happy-dom',
+          include: ['src/**/*.integration.test.{ts,tsx}'],
+          setupFiles: ['./src/test/setup.ts', './src/test/integration.setup.ts'],
+          globals: true,
+          testTimeout: 30000,
+          hookTimeout: 30000,
         }
       }
     ]
