@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components */
 import { type ReactNode } from 'react'
 import { WagmiProvider, type Config } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'

@@ -34,7 +34,7 @@ export function Button({
 }: ButtonProps) {
   return (
     <button
-      disabled={disabled || isLoading}
+      disabled={disabled === true || isLoading}
       className={`
         inline-flex items-center justify-center gap-2  font-medium
         transition-all duration-200

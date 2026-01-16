@@ -94,10 +94,10 @@ export function Mint() {
   useEffect(() => {
     if (usdcApproveSuccess && !usdcApproveHandledRef.current) {
       usdcApproveHandledRef.current = true
-      refetchUsdcAllowance()
+      void refetchUsdcAllowance()
       if (pendingAction === 'mint' && pendingAmountRef.current > 0n) {
         mintTriggeredRef.current = true
-        mint(pendingAmountRef.current)
+        void mint(pendingAmountRef.current)
         pendingAmountRef.current = 0n
         setPendingAction(null)
       }
@@ -107,13 +107,13 @@ export function Mint() {
   useEffect(() => {
     if (bearApproveSuccess && !bearApproveHandledRef.current) {
       bearApproveHandledRef.current = true
-      refetchBearAllowance()
+      void refetchBearAllowance()
       if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
         if (bullAllowance < pendingAmountRef.current) {
-          approveBull(pendingAmountRef.current)
+          void approveBull(pendingAmountRef.current)
         } else {
           burnTriggeredRef.current = true
-          burn(pendingAmountRef.current)
+          void burn(pendingAmountRef.current)
           pendingAmountRef.current = 0n
           setPendingAction(null)
         }
@@ -124,10 +124,10 @@ export function Mint() {
   useEffect(() => {
     if (bullApproveSuccess && !bullApproveHandledRef.current) {
       bullApproveHandledRef.current = true
-      refetchBullAllowance()
+      void refetchBullAllowance()
       if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
         burnTriggeredRef.current = true
-        burn(pendingAmountRef.current)
+        void burn(pendingAmountRef.current)
         pendingAmountRef.current = 0n
         setPendingAction(null)
       }
@@ -137,7 +137,7 @@ export function Mint() {
   useEffect(() => {
     if (mintSuccess) {
       if (mintHash) txModal.setSuccess(mintHash)
-      refetchBalances()
+      void refetchBalances()
       setInputAmount('')
       resetMint()
       mintTriggeredRef.current = false
@@ -148,7 +148,7 @@ export function Mint() {
   useEffect(() => {
     if (burnSuccess) {
       if (burnHash) txModal.setSuccess(burnHash)
-      refetchBalances()
+      void refetchBalances()
       setInputAmount('')
       resetBurn()
       burnTriggeredRef.current = false
@@ -234,7 +234,7 @@ export function Mint() {
       txModal.open({
         title: 'Minting token pairs',
         steps: ['Approve USDC', 'Confirming approval', 'Mint pairs', 'Awaiting confirmation'],
-        onRetry: handleMint,
+        onRetry: () => void handleMint(),
       })
       pendingAmountRef.current = pairAmountBigInt
       setPendingAction('mint')
@@ -245,7 +245,7 @@ export function Mint() {
     txModal.open({
       title: 'Minting token pairs',
       steps: ['Mint pairs', 'Awaiting confirmation'],
-      onRetry: handleMint,
+      onRetry: () => void handleMint(),
     })
     mintTriggeredRef.current = true
     await mint(pairAmountBigInt)
@@ -268,7 +268,7 @@ export function Mint() {
     txModal.open({
       title: 'Redeeming token pairs',
       steps,
-      onRetry: handleRedeem,
+      onRetry: () => void handleRedeem(),
     })
 
     if (needsBearApproval) {
@@ -398,7 +398,7 @@ export function Mint() {
 
               {isConnected ? (
                 <button
-                  onClick={handleMint}
+                  onClick={() => void handleMint()}
                   disabled={isActionDisabled}
                   className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-4 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                 >
@@ -462,7 +462,7 @@ export function Mint() {
 
               {isConnected ? (
                 <button
-                  onClick={handleRedeem}
+                  onClick={() => void handleRedeem()}
                   disabled={isActionDisabled}
                   className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-text-primary font-semibold py-4 px-6  shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                 >

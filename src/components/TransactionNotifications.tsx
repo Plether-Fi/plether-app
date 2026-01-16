@@ -27,7 +27,7 @@ export function TransactionNotifications() {
   const pendingTransactions = useTransactionStore((state) => state.pendingTransactions)
 
   const addToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
-    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2)}`
+    const id = `toast-${String(Date.now())}-${Math.random().toString(36).slice(2)}`
     setToasts((prev) => [...prev, { ...toast, id }])
   }, [])
 
@@ -56,7 +56,7 @@ export function TransactionNotifications() {
         addToast({
           type: 'error',
           title: `${label} Failed`,
-          message: tx.errorMessage || tx.description,
+          message: tx.errorMessage ?? tx.description,
         })
       }
     })
@@ -73,7 +73,7 @@ export function TransactionNotifications() {
       })
     }, 60000)
 
-    return () => clearInterval(interval)
+    return () => { clearInterval(interval); }
   }, [pendingTransactions])
 
   return <ToastContainer toasts={toasts} onClose={removeToast} />

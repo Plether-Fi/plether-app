@@ -80,7 +80,7 @@ export function History() {
         {filterOptions.map((option) => (
           <button
             key={option.id}
-            onClick={() => setFilter(option.id)}
+            onClick={() => { setFilter(option.id); }}
             className={`
               flex items-center gap-2 px-4 py-2  text-sm font-medium transition-all
               ${filter === option.id

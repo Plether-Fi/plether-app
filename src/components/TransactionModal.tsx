@@ -25,7 +25,7 @@ export function TransactionModal() {
     if (isOpen) {
       document.addEventListener('keydown', handleEscape)
     }
-    return () => document.removeEventListener('keydown', handleEscape)
+    return () => { document.removeEventListener('keydown', handleEscape); }
   }, [isOpen, close])
 
   const handleRetry = () => {

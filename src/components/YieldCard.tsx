@@ -29,11 +29,11 @@ export function YieldCard({
   const [supplyAmount, setSupplyAmount] = useState('')
   const [borrowAmount, setBorrowAmount] = useState('')
 
-  const handleSupply = async () => {
+  const handleSupply = () => {
     console.log(`${supplyMode}:`, { amount: supplyAmount })
   }
 
-  const handleBorrow = async () => {
+  const handleBorrow = () => {
     console.log(`${borrowMode}:`, { amount: borrowAmount })
   }
 

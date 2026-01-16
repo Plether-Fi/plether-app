@@ -6,7 +6,7 @@ import { formatUnits, parseUnits } from 'viem'
 export function formatAmount(
   amount: bigint,
   decimals: number,
-  maxDecimals: number = 4
+  maxDecimals = 4
 ): string {
   const formatted = formatUnits(amount, decimals)
   const num = parseFloat(formatted)
@@ -23,7 +23,7 @@ export function formatAmount(
 /**
  * Format USD value
  */
-export function formatUsd(amount: bigint, decimals: number = 6): string {
+export function formatUsd(amount: bigint, decimals = 6): string {
   const num = parseFloat(formatUnits(amount, decimals))
 
   return new Intl.NumberFormat('en-US', {
@@ -37,7 +37,7 @@ export function formatUsd(amount: bigint, decimals: number = 6): string {
 /**
  * Format percentage
  */
-export function formatPercent(value: number, decimals: number = 2): string {
+export function formatPercent(value: number, decimals = 2): string {
   return `${value.toFixed(decimals)}%`
 }
 

@@ -18,15 +18,15 @@ export function Toast({ id, type, title, message, txHash, duration = 5000, onClo
   useEffect(() => {
     const timer = setTimeout(() => {
       setIsLeaving(true)
-      setTimeout(() => onClose(id), 300)
+      setTimeout(() => { onClose(id); }, 300)
     }, duration)
 
-    return () => clearTimeout(timer)
+    return () => { clearTimeout(timer); }
   }, [id, duration, onClose])
 
   const handleClose = () => {
     setIsLeaving(true)
-    setTimeout(() => onClose(id), 300)
+    setTimeout(() => { onClose(id); }, 300)
   }
 
   const bgColor = {

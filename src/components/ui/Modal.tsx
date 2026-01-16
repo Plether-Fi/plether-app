@@ -40,7 +40,7 @@ export function Modal({
     if (isOpen) {
       document.addEventListener('keydown', handleEscape)
     }
-    return () => document.removeEventListener('keydown', handleEscape)
+    return () => { document.removeEventListener('keydown', handleEscape); }
   }, [isOpen, onClose])
 
   if (!isOpen) return null

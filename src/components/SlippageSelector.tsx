@@ -41,7 +41,7 @@ export function SlippageSelector() {
   return (
     <>
       <button
-        onClick={() => setIsOpen(true)}
+        onClick={() => { setIsOpen(true); }}
         className="flex items-center gap-1 text-sm text-gray-400 hover:text-white transition-colors"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -63,7 +63,7 @@ export function SlippageSelector() {
 
       <Modal
         isOpen={isOpen}
-        onClose={() => setIsOpen(false)}
+        onClose={() => { setIsOpen(false); }}
         title="Trade Settings"
         size="sm"
       >
@@ -79,7 +79,7 @@ export function SlippageSelector() {
                   key={preset}
                   variant={slippage === preset ? 'primary' : 'secondary'}
                   size="sm"
-                  onClick={() => handleSlippagePresetClick(preset)}
+                  onClick={() => { handleSlippagePresetClick(preset); }}
                   className="flex-1"
                 >
                   {preset}%
@@ -91,8 +91,8 @@ export function SlippageSelector() {
                 type="text"
                 inputMode="decimal"
                 value={customSlippage}
-                onChange={(e) => handleSlippageCustomChange(e.target.value)}
-                placeholder={`Custom (max ${MAX_SLIPPAGE}%)`}
+                onChange={(e) => { handleSlippageCustomChange(e.target.value); }}
+                placeholder={`Custom (max ${String(MAX_SLIPPAGE)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
                 className={isSlippageCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
               />
@@ -112,7 +112,7 @@ export function SlippageSelector() {
                   key={preset}
                   variant={maxPriceImpact === preset ? 'primary' : 'secondary'}
                   size="sm"
-                  onClick={() => handlePriceImpactPresetClick(preset)}
+                  onClick={() => { handlePriceImpactPresetClick(preset); }}
                   className="flex-1"
                 >
                   {preset}%
@@ -124,8 +124,8 @@ export function SlippageSelector() {
                 type="text"
                 inputMode="decimal"
                 value={customPriceImpact}
-                onChange={(e) => handlePriceImpactCustomChange(e.target.value)}
-                placeholder={`Custom (max ${MAX_PRICE_IMPACT}%)`}
+                onChange={(e) => { handlePriceImpactCustomChange(e.target.value); }}
+                placeholder={`Custom (max ${String(MAX_PRICE_IMPACT)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
                 className={isPriceImpactCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
               />
@@ -134,7 +134,7 @@ export function SlippageSelector() {
 
           <Button
             variant="primary"
-            onClick={() => setIsOpen(false)}
+            onClick={() => { setIsOpen(false); }}
             className="w-full"
           >
             Save

@@ -129,10 +129,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   useEffect(() => {
     if (approveSuccess && !approveHandledRef.current) {
       approveHandledRef.current = true
-      refetchAllowance()
+      void refetchAllowance()
       if (pendingSwap && pendingAmountRef.current > 0n) {
         swapTriggeredRef.current = true
-        executeSwap(pendingAmountRef.current)
+        void executeSwap(pendingAmountRef.current)
         pendingAmountRef.current = 0n
         setPendingSwap(false)
       }
@@ -141,7 +141,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   useEffect(() => {
     if (curveSuccess || zapSuccess) {
-      const hash = curveHash || zapHash
+      const hash = curveHash ?? zapHash
       if (hash) txModal.setSuccess(hash)
       refetchBalances?.()
       setInputAmount('')
@@ -175,7 +175,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     } else if (curveConfirming || zapConfirming) {
       modal.setStepInProgress(swapStepOffset + 1)
     } else if (curveError || zapError) {
-      modal.setError(swapStepOffset, parseTransactionError(curveError || zapError))
+      modal.setError(swapStepOffset, parseTransactionError(curveError ?? zapError))
     }
   }, [curvePending, zapPending, curveConfirming, zapConfirming, curveError, zapError, pendingSwap, approveSuccess])
 
@@ -195,7 +195,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
           'Awaiting confirmation',
         ],
-        onRetry: proceedWithSwap,
+        onRetry: () => void proceedWithSwap(),
       })
       pendingAmountRef.current = inputAmountBigInt
       setPendingSwap(true)
@@ -209,7 +209,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
         'Awaiting confirmation',
       ],
-      onRetry: proceedWithSwap,
+      onRetry: () => void proceedWithSwap(),
     })
     swapTriggeredRef.current = true
     await executeSwap(inputAmountBigInt)
@@ -275,7 +275,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <label className="text-sm font-medium text-cyber-text-secondary">Select Token</label>
         <div className="grid grid-cols-2 gap-4">
           <button
-            onClick={() => setSelectedToken('BEAR')}
+            onClick={() => { setSelectedToken('BEAR'); }}
             className={`relative p-4 text-center transition-all ${
               selectedToken === 'BEAR'
                 ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
@@ -286,7 +286,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             <div className={`text-xs mt-1 ${selectedToken === 'BEAR' ? 'text-cyber-electric-fuchsia/70' : 'text-cyber-text-secondary'}`}>Bearish on USD</div>
           </button>
           <button
-            onClick={() => setSelectedToken('BULL')}
+            onClick={() => { setSelectedToken('BULL'); }}
             className={`relative p-4 text-center transition-all ${
               selectedToken === 'BULL'
                 ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
@@ -329,7 +329,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       <div className="border-t border-cyber-border-glow/30 pt-4">
         <button
-          onClick={() => setShowDetails(!showDetails)}
+          onClick={() => { setShowDetails(!showDetails); }}
           className="w-full flex justify-between items-center text-sm text-cyber-text-secondary hover:text-cyber-bright-blue"
         >
           <span>Swap details</span>
@@ -371,7 +371,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       {isConnected ? (
         <button
-          onClick={handleSwap}
+          onClick={() => void handleSwap()}
           disabled={isDisabled}
           className="w-full bg-cyber-bright-blue hover:bg-cyber-bright-blue/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-bright-blue/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
         >
@@ -388,7 +388,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       <Modal
         isOpen={showPriceImpactWarning}
-        onClose={() => setShowPriceImpactWarning(false)}
+        onClose={() => { setShowPriceImpactWarning(false); }}
         title="High Price Impact"
         size="sm"
       >
@@ -410,14 +410,14 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           <div className="flex gap-3">
             <Button
               variant="secondary"
-              onClick={() => setShowPriceImpactWarning(false)}
+              onClick={() => { setShowPriceImpactWarning(false); }}
               className="flex-1"
             >
               Cancel
             </Button>
             <Button
               variant="primary"
-              onClick={handleConfirmHighImpact}
+              onClick={() => void handleConfirmHighImpact()}
               className="flex-1 !bg-red-500 hover:!bg-red-600"
             >
               Swap Anyway

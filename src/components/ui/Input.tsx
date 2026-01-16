@@ -1,4 +1,4 @@
-import { type InputHTMLAttributes, type ReactNode, forwardRef } from 'react'
+import { type InputHTMLAttributes, type ReactNode } from 'react'
 
 interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   label?: string
@@ -6,8 +6,7 @@ interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
   rightElement?: ReactNode
 }
 
-export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ label, error, rightElement, className = '', ...props }, ref) => {
+export const Input = ({ ref, label, error, rightElement, className = '', ...props }: InputProps & { ref?: React.RefObject<HTMLInputElement | null> }) => {
     return (
       <div className="w-full">
         {label && (
@@ -39,6 +38,5 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
       </div>
     )
   }
-)
 
 Input.displayName = 'Input'

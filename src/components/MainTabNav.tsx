@@ -62,7 +62,7 @@ export function MainTabNav({ activeTab, onTabChange }: MainTabNavProps) {
         return (
           <button
             key={tab.id}
-            onClick={() => onTabChange(tab.id)}
+            onClick={() => { onTabChange(tab.id); }}
             className={`
               flex-1 flex items-center gap-3 px-6 py-5 text-left transition-colors -mb-[2px]
               ${isActive

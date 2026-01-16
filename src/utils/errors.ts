@@ -46,7 +46,7 @@ function cleanErrorMessage(message: string): string {
   }
 
   // Execution reverted with reason
-  const revertMatch = message.match(/execution reverted: (.+?)(?:\n|$|")/i)
+  const revertMatch = /execution reverted: (.+?)(?:\n|$|")/i.exec(message)
   if (revertMatch) {
     return revertMatch[1].trim()
   }

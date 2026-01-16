@@ -1,5 +1,6 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRef, useEffect } from 'react'
+import { zeroAddress } from 'viem'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -8,12 +9,13 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
+  const queryAddress = address ?? zeroAddress
 
   const { data, isLoading, error, refetch } = useReadContract({
     address: routerAddress,
     abi: LEVERAGE_ROUTER_ABI,
     functionName: 'getPosition',
-    args: [address!],
+    args: [queryAddress],
     query: {
       enabled: !!address && !!routerAddress,
     },
@@ -23,7 +25,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     address: routerAddress,
     abi: LEVERAGE_ROUTER_ABI,
     functionName: 'getHealthFactor',
-    args: [address!],
+    args: [queryAddress],
     query: {
       enabled: !!address && !!routerAddress && !!data && data[0] > 0n,
     },
@@ -33,7 +35,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     address: routerAddress,
     abi: LEVERAGE_ROUTER_ABI,
     functionName: 'getLiquidationPrice',
-    args: [address!],
+    args: [queryAddress],
     query: {
       enabled: !!address && !!routerAddress && !!data && data[0] > 0n,
     },

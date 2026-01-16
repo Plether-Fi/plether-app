@@ -1,5 +1,5 @@
 import { useAccount, useReadContract } from 'wagmi'
-import { type Address } from 'viem'
+import { type Address, zeroAddress } from 'viem'
 import { ERC20_ABI } from '../contracts/abis'
 
 export function useAllowance(tokenAddress: Address, spenderAddress: Address) {
@@ -9,7 +9,7 @@ export function useAllowance(tokenAddress: Address, spenderAddress: Address) {
     address: tokenAddress,
     abi: ERC20_ABI,
     functionName: 'allowance',
-    args: [address!, spenderAddress],
+    args: [address ?? zeroAddress, spenderAddress],
     query: {
       enabled: !!address,
     },

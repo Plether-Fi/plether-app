@@ -27,9 +27,9 @@ export function Dashboard() {
     location.pathname === '/yield' ? 'yield' : 'trade'
 
   const handleTabChange = (tab: MainTab) => {
-    if (tab === 'leverage') navigate('/leverage')
-    else if (tab === 'yield') navigate('/yield')
-    else navigate('/')
+    if (tab === 'leverage') void navigate('/leverage')
+    else if (tab === 'yield') void navigate('/yield')
+    else void navigate('/')
   }
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
@@ -63,9 +63,9 @@ export function Dashboard() {
       await closeBullPosition(bullPosition.debt, bullPosition.collateral, slippageBps, deadline)
     }
 
-    bearPosition.refetch()
-    bullPosition.refetch()
-    refetchBalances()
+    void bearPosition.refetch()
+    void bullPosition.refetch()
+    void refetchBalances()
   }
 
   const positions: LeveragePosition[] = []
@@ -175,7 +175,7 @@ export function Dashboard() {
                       setSelectedPosition(position)
                       setAdjustModalOpen(true)
                     }}
-                    onClose={() => handleClosePosition(position)}
+                    onClose={() => void handleClosePosition(position)}
                     isClosing={position.side === 'BEAR' ? bearClosePending : bullClosePending}
                   />
                 ))}
@@ -194,12 +194,12 @@ export function Dashboard() {
                   usdcBalance={usdcBalance}
                   bearBalance={bearBalance}
                   bullBalance={bullBalance}
-                  refetchBalances={refetchBalances}
+                  refetchBalances={() => void refetchBalances()}
                 />
               )}
 
               {mainTab === 'leverage' && (
-                <LeverageCard usdcBalance={usdcBalance} refetchBalances={refetchBalances} />
+                <LeverageCard usdcBalance={usdcBalance} refetchBalances={() => void refetchBalances()} />
               )}
 
               {mainTab === 'yield' && (
@@ -236,9 +236,9 @@ export function Dashboard() {
               }}
               position={selectedPosition}
               onSuccess={() => {
-                bearPosition.refetch()
-                bullPosition.refetch()
-                refetchBalances()
+                void bearPosition.refetch()
+                void bullPosition.refetch()
+                void refetchBalances()
               }}
             />
           )}

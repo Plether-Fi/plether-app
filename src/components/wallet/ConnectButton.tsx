@@ -25,12 +25,12 @@ export function ConnectButton() {
     }
   }
 
-  const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId as typeof SUPPORTED_CHAIN_IDS[number])
+  const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
 
   if (!isConnected) {
     return (
       <button
-        onClick={() => open()}
+        onClick={() => void open()}
         className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 font-medium text-sm"
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
@@ -56,18 +56,18 @@ export function ConnectButton() {
 
       {/* Account button */}
       <button
-        onClick={() => open({ view: 'Account' })}
+        onClick={() => void open({ view: 'Account' })}
         className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 group"
       >
         <div className="w-2 h-2 rounded-full bg-cyber-neon-green shadow-md shadow-cyber-neon-green/50" />
         <span className="font-medium text-xs sm:text-sm">
-          {formatAddress(address || '')}
+          {formatAddress(address ?? '')}
         </span>
       </button>
 
       {/* Disconnect button */}
       <button
-        onClick={() => disconnect()}
+        onClick={() => { disconnect(); }}
         className="p-2 text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
         title="Disconnect"
       >

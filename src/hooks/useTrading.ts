@@ -1,6 +1,6 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi'
 import { useRef, useEffect, useCallback, useState } from 'react'
-import { type Address } from 'viem'
+import { zeroAddress } from 'viem'
 import { CURVE_POOL_ABI, ZAP_ROUTER_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -340,12 +340,13 @@ export function useZapBuyWithPermit() {
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
   const [isSigningPermit, setIsSigningPermit] = useState(false)
+  const queryAddress = address ?? zeroAddress
 
   const { data: nonce } = useReadContract({
     address: addresses?.USDC,
     abi: ERC20_ABI,
     functionName: 'nonces',
-    args: [address!],
+    args: [queryAddress],
     query: { enabled: !!address && !!addresses },
   })
 
@@ -397,7 +398,7 @@ export function useZapBuyWithPermit() {
           name: tokenName,
           version: '1',
           chainId: chainId,
-          verifyingContract: addresses.USDC as Address,
+          verifyingContract: addresses.USDC,
         },
         types: {
           Permit: [
@@ -411,7 +412,7 @@ export function useZapBuyWithPermit() {
         primaryType: 'Permit',
         message: {
           owner: address,
-          spender: addresses.ZAP_ROUTER as Address,
+          spender: addresses.ZAP_ROUTER,
           value: usdcAmount,
           nonce: nonce,
           deadline: deadline,
@@ -420,7 +421,7 @@ export function useZapBuyWithPermit() {
       setIsSigningPermit(false)
 
       const r = signature.slice(0, 66) as `0x${string}`
-      const s = `0x${signature.slice(66, 130)}` as `0x${string}`
+      const s = `0x${signature.slice(66, 130)}`
       const v = parseInt(signature.slice(130, 132), 16)
 
       writeContract(
@@ -466,12 +467,13 @@ export function useZapSellWithPermit() {
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
   const [isSigningPermit, setIsSigningPermit] = useState(false)
+  const queryAddress = address ?? zeroAddress
 
   const { data: nonce } = useReadContract({
     address: addresses?.DXY_BULL,
     abi: ERC20_ABI,
     functionName: 'nonces',
-    args: [address!],
+    args: [queryAddress],
     query: { enabled: !!address && !!addresses },
   })
 
@@ -523,7 +525,7 @@ export function useZapSellWithPermit() {
           name: tokenName,
           version: '1',
           chainId: chainId,
-          verifyingContract: addresses.DXY_BULL as Address,
+          verifyingContract: addresses.DXY_BULL,
         },
         types: {
           Permit: [
@@ -537,7 +539,7 @@ export function useZapSellWithPermit() {
         primaryType: 'Permit',
         message: {
           owner: address,
-          spender: addresses.ZAP_ROUTER as Address,
+          spender: addresses.ZAP_ROUTER,
           value: bullAmount,
           nonce: nonce,
           deadline: deadline,
@@ -546,7 +548,7 @@ export function useZapSellWithPermit() {
       setIsSigningPermit(false)
 
       const r = signature.slice(0, 66) as `0x${string}`
-      const s = `0x${signature.slice(66, 130)}` as `0x${string}`
+      const s = `0x${signature.slice(66, 130)}`
       const v = parseInt(signature.slice(130, 132), 16)
 
       writeContract(

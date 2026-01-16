@@ -1,6 +1,6 @@
 import { type Address } from 'viem'
 
-export type ContractAddresses = {
+export interface ContractAddresses {
   USDC: Address
   DXY_BEAR: Address
   DXY_BULL: Address
@@ -28,14 +28,18 @@ const addressModules = import.meta.glob<{ default: Record<string, string> }>(
 )
 
 function loadAddresses(filename: string): ContractAddresses | null {
-  const module = addressModules[`./${filename}`]
-  return module ? (module.default as ContractAddresses) : null
+  const module = addressModules[`./${filename}`] as { default: ContractAddresses } | undefined
+  return module?.default ?? null
 }
 
 const MAINNET_ADDRESSES = loadAddresses('addresses.mainnet.json')
 const LOCAL_ADDRESSES = loadAddresses('addresses.local.json')
 
-export const SEPOLIA_ADDRESSES = loadAddresses('addresses.sepolia.json')!
+const sepoliaAddresses = loadAddresses('addresses.sepolia.json')
+if (!sepoliaAddresses) {
+  throw new Error('Sepolia addresses not found')
+}
+export const SEPOLIA_ADDRESSES = sepoliaAddresses
 
 export function getAddresses(chainId: number): ContractAddresses {
   switch (chainId) {
@@ -45,17 +49,17 @@ export function getAddresses(chainId: number): ContractAddresses {
       }
       return MAINNET_ADDRESSES
     case 11155111:
-      if (!SEPOLIA_ADDRESSES) {
-        throw new Error('Sepolia addresses not found')
-      }
       return SEPOLIA_ADDRESSES
     case 31337:
       if (!LOCAL_ADDRESSES) {
         console.warn('Local addresses not found. Copy addresses.local.example.json to addresses.local.json')
-        return SEPOLIA_ADDRESSES!
+        return SEPOLIA_ADDRESSES
       }
       return LOCAL_ADDRESSES
     default:
-      return MAINNET_ADDRESSES!
+      if (!MAINNET_ADDRESSES) {
+        return SEPOLIA_ADDRESSES
+      }
+      return MAINNET_ADDRESSES
   }
 }

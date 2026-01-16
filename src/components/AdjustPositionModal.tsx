@@ -38,9 +38,9 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
   useEffect(() => {
     if (approveSuccess && !approveHandledRef.current) {
       approveHandledRef.current = true
-      refetchAllowance()
+      void refetchAllowance()
       if (pendingAction && pendingAmountRef.current > 0n) {
-        addCollateral(pendingAmountRef.current)
+        void addCollateral(pendingAmountRef.current)
         pendingAmountRef.current = 0n
         setPendingAction(false)
       }
@@ -128,7 +128,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
             <input
               type="number"
               value={amount}
-              onChange={(e) => setAmount(e.target.value)}
+              onChange={(e) => { setAmount(e.target.value); }}
               placeholder="0.00"
               className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 py-3 pl-4 pr-20 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
             />
@@ -150,7 +150,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
         </div>
 
         <button
-          onClick={handleConfirm}
+          onClick={() => void handleConfirm()}
           disabled={isDisabled}
           className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
         >

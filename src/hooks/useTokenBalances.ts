@@ -1,10 +1,12 @@
 import { useAccount, useReadContracts } from 'wagmi'
+import { zeroAddress } from 'viem'
 import { ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 
 export function useTokenBalances() {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
+  const queryAddress = address ?? zeroAddress
 
   const { data, isLoading, error, refetch } = useReadContracts({
     contracts: addresses ? [
@@ -12,31 +14,31 @@ export function useTokenBalances() {
         address: addresses.USDC,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [queryAddress],
       },
       {
         address: addresses.DXY_BEAR,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [queryAddress],
       },
       {
         address: addresses.DXY_BULL,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [queryAddress],
       },
       {
         address: addresses.SDXY_BEAR,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [queryAddress],
       },
       {
         address: addresses.SDXY_BULL,
         abi: ERC20_ABI,
         functionName: 'balanceOf',
-        args: [address!],
+        args: [queryAddress],
       },
     ] : [],
     query: {

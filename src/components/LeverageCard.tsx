@@ -54,9 +54,9 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
   useEffect(() => {
     if (approveSuccess && !approveHandledRef.current) {
       approveHandledRef.current = true
-      refetchAllowance()
+      void refetchAllowance()
       if (pendingOpen && pendingAmountRef.current > 0n) {
-        executeOpenPosition(pendingAmountRef.current)
+        void executeOpenPosition(pendingAmountRef.current)
         pendingAmountRef.current = 0n
         setPendingOpen(false)
       }
@@ -114,7 +114,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
         <label className="text-sm font-medium text-cyber-text-secondary">Position Side</label>
         <div className="grid grid-cols-2 gap-4">
           <button
-            onClick={() => setSelectedSide('BEAR')}
+            onClick={() => { setSelectedSide('BEAR'); }}
             className={`relative p-4 text-center transition-all ${
               selectedSide === 'BEAR'
                 ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
@@ -125,7 +125,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
             <div className={`text-xs mt-1 ${selectedSide === 'BEAR' ? 'text-cyber-electric-fuchsia/70' : 'text-cyber-text-secondary'}`}>Bearish on USD</div>
           </button>
           <button
-            onClick={() => setSelectedSide('BULL')}
+            onClick={() => { setSelectedSide('BULL'); }}
             className={`relative p-4 text-center transition-all ${
               selectedSide === 'BULL'
                 ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
@@ -160,7 +160,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
           max="5"
           step="0.1"
           value={leverage}
-          onChange={(e) => setLeverage(parseFloat(e.target.value))}
+          onChange={(e) => { setLeverage(parseFloat(e.target.value)); }}
           className="w-full h-2 bg-cyber-surface-light appearance-none cursor-pointer accent-cyber-electric-fuchsia"
         />
         <div className="flex justify-between text-xs text-cyber-text-secondary mt-1">
@@ -190,7 +190,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
 
       {isConnected ? (
         <button
-          onClick={handleOpenPosition}
+          onClick={() => void handleOpenPosition()}
           disabled={isDisabled}
           className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
         >

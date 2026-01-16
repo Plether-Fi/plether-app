@@ -20,8 +20,8 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
     { chain: anvil, name: 'Anvil (Local)', icon: 'terminal' },
   ]
 
-  const handleSwitch = async (targetChainId: typeof SUPPORTED_CHAIN_IDS[number]) => {
-    await switchChain({ chainId: targetChainId })
+  const handleSwitch = (targetChainId: typeof SUPPORTED_CHAIN_IDS[number]) => {
+    switchChain({ chainId: targetChainId })
     onClose()
   }
 
@@ -33,7 +33,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
           return (
             <button
               key={chain.id}
-              onClick={() => handleSwitch(chain.id as typeof SUPPORTED_CHAIN_IDS[number])}
+              onClick={() => { handleSwitch(chain.id) }}
               disabled={isPending}
               className={`
                 w-full flex items-center gap-3 px-4 py-3  transition-all
@@ -68,7 +68,7 @@ export function WrongNetworkBanner() {
   const chainId = useChainId()
   const { switchChain, isPending } = useSwitchChain()
 
-  const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId as typeof SUPPORTED_CHAIN_IDS[number])
+  const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
 
   if (!isWrongNetwork) return null
 
@@ -82,7 +82,7 @@ export function WrongNetworkBanner() {
           </p>
         </div>
         <button
-          onClick={() => switchChain({ chainId: mainnet.id })}
+          onClick={() => { switchChain({ chainId: mainnet.id }) }}
           disabled={isPending}
           className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyber-electric-fuchsia/20"
         >

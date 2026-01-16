@@ -28,7 +28,7 @@ export function useBasketOraclePrice() {
   const updatedAt = roundData?.[3] ?? 0n
 
   return {
-    price: price < 0n ? 0n : BigInt(price),
+    price: price < 0n ? 0n : price,
     decimals: decimals ?? 8,
     lastUpdated: updatedAt,
     isLoading: priceLoading,

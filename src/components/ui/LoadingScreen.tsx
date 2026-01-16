@@ -43,7 +43,7 @@ export function LoadingScreen({
                   ? 'bg-cyber-neon-green shadow-[0_0_12px_rgba(0,255,153,0.8)]'
                   : 'bg-cyber-warning-text shadow-[0_0_12px_rgba(255,215,0,0.8)]'
             }`}
-            style={{ width: `${progress}%` }}
+            style={{ width: `${String(progress)}%` }}
           />
         </div>
       </div>

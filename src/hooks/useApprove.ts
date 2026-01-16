@@ -75,7 +75,7 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
     isPending,
     isConfirming,
     isSuccess,
-    error: writeError || receiptError,
+    error: writeError ?? receiptError,
     reset,
   }
 }

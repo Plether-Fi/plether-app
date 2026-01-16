@@ -139,7 +139,7 @@ export function useMint() {
     try {
       writeContract(
         {
-          address: addresses?.SYNTHETIC_SPLITTER,
+          address: addresses.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
           functionName: 'mint',
           args: [pairAmount],
@@ -222,7 +222,7 @@ export function useBurn() {
     try {
       writeContract(
         {
-          address: addresses?.SYNTHETIC_SPLITTER,
+          address: addresses.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
           functionName: 'burn',
           args: [pairAmount],

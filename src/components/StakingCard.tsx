@@ -103,7 +103,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
     txModal.open({
       title: `Staking DXY-${side}`,
       steps: ['Sign permit', `Stake DXY-${side}`, 'Awaiting confirmation'],
-      onRetry: handleStake,
+      onRetry: () => void handleStake(),
     })
     await stakeWithPermit(amountBigInt)
   }
@@ -113,7 +113,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
     txModal.open({
       title: `Unstaking sDXY-${side}`,
       steps: [`Unstake sDXY-${side}`, 'Awaiting confirmation'],
-      onRetry: handleUnstake,
+      onRetry: () => void handleUnstake(),
     })
     await unstake(amountBigInt)
   }
@@ -208,7 +208,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
         />
 
         <button
-          onClick={handleAction}
+          onClick={() => void handleAction()}
           disabled={isDisabled}
           className={`w-full ${bgColor} hover:opacity-90 ${isBear ? 'text-cyber-text-primary' : 'text-cyber-bg'} font-semibold py-4 px-6 shadow-lg ${shadowColor}/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none`}
         >

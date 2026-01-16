@@ -1,6 +1,6 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi'
 import { useRef, useEffect, useCallback, useState } from 'react'
-import { type Address } from 'viem'
+import { zeroAddress } from 'viem'
 import { STAKED_TOKEN_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -10,12 +10,13 @@ export function useStakedBalance(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const stakingAddress = side === 'BEAR' ? addresses?.STAKING_BEAR : addresses?.STAKING_BULL
+  const queryAddress = address ?? zeroAddress
 
   const { data: shares, isLoading: sharesLoading, refetch: refetchShares } = useReadContract({
     address: stakingAddress,
     abi: ERC20_ABI,
     functionName: 'balanceOf',
-    args: [address!],
+    args: [queryAddress],
     query: {
       enabled: !!address && !!stakingAddress,
     },
@@ -36,8 +37,8 @@ export function useStakedBalance(side: 'BEAR' | 'BULL') {
     assets: assets ?? shares ?? 0n,
     isLoading: sharesLoading || assetsLoading,
     refetch: () => {
-      refetchShares()
-      refetchAssets()
+      void refetchShares()
+      void refetchAssets()
     },
   }
 }
@@ -290,12 +291,13 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
   const [isSigningPermit, setIsSigningPermit] = useState(false)
   const [permitError, setPermitError] = useState<Error | null>(null)
   const [permitCompleted, setPermitCompleted] = useState(false)
+  const queryAddress = address ?? zeroAddress
 
   const { data: nonce } = useReadContract({
     address: tokenAddress,
     abi: ERC20_ABI,
     functionName: 'nonces',
-    args: [address!],
+    args: [queryAddress],
     query: { enabled: !!address && !!tokenAddress },
   })
 
@@ -354,7 +356,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
           name: tokenName,
           version: '1',
           chainId: chainId,
-          verifyingContract: tokenAddress as Address,
+          verifyingContract: tokenAddress,
         },
         types: {
           Permit: [
@@ -368,7 +370,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
         primaryType: 'Permit',
         message: {
           owner: address,
-          spender: stakingAddress as Address,
+          spender: stakingAddress,
           value: amount,
           nonce: nonce,
           deadline: deadline,
@@ -378,7 +380,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
       setPermitCompleted(true)
 
       const r = signature.slice(0, 66) as `0x${string}`
-      const s = `0x${signature.slice(66, 130)}` as `0x${string}`
+      const s = `0x${signature.slice(66, 130)}`
       const v = parseInt(signature.slice(130, 132), 16)
 
       writeContract(
@@ -425,7 +427,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
     isSigningPermit,
     isConfirming,
     isSuccess,
-    error: permitError || error,
+    error: permitError ?? error,
     permitCompleted,
     reset: resetAll,
     hash,
