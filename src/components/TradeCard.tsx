@@ -7,7 +7,7 @@ import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useAllowance, use
 import { getAddresses } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import { formatAmount } from '../utils/formatters'
-import { parseTransactionError } from '../utils/errors'
+import { parseTransactionError, getErrorMessage } from '../utils/errors'
 
 type TradeMode = 'buy' | 'sell'
 type TokenSide = 'BEAR' | 'BULL'
@@ -161,7 +161,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     } else if (approveConfirming) {
       modal.setStepInProgress(1)
     } else if (approveError) {
-      modal.setError(0, parseTransactionError(approveError))
+      modal.setError(0, getErrorMessage(parseTransactionError(approveError)))
     }
   }, [approvePending, approveConfirming, approveError])
 
@@ -175,7 +175,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     } else if (curveConfirming || zapConfirming) {
       modal.setStepInProgress(swapStepOffset + 1)
     } else if (curveError || zapError) {
-      modal.setError(swapStepOffset, parseTransactionError(curveError ?? zapError))
+      modal.setError(swapStepOffset, getErrorMessage(parseTransactionError(curveError ?? zapError)))
     }
   }, [curvePending, zapPending, curveConfirming, zapConfirming, curveError, zapError, pendingSwap, approveSuccess])
 

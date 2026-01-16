@@ -1,9 +1,24 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRef, useEffect } from 'react'
+import { Result } from 'better-result'
 import { PLETH_CORE_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
-import { parseTransactionError } from '../utils/errors'
+import {
+  parseTransactionError,
+  getErrorMessage,
+  type TransactionError,
+} from '../utils/errors'
+
+export class NotConnectedError extends Error {
+  readonly _tag = 'NotConnectedError' as const
+  constructor() {
+    super('Wallet not connected or wrong network')
+  }
+}
+
+export type MintError = NotConnectedError | TransactionError
+export type BurnError = NotConnectedError | TransactionError
 
 export function usePlethCoreStatus() {
   const { chainId } = useAccount()
@@ -115,16 +130,19 @@ export function useMint() {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const mint = async (pairAmount: bigint) => {
-    if (!addresses) return
+  const mint = async (pairAmount: bigint): Promise<Result<`0x${string}`, MintError>> => {
+    if (!addresses) {
+      return Result.err(new NotConnectedError())
+    }
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId
@@ -136,34 +154,46 @@ export function useMint() {
       description: 'Minting DXY-BEAR + DXY-BULL',
     })
 
-    try {
-      writeContract(
-        {
-          address: addresses.SYNTHETIC_SPLITTER,
-          abi: PLETH_CORE_ABI,
-          functionName: 'mint',
-          args: [pairAmount],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: addresses.SYNTHETIC_SPLITTER,
+              abi: PLETH_CORE_ABI,
+              functionName: 'mint',
+              args: [pairAmount],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch (err) {
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {
@@ -199,16 +229,20 @@ export function useBurn() {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const burn = async (pairAmount: bigint) => {
-    if (!addresses) return
+  const burn = async (pairAmount: bigint): Promise<Result<`0x${string}`, BurnError>> => {
+    if (!addresses) {
+      return Result.err(new NotConnectedError())
+    }
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -219,34 +253,46 @@ export function useBurn() {
       description: 'Redeeming DXY-BEAR + DXY-BULL for USDC',
     })
 
-    try {
-      writeContract(
-        {
-          address: addresses.SYNTHETIC_SPLITTER,
-          abi: PLETH_CORE_ABI,
-          functionName: 'burn',
-          args: [pairAmount],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: addresses.SYNTHETIC_SPLITTER,
+              abi: PLETH_CORE_ABI,
+              functionName: 'burn',
+              args: [pairAmount],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch (err) {
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {

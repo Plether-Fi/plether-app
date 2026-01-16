@@ -1,9 +1,18 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRef, useEffect } from 'react'
 import { zeroAddress } from 'viem'
+import { Result } from 'better-result'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
+import {
+  parseTransactionError,
+  getErrorMessage,
+  type TransactionError,
+} from '../utils/errors'
+import { NotConnectedError } from './usePlethCore'
+
+export type LeverageError = NotConnectedError | TransactionError
 
 export function useLeveragePosition(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
@@ -89,7 +98,7 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
     hash,
   })
 
@@ -102,13 +111,25 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'failed' })
+      const txError = parseTransactionError(receiptError)
+      updateTransaction(txIdRef.current, {
+        status: 'failed',
+        errorMessage: getErrorMessage(txError),
+      })
       txIdRef.current = null
     }
-  }, [isError, updateTransaction])
+  }, [isError, receiptError, updateTransaction])
 
-  const openPosition = async (principal: bigint, leverage: bigint, maxSlippageBps: bigint, deadline: bigint) => {
-    if (!routerAddress) return
+  const openPosition = async (
+    principal: bigint,
+    leverage: bigint,
+    maxSlippageBps: bigint,
+    deadline: bigint
+  ): Promise<Result<`0x${string}`, LeverageError>> => {
+    if (!routerAddress) {
+      return Result.err(new NotConnectedError())
+    }
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -119,28 +140,46 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
       description: `Opening ${side} leverage position`,
     })
 
-    try {
-      writeContract(
-        {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'openLeverage',
-          args: [principal, leverage, maxSlippageBps, deadline],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: routerAddress,
+              abi: LEVERAGE_ROUTER_ABI,
+              functionName: 'openLeverage',
+              args: [principal, leverage, maxSlippageBps, deadline],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {
@@ -164,7 +203,7 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
     hash,
   })
 
@@ -177,13 +216,25 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'failed' })
+      const txError = parseTransactionError(receiptError)
+      updateTransaction(txIdRef.current, {
+        status: 'failed',
+        errorMessage: getErrorMessage(txError),
+      })
       txIdRef.current = null
     }
-  }, [isError, updateTransaction])
+  }, [isError, receiptError, updateTransaction])
 
-  const closePosition = async (debtToRepay: bigint, collateralToWithdraw: bigint, maxSlippageBps: bigint, deadline: bigint) => {
-    if (!routerAddress) return
+  const closePosition = async (
+    debtToRepay: bigint,
+    collateralToWithdraw: bigint,
+    maxSlippageBps: bigint,
+    deadline: bigint
+  ): Promise<Result<`0x${string}`, LeverageError>> => {
+    if (!routerAddress) {
+      return Result.err(new NotConnectedError())
+    }
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -194,28 +245,46 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
       description: `Closing ${side} leverage position`,
     })
 
-    try {
-      writeContract(
-        {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'closeLeverage',
-          args: [debtToRepay, collateralToWithdraw, maxSlippageBps, deadline],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: routerAddress,
+              abi: LEVERAGE_ROUTER_ABI,
+              functionName: 'closeLeverage',
+              args: [debtToRepay, collateralToWithdraw, maxSlippageBps, deadline],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {
@@ -239,7 +308,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
     hash,
   })
 
@@ -252,13 +321,20 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'failed' })
+      const txError = parseTransactionError(receiptError)
+      updateTransaction(txIdRef.current, {
+        status: 'failed',
+        errorMessage: getErrorMessage(txError),
+      })
       txIdRef.current = null
     }
-  }, [isError, updateTransaction])
+  }, [isError, receiptError, updateTransaction])
 
-  const addCollateral = async (amount: bigint) => {
-    if (!routerAddress) return
+  const addCollateral = async (amount: bigint): Promise<Result<`0x${string}`, LeverageError>> => {
+    if (!routerAddress) {
+      return Result.err(new NotConnectedError())
+    }
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -269,32 +345,53 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
       description: 'Adding collateral',
     })
 
-    try {
-      writeContract(
-        {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'addCollateral',
-          args: [amount],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: routerAddress,
+              abi: LEVERAGE_ROUTER_ABI,
+              functionName: 'addCollateral',
+              args: [amount],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
-  const removeCollateral = async (amount: bigint) => {
-    if (!routerAddress) return
+  const removeCollateral = async (amount: bigint): Promise<Result<`0x${string}`, LeverageError>> => {
+    if (!routerAddress) {
+      return Result.err(new NotConnectedError())
+    }
+
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -305,28 +402,46 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
       description: 'Removing collateral',
     })
 
-    try {
-      writeContract(
-        {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'removeCollateral',
-          args: [amount],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: () => {
-            updateTransaction(txId, { status: 'failed' })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: routerAddress,
+              abi: LEVERAGE_ROUTER_ABI,
+              functionName: 'removeCollateral',
+              args: [amount],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch {
-      updateTransaction(txId, { status: 'failed' })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
+import { Result } from 'better-result'
 import { useTransactionStore } from '../../stores/transactionStore'
+import type { ApproveError } from '../useApprove'
 
 const mockWriteContract = vi.fn()
 const mockReset = vi.fn()
@@ -39,6 +41,10 @@ describe('useApprove', () => {
   })
 
   it('adds a pending transaction when approve is called', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
 
     await act(async () => {
@@ -48,11 +54,14 @@ describe('useApprove', () => {
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions).toHaveLength(1)
     expect(pendingTransactions[0].type).toBe('approve')
-    expect(pendingTransactions[0].status).toBe('pending')
     expect(pendingTransactions[0].description).toBe('Approving token spend')
   })
 
   it('calls writeContract with correct arguments', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
     const amount = 100000000n
 
@@ -68,32 +77,43 @@ describe('useApprove', () => {
     expect(callArgs.args[1]).toBe(amount)
   })
 
-  it('updates transaction to confirming when writeContract succeeds', async () => {
+  it('returns Result.ok with hash when writeContract succeeds', async () => {
     mockWriteContract.mockImplementation((_, callbacks) => {
       callbacks.onSuccess('0xapprove123hash')
     })
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
+    let approveResult: Result<`0x${string}`, ApproveError> | undefined
 
     await act(async () => {
-      await result.current.approve(100000000n)
+      approveResult = await result.current.approve(100000000n)
     })
+
+    expect(approveResult).toBeDefined()
+    expect(Result.isOk(approveResult!)).toBe(true)
+    if (Result.isOk(approveResult!)) {
+      expect(approveResult.value).toBe('0xapprove123hash')
+    }
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('confirming')
     expect(pendingTransactions[0].hash).toBe('0xapprove123hash')
   })
 
-  it('updates transaction to failed when writeContract errors', async () => {
+  it('returns Result.err when writeContract errors', async () => {
     mockWriteContract.mockImplementation((_, callbacks) => {
       callbacks.onError(new Error('User rejected'))
     })
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
+    let approveResult: Result<`0x${string}`, ApproveError> | undefined
 
     await act(async () => {
-      await result.current.approve(100000000n)
+      approveResult = await result.current.approve(100000000n)
     })
+
+    expect(approveResult).toBeDefined()
+    expect(Result.isError(approveResult!)).toBe(true)
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('failed')
@@ -151,22 +171,30 @@ describe('useApprove', () => {
     })
   })
 
-  it('handles writeContract throwing an exception', async () => {
+  it('returns Result.err when writeContract throws an exception', async () => {
     mockWriteContract.mockImplementation(() => {
       throw new Error('Network error')
     })
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
+    let approveResult: Result<`0x${string}`, ApproveError> | undefined
 
     await act(async () => {
-      await result.current.approve(100000000n)
+      approveResult = await result.current.approve(100000000n)
     })
+
+    expect(approveResult).toBeDefined()
+    expect(Result.isError(approveResult!)).toBe(true)
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('failed')
   })
 
   it('uses the correct token and spender addresses from hook params', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const customToken = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const
     const customSpender = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const
 

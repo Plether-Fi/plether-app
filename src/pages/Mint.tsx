@@ -3,7 +3,7 @@ import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { formatAmount } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
-import { parseTransactionError } from '../utils/errors'
+import { parseTransactionError, getErrorMessage } from '../utils/errors'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
 import { useTokenBalances, useMint, useBurn, usePreviewMint, usePreviewBurn, useAllowance, useApprove, useTransactionModal } from '../hooks'
@@ -164,7 +164,7 @@ export function Mint() {
     } else if (usdcApproveConfirming) {
       modal.setStepInProgress(1)
     } else if (usdcApproveError) {
-      modal.setError(0, parseTransactionError(usdcApproveError))
+      modal.setError(0, getErrorMessage(parseTransactionError(usdcApproveError)))
     }
   }, [usdcApprovePending, usdcApproveConfirming, usdcApproveError])
 
@@ -177,7 +177,7 @@ export function Mint() {
     } else if (mintConfirming) {
       modal.setStepInProgress(stepOffset + 1)
     } else if (mintError) {
-      modal.setError(stepOffset, parseTransactionError(mintError))
+      modal.setError(stepOffset, getErrorMessage(parseTransactionError(mintError)))
     }
   }, [mintPending, mintConfirming, mintError, needsUsdcApproval, usdcApproveSuccess])
 
@@ -189,7 +189,7 @@ export function Mint() {
     } else if (bearApproveConfirming) {
       modal.setStepInProgress(1)
     } else if (bearApproveError) {
-      modal.setError(0, parseTransactionError(bearApproveError))
+      modal.setError(0, getErrorMessage(parseTransactionError(bearApproveError)))
     }
   }, [bearApprovePending, bearApproveConfirming, bearApproveError])
 
@@ -201,7 +201,7 @@ export function Mint() {
     } else if (bullApproveConfirming) {
       modal.setStepInProgress(3)
     } else if (bullApproveError) {
-      modal.setError(2, parseTransactionError(bullApproveError))
+      modal.setError(2, getErrorMessage(parseTransactionError(bullApproveError)))
     }
   }, [bullApprovePending, bullApproveConfirming, bullApproveError])
 
@@ -214,7 +214,7 @@ export function Mint() {
     } else if (burnConfirming) {
       modal.setStepInProgress(stepOffset + 1)
     } else if (burnError) {
-      modal.setError(stepOffset, parseTransactionError(burnError))
+      modal.setError(stepOffset, getErrorMessage(parseTransactionError(burnError)))
     }
   }, [burnPending, burnConfirming, burnError, needsBearApproval, bearApproveSuccess, needsBullApproval, bullApproveSuccess])
 

@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { renderHook, act, waitFor } from '@testing-library/react'
+import { Result } from 'better-result'
 import { useTransactionStore } from '../../stores/transactionStore'
+import type { MintError } from '../usePlethCore'
 
 const mockWriteContract = vi.fn()
 const mockReset = vi.fn()
@@ -47,6 +49,10 @@ describe('useMint', () => {
   })
 
   it('adds a pending transaction when mint is called', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useMint())
 
     await act(async () => {
@@ -56,11 +62,14 @@ describe('useMint', () => {
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions).toHaveLength(1)
     expect(pendingTransactions[0].type).toBe('mint')
-    expect(pendingTransactions[0].status).toBe('pending')
     expect(pendingTransactions[0].description).toBe('Minting DXY-BEAR + DXY-BULL')
   })
 
   it('calls writeContract with correct arguments', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useMint())
     const pairAmount = 50000000000000000000n
 
@@ -74,32 +83,43 @@ describe('useMint', () => {
     expect(callArgs.args[0]).toBe(pairAmount)
   })
 
-  it('updates transaction to confirming when writeContract succeeds', async () => {
+  it('returns Result.ok with hash when writeContract succeeds', async () => {
     mockWriteContract.mockImplementation((_, callbacks) => {
       callbacks.onSuccess('0xabc123hash')
     })
 
     const { result } = renderHook(() => useMint())
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000000000000000000n)
+      mintResult = await result.current.mint(1000000000000000000n)
     })
+
+    expect(mintResult).toBeDefined()
+    expect(Result.isOk(mintResult!)).toBe(true)
+    if (Result.isOk(mintResult!)) {
+      expect(mintResult.value).toBe('0xabc123hash')
+    }
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('confirming')
     expect(pendingTransactions[0].hash).toBe('0xabc123hash')
   })
 
-  it('updates transaction to failed when writeContract errors', async () => {
+  it('returns Result.err when writeContract errors', async () => {
     mockWriteContract.mockImplementation((_, callbacks) => {
       callbacks.onError(new Error('User rejected'))
     })
 
     const { result } = renderHook(() => useMint())
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000000000000000000n)
+      mintResult = await result.current.mint(1000000000000000000n)
     })
+
+    expect(mintResult).toBeDefined()
+    expect(Result.isError(mintResult!)).toBe(true)
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('failed')
@@ -157,16 +177,20 @@ describe('useMint', () => {
     })
   })
 
-  it('handles writeContract throwing an exception', async () => {
+  it('returns Result.err when writeContract throws an exception', async () => {
     mockWriteContract.mockImplementation(() => {
       throw new Error('Network error')
     })
 
     const { result } = renderHook(() => useMint())
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000000000000000000n)
+      mintResult = await result.current.mint(1000000000000000000n)
     })
+
+    expect(mintResult).toBeDefined()
+    expect(Result.isError(mintResult!)).toBe(true)
 
     const { pendingTransactions } = useTransactionStore.getState()
     expect(pendingTransactions[0].status).toBe('failed')

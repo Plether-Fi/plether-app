@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { type ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { Result } from 'better-result'
+import type { MintError, BurnError } from '../usePlethCore'
 
 // Mock wagmi before importing hooks
 const mockWriteContract = vi.fn()
@@ -75,25 +77,37 @@ describe('useMint', () => {
     expect(typeof result.current.mint).toBe('function')
   })
 
-  it('does nothing when chainId is undefined', async () => {
+  it('returns Result.err when chainId is undefined', async () => {
     mockUseAccount.mockReturnValue({ chainId: undefined })
 
     const { result } = renderHook(() => useMint(), { wrapper: createWrapper() })
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000n)
+      mintResult = await result.current.mint(1000n)
     })
 
+    expect(mintResult).toBeDefined()
+    expect(Result.isError(mintResult!)).toBe(true)
     expect(mockWriteContract).not.toHaveBeenCalled()
     expect(mockAddTransaction).not.toHaveBeenCalled()
   })
 
-  it('calls writeContract with correct parameters', async () => {
+  it('calls writeContract with correct parameters and returns Result.ok', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useMint(), { wrapper: createWrapper() })
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000n)
+      mintResult = await result.current.mint(1000n)
     })
+
+    expect(mintResult).toBeDefined()
+    expect(Result.isOk(mintResult!)).toBe(true)
+    expect((mintResult as { value: string }).value).toBe('0xhash')
 
     expect(mockAddTransaction).toHaveBeenCalledWith({
       id: 'test-uuid-123',
@@ -115,24 +129,21 @@ describe('useMint', () => {
     )
   })
 
-  it('updates transaction on success callback', async () => {
-    let capturedOnSuccess: ((hash: string) => void) | undefined
-
-    mockWriteContract.mockImplementation((_config, options) => {
-      capturedOnSuccess = options.onSuccess
+  it('updates transaction on success callback and returns Result.ok', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xabcd1234')
     })
 
     const { result } = renderHook(() => useMint(), { wrapper: createWrapper() })
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000n)
+      mintResult = await result.current.mint(1000n)
     })
 
-    expect(capturedOnSuccess).toBeDefined()
-
-    act(() => {
-      capturedOnSuccess!('0xabcd1234')
-    })
+    expect(mintResult).toBeDefined()
+    expect(Result.isOk(mintResult!)).toBe(true)
+    expect((mintResult as { value: string }).value).toBe('0xabcd1234')
 
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       hash: '0xabcd1234',
@@ -140,24 +151,20 @@ describe('useMint', () => {
     })
   })
 
-  it('updates transaction on error callback', async () => {
-    let capturedOnError: ((error: Error) => void) | undefined
-
-    mockWriteContract.mockImplementation((_config, options) => {
-      capturedOnError = options.onError
+  it('updates transaction on error callback and returns Result.err', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onError(new Error('User rejected'))
     })
 
     const { result } = renderHook(() => useMint(), { wrapper: createWrapper() })
+    let mintResult: Result<`0x${string}`, MintError> | undefined
 
     await act(async () => {
-      await result.current.mint(1000n)
+      mintResult = await result.current.mint(1000n)
     })
 
-    expect(capturedOnError).toBeDefined()
-
-    act(() => {
-      capturedOnError!(new Error('User rejected'))
-    })
+    expect(mintResult).toBeDefined()
+    expect(Result.isError(mintResult!)).toBe(true)
 
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       status: 'failed',
@@ -252,25 +259,37 @@ describe('useBurn', () => {
     expect(typeof result.current.burn).toBe('function')
   })
 
-  it('does nothing when chainId is undefined', async () => {
+  it('returns Result.err when chainId is undefined', async () => {
     mockUseAccount.mockReturnValue({ chainId: undefined })
 
     const { result } = renderHook(() => useBurn(), { wrapper: createWrapper() })
+    let burnResult: Result<`0x${string}`, BurnError> | undefined
 
     await act(async () => {
-      await result.current.burn(1000n)
+      burnResult = await result.current.burn(1000n)
     })
 
+    expect(burnResult).toBeDefined()
+    expect(Result.isError(burnResult!)).toBe(true)
     expect(mockWriteContract).not.toHaveBeenCalled()
     expect(mockAddTransaction).not.toHaveBeenCalled()
   })
 
-  it('calls writeContract with correct parameters', async () => {
+  it('calls writeContract with correct parameters and returns Result.ok', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xhash')
+    })
+
     const { result } = renderHook(() => useBurn(), { wrapper: createWrapper() })
+    let burnResult: Result<`0x${string}`, BurnError> | undefined
 
     await act(async () => {
-      await result.current.burn(1000n)
+      burnResult = await result.current.burn(1000n)
     })
+
+    expect(burnResult).toBeDefined()
+    expect(Result.isOk(burnResult!)).toBe(true)
+    expect((burnResult as { value: string }).value).toBe('0xhash')
 
     expect(mockAddTransaction).toHaveBeenCalledWith({
       id: 'test-uuid-123',
@@ -292,24 +311,21 @@ describe('useBurn', () => {
     )
   })
 
-  it('updates transaction on success callback', async () => {
-    let capturedOnSuccess: ((hash: string) => void) | undefined
-
-    mockWriteContract.mockImplementation((_config, options) => {
-      capturedOnSuccess = options.onSuccess
+  it('updates transaction on success callback and returns Result.ok', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onSuccess('0xabcd1234')
     })
 
     const { result } = renderHook(() => useBurn(), { wrapper: createWrapper() })
+    let burnResult: Result<`0x${string}`, BurnError> | undefined
 
     await act(async () => {
-      await result.current.burn(1000n)
+      burnResult = await result.current.burn(1000n)
     })
 
-    expect(capturedOnSuccess).toBeDefined()
-
-    act(() => {
-      capturedOnSuccess!('0xabcd1234')
-    })
+    expect(burnResult).toBeDefined()
+    expect(Result.isOk(burnResult!)).toBe(true)
+    expect((burnResult as { value: string }).value).toBe('0xabcd1234')
 
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       hash: '0xabcd1234',
@@ -317,24 +333,20 @@ describe('useBurn', () => {
     })
   })
 
-  it('updates transaction on error callback', async () => {
-    let capturedOnError: ((error: Error) => void) | undefined
-
-    mockWriteContract.mockImplementation((_config, options) => {
-      capturedOnError = options.onError
+  it('updates transaction on error callback and returns Result.err', async () => {
+    mockWriteContract.mockImplementation((_, callbacks) => {
+      callbacks.onError(new Error('User rejected'))
     })
 
     const { result } = renderHook(() => useBurn(), { wrapper: createWrapper() })
+    let burnResult: Result<`0x${string}`, BurnError> | undefined
 
     await act(async () => {
-      await result.current.burn(1000n)
+      burnResult = await result.current.burn(1000n)
     })
 
-    expect(capturedOnError).toBeDefined()
-
-    act(() => {
-      capturedOnError!(new Error('User rejected'))
-    })
+    expect(burnResult).toBeDefined()
+    expect(Result.isError(burnResult!)).toBe(true)
 
     expect(mockUpdateTransaction).toHaveBeenCalledWith('test-uuid-123', {
       status: 'failed',

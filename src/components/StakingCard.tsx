@@ -3,7 +3,7 @@ import { TokenIcon, OutputDisplay } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
 import { parseStakingAmount, getStakingDecimals, SHARE_DECIMALS } from '../utils/staking'
-import { parseTransactionError } from '../utils/errors'
+import { parseTransactionError, getErrorMessage } from '../utils/errors'
 import { useStakeWithPermit, useUnstake, useStakedBalance, usePreviewDeposit, usePreviewRedeem } from '../hooks/useStaking'
 import { useTransactionModal } from '../hooks'
 
@@ -82,7 +82,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
       modal.setStepInProgress(2)
     } else if (stakeError) {
       const stepIndex = permitCompleted ? 1 : 0
-      modal.setError(stepIndex, parseTransactionError(stakeError))
+      modal.setError(stepIndex, getErrorMessage(parseTransactionError(stakeError)))
     }
   }, [isSigningPermit, stakePending, stakeConfirming, stakeError, permitCompleted])
 
@@ -94,7 +94,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
     } else if (unstakeConfirming) {
       modal.setStepInProgress(1)
     } else if (unstakeError) {
-      modal.setError(0, parseTransactionError(unstakeError))
+      modal.setError(0, getErrorMessage(parseTransactionError(unstakeError)))
     }
   }, [unstakePending, unstakeConfirming, unstakeError])
 

@@ -26,3 +26,6 @@ dist-ssr
 storybook-static
 coverage
 .env
+
+# opensrc - source code for packages
+opensrc/

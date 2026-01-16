@@ -1,9 +1,16 @@
 import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { useRef, useEffect } from 'react'
 import { type Address } from 'viem'
+import { Result } from 'better-result'
 import { ERC20_ABI } from '../contracts/abis'
 import { useTransactionStore } from '../stores/transactionStore'
-import { parseTransactionError } from '../utils/errors'
+import {
+  parseTransactionError,
+  getErrorMessage,
+  type TransactionError,
+} from '../utils/errors'
+
+export type ApproveError = TransactionError
 
 export function useApprove(tokenAddress: Address, spenderAddress: Address) {
   const addTransaction = useTransactionStore((s) => s.addTransaction)
@@ -25,15 +32,16 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const approve = async (amount: bigint) => {
+  const approve = async (amount: bigint): Promise<Result<`0x${string}`, ApproveError>> => {
     const txId = crypto.randomUUID()
     txIdRef.current = txId
     addTransaction({
@@ -44,34 +52,46 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
       description: 'Approving token spend',
     })
 
-    try {
-      writeContract(
-        {
-          address: tokenAddress,
-          abi: ERC20_ABI,
-          functionName: 'approve',
-          args: [spenderAddress, amount],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: tokenAddress,
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [spenderAddress, amount],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch (err) {
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   const reset = () => {

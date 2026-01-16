@@ -1,10 +1,18 @@
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, useSignTypedData } from 'wagmi'
 import { useRef, useEffect, useCallback, useState } from 'react'
 import { zeroAddress } from 'viem'
+import { Result } from 'better-result'
 import { STAKED_TOKEN_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
-import { parseTransactionError } from '../utils/errors'
+import {
+  parseTransactionError,
+  getErrorMessage,
+  type TransactionError,
+} from '../utils/errors'
+import { NotConnectedError } from './usePlethCore'
+
+export type StakingError = NotConnectedError | TransactionError
 
 export function useStakedBalance(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
@@ -133,16 +141,19 @@ export function useStake(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const stake = async (amount: bigint) => {
-    if (!address || !stakingAddress) return
+  const stake = async (amount: bigint): Promise<Result<`0x${string}`, StakingError>> => {
+    if (!address || !stakingAddress) {
+      return Result.err(new NotConnectedError())
+    }
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId
@@ -154,34 +165,46 @@ export function useStake(side: 'BEAR' | 'BULL') {
       description: `Staking DXY-${side}`,
     })
 
-    try {
-      writeContract(
-        {
-          address: stakingAddress,
-          abi: STAKED_TOKEN_ABI,
-          functionName: 'deposit',
-          args: [amount, address],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: stakingAddress,
+              abi: STAKED_TOKEN_ABI,
+              functionName: 'deposit',
+              args: [amount, address],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch (err) {
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {
@@ -218,16 +241,19 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const unstake = async (shares: bigint) => {
-    if (!address || !stakingAddress) return
+  const unstake = async (shares: bigint): Promise<Result<`0x${string}`, StakingError>> => {
+    if (!address || !stakingAddress) {
+      return Result.err(new NotConnectedError())
+    }
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId
@@ -239,34 +265,46 @@ export function useUnstake(side: 'BEAR' | 'BULL') {
       description: `Unstaking sDXY-${side}`,
     })
 
-    try {
-      writeContract(
-        {
-          address: stakingAddress,
-          abi: STAKED_TOKEN_ABI,
-          functionName: 'redeem',
-          args: [shares, address, address],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
+    return Result.tryPromise({
+      try: () =>
+        new Promise<`0x${string}`>((resolve, reject) => {
+          writeContract(
+            {
+              address: stakingAddress,
+              abi: STAKED_TOKEN_ABI,
+              functionName: 'redeem',
+              args: [shares, address, address],
+            },
+            {
+              onSuccess: (hash) => {
+                updateTransaction(txId, { hash, status: 'confirming' })
+                resolve(hash)
+              },
+              onError: (err) => {
+                const txError = parseTransactionError(err)
+                updateTransaction(txId, {
+                  status: 'failed',
+                  errorMessage: getErrorMessage(txError),
+                })
+                txIdRef.current = null
+                reject(txError)
+              },
+            }
+          )
+        }),
+      catch: (err) => {
+        if (err instanceof Error && '_tag' in err) {
+          return err as TransactionError
         }
-      )
-    } catch (err) {
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
+        const txError = parseTransactionError(err)
+        updateTransaction(txId, {
+          status: 'failed',
+          errorMessage: getErrorMessage(txError),
+        })
+        txIdRef.current = null
+        return txError
+      },
+    })
   }
 
   return {
@@ -324,96 +362,115 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
 
   useEffect(() => {
     if (isError && txIdRef.current) {
+      const txError = parseTransactionError(receiptError)
       updateTransaction(txIdRef.current, {
         status: 'failed',
-        errorMessage: parseTransactionError(receiptError),
+        errorMessage: getErrorMessage(txError),
       })
       txIdRef.current = null
     }
   }, [isError, receiptError, updateTransaction])
 
-  const stakeWithPermit = useCallback(async (amount: bigint) => {
-    if (!address || !stakingAddress || !tokenAddress || !chainId || nonce === undefined || !tokenName) return
+  const stakeWithPermit = useCallback(
+    async (amount: bigint): Promise<Result<`0x${string}`, StakingError>> => {
+      if (!address || !stakingAddress || !tokenAddress || !chainId || nonce === undefined || !tokenName) {
+        return Result.err(new NotConnectedError())
+      }
 
-    setPermitError(null)
-    setPermitCompleted(false)
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'stake',
-      status: 'pending',
-      hash: undefined,
-      description: `Staking DXY-${side}`,
-    })
+      setPermitError(null)
+      setPermitCompleted(false)
+      const txId = crypto.randomUUID()
+      txIdRef.current = txId
+      addTransaction({
+        id: txId,
+        type: 'stake',
+        status: 'pending',
+        hash: undefined,
+        description: `Staking DXY-${side}`,
+      })
 
-    try {
-      setIsSigningPermit(true)
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+      return Result.tryPromise({
+        try: async () => {
+          setIsSigningPermit(true)
+          const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
 
-      const signature = await signTypedDataAsync({
-        domain: {
-          name: tokenName,
-          version: '1',
-          chainId: chainId,
-          verifyingContract: tokenAddress,
+          const signature = await signTypedDataAsync({
+            domain: {
+              name: tokenName,
+              version: '1',
+              chainId: chainId,
+              verifyingContract: tokenAddress,
+            },
+            types: {
+              Permit: [
+                { name: 'owner', type: 'address' },
+                { name: 'spender', type: 'address' },
+                { name: 'value', type: 'uint256' },
+                { name: 'nonce', type: 'uint256' },
+                { name: 'deadline', type: 'uint256' },
+              ],
+            },
+            primaryType: 'Permit',
+            message: {
+              owner: address,
+              spender: stakingAddress,
+              value: amount,
+              nonce: nonce,
+              deadline: deadline,
+            },
+          })
+          setIsSigningPermit(false)
+          setPermitCompleted(true)
+
+          const r: `0x${string}` = signature.slice(0, 66) as `0x${string}`
+          const s: `0x${string}` = `0x${signature.slice(66, 130)}`
+          const v = parseInt(signature.slice(130, 132), 16)
+
+          return new Promise<`0x${string}`>((resolve, reject) => {
+            writeContract(
+              {
+                address: stakingAddress,
+                abi: STAKED_TOKEN_ABI,
+                functionName: 'depositWithPermit',
+                args: [amount, address, deadline, v, r, s],
+              },
+              {
+                onSuccess: (hash) => {
+                  updateTransaction(txId, { hash, status: 'confirming' })
+                  resolve(hash)
+                },
+                onError: (err) => {
+                  const txError = parseTransactionError(err)
+                  updateTransaction(txId, {
+                    status: 'failed',
+                    errorMessage: getErrorMessage(txError),
+                  })
+                  txIdRef.current = null
+                  reject(txError)
+                },
+              }
+            )
+          })
         },
-        types: {
-          Permit: [
-            { name: 'owner', type: 'address' },
-            { name: 'spender', type: 'address' },
-            { name: 'value', type: 'uint256' },
-            { name: 'nonce', type: 'uint256' },
-            { name: 'deadline', type: 'uint256' },
-          ],
-        },
-        primaryType: 'Permit',
-        message: {
-          owner: address,
-          spender: stakingAddress,
-          value: amount,
-          nonce: nonce,
-          deadline: deadline,
+        catch: (err) => {
+          setIsSigningPermit(false)
+          const error = err instanceof Error ? err : new Error(String(err))
+          setPermitError(error)
+          if (err instanceof Error && '_tag' in err) {
+            return err as TransactionError
+          }
+          const txError = parseTransactionError(err)
+          updateTransaction(txId, {
+            status: 'failed',
+            errorMessage: getErrorMessage(txError),
+          })
+          txIdRef.current = null
+          return txError
         },
       })
-      setIsSigningPermit(false)
-      setPermitCompleted(true)
-
-      const r: `0x${string}` = signature.slice(0, 66) as `0x${string}`
-      const s: `0x${string}` = `0x${signature.slice(66, 130)}`
-      const v = parseInt(signature.slice(130, 132), 16)
-
-      writeContract(
-        {
-          address: stakingAddress,
-          abi: STAKED_TOKEN_ABI,
-          functionName: 'depositWithPermit',
-          args: [amount, address, deadline, v, r, s],
-        },
-        {
-          onSuccess: (hash) => {
-            updateTransaction(txId, { hash, status: 'confirming' })
-          },
-          onError: (err) => {
-            updateTransaction(txId, {
-              status: 'failed',
-              errorMessage: parseTransactionError(err),
-            })
-            txIdRef.current = null
-          },
-        }
-      )
-    } catch (err) {
-      setIsSigningPermit(false)
-      const error = err instanceof Error ? err : new Error(String(err))
-      setPermitError(error)
-      updateTransaction(txId, {
-        status: 'failed',
-        errorMessage: parseTransactionError(err),
-      })
-      txIdRef.current = null
-    }
-  }, [address, stakingAddress, tokenAddress, chainId, nonce, tokenName, signTypedDataAsync, writeContract, addTransaction, updateTransaction, side])
+    },
+    [address, stakingAddress, tokenAddress, chainId, nonce, tokenName, signTypedDataAsync, writeContract, addTransaction, updateTransaction, side]
+  )
 
   const resetAll = () => {
     reset()
