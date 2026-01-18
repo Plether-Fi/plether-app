@@ -1,7 +1,7 @@
 import { type ReactNode, useEffect } from 'react'
 import { Header } from './Header'
 import { MobileNav } from './MobileNav'
-import { WrongNetworkBanner } from '../wallet/NetworkSwitcher'
+import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
 import { useAccount } from 'wagmi'
 import { useTransactionStore } from '../../stores/transactionStore'
 

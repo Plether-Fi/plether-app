@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useTransactionStore, type PendingTransaction } from '../stores/transactionStore'
-import { ToastContainer, type ToastType } from './ui/Toast'
+import { ToastContainer, type ToastType } from './ui'
 
 interface ToastItem {
   id: string

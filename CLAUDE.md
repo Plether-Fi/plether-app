@@ -36,6 +36,9 @@ Plether is a DeFi frontend for trading DXY-BEAR and DXY-BULL tokens on Ethereum.
 - `src/contracts/` - ABIs and addresses (mainnet + sepolia)
 - `src/utils/errors.ts` - TaggedError definitions for transaction errors
 
+### Component Structure
+One exported component per file. Private helper components used only within the same file are acceptable, but any component intended for reuse must have its own file. Import components via barrel exports (`../components/ui`) rather than direct file paths.
+
 ### Error Handling Pattern
 
 All async operations (especially contract interactions) return `Result<T, E>` from better-result:

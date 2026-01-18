@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { Card, CardHeader } from '../components/ui/Card'
+import { Card, CardHeader } from '../components/ui'
 import { Button } from '../components/ui/Button'
 
 const meta: Meta<typeof Card> = {

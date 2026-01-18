@@ -1,5 +1,3 @@
-import { type ReactNode } from 'react'
-
 interface Tab {
   id: string
   label: string
@@ -32,14 +30,4 @@ export function Tabs({ tabs, activeTab, onChange }: TabsProps) {
       ))}
     </div>
   )
-}
-
-interface TabPanelProps {
-  children: ReactNode
-  isActive: boolean
-}
-
-export function TabPanel({ children, isActive }: TabPanelProps) {
-  if (!isActive) return null
-  return <div>{children}</div>
 }
