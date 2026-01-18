@@ -5,7 +5,7 @@ import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
 import { usePreviewOpenLeverage, useOpenLeverage, useAllowance, useApprove } from '../hooks'
-import { getAddresses } from '../contracts/addresses'
+import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 
 type TokenSide = 'BEAR' | 'BULL'
@@ -17,7 +17,7 @@ export interface LeverageCardProps {
 
 export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps) {
   const { isConnected, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 11155111)
+  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const slippage = useSettingsStore((s) => s.slippage)
 
   const [selectedSide, setSelectedSide] = useState<TokenSide>('BEAR')

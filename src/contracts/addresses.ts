@@ -1,4 +1,7 @@
 import { type Address } from 'viem'
+import { sepolia } from 'wagmi/chains'
+
+export const DEFAULT_CHAIN_ID = sepolia.id
 
 export interface ContractAddresses {
   USDC: Address

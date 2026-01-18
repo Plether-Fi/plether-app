@@ -3,7 +3,7 @@ import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { Modal } from './ui'
 import { useAdjustCollateral, useAllowance, useApprove, useTokenBalances } from '../hooks'
-import { getAddresses } from '../contracts/addresses'
+import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { formatAmount } from '../utils/formatters'
 import type { LeveragePosition } from '../types'
 
@@ -16,7 +16,7 @@ export interface AdjustPositionModalProps {
 
 export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: AdjustPositionModalProps) {
   const { chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 11155111)
+  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
 
   const [action, setAction] = useState<'add' | 'remove'>('add')
   const [amount, setAmount] = useState('')

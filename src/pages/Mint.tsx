@@ -7,7 +7,7 @@ import { parseTransactionError, getErrorMessage } from '../utils/errors'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
 import { useTokenBalances, useMint, useBurn, usePreviewMint, usePreviewBurn, useAllowance, useApprove, useTransactionModal } from '../hooks'
-import { getAddresses } from '../contracts/addresses'
+import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 
 type MintMode = 'mint' | 'redeem'
 type PendingAction = 'mint' | 'burn' | null
@@ -34,7 +34,7 @@ export function Mint() {
   const mintTriggeredRef = useRef(false)
   const burnTriggeredRef = useRef(false)
 
-  const addresses = getAddresses(chainId ?? 1)
+  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
 
   const pairAmountBigInt = parsePairAmount(inputAmount)

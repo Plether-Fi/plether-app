@@ -4,7 +4,7 @@ import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
 import { InfoTooltip, OutputDisplay, Modal, Button } from './ui'
 import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useAllowance, useApprove, useTransactionModal } from '../hooks'
-import { getAddresses } from '../contracts/addresses'
+import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import { formatAmount } from '../utils/formatters'
 import { parseTransactionError, getErrorMessage } from '../utils/errors'
@@ -21,7 +21,7 @@ export interface TradeCardProps {
 
 export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalances }: TradeCardProps) {
   const { isConnected, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? 11155111)
+  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const slippage = useSettingsStore((s) => s.slippage)
   const maxPriceImpact = useSettingsStore((s) => s.maxPriceImpact)
   const txModal = useTransactionModal()
