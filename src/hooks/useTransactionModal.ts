@@ -62,18 +62,28 @@ export const useTransactionModal = create<TransactionModalState>()(devtools((set
     { set((state) => ({
       steps: state.steps.map((step, i) => {
         if (i < index) return { ...step, status: 'completed' as const }
-        if (i === index) return { ...step, status: 'in_progress' as const }
+        if (i === index) {
+          if (step.status === 'completed') return step
+          return { ...step, status: 'in_progress' as const }
+        }
         return step
       }),
     })); },
 
-  setError: (stepIndex, message) =>
-    { set((state) => ({
-      steps: state.steps.map((step, i) =>
-        i === stepIndex ? { ...step, status: 'error' as const } : step
-      ),
-      errorMessage: message,
-    })); },
+  setError: (_stepIndex, message) =>
+    { set((state) => {
+      const inProgressIndex = state.steps.findIndex(s => s.status === 'in_progress')
+      const errorIndex = inProgressIndex >= 0 ? inProgressIndex : Math.min(_stepIndex, state.steps.length - 1)
+
+      return {
+        steps: state.steps.map((step, i) => {
+          if (i < errorIndex) return { ...step, status: 'completed' as const }
+          if (i === errorIndex) return { ...step, status: 'error' as const }
+          return step
+        }),
+        errorMessage: message,
+      }
+    }); },
 
   setSuccess: (hash) =>
     { set((state) => ({
