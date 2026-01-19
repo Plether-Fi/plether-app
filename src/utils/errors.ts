@@ -88,6 +88,24 @@ function truncateMessage(message: string): string {
   return message.length > 100 ? message.slice(0, 100) + '...' : message
 }
 
+const USER_REJECTION_PATTERNS = [
+  'user rejected',
+  'user denied',
+  'user cancelled',
+  'user canceled',
+  'rejected the request',
+  'rejected by user',
+  'request rejected',
+  'transaction was rejected',
+  'signature request was rejected',
+  'action_rejected',
+]
+
+function isUserRejection(message: string): boolean {
+  const lower = message.toLowerCase()
+  return USER_REJECTION_PATTERNS.some((pattern) => lower.includes(pattern))
+}
+
 export function parseTransactionError(error: unknown): TransactionError {
   if (!error) return new UnknownTransactionError({ cause: error })
 
@@ -103,7 +121,7 @@ export function parseTransactionError(error: unknown): TransactionError {
     errorObj.message ??
     (typeof error === 'string' ? error : '')
 
-  if (message.includes('User rejected') || message.includes('user rejected')) {
+  if (isUserRejection(message)) {
     return new UserRejectedError()
   }
 

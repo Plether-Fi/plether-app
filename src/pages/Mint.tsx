@@ -1,16 +1,13 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { formatAmount } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
-import { parseTransactionError, getErrorMessage } from '../utils/errors'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
-import { useTokenBalances, useMint, useBurn, usePreviewMint, usePreviewBurn, useAllowance, useApprove, useTransactionModal } from '../hooks'
-import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
+import { useTokenBalances, useMintFlow } from '../hooks'
 
 type MintMode = 'mint' | 'redeem'
-type PendingAction = 'mint' | 'burn' | null
 
 function parsePairAmount(input: string): bigint {
   if (!input || isNaN(parseFloat(input))) return 0n
@@ -22,201 +19,30 @@ function parsePairAmount(input: string): bigint {
 }
 
 export function Mint() {
-  const { isConnected, chainId } = useAccount()
-  const txModal = useTransactionModal()
+  const { isConnected } = useAccount()
   const [mode, setMode] = useState<MintMode>('mint')
   const [inputAmount, setInputAmount] = useState('')
-  const [pendingAction, setPendingAction] = useState<PendingAction>(null)
-  const pendingAmountRef = useRef<bigint>(0n)
-  const usdcApproveHandledRef = useRef(false)
-  const bearApproveHandledRef = useRef(false)
-  const bullApproveHandledRef = useRef(false)
-  const mintTriggeredRef = useRef(false)
-  const burnTriggeredRef = useRef(false)
 
-  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
-
   const pairAmountBigInt = parsePairAmount(inputAmount)
 
-  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER)
-  const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER)
-  const { allowance: bullAllowance, refetch: refetchBullAllowance } = useAllowance(addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER)
+  const handleSuccess = useCallback(() => {
+    void refetchBalances()
+    setInputAmount('')
+  }, [refetchBalances])
 
   const {
-    approve: approveUsdc,
-    isPending: usdcApprovePending,
-    isConfirming: usdcApproveConfirming,
-    isSuccess: usdcApproveSuccess,
-    error: usdcApproveError,
-  } = useApprove(addresses.USDC, addresses.SYNTHETIC_SPLITTER)
-  const {
-    approve: approveBear,
-    isPending: bearApprovePending,
-    isConfirming: bearApproveConfirming,
-    isSuccess: bearApproveSuccess,
-    error: bearApproveError,
-  } = useApprove(addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER)
-  const {
-    approve: approveBull,
-    isPending: bullApprovePending,
-    isConfirming: bullApproveConfirming,
-    isSuccess: bullApproveSuccess,
-    error: bullApproveError,
-  } = useApprove(addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER)
-
-  const {
-    mint,
-    isPending: mintPending,
-    isConfirming: mintConfirming,
-    isSuccess: mintSuccess,
-    error: mintError,
-    reset: resetMint,
-    hash: mintHash,
-  } = useMint()
-  const {
-    burn,
-    isPending: burnPending,
-    isConfirming: burnConfirming,
-    isSuccess: burnSuccess,
-    error: burnError,
-    reset: resetBurn,
-    hash: burnHash,
-  } = useBurn()
-
-  const { usdcRequired, isLoading: previewMintLoading } = usePreviewMint(pairAmountBigInt)
-  const { usdcToReturn, isLoading: previewBurnLoading } = usePreviewBurn(pairAmountBigInt)
-
-  const needsUsdcApproval = mode === 'mint' && usdcRequired > 0n && usdcAllowance < usdcRequired
-  const needsBearApproval = mode === 'redeem' && pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt
-  const needsBullApproval = mode === 'redeem' && pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
-
-  useEffect(() => {
-    if (usdcApproveSuccess && !usdcApproveHandledRef.current) {
-      usdcApproveHandledRef.current = true
-      void refetchUsdcAllowance()
-      if (pendingAction === 'mint' && pendingAmountRef.current > 0n) {
-        mintTriggeredRef.current = true
-        void mint(pendingAmountRef.current)
-        pendingAmountRef.current = 0n
-        setPendingAction(null)
-      }
-    }
-  }, [usdcApproveSuccess, refetchUsdcAllowance, pendingAction, mint])
-
-  useEffect(() => {
-    if (bearApproveSuccess && !bearApproveHandledRef.current) {
-      bearApproveHandledRef.current = true
-      void refetchBearAllowance()
-      if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
-        if (bullAllowance < pendingAmountRef.current) {
-          void approveBull(pendingAmountRef.current)
-        } else {
-          burnTriggeredRef.current = true
-          void burn(pendingAmountRef.current)
-          pendingAmountRef.current = 0n
-          setPendingAction(null)
-        }
-      }
-    }
-  }, [bearApproveSuccess, refetchBearAllowance, pendingAction, bullAllowance, approveBull, burn])
-
-  useEffect(() => {
-    if (bullApproveSuccess && !bullApproveHandledRef.current) {
-      bullApproveHandledRef.current = true
-      void refetchBullAllowance()
-      if (pendingAction === 'burn' && pendingAmountRef.current > 0n) {
-        burnTriggeredRef.current = true
-        void burn(pendingAmountRef.current)
-        pendingAmountRef.current = 0n
-        setPendingAction(null)
-      }
-    }
-  }, [bullApproveSuccess, refetchBullAllowance, pendingAction, burn])
-
-  useEffect(() => {
-    if (mintSuccess) {
-      if (mintHash) txModal.setSuccess(mintHash)
-      void refetchBalances()
-      setInputAmount('')
-      resetMint()
-      mintTriggeredRef.current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mintSuccess, mintHash, refetchBalances, resetMint])
-
-  useEffect(() => {
-    if (burnSuccess) {
-      if (burnHash) txModal.setSuccess(burnHash)
-      void refetchBalances()
-      setInputAmount('')
-      resetBurn()
-      burnTriggeredRef.current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [burnSuccess, burnHash, refetchBalances, resetBurn])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen) return
-    if (usdcApprovePending) {
-      modal.setStepInProgress(0)
-    } else if (usdcApproveConfirming) {
-      modal.setStepInProgress(1)
-    } else if (usdcApproveError) {
-      modal.setError(0, getErrorMessage(parseTransactionError(usdcApproveError)))
-    }
-  }, [usdcApprovePending, usdcApproveConfirming, usdcApproveError])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !mintTriggeredRef.current) return
-    const stepOffset = needsUsdcApproval || usdcApproveSuccess ? 2 : 0
-    if (mintPending) {
-      modal.setStepInProgress(stepOffset)
-    } else if (mintConfirming) {
-      modal.setStepInProgress(stepOffset + 1)
-    } else if (mintError) {
-      modal.setError(stepOffset, getErrorMessage(parseTransactionError(mintError)))
-    }
-  }, [mintPending, mintConfirming, mintError, needsUsdcApproval, usdcApproveSuccess])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen) return
-    if (bearApprovePending) {
-      modal.setStepInProgress(0)
-    } else if (bearApproveConfirming) {
-      modal.setStepInProgress(1)
-    } else if (bearApproveError) {
-      modal.setError(0, getErrorMessage(parseTransactionError(bearApproveError)))
-    }
-  }, [bearApprovePending, bearApproveConfirming, bearApproveError])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen) return
-    if (bullApprovePending) {
-      modal.setStepInProgress(2)
-    } else if (bullApproveConfirming) {
-      modal.setStepInProgress(3)
-    } else if (bullApproveError) {
-      modal.setError(2, getErrorMessage(parseTransactionError(bullApproveError)))
-    }
-  }, [bullApprovePending, bullApproveConfirming, bullApproveError])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !burnTriggeredRef.current) return
-    const stepOffset = (needsBearApproval || bearApproveSuccess ? 2 : 0) + (needsBullApproval || bullApproveSuccess ? 2 : 0)
-    if (burnPending) {
-      modal.setStepInProgress(stepOffset)
-    } else if (burnConfirming) {
-      modal.setStepInProgress(stepOffset + 1)
-    } else if (burnError) {
-      modal.setError(stepOffset, getErrorMessage(parseTransactionError(burnError)))
-    }
-  }, [burnPending, burnConfirming, burnError, needsBearApproval, bearApproveSuccess, needsBullApproval, bullApproveSuccess])
+    usdcRequired,
+    usdcToReturn,
+    previewMintLoading,
+    previewBurnLoading,
+    needsUsdcApproval,
+    needsBearApproval,
+    needsBullApproval,
+    isRunning,
+    handleMint,
+    handleRedeem,
+  } = useMintFlow(pairAmountBigInt, { onSuccess: handleSuccess })
 
   const isPreviewLoading = mode === 'mint' ? previewMintLoading : previewBurnLoading
   const previewAmount = mode === 'mint' ? usdcRequired : usdcToReturn
@@ -225,83 +51,17 @@ export function Mint() {
     : formatAmount(previewAmount, 6)
   const minBalance = getMinBalance(bearBalance, bullBalance)
 
-  const handleMint = async () => {
-    if (pairAmountBigInt <= 0n) return
-    usdcApproveHandledRef.current = false
-    mintTriggeredRef.current = false
-
-    if (needsUsdcApproval) {
-      txModal.open({
-        title: 'Minting token pairs',
-        steps: ['Approve USDC', 'Confirming approval', 'Mint pairs', 'Awaiting confirmation'],
-        onRetry: () => void handleMint(),
-      })
-      pendingAmountRef.current = pairAmountBigInt
-      setPendingAction('mint')
-      await approveUsdc(usdcRequired)
-      return
-    }
-
-    txModal.open({
-      title: 'Minting token pairs',
-      steps: ['Mint pairs', 'Awaiting confirmation'],
-      onRetry: () => void handleMint(),
-    })
-    mintTriggeredRef.current = true
-    await mint(pairAmountBigInt)
-  }
-
-  const handleRedeem = async () => {
-    bearApproveHandledRef.current = false
-    bullApproveHandledRef.current = false
-    burnTriggeredRef.current = false
-
-    const steps: string[] = []
-    if (needsBearApproval) {
-      steps.push('Approve DXY-BEAR', 'Confirming approval')
-    }
-    if (needsBullApproval) {
-      steps.push('Approve DXY-BULL', 'Confirming approval')
-    }
-    steps.push('Redeem pairs', 'Awaiting confirmation')
-
-    txModal.open({
-      title: 'Redeeming token pairs',
-      steps,
-      onRetry: () => void handleRedeem(),
-    })
-
-    if (needsBearApproval) {
-      pendingAmountRef.current = pairAmountBigInt
-      setPendingAction('burn')
-      await approveBear(pairAmountBigInt)
-      return
-    }
-    if (needsBullApproval) {
-      pendingAmountRef.current = pairAmountBigInt
-      setPendingAction('burn')
-      await approveBull(pairAmountBigInt)
-      return
-    }
-    burnTriggeredRef.current = true
-    await burn(pairAmountBigInt)
-  }
-
   const getMintButtonText = () => {
-    if (mintPending) return 'Minting...'
-    if (usdcApprovePending) return 'Approving USDC...'
+    if (isRunning) return 'Processing...'
     if (usdcRequired > usdcBalance) return 'Insufficient USDC'
-    if (needsUsdcApproval) return 'Approve USDC'
+    if (needsUsdcApproval) return 'Approve & Mint'
     return 'Mint Pairs'
   }
 
   const getRedeemButtonText = () => {
-    if (burnPending) return 'Redeeming...'
-    if (bearApprovePending) return 'Approving DXY-BEAR...'
-    if (bullApprovePending) return 'Approving DXY-BULL...'
+    if (isRunning) return 'Processing...'
     if (pairAmountBigInt > minBalance) return 'Insufficient Balance'
-    if (needsBearApproval) return 'Approve DXY-BEAR'
-    if (needsBullApproval) return 'Approve DXY-BULL'
+    if (needsBearApproval || needsBullApproval) return 'Approve & Redeem'
     return 'Redeem for USDC'
   }
 
@@ -309,9 +69,7 @@ export function Mint() {
     ? usdcRequired > usdcBalance
     : pairAmountBigInt > minBalance
 
-  const isActionDisabled = !inputAmount || parseFloat(inputAmount) <= 0 ||
-    mintPending || burnPending || usdcApprovePending || bearApprovePending || bullApprovePending ||
-    insufficientBalance
+  const isActionDisabled = !inputAmount || parseFloat(inputAmount) <= 0 || isRunning || insufficientBalance
 
   return (
     <div className="space-y-10 max-w-xl mx-auto">
@@ -320,7 +78,7 @@ export function Mint() {
         <p className="text-cyber-text-secondary font-light">Create or redeem DXY-BEAR + DXY-BULL pairs</p>
       </div>
 
-      <div className="bg-cyber-surface-dark  border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+      <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
         <div className="flex border-b border-cyber-border-glow/30">
           <button
             onClick={() => { setMode('mint'); setInputAmount('') }}
@@ -398,16 +156,16 @@ export function Mint() {
 
               {isConnected ? (
                 <button
-                  onClick={() => void handleMint()}
+                  onClick={handleMint}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-4 px-6  shadow-lg shadow-cyber-neon-green/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                  className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                 >
                   {getMintButtonText()}
                 </button>
               ) : (
                 <button
                   disabled
-                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6  cursor-not-allowed"
+                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6 cursor-not-allowed"
                 >
                   Connect Wallet to Mint
                 </button>
@@ -420,7 +178,7 @@ export function Mint() {
                 You need equal amounts of both tokens.
               </Alert>
 
-              <div className="bg-cyber-surface-light  p-4 space-y-3 border border-cyber-border-glow/30">
+              <div className="bg-cyber-surface-light p-4 space-y-3 border border-cyber-border-glow/30">
                 <p className="text-sm text-cyber-text-secondary">Your balances:</p>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
@@ -453,7 +211,7 @@ export function Mint() {
                 </div>
               </div>
 
-              <div className="bg-cyber-surface-light  p-4 border border-cyber-border-glow/30">
+              <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
                 <div className="flex justify-between items-center">
                   <span className="text-cyber-text-secondary">You will receive</span>
                   <span className="text-cyber-text-primary font-semibold text-lg">{outputDisplay} USDC</span>
@@ -462,16 +220,16 @@ export function Mint() {
 
               {isConnected ? (
                 <button
-                  onClick={() => void handleRedeem()}
+                  onClick={handleRedeem}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-text-primary font-semibold py-4 px-6  shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                  className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-text-primary font-semibold py-4 px-6 shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
                 >
                   {getRedeemButtonText()}
                 </button>
               ) : (
                 <button
                   disabled
-                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6  cursor-not-allowed"
+                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6 cursor-not-allowed"
                 >
                   Connect Wallet to Redeem
                 </button>
