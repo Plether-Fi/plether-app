@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useAccount } from 'wagmi'
+import { useState, useCallback } from 'react'
+import { useAccount, useWriteContract } from 'wagmi'
 import { parseUnits } from 'viem'
 import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { usePreviewOpenLeverage, useOpenLeverage, useApprovalFlow } from '../hooks'
+import { usePreviewOpenLeverage, useAllowance, useTransactionSequence, type TransactionStep } from '../hooks'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
+import { ERC20_ABI, LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 
 type TokenSide = 'BEAR' | 'BULL'
 
@@ -33,52 +34,89 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
     leverageWei
   )
 
-  const { openPosition, isPending: positionPending, isSuccess, reset } = useOpenLeverage(selectedSide)
-
   const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
 
-  const {
-    execute: executeWithApproval,
-    needsApproval,
-    isApproving,
-    approvePending,
-  } = useApprovalFlow({
-    tokenAddress: addresses.USDC,
-    spenderAddress: routerAddress,
-  })
+  const { writeContractAsync } = useWriteContract()
+  const sequence = useTransactionSequence()
 
+  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
+    addresses.USDC,
+    routerAddress
+  )
+
+  const needsUsdcApproval = collateralBigInt > 0n && usdcAllowance < collateralBigInt
   const insufficientBalance = collateralBigInt > usdcBalance
 
-  const executeOpenPosition = useCallback(async (amount: bigint) => {
-    const slippageBps = BigInt(Math.floor(slippage * 100))
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
-    await openPosition(amount, leverageWei, slippageBps, deadline)
-  }, [slippage, leverageWei, openPosition])
+  const handleSuccess = useCallback(() => {
+    refetchBalances?.()
+    setCollateralAmount('')
+    setLeverage(2)
+  }, [refetchBalances])
 
-  useEffect(() => {
-    if (isSuccess) {
-      refetchBalances?.()
-      setCollateralAmount('')
-      setLeverage(2)
-      reset()
+  const buildOpenLeverageSteps = useCallback((): TransactionStep[] => {
+    const steps: TransactionStep[] = []
+
+    if (needsUsdcApproval) {
+      steps.push({
+        label: 'Approve USDC',
+        action: async () => {
+          const hash = await writeContractAsync({
+            address: addresses.USDC,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [routerAddress, collateralBigInt],
+          })
+          await refetchUsdcAllowance()
+          return hash
+        },
+      })
     }
-  }, [isSuccess, refetchBalances, reset])
 
-  const handleOpenPosition = async () => {
-    if (!collateralBigInt || collateralBigInt <= 0n) return
-    await executeWithApproval(collateralBigInt, executeOpenPosition)
-  }
+    steps.push({
+      label: `Open ${selectedSide} position`,
+      action: () => {
+        const slippageBps = BigInt(Math.floor(slippage * 100))
+        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+        return writeContractAsync({
+          address: routerAddress,
+          abi: LEVERAGE_ROUTER_ABI,
+          functionName: 'openLeverage',
+          args: [collateralBigInt, leverageWei, slippageBps, deadline],
+        })
+      },
+    })
+
+    return steps
+  }, [
+    needsUsdcApproval,
+    selectedSide,
+    collateralBigInt,
+    leverageWei,
+    slippage,
+    addresses.USDC,
+    routerAddress,
+    writeContractAsync,
+    refetchUsdcAllowance,
+  ])
+
+  const handleOpenPosition = useCallback(() => {
+    if (collateralBigInt <= 0n) return
+
+    void sequence.execute({
+      title: `Opening ${selectedSide} leverage position`,
+      buildSteps: buildOpenLeverageSteps,
+      onSuccess: handleSuccess,
+    })
+  }, [collateralBigInt, selectedSide, sequence, buildOpenLeverageSteps, handleSuccess])
 
   const getButtonText = () => {
-    if (positionPending) return 'Opening Position...'
-    if (approvePending) return 'Approving USDC...'
+    if (sequence.isRunning) return 'Processing...'
     if (insufficientBalance) return 'Insufficient USDC'
-    if (needsApproval(collateralBigInt)) return 'Approve USDC'
+    if (needsUsdcApproval) return 'Approve & Open Position'
     return `Open ${selectedSide} Position`
   }
 
-  const isActionPending = positionPending || isApproving
-  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || isActionPending || insufficientBalance
+  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || sequence.isRunning || insufficientBalance
 
   const collateralNum = parseFloat(collateralAmount) || 0
   const positionSizeDisplay = previewLoading && collateralBigInt > 0n
@@ -170,7 +208,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
 
       {isConnected ? (
         <button
-          onClick={() => void handleOpenPosition()}
+          onClick={handleOpenPosition}
           disabled={isDisabled}
           className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
         >
