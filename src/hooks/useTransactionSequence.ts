@@ -3,6 +3,15 @@ import { usePublicClient } from 'wagmi'
 import { useTransactionModal } from './useTransactionModal'
 import { parseTransactionError, getErrorMessage } from '../utils/errors'
 
+class TransactionRevertError extends Error {
+  data?: string
+  constructor(message: string, data?: string) {
+    super(message)
+    this.name = 'TransactionRevertError'
+    this.data = data
+  }
+}
+
 export interface TransactionStep {
   label: string
   action: () => Promise<`0x${string}` | undefined>
@@ -88,7 +97,20 @@ export function useTransactionSequence() {
         if (isAborted()) return
 
         if (receipt.status === 'reverted') {
-          throw new Error('Transaction reverted')
+          // Simulate the failed tx to get the revert reason
+          try {
+            const tx = await publicClient.getTransaction({ hash })
+            await publicClient.call({
+              to: tx.to!,
+              data: tx.input,
+              account: tx.from,
+              value: tx.value,
+              blockNumber: receipt.blockNumber,
+            })
+          } catch (callErr) {
+            throw callErr
+          }
+          throw new TransactionRevertError('Transaction reverted')
         }
 
       } catch (err) {
