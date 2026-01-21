@@ -25,22 +25,21 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
   const [collateralAmount, setCollateralAmount] = useState('')
   const [targetLeverage, setTargetLeverage] = useState(2)
 
+  const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+
   const { bearPrice, bullPrice, cap } = useTokenPrices()
   const tokenPrice = selectedSide === 'BEAR' ? bearPrice : bullPrice
 
+  // Max effective leverage from LLTV: maxLev = 1 / (1 - lltv)
+  // LLTV = 91.5% → 1 / 0.085 = 11.76x
+  const maxEffectiveLeverage = 11.76
+
   // Calculate contract leverage parameter from desired effective leverage
-  // effectiveLeverage ≈ contractLeverage × tokenPrice / CAP
-  // So: contractLeverage = targetLeverage × CAP / tokenPrice
-  const MAX_CONTRACT_LEVERAGE = 10n * 10n ** 18n
-  const contractLeverageRaw = tokenPrice > 0n && cap > 0n
+  // BULL: effectiveLeverage ≈ contractLeverage × tokenPrice / CAP (you only keep BULL portion)
+  // BEAR: effectiveLeverage = contractLeverage (contract handles it directly)
+  const contractLeverage = selectedSide === 'BULL' && tokenPrice > 0n && cap > 0n
     ? BigInt(Math.floor(targetLeverage * 1e18)) * cap / tokenPrice
     : BigInt(Math.floor(targetLeverage * 1e18))
-  const contractLeverage = contractLeverageRaw > MAX_CONTRACT_LEVERAGE ? MAX_CONTRACT_LEVERAGE : contractLeverageRaw
-
-  // Max effective leverage based on token price ratio
-  const maxEffectiveLeverage = tokenPrice > 0n && cap > 0n
-    ? Number(MAX_CONTRACT_LEVERAGE * tokenPrice / cap) / 1e18
-    : 10
 
   const collateralBigInt = collateralAmount ? parseUnits(collateralAmount, 6) : 0n
 
@@ -52,8 +51,6 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
 
   // Expected tokens (18 dec) × price (8 dec) / 10^20 = 6 dec USDC
   const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
-
-  const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
 
   // Get Morpho address from router
   const { data: morphoAddress } = useReadContract({
@@ -234,14 +231,14 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
         <div className="flex items-center justify-between mb-2">
           <label className="text-sm text-cyber-text-secondary flex items-center gap-1">
             Leverage
-            <InfoTooltip content="Target leverage for your position. Max depends on current token price." />
+            <InfoTooltip content="Target leverage for your position. Max is based on Morpho LLTV and token price." />
           </label>
-          <span className="text-cyber-text-primary font-medium">{targetLeverage}x</span>
+          <span className="text-cyber-text-primary font-medium">{targetLeverage.toFixed(1)}x</span>
         </div>
         <input
           type="range"
           min="1.1"
-          max={Math.min(maxEffectiveLeverage, 10).toFixed(1)}
+          max={maxEffectiveLeverage.toFixed(1)}
           step="0.1"
           value={Math.min(targetLeverage, maxEffectiveLeverage)}
           onChange={(e) => { setTargetLeverage(parseFloat(e.target.value)); }}
@@ -249,7 +246,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
         />
         <div className="flex justify-between text-xs text-cyber-text-secondary mt-1">
           <span>1.1x</span>
-          <span>{Math.min(maxEffectiveLeverage, 10).toFixed(1)}x</span>
+          <span>{maxEffectiveLeverage.toFixed(1)}x</span>
         </div>
       </div>
 
