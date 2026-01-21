@@ -179,7 +179,7 @@ describe('usePreviewOpenLeverage', () => {
 
     expect(result.current.loanAmount).toBe(2000000000000000000n)
     expect(result.current.totalUSDC).toBe(3000000000000000000n)
-    expect(result.current.expectedPlDxyBear).toBe(1500000000000000000n)
+    expect(result.current.expectedCollateralTokens).toBe(1500000000000000000n)
     expect(result.current.expectedDebt).toBe(1000000000000000000n)
   })
 
@@ -197,7 +197,7 @@ describe('usePreviewOpenLeverage', () => {
 
     expect(result.current.loanAmount).toBe(0n)
     expect(result.current.totalUSDC).toBe(0n)
-    expect(result.current.expectedPlDxyBear).toBe(0n)
+    expect(result.current.expectedCollateralTokens).toBe(0n)
     expect(result.current.expectedDebt).toBe(0n)
   })
 })

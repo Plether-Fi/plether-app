@@ -4,7 +4,7 @@ import { parseUnits, zeroAddress } from 'viem'
 import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { usePreviewOpenLeverage, useAllowance, useTransactionSequence, type TransactionStep } from '../hooks'
+import { usePreviewOpenLeverage, useAllowance, useTransactionSequence, useTokenPrices, type TransactionStep } from '../hooks'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
@@ -23,16 +23,35 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
 
   const [selectedSide, setSelectedSide] = useState<TokenSide>('BULL')
   const [collateralAmount, setCollateralAmount] = useState('')
-  const [leverage, setLeverage] = useState(2)
+  const [targetLeverage, setTargetLeverage] = useState(2)
+
+  const { bearPrice, bullPrice, cap } = useTokenPrices()
+  const tokenPrice = selectedSide === 'BEAR' ? bearPrice : bullPrice
+
+  // Calculate contract leverage parameter from desired effective leverage
+  // effectiveLeverage ≈ contractLeverage × tokenPrice / CAP
+  // So: contractLeverage = targetLeverage × CAP / tokenPrice
+  const MAX_CONTRACT_LEVERAGE = 10n * 10n ** 18n
+  const contractLeverageRaw = tokenPrice > 0n && cap > 0n
+    ? BigInt(Math.floor(targetLeverage * 1e18)) * cap / tokenPrice
+    : BigInt(Math.floor(targetLeverage * 1e18))
+  const contractLeverage = contractLeverageRaw > MAX_CONTRACT_LEVERAGE ? MAX_CONTRACT_LEVERAGE : contractLeverageRaw
+
+  // Max effective leverage based on token price ratio
+  const maxEffectiveLeverage = tokenPrice > 0n && cap > 0n
+    ? Number(MAX_CONTRACT_LEVERAGE * tokenPrice / cap) / 1e18
+    : 10
 
   const collateralBigInt = collateralAmount ? parseUnits(collateralAmount, 6) : 0n
-  const leverageWei = parseUnits(leverage.toString(), 18)
 
-  const { totalUSDC, loanAmount, isLoading: previewLoading } = usePreviewOpenLeverage(
+  const { expectedCollateralTokens, expectedDebt, isLoading: previewLoading } = usePreviewOpenLeverage(
     selectedSide,
     collateralBigInt,
-    leverageWei
+    contractLeverage
   )
+
+  // Expected tokens (18 dec) × price (8 dec) / 10^20 = 6 dec USDC
+  const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
 
   const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
 
@@ -70,7 +89,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
   const handleSuccess = useCallback(() => {
     refetchBalances?.()
     setCollateralAmount('')
-    setLeverage(2)
+    setTargetLeverage(2)
   }, [refetchBalances])
 
   const buildOpenLeverageSteps = useCallback((): TransactionStep[] => {
@@ -115,7 +134,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
         const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
         console.log('[openLeverage] args:', {
           principal: collateralBigInt.toString(),
-          leverage: leverageWei.toString(),
+          leverage: contractLeverage.toString(),
           slippageBps: slippageBps.toString(),
           deadline: deadline.toString(),
         })
@@ -123,7 +142,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
           address: routerAddress,
           abi: LEVERAGE_ROUTER_ABI,
           functionName: 'openLeverage',
-          args: [collateralBigInt, leverageWei, slippageBps, deadline],
+          args: [collateralBigInt, contractLeverage, slippageBps, deadline],
         })
       },
     })
@@ -135,7 +154,7 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
     needsUsdcApproval,
     selectedSide,
     collateralBigInt,
-    leverageWei,
+    contractLeverage,
     slippage,
     addresses.USDC,
     routerAddress,
@@ -168,10 +187,10 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
   const collateralNum = parseFloat(collateralAmount) || 0
   const positionSizeDisplay = previewLoading && collateralBigInt > 0n
     ? '...'
-    : formatUsd(totalUSDC)
+    : formatUsd(expectedPositionValue)
   const debtDisplay = previewLoading && collateralBigInt > 0n
     ? '...'
-    : formatUsd(loanAmount)
+    : formatUsd(expectedDebt)
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
@@ -215,39 +234,39 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
         <div className="flex items-center justify-between mb-2">
           <label className="text-sm text-cyber-text-secondary flex items-center gap-1">
             Leverage
-            <InfoTooltip content="Higher leverage increases both potential profits and liquidation risk" />
+            <InfoTooltip content="Target leverage for your position. Max depends on current token price." />
           </label>
-          <span className="text-cyber-text-primary font-medium">{leverage}x</span>
+          <span className="text-cyber-text-primary font-medium">{targetLeverage}x</span>
         </div>
         <input
           type="range"
           min="1.1"
-          max="10"
+          max={Math.min(maxEffectiveLeverage, 10).toFixed(1)}
           step="0.1"
-          value={leverage}
-          onChange={(e) => { setLeverage(parseFloat(e.target.value)); }}
+          value={Math.min(targetLeverage, maxEffectiveLeverage)}
+          onChange={(e) => { setTargetLeverage(parseFloat(e.target.value)); }}
           className="w-full h-2 bg-cyber-surface-light appearance-none cursor-pointer accent-cyber-electric-fuchsia"
         />
         <div className="flex justify-between text-xs text-cyber-text-secondary mt-1">
           <span>1.1x</span>
-          <span>10x</span>
+          <span>{Math.min(maxEffectiveLeverage, 10).toFixed(1)}x</span>
         </div>
       </div>
 
       <div className="bg-cyber-surface-light p-4 space-y-3 border border-cyber-border-glow/30">
         <h4 className="text-sm font-medium text-cyber-text-secondary">Position Preview</h4>
         <div className="flex justify-between">
-          <span className="text-cyber-text-secondary text-sm">Total Position</span>
+          <span className="text-cyber-text-secondary text-sm">Position Value</span>
           <span className="text-cyber-text-primary">{positionSizeDisplay}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-cyber-text-secondary text-sm">Collateral</span>
+          <span className="text-cyber-text-secondary text-sm">Your Equity</span>
           <span className="text-cyber-text-primary">{formatUsd(BigInt(Math.floor(collateralNum * 1e6)))}</span>
         </div>
         <div className="flex justify-between">
           <span className="text-cyber-text-secondary text-sm flex items-center gap-1">
             Debt
-            <InfoTooltip content="Amount borrowed to create the leveraged position" />
+            <InfoTooltip content="USDC borrowed from Morpho against your position" />
           </span>
           <span className="text-cyber-warning-text">{debtDisplay}</span>
         </div>

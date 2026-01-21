@@ -19,7 +19,7 @@ import { useSettingsStore } from '../stores/settingsStore'
 import type { LeveragePosition } from '../types'
 
 export function Dashboard() {
-  const { isConnected } = useAccount()
+  const { isConnected, chainId } = useAccount()
   const location = useLocation()
   const navigate = useNavigate()
 
@@ -55,7 +55,6 @@ export function Dashboard() {
   const bullPosition = useLeveragePosition('BULL')
 
   const slippage = useSettingsStore((s) => s.slippage)
-  const { chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const { writeContractAsync } = useWriteContract()
   const closeSequence = useTransactionSequence()
@@ -68,21 +67,22 @@ export function Dashboard() {
       const slippageBps = BigInt(Math.floor(slippage * 100))
       const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
 
-      console.log('[closeLeverage] args:', {
-        side: position.side,
-        collateralToWithdraw: collateralToClose.toString(),
-        slippageBps: slippageBps.toString(),
-        deadline: deadline.toString(),
-      })
-
       return [{
         label: `Close ${position.side} position`,
-        action: () => writeContractAsync({
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'closeLeverage',
-          args: [collateralToClose, slippageBps, deadline],
-        }),
+        action: () => {
+          console.log('[closeLeverage] args:', {
+            side: position.side,
+            collateralToWithdraw: collateralToClose.toString(),
+            slippageBps: slippageBps.toString(),
+          })
+
+          return writeContractAsync({
+            address: routerAddress,
+            abi: LEVERAGE_ROUTER_ABI,
+            functionName: 'closeLeverage',
+            args: [collateralToClose, slippageBps, deadline],
+          })
+        },
       }]
     }
 

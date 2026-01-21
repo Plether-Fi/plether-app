@@ -159,7 +159,7 @@ export function usePreviewOpenLeverage(side: 'BEAR' | 'BULL', principal: bigint,
   return {
     loanAmount: data?.[0] ?? 0n,
     totalUSDC: data?.[1] ?? 0n,
-    expectedPlDxyBear: data?.[2] ?? 0n,
+    expectedCollateralTokens: data?.[2] ?? 0n,
     expectedDebt: data?.[3] ?? 0n,
     isLoading,
     error,
