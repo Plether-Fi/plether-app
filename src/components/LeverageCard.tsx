@@ -14,9 +14,10 @@ type TokenSide = 'BEAR' | 'BULL'
 export interface LeverageCardProps {
   usdcBalance: bigint
   refetchBalances?: () => void
+  onPositionOpened?: () => void
 }
 
-export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps) {
+export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }: LeverageCardProps) {
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const slippage = useSettingsStore((s) => s.slippage)
@@ -85,9 +86,10 @@ export function LeverageCard({ usdcBalance, refetchBalances }: LeverageCardProps
 
   const handleSuccess = useCallback(() => {
     refetchBalances?.()
+    onPositionOpened?.()
     setCollateralAmount('')
     setTargetLeverage(2)
-  }, [refetchBalances])
+  }, [refetchBalances, onPositionOpened])
 
   const buildOpenLeverageSteps = useCallback((): TransactionStep[] => {
     const steps: TransactionStep[] = []

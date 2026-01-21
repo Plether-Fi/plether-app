@@ -59,7 +59,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
   }, [marketParams])
 
   // Query Morpho for position (collateral is stored there)
-  const { data: morphoPosition, isLoading: positionLoading, error, refetch } = useReadContract({
+  const { data: morphoPosition, isLoading: positionLoading, error, refetch: refetchPosition } = useReadContract({
     address: morphoAddress,
     abi: MORPHO_ABI,
     functionName: 'position',
@@ -70,7 +70,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
   })
 
   // Get debt from router (includes accrued interest)
-  const { data: debt, isLoading: debtLoading } = useReadContract({
+  const { data: debt, isLoading: debtLoading, refetch: refetchDebt } = useReadContract({
     address: routerAddress,
     abi: LEVERAGE_ROUTER_ABI,
     functionName: 'getActualDebt',
@@ -127,6 +127,10 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     equity: equity.toString(),
     leverage: leverage.toString(),
   })
+
+  const refetch = async () => {
+    await Promise.all([refetchPosition(), refetchDebt()])
+  }
 
   return {
     collateral,

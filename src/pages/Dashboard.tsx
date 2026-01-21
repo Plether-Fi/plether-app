@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useAccount } from 'wagmi'
-import { Alert } from '../components/ui'
 import { PortfolioCard } from '../components/PortfolioCard'
-import { PositionCard } from '../components/PositionCard'
+import { PositionsSection } from '../components/PositionsSection'
 import { AdjustPositionModal } from '../components/AdjustPositionModal'
 import { TradeCard } from '../components/TradeCard'
 import { YieldCard } from '../components/YieldCard'
@@ -10,7 +9,6 @@ import { LeverageCard } from '../components/LeverageCard'
 import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { HEALTH_FACTOR_WARNING } from '../config/constants'
 import { useTokenBalances, useLeveragePosition, useStakedBalance, useTokenPrices, useTransactionSequence, type TransactionStep } from '../hooks'
 import { useWriteContract } from 'wagmi'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
@@ -145,8 +143,6 @@ export function Dashboard() {
     })
   }
 
-  const hasLowHealth = positions.some((p) => p.healthFactor > 0 && p.healthFactor < HEALTH_FACTOR_WARNING)
-
   // Portfolio values: token balances (18 dec) * price (8 dec) / 10^20 = 6 dec USDC
   const bearSpotValue = bearBalance * bearPrice / 10n ** 20n
   const bullSpotValue = bullBalance * bullPrice / 10n ** 20n
@@ -207,32 +203,16 @@ export function Dashboard() {
           </div>
 
           {/* Positions section */}
-          {positions.length > 0 && (
-            <div className="mb-12">
-              <h2 className="text-xl font-semibold text-cyber-text-primary mb-4">Open Positions</h2>
-
-              {hasLowHealth && (
-                <Alert variant="warning" title="Low Health Factor Warning" className="mb-6 shadow-lg shadow-cyber-warning-text/10">
-                  One or more positions have low health factors and may be at risk of liquidation.
-                </Alert>
-              )}
-
-              <div className="space-y-4">
-                {positions.map((position) => (
-                  <PositionCard
-                    key={position.id}
-                    position={position}
-                    onAdjust={() => {
-                      setSelectedPosition(position)
-                      setAdjustModalOpen(true)
-                    }}
-                    onClose={() => handleClosePosition(position)}
-                    isClosing={closeSequence.isRunning}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
+          <PositionsSection
+            positions={positions}
+            isLoading={bearPosition.isLoading || bullPosition.isLoading}
+            isClosing={closeSequence.isRunning}
+            onAdjust={(position) => {
+              setSelectedPosition(position)
+              setAdjustModalOpen(true)
+            }}
+            onClose={handleClosePosition}
+          />
 
           {/* Trade / Leverage / Yield widget */}
           <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden shadow-lg shadow-cyber-border-glow/10">
@@ -250,7 +230,14 @@ export function Dashboard() {
               )}
 
               {mainTab === 'leverage' && (
-                <LeverageCard usdcBalance={usdcBalance} refetchBalances={() => void refetchBalances()} />
+                <LeverageCard
+                  usdcBalance={usdcBalance}
+                  refetchBalances={() => void refetchBalances()}
+                  onPositionOpened={() => {
+                    void bearPosition.refetch()
+                    void bullPosition.refetch()
+                  }}
+                />
               )}
 
               {mainTab === 'yield' && (
