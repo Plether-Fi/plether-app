@@ -63,7 +63,7 @@ export function useLeveragePosition(side: 'BEAR' | 'BULL') {
     address: morphoAddress,
     abi: MORPHO_ABI,
     functionName: 'position',
-    args: [marketId!, queryAddress],
+    args: [marketId ?? '0x', queryAddress],
     query: {
       enabled: !!address && !!morphoAddress && !!marketId,
     },
