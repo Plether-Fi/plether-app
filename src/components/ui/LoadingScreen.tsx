@@ -67,7 +67,7 @@ export function LoadingScreen({
           {steps.map((step, index) => {
             const isAfterError = hasError && index > errorIndex
             return (
-              <div key={index}>
+              <div key={`${step.label}-${String(index)}`}>
                 <div className={`flex items-center gap-4 ${isAfterError ? 'opacity-20' : ''}`}>
                   <StepIndicator status={step.status} />
                   <span

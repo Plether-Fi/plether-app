@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { useTransactionModal } from '../useTransactionModal'
 
 /**
@@ -35,7 +35,7 @@ describe('useTransactionSequence simulation', () => {
       const { open, setStepInProgress, setError } = useTransactionModal.getState()
 
       // Simulate useCallback capturing needsUsdcApproval = true
-      let capturedNeedsApproval = true
+      const capturedNeedsApproval = true
       const buildSteps = () => {
         const steps = []
         if (capturedNeedsApproval) {
@@ -141,7 +141,7 @@ describe('useTransactionSequence simulation', () => {
      * Or buildSteps() is called with wrong state?
      */
     it('simulates double execute call during first attempt', () => {
-      const { open, setStepInProgress, setError } = useTransactionModal.getState()
+      const { open, setStepInProgress } = useTransactionModal.getState()
 
       // First execute call - 4 steps
       open({ title: 'Minting', steps: ['Approve USDC', 'Confirming...', 'Mint pairs', 'Confirming...'] })

@@ -98,17 +98,15 @@ export function useTransactionSequence() {
 
         if (receipt.status === 'reverted') {
           // Simulate the failed tx to get the revert reason
-          try {
-            const tx = await publicClient.getTransaction({ hash })
+          const tx = await publicClient.getTransaction({ hash })
+          if (tx.to) {
             await publicClient.call({
-              to: tx.to!,
+              to: tx.to,
               data: tx.input,
               account: tx.from,
               value: tx.value,
               blockNumber: receipt.blockNumber,
             })
-          } catch (callErr) {
-            throw callErr
           }
           throw new TransactionRevertError('Transaction reverted')
         }

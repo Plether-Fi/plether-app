@@ -3,8 +3,6 @@ import { mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { Modal } from '../ui'
 
-const SUPPORTED_CHAIN_IDS = [mainnet.id, sepolia.id, anvil.id] as const
-
 interface NetworkSwitcherProps {
   isOpen: boolean
   onClose: () => void
@@ -20,7 +18,7 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
     { chain: anvil, name: 'Anvil (Local)', icon: 'terminal' },
   ]
 
-  const handleSwitch = (targetChainId: typeof SUPPORTED_CHAIN_IDS[number]) => {
+  const handleSwitch = (targetChainId: typeof mainnet.id | typeof sepolia.id | typeof anvil.id) => {
     switchChain({ chainId: targetChainId })
     onClose()
   }

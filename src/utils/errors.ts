@@ -164,13 +164,16 @@ function extractErrorData(error: unknown): string | null {
   const err = error as Record<string, unknown>
 
   // Try common viem error data locations
+  const cause = err.cause as Record<string, unknown> | undefined
+  const nestedCause = cause?.cause as Record<string, unknown> | undefined
+  const errorObj = err.error as Record<string, unknown> | undefined
   const candidates = [
     err.data,
-    (err.cause as Record<string, unknown>)?.data,
-    (err.cause as Record<string, unknown>)?.cause,
-    ((err.cause as Record<string, unknown>)?.cause as Record<string, unknown>)?.data,
+    cause?.data,
+    cause?.cause,
+    nestedCause?.data,
     err.error,
-    (err.error as Record<string, unknown>)?.data,
+    errorObj?.data,
   ]
 
   for (const candidate of candidates) {

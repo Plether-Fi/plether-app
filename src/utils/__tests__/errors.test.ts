@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest'
-import { Result } from 'better-result'
 import {
   parseTransactionError,
   getErrorMessage,
@@ -9,7 +8,6 @@ import {
   NetworkError,
   TimeoutError,
   UnknownTransactionError,
-  type TransactionError,
 } from '../errors'
 
 describe('parseTransactionError', () => {

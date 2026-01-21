@@ -12,7 +12,7 @@ import {
   setERC20Balance,
   TEST_ACCOUNTS,
 } from '../../test/anvil'
-import { SEPOLIA_ADDRESSES, getAddresses } from '../../contracts/addresses'
+import { SEPOLIA_ADDRESSES } from '../../contracts/addresses'
 import { ERC20_ABI, CURVE_POOL_ABI, ZAP_ROUTER_ABI } from '../../contracts/abis'
 import { useCurveQuote, useZapQuote } from '../useTrading'
 

@@ -6,7 +6,6 @@ import type { SwapError } from '../useTrading'
 
 const mockWriteContract = vi.fn()
 const mockReset = vi.fn()
-const mockReadContractData = vi.fn()
 const mockSignTypedDataAsync = vi.fn()
 
 const mockUseAccount = vi.fn()
