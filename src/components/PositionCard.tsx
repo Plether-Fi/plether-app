@@ -26,7 +26,7 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
           <TokenIcon side={position.side} />
           <div>
             <div className="flex items-center gap-2">
-              <span className={`font-semibold ${sideColor}`}>DXY-{position.side}</span>
+              <span className={`font-semibold ${sideColor}`}>plDXY-{position.side}</span>
               <span className="px-1.5 py-0.5 bg-cyber-surface-light text-xs text-cyber-text-secondary font-medium border border-cyber-border-glow/30">
                 {position.leverage}x
               </span>

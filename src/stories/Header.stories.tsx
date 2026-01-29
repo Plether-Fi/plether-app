@@ -45,7 +45,7 @@ function MockPriceDisplay() {
   return (
     <div className="flex items-center gap-3">
       <div className="flex items-center gap-1.5">
-        <span className="text-cyber-text-secondary text-xs">DXY</span>
+        <span className="text-cyber-text-secondary text-xs">plDXY</span>
         <span className="text-cyber-text-primary font-medium">108.42</span>
         <span className="text-cyber-neon-green text-xs">+0.12%</span>
       </div>

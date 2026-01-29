@@ -101,8 +101,8 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   const handleStake = async () => {
     stakeTriggeredRef.current = true
     txModal.open({
-      title: `Staking DXY-${side}`,
-      steps: ['Sign permit', `Stake DXY-${side}`, 'Awaiting confirmation'],
+      title: `Staking plDXY-${side}`,
+      steps: ['Sign permit', `Stake plDXY-${side}`, 'Awaiting confirmation'],
       onRetry: () => void handleStake(),
     })
     await stakeWithPermit(amountBigInt)
@@ -111,8 +111,8 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   const handleUnstake = async () => {
     unstakeTriggeredRef.current = true
     txModal.open({
-      title: `Unstaking sDXY-${side}`,
-      steps: [`Unstake sDXY-${side}`, 'Awaiting confirmation'],
+      title: `Unstaking splDXY-${side}`,
+      steps: [`Unstake splDXY-${side}`, 'Awaiting confirmation'],
       onRetry: () => void handleUnstake(),
     })
     await unstake(amountBigInt)
@@ -133,11 +133,11 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
       if (isSigningPermit) return 'Sign Permit...'
       if (stakePending) return 'Staking...'
       if (insufficientBalance) return 'Insufficient Balance'
-      return `Stake DXY-${side}`
+      return `Stake plDXY-${side}`
     } else {
       if (unstakePending) return 'Unstaking...'
       if (insufficientBalance) return 'Insufficient Balance'
-      return `Unstake sDXY-${side}`
+      return `Unstake splDXY-${side}`
     }
   }
 
@@ -150,7 +150,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
         <div className="flex items-center gap-3">
           <TokenIcon side={side} />
           <div>
-            <h3 className={`font-semibold ${textColor}`}>DXY-{side} Staking</h3>
+            <h3 className={`font-semibold ${textColor}`}>plDXY-{side} Staking</h3>
             <p className="text-xs text-cyber-text-secondary">Stake to use as collateral</p>
           </div>
         </div>
@@ -161,7 +161,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
           <div className="flex justify-between items-center">
             <span className="text-cyber-text-secondary text-sm">Staked Balance</span>
             <span className={`${textColor} font-semibold`}>
-              {formatAmount(stakedBalance, SHARE_DECIMALS)} sDXY-{side}
+              {formatAmount(stakedBalance, SHARE_DECIMALS)} splDXY-{side}
             </span>
           </div>
         </div>
@@ -190,10 +190,10 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
         </div>
 
         <TokenInput
-          label={mode === 'stake' ? `DXY-${side} to stake` : `sDXY-${side} to unstake`}
+          label={mode === 'stake' ? `plDXY-${side} to stake` : `splDXY-${side} to unstake`}
           value={amount}
           onChange={setAmount}
-          token={{ symbol: mode === 'stake' ? `DXY-${side}` : `sDXY-${side}`, decimals }}
+          token={{ symbol: mode === 'stake' ? `plDXY-${side}` : `splDXY-${side}`, decimals }}
           balance={balance}
         />
 
@@ -203,7 +203,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
             ? (previewDepositLoading ? '...' : formatAmount(previewShares, SHARE_DECIMALS))
             : (previewRedeemLoading ? '...' : formatAmount(previewAssets, 18))
           }
-          token={mode === 'stake' ? `sDXY-${side}` : `DXY-${side}`}
+          token={mode === 'stake' ? `splDXY-${side}` : `plDXY-${side}`}
           variant={side}
         />
 

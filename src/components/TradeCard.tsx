@@ -35,10 +35,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   const inputToken = mode === 'buy'
     ? { symbol: 'USDC', decimals: 6 }
-    : { symbol: `DXY-${selectedToken}`, decimals: 18 }
+    : { symbol: `plDXY-${selectedToken}`, decimals: 18 }
 
   const outputToken = mode === 'buy'
-    ? { symbol: `DXY-${selectedToken}`, decimals: 18 }
+    ? { symbol: `plDXY-${selectedToken}`, decimals: 18 }
     : { symbol: 'USDC', decimals: 6 }
 
   const inputBalance = mode === 'buy'
@@ -168,7 +168,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   }, [isSwapping, curvePending, zapPending, curveConfirming, zapConfirming, curveError, zapError, needsApproval, inputAmountBigInt])
 
   const proceedWithSwap = useCallback(async () => {
-    const tokenLabel = `DXY-${selectedToken}`
+    const tokenLabel = `plDXY-${selectedToken}`
     const actionLabel = mode === 'buy' ? 'Buying' : 'Selling'
     const requiresApproval = needsApproval(inputAmountBigInt)
 
@@ -212,7 +212,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     if (approvePending) return `Approving ${inputToken.symbol}...`
     if (insufficientBalance) return `Insufficient ${inputToken.symbol}`
     if (needsApproval(inputAmountBigInt)) return `Approve ${inputToken.symbol}`
-    return `${mode === 'buy' ? 'Buy' : 'Sell'} DXY-${selectedToken}`
+    return `${mode === 'buy' ? 'Buy' : 'Sell'} plDXY-${selectedToken}`
   }
 
   const isPending = curvePending || zapPending || isApproving

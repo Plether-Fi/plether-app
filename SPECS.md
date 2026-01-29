@@ -59,7 +59,7 @@ Generate the frontend app that interacts with the Plether protocol routers and c
 ## Dashboard & Portfolio
 * **Main dashboard**: Portfolio overview showing total value across all positions (spot, staked, leveraged, lending)
 * **Price display**:
-  - Compact header bar with DXY price and protocol status (Active/Paused/Settled)
+  - Compact header bar with plDXY price and protocol status (Active/Paused/Settled)
   - Detailed dashboard widget with more info
 * **Transaction history**: Full history with filters by type (mint, swap, stake, leverage, etc.)
 
@@ -79,6 +79,6 @@ Generate the frontend app that interacts with the Plether protocol routers and c
 * No wallet or identity tracking
 
 ## Price & Status Display
-* DXY price from BasketOracle
+* plDXY price from BasketOracle
 * Protocol status indicator (Active / Paused / Settled)
 * Available in header bar (compact) and dashboard widget (detailed)
