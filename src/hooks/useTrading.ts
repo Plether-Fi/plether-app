@@ -12,6 +12,9 @@ import {
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
 
+// Note: useTransactionStore is only used by useZapBuyWithPermit and useZapSellWithPermit
+// useCurveSwap and useZapSwap do not create transactions - that's handled by TradeCard
+
 export type SwapError = NotConnectedError | TransactionError
 
 const USDC_INDEX = 0n
@@ -66,33 +69,12 @@ export function useCurveQuote(tokenIn: 'USDC' | 'BEAR', amountIn: bigint) {
 export function useCurveSwap() {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const txIdRef = useRef<string | null>(null)
 
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'success' })
-      txIdRef.current = null
-    }
-  }, [isSuccess, updateTransaction])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
 
   const swap = async (
     tokenIn: 'USDC' | 'BEAR',
@@ -106,54 +88,18 @@ export function useCurveSwap() {
     const i = tokenIn === 'USDC' ? USDC_INDEX : BEAR_INDEX
     const j = tokenIn === 'USDC' ? BEAR_INDEX : USDC_INDEX
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'swap',
-      status: 'pending',
-      hash: undefined,
-      description: tokenIn === 'USDC' ? 'Swapping USDC for plDXY-BEAR' : 'Swapping plDXY-BEAR for USDC',
-    })
-
     return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: addresses.CURVE_POOL,
-              abi: CURVE_POOL_ABI,
-              functionName: 'exchange',
-              args: [i, j, amountIn, minAmountOut, address],
-            },
-            {
-              onSuccess: (hash) => {
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
+      try: () => writeContractAsync({
+        address: addresses.CURVE_POOL,
+        abi: CURVE_POOL_ABI,
+        functionName: 'exchange',
+        args: [i, j, amountIn, minAmountOut, address],
+      }),
       catch: (err) => {
         if (err instanceof Error && '_tag' in err) {
           return err as TransactionError
         }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
+        return parseTransactionError(err)
       },
     })
   }
@@ -163,6 +109,7 @@ export function useCurveSwap() {
     isPending,
     isConfirming,
     isSuccess,
+    isError,
     error,
     reset,
     hash,
@@ -242,33 +189,12 @@ export function useZapQuote(direction: 'buy' | 'sell', amount: bigint) {
 export function useZapSwap() {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const txIdRef = useRef<string | null>(null)
 
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
+  const { isLoading: isConfirming, isSuccess, isError } = useWaitForTransactionReceipt({
     hash,
   })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'success' })
-      txIdRef.current = null
-    }
-  }, [isSuccess, updateTransaction])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
 
   const zapBuy = async (
     usdcAmount: bigint,
@@ -280,54 +206,18 @@ export function useZapSwap() {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'swap',
-      status: 'pending',
-      hash: undefined,
-      description: 'Swapping USDC for plDXY-BULL',
-    })
-
     return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: addresses.ZAP_ROUTER,
-              abi: ZAP_ROUTER_ABI,
-              functionName: 'zapMint',
-              args: [usdcAmount, minBullOut, maxSlippageBps, deadline],
-            },
-            {
-              onSuccess: (hash) => {
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
+      try: () => writeContractAsync({
+        address: addresses.ZAP_ROUTER,
+        abi: ZAP_ROUTER_ABI,
+        functionName: 'zapMint',
+        args: [usdcAmount, minBullOut, maxSlippageBps, deadline],
+      }),
       catch: (err) => {
         if (err instanceof Error && '_tag' in err) {
           return err as TransactionError
         }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
+        return parseTransactionError(err)
       },
     })
   }
@@ -341,54 +231,18 @@ export function useZapSwap() {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'swap',
-      status: 'pending',
-      hash: undefined,
-      description: 'Swapping plDXY-BULL for USDC',
-    })
-
     return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: addresses.ZAP_ROUTER,
-              abi: ZAP_ROUTER_ABI,
-              functionName: 'zapBurn',
-              args: [bullAmount, minUsdcOut, deadline],
-            },
-            {
-              onSuccess: (hash) => {
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
+      try: () => writeContractAsync({
+        address: addresses.ZAP_ROUTER,
+        abi: ZAP_ROUTER_ABI,
+        functionName: 'zapBurn',
+        args: [bullAmount, minUsdcOut, deadline],
+      }),
       catch: (err) => {
         if (err instanceof Error && '_tag' in err) {
           return err as TransactionError
         }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
+        return parseTransactionError(err)
       },
     })
   }
@@ -399,6 +253,7 @@ export function useZapSwap() {
     isPending,
     isConfirming,
     isSuccess,
+    isError,
     error,
     reset,
     hash,
@@ -430,7 +285,7 @@ export function useZapBuyWithPermit() {
   })
 
   const { signTypedDataAsync } = useSignTypedData()
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract()
 
   const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({ hash })
 
@@ -469,7 +324,8 @@ export function useZapBuyWithPermit() {
         type: 'swap',
         status: 'pending',
         hash: undefined,
-        description: 'Swapping USDC for plDXY-BULL',
+        title: 'Swapping USDC for plDXY-BULL',
+        steps: [{ label: 'Sign permit', status: 'pending' }, { label: 'Swap', status: 'pending' }],
       })
 
       return Result.tryPromise({
@@ -508,31 +364,14 @@ export function useZapBuyWithPermit() {
           const s: `0x${string}` = `0x${signature.slice(66, 130)}`
           const v = parseInt(signature.slice(130, 132), 16)
 
-          return new Promise<`0x${string}`>((resolve, reject) => {
-            writeContract(
-              {
-                address: addresses.ZAP_ROUTER,
-                abi: ZAP_ROUTER_ABI,
-                functionName: 'zapMintWithPermit',
-                args: [usdcAmount, minBullOut, maxSlippageBps, deadline, v, r, s],
-              },
-              {
-                onSuccess: (hash) => {
-                  updateTransaction(txId, { hash, status: 'confirming' })
-                  resolve(hash)
-                },
-                onError: (err) => {
-                  const txError = parseTransactionError(err)
-                  updateTransaction(txId, {
-                    status: 'failed',
-                    errorMessage: getErrorMessage(txError),
-                  })
-                  txIdRef.current = null
-                  reject(txError)
-                },
-              }
-            )
+          const txHash = await writeContractAsync({
+            address: addresses.ZAP_ROUTER,
+            abi: ZAP_ROUTER_ABI,
+            functionName: 'zapMintWithPermit',
+            args: [usdcAmount, minBullOut, maxSlippageBps, deadline, v, r, s],
           })
+          updateTransaction(txId, { hash: txHash, status: 'confirming' })
+          return txHash
         },
         catch: (err) => {
           setIsSigningPermit(false)
@@ -549,7 +388,7 @@ export function useZapBuyWithPermit() {
         },
       })
     },
-    [address, addresses, chainId, nonce, tokenName, signTypedDataAsync, writeContract, addTransaction, updateTransaction]
+    [address, addresses, chainId, nonce, tokenName, signTypedDataAsync, writeContractAsync, addTransaction, updateTransaction]
   )
 
   return {
@@ -589,7 +428,7 @@ export function useZapSellWithPermit() {
   })
 
   const { signTypedDataAsync } = useSignTypedData()
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
+  const { writeContractAsync, data: hash, isPending, error, reset } = useWriteContract()
 
   const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({ hash })
 
@@ -624,7 +463,8 @@ export function useZapSellWithPermit() {
         type: 'swap',
         status: 'pending',
         hash: undefined,
-        description: 'Swapping plDXY-BULL for USDC',
+        title: 'Swapping plDXY-BULL for USDC',
+        steps: [{ label: 'Sign permit', status: 'pending' }, { label: 'Swap', status: 'pending' }],
       })
 
       return Result.tryPromise({
@@ -663,31 +503,14 @@ export function useZapSellWithPermit() {
           const s: `0x${string}` = `0x${signature.slice(66, 130)}`
           const v = parseInt(signature.slice(130, 132), 16)
 
-          return new Promise<`0x${string}`>((resolve, reject) => {
-            writeContract(
-              {
-                address: addresses.ZAP_ROUTER,
-                abi: ZAP_ROUTER_ABI,
-                functionName: 'zapBurnWithPermit',
-                args: [bullAmount, minUsdcOut, deadline, v, r, s],
-              },
-              {
-                onSuccess: (hash) => {
-                  updateTransaction(txId, { hash, status: 'confirming' })
-                  resolve(hash)
-                },
-                onError: (err) => {
-                  const txError = parseTransactionError(err)
-                  updateTransaction(txId, {
-                    status: 'failed',
-                    errorMessage: getErrorMessage(txError),
-                  })
-                  txIdRef.current = null
-                  reject(txError)
-                },
-              }
-            )
+          const txHash = await writeContractAsync({
+            address: addresses.ZAP_ROUTER,
+            abi: ZAP_ROUTER_ABI,
+            functionName: 'zapBurnWithPermit',
+            args: [bullAmount, minUsdcOut, deadline, v, r, s],
           })
+          updateTransaction(txId, { hash: txHash, status: 'confirming' })
+          return txHash
         },
         catch: (err) => {
           setIsSigningPermit(false)
@@ -704,7 +527,7 @@ export function useZapSellWithPermit() {
         },
       })
     },
-    [address, addresses, chainId, nonce, tokenName, signTypedDataAsync, writeContract, addTransaction, updateTransaction]
+    [address, addresses, chainId, nonce, tokenName, signTypedDataAsync, writeContractAsync, addTransaction, updateTransaction]
   )
 
   return {

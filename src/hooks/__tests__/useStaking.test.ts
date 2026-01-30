@@ -4,7 +4,7 @@ import { Result } from 'better-result'
 import { useTransactionStore } from '../../stores/transactionStore'
 import type { StakingError } from '../useStaking'
 
-const mockWriteContract = vi.fn()
+const mockWriteContractAsync = vi.fn()
 const mockReset = vi.fn()
 const mockSignTypedDataAsync = vi.fn()
 
@@ -251,7 +251,7 @@ describe('usePreviewRedeem', () => {
 describe('useStake', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -259,7 +259,7 @@ describe('useStake', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -273,10 +273,8 @@ describe('useStake', () => {
     })
   })
 
-  it('adds pending transaction when stake is called', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('calls writeContractAsync with correct arguments', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useStake('BEAR'))
 
@@ -284,16 +282,14 @@ describe('useStake', () => {
       await result.current.stake(1000000000000000000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('stake')
-    expect(pendingTransactions[0].description).toBe('Staking plDXY-BEAR')
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(1)
+    const callArgs = mockWriteContractAsync.mock.calls[0][0]
+    expect(callArgs.functionName).toBe('deposit')
+    expect(callArgs.args[0]).toBe(1000000000000000000n)
   })
 
   it('returns Result.ok with hash on success', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xstakehash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xstakehash')
 
     const { result } = renderHook(() => useStake('BULL'))
     let stakeResult: Result<`0x${string}`, StakingError> | undefined
@@ -329,10 +325,8 @@ describe('useStake', () => {
     }
   })
 
-  it('returns Result.err when writeContract fails', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('User rejected'))
-    })
+  it('returns Result.err when writeContractAsync fails', async () => {
+    mockWriteContractAsync.mockRejectedValue(new Error('User rejected'))
 
     const { result } = renderHook(() => useStake('BEAR'))
     let stakeResult: Result<`0x${string}`, StakingError> | undefined
@@ -343,15 +337,10 @@ describe('useStake', () => {
 
     expect(stakeResult).toBeDefined()
     expect(Result.isError(stakeResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
   })
 
-  it('updates transaction to success when receipt confirms', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('exposes isSuccess when receipt confirms', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result, rerender } = renderHook(() => useStake('BEAR'))
 
@@ -367,8 +356,7 @@ describe('useStake', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('success')
+      expect(result.current.isSuccess).toBe(true)
     })
   })
 })
@@ -376,7 +364,7 @@ describe('useStake', () => {
 describe('useUnstake', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -384,7 +372,7 @@ describe('useUnstake', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -398,10 +386,8 @@ describe('useUnstake', () => {
     })
   })
 
-  it('adds pending transaction when unstake is called', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('calls writeContractAsync with correct arguments', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useUnstake('BULL'))
 
@@ -409,16 +395,14 @@ describe('useUnstake', () => {
       await result.current.unstake(1000000000000000000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('unstake')
-    expect(pendingTransactions[0].description).toBe('Unstaking splDXY-BULL')
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(1)
+    const callArgs = mockWriteContractAsync.mock.calls[0][0]
+    expect(callArgs.functionName).toBe('redeem')
+    expect(callArgs.args[0]).toBe(1000000000000000000n)
   })
 
   it('returns Result.ok with hash on success', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xunstakehash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xunstakehash')
 
     const { result } = renderHook(() => useUnstake('BEAR'))
     let unstakeResult: Result<`0x${string}`, StakingError> | undefined
@@ -454,10 +438,8 @@ describe('useUnstake', () => {
     }
   })
 
-  it('returns Result.err when writeContract fails', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('Insufficient balance'))
-    })
+  it('returns Result.err when writeContractAsync fails', async () => {
+    mockWriteContractAsync.mockRejectedValue(new Error('Insufficient balance'))
 
     const { result } = renderHook(() => useUnstake('BULL'))
     let unstakeResult: Result<`0x${string}`, StakingError> | undefined
@@ -468,16 +450,13 @@ describe('useUnstake', () => {
 
     expect(unstakeResult).toBeDefined()
     expect(Result.isError(unstakeResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
   })
 })
 
 describe('useStakeWithPermit', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -489,7 +468,7 @@ describe('useStakeWithPermit', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -541,9 +520,7 @@ describe('useStakeWithPermit', () => {
       '0x' + '1'.repeat(64) + '2'.repeat(64) + '1b'
     )
 
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xstakepermithash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xstakepermithash')
 
     const { result } = renderHook(() => useStakeWithPermit('BEAR'))
     let stakeResult: Result<`0x${string}`, StakingError> | undefined
@@ -555,9 +532,6 @@ describe('useStakeWithPermit', () => {
     expect(stakeResult).toBeDefined()
     expect(Result.isOk(stakeResult!)).toBe(true)
     expect(mockSignTypedDataAsync).toHaveBeenCalled()
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Staking plDXY-BEAR')
   })
 
   it('handles signature rejection', async () => {
@@ -581,9 +555,6 @@ describe('useStakeWithPermit', () => {
 
     expect(stakeResult).toBeDefined()
     expect(Result.isError(stakeResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
   })
 
   it('provides reset function that clears permit state', async () => {

@@ -98,6 +98,7 @@ export function useMintFlow(pairAmount: bigint, options: UseMintFlowOptions = {}
 
     void sequence.execute({
       title: 'Minting token pairs',
+      type: 'mint',
       buildSteps: buildMintSteps,
       onSuccess,
     })
@@ -153,6 +154,7 @@ export function useMintFlow(pairAmount: bigint, options: UseMintFlowOptions = {}
 
     void sequence.execute({
       title: 'Redeeming token pairs',
+      type: 'burn',
       buildSteps: buildRedeemSteps,
       onSuccess,
     })

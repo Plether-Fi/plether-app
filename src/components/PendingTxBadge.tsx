@@ -1,8 +1,8 @@
 import { useTransactionStore } from '../stores/transactionStore'
 
 export function PendingTxBadge() {
-  const { pendingTransactions } = useTransactionStore()
-  const activeTxs = pendingTransactions.filter(
+  const transactions = useTransactionStore((s) => s.transactions)
+  const activeTxs = transactions.filter(
     tx => tx.status === 'pending' || tx.status === 'confirming'
   )
   const count = activeTxs.length

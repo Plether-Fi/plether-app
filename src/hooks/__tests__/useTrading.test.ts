@@ -4,7 +4,7 @@ import { Result } from 'better-result'
 import { useTransactionStore } from '../../stores/transactionStore'
 import type { SwapError } from '../useTrading'
 
-const mockWriteContract = vi.fn()
+const mockWriteContractAsync = vi.fn()
 const mockReset = vi.fn()
 const mockSignTypedDataAsync = vi.fn()
 
@@ -109,7 +109,7 @@ describe('useCurveQuote', () => {
 describe('useCurveSwap', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -117,7 +117,7 @@ describe('useCurveSwap', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -131,10 +131,8 @@ describe('useCurveSwap', () => {
     })
   })
 
-  it('adds a pending transaction when swap is called', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('calls writeContractAsync with correct parameters', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useCurveSwap())
 
@@ -142,16 +140,14 @@ describe('useCurveSwap', () => {
       await result.current.swap('USDC', 1000000n, 900000000000000000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('swap')
-    expect(pendingTransactions[0].description).toBe('Swapping USDC for plDXY-BEAR')
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(1)
+    const callArgs = mockWriteContractAsync.mock.calls[0][0]
+    expect(callArgs.functionName).toBe('exchange')
+    expect(callArgs.args[2]).toBe(1000000n)
   })
 
   it('returns Result.ok with hash when swap succeeds', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xswaphash123')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xswaphash123')
 
     const { result } = renderHook(() => useCurveSwap())
     let swapResult: Result<`0x${string}`, SwapError> | undefined
@@ -168,9 +164,7 @@ describe('useCurveSwap', () => {
   })
 
   it('returns Result.err when user rejects transaction', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('User rejected'))
-    })
+    mockWriteContractAsync.mockRejectedValue(new Error('User rejected'))
 
     const { result } = renderHook(() => useCurveSwap())
     let swapResult: Result<`0x${string}`, SwapError> | undefined
@@ -181,9 +175,6 @@ describe('useCurveSwap', () => {
 
     expect(swapResult).toBeDefined()
     expect(Result.isError(swapResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
   })
 
   it('returns NotConnectedError when address is missing', async () => {
@@ -206,27 +197,24 @@ describe('useCurveSwap', () => {
     }
   })
 
-  it('updates transaction status to confirming on success', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('returns hash from writeContractAsync success', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useCurveSwap())
+    let swapResult: Result<`0x${string}`, SwapError> | undefined
 
     await act(async () => {
-      await result.current.swap('BEAR', 1000000000000000000n, 900000n)
+      swapResult = await result.current.swap('BEAR', 1000000000000000000n, 900000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('confirming')
-    expect(pendingTransactions[0].hash).toBe('0xhash')
-    expect(pendingTransactions[0].description).toBe('Swapping plDXY-BEAR for USDC')
+    expect(Result.isOk(swapResult!)).toBe(true)
+    if (Result.isOk(swapResult!)) {
+      expect(swapResult.value).toBe('0xhash')
+    }
   })
 
-  it('updates transaction to success when receipt confirms', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('exposes isSuccess when receipt confirms', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result, rerender } = renderHook(() => useCurveSwap())
 
@@ -242,8 +230,7 @@ describe('useCurveSwap', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('success')
+      expect(result.current.isSuccess).toBe(true)
     })
   })
 })
@@ -308,7 +295,7 @@ describe('useZapQuote', () => {
 describe('useZapSwap', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -316,7 +303,7 @@ describe('useZapSwap', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -331,9 +318,7 @@ describe('useZapSwap', () => {
   })
 
   it('executes zapBuy and returns Result.ok on success', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xzapbuyhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xzapbuyhash')
 
     const { result } = renderHook(() => useZapSwap())
     let zapResult: Result<`0x${string}`, SwapError> | undefined
@@ -345,15 +330,13 @@ describe('useZapSwap', () => {
 
     expect(zapResult).toBeDefined()
     expect(Result.isOk(zapResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Swapping USDC for plDXY-BULL')
+    if (Result.isOk(zapResult!)) {
+      expect(zapResult.value).toBe('0xzapbuyhash')
+    }
   })
 
   it('executes zapSell and returns Result.ok on success', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xzapsellhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xzapsellhash')
 
     const { result } = renderHook(() => useZapSwap())
     let zapResult: Result<`0x${string}`, SwapError> | undefined
@@ -365,9 +348,9 @@ describe('useZapSwap', () => {
 
     expect(zapResult).toBeDefined()
     expect(Result.isOk(zapResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Swapping plDXY-BULL for USDC')
+    if (Result.isOk(zapResult!)) {
+      expect(zapResult.value).toBe('0xzapsellhash')
+    }
   })
 
   it('returns NotConnectedError when chainId is missing', async () => {
@@ -391,10 +374,8 @@ describe('useZapSwap', () => {
     }
   })
 
-  it('returns Result.err when writeContract fails', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('Insufficient balance'))
-    })
+  it('returns Result.err when writeContractAsync fails', async () => {
+    mockWriteContractAsync.mockRejectedValue(new Error('Insufficient balance'))
 
     const { result } = renderHook(() => useZapSwap())
     let zapResult: Result<`0x${string}`, SwapError> | undefined
@@ -406,16 +387,13 @@ describe('useZapSwap', () => {
 
     expect(zapResult).toBeDefined()
     expect(Result.isError(zapResult!)).toBe(true)
-
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
   })
 })
 
 describe('useZapBuyWithPermit', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -427,7 +405,7 @@ describe('useZapBuyWithPermit', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -479,9 +457,7 @@ describe('useZapBuyWithPermit', () => {
       '0x' + '1'.repeat(64) + '2'.repeat(64) + '1b'
     )
 
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xpermithash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xpermithash')
 
     const { result } = renderHook(() => useZapBuyWithPermit())
     let zapResult: Result<`0x${string}`, SwapError> | undefined
@@ -499,7 +475,7 @@ describe('useZapBuyWithPermit', () => {
 describe('useZapSellWithPermit', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -511,7 +487,7 @@ describe('useZapSellWithPermit', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
+      writeContractAsync: mockWriteContractAsync,
       data: undefined,
       isPending: false,
       error: null,
@@ -563,9 +539,7 @@ describe('useZapSellWithPermit', () => {
       '0x' + '1'.repeat(64) + '2'.repeat(64) + '1b'
     )
 
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xsellpermithash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xsellpermithash')
 
     const { result } = renderHook(() => useZapSellWithPermit())
 
@@ -573,7 +547,7 @@ describe('useZapSellWithPermit', () => {
       await result.current.zapSellWithPermit(1000000000000000000n, 900000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Swapping plDXY-BULL for USDC')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].title).toBe('Swapping plDXY-BULL for USDC')
   })
 })

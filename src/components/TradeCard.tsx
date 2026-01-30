@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
 import { InfoTooltip, OutputDisplay, Modal, Button } from './ui'
-import { useCurveQuote, useCurveSwap, useZapQuote, useZapSwap, useApprovalFlow, useTransactionModal } from '../hooks'
+import { useCurveQuote, useZapQuote } from '../hooks'
+import { useTransactionStore } from '../stores/transactionStore'
+import { transactionManager } from '../services/transactionManager'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import { formatAmount } from '../utils/formatters'
-import { parseTransactionError, getErrorMessage } from '../utils/errors'
+import { useAllowance } from '../hooks/useAllowance'
 
 type TradeMode = 'buy' | 'sell'
 type TokenSide = 'BEAR' | 'BULL'
@@ -24,14 +26,24 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const slippage = useSettingsStore((s) => s.slippage)
   const maxPriceImpact = useSettingsStore((s) => s.maxPriceImpact)
-  const txModal = useTransactionModal()
+  const txStore = useTransactionStore()
 
   const [mode, setMode] = useState<TradeMode>('buy')
   const [selectedToken, setSelectedToken] = useState<TokenSide>('BULL')
   const [inputAmount, setInputAmount] = useState('')
   const [showPriceImpactWarning, setShowPriceImpactWarning] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
-  const [isSwapping, setIsSwapping] = useState(false)
+
+  const isBearTrade = selectedToken === 'BEAR'
+  const operationKey = isBearTrade
+    ? `swap-${mode}-bear`
+    : (mode === 'buy' ? 'swap-buy-bull' : 'swap-sell-bull')
+
+  const transactionId = txStore.activeOperations[operationKey]
+  const currentTx = transactionId
+    ? txStore.transactions.find(t => t.id === transactionId)
+    : null
+  const isPending = currentTx?.status === 'pending' || currentTx?.status === 'confirming'
 
   const inputToken = mode === 'buy'
     ? { symbol: 'USDC', decimals: 6 }
@@ -47,8 +59,6 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   const inputDecimals = mode === 'buy' ? 6 : 18
   const inputAmountBigInt = inputAmount ? parseUnits(inputAmount, inputDecimals) : 0n
-
-  const isBearTrade = selectedToken === 'BEAR'
 
   const { amountOut: curveAmountOut, priceImpact: curvePriceImpact, isLoading: curveQuoteLoading } = useCurveQuote(
     mode === 'buy' ? 'USDC' : 'BEAR',
@@ -70,128 +80,46 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     }
   }, [priceImpact])
 
-  const {
-    swap: curveSwap,
-    isPending: curvePending,
-    isConfirming: curveConfirming,
-    isSuccess: curveSuccess,
-    error: curveError,
-    reset: resetCurve,
-    hash: curveHash,
-  } = useCurveSwap()
-
-  const {
-    zapBuy,
-    zapSell,
-    isPending: zapPending,
-    isConfirming: zapConfirming,
-    isSuccess: zapSuccess,
-    error: zapError,
-    reset: resetZap,
-    hash: zapHash,
-  } = useZapSwap()
-
   const spenderAddress = isBearTrade ? addresses.CURVE_POOL : addresses.ZAP_ROUTER
   const tokenToApprove = mode === 'buy'
     ? addresses.USDC
     : (selectedToken === 'BEAR' ? addresses.DXY_BEAR : addresses.DXY_BULL)
 
-  const {
-    execute: executeWithApproval,
-    needsApproval,
-    isApproving,
-    approvePending,
-    approveConfirming,
-    approveError,
-  } = useApprovalFlow({
-    tokenAddress: tokenToApprove,
-    spenderAddress,
-  })
+  const { allowance, refetch: refetchAllowance } = useAllowance(tokenToApprove, spenderAddress)
+  const needsApproval = inputAmountBigInt > 0n && allowance < inputAmountBigInt
 
   const insufficientBalance = inputAmountBigInt > inputBalance
 
-  const executeSwap = useCallback(async (amount: bigint) => {
-    setIsSwapping(true)
+  useEffect(() => {
+    if (currentTx?.status === 'success') {
+      refetchBalances?.()
+      refetchAllowance()
+      setInputAmount('')
+    }
+  }, [currentTx?.status, refetchBalances, refetchAllowance])
+
+  const proceedWithSwap = () => {
     const slippageBps = BigInt(Math.floor(slippage * 100))
     const minAmountOut = quoteAmountOut - (quoteAmountOut * slippageBps / 10000n)
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
 
     if (isBearTrade) {
-      await curveSwap(mode === 'buy' ? 'USDC' : 'BEAR', amount, minAmountOut)
+      void transactionManager.executeCurveSwap(mode, inputAmountBigInt, minAmountOut, {
+        onRetry: proceedWithSwap,
+      })
     } else {
       if (mode === 'buy') {
-        await zapBuy(amount, minAmountOut, slippageBps, deadline)
+        void transactionManager.executeZapBuy(inputAmountBigInt, minAmountOut, slippageBps, {
+          onRetry: proceedWithSwap,
+        })
       } else {
-        await zapSell(amount, minAmountOut, deadline)
+        void transactionManager.executeZapSell(inputAmountBigInt, minAmountOut, {
+          onRetry: proceedWithSwap,
+        })
       }
     }
-  }, [slippage, quoteAmountOut, isBearTrade, mode, curveSwap, zapBuy, zapSell])
+  }
 
-  useEffect(() => {
-    if (curveSuccess || zapSuccess) {
-      const hash = curveHash ?? zapHash
-      if (hash) txModal.setSuccess(hash)
-      refetchBalances?.()
-      setInputAmount('')
-      setIsSwapping(false)
-      resetCurve()
-      resetZap()
-    }
-  }, [curveSuccess, zapSuccess, curveHash, zapHash, refetchBalances, resetCurve, resetZap, txModal])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !isApproving) return
-
-    if (approvePending) {
-      modal.setStepInProgress(0)
-    } else if (approveConfirming) {
-      modal.setStepInProgress(1)
-    } else if (approveError) {
-      modal.setError(0, getErrorMessage(parseTransactionError(approveError)))
-    }
-  }, [isApproving, approvePending, approveConfirming, approveError])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !isSwapping) return
-    const stepOffset = needsApproval(inputAmountBigInt) ? 2 : 0
-
-    if (curvePending || zapPending) {
-      modal.setStepInProgress(stepOffset)
-    } else if (curveConfirming || zapConfirming) {
-      modal.setStepInProgress(stepOffset + 1)
-    } else if (curveError || zapError) {
-      modal.setError(stepOffset, getErrorMessage(parseTransactionError(curveError ?? zapError)))
-      setIsSwapping(false)
-    }
-  }, [isSwapping, curvePending, zapPending, curveConfirming, zapConfirming, curveError, zapError, needsApproval, inputAmountBigInt])
-
-  const proceedWithSwap = useCallback(async () => {
-    const tokenLabel = `plDXY-${selectedToken}`
-    const actionLabel = mode === 'buy' ? 'Buying' : 'Selling'
-    const requiresApproval = needsApproval(inputAmountBigInt)
-
-    txModal.open({
-      title: `${actionLabel} ${tokenLabel}`,
-      steps: requiresApproval
-        ? [
-            `Approve ${inputToken.symbol}`,
-            'Confirming approval',
-            `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
-            'Awaiting confirmation',
-          ]
-        : [
-            `${mode === 'buy' ? 'Buy' : 'Sell'} ${tokenLabel}`,
-            'Awaiting confirmation',
-          ],
-      onRetry: () => void proceedWithSwap(),
-    })
-
-    await executeWithApproval(inputAmountBigInt, executeSwap)
-  }, [selectedToken, mode, needsApproval, inputAmountBigInt, inputToken.symbol, txModal, executeWithApproval, executeSwap])
-
-  const handleSwap = async () => {
+  const handleSwap = () => {
     if (!inputAmountBigInt || inputAmountBigInt <= 0n) return
 
     if (priceImpact > maxPriceImpact) {
@@ -199,23 +127,21 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       return
     }
 
-    await proceedWithSwap()
+    proceedWithSwap()
   }
 
-  const handleConfirmHighImpact = async () => {
+  const handleConfirmHighImpact = () => {
     setShowPriceImpactWarning(false)
-    await proceedWithSwap()
+    proceedWithSwap()
   }
 
   const getButtonText = () => {
-    if (curvePending || zapPending) return 'Swapping...'
-    if (approvePending) return `Approving ${inputToken.symbol}...`
+    if (isPending) return 'Swapping...'
     if (insufficientBalance) return `Insufficient ${inputToken.symbol}`
-    if (needsApproval(inputAmountBigInt)) return `Approve ${inputToken.symbol}`
+    if (needsApproval) return `Approve & ${mode === 'buy' ? 'Buy' : 'Sell'}`
     return `${mode === 'buy' ? 'Buy' : 'Sell'} plDXY-${selectedToken}`
   }
 
-  const isPending = curvePending || zapPending || isApproving
   const isDisabled = !inputAmount || parseFloat(inputAmount) <= 0 || isPending || insufficientBalance
 
   const outputDisplay = isQuoteLoading && inputAmountBigInt > 0n

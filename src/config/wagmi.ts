@@ -2,6 +2,7 @@ import { http, createConfig } from 'wagmi'
 import { defineChain } from 'viem'
 import { mainnet, sepolia } from 'wagmi/chains'
 import { injected, walletConnect } from 'wagmi/connectors'
+import { transactionManager } from '../services/transactionManager'
 
 // WalletConnect project ID - replace with your own from https://cloud.walletconnect.com
 export const WALLETCONNECT_PROJECT_ID = '1ac6ecffb101d037c113363688a6ef8e'
@@ -41,3 +42,6 @@ declare module 'wagmi' {
     config: typeof config
   }
 }
+
+// Initialize global transaction manager
+transactionManager.setConfig(config)

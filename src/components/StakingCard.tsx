@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import { TokenIcon, OutputDisplay } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
 import { parseStakingAmount, getStakingDecimals, SHARE_DECIMALS } from '../utils/staking'
-import { parseTransactionError, getErrorMessage } from '../utils/errors'
-import { useStakeWithPermit, useUnstake, useStakedBalance, usePreviewDeposit, usePreviewRedeem } from '../hooks/useStaking'
-import { useTransactionModal } from '../hooks'
+import { useStakedBalance, usePreviewDeposit, usePreviewRedeem } from '../hooks/useStaking'
+import { useTransactionStore } from '../stores/transactionStore'
+import { transactionManager } from '../services/transactionManager'
 
 type StakeMode = 'stake' | 'unstake'
 
@@ -15,33 +15,26 @@ export interface StakingCardProps {
 }
 
 export function StakingCard({ side, tokenBalance }: StakingCardProps) {
-  const txModal = useTransactionModal()
+  const txStore = useTransactionStore()
   const [mode, setMode] = useState<StakeMode>('stake')
   const [amount, setAmount] = useState('')
-  const stakeTriggeredRef = useRef(false)
-  const unstakeTriggeredRef = useRef(false)
+
+  const stakeOpKey = `stake-${side}`
+  const unstakeOpKey = `unstake-${side}`
+  const stakeTransactionId = txStore.activeOperations[stakeOpKey]
+  const unstakeTransactionId = txStore.activeOperations[unstakeOpKey]
+
+  const stakeTx = stakeTransactionId
+    ? txStore.transactions.find(t => t.id === stakeTransactionId)
+    : null
+  const unstakeTx = unstakeTransactionId
+    ? txStore.transactions.find(t => t.id === unstakeTransactionId)
+    : null
+
+  const isStakePending = stakeTx?.status === 'pending' || stakeTx?.status === 'confirming'
+  const isUnstakePending = unstakeTx?.status === 'pending' || unstakeTx?.status === 'confirming'
 
   const { shares: stakedBalance, refetch: refetchStaked } = useStakedBalance(side)
-  const {
-    stakeWithPermit,
-    isPending: stakePending,
-    isConfirming: stakeConfirming,
-    isSigningPermit,
-    isSuccess: stakeSuccess,
-    error: stakeError,
-    permitCompleted,
-    reset: resetStake,
-    hash: stakeHash,
-  } = useStakeWithPermit(side)
-  const {
-    unstake,
-    isPending: unstakePending,
-    isConfirming: unstakeConfirming,
-    isSuccess: unstakeSuccess,
-    error: unstakeError,
-    reset: resetUnstake,
-    hash: unstakeHash,
-  } = useUnstake(side)
 
   const decimals = getStakingDecimals(mode)
   const amountBigInt = parseStakingAmount(amount, mode)
@@ -49,73 +42,22 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
   const { shares: previewShares, isLoading: previewDepositLoading } = usePreviewDeposit(side, mode === 'stake' ? amountBigInt : 0n)
   const { assets: previewAssets, isLoading: previewRedeemLoading } = usePreviewRedeem(side, mode === 'unstake' ? amountBigInt : 0n)
 
-  useEffect(() => {
-    if (stakeSuccess) {
-      if (stakeHash) txModal.setSuccess(stakeHash)
+  const handleStake = () => {
+    void transactionManager.executeStakeWithPermit(side, amountBigInt, {
+      onRetry: handleStake,
+    }).then(() => {
       refetchStaked()
       setAmount('')
-      resetStake()
-      stakeTriggeredRef.current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stakeSuccess, stakeHash, refetchStaked, resetStake])
-
-  useEffect(() => {
-    if (unstakeSuccess) {
-      if (unstakeHash) txModal.setSuccess(unstakeHash)
-      refetchStaked()
-      setAmount('')
-      resetUnstake()
-      unstakeTriggeredRef.current = false
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unstakeSuccess, unstakeHash, refetchStaked, resetUnstake])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !stakeTriggeredRef.current) return
-    if (isSigningPermit) {
-      modal.setStepInProgress(0)
-    } else if (stakePending) {
-      modal.setStepInProgress(1)
-    } else if (stakeConfirming) {
-      modal.setStepInProgress(2)
-    } else if (stakeError) {
-      const stepIndex = permitCompleted ? 1 : 0
-      modal.setError(stepIndex, getErrorMessage(parseTransactionError(stakeError)))
-    }
-  }, [isSigningPermit, stakePending, stakeConfirming, stakeError, permitCompleted])
-
-  useEffect(() => {
-    const modal = useTransactionModal.getState()
-    if (!modal.isOpen || !unstakeTriggeredRef.current) return
-    if (unstakePending) {
-      modal.setStepInProgress(0)
-    } else if (unstakeConfirming) {
-      modal.setStepInProgress(1)
-    } else if (unstakeError) {
-      modal.setError(0, getErrorMessage(parseTransactionError(unstakeError)))
-    }
-  }, [unstakePending, unstakeConfirming, unstakeError])
-
-  const handleStake = async () => {
-    stakeTriggeredRef.current = true
-    txModal.open({
-      title: `Staking plDXY-${side}`,
-      steps: ['Sign permit', `Stake plDXY-${side}`, 'Awaiting confirmation'],
-      onRetry: () => void handleStake(),
     })
-    await stakeWithPermit(amountBigInt)
   }
 
-  const handleUnstake = async () => {
-    unstakeTriggeredRef.current = true
-    txModal.open({
-      title: `Unstaking splDXY-${side}`,
-      steps: [`Unstake splDXY-${side}`, 'Awaiting confirmation'],
-      onRetry: () => void handleUnstake(),
+  const handleUnstake = () => {
+    void transactionManager.executeUnstake(side, amountBigInt, {
+      onRetry: handleUnstake,
+    }).then(() => {
+      refetchStaked()
+      setAmount('')
     })
-    await unstake(amountBigInt)
   }
 
   const handleAction = mode === 'stake' ? handleStake : handleUnstake
@@ -130,19 +72,18 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
 
   const getButtonText = () => {
     if (mode === 'stake') {
-      if (isSigningPermit) return 'Sign Permit...'
-      if (stakePending) return 'Staking...'
+      if (isStakePending) return 'Staking...'
       if (insufficientBalance) return 'Insufficient Balance'
       return `Stake plDXY-${side}`
     } else {
-      if (unstakePending) return 'Unstaking...'
+      if (isUnstakePending) return 'Unstaking...'
       if (insufficientBalance) return 'Insufficient Balance'
       return `Unstake splDXY-${side}`
     }
   }
 
   const isDisabled = !amount || parseFloat(amount) <= 0 ||
-    stakePending || unstakePending || insufficientBalance
+    isStakePending || isUnstakePending || insufficientBalance
 
   return (
     <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg overflow-hidden">

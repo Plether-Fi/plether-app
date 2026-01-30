@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { usePublicClient } from 'wagmi'
 import { useTransactionModal } from './useTransactionModal'
+import { useTransactionStore, type TransactionType } from '../stores/transactionStore'
 import { parseTransactionError, getErrorMessage } from '../utils/errors'
 
 class TransactionRevertError extends Error {
@@ -19,6 +20,7 @@ export interface TransactionStep {
 
 export interface SequenceConfig {
   title: string
+  type?: TransactionType
   buildSteps: () => TransactionStep[]
   onSuccess?: (hash: string) => void
 }
@@ -42,6 +44,7 @@ const initialState: SequenceState = {
 export function useTransactionSequence() {
   const publicClient = usePublicClient()
   const txModal = useTransactionModal()
+  const txStore = useTransactionStore()
   const [state, setState] = useState<SequenceState>(initialState)
   const abortRef = useRef<{ aborted: boolean }>({ aborted: false })
 
@@ -54,13 +57,24 @@ export function useTransactionSequence() {
 
   const execute = useCallback(async (config: SequenceConfig) => {
     abortRef.current = { aborted: false }
-    const { title, buildSteps, onSuccess } = config
+    const { title, type, buildSteps, onSuccess } = config
     const steps = buildSteps()
+    const transactionId = crypto.randomUUID()
 
     const modalSteps = steps.flatMap(s => [s.label, 'Confirming...'])
-    txModal.open({
+
+    // Add to transaction store (single source of truth)
+    txStore.addTransaction({
+      id: transactionId,
+      type: type ?? 'mint',
+      status: 'pending',
       title,
-      steps: modalSteps,
+      steps: modalSteps.map(label => ({ label, status: 'pending' as const })),
+    })
+
+    // Open modal (UI only)
+    txModal.open({
+      transactionId,
       onRetry: () => {
         reset()
         void execute(config)
@@ -77,7 +91,7 @@ export function useTransactionSequence() {
       const step = steps[i]
       const modalStepBase = i * 2
 
-      txModal.setStepInProgress(modalStepBase)
+      txStore.setStepInProgress(transactionId, modalStepBase)
       setState(s => ({ ...s, currentStepIndex: i }))
 
       try {
@@ -90,14 +104,13 @@ export function useTransactionSequence() {
 
         lastHash = hash
 
-        txModal.setStepInProgress(modalStepBase + 1)
+        txStore.setStepInProgress(transactionId, modalStepBase + 1)
 
         const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
         if (isAborted()) return
 
         if (receipt.status === 'reverted') {
-          // Simulate the failed tx to get the revert reason
           const tx = await publicClient.getTransaction({ hash })
           if (tx.to) {
             await publicClient.call({
@@ -118,17 +131,17 @@ export function useTransactionSequence() {
         const message = getErrorMessage(error)
 
         setState(s => ({ ...s, status: 'error', error: message }))
-        txModal.setError(modalStepBase, message)
+        txStore.setStepError(transactionId, modalStepBase, message)
         return
       }
     }
 
     if (lastHash) {
       setState({ status: 'success', currentStepIndex: steps.length, error: null, hash: lastHash })
-      txModal.setSuccess(lastHash)
+      txStore.setStepSuccess(transactionId, lastHash)
       onSuccess?.(lastHash)
     }
-  }, [publicClient, txModal, reset])
+  }, [publicClient, txModal, txStore, reset])
 
   return {
     execute,
