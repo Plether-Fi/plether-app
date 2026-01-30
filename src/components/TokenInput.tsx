@@ -13,6 +13,7 @@ interface TokenInputProps {
   label?: string
   disabled?: boolean
   error?: string
+  compact?: boolean
 }
 
 export function TokenInput({
@@ -24,6 +25,7 @@ export function TokenInput({
   label,
   disabled,
   error,
+  compact = false,
 }: TokenInputProps) {
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
@@ -55,11 +57,12 @@ export function TokenInput({
           disabled={disabled}
           placeholder="0.00"
           className={`
-            w-full px-4 py-4 pr-32 bg-cyber-surface-light border  text-cyber-text-primary text-xl
+            w-full bg-cyber-surface-light border text-cyber-text-primary
             placeholder-cyber-text-secondary/50 focus:outline-none focus:ring-1
             focus:ring-cyber-bright-blue focus:border-cyber-bright-blue
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-all shadow-sm shadow-cyber-border-glow/10
+            ${compact ? 'px-3 py-2.5 pr-24 text-base' : 'px-4 py-4 pr-32 text-xl'}
             ${error ? 'border-cyber-electric-fuchsia' : 'border-cyber-border-glow/30'}
           `}
         />

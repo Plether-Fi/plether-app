@@ -221,10 +221,15 @@ export function useAvailableToBorrow(side: 'BEAR' | 'BULL') {
     ? (borrowShares * totalBorrowAssets) / totalBorrowShares
     : 0n
 
-  // Morpho max borrow: collateral * oraclePrice * lltv / 10^54
-  // oraclePrice is 1e36 scale, lltv is 1e18 scale
-  // Note: splDXY has 1000x virtual offset, so we divide by additional 1e15
-  // to convert from price-per-asset to price-per-share
+  // Collateral USD value: collateral * oraclePrice / 10^51
+  // oraclePrice is 1e36 scale, collateral is splDXY shares (18 dec + 1000x offset = 21 effective)
+  // Result: 21 + 36 - 51 = 6 decimals (USDC)
+  const collateralUsd = price > 0n
+    ? (collateral * price) / 10n ** 51n
+    : 0n
+
+  // Morpho max borrow: collateral * oraclePrice * lltv / 10^69
+  // lltv is 1e18 scale, so 51 + 18 = 69
   const maxBorrow = lltv > 0n && price > 0n
     ? (collateral * price * lltv) / 10n ** 69n
     : 0n
@@ -233,6 +238,7 @@ export function useAvailableToBorrow(side: 'BEAR' | 'BULL') {
 
   return {
     collateral,
+    collateralUsd,
     currentDebt,
     maxBorrow,
     availableToBorrow,

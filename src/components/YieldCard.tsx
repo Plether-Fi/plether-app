@@ -9,18 +9,19 @@ import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
 
 type SupplyMode = 'supply' | 'withdraw'
 type BorrowMode = 'borrow' | 'repay'
-
 type MarketSide = 'BEAR' | 'BULL'
 
-export interface YieldCardProps {
+export interface MarketData {
   suppliedAmount: bigint
   borrowedAmount: bigint
   availableToBorrow: bigint
+  collateral: bigint
+}
+
+export interface YieldCardProps {
+  bearMarket: MarketData
+  bullMarket: MarketData
   usdcBalance: bigint
-  suppliedBalance: bigint
-  hasCollateral?: boolean
-  side?: MarketSide
-  onSideChange?: (side: MarketSide) => void
   onSuccess?: () => void
 }
 
@@ -64,31 +65,17 @@ function useMarketConfig(side: MarketSide) {
   return { morphoAddress, marketParams }
 }
 
-export function YieldCard({
-  suppliedAmount,
-  borrowedAmount,
-  availableToBorrow,
-  usdcBalance,
-  suppliedBalance,
-  hasCollateral = false,
-  side: controlledSide,
-  onSideChange,
-  onSuccess,
-}: YieldCardProps) {
+interface MarketColumnProps {
+  side: MarketSide
+  market: MarketData
+  usdcBalance: bigint
+  onSuccess?: () => void
+}
+
+function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProps) {
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
-
-  const [internalSide, setInternalSide] = useState<MarketSide>('BEAR')
-  const activeSide = controlledSide ?? internalSide
-  const handleSideChange = (newSide: MarketSide) => {
-    if (onSideChange) {
-      onSideChange(newSide)
-    } else {
-      setInternalSide(newSide)
-    }
-  }
-
-  const { morphoAddress, marketParams } = useMarketConfig(activeSide)
+  const { morphoAddress, marketParams } = useMarketConfig(side)
 
   const [supplyMode, setSupplyMode] = useState<SupplyMode>('supply')
   const [borrowMode, setBorrowMode] = useState<BorrowMode>('borrow')
@@ -107,12 +94,13 @@ export function YieldCard({
   const supplySequence = useTransactionSequence()
   const borrowSequence = useTransactionSequence()
 
+  const hasCollateral = market.collateral > 0n
   const needsApprovalForSupply = supplyMode === 'supply' && supplyBigInt > 0n && usdcAllowance < supplyBigInt
   const needsApprovalForRepay = borrowMode === 'repay' && borrowBigInt > 0n && usdcAllowance < borrowBigInt
   const insufficientBalanceSupply = supplyMode === 'supply' && supplyBigInt > usdcBalance
   const insufficientBalanceRepay = borrowMode === 'repay' && borrowBigInt > usdcBalance
-  const insufficientSupplied = supplyMode === 'withdraw' && supplyBigInt > suppliedBalance
-  const insufficientBorrowable = borrowMode === 'borrow' && borrowBigInt > availableToBorrow
+  const insufficientSupplied = supplyMode === 'withdraw' && supplyBigInt > market.suppliedAmount
+  const insufficientBorrowable = borrowMode === 'borrow' && borrowBigInt > market.availableToBorrow
 
   const buildSupplySteps = useCallback((): TransactionStep[] => {
     if (!morphoAddress || !marketParams || !address) return []
@@ -208,57 +196,37 @@ export function YieldCard({
     if (supplyBigInt <= 0n || !morphoAddress || !marketParams) return
 
     void supplySequence.execute({
-      title: supplyMode === 'supply' ? 'Supplying USDC' : 'Withdrawing USDC',
+      title: supplyMode === 'supply' ? `Supplying USDC to ${side}` : `Withdrawing USDC from ${side}`,
       buildSteps: buildSupplySteps,
       onSuccess: () => {
         setSupplyAmount('')
         onSuccess?.()
       },
     })
-  }, [supplyBigInt, morphoAddress, marketParams, supplyMode, supplySequence, buildSupplySteps, onSuccess])
+  }, [supplyBigInt, morphoAddress, marketParams, supplyMode, side, supplySequence, buildSupplySteps, onSuccess])
 
   const handleBorrow = useCallback(() => {
     if (borrowBigInt <= 0n || !morphoAddress || !marketParams) return
 
     void borrowSequence.execute({
-      title: borrowMode === 'borrow' ? 'Borrowing USDC' : 'Repaying USDC',
+      title: borrowMode === 'borrow' ? `Borrowing USDC from ${side}` : `Repaying USDC to ${side}`,
       buildSteps: buildBorrowSteps,
       onSuccess: () => {
         setBorrowAmount('')
         onSuccess?.()
       },
     })
-  }, [borrowBigInt, morphoAddress, marketParams, borrowMode, borrowSequence, buildBorrowSteps, onSuccess])
-
-  const formatMaxAmount = (amount: bigint, decimals: number) => {
-    const value = Number(amount) / 10 ** decimals
-    return value > 0 ? value.toString() : ''
-  }
-
-  const handleSuppliedClick = () => {
-    setSupplyMode('withdraw')
-    setSupplyAmount(formatMaxAmount(suppliedBalance, 6))
-  }
-
-  const handleBorrowedClick = () => {
-    setBorrowMode('repay')
-    setBorrowAmount(formatMaxAmount(borrowedAmount, 6))
-  }
-
-  const handleAvailableClick = () => {
-    setBorrowMode('borrow')
-    setBorrowAmount(formatMaxAmount(availableToBorrow, 6))
-  }
+  }, [borrowBigInt, morphoAddress, marketParams, borrowMode, side, borrowSequence, buildBorrowSteps, onSuccess])
 
   const getSupplyButtonText = () => {
     if (supplySequence.isRunning) return 'Processing...'
     if (supplyMode === 'supply') {
       if (insufficientBalanceSupply) return 'Insufficient USDC'
       if (needsApprovalForSupply) return 'Approve & Supply'
-      return 'Supply USDC'
+      return 'Supply'
     }
-    if (insufficientSupplied) return 'Insufficient Supplied'
-    return 'Withdraw USDC'
+    if (insufficientSupplied) return 'Insufficient'
+    return 'Withdraw'
   }
 
   const getBorrowButtonText = () => {
@@ -266,11 +234,11 @@ export function YieldCard({
     if (borrowMode === 'borrow') {
       if (!hasCollateral) return 'No Collateral'
       if (insufficientBorrowable) return 'Exceeds Available'
-      return 'Borrow USDC'
+      return 'Borrow'
     }
     if (insufficientBalanceRepay) return 'Insufficient USDC'
     if (needsApprovalForRepay) return 'Approve & Repay'
-    return 'Repay USDC'
+    return 'Repay'
   }
 
   const isSupplyDisabled = !supplyAmount ||
@@ -287,148 +255,190 @@ export function YieldCard({
     (borrowMode === 'repay' && insufficientBalanceRepay) ||
     !isConnected
 
+  const accentColor = side === 'BEAR' ? 'cyber-electric-fuchsia' : 'cyber-neon-green'
+  const accentColorClass = side === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
+  const borderClass = side === 'BEAR' ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'
+  const bgClass = side === 'BEAR' ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'
+
   return (
-    <div className="max-w-xl mx-auto space-y-6">
-      <div className="grid grid-cols-3 gap-4">
-        <button
-          onClick={handleSuppliedClick}
-          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-neon-green/50 hover:shadow-md hover:shadow-cyber-neon-green/10"
-        >
-          <p className="text-xs text-cyber-text-secondary">Supplied</p>
-          <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(suppliedAmount)}</p>
-        </button>
-        <button
-          onClick={handleBorrowedClick}
-          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-warning-text/50 hover:shadow-md hover:shadow-cyber-warning-text/10"
-        >
-          <p className="text-xs text-cyber-text-secondary">Borrowed</p>
-          <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(borrowedAmount)}</p>
-        </button>
-        <button
-          onClick={handleAvailableClick}
-          className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30 text-left transition-all hover:border-cyber-bright-blue/50 hover:shadow-md hover:shadow-cyber-bright-blue/10"
-        >
-          <p className="text-xs text-cyber-text-secondary">Available</p>
-          <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(availableToBorrow)}</p>
-          <p className="text-xs text-cyber-text-secondary">to borrow</p>
-        </button>
+    <div className={`flex-1 border ${borderClass} bg-cyber-surface-dark`}>
+      {/* Header */}
+      <div className={`${bgClass} px-4 py-3 border-b ${borderClass}`}>
+        <h3 className={`font-semibold ${accentColorClass}`}>{side} Market</h3>
+        <p className="text-xs text-cyber-text-secondary mt-0.5">splDXY-{side} collateral</p>
       </div>
 
-      <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
-        <h4 className="font-medium text-cyber-text-primary mb-4">Supply USDC</h4>
-        <div className="bg-cyber-surface-dark p-1 flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
+      {/* Stats */}
+      <div className="p-4 space-y-2 border-b border-cyber-border-glow/20">
+        <div className="flex justify-between text-sm">
+          <span className="text-cyber-text-secondary">Supplied</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.suppliedAmount)}</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-cyber-text-secondary">Borrowed</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.borrowedAmount)}</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-cyber-text-secondary">Collateral</span>
+          <span className={`font-medium ${hasCollateral ? accentColorClass : 'text-cyber-text-secondary'}`}>
+            {hasCollateral ? formatUsd(market.collateral) : 'None'}
+          </span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span className="text-cyber-text-secondary">Available</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.availableToBorrow)}</span>
+        </div>
+      </div>
+
+      {/* Supply Section */}
+      <div className="p-4 border-b border-cyber-border-glow/20">
+        <div className="flex text-xs font-medium mb-3 border border-cyber-border-glow/30">
           <button
             onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all ${
+            className={`flex-1 py-1.5 px-3 transition-all ${
               supplyMode === 'supply'
-                ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                ? `${bgClass} ${accentColorClass}`
+                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
             }`}
           >
             Supply
           </button>
           <button
             onClick={() => { setSupplyMode('withdraw'); setSupplyAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all ${
+            className={`flex-1 py-1.5 px-3 transition-all ${
               supplyMode === 'withdraw'
-                ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                ? `${bgClass} ${accentColorClass}`
+                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
             }`}
           >
             Withdraw
           </button>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-3">
           <TokenInput
             value={supplyAmount}
             onChange={setSupplyAmount}
             token={{ symbol: 'USDC', decimals: 6 }}
-            balance={supplyMode === 'supply' ? usdcBalance : suppliedBalance}
+            balance={supplyMode === 'supply' ? usdcBalance : market.suppliedAmount}
+            compact
           />
           <button
             onClick={handleSupply}
             disabled={isSupplyDisabled}
-            className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`w-full bg-${accentColor} hover:bg-${accentColor}/90 text-cyber-bg font-semibold py-2 px-4 text-sm shadow-lg shadow-${accentColor}/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+            style={{
+              backgroundColor: isSupplyDisabled ? undefined : (side === 'BEAR' ? '#FF00CC' : '#00FF99'),
+              boxShadow: isSupplyDisabled ? undefined : `0 10px 15px -3px ${side === 'BEAR' ? 'rgba(255,0,204,0.3)' : 'rgba(0,255,153,0.3)'}`,
+            }}
           >
             {getSupplyButtonText()}
           </button>
         </div>
       </div>
 
-      <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="font-medium text-cyber-text-primary">Borrow USDC</h4>
-          <div className="flex text-xs font-medium border border-cyber-border-glow/30">
-            <button
-              onClick={() => handleSideChange('BEAR')}
-              className={`py-1 px-3 transition-all ${
-                activeSide === 'BEAR'
-                  ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border-r border-cyber-electric-fuchsia/50'
-                  : 'text-cyber-text-secondary hover:text-cyber-electric-fuchsia border-r border-cyber-border-glow/30'
-              }`}
-            >
-              BEAR
-            </button>
-            <button
-              onClick={() => handleSideChange('BULL')}
-              className={`py-1 px-3 transition-all ${
-                activeSide === 'BULL'
-                  ? 'bg-cyber-neon-green/20 text-cyber-neon-green'
-                  : 'text-cyber-text-secondary hover:text-cyber-neon-green'
-              }`}
-            >
-              BULL
-            </button>
-          </div>
-        </div>
-        <div className="bg-cyber-surface-dark p-1 flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
+      {/* Borrow Section */}
+      <div className="p-4">
+        <div className="flex text-xs font-medium mb-3 border border-cyber-border-glow/30">
           <button
             onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all ${
+            className={`flex-1 py-1.5 px-3 transition-all ${
               borrowMode === 'borrow'
-                ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                : 'text-cyber-text-secondary hover:text-cyber-neon-green'
+                ? `${bgClass} ${accentColorClass}`
+                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
             }`}
           >
             Borrow
           </button>
           <button
             onClick={() => { setBorrowMode('repay'); setBorrowAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all ${
+            className={`flex-1 py-1.5 px-3 transition-all ${
               borrowMode === 'repay'
-                ? 'bg-cyber-surface-light text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                : 'text-cyber-text-secondary hover:text-cyber-neon-green'
+                ? `${bgClass} ${accentColorClass}`
+                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
             }`}
           >
             Repay
           </button>
         </div>
-        <div className="space-y-4">
+        <div className="space-y-3">
           <TokenInput
             value={borrowAmount}
             onChange={setBorrowAmount}
             token={{ symbol: 'USDC', decimals: 6 }}
-            balance={borrowMode === 'borrow' ? availableToBorrow : borrowedAmount}
+            balance={borrowMode === 'borrow' ? market.availableToBorrow : market.borrowedAmount}
             balanceLabel={borrowMode === 'borrow' ? 'Available:' : 'Owed:'}
+            compact
           />
           {borrowMode === 'borrow' && !hasCollateral && (
             <p className="text-xs text-cyber-warning-text">
-              Borrowing requires staked collateral from a leverage position (splDXY-BEAR or splDXY-BULL)
-            </p>
-          )}
-          {borrowMode === 'borrow' && hasCollateral && (
-            <p className="text-xs text-cyber-text-secondary">
-              Borrow against your staked collateral from leverage positions
+              Open a {side} leverage position to borrow
             </p>
           )}
           <button
             onClick={handleBorrow}
             disabled={isBorrowDisabled}
-            className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`w-full bg-${accentColor} hover:bg-${accentColor}/90 text-cyber-bg font-semibold py-2 px-4 text-sm shadow-lg shadow-${accentColor}/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
+            style={{
+              backgroundColor: isBorrowDisabled ? undefined : (side === 'BEAR' ? '#FF00CC' : '#00FF99'),
+              boxShadow: isBorrowDisabled ? undefined : `0 10px 15px -3px ${side === 'BEAR' ? 'rgba(255,0,204,0.3)' : 'rgba(0,255,153,0.3)'}`,
+            }}
           >
             {getBorrowButtonText()}
           </button>
         </div>
+      </div>
+    </div>
+  )
+}
+
+export function YieldCard({
+  bearMarket,
+  bullMarket,
+  usdcBalance,
+  onSuccess,
+}: YieldCardProps) {
+  return (
+    <div className="max-w-4xl mx-auto">
+      {/* Summary row */}
+      <div className="grid grid-cols-4 gap-4 mb-6">
+        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+          <p className="text-xs text-cyber-text-secondary">Total Supplied</p>
+          <p className="text-lg font-bold text-cyber-text-primary">
+            {formatUsd(bearMarket.suppliedAmount + bullMarket.suppliedAmount)}
+          </p>
+        </div>
+        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+          <p className="text-xs text-cyber-text-secondary">Total Borrowed</p>
+          <p className="text-lg font-bold text-cyber-text-primary">
+            {formatUsd(bearMarket.borrowedAmount + bullMarket.borrowedAmount)}
+          </p>
+        </div>
+        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+          <p className="text-xs text-cyber-text-secondary">Total Available</p>
+          <p className="text-lg font-bold text-cyber-text-primary">
+            {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)}
+          </p>
+        </div>
+        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+          <p className="text-xs text-cyber-text-secondary">Wallet Balance</p>
+          <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(usdcBalance)}</p>
+        </div>
+      </div>
+
+      {/* Two-column market layout */}
+      <div className="flex gap-6">
+        <MarketColumn
+          side="BULL"
+          market={bullMarket}
+          usdcBalance={usdcBalance}
+          onSuccess={onSuccess}
+        />
+        <MarketColumn
+          side="BEAR"
+          market={bearMarket}
+          usdcBalance={usdcBalance}
+          onSuccess={onSuccess}
+        />
       </div>
     </div>
   )
