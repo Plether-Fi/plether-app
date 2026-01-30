@@ -1,163 +1,381 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { useTransactionModal } from '../useTransactionModal'
+import { useTransactionModal, useCurrentTransaction, useIsCurrentTransactionInProgress } from '../useTransactionModal'
+import { useTransactionStore } from '../../stores/transactionStore'
+import { renderHook } from '@testing-library/react'
 
 describe('useTransactionModal', () => {
   beforeEach(() => {
     useTransactionModal.getState().reset()
+    useTransactionStore.setState({ transactions: [] })
   })
 
-  describe('mint flow with USDC approval', () => {
-    const modalSteps = ['Approve USDC', 'Confirming...', 'Mint pairs', 'Confirming...']
+  describe('open and close', () => {
+    it('opens modal and sets current index', () => {
+      const txId = 'test-tx-123'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [{ label: 'Step 1', status: 'pending' }],
+      })
 
-    it('opens modal with all steps pending', () => {
-      const { open } = useTransactionModal.getState()
-      open({ title: 'Minting', steps: modalSteps })
+      useTransactionModal.getState().open({ transactionId: txId })
 
-      const { steps } = useTransactionModal.getState()
-      expect(steps).toHaveLength(4)
-      expect(steps.every(s => s.status === 'pending')).toBe(true)
+      const state = useTransactionModal.getState()
+      expect(state.isOpen).toBe(true)
+      expect(state.currentIndex).toBe(0)
     })
 
-    it('setStepInProgress(0) marks step 0 as in_progress', () => {
-      const { open, setStepInProgress } = useTransactionModal.getState()
-      open({ title: 'Minting', steps: modalSteps })
-      setStepInProgress(0)
+    it('closes modal', () => {
+      const txId = 'test-tx-123'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [{ label: 'Step 1', status: 'pending' }],
+      })
 
-      const { steps } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('in_progress')
-      expect(steps[1].status).toBe('pending')
-      expect(steps[2].status).toBe('pending')
-      expect(steps[3].status).toBe('pending')
+      useTransactionModal.getState().open({ transactionId: txId })
+      useTransactionModal.getState().close()
+
+      const state = useTransactionModal.getState()
+      expect(state.isOpen).toBe(false)
     })
 
-    it('setStepInProgress(1) marks step 0 completed, step 1 in_progress', () => {
-      const { open, setStepInProgress } = useTransactionModal.getState()
-      open({ title: 'Minting', steps: modalSteps })
-      setStepInProgress(0)
-      setStepInProgress(1)
+    it('stores onRetry callback per transaction', () => {
+      const txId = 'test-tx-123'
+      const mockRetry = () => {}
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [{ label: 'Step 1', status: 'pending' }],
+      })
 
-      const { steps } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('completed')
-      expect(steps[1].status).toBe('in_progress')
-      expect(steps[2].status).toBe('pending')
-      expect(steps[3].status).toBe('pending')
+      useTransactionModal.getState().open({ transactionId: txId, onRetry: mockRetry })
+
+      expect(useTransactionModal.getState().getRetryCallback(txId)).toBe(mockRetry)
     })
 
-    it('setStepInProgress(2) marks steps 0,1 completed, step 2 in_progress', () => {
-      const { open, setStepInProgress } = useTransactionModal.getState()
-      open({ title: 'Minting', steps: modalSteps })
-      setStepInProgress(0)
-      setStepInProgress(1)
-      setStepInProgress(2)
+    it('stores multiple retry callbacks for parallel transactions', () => {
+      const mockRetry1 = () => {}
+      const mockRetry2 = () => {}
 
-      const { steps } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('completed')
-      expect(steps[1].status).toBe('completed')
-      expect(steps[2].status).toBe('in_progress')
-      expect(steps[3].status).toBe('pending')
-    })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'pending',
+        title: 'First',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-2',
+        type: 'swap',
+        status: 'pending',
+        title: 'Second',
+        steps: [],
+      })
 
-    it('setError(2) marks step 2 as error with previous steps completed', () => {
-      const { open, setStepInProgress, setError } = useTransactionModal.getState()
-      open({ title: 'Minting', steps: modalSteps })
+      useTransactionModal.getState().open({ transactionId: 'tx-1', onRetry: mockRetry1 })
+      useTransactionModal.getState().open({ transactionId: 'tx-2', onRetry: mockRetry2 })
 
-      // Simulate the flow: approve USDC -> confirming -> mint step starts -> error
-      setStepInProgress(0)
-      setStepInProgress(1)
-      setStepInProgress(2)
-      setError(2, 'User rejected transaction')
-
-      const { steps, errorMessage } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('completed')
-      expect(steps[1].status).toBe('completed')
-      expect(steps[2].status).toBe('error')
-      expect(steps[3].status).toBe('pending')
-      expect(errorMessage).toBe('User rejected transaction')
-    })
-  })
-
-  describe('error display location', () => {
-    it('error on step 2 should NOT affect step 0 status', () => {
-      const { open, setStepInProgress, setError } = useTransactionModal.getState()
-      open({ title: 'Test', steps: ['Step 0', 'Step 1', 'Step 2', 'Step 3'] })
-
-      setStepInProgress(0)
-      setStepInProgress(1)
-      setStepInProgress(2)
-
-      // Step 0 should be completed before error
-      expect(useTransactionModal.getState().steps[0].status).toBe('completed')
-
-      setError(2, 'Error message')
-
-      // Step 0 should still be completed after error
-      const { steps } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('completed')
-      expect(steps[2].status).toBe('error')
+      expect(useTransactionModal.getState().getRetryCallback('tx-1')).toBe(mockRetry1)
+      expect(useTransactionModal.getState().getRetryCallback('tx-2')).toBe(mockRetry2)
     })
   })
 
-  describe('retry scenario - steps rebuilt without approval', () => {
-    it('on retry with fewer steps, error index should match NEW step list', () => {
-      const { open, setStepInProgress, setError, reset } = useTransactionModal.getState()
+  describe('navigation', () => {
+    it('navigatePrev moves to previous transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'success',
+        title: 'First',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-2',
+        type: 'swap',
+        status: 'pending',
+        title: 'Second',
+        steps: [],
+      })
 
-      // First attempt: 4 steps (with approval)
-      open({ title: 'Minting', steps: ['Approve USDC', 'Confirming...', 'Mint pairs', 'Confirming...'] })
-      setStepInProgress(0)
-      setStepInProgress(1)
-      setStepInProgress(2)
-      // User rejects mint, but let's say they close and retry
+      useTransactionModal.getState().open({ transactionId: 'tx-2' })
+      expect(useTransactionModal.getState().currentIndex).toBe(1)
 
-      // Reset and retry - now only 2 steps (no approval needed)
-      reset()
-      open({ title: 'Minting', steps: ['Mint pairs', 'Confirming...'] })
+      useTransactionModal.getState().navigatePrev()
 
-      const { steps: newSteps } = useTransactionModal.getState()
-      expect(newSteps).toHaveLength(2)
-      expect(newSteps[0].label).toBe('Mint pairs')
+      expect(useTransactionModal.getState().currentIndex).toBe(0)
+    })
 
-      // Now if mint fails at i=0, modalStepBase=0
-      setStepInProgress(0)
-      setError(0, 'User rejected')
+    it('navigateNext moves to next transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'success',
+        title: 'First',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-2',
+        type: 'swap',
+        status: 'pending',
+        title: 'Second',
+        steps: [],
+      })
 
-      const { steps, errorMessage } = useTransactionModal.getState()
-      expect(steps[0].status).toBe('error')
-      expect(steps[0].label).toBe('Mint pairs')
-      expect(errorMessage).toBe('User rejected')
+      useTransactionModal.getState().open({ transactionId: 'tx-2' })
+      useTransactionModal.getState().navigatePrev()
+      expect(useTransactionModal.getState().currentIndex).toBe(0)
+
+      useTransactionModal.getState().navigateNext()
+
+      expect(useTransactionModal.getState().currentIndex).toBe(1)
+    })
+
+    it('cannot navigate before first transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'pending',
+        title: 'First',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
+      useTransactionModal.getState().navigatePrev()
+
+      expect(useTransactionModal.getState().currentIndex).toBe(0)
+    })
+
+    it('viewTransaction jumps to specific index', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'success',
+        title: 'First',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-2',
+        type: 'swap',
+        status: 'success',
+        title: 'Second',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-3',
+        type: 'burn',
+        status: 'pending',
+        title: 'Third',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-3' })
+      useTransactionModal.getState().viewTransaction(0)
+
+      expect(useTransactionModal.getState().currentIndex).toBe(0)
     })
   })
 
-  describe('BUG: onRetry uses stale buildSteps but modal shows OLD steps', () => {
-    it('FAILS if retry does not rebuild modal steps when buildSteps returns fewer items', () => {
-      // This test documents the bug:
-      // 1. First execution opens modal with 4 steps
-      // 2. Approval succeeds, allowance updates
-      // 3. buildSteps now returns 1 step (no approval needed)
-      // 4. On retry, onRetry callback has OLD config that rebuilds steps
-      // 5. BUT if buildSteps() reads current allowance, it returns 1 step
-      // 6. Modal shows 2 steps but execution uses index 0 for mint
+  describe('useCurrentTransaction', () => {
+    it('returns transaction at current index', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'pending',
+        title: 'Test Transaction',
+        steps: [{ label: 'Step 1', status: 'pending' }],
+      })
 
-      const { open, setStepInProgress, setError } = useTransactionModal.getState()
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
 
-      // Simulate: onRetry opens modal with NEW (fewer) steps
-      // but the OLD modal steps from first attempt are somehow preserved
-      // This shouldn't happen, but let's verify
+      const { result } = renderHook(() => useCurrentTransaction())
+      expect(result.current?.id).toBe('tx-1')
+      expect(result.current?.title).toBe('Test Transaction')
+    })
 
-      // If modal has 4 steps but execution thinks there's only 1 logical step:
-      open({ title: 'Minting', steps: ['Approve USDC', 'Confirming...', 'Mint pairs', 'Confirming...'] })
+    it('returns transaction at navigated index', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'success',
+        title: 'First',
+        steps: [],
+      })
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-2',
+        type: 'swap',
+        status: 'pending',
+        title: 'Second',
+        steps: [],
+      })
 
-      // Execution runs with steps.length = 1 (only mint)
-      // Loop i=0, modalStepBase = 0
-      setStepInProgress(0)  // This marks step 0 (Approve USDC) as in_progress
+      useTransactionModal.getState().open({ transactionId: 'tx-2' })
+      useTransactionModal.getState().navigatePrev()
 
-      // User rejects mint (which is actually at modal index 2 if 4 steps, but index 0 if 2 steps)
-      setError(0, 'User rejected')
+      const { result } = renderHook(() => useCurrentTransaction())
+      expect(result.current?.id).toBe('tx-1')
+      expect(result.current?.title).toBe('First')
+    })
 
-      // BUG: Error shows under "Approve USDC" when it should show under "Mint pairs"
-      const { steps, errorMessage } = useTransactionModal.getState()
-      expect(steps[0].label).toBe('Approve USDC')
-      expect(steps[0].status).toBe('error')  // This is the bug!
-      expect(errorMessage).toBe('User rejected')
+    it('returns null when no transaction at index', () => {
+      const { result } = renderHook(() => useCurrentTransaction())
+      expect(result.current).toBeNull()
+    })
+  })
+
+  describe('useIsCurrentTransactionInProgress', () => {
+    it('returns true for pending transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'pending',
+        title: 'Test',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
+
+      const { result } = renderHook(() => useIsCurrentTransactionInProgress())
+      expect(result.current).toBe(true)
+    })
+
+    it('returns true for confirming transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'confirming',
+        title: 'Test',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
+
+      const { result } = renderHook(() => useIsCurrentTransactionInProgress())
+      expect(result.current).toBe(true)
+    })
+
+    it('returns false for completed transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'success',
+        title: 'Test',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
+
+      const { result } = renderHook(() => useIsCurrentTransactionInProgress())
+      expect(result.current).toBe(false)
+    })
+
+    it('returns false for failed transaction', () => {
+      useTransactionStore.getState().addTransaction({
+        id: 'tx-1',
+        type: 'mint',
+        status: 'failed',
+        title: 'Test',
+        steps: [],
+      })
+
+      useTransactionModal.getState().open({ transactionId: 'tx-1' })
+
+      const { result } = renderHook(() => useIsCurrentTransactionInProgress())
+      expect(result.current).toBe(false)
+    })
+  })
+
+  describe('step updates via transactionStore', () => {
+    it('setStepInProgress updates step in store', () => {
+      const txId = 'tx-1'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [
+          { label: 'Approve', status: 'pending' },
+          { label: 'Mint', status: 'pending' },
+        ],
+      })
+
+      useTransactionStore.getState().setStepInProgress(txId, 0)
+
+      const tx = useTransactionStore.getState().transactions[0]
+      expect(tx.steps[0].status).toBe('in_progress')
+      expect(tx.steps[1].status).toBe('pending')
+    })
+
+    it('setStepInProgress marks previous steps as completed', () => {
+      const txId = 'tx-1'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [
+          { label: 'Step 1', status: 'pending' },
+          { label: 'Step 2', status: 'pending' },
+          { label: 'Step 3', status: 'pending' },
+        ],
+      })
+
+      useTransactionStore.getState().setStepInProgress(txId, 2)
+
+      const tx = useTransactionStore.getState().transactions[0]
+      expect(tx.steps[0].status).toBe('completed')
+      expect(tx.steps[1].status).toBe('completed')
+      expect(tx.steps[2].status).toBe('in_progress')
+    })
+
+    it('setStepError sets step to error state', () => {
+      const txId = 'tx-1'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'pending',
+        title: 'Minting',
+        steps: [
+          { label: 'Approve', status: 'completed' },
+          { label: 'Mint', status: 'in_progress' },
+        ],
+      })
+
+      useTransactionStore.getState().setStepError(txId, 1, 'User rejected')
+
+      const tx = useTransactionStore.getState().transactions[0]
+      expect(tx.steps[0].status).toBe('completed')
+      expect(tx.steps[1].status).toBe('error')
+      expect(tx.status).toBe('failed')
+      expect(tx.errorMessage).toBe('User rejected')
+    })
+
+    it('setStepSuccess marks all steps as completed', () => {
+      const txId = 'tx-1'
+      useTransactionStore.getState().addTransaction({
+        id: txId,
+        type: 'mint',
+        status: 'confirming',
+        title: 'Minting',
+        steps: [
+          { label: 'Approve', status: 'completed' },
+          { label: 'Mint', status: 'in_progress' },
+        ],
+      })
+
+      useTransactionStore.getState().setStepSuccess(txId, '0xhash123')
+
+      const tx = useTransactionStore.getState().transactions[0]
+      expect(tx.steps[0].status).toBe('completed')
+      expect(tx.steps[1].status).toBe('completed')
+      expect(tx.status).toBe('success')
+      expect(tx.hash).toBe('0xhash123')
     })
   })
 })

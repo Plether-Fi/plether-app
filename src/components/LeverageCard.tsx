@@ -1,13 +1,15 @@
-import { useState, useCallback } from 'react'
-import { useAccount, useWriteContract, useReadContract } from 'wagmi'
+import { useState, useCallback, useEffect } from 'react'
+import { useAccount, useReadContract } from 'wagmi'
 import { parseUnits, zeroAddress } from 'viem'
 import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { usePreviewOpenLeverage, useAllowance, useTransactionSequence, useTokenPrices, type TransactionStep } from '../hooks'
+import { usePreviewOpenLeverage, useAllowance, useTokenPrices } from '../hooks'
+import { useTransactionStore } from '../stores/transactionStore'
+import { transactionManager } from '../services/transactionManager'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
-import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
+import { LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
 
 type TokenSide = 'BEAR' | 'BULL'
 
@@ -21,23 +23,26 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const slippage = useSettingsStore((s) => s.slippage)
+  const txStore = useTransactionStore()
 
   const [selectedSide, setSelectedSide] = useState<TokenSide>('BULL')
   const [collateralAmount, setCollateralAmount] = useState('')
   const [targetLeverage, setTargetLeverage] = useState(2)
 
   const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
+  const operationKey = `leverage-open-${selectedSide}`
+
+  const transactionId = txStore.activeOperations[operationKey]
+  const currentTx = transactionId
+    ? txStore.transactions.find(t => t.id === transactionId)
+    : null
+  const isRunning = currentTx?.status === 'pending' || currentTx?.status === 'confirming'
 
   const { bearPrice, bullPrice, cap } = useTokenPrices()
   const tokenPrice = selectedSide === 'BEAR' ? bearPrice : bullPrice
 
-  // Max effective leverage from LLTV: maxLev = 1 / (1 - lltv)
-  // LLTV = 91.5% → 1 / 0.085 = 11.76x
   const maxEffectiveLeverage = 11.76
 
-  // Calculate contract leverage parameter from desired effective leverage
-  // BULL: effectiveLeverage ≈ contractLeverage × tokenPrice / CAP (you only keep BULL portion)
-  // BEAR: effectiveLeverage = contractLeverage (contract handles it directly)
   const contractLeverage = selectedSide === 'BULL' && tokenPrice > 0n && cap > 0n
     ? BigInt(Math.floor(targetLeverage * 1e18)) * cap / tokenPrice
     : BigInt(Math.floor(targetLeverage * 1e18))
@@ -50,17 +55,14 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     contractLeverage
   )
 
-  // Expected tokens (18 dec) × price (8 dec) / 10^20 = 6 dec USDC
   const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
 
-  // Get Morpho address from router
   const { data: morphoAddress } = useReadContract({
     address: routerAddress,
     abi: LEVERAGE_ROUTER_ABI,
     functionName: 'MORPHO',
   })
 
-  // Check if user has authorized the router in Morpho
   const { data: isAuthorized, refetch: refetchAuthorization } = useReadContract({
     address: morphoAddress,
     abi: MORPHO_ABI,
@@ -73,9 +75,6 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
 
   const needsMorphoAuthorization = !isAuthorized
 
-  const { writeContractAsync } = useWriteContract()
-  const sequence = useTransactionSequence()
-
   const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
     addresses.USDC,
     routerAddress
@@ -84,96 +83,29 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const needsUsdcApproval = collateralBigInt > 0n && usdcAllowance < collateralBigInt
   const insufficientBalance = collateralBigInt > usdcBalance
 
-  const handleSuccess = useCallback(() => {
-    refetchBalances?.()
-    onPositionOpened?.()
-    setCollateralAmount('')
-    setTargetLeverage(2)
-  }, [refetchBalances, onPositionOpened])
-
-  const buildOpenLeverageSteps = useCallback((): TransactionStep[] => {
-    const steps: TransactionStep[] = []
-
-    if (needsMorphoAuthorization && morphoAddress) {
-      steps.push({
-        label: 'Authorize Morpho',
-        action: async () => {
-          const hash = await writeContractAsync({
-            address: morphoAddress,
-            abi: MORPHO_ABI,
-            functionName: 'setAuthorization',
-            args: [routerAddress, true],
-          })
-          await refetchAuthorization()
-          return hash
-        },
-      })
+  useEffect(() => {
+    if (currentTx?.status === 'success') {
+      refetchBalances?.()
+      onPositionOpened?.()
+      void refetchAuthorization()
+      void refetchUsdcAllowance()
+      setCollateralAmount('')
+      setTargetLeverage(2)
     }
-
-    if (needsUsdcApproval) {
-      steps.push({
-        label: 'Approve USDC',
-        action: async () => {
-          const hash = await writeContractAsync({
-            address: addresses.USDC,
-            abi: ERC20_ABI,
-            functionName: 'approve',
-            args: [routerAddress, collateralBigInt],
-          })
-          await refetchUsdcAllowance()
-          return hash
-        },
-      })
-    }
-
-    steps.push({
-      label: `Open ${selectedSide} position`,
-      action: () => {
-        const slippageBps = BigInt(Math.floor(slippage * 100))
-        const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
-        console.log('[openLeverage] args:', {
-          principal: collateralBigInt.toString(),
-          leverage: contractLeverage.toString(),
-          slippageBps: slippageBps.toString(),
-          deadline: deadline.toString(),
-        })
-        return writeContractAsync({
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'openLeverage',
-          args: [collateralBigInt, contractLeverage, slippageBps, deadline],
-        })
-      },
-    })
-
-    return steps
-  }, [
-    needsMorphoAuthorization,
-    morphoAddress,
-    needsUsdcApproval,
-    selectedSide,
-    collateralBigInt,
-    contractLeverage,
-    slippage,
-    addresses.USDC,
-    routerAddress,
-    writeContractAsync,
-    refetchAuthorization,
-    refetchUsdcAllowance,
-  ])
+  }, [currentTx?.status, refetchBalances, onPositionOpened, refetchAuthorization, refetchUsdcAllowance])
 
   const handleOpenPosition = useCallback(() => {
     if (collateralBigInt <= 0n) return
 
-    void sequence.execute({
-      title: `Opening ${selectedSide} leverage position`,
-      buildSteps: buildOpenLeverageSteps,
-      onSuccess: handleSuccess,
+    const slippageBps = BigInt(Math.floor(slippage * 100))
+
+    void transactionManager.executeOpenLeverage(selectedSide, collateralBigInt, contractLeverage, slippageBps, {
+      onRetry: handleOpenPosition,
     })
-  }, [collateralBigInt, selectedSide, sequence, buildOpenLeverageSteps, handleSuccess])
+  }, [collateralBigInt, selectedSide, contractLeverage, slippage])
 
   const getButtonText = () => {
-    if (sequence.isRunning) return 'Processing...'
+    if (isRunning) return 'Processing...'
     if (insufficientBalance) return 'Insufficient USDC'
     if (needsMorphoAuthorization && needsUsdcApproval) return 'Authorize, Approve & Open'
     if (needsMorphoAuthorization) return 'Authorize & Open Position'
@@ -181,7 +113,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     return `Open ${selectedSide} Position`
   }
 
-  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || sequence.isRunning || insufficientBalance
+  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || isRunning || insufficientBalance
 
   const collateralNum = parseFloat(collateralAmount) || 0
   const positionSizeDisplay = previewLoading && collateralBigInt > 0n

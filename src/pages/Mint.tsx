@@ -1,11 +1,15 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { formatAmount } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
-import { useTokenBalances, useMintFlow } from '../hooks'
+import { useTokenBalances, usePreviewMint, usePreviewBurn } from '../hooks'
+import { useAllowance } from '../hooks/useAllowance'
+import { useTransactionStore } from '../stores/transactionStore'
+import { transactionManager } from '../services/transactionManager'
+import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 
 type MintMode = 'mint' | 'redeem'
 
@@ -19,30 +23,79 @@ function parsePairAmount(input: string): bigint {
 }
 
 export function Mint() {
-  const { isConnected } = useAccount()
+  const { isConnected, chainId } = useAccount()
+  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
+  const txStore = useTransactionStore()
+
   const [mode, setMode] = useState<MintMode>('mint')
   const [inputAmount, setInputAmount] = useState('')
 
   const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
   const pairAmountBigInt = parsePairAmount(inputAmount)
 
-  const handleSuccess = useCallback(() => {
-    void refetchBalances()
-    setInputAmount('')
-  }, [refetchBalances])
+  const mintOperationKey = 'mint'
+  const redeemOperationKey = 'redeem'
 
-  const {
-    usdcRequired,
-    usdcToReturn,
-    previewMintLoading,
-    previewBurnLoading,
-    needsUsdcApproval,
-    needsBearApproval,
-    needsBullApproval,
-    isRunning,
-    handleMint,
-    handleRedeem,
-  } = useMintFlow(pairAmountBigInt, { onSuccess: handleSuccess })
+  const mintTransactionId = txStore.activeOperations[mintOperationKey]
+  const redeemTransactionId = txStore.activeOperations[redeemOperationKey]
+
+  const mintTx = mintTransactionId
+    ? txStore.transactions.find(t => t.id === mintTransactionId)
+    : null
+  const redeemTx = redeemTransactionId
+    ? txStore.transactions.find(t => t.id === redeemTransactionId)
+    : null
+
+  const isMintPending = mintTx?.status === 'pending' || mintTx?.status === 'confirming'
+  const isRedeemPending = redeemTx?.status === 'pending' || redeemTx?.status === 'confirming'
+  const isRunning = isMintPending || isRedeemPending
+
+  const { usdcRequired, isLoading: previewMintLoading } = usePreviewMint(pairAmountBigInt)
+  const { usdcToReturn, isLoading: previewBurnLoading } = usePreviewBurn(pairAmountBigInt)
+
+  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
+    addresses.USDC,
+    addresses.SYNTHETIC_SPLITTER
+  )
+  const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(
+    addresses.DXY_BEAR,
+    addresses.SYNTHETIC_SPLITTER
+  )
+  const { allowance: bullAllowance, refetch: refetchBullAllowance } = useAllowance(
+    addresses.DXY_BULL,
+    addresses.SYNTHETIC_SPLITTER
+  )
+
+  const needsUsdcApproval = usdcRequired > 0n && usdcAllowance < usdcRequired
+  const needsBearApproval = pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt
+  const needsBullApproval = pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
+
+  useEffect(() => {
+    const tx = mode === 'mint' ? mintTx : redeemTx
+    if (tx?.status === 'success') {
+      void refetchBalances()
+      void refetchUsdcAllowance()
+      void refetchBearAllowance()
+      void refetchBullAllowance()
+      setInputAmount('')
+    }
+  }, [mintTx?.status, redeemTx?.status, mode, refetchBalances, refetchUsdcAllowance, refetchBearAllowance, refetchBullAllowance])
+
+  const handleMint = useCallback(() => {
+    if (pairAmountBigInt <= 0n) return
+
+    void transactionManager.executeMint(pairAmountBigInt, usdcRequired, {
+      onRetry: handleMint,
+    })
+  }, [pairAmountBigInt, usdcRequired])
+
+  const handleRedeem = useCallback(() => {
+    if (pairAmountBigInt <= 0n) return
+
+    void transactionManager.executeRedeem(pairAmountBigInt, {
+      onRetry: handleRedeem,
+    })
+  }, [pairAmountBigInt])
 
   const isPreviewLoading = mode === 'mint' ? previewMintLoading : previewBurnLoading
   const previewAmount = mode === 'mint' ? usdcRequired : usdcToReturn
@@ -52,14 +105,14 @@ export function Mint() {
   const minBalance = getMinBalance(bearBalance, bullBalance)
 
   const getMintButtonText = () => {
-    if (isRunning) return 'Processing...'
+    if (isMintPending) return 'Processing...'
     if (usdcRequired > usdcBalance) return 'Insufficient USDC'
     if (needsUsdcApproval) return 'Approve & Mint'
     return 'Mint Pairs'
   }
 
   const getRedeemButtonText = () => {
-    if (isRunning) return 'Processing...'
+    if (isRedeemPending) return 'Processing...'
     if (pairAmountBigInt > minBalance) return 'Insufficient Balance'
     if (needsBearApproval || needsBullApproval) return 'Approve & Redeem'
     return 'Redeem for USDC'

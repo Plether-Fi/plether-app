@@ -114,7 +114,8 @@ describe('useMint', () => {
       type: 'mint',
       status: 'pending',
       hash: undefined,
-      description: 'Minting plDXY-BEAR + plDXY-BULL',
+      title: 'Minting plDXY-BEAR + plDXY-BULL',
+      steps: [{ label: 'Mint pairs', status: 'pending' }],
     })
 
     expect(mockWriteContract).toHaveBeenCalledWith(
@@ -296,7 +297,8 @@ describe('useBurn', () => {
       type: 'burn',
       status: 'pending',
       hash: undefined,
-      description: 'Redeeming plDXY-BEAR + plDXY-BULL for USDC',
+      title: 'Redeeming plDXY-BEAR + plDXY-BULL for USDC',
+      steps: [{ label: 'Redeem pairs', status: 'pending' }],
     })
 
     expect(mockWriteContract).toHaveBeenCalledWith(

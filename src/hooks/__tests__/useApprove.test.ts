@@ -23,7 +23,7 @@ const SPENDER_ADDRESS = '0x2222222222222222222222222222222222222222' as const
 describe('useApprove', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseWriteContract.mockReturnValue({
       writeContract: mockWriteContract,
@@ -51,10 +51,10 @@ describe('useApprove', () => {
       await result.current.approve(100000000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('approve')
-    expect(pendingTransactions[0].description).toBe('Approving token spend')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions).toHaveLength(1)
+    expect(transactions[0].type).toBe('approve')
+    expect(transactions[0].title).toBe('Approving token spend')
   })
 
   it('calls writeContract with correct arguments', async () => {
@@ -95,9 +95,9 @@ describe('useApprove', () => {
       expect(approveResult.value).toBe('0xapprove123hash')
     }
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('confirming')
-    expect(pendingTransactions[0].hash).toBe('0xapprove123hash')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('confirming')
+    expect(transactions[0].hash).toBe('0xapprove123hash')
   })
 
   it('returns Result.err when writeContract errors', async () => {
@@ -115,8 +115,8 @@ describe('useApprove', () => {
     expect(approveResult).toBeDefined()
     expect(Result.isError(approveResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 
   it('updates transaction to success when isSuccess becomes true', async () => {
@@ -130,7 +130,7 @@ describe('useApprove', () => {
       await result.current.approve(100000000n)
     })
 
-    expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
+    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
 
     mockUseWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
@@ -140,8 +140,8 @@ describe('useApprove', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('success')
+      const { transactions } = useTransactionStore.getState()
+      expect(transactions[0].status).toBe('success')
     })
   })
 
@@ -156,7 +156,7 @@ describe('useApprove', () => {
       await result.current.approve(100000000n)
     })
 
-    expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
+    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
 
     mockUseWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
@@ -166,8 +166,8 @@ describe('useApprove', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('failed')
+      const { transactions } = useTransactionStore.getState()
+      expect(transactions[0].status).toBe('failed')
     })
   })
 
@@ -186,8 +186,8 @@ describe('useApprove', () => {
     expect(approveResult).toBeDefined()
     expect(Result.isError(approveResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 
   it('uses the correct token and spender addresses from hook params', async () => {

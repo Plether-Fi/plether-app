@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { useTransactionStore, type PendingTransaction } from '../stores/transactionStore'
+import { useTransactionStore, type Transaction } from '../stores/transactionStore'
 import { ToastContainer, type ToastType } from './ui'
 
 interface ToastItem {
@@ -24,7 +24,7 @@ const TX_TYPE_LABELS: Record<string, string> = {
 export function TransactionNotifications() {
   const [toasts, setToasts] = useState<ToastItem[]>([])
   const processedTxsRef = useRef<Set<string>>(new Set())
-  const pendingTransactions = useTransactionStore((state) => state.pendingTransactions)
+  const transactions = useTransactionStore((state) => state.transactions)
 
   const addToast = useCallback((toast: Omit<ToastItem, 'id'>) => {
     const id = `toast-${String(Date.now())}-${Math.random().toString(36).slice(2)}`
@@ -36,7 +36,7 @@ export function TransactionNotifications() {
   }, [])
 
   useEffect(() => {
-    pendingTransactions.forEach((tx: PendingTransaction) => {
+    transactions.forEach((tx: Transaction) => {
       const txKey = `${tx.id}-${tx.status}`
 
       if (processedTxsRef.current.has(txKey)) return
@@ -47,7 +47,7 @@ export function TransactionNotifications() {
         addToast({
           type: 'success',
           title: `${label} Successful`,
-          message: tx.description,
+          message: tx.title,
           txHash: tx.hash,
         })
       } else if (tx.status === 'failed') {
@@ -56,15 +56,15 @@ export function TransactionNotifications() {
         addToast({
           type: 'error',
           title: `${label} Failed`,
-          message: tx.errorMessage ?? tx.description,
+          message: tx.errorMessage ?? tx.title,
         })
       }
     })
-  }, [pendingTransactions, addToast])
+  }, [transactions, addToast])
 
   useEffect(() => {
     const interval = setInterval(() => {
-      const currentIds = new Set(pendingTransactions.map((tx: PendingTransaction) => tx.id))
+      const currentIds = new Set(transactions.map((tx: Transaction) => tx.id))
       processedTxsRef.current.forEach((key) => {
         const txId = key.split('-')[0]
         if (!currentIds.has(txId)) {
@@ -74,7 +74,7 @@ export function TransactionNotifications() {
     }, 60000)
 
     return () => { clearInterval(interval); }
-  }, [pendingTransactions])
+  }, [transactions])
 
   return <ToastContainer toasts={toasts} onClose={removeToast} />
 }

@@ -49,7 +49,8 @@ export function useApprove(tokenAddress: Address, spenderAddress: Address) {
       type: 'approve',
       status: 'pending',
       hash: undefined,
-      description: 'Approving token spend',
+      title: 'Approving token spend',
+      steps: [{ label: 'Approve', status: 'pending' }],
     })
 
     return Result.tryPromise({

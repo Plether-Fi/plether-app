@@ -6,6 +6,7 @@ import { config } from '../config/wagmi'
 import { LoadingScreen, type LoadingStep } from '../components/ui/LoadingScreen'
 import { TransactionModal } from '../components/TransactionModal'
 import { useTransactionModal } from '../hooks/useTransactionModal'
+import { useTransactionStore } from '../stores/transactionStore'
 
 const queryClient = new QueryClient()
 
@@ -133,7 +134,11 @@ function AnimatedDemo() {
 
   useEffect(() => {
     modal.reset()
-    return () => modal.reset()
+    useTransactionStore.getState().clearTransactions()
+    return () => {
+      modal.reset()
+      useTransactionStore.getState().clearTransactions()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -156,38 +161,49 @@ export const AnimatedSuccess: Story = {
   decorators: interactiveDecorators,
   render: () => <AnimatedDemo />,
   play: async ({ step }) => {
+    const txStore = useTransactionStore.getState()
     const modal = useTransactionModal.getState()
+    const transactionId = crypto.randomUUID()
 
     await step('Open modal', async () => {
-      modal.open({
+      txStore.addTransaction({
+        id: transactionId,
+        type: 'swap',
+        status: 'pending',
         title: 'Buying plDXY-BEAR',
-        steps: ['Approve USDC', 'Confirming approval', 'Buy plDXY-BEAR', 'Awaiting confirmation'],
+        steps: [
+          { label: 'Approve USDC', status: 'pending' },
+          { label: 'Confirming approval', status: 'pending' },
+          { label: 'Buy plDXY-BEAR', status: 'pending' },
+          { label: 'Awaiting confirmation', status: 'pending' },
+        ],
       })
+      modal.open({ transactionId })
       await sleep(500)
     })
 
     await step('Approve USDC', async () => {
-      modal.setStepInProgress(0)
+      txStore.setStepInProgress(transactionId, 0)
       await sleep(1000)
     })
 
     await step('Confirming approval', async () => {
-      modal.setStepInProgress(1)
+      txStore.setStepInProgress(transactionId, 1)
       await sleep(1500)
     })
 
     await step('Buy plDXY-BEAR', async () => {
-      modal.setStepInProgress(2)
+      txStore.setStepInProgress(transactionId, 2)
       await sleep(1000)
     })
 
     await step('Awaiting confirmation', async () => {
-      modal.setStepInProgress(3)
+      txStore.setStepInProgress(transactionId, 3)
       await sleep(1500)
     })
 
     await step('Transaction success', async () => {
-      modal.setSuccess('0xabc123def456789abc123def456789abc123def456789abc123def456789abcd')
+      txStore.setStepSuccess(transactionId, '0xabc123def456789abc123def456789abc123def456789abc123def456789abcd')
     })
   },
 }
@@ -196,28 +212,39 @@ export const AnimatedError: Story = {
   decorators: interactiveDecorators,
   render: () => <AnimatedDemo />,
   play: async ({ step }) => {
+    const txStore = useTransactionStore.getState()
     const modal = useTransactionModal.getState()
+    const transactionId = crypto.randomUUID()
 
     await step('Open modal', async () => {
-      modal.open({
+      txStore.addTransaction({
+        id: transactionId,
+        type: 'swap',
+        status: 'pending',
         title: 'Buying plDXY-BEAR',
-        steps: ['Approve USDC', 'Confirming approval', 'Buy plDXY-BEAR', 'Awaiting confirmation'],
+        steps: [
+          { label: 'Approve USDC', status: 'pending' },
+          { label: 'Confirming approval', status: 'pending' },
+          { label: 'Buy plDXY-BEAR', status: 'pending' },
+          { label: 'Awaiting confirmation', status: 'pending' },
+        ],
       })
+      modal.open({ transactionId })
       await sleep(500)
     })
 
     await step('Approve USDC', async () => {
-      modal.setStepInProgress(0)
+      txStore.setStepInProgress(transactionId, 0)
       await sleep(1000)
     })
 
     await step('Confirming approval', async () => {
-      modal.setStepInProgress(1)
+      txStore.setStepInProgress(transactionId, 1)
       await sleep(1500)
     })
 
     await step('Transaction rejected', async () => {
-      modal.setError(1, 'User rejected the transaction')
+      txStore.setStepError(transactionId, 1, 'User rejected the transaction')
     })
   },
 }

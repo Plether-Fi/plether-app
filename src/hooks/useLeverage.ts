@@ -220,7 +220,8 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
       type: 'leverage',
       status: 'pending',
       hash: undefined,
-      description: `Opening ${side} leverage position`,
+      title: `Opening ${side} leverage position`,
+      steps: [{ label: 'Open position', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -324,7 +325,8 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
       type: 'leverage',
       status: 'pending',
       hash: undefined,
-      description: `Closing ${side} leverage position`,
+      title: `Closing ${side} leverage position`,
+      steps: [{ label: 'Close position', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -424,7 +426,8 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
       type: 'leverage',
       status: 'pending',
       hash: undefined,
-      description: 'Adding collateral',
+      title: 'Adding collateral',
+      steps: [{ label: 'Add collateral', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -481,7 +484,8 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
       type: 'leverage',
       status: 'pending',
       hash: undefined,
-      description: 'Removing collateral',
+      title: 'Removing collateral',
+      steps: [{ label: 'Remove collateral', status: 'pending' }],
     })
 
     return Result.tryPromise({

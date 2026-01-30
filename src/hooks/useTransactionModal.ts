@@ -1,103 +1,99 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import { type LoadingStep } from '../components/ui/LoadingScreen'
+import { useTransactionStore, type Transaction } from '../stores/transactionStore'
 
 interface TransactionModalState {
   isOpen: boolean
-  title: string
-  steps: LoadingStep[]
-  errorMessage?: string
-  transactionHash?: string
-  onRetry?: () => void
+  currentIndex: number
+  retryCallbacks: Record<string, () => void>
 
-  open: (config: {
-    title: string
-    steps: string[]
-    onRetry?: () => void
-  }) => void
+  open: (config: { transactionId: string; onRetry?: () => void }) => void
   close: () => void
-  setStepStatus: (index: number, status: LoadingStep['status']) => void
-  setStepInProgress: (index: number) => void
-  setError: (stepIndex: number, message: string) => void
-  setSuccess: (hash: string) => void
   reset: () => void
+  navigatePrev: () => void
+  navigateNext: () => void
+  viewTransaction: (index: number) => void
+  getRetryCallback: (transactionId: string) => (() => void) | undefined
 }
 
-export const useTransactionModal = create<TransactionModalState>()(devtools((set) => ({
+function isTransactionInProgress(tx: Transaction | null): boolean {
+  if (!tx) return false
+  return tx.status === 'pending' || tx.status === 'confirming'
+}
+
+const store = create<TransactionModalState>()(devtools((set, get) => ({
   isOpen: false,
-  title: '',
-  steps: [],
-  errorMessage: undefined,
-  transactionHash: undefined,
-  onRetry: undefined,
+  currentIndex: -1,
+  retryCallbacks: {},
 
-  open: ({ title, steps, onRetry }) =>
-    { set({
+  open: ({ transactionId, onRetry }) => {
+    const txStore = useTransactionStore.getState()
+    const txIndex = txStore.transactions.findIndex(t => t.id === transactionId)
+
+    set(state => ({
       isOpen: true,
-      title,
-      steps: steps.map((label) => ({ label, status: 'pending' as const })),
-      errorMessage: undefined,
-      transactionHash: undefined,
-      onRetry,
-    }); },
+      currentIndex: txIndex >= 0 ? txIndex : txStore.transactions.length - 1,
+      retryCallbacks: onRetry
+        ? { ...state.retryCallbacks, [transactionId]: onRetry }
+        : state.retryCallbacks,
+    }))
+  },
 
-  close: () =>
-    { set({
-      isOpen: false,
-      title: '',
-      steps: [],
-      errorMessage: undefined,
-      transactionHash: undefined,
-      onRetry: undefined,
-    }); },
-
-  setStepStatus: (index, status) =>
-    { set((state) => ({
-      steps: state.steps.map((step, i) =>
-        i === index ? { ...step, status } : step
-      ),
-    })); },
-
-  setStepInProgress: (index) =>
-    { set((state) => ({
-      steps: state.steps.map((step, i) => {
-        if (i < index) return { ...step, status: 'completed' as const }
-        if (i === index) {
-          if (step.status === 'completed') return step
-          return { ...step, status: 'in_progress' as const }
-        }
-        return step
-      }),
-    })); },
-
-  setError: (_stepIndex, message) =>
-    { set((state) => {
-      const inProgressIndex = state.steps.findIndex(s => s.status === 'in_progress')
-      const errorIndex = inProgressIndex >= 0 ? inProgressIndex : Math.min(_stepIndex, state.steps.length - 1)
-
-      return {
-        steps: state.steps.map((step, i) => {
-          if (i < errorIndex) return { ...step, status: 'completed' as const }
-          if (i === errorIndex) return { ...step, status: 'error' as const }
-          return step
-        }),
-        errorMessage: message,
-      }
-    }); },
-
-  setSuccess: (hash) =>
-    { set((state) => ({
-      steps: state.steps.map((step) => ({ ...step, status: 'completed' as const })),
-      transactionHash: hash,
-    })); },
+  close: () => set({ isOpen: false }),
 
   reset: () =>
-    { set({
+    set({
       isOpen: false,
-      title: '',
-      steps: [],
-      errorMessage: undefined,
-      transactionHash: undefined,
-      onRetry: undefined,
-    }); },
+      currentIndex: -1,
+      retryCallbacks: {},
+    }),
+
+  navigatePrev: () => {
+    const { currentIndex } = get()
+    if (currentIndex > 0) {
+      set({ currentIndex: currentIndex - 1 })
+    }
+  },
+
+  navigateNext: () => {
+    const { currentIndex } = get()
+    const txStore = useTransactionStore.getState()
+
+    if (currentIndex < txStore.transactions.length - 1) {
+      set({ currentIndex: currentIndex + 1 })
+    }
+  },
+
+  viewTransaction: (index) => {
+    const txStore = useTransactionStore.getState()
+
+    if (index >= 0 && index < txStore.transactions.length) {
+      set({ currentIndex: index })
+    }
+  },
+
+  getRetryCallback: (transactionId) => get().retryCallbacks[transactionId],
 }), { name: 'TransactionModal' }))
+
+export const useTransactionModal = store
+
+export function useCurrentTransaction() {
+  const { currentIndex } = useTransactionModal()
+  const transactions = useTransactionStore((s) => s.transactions)
+
+  if (currentIndex >= 0 && currentIndex < transactions.length) {
+    return transactions[currentIndex]
+  }
+  return null
+}
+
+export function useIsCurrentTransactionInProgress() {
+  const tx = useCurrentTransaction()
+  return isTransactionInProgress(tx)
+}
+
+export { isTransactionInProgress }
+
+if (typeof window !== 'undefined') {
+  (window as unknown as { __txModal: typeof store }).__txModal = store
+}

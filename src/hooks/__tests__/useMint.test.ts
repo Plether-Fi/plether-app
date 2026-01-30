@@ -31,7 +31,7 @@ import { useMint } from '../usePlethCore'
 describe('useMint', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseWriteContract.mockReturnValue({
       writeContract: mockWriteContract,
@@ -59,10 +59,10 @@ describe('useMint', () => {
       await result.current.mint(1000000000000000000n)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('mint')
-    expect(pendingTransactions[0].description).toBe('Minting plDXY-BEAR + plDXY-BULL')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions).toHaveLength(1)
+    expect(transactions[0].type).toBe('mint')
+    expect(transactions[0].title).toBe('Minting plDXY-BEAR + plDXY-BULL')
   })
 
   it('calls writeContract with correct arguments', async () => {
@@ -101,9 +101,9 @@ describe('useMint', () => {
       expect(mintResult.value).toBe('0xabc123hash')
     }
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('confirming')
-    expect(pendingTransactions[0].hash).toBe('0xabc123hash')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('confirming')
+    expect(transactions[0].hash).toBe('0xabc123hash')
   })
 
   it('returns Result.err when writeContract errors', async () => {
@@ -121,8 +121,8 @@ describe('useMint', () => {
     expect(mintResult).toBeDefined()
     expect(Result.isError(mintResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 
   it('updates transaction to success when isSuccess becomes true', async () => {
@@ -136,7 +136,7 @@ describe('useMint', () => {
       await result.current.mint(1000000000000000000n)
     })
 
-    expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
+    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
 
     mockUseWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
@@ -146,8 +146,8 @@ describe('useMint', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('success')
+      const { transactions } = useTransactionStore.getState()
+      expect(transactions[0].status).toBe('success')
     })
   })
 
@@ -162,7 +162,7 @@ describe('useMint', () => {
       await result.current.mint(1000000000000000000n)
     })
 
-    expect(useTransactionStore.getState().pendingTransactions[0].status).toBe('confirming')
+    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
 
     mockUseWaitForTransactionReceipt.mockReturnValue({
       isLoading: false,
@@ -172,8 +172,8 @@ describe('useMint', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('failed')
+      const { transactions } = useTransactionStore.getState()
+      expect(transactions[0].status).toBe('failed')
     })
   })
 
@@ -192,7 +192,7 @@ describe('useMint', () => {
     expect(mintResult).toBeDefined()
     expect(Result.isError(mintResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 })

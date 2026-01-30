@@ -205,7 +205,7 @@ describe('usePreviewOpenLeverage', () => {
 describe('useOpenLeverage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -239,10 +239,10 @@ describe('useOpenLeverage', () => {
       await result.current.openPosition(1000000000000000000n, 2000000000000000000n, 100n, deadline)
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('leverage')
-    expect(pendingTransactions[0].description).toBe('Opening BEAR leverage position')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions).toHaveLength(1)
+    expect(transactions[0].type).toBe('leverage')
+    expect(transactions[0].title).toBe('Opening BEAR leverage position')
   })
 
   it('returns Result.ok with hash on success', async () => {
@@ -317,8 +317,8 @@ describe('useOpenLeverage', () => {
     expect(leverageResult).toBeDefined()
     expect(Result.isError(leverageResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 
   it('updates transaction to success when receipt confirms', async () => {
@@ -341,8 +341,8 @@ describe('useOpenLeverage', () => {
     rerender()
 
     await waitFor(() => {
-      const { pendingTransactions } = useTransactionStore.getState()
-      expect(pendingTransactions[0].status).toBe('success')
+      const { transactions } = useTransactionStore.getState()
+      expect(transactions[0].status).toBe('success')
     })
   })
 })
@@ -350,7 +350,7 @@ describe('useOpenLeverage', () => {
 describe('useCloseLeverage', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -388,10 +388,10 @@ describe('useCloseLeverage', () => {
       )
     })
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions).toHaveLength(1)
-    expect(pendingTransactions[0].type).toBe('leverage')
-    expect(pendingTransactions[0].description).toBe('Closing BULL leverage position')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions).toHaveLength(1)
+    expect(transactions[0].type).toBe('leverage')
+    expect(transactions[0].title).toBe('Closing BULL leverage position')
   })
 
   it('returns Result.ok on success', async () => {
@@ -419,7 +419,7 @@ describe('useCloseLeverage', () => {
 describe('useAdjustCollateral', () => {
   beforeEach(() => {
     vi.resetAllMocks()
-    useTransactionStore.setState({ pendingTransactions: [] })
+    useTransactionStore.setState({ transactions: [] })
 
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
@@ -456,8 +456,8 @@ describe('useAdjustCollateral', () => {
     expect(adjustResult).toBeDefined()
     expect(Result.isOk(adjustResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Adding collateral')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].title).toBe('Adding collateral')
   })
 
   it('removes collateral and creates transaction', async () => {
@@ -475,8 +475,8 @@ describe('useAdjustCollateral', () => {
     expect(adjustResult).toBeDefined()
     expect(Result.isOk(adjustResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].description).toBe('Removing collateral')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].title).toBe('Removing collateral')
   })
 
   it('returns NotConnectedError when chainId is missing for addCollateral', async () => {
@@ -534,7 +534,7 @@ describe('useAdjustCollateral', () => {
     expect(adjustResult).toBeDefined()
     expect(Result.isError(adjustResult!)).toBe(true)
 
-    const { pendingTransactions } = useTransactionStore.getState()
-    expect(pendingTransactions[0].status).toBe('failed')
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
   })
 })
