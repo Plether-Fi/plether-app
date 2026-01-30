@@ -254,8 +254,6 @@ export function Dashboard() {
                   suppliedAmount={totalSupplied}
                   borrowedAmount={totalBorrowed}
                   availableToBorrow={totalAvailableToBorrow}
-                  supplyApy={3.5}
-                  borrowApy={5.2}
                   usdcBalance={usdcBalance}
                   suppliedBalance={totalSupplied}
                   hasCollateral={hasCollateral}

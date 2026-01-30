@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react'
 import { useAccount, useWriteContract, useReadContract } from 'wagmi'
 import { parseUnits, zeroAddress, type Address } from 'viem'
 import { TokenInput } from './TokenInput'
-import { formatUsd, formatPercent } from '../utils/formatters'
+import { formatUsd } from '../utils/formatters'
 import { useTransactionSequence, useAllowance, type TransactionStep } from '../hooks'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
@@ -14,8 +14,6 @@ export interface YieldCardProps {
   suppliedAmount: bigint
   borrowedAmount: bigint
   availableToBorrow: bigint
-  supplyApy: number
-  borrowApy: number
   usdcBalance: bigint
   suppliedBalance: bigint
   hasCollateral?: boolean
@@ -66,8 +64,6 @@ export function YieldCard({
   suppliedAmount,
   borrowedAmount,
   availableToBorrow,
-  supplyApy,
-  borrowApy,
   usdcBalance,
   suppliedBalance,
   hasCollateral = false,
@@ -283,7 +279,6 @@ export function YieldCard({
         >
           <p className="text-xs text-cyber-text-secondary">Supplied</p>
           <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(suppliedAmount)}</p>
-          <p className="text-xs text-cyber-neon-green">+{formatPercent(supplyApy)} APY</p>
         </button>
         <button
           onClick={handleBorrowedClick}
@@ -291,7 +286,6 @@ export function YieldCard({
         >
           <p className="text-xs text-cyber-text-secondary">Borrowed</p>
           <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(borrowedAmount)}</p>
-          <p className="text-xs text-cyber-warning-text">-{formatPercent(borrowApy)} APY</p>
         </button>
         <button
           onClick={handleAvailableClick}
@@ -304,10 +298,7 @@ export function YieldCard({
       </div>
 
       <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="font-medium text-cyber-text-primary">Supply USDC</h4>
-          <span className="text-sm text-cyber-neon-green">{formatPercent(supplyApy)} APY</span>
-        </div>
+        <h4 className="font-medium text-cyber-text-primary mb-4">Supply USDC</h4>
         <div className="bg-cyber-surface-dark p-1 flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
           <button
             onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
@@ -348,10 +339,7 @@ export function YieldCard({
       </div>
 
       <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="font-medium text-cyber-text-primary">Borrow USDC</h4>
-          <span className="text-sm text-cyber-warning-text">{formatPercent(borrowApy)} APY</span>
-        </div>
+        <h4 className="font-medium text-cyber-text-primary mb-4">Borrow USDC</h4>
         <div className="bg-cyber-surface-dark p-1 flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
           <button
             onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}

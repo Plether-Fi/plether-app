@@ -36,8 +36,6 @@ export interface StakingPosition {
 export interface MorphoPosition {
   supplied: bigint
   borrowed: bigint
-  supplyApy: number
-  borrowApy: number
   availableToBorrow: bigint
 }
 

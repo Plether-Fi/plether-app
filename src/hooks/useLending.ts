@@ -2,7 +2,7 @@ import { useAccount, useReadContract, useWriteContract, useWaitForTransactionRec
 import { useRef, useEffect, useMemo, useCallback } from 'react'
 import { zeroAddress, keccak256, encodeAbiParameters, type Address } from 'viem'
 import { Result } from 'better-result'
-import { LEVERAGE_ROUTER_ABI, MORPHO_ABI, ERC20_ABI } from '../contracts/abis'
+import { LEVERAGE_ROUTER_ABI, MORPHO_ABI, ERC20_ABI, MORPHO_ORACLE_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
 import {
@@ -203,18 +203,30 @@ export function useAvailableToBorrow(side: 'BEAR' | 'BULL') {
     query: { enabled: !!morphoAddress && !!marketId },
   })
 
+  const { data: oraclePrice } = useReadContract({
+    address: marketParams?.oracle,
+    abi: MORPHO_ORACLE_ABI,
+    functionName: 'price',
+    query: { enabled: !!marketParams?.oracle },
+  })
+
   const collateral = position?.[2] ?? 0n
   const borrowShares = position?.[1] ?? 0n
   const totalBorrowAssets = marketData?.[2] ?? 0n
   const totalBorrowShares = marketData?.[3] ?? 0n
   const lltv = marketParams?.lltv ?? 0n
+  const price = oraclePrice ?? 0n
 
   const currentDebt = totalBorrowShares > 0n
     ? (borrowShares * totalBorrowAssets) / totalBorrowShares
     : 0n
 
-  const maxBorrow = lltv > 0n
-    ? (collateral * lltv) / 10n ** 18n
+  // Morpho max borrow: collateral * oraclePrice * lltv / 10^54
+  // oraclePrice is 1e36 scale, lltv is 1e18 scale
+  // Note: splDXY has 1000x virtual offset, so we divide by additional 1e15
+  // to convert from price-per-asset to price-per-share
+  const maxBorrow = lltv > 0n && price > 0n
+    ? (collateral * price * lltv) / 10n ** 69n
     : 0n
 
   const availableToBorrow = maxBorrow > currentDebt ? maxBorrow - currentDebt : 0n
@@ -272,7 +284,8 @@ export function useSupply(side: 'BEAR' | 'BULL') {
       type: 'supply',
       status: 'pending',
       hash: undefined,
-      description: `Supplying USDC to ${side} market`,
+      title: `Supplying USDC to ${side} market`,
+      steps: [{ label: 'Supply USDC', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -374,7 +387,8 @@ export function useWithdraw(side: 'BEAR' | 'BULL') {
       type: 'withdraw',
       status: 'pending',
       hash: undefined,
-      description: `Withdrawing USDC from ${side} market`,
+      title: `Withdrawing USDC from ${side} market`,
+      steps: [{ label: 'Withdraw USDC', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -474,7 +488,8 @@ export function useBorrow(side: 'BEAR' | 'BULL') {
       type: 'borrow',
       status: 'pending',
       hash: undefined,
-      description: `Borrowing USDC from ${side} market`,
+      title: `Borrowing USDC from ${side} market`,
+      steps: [{ label: 'Borrow USDC', status: 'pending' }],
     })
 
     return Result.tryPromise({
@@ -574,7 +589,8 @@ export function useRepay(side: 'BEAR' | 'BULL') {
       type: 'repay',
       status: 'pending',
       hash: undefined,
-      description: `Repaying USDC to ${side} market`,
+      title: `Repaying USDC to ${side} market`,
+      steps: [{ label: 'Repay USDC', status: 'pending' }],
     })
 
     return Result.tryPromise({
