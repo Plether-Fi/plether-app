@@ -35,6 +35,7 @@ export function Dashboard() {
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
   const [adjustModalOpen, setAdjustModalOpen] = useState(false)
+  const [lendingSide, setLendingSide] = useState<'BEAR' | 'BULL'>('BEAR')
 
   const {
     usdcBalance,
@@ -161,8 +162,6 @@ export function Dashboard() {
 
   const totalSupplied = lendingPosition.totalSupplied
   const totalBorrowed = lendingPosition.totalBorrowed
-  const totalAvailableToBorrow = bearBorrowable.availableToBorrow + bullBorrowable.availableToBorrow
-  const hasCollateral = bearBorrowable.collateral > 0n || bullBorrowable.collateral > 0n
   const lendingValue = totalSupplied > totalBorrowed ? totalSupplied - totalBorrowed : 0n
 
   return (
@@ -251,12 +250,14 @@ export function Dashboard() {
 
               {mainTab === 'lending' && (
                 <YieldCard
-                  suppliedAmount={totalSupplied}
-                  borrowedAmount={totalBorrowed}
-                  availableToBorrow={totalAvailableToBorrow}
+                  suppliedAmount={lendingSide === 'BEAR' ? lendingPosition.bearPosition.suppliedAssets : lendingPosition.bullPosition.suppliedAssets}
+                  borrowedAmount={lendingSide === 'BEAR' ? lendingPosition.bearPosition.borrowedAssets : lendingPosition.bullPosition.borrowedAssets}
+                  availableToBorrow={lendingSide === 'BEAR' ? bearBorrowable.availableToBorrow : bullBorrowable.availableToBorrow}
                   usdcBalance={usdcBalance}
-                  suppliedBalance={totalSupplied}
-                  hasCollateral={hasCollateral}
+                  suppliedBalance={lendingSide === 'BEAR' ? lendingPosition.bearPosition.suppliedAssets : lendingPosition.bullPosition.suppliedAssets}
+                  hasCollateral={lendingSide === 'BEAR' ? bearBorrowable.collateral > 0n : bullBorrowable.collateral > 0n}
+                  side={lendingSide}
+                  onSideChange={setLendingSide}
                   onSuccess={() => void lendingPosition.refetch()}
                 />
               )}

@@ -548,10 +548,21 @@ export function useBorrow(side: 'BEAR' | 'BULL') {
 export function useRepay(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
-  const { morphoAddress, marketParams } = useMarketConfig(side)
+  const { morphoAddress, marketParams, marketId } = useMarketConfig(side)
   const addTransaction = useTransactionStore((s) => s.addTransaction)
   const updateTransaction = useTransactionStore((s) => s.updateTransaction)
   const txIdRef = useRef<string | null>(null)
+
+  const { data: marketData } = useReadContract({
+    address: morphoAddress,
+    abi: MORPHO_ABI,
+    functionName: 'market',
+    args: [marketId ?? '0x'],
+    query: { enabled: !!morphoAddress && !!marketId },
+  })
+
+  const totalBorrowAssets = marketData?.[2] ?? 0n
+  const totalBorrowShares = marketData?.[3] ?? 0n
 
   const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
 
@@ -577,10 +588,17 @@ export function useRepay(side: 'BEAR' | 'BULL') {
     }
   }, [isError, receiptError, updateTransaction])
 
+  const assetsToShares = useCallback((assets: bigint): bigint => {
+    if (totalBorrowAssets === 0n) return assets
+    return (assets * totalBorrowShares) / totalBorrowAssets
+  }, [totalBorrowAssets, totalBorrowShares])
+
   const repay = async (assets: bigint): Promise<Result<`0x${string}`, LendingError>> => {
     if (!morphoAddress || !marketParams || !address || !addresses) {
       return Result.err(new NotConnectedError())
     }
+
+    const shares = assetsToShares(assets)
 
     const txId = crypto.randomUUID()
     txIdRef.current = txId
@@ -601,7 +619,7 @@ export function useRepay(side: 'BEAR' | 'BULL') {
               address: morphoAddress,
               abi: MORPHO_ABI,
               functionName: 'repay',
-              args: [marketParams, assets, 0n, address, '0x'],
+              args: [marketParams, 0n, shares, address, '0x'],
             },
             {
               onSuccess: (hash) => {

@@ -10,6 +10,8 @@ import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
 type SupplyMode = 'supply' | 'withdraw'
 type BorrowMode = 'borrow' | 'repay'
 
+type MarketSide = 'BEAR' | 'BULL'
+
 export interface YieldCardProps {
   suppliedAmount: bigint
   borrowedAmount: bigint
@@ -17,6 +19,8 @@ export interface YieldCardProps {
   usdcBalance: bigint
   suppliedBalance: bigint
   hasCollateral?: boolean
+  side?: MarketSide
+  onSideChange?: (side: MarketSide) => void
   onSuccess?: () => void
 }
 
@@ -28,10 +32,10 @@ interface MarketParams {
   lltv: bigint
 }
 
-function useMarketConfig() {
+function useMarketConfig(side: MarketSide) {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
-  const routerAddress = addresses?.LEVERAGE_ROUTER
+  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
 
   const { data: morphoAddress } = useReadContract({
     address: routerAddress,
@@ -67,11 +71,24 @@ export function YieldCard({
   usdcBalance,
   suppliedBalance,
   hasCollateral = false,
+  side: controlledSide,
+  onSideChange,
   onSuccess,
 }: YieldCardProps) {
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
-  const { morphoAddress, marketParams } = useMarketConfig()
+
+  const [internalSide, setInternalSide] = useState<MarketSide>('BEAR')
+  const activeSide = controlledSide ?? internalSide
+  const handleSideChange = (newSide: MarketSide) => {
+    if (onSideChange) {
+      onSideChange(newSide)
+    } else {
+      setInternalSide(newSide)
+    }
+  }
+
+  const { morphoAddress, marketParams } = useMarketConfig(activeSide)
 
   const [supplyMode, setSupplyMode] = useState<SupplyMode>('supply')
   const [borrowMode, setBorrowMode] = useState<BorrowMode>('borrow')
@@ -339,7 +356,31 @@ export function YieldCard({
       </div>
 
       <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
-        <h4 className="font-medium text-cyber-text-primary mb-4">Borrow USDC</h4>
+        <div className="flex items-center justify-between mb-4">
+          <h4 className="font-medium text-cyber-text-primary">Borrow USDC</h4>
+          <div className="flex text-xs font-medium border border-cyber-border-glow/30">
+            <button
+              onClick={() => handleSideChange('BEAR')}
+              className={`py-1 px-3 transition-all ${
+                activeSide === 'BEAR'
+                  ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border-r border-cyber-electric-fuchsia/50'
+                  : 'text-cyber-text-secondary hover:text-cyber-electric-fuchsia border-r border-cyber-border-glow/30'
+              }`}
+            >
+              BEAR
+            </button>
+            <button
+              onClick={() => handleSideChange('BULL')}
+              className={`py-1 px-3 transition-all ${
+                activeSide === 'BULL'
+                  ? 'bg-cyber-neon-green/20 text-cyber-neon-green'
+                  : 'text-cyber-text-secondary hover:text-cyber-neon-green'
+              }`}
+            >
+              BULL
+            </button>
+          </div>
+        </div>
         <div className="bg-cyber-surface-dark p-1 flex text-sm font-medium mb-4 border border-cyber-border-glow/30">
           <button
             onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
