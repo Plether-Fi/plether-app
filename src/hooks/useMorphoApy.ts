@@ -101,7 +101,7 @@ export function useMorphoApy(side: 'BEAR' | 'BULL') {
     const borrowRatePerYear = borrowRatePerSecond * SECONDS_PER_YEAR
     const borrowApy = Number(borrowRatePerYear) / 1e18
 
-    const feeWad = BigInt(fee)
+    const feeWad = fee
     const supplyRatePerYear = (borrowRatePerYear * utilizationWad * (WAD - feeWad)) / WAD / WAD
     const supplyApy = Number(supplyRatePerYear) / 1e18
 

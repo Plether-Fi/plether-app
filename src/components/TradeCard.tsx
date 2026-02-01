@@ -93,7 +93,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   useEffect(() => {
     if (currentTx?.status === 'success') {
       refetchBalances?.()
-      refetchAllowance()
+      void refetchAllowance()
       setInputAmount('')
     }
   }, [currentTx?.status, refetchBalances, refetchAllowance])
@@ -273,7 +273,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       {isConnected ? (
         <button
-          onClick={() => void handleSwap()}
+          onClick={() => { handleSwap() }}
           disabled={isDisabled}
           className="w-full bg-cyber-bright-blue hover:bg-cyber-bright-blue/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-bright-blue/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
         >
@@ -319,7 +319,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             </Button>
             <Button
               variant="primary"
-              onClick={() => void handleConfirmHighImpact()}
+              onClick={() => { handleConfirmHighImpact() }}
               className="flex-1 !bg-red-500 hover:!bg-red-600"
             >
               Swap Anyway

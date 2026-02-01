@@ -149,7 +149,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
         />
 
         <button
-          onClick={() => void handleAction()}
+          onClick={() => { handleAction() }}
           disabled={isDisabled}
           className={`w-full ${bgColor} hover:opacity-90 ${isBear ? 'text-cyber-text-primary' : 'text-cyber-bg'} font-semibold py-4 px-6 shadow-lg ${shadowColor}/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none`}
         >

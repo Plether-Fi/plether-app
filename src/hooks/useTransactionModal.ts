@@ -39,14 +39,15 @@ const store = create<TransactionModalState>()(devtools((set, get) => ({
     }))
   },
 
-  close: () => set({ isOpen: false }),
+  close: () => { set({ isOpen: false }) },
 
-  reset: () =>
+  reset: () => {
     set({
       isOpen: false,
       currentIndex: -1,
       retryCallbacks: {},
-    }),
+    })
+  },
 
   navigatePrev: () => {
     const { currentIndex } = get()

@@ -17,7 +17,7 @@ interface PendingOperation {
 
 class TransactionManager {
   private config: Config | null = null
-  private pendingOperations: Map<string, PendingOperation> = new Map()
+  private pendingOperations = new Map<string, PendingOperation>()
 
   setConfig(config: Config) {
     this.config = config
@@ -42,7 +42,7 @@ class TransactionManager {
       abi: ERC20_ABI,
       functionName: 'allowance',
       args: [ownerAddress, spenderAddress],
-    }) as bigint
+    })
     return allowance >= amount
   }
 
@@ -142,7 +142,7 @@ class TransactionManager {
 
       const signature = await signTypedData(config, {
         domain: {
-          name: tokenName as string,
+          name: tokenName,
           version: '1',
           chainId: chainId,
           verifyingContract: tokenAddress,
@@ -161,7 +161,7 @@ class TransactionManager {
           owner: address,
           spender: stakingAddress,
           value: amount,
-          nonce: nonce as bigint,
+          nonce: nonce,
           deadline: deadline,
         },
       })
@@ -864,14 +864,14 @@ class TransactionManager {
       address: routerAddress,
       abi: LEVERAGE_ROUTER_ABI,
       functionName: 'MORPHO',
-    }) as `0x${string}`
+    })
 
     const isAuthorized = await readContract(config, {
       address: morphoAddress,
       abi: MORPHO_ABI,
       functionName: 'isAuthorized',
       args: [address, routerAddress],
-    }) as boolean
+    })
 
     const hasUsdcAllowance = await this.checkAllowance(addresses.USDC, routerAddress, address, principal)
 

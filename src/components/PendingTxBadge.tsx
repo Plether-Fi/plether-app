@@ -13,10 +13,8 @@ export function PendingTxBadge() {
   if (count === 0) return null
 
   const handleClick = () => {
-    const firstPendingTx = activeTxs[0]
-    if (firstPendingTx) {
-      open({ transactionId: firstPendingTx.id })
-    }
+    const firstPendingTx = activeTxs[0] as { id: string }
+    open({ transactionId: firstPendingTx.id })
   }
 
   return (

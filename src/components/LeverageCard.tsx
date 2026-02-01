@@ -35,7 +35,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const operationKey = `leverage-open-${selectedSide}`
 
   const activeTransactionId = activeOperations[operationKey]
-  const currentTxId = activeTransactionId ?? trackedTxId
+  const currentTxId = activeTransactionId || trackedTxId
   const currentTx = currentTxId
     ? transactions.find(t => t.id === currentTxId)
     : null

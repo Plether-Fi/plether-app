@@ -147,7 +147,8 @@ export const useTransactionStore = create<TransactionState>()(
 
         clearActiveOperation: (key) =>
           set((state) => {
-            const { [key]: _, ...rest } = state.activeOperations
+            const { [key]: _removed, ...rest } = state.activeOperations
+            void _removed
             return { activeOperations: rest }
           }),
 
