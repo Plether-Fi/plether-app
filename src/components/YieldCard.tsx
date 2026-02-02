@@ -427,14 +427,16 @@ export function YieldCard({
           </p>
         </div>
         <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+          <p className="text-xs text-cyber-text-secondary">Total Collateral</p>
+          <p className="text-lg font-bold text-cyber-text-primary">
+            {formatUsd(bearMarket.collateral + bullMarket.collateral)}
+          </p>
+        </div>
+        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
           <p className="text-xs text-cyber-text-secondary">Total Available</p>
           <p className="text-lg font-bold text-cyber-text-primary">
             {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)}
           </p>
-        </div>
-        <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
-          <p className="text-xs text-cyber-text-secondary">Wallet Balance</p>
-          <p className="text-lg font-bold text-cyber-text-primary">{formatUsd(usdcBalance)}</p>
         </div>
       </div>
 

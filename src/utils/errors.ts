@@ -198,12 +198,16 @@ function extractMessage(error: unknown): string {
     cause?: { shortMessage?: string; message?: string }
   }
 
-  if (errorObj.shortMessage) return errorObj.shortMessage
-  if (errorObj.cause?.shortMessage) return errorObj.cause.shortMessage
-  if (errorObj.message) return errorObj.message
-  if (typeof error === 'string') return error
+  let msg = 'Transaction failed'
+  if (errorObj.shortMessage) msg = errorObj.shortMessage
+  else if (errorObj.cause?.shortMessage) msg = errorObj.cause.shortMessage
+  else if (errorObj.message) msg = errorObj.message
+  else if (typeof error === 'string') msg = error
 
-  return 'Transaction failed'
+  if (msg.length > 100) {
+    return msg.slice(0, 100) + '...'
+  }
+  return msg
 }
 
 const USER_REJECTION_PATTERNS = [
