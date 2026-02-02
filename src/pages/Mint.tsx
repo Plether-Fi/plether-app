@@ -79,7 +79,7 @@ export function Mint() {
       void refetchBullAllowance()
       setInputAmount('')
     }
-  }, [mintTx?.status, redeemTx?.status, mode, refetchBalances, refetchUsdcAllowance, refetchBearAllowance, refetchBullAllowance])
+  }, [mintTx, redeemTx, mode, refetchBalances, refetchUsdcAllowance, refetchBearAllowance, refetchBullAllowance])
 
   const handleMint = useCallback(() => {
     if (pairAmountBigInt <= 0n) return

@@ -83,6 +83,7 @@ class TransactionManager {
     }
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) {
       throw new Error('No wallet connected')
     }
@@ -237,6 +238,7 @@ class TransactionManager {
     }
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) {
       throw new Error('No wallet connected')
     }
@@ -334,6 +336,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -442,6 +445,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -544,6 +548,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -646,6 +651,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -745,6 +751,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -854,6 +861,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const address = walletClient.account.address
@@ -983,6 +991,7 @@ class TransactionManager {
     if (!chainId) throw new Error('No chain connected')
 
     const walletClient = await getWalletClient(config)
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- defensive runtime check
     if (!walletClient) throw new Error('No wallet connected')
 
     const addresses = getAddresses(chainId)
