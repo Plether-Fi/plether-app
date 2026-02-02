@@ -101,7 +101,7 @@ export function Dashboard() {
 
   const positions: LeveragePosition[] = []
 
-  if (bearPosition.hasPosition) {
+  if (bearPosition.hasPosition && bearPosition.collateralUsdc > 0n) {
     const leverageNum = Number(bearPosition.leverage) / 100
     positions.push({
       id: 'bear-position',
@@ -117,7 +117,7 @@ export function Dashboard() {
     })
   }
 
-  if (bullPosition.hasPosition) {
+  if (bullPosition.hasPosition && bullPosition.collateralUsdc > 0n) {
     const leverageNum = Number(bullPosition.leverage) / 100
     positions.push({
       id: 'bull-position',
