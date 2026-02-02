@@ -21,14 +21,12 @@ export function formatAmount(
 }
 
 /**
- * Format USD value
+ * Format USDC value (without $ symbol - use "USDC" suffix where needed)
  */
 export function formatUsd(amount: bigint, decimals = 6): string {
   const num = parseFloat(formatUnits(amount, decimals))
 
   return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(num)

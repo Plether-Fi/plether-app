@@ -133,7 +133,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
           </div>
           <div className="flex justify-between">
             <span className="text-cyber-text-secondary">Current Liquidation Price</span>
-            <span className="text-cyber-warning-text">${(Number(position.liquidationPrice) / 1e6).toFixed(2)}</span>
+            <span className="text-cyber-warning-text">{(Number(position.liquidationPrice) / 1e6).toFixed(2)} USDC</span>
           </div>
         </div>
 

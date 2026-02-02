@@ -32,7 +32,7 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
               </span>
             </div>
             <div className="text-xs text-cyber-text-secondary mt-1">
-              Size: {formatUsd(position.size)} | Equity: {formatUsd(position.collateral)}
+              Size: {formatUsd(position.size)} USDC | Equity: {formatUsd(position.collateral)} USDC
             </div>
           </div>
         </div>
@@ -47,7 +47,7 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
           <div className="flex flex-col">
             <span className="text-xs text-cyber-text-secondary mb-1">Liq. Price</span>
             <span className="text-sm font-semibold text-cyber-text-primary">
-              ${(Number(position.liquidationPrice) / 1e6).toFixed(2)}
+              {(Number(position.liquidationPrice) / 1e6).toFixed(2)} USDC
             </span>
           </div>
           <div className="flex flex-col">

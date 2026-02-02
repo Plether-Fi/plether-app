@@ -126,6 +126,11 @@ Defined in `src/index.css` via `@theme`:
 - `cyber-electric-fuchsia` (#FF00CC) - plDXY-BEAR, secondary actions
 - `bear` / `bull` - Aliases for token-specific styling
 
+### Currency Display
+- **Never use dollar sign ($)** to represent USDC values
+- Use `formatUsd()` from `src/utils/formatters.ts` which formats numbers without $
+- Append "USDC" suffix where appropriate (e.g., "100.00 USDC" not "$100.00")
+
 ### Testing Strategy
 
 **Test Types:**

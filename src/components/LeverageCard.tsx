@@ -200,18 +200,18 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         <h4 className="text-sm font-medium text-cyber-text-secondary">Position Preview</h4>
         <div className="flex justify-between">
           <span className="text-cyber-text-secondary text-sm">Position Value</span>
-          <span className="text-cyber-text-primary">{positionSizeDisplay}</span>
+          <span className="text-cyber-text-primary">{positionSizeDisplay} USDC</span>
         </div>
         <div className="flex justify-between">
           <span className="text-cyber-text-secondary text-sm">Your Equity</span>
-          <span className="text-cyber-text-primary">{equityDisplay}</span>
+          <span className="text-cyber-text-primary">{equityDisplay} USDC</span>
         </div>
         <div className="flex justify-between">
           <span className="text-cyber-text-secondary text-sm flex items-center gap-1">
             Debt
             <InfoTooltip content="USDC borrowed from Morpho against your position" />
           </span>
-          <span className="text-cyber-warning-text">{debtDisplay}</span>
+          <span className="text-cyber-warning-text">{debtDisplay} USDC</span>
         </div>
       </div>
 

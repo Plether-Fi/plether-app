@@ -44,7 +44,7 @@ export function PriceDisplay({
           {isLoading ? (
             <Skeleton width={60} height={20} />
           ) : (
-            <span className="text-cyber-text-primary font-semibold">${price.toFixed(2)}</span>
+            <span className="text-cyber-text-primary font-semibold">{price.toFixed(2)} USDC</span>
           )}
         </div>
         <span className={`px-2 py-0.5 text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
@@ -66,7 +66,7 @@ export function PriceDisplay({
         <Skeleton width={120} height={36} />
       ) : (
         <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-cyber-text-primary">${price.toFixed(2)}</span>
+          <span className="text-3xl font-bold text-cyber-text-primary">{price.toFixed(2)} USDC</span>
         </div>
       )}
       <p className="text-xs text-cyber-text-secondary mt-2">

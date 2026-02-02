@@ -43,18 +43,18 @@ describe('formatAmount', () => {
 })
 
 describe('formatUsd', () => {
-  it('formats USDC amounts as USD', () => {
-    expect(formatUsd(1000000n, 6)).toBe('$1.00')
-    expect(formatUsd(1500000n, 6)).toBe('$1.50')
-    expect(formatUsd(100000000n, 6)).toBe('$100.00')
+  it('formats USDC amounts without dollar sign', () => {
+    expect(formatUsd(1000000n, 6)).toBe('1.00')
+    expect(formatUsd(1500000n, 6)).toBe('1.50')
+    expect(formatUsd(100000000n, 6)).toBe('100.00')
   })
 
-  it('formats zero as $0.00', () => {
-    expect(formatUsd(0n, 6)).toBe('$0.00')
+  it('formats zero as 0.00', () => {
+    expect(formatUsd(0n, 6)).toBe('0.00')
   })
 
   it('formats large amounts with separators', () => {
-    expect(formatUsd(1000000000000n, 6)).toBe('$1,000,000.00')
+    expect(formatUsd(1000000000000n, 6)).toBe('1,000,000.00')
   })
 })
 

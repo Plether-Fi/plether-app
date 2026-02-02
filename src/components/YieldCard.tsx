@@ -273,7 +273,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
       <div className="p-4 space-y-2 border-b border-cyber-border-glow/20">
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Supplied</span>
-          <span className="text-cyber-text-primary font-medium">{formatUsd(market.suppliedAmount)}</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.suppliedAmount)} USDC</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Supply APY</span>
@@ -281,7 +281,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Borrowed</span>
-          <span className="text-cyber-text-primary font-medium">{formatUsd(market.borrowedAmount)}</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.borrowedAmount)} USDC</span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Borrow APY</span>
@@ -294,12 +294,12 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Collateral</span>
           <span className={`font-medium ${hasCollateral ? accentColorClass : 'text-cyber-text-secondary'}`}>
-            {hasCollateral ? formatUsd(market.collateral) : 'None'}
+            {hasCollateral ? `${formatUsd(market.collateral)} USDC` : 'None'}
           </span>
         </div>
         <div className="flex justify-between text-sm">
           <span className="text-cyber-text-secondary">Available</span>
-          <span className="text-cyber-text-primary font-medium">{formatUsd(market.availableToBorrow)}</span>
+          <span className="text-cyber-text-primary font-medium">{formatUsd(market.availableToBorrow)} USDC</span>
         </div>
       </div>
 
@@ -417,25 +417,25 @@ export function YieldCard({
         <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
           <p className="text-xs text-cyber-text-secondary">Total Supplied</p>
           <p className="text-lg font-bold text-cyber-text-primary">
-            {formatUsd(bearMarket.suppliedAmount + bullMarket.suppliedAmount)}
+            {formatUsd(bearMarket.suppliedAmount + bullMarket.suppliedAmount)} USDC
           </p>
         </div>
         <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
           <p className="text-xs text-cyber-text-secondary">Total Borrowed</p>
           <p className="text-lg font-bold text-cyber-text-primary">
-            {formatUsd(bearMarket.borrowedAmount + bullMarket.borrowedAmount)}
+            {formatUsd(bearMarket.borrowedAmount + bullMarket.borrowedAmount)} USDC
           </p>
         </div>
         <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
           <p className="text-xs text-cyber-text-secondary">Total Collateral</p>
           <p className="text-lg font-bold text-cyber-text-primary">
-            {formatUsd(bearMarket.collateral + bullMarket.collateral)}
+            {formatUsd(bearMarket.collateral + bullMarket.collateral)} USDC
           </p>
         </div>
         <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
           <p className="text-xs text-cyber-text-secondary">Total Available</p>
           <p className="text-lg font-bold text-cyber-text-primary">
-            {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)}
+            {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)} USDC
           </p>
         </div>
       </div>

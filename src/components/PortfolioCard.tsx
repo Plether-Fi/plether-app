@@ -30,7 +30,7 @@ export function PortfolioCard({ title, value, description, link, isLoading, colo
     <Link to={link}>
       <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 shadow-md hover:border-cyber-bright-blue/50 transition-colors cursor-pointer h-full">
         <p className="text-xs text-cyber-text-secondary uppercase tracking-wider font-medium mb-2">{title}</p>
-        <div className={`text-2xl font-bold mb-1 ${colorClass}`}>{formatUsd(value)}</div>
+        <div className={`text-2xl font-bold mb-1 ${colorClass}`}>{formatUsd(value)} USDC</div>
         <p className="text-xs text-cyber-text-secondary truncate">{description}</p>
       </div>
     </Link>
