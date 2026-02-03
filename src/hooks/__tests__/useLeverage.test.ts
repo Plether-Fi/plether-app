@@ -5,18 +5,23 @@ import { useTransactionStore } from '../../stores/transactionStore'
 import type { LeverageError } from '../useLeverage'
 
 const mockWriteContract = vi.fn()
+const mockWriteContractAsync = vi.fn()
 const mockReset = vi.fn()
 
 const mockUseAccount = vi.fn()
 const mockUseReadContract = vi.fn()
 const mockUseWriteContract = vi.fn()
 const mockUseWaitForTransactionReceipt = vi.fn()
+const mockWaitForTransactionReceipt = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: () => mockUseAccount(),
   useReadContract: () => mockUseReadContract(),
   useWriteContract: () => mockUseWriteContract(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
+  usePublicClient: () => ({
+    waitForTransactionReceipt: mockWaitForTransactionReceipt,
+  }),
 }))
 
 import {
@@ -431,25 +436,19 @@ describe('useAdjustCollateral', () => {
     })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
-      data: undefined,
+      writeContractAsync: mockWriteContractAsync,
       isPending: false,
       error: null,
       reset: mockReset,
     })
 
-    mockUseWaitForTransactionReceipt.mockReturnValue({
-      isLoading: false,
-      isSuccess: false,
-      isError: false,
+    mockWaitForTransactionReceipt.mockResolvedValue({
+      status: 'success',
     })
-
   })
 
   it('adds collateral and creates transaction', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xaddcollateralhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xaddcollateralhash')
 
     const { result } = renderHook(() => useAdjustCollateral('BEAR'))
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
@@ -466,9 +465,7 @@ describe('useAdjustCollateral', () => {
   })
 
   it('removes collateral and creates transaction', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xremovecollateralhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xremovecollateralhash')
 
     const { result } = renderHook(() => useAdjustCollateral('BULL'))
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
@@ -524,9 +521,27 @@ describe('useAdjustCollateral', () => {
     }
   })
 
-  it('handles writeContract failure for addCollateral', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('Insufficient funds'))
+  it('handles writeContractAsync failure for addCollateral', async () => {
+    mockWriteContractAsync.mockRejectedValue(new Error('Insufficient funds'))
+
+    const { result } = renderHook(() => useAdjustCollateral('BEAR'))
+    let adjustResult: Result<`0x${string}`, LeverageError> | undefined
+
+    await act(async () => {
+      adjustResult = await result.current.addCollateral(500000000000000000n)
+    })
+
+    expect(adjustResult).toBeDefined()
+    expect(Result.isError(adjustResult!)).toBe(true)
+
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].status).toBe('failed')
+  })
+
+  it('handles transaction revert', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xrevertedhash')
+    mockWaitForTransactionReceipt.mockResolvedValue({
+      status: 'reverted',
     })
 
     const { result } = renderHook(() => useAdjustCollateral('BEAR'))

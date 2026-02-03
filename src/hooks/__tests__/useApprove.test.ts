@@ -1,18 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { renderHook, act, waitFor } from '@testing-library/react'
+import { renderHook, act } from '@testing-library/react'
 import { Result } from 'better-result'
 import { useTransactionStore } from '../../stores/transactionStore'
 import type { ApproveError } from '../useApprove'
 
-const mockWriteContract = vi.fn()
+const mockWriteContractAsync = vi.fn()
 const mockReset = vi.fn()
+const mockWaitForTransactionReceipt = vi.fn()
 
 const mockUseWriteContract = vi.fn()
-const mockUseWaitForTransactionReceipt = vi.fn()
 
 vi.mock('wagmi', () => ({
   useWriteContract: () => mockUseWriteContract(),
-  useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
+  usePublicClient: () => ({
+    waitForTransactionReceipt: mockWaitForTransactionReceipt,
+  }),
 }))
 
 import { useApprove } from '../useApprove'
@@ -26,24 +28,19 @@ describe('useApprove', () => {
     useTransactionStore.setState({ transactions: [] })
 
     mockUseWriteContract.mockReturnValue({
-      writeContract: mockWriteContract,
-      data: undefined,
+      writeContractAsync: mockWriteContractAsync,
       isPending: false,
       error: null,
       reset: mockReset,
     })
 
-    mockUseWaitForTransactionReceipt.mockReturnValue({
-      isLoading: false,
-      isSuccess: false,
-      isError: false,
+    mockWaitForTransactionReceipt.mockResolvedValue({
+      status: 'success',
     })
   })
 
   it('adds a pending transaction when approve is called', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
 
@@ -54,13 +51,11 @@ describe('useApprove', () => {
     const { transactions } = useTransactionStore.getState()
     expect(transactions).toHaveLength(1)
     expect(transactions[0].type).toBe('approve')
-    expect(transactions[0].title).toBe('Approving token spend')
+    expect(transactions[0].title).toBe('Approving USDC')
   })
 
-  it('calls writeContract with correct arguments', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+  it('calls writeContractAsync with correct arguments', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
     const amount = 100000000n
@@ -69,18 +64,17 @@ describe('useApprove', () => {
       await result.current.approve(amount)
     })
 
-    expect(mockWriteContract).toHaveBeenCalledTimes(1)
-    const callArgs = mockWriteContract.mock.calls[0][0]
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(1)
+    const callArgs = mockWriteContractAsync.mock.calls[0][0]
     expect(callArgs.address).toBe(TOKEN_ADDRESS)
     expect(callArgs.functionName).toBe('approve')
     expect(callArgs.args[0]).toBe(SPENDER_ADDRESS)
     expect(callArgs.args[1]).toBe(amount)
   })
 
-  it('returns Result.ok with hash when writeContract succeeds', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xapprove123hash')
-    })
+  it('returns Result.ok with hash when transaction succeeds', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xapprove123hash')
+    mockWaitForTransactionReceipt.mockResolvedValue({ status: 'success' })
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
     let approveResult: Result<`0x${string}`, ApproveError> | undefined
@@ -96,14 +90,12 @@ describe('useApprove', () => {
     }
 
     const { transactions } = useTransactionStore.getState()
-    expect(transactions[0].status).toBe('confirming')
+    expect(transactions[0].status).toBe('success')
     expect(transactions[0].hash).toBe('0xapprove123hash')
   })
 
-  it('returns Result.err when writeContract errors', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onError(new Error('User rejected'))
-    })
+  it('returns Result.err when writeContractAsync rejects', async () => {
+    mockWriteContractAsync.mockRejectedValue(new Error('User rejected'))
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
     let approveResult: Result<`0x${string}`, ApproveError> | undefined
@@ -119,62 +111,9 @@ describe('useApprove', () => {
     expect(transactions[0].status).toBe('failed')
   })
 
-  it('updates transaction to success when isSuccess becomes true', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xapprove123hash')
-    })
-
-    const { result, rerender } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
-
-    await act(async () => {
-      await result.current.approve(100000000n)
-    })
-
-    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
-
-    mockUseWaitForTransactionReceipt.mockReturnValue({
-      isLoading: false,
-      isSuccess: true,
-      isError: false,
-    })
-    rerender()
-
-    await waitFor(() => {
-      const { transactions } = useTransactionStore.getState()
-      expect(transactions[0].status).toBe('success')
-    })
-  })
-
-  it('updates transaction to failed when isError becomes true', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xapprove123hash')
-    })
-
-    const { result, rerender } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
-
-    await act(async () => {
-      await result.current.approve(100000000n)
-    })
-
-    expect(useTransactionStore.getState().transactions[0].status).toBe('confirming')
-
-    mockUseWaitForTransactionReceipt.mockReturnValue({
-      isLoading: false,
-      isSuccess: false,
-      isError: true,
-    })
-    rerender()
-
-    await waitFor(() => {
-      const { transactions } = useTransactionStore.getState()
-      expect(transactions[0].status).toBe('failed')
-    })
-  })
-
-  it('returns Result.err when writeContract throws an exception', async () => {
-    mockWriteContract.mockImplementation(() => {
-      throw new Error('Network error')
-    })
+  it('updates transaction to failed when receipt shows reverted', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xrevertedhash')
+    mockWaitForTransactionReceipt.mockResolvedValue({ status: 'reverted' })
 
     const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
     let approveResult: Result<`0x${string}`, ApproveError> | undefined
@@ -183,7 +122,6 @@ describe('useApprove', () => {
       approveResult = await result.current.approve(100000000n)
     })
 
-    expect(approveResult).toBeDefined()
     expect(Result.isError(approveResult!)).toBe(true)
 
     const { transactions } = useTransactionStore.getState()
@@ -191,9 +129,7 @@ describe('useApprove', () => {
   })
 
   it('uses the correct token and spender addresses from hook params', async () => {
-    mockWriteContract.mockImplementation((_, callbacks) => {
-      callbacks.onSuccess('0xhash')
-    })
+    mockWriteContractAsync.mockResolvedValue('0xhash')
 
     const customToken = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const
     const customSpender = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' as const
@@ -204,8 +140,24 @@ describe('useApprove', () => {
       await result.current.approve(500n)
     })
 
-    const callArgs = mockWriteContract.mock.calls[0][0]
+    const callArgs = mockWriteContractAsync.mock.calls[0][0]
     expect(callArgs.address).toBe(customToken)
     expect(callArgs.args[0]).toBe(customSpender)
   })
+
+  it('sets isSuccess true after successful transaction', async () => {
+    mockWriteContractAsync.mockResolvedValue('0xhash')
+    mockWaitForTransactionReceipt.mockResolvedValue({ status: 'success' })
+
+    const { result } = renderHook(() => useApprove(TOKEN_ADDRESS, SPENDER_ADDRESS))
+
+    expect(result.current.isSuccess).toBe(false)
+
+    await act(async () => {
+      await result.current.approve(100000000n)
+    })
+
+    expect(result.current.isSuccess).toBe(true)
+  })
+
 })

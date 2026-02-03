@@ -1,9 +1,10 @@
-import { useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { useRef, useEffect } from 'react'
+import { useWriteContract, usePublicClient } from 'wagmi'
+import { useState, useCallback } from 'react'
 import { type Address } from 'viem'
 import { Result } from 'better-result'
 import { ERC20_ABI } from '../contracts/abis'
 import { useTransactionStore } from '../stores/transactionStore'
+import { useTransactionModal } from './useTransactionModal'
 import {
   parseTransactionError,
   getErrorMessage,
@@ -14,97 +15,79 @@ export type ApproveError = TransactionError
 
 export function useApprove(tokenAddress: Address, spenderAddress: Address) {
   const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const txIdRef = useRef<string | null>(null)
+  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
+  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
+  const setStepError = useTransactionStore((s) => s.setStepError)
+  const txModal = useTransactionModal()
+  const publicClient = usePublicClient()
 
-  const { writeContract, data: hash, isPending, error: writeError, reset: resetWrite } = useWriteContract()
+  const { writeContractAsync, isPending, error: writeError, reset: resetWrite } = useWriteContract()
 
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
+  const [isConfirming, setIsConfirming] = useState(false)
+  const [isSuccess, setIsSuccess] = useState(false)
 
-  useEffect(() => {
-    if (isSuccess && txIdRef.current) {
-      updateTransaction(txIdRef.current, { status: 'success' })
-      txIdRef.current = null
-    }
-  }, [isSuccess, updateTransaction])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
-
-  const approve = async (amount: bigint): Promise<Result<`0x${string}`, ApproveError>> => {
+  const approve = useCallback(async (amount: bigint): Promise<Result<`0x${string}`, ApproveError>> => {
     const txId = crypto.randomUUID()
-    txIdRef.current = txId
     addTransaction({
       id: txId,
       type: 'approve',
       status: 'pending',
       hash: undefined,
-      title: 'Approving token spend',
-      steps: [{ label: 'Approve', status: 'pending' }],
+      title: 'Approving USDC',
+      steps: [{ label: 'Approve spending', status: 'pending' }],
     })
+    txModal.open({ transactionId: txId })
+    setStepInProgress(txId, 0)
+
+    setIsSuccess(false)
+    setIsConfirming(false)
 
     return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: tokenAddress,
-              abi: ERC20_ABI,
-              functionName: 'approve',
-              args: [spenderAddress, amount],
-            },
-            {
-              onSuccess: (hash) => {
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
+      try: async () => {
+        const hash = await writeContractAsync({
+          address: tokenAddress,
+          abi: ERC20_ABI,
+          functionName: 'approve',
+          args: [spenderAddress, amount],
         })
-        txIdRef.current = null
+
+        setIsConfirming(true)
+
+        const receipt = await publicClient.waitForTransactionReceipt({ hash })
+
+        if (receipt.status === 'reverted') {
+          throw new Error('Transaction reverted')
+        }
+
+        setStepSuccess(txId, hash)
+        setIsConfirming(false)
+        setIsSuccess(true)
+
+        return hash
+      },
+      catch: (err) => {
+        setIsConfirming(false)
+        const txError = err instanceof Error && '_tag' in err
+          ? err as TransactionError
+          : parseTransactionError(err)
+        setStepError(txId, 0, getErrorMessage(txError))
         return txError
       },
     })
-  }
+  }, [tokenAddress, spenderAddress, addTransaction, setStepInProgress, setStepSuccess, setStepError, txModal, writeContractAsync, publicClient])
 
-  const reset = () => {
+  const reset = useCallback(() => {
     resetWrite()
-  }
+    setIsConfirming(false)
+    setIsSuccess(false)
+  }, [resetWrite])
 
   return {
     approve,
     isPending,
     isConfirming,
     isSuccess,
-    error: writeError ?? receiptError,
+    error: writeError,
     reset,
   }
 }

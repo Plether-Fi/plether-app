@@ -20,12 +20,13 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
 
   const [action, setAction] = useState<'add' | 'remove'>('add')
   const [amount, setAmount] = useState('')
+  const [isHidden, setIsHidden] = useState(false)
 
   const { usdcBalance } = useTokenBalances()
   const { collateral: collateralShares } = useLeveragePosition(position.side)
 
   const routerAddress = position.side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
-  const { addCollateral, removeCollateral, isPending, isSuccess, reset } = useAdjustCollateral(position.side)
+  const { addCollateral, removeCollateral, isPending, isSuccess, reset } = useAdjustCollateral(position.side, onSuccess)
 
   const {
     execute: executeWithApproval,
@@ -35,6 +36,8 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
   } = useApprovalFlow({
     tokenAddress: addresses.USDC,
     spenderAddress: routerAddress,
+    actionTitle: 'Adding collateral',
+    actionStepLabel: 'Add collateral',
   })
 
   // For add: amount in USDC (6 decimals)
@@ -55,33 +58,39 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
   // For remove: check against collateral shares
   const insufficientBalance = action === 'add'
     ? amountBigInt > usdcBalance
-    : amountBigInt > (collateralShares ?? 0n)
+    : amountBigInt > collateralShares
 
   // Format collateral shares to token amount for display (divide by 1000 offset, then format as 18 decimals)
   const collateralTokens = collateralShares ? collateralShares / 1000n : 0n
   const formattedCollateral = formatUnits(collateralTokens, 18)
 
+  // Close modal when transaction succeeds
   useEffect(() => {
     if (isSuccess) {
-      onSuccess?.()
+      setAmount('')
+      setIsHidden(false)
       reset()
+      onClose()
     }
-  }, [isSuccess, onSuccess, reset])
+  }, [isSuccess, reset, onClose])
 
   const handleConfirm = () => {
     if (!amountBigInt || amountBigInt <= 0n) return
-
-    // Close modal immediately - transaction modal will show progress
-    setAmount('')
-    onClose()
 
     const maxSlippageBps = 100n // 1% slippage
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600) // 1 hour
 
     if (action === 'add') {
-      const addWithSlippage = (usdcAmount: bigint) => addCollateral(usdcAmount, maxSlippageBps, deadline)
+      // Hide modal but keep mounted - approval flow needs component to stay alive
+      // useEffect will fully close when isSuccess becomes true
+      setIsHidden(true)
+      const addWithSlippage = (usdcAmount: bigint, txContext: { txId: string; stepIndex: number }) =>
+        addCollateral(usdcAmount, maxSlippageBps, deadline, txContext)
       void executeWithApproval(amountBigInt, addWithSlippage)
     } else {
+      // Remove doesn't need approval, close immediately
+      setAmount('')
+      onClose()
       void removeCollateral(amountBigInt, maxSlippageBps, deadline)
     }
   }
@@ -99,7 +108,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
   const isDisabled = !amount || parseFloat(amount) <= 0 || isActionPending || insufficientBalance
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`Adjust ${position.side} Position`}>
+    <Modal isOpen={isOpen && !isHidden} onClose={onClose} title={`Adjust ${position.side} Position`}>
       <div className="space-y-4">
         <div className="flex gap-2">
           <button

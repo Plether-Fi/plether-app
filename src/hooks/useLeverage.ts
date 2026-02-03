@@ -397,7 +397,7 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
   }
 }
 
-export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
+export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: () => void) {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
@@ -414,26 +414,37 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
   const [isSuccess, setIsSuccess] = useState(false)
   const [hash, setHash] = useState<`0x${string}` | undefined>(undefined)
 
+  // Store callback in ref so it can be called after component unmounts
+  const onSuccessRef = useRef(onSuccessCallback)
+  useEffect(() => {
+    onSuccessRef.current = onSuccessCallback
+  }, [onSuccessCallback])
+
   const addCollateral = useCallback(async (
     usdcAmount: bigint,
     maxSlippageBps: bigint,
-    deadline: bigint
+    deadline: bigint,
+    txContext?: { txId: string; stepIndex: number }
   ): Promise<Result<`0x${string}`, LeverageError>> => {
     if (!routerAddress) {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    addTransaction({
-      id: txId,
-      type: 'leverage',
-      status: 'pending',
-      hash: undefined,
-      title: 'Adding collateral',
-      steps: [{ label: 'Add collateral', status: 'pending' }],
-    })
-    txModal.open({ transactionId: txId })
-    setStepInProgress(txId, 0)
+    const txId = txContext?.txId ?? crypto.randomUUID()
+    const stepIndex = txContext?.stepIndex ?? 0
+
+    if (!txContext) {
+      addTransaction({
+        id: txId,
+        type: 'leverage',
+        status: 'pending',
+        hash: undefined,
+        title: 'Adding collateral',
+        steps: [{ label: 'Add collateral', status: 'pending' }],
+      })
+      txModal.open({ transactionId: txId })
+      setStepInProgress(txId, stepIndex)
+    }
 
     setIsSuccess(false)
     setIsConfirming(false)
@@ -460,6 +471,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
         setStepSuccess(txId, txHash)
         setIsConfirming(false)
         setIsSuccess(true)
+        onSuccessRef.current?.()
 
         return txHash
       },
@@ -468,7 +480,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
         const txError = err instanceof Error && '_tag' in err
           ? err as TransactionError
           : parseTransactionError(err)
-        setStepError(txId, 0, getErrorMessage(txError))
+        setStepError(txId, stepIndex, getErrorMessage(txError))
         return txError
       },
     })
@@ -520,6 +532,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL') {
         setStepSuccess(txId, txHash)
         setIsConfirming(false)
         setIsSuccess(true)
+        onSuccessRef.current?.()
 
         return txHash
       },
