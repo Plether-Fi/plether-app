@@ -149,7 +149,6 @@ export function Dashboard() {
               variant="bull"
               title="Total BULL Position"
               balance={bullBalance + stakedBullAssets}
-              balanceLabel="Total Balance"
               balanceDecimals={18}
               balanceToken="plDXY-BULL"
               secondaryValue={stakedBullAssets}
@@ -162,7 +161,6 @@ export function Dashboard() {
               variant="usdc"
               title="Total USDC Position"
               balance={usdcBalance + totalSupplied}
-              balanceLabel="Total Balance"
               balanceDecimals={6}
               balanceToken="USDC"
               secondaryValue={totalSupplied}
@@ -175,7 +173,6 @@ export function Dashboard() {
               variant="bear"
               title="Total BEAR Position"
               balance={bearBalance + stakedBearAssets}
-              balanceLabel="Total Balance"
               balanceDecimals={18}
               balanceToken="plDXY-BEAR"
               secondaryValue={stakedBearAssets}

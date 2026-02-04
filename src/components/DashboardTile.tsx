@@ -1,4 +1,4 @@
-import { Skeleton, TokenIcon } from './ui'
+import { Skeleton, TokenIcon, TokenLabel } from './ui'
 import { formatAmount, formatUsd } from '../utils/formatters'
 
 type TileVariant = 'bull' | 'usdc' | 'bear'
@@ -7,7 +7,6 @@ interface DashboardTileProps {
   variant: TileVariant
   title: string
   balance: bigint
-  balanceLabel: string
   balanceDecimals: number
   balanceToken: string
   secondaryValue: bigint
@@ -69,7 +68,6 @@ export function DashboardTile({
   variant,
   title,
   balance,
-  balanceLabel,
   balanceDecimals,
   balanceToken,
   secondaryValue,
@@ -104,16 +102,18 @@ export function DashboardTile({
 
         <div className="space-y-3">
           <div className={`pb-3 border-b ${styles.divider}`}>
-            <p className="text-2xl font-bold text-cyber-text-primary">
-              {balanceDecimals === 6 ? formatUsd(balance) : formatAmount(balance, balanceDecimals, 2)} {balanceToken}
+            <p className="text-2xl font-bold text-cyber-text-primary flex items-center gap-2">
+              {balanceDecimals === 6 ? formatUsd(balance) : formatAmount(balance, balanceDecimals, 2, 2)}
+              <TokenLabel token={balanceToken} />
             </p>
           </div>
 
           <div className="flex justify-between items-end">
             <div>
               <p className="text-xs text-cyber-text-secondary uppercase tracking-wider">{secondaryLabel}</p>
-              <p className="text-lg font-semibold text-cyber-text-primary">
-                {secondaryDecimals === 6 ? formatUsd(secondaryValue) : formatAmount(secondaryValue, secondaryDecimals, 2)} {secondaryToken}
+              <p className="text-lg font-semibold text-cyber-text-primary flex items-center gap-2">
+                {secondaryDecimals === 6 ? formatUsd(secondaryValue) : formatAmount(secondaryValue, secondaryDecimals, 2, 2)}
+                <TokenLabel token={secondaryToken} />
               </p>
             </div>
             <div className="text-right">

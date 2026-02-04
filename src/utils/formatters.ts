@@ -6,16 +6,17 @@ import { formatUnits, parseUnits } from 'viem'
 export function formatAmount(
   amount: bigint,
   decimals: number,
-  maxDecimals = 4
+  maxDecimals = 4,
+  minDecimals = 0
 ): string {
   const formatted = formatUnits(amount, decimals)
   const num = parseFloat(formatted)
 
-  if (num === 0) return '0'
+  if (num === 0) return minDecimals > 0 ? '0.' + '0'.repeat(minDecimals) : '0'
   if (num < 0.0001) return '< 0.0001'
 
   return num.toLocaleString('en-US', {
-    minimumFractionDigits: 0,
+    minimumFractionDigits: minDecimals,
     maximumFractionDigits: maxDecimals,
   })
 }
