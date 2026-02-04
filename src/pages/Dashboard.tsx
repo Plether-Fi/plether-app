@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAccount } from 'wagmi'
-import { PortfolioCard } from '../components/PortfolioCard'
+import { DashboardTile } from '../components/DashboardTile'
 import { PositionsSection } from '../components/PositionsSection'
 import { AdjustPositionModal } from '../components/AdjustPositionModal'
 import { TradeCard } from '../components/TradeCard'
@@ -9,7 +9,7 @@ import { LeverageCard } from '../components/LeverageCard'
 import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useTokenBalances, useLeveragePosition, useStakedBalance, useTokenPrices, useTransactionSequence, useCombinedLendingPosition, useAvailableToBorrow, type TransactionStep } from '../hooks'
+import { useTokenBalances, useLeveragePosition, useStakedBalance, useTransactionSequence, useCombinedLendingPosition, useAvailableToBorrow, type TransactionStep } from '../hooks'
 import { useWriteContract } from 'wagmi'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
@@ -46,8 +46,6 @@ export function Dashboard() {
 
   const { assets: stakedBearAssets, isLoading: stakedBearLoading } = useStakedBalance('BEAR')
   const { assets: stakedBullAssets, isLoading: stakedBullLoading } = useStakedBalance('BULL')
-
-  const { bearPrice, bullPrice } = useTokenPrices()
 
   const bearPosition = useLeveragePosition('BEAR')
   const bullPosition = useLeveragePosition('BULL')
@@ -133,18 +131,6 @@ export function Dashboard() {
     })
   }
 
-  // Portfolio values: token balances (18 dec) * price (8 dec) / 10^20 = 6 dec USDC
-  const bearSpotValue = bearBalance * bearPrice / 10n ** 20n
-  const bullSpotValue = bullBalance * bullPrice / 10n ** 20n
-  const spotValue = usdcBalance + bearSpotValue + bullSpotValue
-
-  // Staked values: assets (18 dec) * price (8 dec) / 10^20 = 6 dec USDC
-  const stakedBearValue = stakedBearAssets * bearPrice / 10n ** 20n
-  const stakedBullValue = stakedBullAssets * bullPrice / 10n ** 20n
-  const stakedValue = stakedBearValue + stakedBullValue
-
-  const leverageValue = positions.reduce((acc, p) => acc + p.collateral, 0n)
-
   const totalSupplied = lendingPosition.totalSupplied
 
   return (
@@ -157,39 +143,46 @@ export function Dashboard() {
 
       {isConnected ? (
         <>
-          {/* Portfolio breakdown */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
-            <PortfolioCard
-              title="Spot Holdings"
-              value={spotValue}
-              description="USDC, plDXY-BEAR, plDXY-BULL"
-              link="/"
-              isLoading={balancesLoading}
-              colorClass="text-cyber-bright-blue"
+          {/* Portfolio tiles */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
+            <DashboardTile
+              variant="bull"
+              title="Total BULL Position"
+              balance={bullBalance + stakedBullAssets}
+              balanceLabel="Total Balance"
+              balanceDecimals={18}
+              balanceToken="plDXY-BULL"
+              secondaryValue={stakedBullAssets}
+              secondaryLabel="Staked Balance"
+              secondaryDecimals={18}
+              secondaryToken="plDXY-BULL"
+              isLoading={balancesLoading || stakedBullLoading}
             />
-            <PortfolioCard
-              title="Staked"
-              value={stakedValue}
-              description="splDXY-BEAR, splDXY-BULL"
-              link="/stake"
-              isLoading={stakedBearLoading || stakedBullLoading}
-              colorClass="text-cyber-bright-blue"
+            <DashboardTile
+              variant="usdc"
+              title="Total USDC Position"
+              balance={usdcBalance + totalSupplied}
+              balanceLabel="Total Balance"
+              balanceDecimals={6}
+              balanceToken="USDC"
+              secondaryValue={totalSupplied}
+              secondaryLabel="Total Lending"
+              secondaryDecimals={6}
+              secondaryToken="USDC"
+              isLoading={balancesLoading || lendingPosition.isLoading}
             />
-            <PortfolioCard
-              title="Leverage"
-              value={leverageValue}
-              description="Open positions"
-              link="/leverage"
-              isLoading={bearPosition.isLoading || bullPosition.isLoading}
-              colorClass="text-cyber-electric-fuchsia"
-            />
-            <PortfolioCard
-              title="Lending"
-              value={totalSupplied}
-              description="Morpho supplied"
-              link="/lending"
-              isLoading={lendingPosition.isLoading}
-              colorClass="text-cyber-neon-green"
+            <DashboardTile
+              variant="bear"
+              title="Total BEAR Position"
+              balance={bearBalance + stakedBearAssets}
+              balanceLabel="Total Balance"
+              balanceDecimals={18}
+              balanceToken="plDXY-BEAR"
+              secondaryValue={stakedBearAssets}
+              secondaryLabel="Staked Balance"
+              secondaryDecimals={18}
+              secondaryToken="plDXY-BEAR"
+              isLoading={balancesLoading || stakedBearLoading}
             />
           </div>
 

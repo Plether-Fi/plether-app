@@ -22,7 +22,7 @@ export function PositionsSection({
 
   return (
     <div className="mb-12">
-      <h2 className="text-xl font-semibold text-cyber-text-primary mb-4">Open Positions</h2>
+      <h2 className="text-xl font-semibold text-cyber-text-primary mb-4">Open Leveraged Positions</h2>
 
       {isLoading ? (
         <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-8 text-center">
