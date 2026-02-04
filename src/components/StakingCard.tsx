@@ -12,9 +12,10 @@ type StakeMode = 'stake' | 'unstake'
 export interface StakingCardProps {
   side: 'BEAR' | 'BULL'
   tokenBalance: bigint
+  onSuccess?: () => void
 }
 
-export function StakingCard({ side, tokenBalance }: StakingCardProps) {
+export function StakingCard({ side, tokenBalance, onSuccess }: StakingCardProps) {
   const txStore = useTransactionStore()
   const [mode, setMode] = useState<StakeMode>('stake')
   const [amount, setAmount] = useState('')
@@ -47,6 +48,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
       onRetry: handleStake,
     }).then(() => {
       refetchStaked()
+      onSuccess?.()
       setAmount('')
     })
   }
@@ -56,6 +58,7 @@ export function StakingCard({ side, tokenBalance }: StakingCardProps) {
       onRetry: handleUnstake,
     }).then(() => {
       refetchStaked()
+      onSuccess?.()
       setAmount('')
     })
   }

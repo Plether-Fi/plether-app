@@ -1,8 +1,7 @@
 import { formatUnits } from 'viem'
-import { Skeleton, Tooltip } from './ui'
-import { useBasketOraclePrice } from '../hooks'
+import { Skeleton } from './ui'
+import { useTokenPrices } from '../hooks'
 import { usePlethCoreStatus } from '../hooks'
-import { decodeContractError } from '../utils/errors'
 import type { ProtocolStatus } from '../config/constants'
 
 interface PriceDisplayProps {
@@ -12,13 +11,12 @@ interface PriceDisplayProps {
 export function PriceDisplay({
   variant = 'compact',
 }: PriceDisplayProps) {
-  const { price: rawPrice, decimals, isLoading: priceLoading, error: priceError } = useBasketOraclePrice()
+  const { bullPrice, isLoading: priceLoading } = useTokenPrices()
   const { status: contractStatus, isLoading: statusLoading } = usePlethCoreStatus()
 
   const isLoading = priceLoading || statusLoading
-  const priceUnknown = !!priceError || rawPrice === 0n
-  const price = rawPrice > 0n ? parseFloat(formatUnits(rawPrice, decimals)) : 0
-  const errorReason = priceError ? decodeContractError(priceError) : 'Price unavailable'
+  const priceUnknown = bullPrice === 0n
+  const price = bullPrice > 0n ? parseFloat(formatUnits(bullPrice, 8)) : 0
 
   const status: ProtocolStatus = contractStatus === 0
     ? 'Active'
@@ -43,15 +41,13 @@ export function PriceDisplay({
     return (
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2">
-          <span className="text-cyber-text-secondary text-sm">plDXY</span>
+          <span className="text-cyber-text-secondary text-sm">plDXY-BULL</span>
           {isLoading ? (
             <Skeleton width={60} height={20} />
           ) : priceUnknown ? (
-            <Tooltip content={errorReason} position="bottom">
-              <span className="text-cyber-text-secondary font-semibold cursor-help">Unknown</span>
-            </Tooltip>
+            <span className="text-cyber-text-secondary font-semibold">--</span>
           ) : (
-            <span className="text-cyber-text-primary font-semibold">{price.toFixed(2)} USDC</span>
+            <span className="text-cyber-text-primary font-semibold">{price.toFixed(4)} USDC</span>
           )}
         </div>
         <span className={`px-2 py-0.5 text-xs font-medium border shadow-sm ${getStatusStyles(status)}`}>
@@ -72,11 +68,9 @@ export function PriceDisplay({
       {isLoading ? (
         <Skeleton width={120} height={36} />
       ) : priceUnknown ? (
-        <Tooltip content={errorReason} position="bottom">
-          <div className="flex items-baseline gap-2 cursor-help">
-            <span className="text-3xl font-bold text-cyber-text-secondary">Unknown</span>
-          </div>
-        </Tooltip>
+        <div className="flex items-baseline gap-2">
+          <span className="text-3xl font-bold text-cyber-text-secondary">--</span>
+        </div>
       ) : (
         <div className="flex items-baseline gap-2">
           <span className="text-3xl font-bold text-cyber-text-primary">{price.toFixed(2)} USDC</span>

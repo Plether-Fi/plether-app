@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { StakingCard } from '../components/StakingCard'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
@@ -5,7 +6,11 @@ import { useTokenBalances } from '../hooks'
 
 export function Stake() {
   const { isConnected } = useAccount()
-  const { bearBalance, bullBalance } = useTokenBalances()
+  const { bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
+
+  const handleSuccess = useCallback(() => {
+    void refetchBalances()
+  }, [refetchBalances])
 
   return (
     <div className="space-y-10">
@@ -19,10 +24,12 @@ export function Stake() {
           <StakingCard
             side="BULL"
             tokenBalance={bullBalance}
+            onSuccess={handleSuccess}
           />
           <StakingCard
             side="BEAR"
             tokenBalance={bearBalance}
+            onSuccess={handleSuccess}
           />
         </div>
       ) : (
