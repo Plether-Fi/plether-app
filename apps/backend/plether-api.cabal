@@ -106,11 +106,24 @@ test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
+    other-modules:
+        Plether.Utils.NumericSpec
+        Plether.Utils.AddressSpec
+        Plether.Ethereum.AbiSpec
+        Plether.Indexer.ContractsSpec
+        Plether.Indexer.EventsSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,
         hspec >= 2.11,
-        aeson >= 2.1
+        hspec-discover >= 2.11,
+        QuickCheck >= 2.14,
+        aeson >= 2.1,
+        bytestring >= 0.11,
+        text >= 2.0,
+        base16-bytestring >= 1.0
+    build-tool-depends:
+        hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
     default-language: GHC2021
     default-extensions:
