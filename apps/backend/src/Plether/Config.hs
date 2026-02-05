@@ -19,6 +19,8 @@ data Config = Config
   , cfgPort :: Int
   , cfgCorsOrigins :: [Text]
   , cfgAddresses :: Addresses
+  , cfgDatabaseUrl :: Maybe Text
+  , cfgIndexerStartBlock :: Integer
   }
   deriving stock (Show)
 
@@ -78,8 +80,11 @@ loadConfig = do
       chainIdStr <- fromMaybe "11155111" <$> lookupEnv "CHAIN_ID"
       portStr <- fromMaybe "3001" <$> lookupEnv "PORT"
       corsStr <- fromMaybe "http://localhost:5173" <$> lookupEnv "CORS_ORIGINS"
+      mDatabaseUrl <- lookupEnv "DATABASE_URL"
+      indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
+          indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
           port = fromMaybe 3001 (readMaybe portStr)
           corsOrigins = map (toText . trim) $ splitOn " " corsStr
           addressFile = case chainId of
@@ -100,6 +105,8 @@ loadConfig = do
                 , cfgPort = port
                 , cfgCorsOrigins = corsOrigins
                 , cfgAddresses = addresses
+                , cfgDatabaseUrl = fmap toText mDatabaseUrl
+                , cfgIndexerStartBlock = indexerStartBlock
                 }
   where
     toText :: String -> Text

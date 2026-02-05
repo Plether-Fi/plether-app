@@ -263,6 +263,7 @@ export interface Pagination {
 
 export interface Transaction {
   id: string;
+  hash: string;
   type: TransactionType;
   timestamp: number;
   blockNumber: number;

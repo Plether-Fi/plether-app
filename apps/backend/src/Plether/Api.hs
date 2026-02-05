@@ -32,6 +32,13 @@ import Plether.Handlers.User
   , getUserDashboard
   , getUserPositions
   )
+import Plether.Handlers.History
+  ( getHistory
+  , getLeverageHistory
+  , getLendingHistory
+  )
+import Plether.Database (DbPool)
+import Plether.Types.History (HistoryParams (..), defaultHistoryParams)
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
@@ -47,8 +54,8 @@ import Web.Scotty
   , status
   )
 
-app :: AppCache -> EthClient -> Config -> ScottyM ()
-app cache client cfg = do
+app :: AppCache -> EthClient -> Config -> Maybe DbPool -> ScottyM ()
+app cache client cfg mPool = do
   middleware $ corsMiddleware cfg
 
   get "/api/protocol/status" $ do
@@ -144,6 +151,60 @@ app cache client cfg = do
       (_, Nothing, _) -> handleError $ E.invalidAmount "principal must be a positive integer"
       (_, _, Nothing) -> handleError $ E.invalidAmount "leverage must be a positive integer"
       _ -> handleError $ E.invalidAmount "invalid parameters"
+
+  case mPool of
+    Just pool -> do
+      get "/api/user/:address/history" $ do
+        addr <- pathParam "address"
+        if isValidAddress addr
+          then do
+            params <- historyParams
+            result <- liftIO $ getHistory pool client cfg addr params
+            handleResult result
+          else handleError $ E.invalidAddress addr
+
+      get "/api/user/:address/history/leverage" $ do
+        addr <- pathParam "address"
+        if isValidAddress addr
+          then do
+            params <- historyParams
+            result <- liftIO $ getLeverageHistory pool client cfg addr params
+            handleResult result
+          else handleError $ E.invalidAddress addr
+
+      get "/api/user/:address/history/lending" $ do
+        addr <- pathParam "address"
+        if isValidAddress addr
+          then do
+            params <- historyParams
+            result <- liftIO $ getLendingHistory pool client cfg addr params
+            handleResult result
+          else handleError $ E.invalidAddress addr
+    Nothing -> pure ()
+
+historyParams :: ActionM HistoryParams
+historyParams = do
+  mPage <- queryParamMaybe "page"
+  mLimit <- queryParamMaybe "limit"
+  mType <- queryParamMaybe "type"
+  mSide <- queryParamMaybe "side"
+  pure $ HistoryParams
+    { hpPage = maybe 1 (max 1 . parseIntOr 1) mPage
+    , hpLimit = maybe 20 (min 100 . max 1 . parseIntOr 20) mLimit
+    , hpTxType = mType
+    , hpSide = mSide
+    , hpTxTypes = []
+    }
+  where
+    parseIntOr :: Int -> Text -> Int
+    parseIntOr def txt = maybe def id (readMaybeInt txt)
+
+    readMaybeInt :: Text -> Maybe Int
+    readMaybeInt txt =
+      let stripped = T.strip txt
+      in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
+           then Just $ read $ T.unpack stripped
+           else Nothing
 
 handleResult :: (ToJSON a) => Either ApiError a -> ActionM ()
 handleResult = \case

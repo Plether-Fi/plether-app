@@ -41,6 +41,13 @@ library
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Utils.Address
         Plether.Utils.Numeric
+        Plether.Database
+        Plether.Database.Schema
+        Plether.Types.History
+        Plether.Indexer
+        Plether.Indexer.Contracts
+        Plether.Indexer.Events
+        Plether.Handlers.History
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -63,7 +70,9 @@ library
         stm >= 2.5,
         time >= 1.12,
         http-types >= 0.12,
-        vector >= 0.13
+        vector >= 0.13,
+        postgresql-simple >= 0.7,
+        resource-pool >= 0.4
     hs-source-dirs:   src
     default-language: GHC2021
     default-extensions:
@@ -83,7 +92,10 @@ executable plether-api
     build-depends:
         base >= 4.17 && < 5,
         plether-api,
-        scotty >= 0.22
+        scotty >= 0.22,
+        text >= 2.0,
+        http-client >= 0.7,
+        http-client-tls >= 0.3
     hs-source-dirs:   app
     default-language: GHC2021
     default-extensions:
