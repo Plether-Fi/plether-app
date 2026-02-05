@@ -1,7 +1,5 @@
-import { formatUnits } from 'viem'
 import { Skeleton, TokenLabel } from './ui'
-import { useTokenPrices } from '../hooks'
-import { usePlethCoreStatus } from '../hooks'
+import { useProtocolStatus } from '../api'
 import type { ProtocolStatus } from '../config/constants'
 
 interface PriceDisplayProps {
@@ -11,18 +9,19 @@ interface PriceDisplayProps {
 export function PriceDisplay({
   variant = 'compact',
 }: PriceDisplayProps) {
-  const { bullPrice, isLoading: priceLoading } = useTokenPrices()
-  const { status: contractStatus, isLoading: statusLoading } = usePlethCoreStatus()
+  const { data: protocolData, isLoading } = useProtocolStatus()
 
-  const isLoading = priceLoading || statusLoading
+  const bullPriceStr = protocolData?.data.prices.bull ?? '0'
+  const bullPrice = BigInt(bullPriceStr)
   const priceUnknown = bullPrice === 0n
-  const price = bullPrice > 0n ? parseFloat(formatUnits(bullPrice, 8)) : 0
+  const price = bullPrice > 0n ? Number(bullPrice) / 1e8 : 0
 
-  const status: ProtocolStatus = contractStatus === 0
+  const apiStatus = protocolData?.data.status
+  const status: ProtocolStatus = apiStatus === 'ACTIVE'
     ? 'Active'
-    : contractStatus === 1
+    : apiStatus === 'PAUSED'
       ? 'Paused'
-      : contractStatus === 2
+      : apiStatus === 'LIQUIDATED'
         ? 'Settled'
         : 'Active'
 
@@ -77,7 +76,7 @@ export function PriceDisplay({
         </div>
       )}
       <p className="text-xs text-cyber-text-secondary mt-2">
-        Updated from BasketOracle
+        Updated from Backend API
       </p>
     </div>
   )

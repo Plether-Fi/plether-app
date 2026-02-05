@@ -4,7 +4,8 @@ import { parseUnits, zeroAddress } from 'viem'
 import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { usePreviewOpenLeverage, useAllowance, useTokenPrices } from '../hooks'
+import { usePreviewOpenLeverage, useAllowance } from '../hooks'
+import { useProtocolStatus } from '../api'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
@@ -47,7 +48,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     }
   }, [activeTransactionId, trackedTxId])
 
-  const { bearPrice, bullPrice } = useTokenPrices()
+  const { data: protocolData } = useProtocolStatus()
+  const prices = protocolData?.data.prices
+  const bearPrice = prices ? BigInt(prices.bear) : 0n
+  const bullPrice = prices ? BigInt(prices.bull) : 0n
   const tokenPrice = selectedSide === 'BEAR' ? bearPrice : bullPrice
 
   const maxEffectiveLeverage = 11.76

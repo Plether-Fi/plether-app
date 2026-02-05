@@ -5,7 +5,9 @@ import { formatAmount, formatUsd } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
-import { useTokenBalances, usePreviewMint, usePreviewBurn } from '../hooks'
+import { usePreviewMint, usePreviewBurn } from '../hooks'
+import { useUserBalances, apiQueryKeys } from '../api'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAllowance } from '../hooks/useAllowance'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
@@ -23,14 +25,27 @@ function parsePairAmount(input: string): bigint {
 }
 
 export function Mint() {
-  const { isConnected, chainId } = useAccount()
+  const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const txStore = useTransactionStore()
+  const queryClient = useQueryClient()
 
   const [mode, setMode] = useState<MintMode>('mint')
   const [inputAmount, setInputAmount] = useState('')
 
-  const { usdcBalance, bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
+  const { data: balancesData } = useUserBalances(address)
+  const balances = balancesData?.data
+
+  const usdcBalance = balances ? BigInt(balances.usdc) : 0n
+  const bearBalance = balances ? BigInt(balances.bear) : 0n
+  const bullBalance = balances ? BigInt(balances.bull) : 0n
+
+  const refetchBalances = useCallback(() => {
+    if (address) {
+      void queryClient.invalidateQueries({ queryKey: apiQueryKeys.user.balances(address) })
+    }
+  }, [address, queryClient])
+
   const pairAmountBigInt = parsePairAmount(inputAmount)
 
   const mintOperationKey = 'mint'
@@ -71,7 +86,7 @@ export function Mint() {
   const needsBullApproval = pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
 
   const handleRefetch = useCallback(() => {
-    void refetchBalances()
+    refetchBalances()
     void refetchUsdcAllowance()
     void refetchBearAllowance()
     void refetchBullAllowance()

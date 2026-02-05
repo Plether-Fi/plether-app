@@ -9,7 +9,9 @@ import { LeverageCard } from '../components/LeverageCard'
 import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useTokenBalances, useLeveragePosition, useStakedBalance, useTransactionSequence, useCombinedLendingPosition, useAvailableToBorrow, type TransactionStep } from '../hooks'
+import { useLeveragePosition, useTransactionSequence, useCombinedLendingPosition, useAvailableToBorrow, type TransactionStep } from '../hooks'
+import { useUserDashboard, apiQueryKeys } from '../api'
+import { useQueryClient } from '@tanstack/react-query'
 import { useWriteContract } from 'wagmi'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
@@ -17,9 +19,10 @@ import { useSettingsStore } from '../stores/settingsStore'
 import type { LeveragePosition } from '../types'
 
 export function Dashboard() {
-  const { isConnected, chainId } = useAccount()
+  const { isConnected, address, chainId } = useAccount()
   const location = useLocation()
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
 
   type MainTab = 'trade' | 'leverage' | 'lending'
 
@@ -36,16 +39,20 @@ export function Dashboard() {
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
   const [adjustModalOpen, setAdjustModalOpen] = useState(false)
 
-  const {
-    usdcBalance,
-    bearBalance,
-    bullBalance,
-    isLoading: balancesLoading,
-    refetch: refetchBalances
-  } = useTokenBalances()
+  const { data: dashboardData, isLoading: dashboardLoading } = useUserDashboard(address)
+  const balances = dashboardData?.data.balances
 
-  const { assets: stakedBearAssets, isLoading: stakedBearLoading } = useStakedBalance('BEAR')
-  const { assets: stakedBullAssets, isLoading: stakedBullLoading } = useStakedBalance('BULL')
+  const usdcBalance = balances ? BigInt(balances.usdc) : 0n
+  const bearBalance = balances ? BigInt(balances.bear) : 0n
+  const bullBalance = balances ? BigInt(balances.bull) : 0n
+  const stakedBearAssets = balances ? BigInt(balances.stakedBearAssets) : 0n
+  const stakedBullAssets = balances ? BigInt(balances.stakedBullAssets) : 0n
+
+  const refetchBalances = () => {
+    if (address) {
+      void queryClient.invalidateQueries({ queryKey: apiQueryKeys.user.dashboard(address) })
+    }
+  }
 
   const bearPosition = useLeveragePosition('BEAR')
   const bullPosition = useLeveragePosition('BULL')
@@ -92,7 +99,7 @@ export function Dashboard() {
       onSuccess: () => {
         void bearPosition.refetch()
         void bullPosition.refetch()
-        void refetchBalances()
+        refetchBalances()
       },
     })
   }
@@ -153,7 +160,7 @@ export function Dashboard() {
           secondaryLabel="Staked Balance"
           secondaryDecimals={18}
           secondaryToken="plDXY-BULL"
-          isLoading={isConnected && (balancesLoading || stakedBullLoading)}
+          isLoading={isConnected && dashboardLoading}
         />
         <DashboardTile
           variant="USDC"
@@ -165,7 +172,7 @@ export function Dashboard() {
           secondaryLabel="Total Lending"
           secondaryDecimals={6}
           secondaryToken="USDC"
-          isLoading={isConnected && (balancesLoading || lendingPosition.isLoading)}
+          isLoading={isConnected && (dashboardLoading || lendingPosition.isLoading)}
         />
         <DashboardTile
           variant="BEAR"
@@ -177,7 +184,7 @@ export function Dashboard() {
           secondaryLabel="Staked Balance"
           secondaryDecimals={18}
           secondaryToken="plDXY-BEAR"
-          isLoading={isConnected && (balancesLoading || stakedBearLoading)}
+          isLoading={isConnected && dashboardLoading}
         />
       </div>
 
@@ -206,14 +213,14 @@ export function Dashboard() {
                   usdcBalance={usdcBalance}
                   bearBalance={bearBalance}
                   bullBalance={bullBalance}
-                  refetchBalances={() => void refetchBalances()}
+                  refetchBalances={refetchBalances}
                 />
               )}
 
               {mainTab === 'leverage' && (
                 <LeverageCard
                   usdcBalance={usdcBalance}
-                  refetchBalances={() => void refetchBalances()}
+                  refetchBalances={refetchBalances}
                   onPositionOpened={() => {
                     void bearPosition.refetch()
                     void bullPosition.refetch()
@@ -240,7 +247,7 @@ export function Dashboard() {
                     void lendingPosition.refetch()
                     void bearPosition.refetch()
                     void bullPosition.refetch()
-                    void refetchBalances()
+                    refetchBalances()
                   }}
                 />
               )}
@@ -269,7 +276,7 @@ export function Dashboard() {
               onSuccess={() => {
                 void bearPosition.refetch()
                 void bullPosition.refetch()
-                void refetchBalances()
+                refetchBalances()
               }}
             />
           )}

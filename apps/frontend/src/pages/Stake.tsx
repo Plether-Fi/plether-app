@@ -2,15 +2,24 @@ import { useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { StakingCard } from '../components/StakingCard'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
-import { useTokenBalances } from '../hooks'
+import { useUserBalances, apiQueryKeys } from '../api'
+import { useQueryClient } from '@tanstack/react-query'
 
 export function Stake() {
-  const { isConnected } = useAccount()
-  const { bearBalance, bullBalance, refetch: refetchBalances } = useTokenBalances()
+  const { isConnected, address } = useAccount()
+  const queryClient = useQueryClient()
+
+  const { data: balancesData } = useUserBalances(address)
+  const balances = balancesData?.data
+
+  const bearBalance = balances ? BigInt(balances.bear) : 0n
+  const bullBalance = balances ? BigInt(balances.bull) : 0n
 
   const handleSuccess = useCallback(() => {
-    void refetchBalances()
-  }, [refetchBalances])
+    if (address) {
+      void queryClient.invalidateQueries({ queryKey: apiQueryKeys.user.balances(address) })
+    }
+  }, [address, queryClient])
 
   return (
     <div className="space-y-10">

@@ -4,3 +4,4 @@ dist-newstyle/
 *.cabal.local
 cabal.project.local
 .ghc.environment.*
+.env
