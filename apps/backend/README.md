@@ -53,7 +53,7 @@ The indexer runs automatically on startup and polls for new blocks every 12 seco
 | `PORT` | No | `3001` | Server port |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
-| `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from |
+| `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
 
 ## API Endpoints
 

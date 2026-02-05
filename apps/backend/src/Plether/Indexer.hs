@@ -155,7 +155,7 @@ getLogs manager rpcUrl reqIdRef addresses fromBlock toBlock = do
         , "method" .= ("eth_getLogs" :: Text)
         , "params" .= [object
             [ "address" .= addresses
-            , "topics" .= [[Aeson.toJSON topics]]
+            , "topics" .= [topics]
             , "fromBlock" .= ("0x" <> intToHex fromBlock)
             , "toBlock" .= ("0x" <> intToHex toBlock)
             ]]
