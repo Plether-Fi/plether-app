@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository Structure
+
+This is a monorepo with the following structure:
+- `apps/frontend/` - React frontend application
+- `apps/api/` - Backend API (non-JavaScript, coming soon)
+
 ## Issue Tracking
 
 This project uses **bd** (beads) for issue tracking. Run `bd onboard` to get started.
@@ -41,7 +47,10 @@ bd sync               # Sync with git
 
 ## Commands
 
+All commands run from `apps/frontend/`:
+
 ```bash
+cd apps/frontend
 npm run build              # TypeScript check + production build
 npm run lint               # ESLint
 npm test                   # Unit tests
@@ -61,17 +70,17 @@ Plether is a DeFi frontend for trading plDXY-BEAR and plDXY-BULL tokens on Ether
 ### Tech Stack
 - **Framework**: Vite + React 19 + TypeScript
 - **Web3**: wagmi + viem + Web3Modal (WalletConnect)
-- **Styling**: Tailwind CSS v4 (CSS-first config in `src/index.css`)
+- **Styling**: Tailwind CSS v4 (CSS-first config in `apps/frontend/src/index.css`)
 - **State**: Zustand for local state, TanStack Query for server state
 - **Error Handling**: better-result for typed Result-based error handling
 
 ### Key Directories
-- `src/pages/` - Route components (Dashboard, Mint, Stake, History)
-- `src/components/ui/` - Reusable UI primitives
-- `src/hooks/` - Contract interaction hooks returning `Result<T, Error>` types
-- `src/stores/` - Zustand stores (transactions, settings)
-- `src/contracts/` - ABIs and addresses (mainnet + sepolia)
-- `src/utils/errors.ts` - TaggedError definitions for transaction errors
+- `apps/frontend/src/pages/` - Route components (Dashboard, Mint, Stake, History)
+- `apps/frontend/src/components/ui/` - Reusable UI primitives
+- `apps/frontend/src/hooks/` - Contract interaction hooks returning `Result<T, Error>` types
+- `apps/frontend/src/stores/` - Zustand stores (transactions, settings)
+- `apps/frontend/src/contracts/` - ABIs and addresses (mainnet + sepolia)
+- `apps/frontend/src/utils/errors.ts` - TaggedError definitions for transaction errors
 
 ### Component Structure
 One exported component per file. Private helper components used only within the same file are acceptable, but any component intended for reuse must have its own file. Import components via barrel exports (`../components/ui`) rather than direct file paths.
@@ -97,7 +106,7 @@ Result.isError(result) // ✅ correct (not isErr)
 result.isOk()          // ❌ wrong - these don't exist
 ```
 
-Error types are defined as TaggedErrors in `src/utils/errors.ts`:
+Error types are defined as TaggedErrors in `apps/frontend/src/utils/errors.ts`:
 - `UserRejectedError` - User cancelled transaction
 - `InsufficientFundsError` - Gas, token, or allowance issues
 - `ContractRevertError` - Contract execution failed
@@ -119,14 +128,14 @@ See `APIERRORS.md` for all contract error selectors. Use this to:
 - **Ensure comprehensive error handling**: When implementing new features, review relevant contract errors to handle all possible failure cases with appropriate user messages
 
 ### Adding Contract Integration
-1. Add ABI to `src/contracts/abis/`
-2. Add address to `src/contracts/addresses.ts` (mainnet + sepolia)
-3. Create hook in `src/hooks/` using wagmi's `useReadContract`/`useWriteContract`
+1. Add ABI to `apps/frontend/src/contracts/abis/`
+2. Add address to `apps/frontend/src/contracts/addresses.ts` (mainnet + sepolia)
+3. Create hook in `apps/frontend/src/hooks/` using wagmi's `useReadContract`/`useWriteContract`
 4. Return `Result<T, TransactionError>` from async operations
 
 ### Backend API Client
 
-The `src/api/` directory contains the typed client for the Plether backend API. This layer provides:
+The `apps/frontend/src/api/` directory contains the typed client for the Plether backend API. This layer provides:
 - **Aggregated data fetching** - Single API call returns all dashboard data
 - **Server-side caching** - Reduces RPC costs and improves load times
 - **Real-time updates** - WebSocket connection for price streaming
@@ -160,14 +169,14 @@ if (Result.isOk(result)) {
 - Approvals: Keep using wagmi hooks (user wallet interaction required)
 
 ### Theme Colors
-Defined in `src/index.css` via `@theme`:
+Defined in `apps/frontend/src/index.css` via `@theme`:
 - `cyber-neon-green` (#00FF99) - Primary accent, plDXY-BULL
 - `cyber-electric-fuchsia` (#FF00CC) - plDXY-BEAR, secondary actions
 - `bear` / `bull` - Aliases for token-specific styling
 
 ### Currency Display
 - **Never use dollar sign ($)** to represent USDC values
-- Use `formatUsd()` from `src/utils/formatters.ts` which formats numbers without $
+- Use `formatUsd()` from `apps/frontend/src/utils/formatters.ts` which formats numbers without $
 - Append "USDC" suffix where appropriate (e.g., "100.00 USDC" not "$100.00")
 - Always use 2 decimal places for USDC values
 - Values less than 0.01 but greater than 0 display as "<0.01 USDC"
@@ -178,10 +187,11 @@ Defined in `src/index.css` via `@theme`:
 1. **Unit** (`*.test.ts`) - Pure functions, stores, hooks with mocked wagmi
 2. **Component** (Storybook + play functions) - UI interactions
 3. **Integration** (`*.integration.test.ts`) - Real contracts via Anvil
-4. **E2E** (`e2e/*.spec.ts`) - Critical user journeys
+4. **E2E** (`apps/frontend/e2e/*.spec.ts`) - Critical user journeys
 
 **Commands:**
 ```bash
+cd apps/frontend
 npm test                   # Unit tests
 npm run test:integration   # Integration tests (requires: npm run anvil)
 npm run test:e2e           # E2E tests
@@ -218,15 +228,15 @@ beforeEach(() => {
 ```
 
 **Test File Locations:**
-- Unit: `src/**/__tests__/*.test.{ts,tsx}`
-- Integration: `src/**/__tests__/*.integration.test.{ts,tsx}`
-- E2E: `e2e/tests/*.spec.ts`
-- Stories: `src/stories/*.stories.tsx`
+- Unit: `apps/frontend/src/**/__tests__/*.test.{ts,tsx}`
+- Integration: `apps/frontend/src/**/__tests__/*.integration.test.{ts,tsx}`
+- E2E: `apps/frontend/e2e/tests/*.spec.ts`
+- Stories: `apps/frontend/src/stories/*.stories.tsx`
 
 **General Rules:**
 - Tests live in `__tests__/` directories adjacent to code
 - Never reimplement application logic in tests - import and test actual functions
-- Design for testability using "functional core, imperative shell": keep pure business logic in `src/utils/` separate from IO code (hooks, API calls)
+- Design for testability using "functional core, imperative shell": keep pure business logic in `apps/frontend/src/utils/` separate from IO code (hooks, API calls)
 
 ### Storybook
 - For interactive stories, use `play` function with `step()` for named steps
@@ -339,7 +349,7 @@ mcp__playwright__browser_run_code({
 mcp__playwright__browser_navigate({ url: "http://localhost:5173" });
 ```
 
-Full implementation: `e2e/fixtures/mockWallet.ts`
+Full implementation: `apps/frontend/e2e/fixtures/mockWallet.ts`
 
 ### Documentation Screenshots
 
@@ -348,10 +358,10 @@ Screenshots for documentation live in `screenshots/`. Use consistent settings:
 **Resolution:** 1024x1000 pixels (set with `mcp__playwright__browser_resize`)
 
 **Setup for Real Transactions:**
-1. Move `addresses.local.json` to `.bak` so app uses Sepolia addresses
+1. Move `apps/frontend/src/contracts/addresses.local.json` to `.bak` so app uses Sepolia addresses
 2. Change wagmi config to use port 8546 (`http://127.0.0.1:8546`)
-3. Use `MOCK_WALLET_ANVIL_SCRIPT` from `e2e/fixtures/mockWallet.ts` which proxies to Anvil
-4. Start Anvil fork: `npm run anvil` (uses port 8546 with Sepolia fork)
+3. Use `MOCK_WALLET_ANVIL_SCRIPT` from `apps/frontend/e2e/fixtures/mockWallet.ts` which proxies to Anvil
+4. Start Anvil fork: `cd apps/frontend && npm run anvil` (uses port 8546 with Sepolia fork)
 
 **Key Lessons:**
 - `addInitScript` only runs on NEW page loads - close browser and reopen to apply changes
@@ -364,7 +374,7 @@ Screenshots for documentation live in `screenshots/`. Use consistent settings:
 **Workflow:**
 ```bash
 # 1. Setup
-mv src/contracts/addresses.local.json src/contracts/addresses.local.json.bak
+mv apps/frontend/src/contracts/addresses.local.json apps/frontend/src/contracts/addresses.local.json.bak
 # Edit wagmi.ts: change anvil port to 8546
 
 # 2. Take screenshots with Playwright MCP
@@ -375,7 +385,7 @@ mcp__playwright__browser_navigate("http://localhost:5173/mint")
 
 # 3. Cleanup
 cp .playwright-mcp/*.png screenshots/
-mv src/contracts/addresses.local.json.bak src/contracts/addresses.local.json
+mv apps/frontend/src/contracts/addresses.local.json.bak apps/frontend/src/contracts/addresses.local.json
 # Revert wagmi.ts port change
 ```
 

@@ -7,11 +7,20 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
+storybook-static
+coverage
+bundle-stats.html
+
+# Local config
 *.local
 *.local.json
+.env
 
 # Editor directories and files
 .vscode/*
@@ -23,13 +32,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-storybook-static
-coverage
-.env
 
 # opensrc - source code for packages
 opensrc/
-bundle-stats.html
 
 # Playwright MCP screenshots
 .playwright-mcp/
@@ -39,3 +44,6 @@ playwright-report/
 
 # Story screenshots
 screenshots/
+
+# Vite cache
+.vite/
