@@ -1,5 +1,6 @@
 module Plether.Indexer.Events
   ( ParsedEvent (..)
+  , MorphoMarkets (..)
   , parseEventLog
   , EventLog (..)
   ) where
@@ -30,13 +31,19 @@ data ParsedEvent = ParsedEvent
   }
   deriving stock (Show)
 
-parseEventLog :: EventLog -> [Text] -> [Text] -> Maybe ParsedEvent
-parseEventLog log bearContracts bullContracts
-  | null (elTopics log) = Nothing
-  | otherwise = parseByTopic (head $ elTopics log) log bearContracts bullContracts
+data MorphoMarkets = MorphoMarkets
+  { mmBearMarketId :: Text
+  , mmBullMarketId :: Text
+  }
+  deriving stock (Show)
 
-parseByTopic :: ByteString -> EventLog -> [Text] -> [Text] -> Maybe ParsedEvent
-parseByTopic topic log bearContracts bullContracts
+parseEventLog :: EventLog -> [Text] -> [Text] -> MorphoMarkets -> Maybe ParsedEvent
+parseEventLog log bearContracts bullContracts morphoMarkets
+  | null (elTopics log) = Nothing
+  | otherwise = parseByTopic (head $ elTopics log) log bearContracts bullContracts morphoMarkets
+
+parseByTopic :: ByteString -> EventLog -> [Text] -> [Text] -> MorphoMarkets -> Maybe ParsedEvent
+parseByTopic topic log bearContracts bullContracts morphoMarkets
   | topic == esTopic mintEvent = parseMintBurnEvent log "mint" Nothing
   | topic == esTopic burnEvent = parseMintBurnEvent log "burn" Nothing
   | topic == esTopic tokenExchangeEvent = parseTokenExchangeEvent log
@@ -46,6 +53,10 @@ parseByTopic topic log bearContracts bullContracts
   | topic == esTopic stakingWithdrawEvent = parseUnstakeEvent log bearContracts bullContracts
   | topic == esTopic positionOpenedEvent = parseLeverageOpenEvent log bearContracts bullContracts
   | topic == esTopic positionClosedEvent = parseLeverageCloseEvent log bearContracts bullContracts
+  | topic == esTopic morphoSupplyEvent = parseMorphoSupplyRepayEvent log "lending_supply" morphoMarkets
+  | topic == esTopic morphoWithdrawEvent = parseMorphoWithdrawBorrowEvent log "lending_withdraw" morphoMarkets
+  | topic == esTopic morphoBorrowEvent = parseMorphoWithdrawBorrowEvent log "lending_borrow" morphoMarkets
+  | topic == esTopic morphoRepayEvent = parseMorphoSupplyRepayEvent log "lending_repay" morphoMarkets
   | otherwise = Nothing
 
 parseMintBurnEvent :: EventLog -> Text -> Maybe Text -> Maybe ParsedEvent
@@ -154,6 +165,45 @@ parseLeverageCloseEvent log bearContracts bullContracts = do
         ]
     }
 
+parseMorphoSupplyRepayEvent :: EventLog -> Text -> MorphoMarkets -> Maybe ParsedEvent
+parseMorphoSupplyRepayEvent log txType morphoMarkets = do
+  onBehalf <- getIndexedAddress (elTopics log) 3
+  let (assets, shares) = decodeUint256Pair (elData log)
+      side = determineSideByMarketId (elTopics log) morphoMarkets
+  Just $ ParsedEvent
+    { peUserAddress = onBehalf
+    , peTxType = txType
+    , peSide = side
+    , peData = object
+        [ "assets" .= assets
+        , "shares" .= shares
+        ]
+    }
+
+parseMorphoWithdrawBorrowEvent :: EventLog -> Text -> MorphoMarkets -> Maybe ParsedEvent
+parseMorphoWithdrawBorrowEvent log txType morphoMarkets = do
+  onBehalf <- getIndexedAddress (elTopics log) 3
+  let (assets, shares) = decodeUint256PairSkip1 (elData log)
+      side = determineSideByMarketId (elTopics log) morphoMarkets
+  Just $ ParsedEvent
+    { peUserAddress = onBehalf
+    , peTxType = txType
+    , peSide = side
+    , peData = object
+        [ "assets" .= assets
+        , "shares" .= shares
+        ]
+    }
+
+determineSideByMarketId :: [ByteString] -> MorphoMarkets -> Maybe Text
+determineSideByMarketId topics morphoMarkets
+  | length topics < 2 = Nothing
+  | normalizeAddress (topicToHex (topics !! 1)) == normalizeAddress (mmBearMarketId morphoMarkets) = Just "bear"
+  | normalizeAddress (topicToHex (topics !! 1)) == normalizeAddress (mmBullMarketId morphoMarkets) = Just "bull"
+  | otherwise = Nothing
+  where
+    topicToHex bs = "0x" <> bytesToHex bs
+
 determineSide :: Text -> [Text] -> [Text] -> Maybe Text
 determineSide addr bearContracts bullContracts
   | normalizeAddress addr `elem` map normalizeAddress bearContracts = Just "bear"
@@ -172,6 +222,12 @@ decodeUint256Pair :: ByteString -> (Integer, Integer)
 decodeUint256Pair bs =
   ( bytesToInteger (BS.take 32 bs)
   , bytesToInteger (BS.take 32 (BS.drop 32 bs))
+  )
+
+decodeUint256PairSkip1 :: ByteString -> (Integer, Integer)
+decodeUint256PairSkip1 bs =
+  ( bytesToInteger (BS.take 32 (BS.drop 32 bs))
+  , bytesToInteger (BS.take 32 (BS.drop 64 bs))
   )
 
 decodeUint256Quad :: ByteString -> (Integer, Integer, Integer, Integer)

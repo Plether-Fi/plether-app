@@ -40,6 +40,22 @@ spec = do
       esTopic positionClosedEvent `shouldBe`
         keccak256Text "PositionClosed(address,uint256,uint256)"
 
+    it "Morpho Supply topic is keccak256 of signature" $
+      esTopic morphoSupplyEvent `shouldBe`
+        keccak256Text "Supply(bytes32,address,address,uint256,uint256)"
+
+    it "Morpho Withdraw topic is keccak256 of signature" $
+      esTopic morphoWithdrawEvent `shouldBe`
+        keccak256Text "Withdraw(bytes32,address,address,address,uint256,uint256)"
+
+    it "Morpho Borrow topic is keccak256 of signature" $
+      esTopic morphoBorrowEvent `shouldBe`
+        keccak256Text "Borrow(bytes32,address,address,address,uint256,uint256)"
+
+    it "Morpho Repay topic is keccak256 of signature" $
+      esTopic morphoRepayEvent `shouldBe`
+        keccak256Text "Repay(bytes32,address,address,uint256,uint256)"
+
   describe "event signature topics are 32 bytes" $ do
     it "mintEvent topic is 32 bytes" $
       BS.length (esTopic mintEvent) `shouldBe` 32
@@ -67,6 +83,18 @@ spec = do
 
     it "positionClosedEvent topic is 32 bytes" $
       BS.length (esTopic positionClosedEvent) `shouldBe` 32
+
+    it "morphoSupplyEvent topic is 32 bytes" $
+      BS.length (esTopic morphoSupplyEvent) `shouldBe` 32
+
+    it "morphoWithdrawEvent topic is 32 bytes" $
+      BS.length (esTopic morphoWithdrawEvent) `shouldBe` 32
+
+    it "morphoBorrowEvent topic is 32 bytes" $
+      BS.length (esTopic morphoBorrowEvent) `shouldBe` 32
+
+    it "morphoRepayEvent topic is 32 bytes" $
+      BS.length (esTopic morphoRepayEvent) `shouldBe` 32
 
   describe "event metadata" $ do
     it "mintEvent has correct name and txType" $ do
@@ -110,9 +138,29 @@ spec = do
       esName positionClosedEvent `shouldBe` "PositionClosed"
       esTxType positionClosedEvent `shouldBe` "leverage_close"
 
+    it "morphoSupplyEvent has correct metadata" $ do
+      esName morphoSupplyEvent `shouldBe` "MorphoSupply"
+      esTxType morphoSupplyEvent `shouldBe` "lending_supply"
+      esSide morphoSupplyEvent `shouldBe` Nothing
+
+    it "morphoWithdrawEvent has correct metadata" $ do
+      esName morphoWithdrawEvent `shouldBe` "MorphoWithdraw"
+      esTxType morphoWithdrawEvent `shouldBe` "lending_withdraw"
+      esSide morphoWithdrawEvent `shouldBe` Nothing
+
+    it "morphoBorrowEvent has correct metadata" $ do
+      esName morphoBorrowEvent `shouldBe` "MorphoBorrow"
+      esTxType morphoBorrowEvent `shouldBe` "lending_borrow"
+      esSide morphoBorrowEvent `shouldBe` Nothing
+
+    it "morphoRepayEvent has correct metadata" $ do
+      esName morphoRepayEvent `shouldBe` "MorphoRepay"
+      esTxType morphoRepayEvent `shouldBe` "lending_repay"
+      esSide morphoRepayEvent `shouldBe` Nothing
+
   describe "allEventSignatures" $ do
-    it "contains all 9 events" $
-      length allEventSignatures `shouldBe` 9
+    it "contains all 13 events" $
+      length allEventSignatures `shouldBe` 13
 
     it "all events have unique topics" $
       let topics = map esTopic allEventSignatures

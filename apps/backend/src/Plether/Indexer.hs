@@ -31,7 +31,7 @@ import Plether.Config (Addresses (..), Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getLastIndexedBlock, insertTransaction, setLastIndexedBlock)
 import Plether.Indexer.Contracts (allEventSignatures, esTopic)
-import Plether.Indexer.Events (EventLog (..), ParsedEvent (..), parseEventLog)
+import Plether.Indexer.Events (EventLog (..), MorphoMarkets (..), ParsedEvent (..), parseEventLog)
 
 data IndexerConfig = IndexerConfig
   { icRpcUrl :: Text
@@ -79,9 +79,13 @@ runIndexerLoop manager pool cfg reqIdRef = do
             Right logs -> do
               let bearContracts = [addrStakingBear (icAddresses cfg), addrLeverageRouter (icAddresses cfg)]
                   bullContracts = [addrStakingBull (icAddresses cfg), addrBullLeverageRouter (icAddresses cfg)]
+                  morphoMarkets = MorphoMarkets
+                    { mmBearMarketId = addrMorphoMarketBear (icAddresses cfg)
+                    , mmBullMarketId = addrMorphoMarketBull (icAddresses cfg)
+                    }
 
               forM_ logs $ \log -> do
-                let mParsed = parseEventLog log bearContracts bullContracts
+                let mParsed = parseEventLog log bearContracts bullContracts morphoMarkets
                 case mParsed of
                   Nothing -> pure ()
                   Just parsed -> do
@@ -112,6 +116,7 @@ getContractAddresses addrs =
   , addrStakingBull addrs
   , addrLeverageRouter addrs
   , addrBullLeverageRouter addrs
+  , addrMorpho addrs
   ]
 
 getCurrentBlockNumber :: Manager -> Text -> IORef Integer -> IO (Either Text Integer)

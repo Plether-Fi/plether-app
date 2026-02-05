@@ -10,6 +10,10 @@ module Plether.Indexer.Contracts
   , stakingWithdrawEvent
   , positionOpenedEvent
   , positionClosedEvent
+  , morphoSupplyEvent
+  , morphoWithdrawEvent
+  , morphoBorrowEvent
+  , morphoRepayEvent
   , keccak256Text
   ) where
 
@@ -111,6 +115,38 @@ positionClosedEvent = EventSignature
   , esSide = Nothing
   }
 
+morphoSupplyEvent :: EventSignature
+morphoSupplyEvent = EventSignature
+  { esName = "MorphoSupply"
+  , esTopic = eventTopic "Supply(bytes32,address,address,uint256,uint256)"
+  , esTxType = "lending_supply"
+  , esSide = Nothing
+  }
+
+morphoWithdrawEvent :: EventSignature
+morphoWithdrawEvent = EventSignature
+  { esName = "MorphoWithdraw"
+  , esTopic = eventTopic "Withdraw(bytes32,address,address,address,uint256,uint256)"
+  , esTxType = "lending_withdraw"
+  , esSide = Nothing
+  }
+
+morphoBorrowEvent :: EventSignature
+morphoBorrowEvent = EventSignature
+  { esName = "MorphoBorrow"
+  , esTopic = eventTopic "Borrow(bytes32,address,address,address,uint256,uint256)"
+  , esTxType = "lending_borrow"
+  , esSide = Nothing
+  }
+
+morphoRepayEvent :: EventSignature
+morphoRepayEvent = EventSignature
+  { esName = "MorphoRepay"
+  , esTopic = eventTopic "Repay(bytes32,address,address,uint256,uint256)"
+  , esTxType = "lending_repay"
+  , esSide = Nothing
+  }
+
 allEventSignatures :: [EventSignature]
 allEventSignatures =
   [ mintEvent
@@ -122,4 +158,8 @@ allEventSignatures =
   , stakingWithdrawEvent
   , positionOpenedEvent
   , positionClosedEvent
+  , morphoSupplyEvent
+  , morphoWithdrawEvent
+  , morphoBorrowEvent
+  , morphoRepayEvent
   ]

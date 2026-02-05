@@ -43,6 +43,9 @@ data Addresses = Addresses
   , addrMorphoOracleBull :: Text
   , addrStakedOracleBear :: Text
   , addrStakedOracleBull :: Text
+  , addrMorpho :: Text
+  , addrMorphoMarketBear :: Text
+  , addrMorphoMarketBull :: Text
   }
   deriving stock (Show, Generic)
 
@@ -67,6 +70,9 @@ instance FromJSON Addresses where
       <*> v .: "MORPHO_ORACLE_BULL"
       <*> v .: "STAKED_ORACLE_BEAR"
       <*> v .: "STAKED_ORACLE_BULL"
+      <*> v .: "MORPHO"
+      <*> v .: "MORPHO_MARKET_BEAR"
+      <*> v .: "MORPHO_MARKET_BULL"
 
 loadAddresses :: FilePath -> IO (Either String Addresses)
 loadAddresses = eitherDecodeFileStrict

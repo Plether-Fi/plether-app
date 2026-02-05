@@ -22,6 +22,9 @@ export interface ContractAddresses {
   MORPHO_ORACLE_BULL: Address
   STAKED_ORACLE_BEAR: Address
   STAKED_ORACLE_BULL: Address
+  MORPHO: Address
+  MORPHO_MARKET_BEAR: Address
+  MORPHO_MARKET_BULL: Address
 }
 
 // Load addresses from JSON files at build time
