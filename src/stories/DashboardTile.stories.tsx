@@ -23,7 +23,7 @@ type Story = StoryObj<typeof meta>
 export const Bull: Story = {
   render: () => (
     <DashboardTile
-      variant="bull"
+      variant="BULL"
       title="plDXY-BULL Position"
       balance={1500000000000000000000n}
       balanceDecimals={18}
@@ -39,7 +39,7 @@ export const Bull: Story = {
 export const USDC: Story = {
   render: () => (
     <DashboardTile
-      variant="usdc"
+      variant="USDC"
       title="USDC Lending"
       balance={5000000000n}
       balanceDecimals={6}
@@ -55,7 +55,7 @@ export const USDC: Story = {
 export const Bear: Story = {
   render: () => (
     <DashboardTile
-      variant="bear"
+      variant="BEAR"
       title="plDXY-BEAR Position"
       balance={2000000000000000000000n}
       balanceDecimals={18}
@@ -71,7 +71,7 @@ export const Bear: Story = {
 export const WithAPY: Story = {
   render: () => (
     <DashboardTile
-      variant="usdc"
+      variant="USDC"
       title="USDC Lending"
       balance={5000000000n}
       balanceDecimals={6}
@@ -88,7 +88,7 @@ export const WithAPY: Story = {
 export const ZeroBalances: Story = {
   render: () => (
     <DashboardTile
-      variant="bull"
+      variant="BULL"
       title="plDXY-BULL Position"
       balance={0n}
       balanceDecimals={18}
@@ -104,7 +104,7 @@ export const ZeroBalances: Story = {
 export const Loading: Story = {
   render: () => (
     <DashboardTile
-      variant="bear"
+      variant="BEAR"
       title="plDXY-BEAR Position"
       balance={0n}
       balanceDecimals={18}
@@ -122,7 +122,7 @@ export const AllVariants: Story = {
   render: () => (
     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
       <DashboardTile
-        variant="bull"
+        variant="BULL"
         title="plDXY-BULL Position"
         balance={1500000000000000000000n}
         balanceDecimals={18}
@@ -133,7 +133,7 @@ export const AllVariants: Story = {
         secondaryToken="plDXY-BULL"
       />
       <DashboardTile
-        variant="usdc"
+        variant="USDC"
         title="USDC Lending"
         balance={5000000000n}
         balanceDecimals={6}
@@ -144,7 +144,7 @@ export const AllVariants: Story = {
         secondaryToken="USDC"
       />
       <DashboardTile
-        variant="bear"
+        variant="BEAR"
         title="plDXY-BEAR Position"
         balance={2000000000000000000000n}
         balanceDecimals={18}

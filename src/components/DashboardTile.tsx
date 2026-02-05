@@ -1,7 +1,7 @@
 import { Skeleton, TokenIcon, TokenLabel } from './ui'
 import { formatAmount, formatUsd } from '../utils/formatters'
 
-type TileVariant = 'bull' | 'usdc' | 'bear'
+type TileVariant = 'BULL' | 'USDC' | 'BEAR'
 
 interface DashboardTileProps {
   variant: TileVariant
@@ -18,19 +18,19 @@ interface DashboardTileProps {
 }
 
 const variantStyles: Record<TileVariant, { glow: string; text: string; border: string; divider: string }> = {
-  bull: {
+  BULL: {
     glow: 'shadow-[0_0_8px_rgba(0,255,153,0.1)] hover:shadow-[0_0_20px_rgba(0,255,153,0.4)]',
     text: 'text-cyber-neon-green',
     border: 'border-cyber-neon-green/50',
     divider: 'border-cyber-neon-green/30',
   },
-  usdc: {
+  USDC: {
     glow: 'shadow-[0_0_8px_rgba(0,200,255,0.1)] hover:shadow-[0_0_20px_rgba(0,200,255,0.4)]',
     text: 'text-cyber-bright-blue',
     border: 'border-cyber-bright-blue/50',
     divider: 'border-cyber-bright-blue/30',
   },
-  bear: {
+  BEAR: {
     glow: 'shadow-[0_0_8px_rgba(255,0,204,0.1)] hover:shadow-[0_0_20px_rgba(255,0,204,0.4)]',
     text: 'text-cyber-electric-fuchsia',
     border: 'border-cyber-electric-fuchsia/50',
@@ -83,21 +83,13 @@ export function DashboardTile({
     return <TileSkeleton />
   }
 
-  const iconSide = variant === 'bull' ? 'BULL' : variant === 'bear' ? 'BEAR' : undefined
-
   return (
     <div
       className={`bg-cyber-surface-dark p-5 border ${styles.border} shadow-md ${styles.glow} h-full transition-shadow duration-200`}
     >
         <div className="flex items-center justify-between mb-2">
           <h3 className={`font-semibold ${styles.text}`}>{title}</h3>
-          {iconSide ? (
-            <TokenIcon side={iconSide} size="sm" />
-          ) : (
-            <div className="w-8 h-8 rounded-full bg-cyber-bright-blue/20 flex items-center justify-center">
-              <span className="text-cyber-bright-blue text-sm font-bold">$</span>
-            </div>
-          )}
+          <TokenIcon side={variant} size="sm" />
         </div>
 
         <div className="space-y-3">

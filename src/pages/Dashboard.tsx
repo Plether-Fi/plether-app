@@ -144,7 +144,7 @@ export function Dashboard() {
       {/* Portfolio tiles - always visible */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10">
         <DashboardTile
-          variant="bull"
+          variant="BULL"
           title="Total BULL Position"
           balance={isConnected ? bullBalance + stakedBullAssets : 0n}
           balanceDecimals={18}
@@ -156,7 +156,7 @@ export function Dashboard() {
           isLoading={isConnected && (balancesLoading || stakedBullLoading)}
         />
         <DashboardTile
-          variant="usdc"
+          variant="USDC"
           title="Total USDC Position"
           balance={isConnected ? usdcBalance + totalSupplied : 0n}
           balanceDecimals={6}
@@ -168,7 +168,7 @@ export function Dashboard() {
           isLoading={isConnected && (balancesLoading || lendingPosition.isLoading)}
         />
         <DashboardTile
-          variant="bear"
+          variant="BEAR"
           title="Total BEAR Position"
           balance={isConnected ? bearBalance + stakedBearAssets : 0n}
           balanceDecimals={18}
