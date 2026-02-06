@@ -17,7 +17,10 @@ export const HEALTH_FACTOR_WARNING = 1.5
 export const HEALTH_FACTOR_DANGER = 1.2
 
 // Protocol status
-export type ProtocolStatus = 'Active' | 'Paused' | 'Settled'
+export type ProtocolStatus = 'Active' | 'Paused' | 'Settled' | 'Stale'
+
+// Oracle staleness threshold (seconds)
+export const ORACLE_STALE_SECONDS = 86400
 
 // Local storage keys
 export const STORAGE_KEYS = {
