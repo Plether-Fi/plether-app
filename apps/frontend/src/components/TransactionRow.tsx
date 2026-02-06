@@ -1,4 +1,6 @@
+import { useChainId } from 'wagmi'
 import { formatAmount, formatDate } from '../utils/formatters'
+import { getExplorerTxUrl } from '../utils/explorer'
 import type { HistoricalTransaction, TransactionType } from '../types'
 
 const typeLabels: Record<TransactionType, string> = {
@@ -66,6 +68,7 @@ export interface TransactionRowProps {
 }
 
 export function TransactionRow({ transaction }: TransactionRowProps) {
+  const chainId = useChainId()
   const truncatedHash = `${transaction.hash.slice(0, 10)}...${transaction.hash.slice(-8)}`
   const decimals = transaction.tokenSymbol === 'USDC' ? 6 : 18
 
@@ -89,10 +92,10 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
 
       <div className="text-right">
         <p className="text-cyber-text-primary font-medium">
-          {formatAmount(transaction.amount, decimals)} {transaction.tokenSymbol}
+          {formatAmount(transaction.amount, decimals)} {transaction.tokenSymbol === 'Pairs' && transaction.amount === 1000000000000000000n ? 'Pair' : transaction.tokenSymbol}
         </p>
         <a
-          href={`https://etherscan.io/tx/${transaction.hash}`}
+          href={getExplorerTxUrl(chainId, transaction.hash)}
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm text-cyber-bright-blue hover:text-cyber-bright-blue/80 inline-flex items-center gap-1"

@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 
 // Token types
-export type TokenSymbol = 'USDC' | 'plDXY-BEAR' | 'plDXY-BULL' | 'splDXY-BEAR' | 'splDXY-BULL'
+export type TokenSymbol = 'USDC' | 'plDXY-BEAR' | 'plDXY-BULL' | 'splDXY-BEAR' | 'splDXY-BULL' | 'Pairs'
 
 export interface Token {
   symbol: TokenSymbol

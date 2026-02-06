@@ -287,7 +287,11 @@ export type TransactionType =
   | 'supply'
   | 'withdraw'
   | 'borrow'
-  | 'repay';
+  | 'repay'
+  | 'lending_supply'
+  | 'lending_withdraw'
+  | 'lending_borrow'
+  | 'lending_repay';
 
 export type TransactionData =
   | MintTransactionData

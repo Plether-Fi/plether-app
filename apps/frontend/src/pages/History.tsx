@@ -3,8 +3,7 @@ import { useAccount } from 'wagmi'
 import { TransactionRow } from '../components/TransactionRow'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { useTransactionHistory } from '../api'
-import type { HistoricalTransaction, TransactionType as LocalTxType, TokenSymbol } from '../types'
-import type { Transaction, TransactionType as ApiTxType } from '../api/types'
+import { transformTransaction } from '../utils/history'
 
 const filterOptions = [
   { id: 'all', label: 'All', icon: 'list' },
@@ -14,80 +13,6 @@ const filterOptions = [
   { id: 'leverage', label: 'Leverage', icon: 'trending_up' },
   { id: 'morpho', label: 'Lending', icon: 'account_balance' },
 ]
-
-function mapApiTypeToLocal(tx: Transaction): LocalTxType {
-  switch (tx.type) {
-    case 'mint': return 'mint'
-    case 'burn': return 'burn'
-    case 'swap':
-    case 'zap_buy':
-      return tx.side === 'bear' ? 'swap_buy_bear' : 'swap_buy_bull'
-    case 'zap_sell':
-      return tx.side === 'bear' ? 'swap_sell_bear' : 'swap_sell_bull'
-    case 'stake':
-      return tx.side === 'bear' ? 'stake_bear' : 'stake_bull'
-    case 'unstake':
-      return tx.side === 'bear' ? 'unstake_bear' : 'unstake_bull'
-    case 'leverage_open': return 'leverage_open'
-    case 'leverage_close': return 'leverage_close'
-    case 'collateral_add':
-    case 'collateral_remove':
-      return 'leverage_adjust'
-    case 'supply': return 'morpho_supply'
-    case 'withdraw': return 'morpho_withdraw'
-    case 'borrow': return 'morpho_borrow'
-    case 'repay': return 'morpho_repay'
-    default:
-      return 'mint'
-  }
-}
-
-function getTokenSymbol(tx: Transaction): TokenSymbol {
-  const localType = mapApiTypeToLocal(tx)
-  if (localType === 'mint' || localType === 'burn') return 'USDC'
-  if (localType.includes('bear')) return 'plDXY-BEAR'
-  if (localType.includes('bull')) return 'plDXY-BULL'
-  if (localType.includes('stake') || localType.includes('unstake')) {
-    return tx.side === 'bear' ? 'plDXY-BEAR' : 'plDXY-BULL'
-  }
-  return 'USDC'
-}
-
-function getAmount(tx: Transaction): bigint {
-  const data = tx.data as unknown as Record<string, unknown>
-  if ('usdcAmount' in data) return BigInt(data.usdcAmount as string)
-  if ('pairAmount' in data) return BigInt(data.pairAmount as string)
-  if ('amountIn' in data) return BigInt(data.amountIn as string)
-  if ('amountOut' in data) return BigInt(data.amountOut as string)
-  if ('assets' in data) return BigInt(data.assets as string)
-  if ('principal' in data) return BigInt(data.principal as string)
-  if ('amount' in data) return BigInt(data.amount as string)
-  if ('tokensSold' in data) return BigInt(data.tokensSold as string)
-  return 0n
-}
-
-function transformTransaction(tx: Transaction): HistoricalTransaction {
-  return {
-    id: tx.id,
-    hash: tx.hash,
-    type: mapApiTypeToLocal(tx),
-    timestamp: tx.timestamp,
-    amount: getAmount(tx),
-    tokenSymbol: getTokenSymbol(tx),
-    status: tx.status,
-  }
-}
-
-function filterApiType(filter: string): ApiTxType | undefined {
-  switch (filter) {
-    case 'mint': return 'mint'
-    case 'swap': return 'swap'
-    case 'stake': return 'stake'
-    case 'leverage': return 'leverage_open'
-    case 'morpho': return 'supply'
-    default: return undefined
-  }
-}
 
 function TransactionSkeleton() {
   return (
@@ -112,10 +37,8 @@ export function History() {
   const { isConnected, address } = useAccount()
   const [filter, setFilter] = useState('all')
 
-  const apiType = filter !== 'all' ? filterApiType(filter) : undefined
   const { data, isLoading, hasNextPage, fetchNextPage, isFetchingNextPage } = useTransactionHistory(
     address,
-    { type: apiType }
   )
 
   const transactions = useMemo(() => {
