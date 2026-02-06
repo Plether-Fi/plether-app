@@ -18,6 +18,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
+import Plether.Utils.Hex (hexToInteger)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -165,11 +166,3 @@ decodeHex txt = case B16.decode (TE.encodeUtf8 $ T.toLower txt) of
   Right bs -> bs
   Left _ -> mempty
 
-hexToInteger :: Text -> Integer
-hexToInteger = T.foldl' (\acc c -> acc * 16 + fromIntegral (hexDigit c)) 0
-  where
-    hexDigit c
-      | c >= '0' && c <= '9' = fromEnum c - fromEnum '0'
-      | c >= 'a' && c <= 'f' = fromEnum c - fromEnum 'a' + 10
-      | c >= 'A' && c <= 'F' = fromEnum c - fromEnum 'A' + 10
-      | otherwise = 0

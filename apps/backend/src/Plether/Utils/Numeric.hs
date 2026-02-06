@@ -4,6 +4,8 @@ module Plether.Utils.Numeric
   , weiToEther
   , etherToWei
   , mulDiv
+  , wad
+  , ray
   , WAD
   , RAY
   , wadMul
@@ -43,10 +45,10 @@ formatWei amount decimals =
    in T.pack (show whole) <> "." <> (if T.null trimmed then "0" else trimmed)
 
 weiToEther :: Integer -> Double
-weiToEther amount = fromIntegral amount / (10 ^ (18 :: Integer))
+weiToEther amount = fromIntegral amount / fromIntegral wad
 
 etherToWei :: Double -> Integer
-etherToWei amount = round $ amount * (10 ^ (18 :: Integer))
+etherToWei amount = round $ amount * fromIntegral wad
 
 mulDiv :: Integer -> Integer -> Integer -> Integer
 mulDiv x y z = (x * y) `div` z

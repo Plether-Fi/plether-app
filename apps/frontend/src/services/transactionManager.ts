@@ -4,6 +4,7 @@ import { useTransactionModal } from '../hooks/useTransactionModal'
 import { getAddresses } from '../contracts/addresses'
 import { STAKED_TOKEN_ABI, ERC20_ABI, CURVE_POOL_ABI, ZAP_ROUTER_ABI, PLETH_CORE_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
 import { parseTransactionError, getErrorMessage } from '../utils/errors'
+import { getDeadline } from '../utils/deadline'
 
 type OperationStatus = 'pending' | 'signing' | 'approving' | 'submitted' | 'confirming' | 'success' | 'error'
 
@@ -436,7 +437,7 @@ class TransactionManager {
     }
     this.pendingOperations.set(operationKey, operation)
 
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+    const deadline = getDeadline()
 
     try {
       let stepOffset = 0
@@ -540,7 +541,7 @@ class TransactionManager {
     }
     this.pendingOperations.set(operationKey, operation)
 
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+    const deadline = getDeadline()
 
     try {
       let stepOffset = 0
@@ -874,7 +875,7 @@ class TransactionManager {
     }
     this.pendingOperations.set(operationKey, operation)
 
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+    const deadline = getDeadline()
 
     try {
       let stepIndex = 0
@@ -986,7 +987,7 @@ class TransactionManager {
     }
     this.pendingOperations.set(operationKey, operation)
 
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+    const deadline = getDeadline()
 
     try {
       txStore.setStepInProgress(transactionId, 0)

@@ -5,6 +5,7 @@ import { Modal } from './ui'
 import { useAdjustCollateral, useApprovalFlow, useTokenBalances, useLeveragePosition } from '../hooks'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { formatUsd } from '../utils/formatters'
+import { getDeadline } from '../utils/deadline'
 import type { LeveragePosition } from '../types'
 
 export interface AdjustPositionModalProps {
@@ -94,7 +95,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
     if (!amountBigInt || amountBigInt <= 0n) return
 
     const maxSlippageBps = 100n // 1% slippage
-    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600) // 1 hour
+    const deadline = getDeadline(60)
 
     if (action === 'add') {
       // Hide modal but keep mounted - approval flow needs component to stay alive

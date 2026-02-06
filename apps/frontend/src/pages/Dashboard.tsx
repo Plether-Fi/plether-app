@@ -17,6 +17,7 @@ import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import type { LeveragePosition } from '../types'
+import { getDeadline } from '../utils/deadline'
 
 export function Dashboard() {
   const { isConnected, address, chainId } = useAccount()
@@ -72,7 +73,7 @@ export function Dashboard() {
 
     const buildCloseSteps = (): TransactionStep[] => {
       const slippageBps = BigInt(Math.floor(slippage * 100))
-      const deadline = BigInt(Math.floor(Date.now() / 1000) + 1800)
+      const deadline = getDeadline()
 
       return [{
         label: `Close ${position.side} position`,

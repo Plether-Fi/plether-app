@@ -28,6 +28,7 @@ import Network.HTTP.Client
   , responseBody
   )
 import Plether.Config (Addresses (..), Config (..))
+import Plether.Utils.Hex (hexToInteger, intToHex)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getLastIndexedBlock, insertTransaction, setLastIndexedBlock)
 import Plether.Indexer.Contracts (allEventSignatures, esTopic)
@@ -235,20 +236,3 @@ rpcCall manager rpcUrl payload = do
 nextId :: IORef Integer -> IO Integer
 nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)
 
-hexToInteger :: Text -> Integer
-hexToInteger = T.foldl' (\acc c -> acc * 16 + fromIntegral (hexDigit c)) 0
-  where
-    hexDigit c
-      | c >= '0' && c <= '9' = fromEnum c - fromEnum '0'
-      | c >= 'a' && c <= 'f' = fromEnum c - fromEnum 'a' + 10
-      | c >= 'A' && c <= 'F' = fromEnum c - fromEnum 'A' + 10
-      | otherwise = 0
-
-intToHex :: Integer -> Text
-intToHex n = T.pack $ showHex n ""
-  where
-    showHex 0 s = if null s then "0" else s
-    showHex x s = showHex (x `div` 16) (hexChar (x `mod` 16) : s)
-    hexChar d
-      | d < 10 = toEnum (fromEnum '0' + fromIntegral d)
-      | otherwise = toEnum (fromEnum 'a' + fromIntegral d - 10)

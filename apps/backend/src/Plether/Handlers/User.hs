@@ -16,7 +16,7 @@ import Plether.Cache
   , setCachedFor
   )
 import Plether.Config (Addresses (..), Config (..))
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.ERC20 as ERC20
 import qualified Plether.Ethereum.Contracts.StakedToken as Staked
 import Plether.Types
@@ -222,8 +222,3 @@ fetchAndCacheAllowances cache client cfg userAddr blockNum = do
     (_, _, _, _, _, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
 
-rpcErrorToApiError :: RpcError -> ApiError
-rpcErrorToApiError = \case
-  RpcHttpError msg -> rpcError msg
-  RpcJsonError msg -> rpcError msg
-  RpcNodeError _ msg -> rpcError msg

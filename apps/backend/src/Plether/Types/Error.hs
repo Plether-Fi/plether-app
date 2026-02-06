@@ -6,6 +6,7 @@ module Plether.Types.Error
   , invalidAmount
   , invalidSide
   , rpcError
+  , rpcErrorToApiError
   , rateLimited
   , internalError
   , networkError
@@ -14,6 +15,7 @@ module Plether.Types.Error
 import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Text (Text)
 import GHC.Generics (Generic)
+import Plether.Ethereum.Client (RpcError (RpcHttpError, RpcJsonError, RpcNodeError))
 
 data ApiErrorCode
   = InvalidAddress
@@ -77,3 +79,9 @@ internalError msg = mkError InternalError $ "Internal error: " <> msg
 
 networkError :: Text -> ApiError
 networkError msg = mkError NetworkError $ "Network error: " <> msg
+
+rpcErrorToApiError :: RpcError -> ApiError
+rpcErrorToApiError = \case
+  RpcHttpError msg -> rpcError msg
+  RpcJsonError msg -> rpcError msg
+  RpcNodeError _ msg -> rpcError msg

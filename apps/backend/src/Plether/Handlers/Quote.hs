@@ -8,12 +8,13 @@ module Plether.Handlers.Quote
 
 import Data.Text (Text)
 import Plether.Config (Addresses (..), Config (..))
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.CurvePool as Curve
 import qualified Plether.Ethereum.Contracts.LeverageRouter as Leverage
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import Plether.Types
+import Plether.Utils.Numeric (wad)
 
 getMintQuote :: EthClient -> Config -> Integer -> IO (Either ApiError (ApiResponse MintQuote))
 getMintQuote client cfg amount = do
@@ -27,7 +28,7 @@ getMintQuote client cfg amount = do
     (Right blockNum, Right cap, Right oracle) -> do
       let oraclePrice = Oracle.rdAnswer oracle
           usdcRequired = (amount * (oraclePrice + (cap - oraclePrice))) `div` (10 ^ (12 :: Integer))
-          pricePerToken = (usdcRequired * (10 ^ (18 :: Integer))) `div` amount
+          pricePerToken = (usdcRequired * wad) `div` amount
 
           quote =
             MintQuote
@@ -123,7 +124,7 @@ getTradeQuote client cfg from amount = do
       let minOut = (dy * 99) `div` 100
           spotPrice =
             if amount > 0
-              then (dy * (10 ^ (18 :: Integer))) `div` amount
+              then (dy * wad) `div` amount
               else 0
           priceImpact = 0
           fee = (amount * 4) `div` 10000
@@ -189,8 +190,3 @@ getLeverageQuote client cfg side principal leverage = do
   where
     maxHealthFactor = 10 ^ (20 :: Integer)
 
-rpcErrorToApiError :: RpcError -> ApiError
-rpcErrorToApiError = \case
-  RpcHttpError msg -> rpcError msg
-  RpcJsonError msg -> rpcError msg
-  RpcNodeError _ msg -> rpcError msg

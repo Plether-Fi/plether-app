@@ -11,6 +11,7 @@ import {
   type TransactionError,
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
+import { getDeadline } from '../utils/deadline'
 
 // Note: useTransactionStore is only used by useZapBuyWithPermit and useZapSellWithPermit
 // useCurveSwap and useZapSwap do not create transactions - that's handled by TradeCard
@@ -350,7 +351,7 @@ export function useZapBuyWithPermit() {
       return Result.tryPromise({
         try: async () => {
           setIsSigningPermit(true)
-          const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+          const deadline = getDeadline(60)
 
           const signature = await signTypedDataAsync({
             domain: {
@@ -498,7 +499,7 @@ export function useZapSellWithPermit() {
       return Result.tryPromise({
         try: async () => {
           setIsSigningPermit(true)
-          const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+          const deadline = getDeadline(60)
 
           const signature = await signTypedDataAsync({
             domain: {

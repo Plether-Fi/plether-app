@@ -12,11 +12,12 @@ import Plether.Cache
   , setCached
   )
 import Plether.Config (Addresses (..), Config (..))
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.StakedToken as Staked
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import Plether.Types
+import Plether.Utils.Numeric (wad)
 
 getProtocolStatus :: AppCache -> EthClient -> Config -> IO (Either ApiError (ApiResponse ProtocolStatus))
 getProtocolStatus cache client cfg = do
@@ -114,8 +115,6 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
     (_, _, _, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
-  where
-    wad = 10 ^ (18 :: Integer)
 
 getProtocolConfig :: Config -> IO (ApiResponse ProtocolConfig)
 getProtocolConfig cfg = do
@@ -158,8 +157,3 @@ getProtocolConfig cfg = do
           }
   pure $ mkResponse 0 (cfgChainId cfg) config
 
-rpcErrorToApiError :: RpcError -> ApiError
-rpcErrorToApiError = \case
-  RpcHttpError msg -> rpcError msg
-  RpcJsonError msg -> rpcError msg
-  RpcNodeError _ msg -> rpcError msg

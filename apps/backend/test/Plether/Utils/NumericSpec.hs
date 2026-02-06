@@ -101,12 +101,6 @@ spec = do
 
     prop "roundtrip (within floating point tolerance)" prop_weiEtherRoundtrip
 
-wad :: Integer
-wad = 10 ^ (18 :: Integer)
-
-ray :: Integer
-ray = 10 ^ (27 :: Integer)
-
 prop_wadMulCommutative :: Integer -> Integer -> Bool
 prop_wadMulCommutative a b = wadMul a b == wadMul b a
 

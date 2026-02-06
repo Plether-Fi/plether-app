@@ -40,6 +40,7 @@ library
         Plether.Ethereum.Contracts.CurvePool
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Utils.Address
+        Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
         Plether.Database.Schema

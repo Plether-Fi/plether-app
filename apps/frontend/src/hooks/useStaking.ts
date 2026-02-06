@@ -9,6 +9,7 @@ import {
   type TransactionError,
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
+import { getDeadline } from '../utils/deadline'
 
 export type StakingError = NotConnectedError | TransactionError
 
@@ -248,7 +249,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
       return Result.tryPromise({
         try: async () => {
           setIsSigningPermit(true)
-          const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+          const deadline = getDeadline(60)
 
           const signature = await signTypedDataAsync({
             domain: {

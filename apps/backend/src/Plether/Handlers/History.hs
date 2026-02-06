@@ -14,8 +14,8 @@ import Plether.Database.Schema
   , getTransactionCount
   , getTransactionsByUser
   )
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
-import Plether.Types (ApiError, ApiResponse, mkResponse, rpcError)
+import Plether.Ethereum.Client (EthClient, ethBlockNumber)
+import Plether.Types (ApiError, ApiResponse, mkResponse, rpcErrorToApiError)
 import Plether.Types.History
 
 getHistory
@@ -118,8 +118,3 @@ textToStatus = \case
   "pending" -> Pending
   _ -> Success
 
-rpcErrorToApiError :: RpcError -> ApiError
-rpcErrorToApiError = \case
-  RpcHttpError msg -> rpcError msg
-  RpcJsonError msg -> rpcError msg
-  RpcNodeError _ msg -> rpcError msg

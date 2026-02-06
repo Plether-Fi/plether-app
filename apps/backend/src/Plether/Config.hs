@@ -92,7 +92,7 @@ loadConfig = do
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
           port = fromMaybe 3001 (readMaybe portStr)
-          corsOrigins = map (toText . trim) $ splitOn " " corsStr
+          corsOrigins = filter (not . T.null) $ map T.strip $ T.splitOn " " $ T.pack corsStr
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"
             11155111 -> "config/addresses.sepolia.json"
@@ -106,28 +106,11 @@ loadConfig = do
           pure $
             Right $
               Config
-                { cfgRpcUrl = toText rpcUrl
+                { cfgRpcUrl = T.pack rpcUrl
                 , cfgChainId = chainId
                 , cfgPort = port
                 , cfgCorsOrigins = corsOrigins
                 , cfgAddresses = addresses
-                , cfgDatabaseUrl = fmap toText mDatabaseUrl
+                , cfgDatabaseUrl = fmap T.pack mDatabaseUrl
                 , cfgIndexerStartBlock = indexerStartBlock
                 }
-  where
-    toText :: String -> Text
-    toText = fromString
-
-    trim :: String -> String
-    trim = dropWhile (== ' ') . reverse . dropWhile (== ' ') . reverse
-
-    splitOn :: String -> String -> [String]
-    splitOn _ "" = []
-    splitOn delim str =
-      let (before, after) = break (== head delim) str
-       in before : case after of
-            [] -> []
-            _ : rest -> splitOn delim rest
-
-    fromString :: String -> Text
-    fromString = T.pack
