@@ -10,6 +10,7 @@ import {
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
 import { getDeadline } from '../utils/deadline'
+import { EIP2612_PERMIT_TYPES, splitSignature } from '../utils/permit'
 
 export type StakingError = NotConnectedError | TransactionError
 
@@ -258,15 +259,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
               chainId: chainId,
               verifyingContract: tokenAddress,
             },
-            types: {
-              Permit: [
-                { name: 'owner', type: 'address' },
-                { name: 'spender', type: 'address' },
-                { name: 'value', type: 'uint256' },
-                { name: 'nonce', type: 'uint256' },
-                { name: 'deadline', type: 'uint256' },
-              ],
-            },
+            types: EIP2612_PERMIT_TYPES,
             primaryType: 'Permit',
             message: {
               owner: address,
@@ -279,9 +272,7 @@ export function useStakeWithPermit(side: 'BEAR' | 'BULL') {
           setIsSigningPermit(false)
           setPermitCompleted(true)
 
-          const r: `0x${string}` = signature.slice(0, 66) as `0x${string}`
-          const s: `0x${string}` = `0x${signature.slice(66, 130)}`
-          const v = parseInt(signature.slice(130, 132), 16)
+          const { r, s, v } = splitSignature(signature)
 
           return writeContractAsync({
             address: stakingAddress,

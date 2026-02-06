@@ -1,11 +1,12 @@
 import { useState, useCallback } from 'react'
-import { useAccount, useWriteContract, useReadContract } from 'wagmi'
-import { parseUnits, zeroAddress, type Address } from 'viem'
+import { useAccount, useWriteContract } from 'wagmi'
+import { parseUnits, zeroAddress } from 'viem'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
 import { useTransactionSequence, useAllowance, useMorphoApy, type TransactionStep } from '../hooks'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
-import { ERC20_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
+import { ERC20_ABI, MORPHO_ABI } from '../contracts/abis'
+import { useMarketConfig } from '../hooks/useMarketConfig'
 
 type SupplyMode = 'supply' | 'withdraw'
 type BorrowMode = 'borrow' | 'repay'
@@ -23,46 +24,6 @@ export interface YieldCardProps {
   bullMarket: MarketData
   usdcBalance: bigint
   onSuccess?: () => void
-}
-
-interface MarketParams {
-  loanToken: Address
-  collateralToken: Address
-  oracle: Address
-  irm: Address
-  lltv: bigint
-}
-
-function useMarketConfig(side: MarketSide) {
-  const { chainId } = useAccount()
-  const addresses = chainId ? getAddresses(chainId) : null
-  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
-
-  const { data: morphoAddress } = useReadContract({
-    address: routerAddress,
-    abi: LEVERAGE_ROUTER_ABI,
-    functionName: 'MORPHO',
-    query: { enabled: !!routerAddress },
-  })
-
-  const { data: marketParamsRaw } = useReadContract({
-    address: routerAddress,
-    abi: LEVERAGE_ROUTER_ABI,
-    functionName: 'marketParams',
-    query: { enabled: !!routerAddress },
-  })
-
-  const marketParams: MarketParams | undefined = marketParamsRaw
-    ? {
-        loanToken: marketParamsRaw[0],
-        collateralToken: marketParamsRaw[1],
-        oracle: marketParamsRaw[2],
-        irm: marketParamsRaw[3],
-        lltv: marketParamsRaw[4],
-      }
-    : undefined
-
-  return { morphoAddress, marketParams }
 }
 
 interface MarketColumnProps {

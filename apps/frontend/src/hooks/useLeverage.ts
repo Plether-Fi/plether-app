@@ -1,4 +1,4 @@
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi'
+import { useAccount, useReadContract, useWriteContract, usePublicClient } from 'wagmi'
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { zeroAddress, keccak256, encodeAbiParameters } from 'viem'
 import { Result } from 'better-result'
@@ -12,6 +12,7 @@ import {
   type TransactionError,
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
+import { useContractTransaction } from './useContractTransaction'
 
 export type LeverageError = NotConnectedError | TransactionError
 
@@ -190,35 +191,7 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const openPosition = async (
     principal: bigint,
@@ -230,108 +203,22 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'leverage',
-      status: 'pending',
-      hash: undefined,
-      title: `Opening ${side} leverage position`,
-      steps: [
-        { label: 'Open position', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: routerAddress,
-              abi: LEVERAGE_ROUTER_ABI,
-              functionName: 'openLeverage',
-              args: [principal, leverage, maxSlippageBps, deadline],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'leverage', title: `Opening ${side} leverage position`,
+        steps: [{ label: 'Open position' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: routerAddress, abi: LEVERAGE_ROUTER_ABI, functionName: 'openLeverage',
+        args: [principal, leverage, maxSlippageBps, deadline] },
+    )
   }
 
-  return {
-    openPosition,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-  }
+  return { openPosition, ...txState }
 }
 
 export function useCloseLeverage(side: 'BEAR' | 'BULL') {
   const { chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const closePosition = async (
     collateralToWithdraw: bigint,
@@ -342,73 +229,15 @@ export function useCloseLeverage(side: 'BEAR' | 'BULL') {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'leverage',
-      status: 'pending',
-      hash: undefined,
-      title: `Closing ${side} leverage position`,
-      steps: [
-        { label: 'Close position', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: routerAddress,
-              abi: LEVERAGE_ROUTER_ABI,
-              functionName: 'closeLeverage',
-              args: [collateralToWithdraw, maxSlippageBps, deadline],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'leverage', title: `Closing ${side} leverage position`,
+        steps: [{ label: 'Close position' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: routerAddress, abi: LEVERAGE_ROUTER_ABI, functionName: 'closeLeverage',
+        args: [collateralToWithdraw, maxSlippageBps, deadline] },
+    )
   }
 
-  return {
-    closePosition,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-  }
+  return { closePosition, ...txState }
 }
 
 export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: () => void) {

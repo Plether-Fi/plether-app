@@ -12,6 +12,7 @@ import {
 } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
 import { getDeadline } from '../utils/deadline'
+import { EIP2612_PERMIT_TYPES, splitSignature } from '../utils/permit'
 
 // Note: useTransactionStore is only used by useZapBuyWithPermit and useZapSellWithPermit
 // useCurveSwap and useZapSwap do not create transactions - that's handled by TradeCard
@@ -360,15 +361,7 @@ export function useZapBuyWithPermit() {
               chainId: chainId,
               verifyingContract: addresses.USDC,
             },
-            types: {
-              Permit: [
-                { name: 'owner', type: 'address' },
-                { name: 'spender', type: 'address' },
-                { name: 'value', type: 'uint256' },
-                { name: 'nonce', type: 'uint256' },
-                { name: 'deadline', type: 'uint256' },
-              ],
-            },
+            types: EIP2612_PERMIT_TYPES,
             primaryType: 'Permit',
             message: {
               owner: address,
@@ -381,9 +374,7 @@ export function useZapBuyWithPermit() {
           setIsSigningPermit(false)
           setStepInProgress(txId, 1)
 
-          const r: `0x${string}` = signature.slice(0, 66) as `0x${string}`
-          const s: `0x${string}` = `0x${signature.slice(66, 130)}`
-          const v = parseInt(signature.slice(130, 132), 16)
+          const { r, s, v } = splitSignature(signature)
 
           const txHash = await writeContractAsync({
             address: addresses.ZAP_ROUTER,
@@ -508,15 +499,7 @@ export function useZapSellWithPermit() {
               chainId: chainId,
               verifyingContract: addresses.DXY_BULL,
             },
-            types: {
-              Permit: [
-                { name: 'owner', type: 'address' },
-                { name: 'spender', type: 'address' },
-                { name: 'value', type: 'uint256' },
-                { name: 'nonce', type: 'uint256' },
-                { name: 'deadline', type: 'uint256' },
-              ],
-            },
+            types: EIP2612_PERMIT_TYPES,
             primaryType: 'Permit',
             message: {
               owner: address,
@@ -529,9 +512,7 @@ export function useZapSellWithPermit() {
           setIsSigningPermit(false)
           setStepInProgress(txId, 1)
 
-          const r: `0x${string}` = signature.slice(0, 66) as `0x${string}`
-          const s: `0x${string}` = `0x${signature.slice(66, 130)}`
-          const v = parseInt(signature.slice(130, 132), 16)
+          const { r, s, v } = splitSignature(signature)
 
           const txHash = await writeContractAsync({
             address: addresses.ZAP_ROUTER,

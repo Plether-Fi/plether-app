@@ -1,76 +1,16 @@
-import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
-import { useRef, useEffect, useMemo, useCallback } from 'react'
-import { zeroAddress, keccak256, encodeAbiParameters, type Address } from 'viem'
+import { useAccount, useReadContract } from 'wagmi'
+import { useCallback } from 'react'
+import { zeroAddress } from 'viem'
 import { Result } from 'better-result'
-import { LEVERAGE_ROUTER_ABI, MORPHO_ABI, ERC20_ABI, MORPHO_ORACLE_ABI } from '../contracts/abis'
+import { MORPHO_ABI, ERC20_ABI, MORPHO_ORACLE_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
-import { useTransactionStore } from '../stores/transactionStore'
-import {
-  parseTransactionError,
-  getErrorMessage,
-  type TransactionError,
-} from '../utils/errors'
+import { type TransactionError } from '../utils/errors'
 import { NotConnectedError } from './usePlethCore'
+import { useMarketConfig } from './useMarketConfig'
+import { useContractTransaction } from './useContractTransaction'
+export type { MarketParams } from './useMarketConfig'
 
 export type LendingError = NotConnectedError | TransactionError
-
-export interface MarketParams {
-  loanToken: Address
-  collateralToken: Address
-  oracle: Address
-  irm: Address
-  lltv: bigint
-}
-
-function useMarketConfig(side: 'BEAR' | 'BULL') {
-  const { chainId } = useAccount()
-  const addresses = chainId ? getAddresses(chainId) : null
-  const routerAddress = side === 'BEAR' ? addresses?.LEVERAGE_ROUTER : addresses?.BULL_LEVERAGE_ROUTER
-
-  const { data: morphoAddress } = useReadContract({
-    address: routerAddress,
-    abi: LEVERAGE_ROUTER_ABI,
-    functionName: 'MORPHO',
-    query: { enabled: !!routerAddress },
-  })
-
-  const { data: marketParams } = useReadContract({
-    address: routerAddress,
-    abi: LEVERAGE_ROUTER_ABI,
-    functionName: 'marketParams',
-    query: { enabled: !!routerAddress },
-  })
-
-  const marketId = useMemo(() => {
-    if (!marketParams) return undefined
-    const [loanToken, collateralToken, oracle, irm, lltv] = marketParams
-    return keccak256(
-      encodeAbiParameters(
-        [
-          { type: 'address' },
-          { type: 'address' },
-          { type: 'address' },
-          { type: 'address' },
-          { type: 'uint256' },
-        ],
-        [loanToken, collateralToken, oracle, irm, lltv]
-      )
-    )
-  }, [marketParams])
-
-  const marketParamsStruct: MarketParams | undefined = useMemo(() => {
-    if (!marketParams) return undefined
-    const [loanToken, collateralToken, oracle, irm, lltv] = marketParams
-    return { loanToken, collateralToken, oracle, irm, lltv }
-  }, [marketParams])
-
-  return {
-    morphoAddress,
-    marketParams: marketParamsStruct,
-    marketId,
-    routerAddress,
-  }
-}
 
 export function useLendingPosition(side: 'BEAR' | 'BULL') {
   const { address } = useAccount()
@@ -250,337 +190,73 @@ export function useSupply(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const { morphoAddress, marketParams, marketId } = useMarketConfig(side)
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const supply = async (assets: bigint): Promise<Result<`0x${string}`, LendingError>> => {
     if (!morphoAddress || !marketParams || !address || !addresses) {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'supply',
-      status: 'pending',
-      hash: undefined,
-      title: `Supplying USDC to ${side} market`,
-      steps: [
-        { label: 'Supply USDC', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: morphoAddress,
-              abi: MORPHO_ABI,
-              functionName: 'supply',
-              args: [marketParams, assets, 0n, address, '0x'],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'supply', title: `Supplying USDC to ${side} market`,
+        steps: [{ label: 'Supply USDC' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: morphoAddress, abi: MORPHO_ABI, functionName: 'supply',
+        args: [marketParams, assets, 0n, address, '0x'] },
+    )
   }
 
-  return {
-    supply,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-    morphoAddress,
-    marketId,
-  }
+  return { supply, ...txState, morphoAddress, marketId }
 }
 
 export function useWithdraw(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const { morphoAddress, marketParams } = useMarketConfig(side)
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const withdraw = async (assets: bigint): Promise<Result<`0x${string}`, LendingError>> => {
     if (!morphoAddress || !marketParams || !address || !addresses) {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'withdraw',
-      status: 'pending',
-      hash: undefined,
-      title: `Withdrawing USDC from ${side} market`,
-      steps: [
-        { label: 'Withdraw USDC', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: morphoAddress,
-              abi: MORPHO_ABI,
-              functionName: 'withdraw',
-              args: [marketParams, assets, 0n, address, address],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'withdraw', title: `Withdrawing USDC from ${side} market`,
+        steps: [{ label: 'Withdraw USDC' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: morphoAddress, abi: MORPHO_ABI, functionName: 'withdraw',
+        args: [marketParams, assets, 0n, address, address] },
+    )
   }
 
-  return {
-    withdraw,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-  }
+  return { withdraw, ...txState }
 }
 
 export function useBorrow(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const { morphoAddress, marketParams } = useMarketConfig(side)
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const borrow = async (assets: bigint): Promise<Result<`0x${string}`, LendingError>> => {
     if (!morphoAddress || !marketParams || !address || !addresses) {
       return Result.err(new NotConnectedError())
     }
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'borrow',
-      status: 'pending',
-      hash: undefined,
-      title: `Borrowing USDC from ${side} market`,
-      steps: [
-        { label: 'Borrow USDC', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: morphoAddress,
-              abi: MORPHO_ABI,
-              functionName: 'borrow',
-              args: [marketParams, assets, 0n, address, address],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'borrow', title: `Borrowing USDC from ${side} market`,
+        steps: [{ label: 'Borrow USDC' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: morphoAddress, abi: MORPHO_ABI, functionName: 'borrow',
+        args: [marketParams, assets, 0n, address, address] },
+    )
   }
 
-  return {
-    borrow,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-  }
+  return { borrow, ...txState }
 }
 
 export function useRepay(side: 'BEAR' | 'BULL') {
   const { address, chainId } = useAccount()
   const addresses = chainId ? getAddresses(chainId) : null
   const { morphoAddress, marketParams, marketId } = useMarketConfig(side)
-  const addTransaction = useTransactionStore((s) => s.addTransaction)
-  const updateTransaction = useTransactionStore((s) => s.updateTransaction)
-  const setStepInProgress = useTransactionStore((s) => s.setStepInProgress)
-  const setStepSuccess = useTransactionStore((s) => s.setStepSuccess)
-  const txIdRef = useRef<string | null>(null)
+  const { sendTransaction, ...txState } = useContractTransaction()
 
   const { data: marketData } = useReadContract({
     address: morphoAddress,
@@ -592,30 +268,6 @@ export function useRepay(side: 'BEAR' | 'BULL') {
 
   const totalBorrowAssets = marketData?.[2] ?? 0n
   const totalBorrowShares = marketData?.[3] ?? 0n
-
-  const { writeContract, data: hash, isPending, error, reset } = useWriteContract()
-
-  const { isLoading: isConfirming, isSuccess, isError, error: receiptError } = useWaitForTransactionReceipt({
-    hash,
-  })
-
-  useEffect(() => {
-    if (isSuccess && txIdRef.current && hash) {
-      setStepSuccess(txIdRef.current, hash)
-      txIdRef.current = null
-    }
-  }, [isSuccess, hash, setStepSuccess])
-
-  useEffect(() => {
-    if (isError && txIdRef.current) {
-      const txError = parseTransactionError(receiptError)
-      updateTransaction(txIdRef.current, {
-        status: 'failed',
-        errorMessage: getErrorMessage(txError),
-      })
-      txIdRef.current = null
-    }
-  }, [isError, receiptError, updateTransaction])
 
   const assetsToShares = useCallback((assets: bigint): bigint => {
     if (totalBorrowAssets === 0n) return assets
@@ -629,73 +281,15 @@ export function useRepay(side: 'BEAR' | 'BULL') {
 
     const shares = assetsToShares(assets)
 
-    const txId = crypto.randomUUID()
-    txIdRef.current = txId
-    addTransaction({
-      id: txId,
-      type: 'repay',
-      status: 'pending',
-      hash: undefined,
-      title: `Repaying USDC to ${side} market`,
-      steps: [
-        { label: 'Repay USDC', status: 'pending' },
-        { label: 'Confirming onchain (~12s)', status: 'pending' },
-      ],
-    })
-    setStepInProgress(txId, 0)
-
-    return Result.tryPromise({
-      try: () =>
-        new Promise<`0x${string}`>((resolve, reject) => {
-          writeContract(
-            {
-              address: morphoAddress,
-              abi: MORPHO_ABI,
-              functionName: 'repay',
-              args: [marketParams, 0n, shares, address, '0x'],
-            },
-            {
-              onSuccess: (hash) => {
-                setStepInProgress(txId, 1)
-                updateTransaction(txId, { hash, status: 'confirming' })
-                resolve(hash)
-              },
-              onError: (err) => {
-                const txError = parseTransactionError(err)
-                updateTransaction(txId, {
-                  status: 'failed',
-                  errorMessage: getErrorMessage(txError),
-                })
-                txIdRef.current = null
-                reject(txError)
-              },
-            }
-          )
-        }),
-      catch: (err) => {
-        if (err instanceof Error && '_tag' in err) {
-          return err as TransactionError
-        }
-        const txError = parseTransactionError(err)
-        updateTransaction(txId, {
-          status: 'failed',
-          errorMessage: getErrorMessage(txError),
-        })
-        txIdRef.current = null
-        return txError
-      },
-    })
+    return sendTransaction(
+      { type: 'repay', title: `Repaying USDC to ${side} market`,
+        steps: [{ label: 'Repay USDC' }, { label: 'Confirming onchain (~12s)' }] },
+      { address: morphoAddress, abi: MORPHO_ABI, functionName: 'repay',
+        args: [marketParams, 0n, shares, address, '0x'] },
+    )
   }
 
-  return {
-    repay,
-    isPending,
-    isConfirming,
-    isSuccess,
-    error,
-    reset,
-    hash,
-  }
+  return { repay, ...txState }
 }
 
 export function useUsdcAllowanceForMorpho(side: 'BEAR' | 'BULL') {
