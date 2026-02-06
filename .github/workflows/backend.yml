@@ -1,0 +1,39 @@
+name: Backend
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: 'latest'
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: ${{ runner.os }}-cabal-${{ hashFiles('apps/backend/plether-api.cabal') }}
+          restore-keys: ${{ runner.os }}-cabal-
+
+      - name: Install dependencies
+        run: cabal update && cabal build --only-dependencies
+
+      - name: Build
+        run: cabal build
+
+      - name: Run tests
+        run: cabal test
