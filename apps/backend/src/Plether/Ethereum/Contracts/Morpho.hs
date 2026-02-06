@@ -7,7 +7,6 @@ module Plether.Ethereum.Contracts.Morpho
   , decodeMarket
   , Position (..)
   , Market (..)
-  , morphoAddress
   ) where
 
 import Data.ByteString (ByteString)
@@ -15,9 +14,6 @@ import qualified Data.ByteString as BS
 import Data.Text (Text)
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeBytes32, encodeCall)
 import Plether.Ethereum.Client (CallParams (..), EthClient, RpcError, ethCall)
-
-morphoAddress :: Text
-morphoAddress = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
 
 data Position = Position
   { posSupplyShares :: Integer
@@ -63,12 +59,12 @@ decodeMarket bs =
     , mktFee = decodeUint256 (BS.take 32 $ BS.drop 160 bs)
     }
 
-position :: EthClient -> ByteString -> Text -> IO (Either RpcError Position)
-position client marketId user = do
-  result <- ethCall client (CallParams morphoAddress (positionCall marketId user))
+position :: EthClient -> Text -> ByteString -> Text -> IO (Either RpcError Position)
+position client morpho marketId user = do
+  result <- ethCall client (CallParams morpho (positionCall marketId user))
   pure $ fmap decodePosition result
 
-market :: EthClient -> ByteString -> IO (Either RpcError Market)
-market client marketId = do
-  result <- ethCall client (CallParams morphoAddress (marketCall marketId))
+market :: EthClient -> Text -> ByteString -> IO (Either RpcError Market)
+market client morpho marketId = do
+  result <- ethCall client (CallParams morpho (marketCall marketId))
   pure $ fmap decodeMarket result
