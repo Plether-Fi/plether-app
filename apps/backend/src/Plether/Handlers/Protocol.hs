@@ -11,12 +11,16 @@ import Plether.Cache
   , getCached
   , setCached
   )
+import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..))
 import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
+import qualified Plether.Ethereum.Contracts.Morpho as Morpho
+import qualified Plether.Ethereum.Contracts.MorphoIrm as MorphoIrm
 import qualified Plether.Ethereum.Contracts.StakedToken as Staked
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import Plether.Types
+import Plether.Utils.Hex (hexToByteString)
 import Plether.Utils.Numeric (wad)
 
 getProtocolStatus :: AppCache -> EthClient -> Config -> IO (Either ApiError (ApiResponse ProtocolStatus))
@@ -68,7 +72,12 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
             1 -> Paused
             _ -> Settled
 
-          protoStatus =
+      apyInfo <- getApyInfo client cfg
+      let apy = case apyInfo of
+            Right a -> a
+            Left _ -> ApyInfo { apyBear = ApyStats 0 0 0, apyBull = ApyStats 0 0 0 }
+
+      let protoStatus =
             ProtocolStatus
               { statusPrices =
                   Prices
@@ -98,11 +107,7 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
                           , stakingExchangeRate = bullExchangeRate
                           }
                     }
-              , statusApy =
-                  ApyInfo
-                    { apyBear = ApyStats 0 0 0
-                    , apyBull = ApyStats 0 0 0
-                    }
+              , statusApy = apy
               , statusTimestamp = timestamp
               }
 
@@ -116,44 +121,113 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
     (_, _, _, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
 
-getProtocolConfig :: Config -> IO (ApiResponse ProtocolConfig)
-getProtocolConfig cfg = do
+getApyInfo :: EthClient -> Config -> IO (Either ApiError ApyInfo)
+getApyInfo client cfg = do
   let addrs = cfgAddresses cfg
-      config =
-        ProtocolConfig
-          { configContracts =
-              Contracts
-                { contractUsdc = addrUsdc addrs
-                , contractDxyBear = addrDxyBear addrs
-                , contractDxyBull = addrDxyBull addrs
-                , contractSdxyBear = addrSdxyBear addrs
-                , contractSdxyBull = addrSdxyBull addrs
-                , contractSyntheticSplitter = addrSyntheticSplitter addrs
-                , contractCurvePool = addrCurvePool addrs
-                , contractZapRouter = addrZapRouter addrs
-                , contractLeverageRouter = addrLeverageRouter addrs
-                , contractBullLeverageRouter = addrBullLeverageRouter addrs
-                , contractBasketOracle = addrBasketOracle addrs
-                , contractMorpho = "0xBBBBBbbBBb9cC5e90e3b3Af64bdAF62C37EEFFCb"
-                , contractMorphoBearMarket = ""
-                , contractMorphoBullMarket = ""
-                }
-          , configDecimals =
-              Decimals
-                { decUsdc = 6
-                , decPlDxyBear = 18
-                , decPlDxyBull = 18
-                , decOraclePrice = 8
-                , decMorphoShares = 18
-                }
-          , configConstants =
-              Constants
-                { constMaxSlippage = 0.01
-                , constMinLeverage = 1.1
-                , constMaxLeverage = 10.0
-                , constLiquidationLtv = 0.86
-                }
-          , configChainId = cfgChainId cfg
-          }
-  pure $ mkResponse 0 (cfgChainId cfg) config
+      morphoAddr = addrMorpho addrs
+  eBearApy <- getMarketApy client addrs morphoAddr (addrMorphoMarketBear addrs)
+  eBullApy <- getMarketApy client addrs morphoAddr (addrMorphoMarketBull addrs)
+  case (eBearApy, eBullApy) of
+    (Right bearApy, Right bullApy) ->
+      pure $ Right $ ApyInfo { apyBear = bearApy, apyBull = bullApy }
+    (Left err, _) -> pure $ Left err
+    (_, Left err) -> pure $ Left err
 
+getMarketApy :: EthClient -> Addresses -> Text -> Text -> IO (Either ApiError ApyStats)
+getMarketApy client addrs morphoAddr marketIdHex = do
+  let marketIdBs = hexToByteString marketIdHex
+  eMarket <- Morpho.market client morphoAddr marketIdBs
+  eMarketParams <- Morpho.idToMarketParams client morphoAddr marketIdBs
+  case (eMarket, eMarketParams) of
+    (Right mkt, Right mp) -> do
+      let irmAddr = Morpho.mpIrm mp
+      eBorrowRate <- MorphoIrm.borrowRateView client irmAddr mp mkt
+      case eBorrowRate of
+        Right borrowRate -> do
+          let secondsPerYear = 31536000 :: Integer
+              -- borrowRate is per-second rate scaled by 1e18
+              -- borrowApy = borrowRate * secondsPerYear / 1e18
+              borrowApy = fromIntegral (borrowRate * secondsPerYear) / (1e18 :: Double)
+
+              totalSupply = Morpho.mktTotalSupplyAssets mkt
+              totalBorrow = Morpho.mktTotalBorrowAssets mkt
+              fee = Morpho.mktFee mkt
+
+              utilization =
+                if totalSupply > 0
+                  then fromIntegral totalBorrow / fromIntegral totalSupply :: Double
+                  else 0
+
+              -- supplyApy = borrowApy * utilization * (1 - fee/1e18)
+              feeRate = fromIntegral fee / (1e18 :: Double)
+              supplyApy = borrowApy * utilization * (1 - feeRate)
+
+          pure $ Right $ ApyStats
+            { apySupply = supplyApy
+            , apyBorrow = borrowApy
+            , apyUtilization = utilization
+            }
+        Left err -> pure $ Left $ rpcErrorToApiError err
+    (Left err, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, Left err) -> pure $ Left $ rpcErrorToApiError err
+
+getProtocolConfig :: EthClient -> Config -> IO (Either ApiError (ApiResponse ProtocolConfig))
+getProtocolConfig client cfg = do
+  let addrs = cfgAddresses cfg
+      morphoAddr = addrMorpho addrs
+      bearMarketBs = hexToByteString (addrMorphoMarketBear addrs)
+      bullMarketBs = hexToByteString (addrMorphoMarketBull addrs)
+
+  eBearParams <- Morpho.idToMarketParams client morphoAddr bearMarketBs
+  eBullParams <- Morpho.idToMarketParams client morphoAddr bullMarketBs
+  eBlockNum <- ethBlockNumber client
+
+  case (eBearParams, eBullParams, eBlockNum) of
+    (Right bearParams, Right bullParams, Right blockNum) -> do
+      let config =
+            ProtocolConfig
+              { configContracts =
+                  Contracts
+                    { contractUsdc = addrUsdc addrs
+                    , contractDxyBear = addrDxyBear addrs
+                    , contractDxyBull = addrDxyBull addrs
+                    , contractSdxyBear = addrSdxyBear addrs
+                    , contractSdxyBull = addrSdxyBull addrs
+                    , contractSyntheticSplitter = addrSyntheticSplitter addrs
+                    , contractCurvePool = addrCurvePool addrs
+                    , contractZapRouter = addrZapRouter addrs
+                    , contractLeverageRouter = addrLeverageRouter addrs
+                    , contractBullLeverageRouter = addrBullLeverageRouter addrs
+                    , contractBasketOracle = addrBasketOracle addrs
+                    , contractMorpho = morphoAddr
+                    , contractMorphoBearMarket = addrMorphoMarketBear addrs
+                    , contractMorphoBullMarket = addrMorphoMarketBull addrs
+                    }
+              , configDecimals =
+                  Decimals
+                    { decUsdc = 6
+                    , decPlDxyBear = 18
+                    , decPlDxyBull = 18
+                    , decOraclePrice = 8
+                    , decMorphoShares = 18
+                    }
+              , configConstants =
+                  Constants
+                    { constMaxSlippage = 0.01
+                    , constMinLeverage = 1.1
+                    , constMaxLeverage = 10.0
+                    , constLiquidationLtv = 0.86
+                    }
+              , configMarkets =
+                  MarketConfig
+                    { marketBearId = addrMorphoMarketBear addrs
+                    , marketBullId = addrMorphoMarketBull addrs
+                    , marketBearLltv = pack $ show (Morpho.mpLltv bearParams)
+                    , marketBullLltv = pack $ show (Morpho.mpLltv bullParams)
+                    }
+              , configChainId = cfgChainId cfg
+              }
+      pure $ Right $ mkResponse blockNum (cfgChainId cfg) config
+    (Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, Left err, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, Left err) -> pure $ Left $ rpcErrorToApiError err

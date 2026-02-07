@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits, formatUnits } from 'viem'
 import { Modal } from './ui'
-import { useAdjustCollateral, useApprovalFlow, useLeveragePosition } from '../hooks'
-import { useUserBalances } from '../api'
+import { useAdjustCollateral, useApprovalFlow } from '../hooks'
+import { useUserDashboard } from '../api'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { formatUsd } from '../utils/formatters'
 import { getDeadline } from '../utils/deadline'
@@ -13,10 +13,11 @@ export interface AdjustPositionModalProps {
   isOpen: boolean
   onClose: () => void
   position: LeveragePosition
+  collateralShares: bigint
   onSuccess?: () => void
 }
 
-export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: AdjustPositionModalProps) {
+export function AdjustPositionModal({ isOpen, onClose, position, collateralShares, onSuccess }: AdjustPositionModalProps) {
   const { address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
 
@@ -24,9 +25,8 @@ export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: Ad
   const [amount, setAmount] = useState('')
   const [isHidden, setIsHidden] = useState(false)
 
-  const { data: balancesData } = useUserBalances(address)
-  const usdcBalance = balancesData ? BigInt(balancesData.data.usdc) : 0n
-  const { collateral: collateralShares } = useLeveragePosition(position.side)
+  const { data: dashboardData } = useUserDashboard(address)
+  const usdcBalance = dashboardData ? BigInt(dashboardData.data.balances.usdc) : 0n
 
   const routerAddress = position.side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
   const { addCollateral, removeCollateral, isPending, isSuccess, reset } = useAdjustCollateral(position.side, onSuccess)

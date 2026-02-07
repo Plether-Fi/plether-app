@@ -37,6 +37,8 @@ library
         Plether.Ethereum.Contracts.BasketOracle
         Plether.Ethereum.Contracts.StakedToken
         Plether.Ethereum.Contracts.Morpho
+        Plether.Ethereum.Contracts.MorphoOracle
+        Plether.Ethereum.Contracts.MorphoIrm
         Plether.Ethereum.Contracts.CurvePool
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter

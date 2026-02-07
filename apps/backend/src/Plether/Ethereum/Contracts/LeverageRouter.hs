@@ -1,9 +1,12 @@
 module Plether.Ethereum.Contracts.LeverageRouter
   ( getActualDebt
+  , getCollateral
   , previewOpenLeverage
   , getActualDebtCall
+  , getCollateralCall
   , previewOpenLeverageCall
   , decodeActualDebt
+  , decodeCollateral
   , decodePreviewOpenLeverage
   , PreviewOpenLeverageResult (..)
   ) where
@@ -41,10 +44,21 @@ decodePreviewOpenLeverage bs =
     , polExpectedDebt = decodeUint256 (BS.take 32 $ BS.drop 96 bs)
     }
 
+getCollateralCall :: Text -> ByteString
+getCollateralCall user = encodeCall "getCollateral(address)" [encodeAddress user]
+
+decodeCollateral :: ByteString -> Integer
+decodeCollateral = decodeUint256
+
 getActualDebt :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
 getActualDebt client router user = do
   result <- ethCall client (CallParams router (getActualDebtCall user))
   pure $ fmap decodeActualDebt result
+
+getCollateral :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
+getCollateral client router user = do
+  result <- ethCall client (CallParams router (getCollateralCall user))
+  pure $ fmap decodeCollateral result
 
 previewOpenLeverage :: EthClient -> Text -> Integer -> Integer -> IO (Either RpcError PreviewOpenLeverageResult)
 previewOpenLeverage client router principal leverage = do

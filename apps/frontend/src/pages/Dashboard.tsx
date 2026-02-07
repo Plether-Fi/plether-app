@@ -9,7 +9,7 @@ import { LeverageCard } from '../components/LeverageCard'
 import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import { useLeveragePosition, useTransactionSequence, useCombinedLendingPosition, useAvailableToBorrow, type TransactionStep } from '../hooks'
+import { useTransactionSequence, type TransactionStep } from '../hooks'
 import { useUserDashboard, apiQueryKeys } from '../api'
 import { useQueryClient } from '@tanstack/react-query'
 import { useWriteContract } from 'wagmi'
@@ -55,12 +55,8 @@ export function Dashboard() {
     }
   }
 
-  const bearPosition = useLeveragePosition('BEAR')
-  const bullPosition = useLeveragePosition('BULL')
-
-  const lendingPosition = useCombinedLendingPosition()
-  const bearBorrowable = useAvailableToBorrow('BEAR')
-  const bullBorrowable = useAvailableToBorrow('BULL')
+  const dashLeverage = dashboardData?.data.leverage
+  const dashLending = dashboardData?.data.lending
 
   const slippage = useSettingsStore((s) => s.slippage)
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
@@ -68,7 +64,8 @@ export function Dashboard() {
   const closeSequence = useTransactionSequence()
 
   const handleClosePosition = (position: LeveragePosition) => {
-    const collateralToClose = position.side === 'BEAR' ? bearPosition.collateral : bullPosition.collateral
+    const apiPos = position.side === 'BEAR' ? dashLeverage?.bear : dashLeverage?.bull
+    const collateralToClose = apiPos ? BigInt(apiPos.collateral) : 0n
     const routerAddress = position.side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
 
     const buildCloseSteps = (): TransactionStep[] => {
@@ -77,69 +74,64 @@ export function Dashboard() {
 
       return [{
         label: `Close ${position.side} position`,
-        action: () => {
-          console.log('[closeLeverage] args:', {
-            side: position.side,
-            collateralToWithdraw: collateralToClose.toString(),
-            slippageBps: slippageBps.toString(),
-          })
-
-          return writeContractAsync({
-            address: routerAddress,
-            abi: LEVERAGE_ROUTER_ABI,
-            functionName: 'closeLeverage',
-            args: [collateralToClose, slippageBps, deadline],
-          })
-        },
+        action: () => writeContractAsync({
+          address: routerAddress,
+          abi: LEVERAGE_ROUTER_ABI,
+          functionName: 'closeLeverage',
+          args: [collateralToClose, slippageBps, deadline],
+        }),
       }]
     }
 
     void closeSequence.execute({
       title: `Closing ${position.side} leverage position`,
       buildSteps: buildCloseSteps,
-      onSuccess: () => {
-        void bearPosition.refetch()
-        void bullPosition.refetch()
-        refetchBalances()
-      },
+      onSuccess: refetchBalances,
     })
   }
 
   const positions: LeveragePosition[] = []
 
-  if (bearPosition.hasPosition && bearPosition.collateralUsdc > 0n) {
-    const leverageNum = Number(bearPosition.leverage) / 100
+  if (dashLeverage?.bear) {
+    const pos = dashLeverage.bear
+    const collateralUsdc = BigInt(pos.collateralUsd)
+    const debt = BigInt(pos.debt)
     positions.push({
       id: 'bear-position',
       side: 'BEAR',
-      size: bearPosition.collateralUsdc,
-      collateral: bearPosition.collateralUsdc > bearPosition.debt ? bearPosition.collateralUsdc - bearPosition.debt : 0n,
-      leverage: leverageNum,
+      size: collateralUsdc,
+      collateral: collateralUsdc > debt ? collateralUsdc - debt : 0n,
+      leverage: Number(pos.leverage) / 100,
       entryPrice: 0n,
-      liquidationPrice: bearPosition.liquidationPrice,
-      healthFactor: bearPosition.healthFactor,
+      liquidationPrice: BigInt(pos.liquidationPrice),
+      healthFactor: Number(pos.healthFactor) / 100,
       pnl: 0n,
       pnlPercentage: 0,
     })
   }
 
-  if (bullPosition.hasPosition && bullPosition.collateralUsdc > 0n) {
-    const leverageNum = Number(bullPosition.leverage) / 100
+  if (dashLeverage?.bull) {
+    const pos = dashLeverage.bull
+    const collateralUsdc = BigInt(pos.collateralUsd)
+    const debt = BigInt(pos.debt)
     positions.push({
       id: 'bull-position',
       side: 'BULL',
-      size: bullPosition.collateralUsdc,
-      collateral: bullPosition.collateralUsdc > bullPosition.debt ? bullPosition.collateralUsdc - bullPosition.debt : 0n,
-      leverage: leverageNum,
+      size: collateralUsdc,
+      collateral: collateralUsdc > debt ? collateralUsdc - debt : 0n,
+      leverage: Number(pos.leverage) / 100,
       entryPrice: 0n,
-      liquidationPrice: bullPosition.liquidationPrice,
-      healthFactor: bullPosition.healthFactor,
+      liquidationPrice: BigInt(pos.liquidationPrice),
+      healthFactor: Number(pos.healthFactor) / 100,
       pnl: 0n,
       pnlPercentage: 0,
     })
   }
 
-  const totalSupplied = lendingPosition.totalSupplied
+  const bearLending = dashLending?.bear
+  const bullLending = dashLending?.bull
+  const totalSupplied = (bearLending ? BigInt(bearLending.supplied) : 0n)
+    + (bullLending ? BigInt(bullLending.supplied) : 0n)
 
   return (
     <div className="space-y-10">
@@ -173,7 +165,7 @@ export function Dashboard() {
           secondaryLabel="Total Lending"
           secondaryDecimals={6}
           secondaryToken="USDC"
-          isLoading={isConnected && (dashboardLoading || lendingPosition.isLoading)}
+          isLoading={isConnected && dashboardLoading}
         />
         <DashboardTile
           variant="BEAR"
@@ -192,7 +184,7 @@ export function Dashboard() {
       {/* Positions section - always visible */}
       <PositionsSection
         positions={isConnected ? positions : []}
-        isLoading={isConnected && (bearPosition.isLoading || bullPosition.isLoading)}
+        isLoading={isConnected && dashboardLoading}
         isClosing={closeSequence.isRunning}
         onAdjust={(position) => {
           setSelectedPosition(position)
@@ -222,34 +214,26 @@ export function Dashboard() {
                 <LeverageCard
                   usdcBalance={usdcBalance}
                   refetchBalances={refetchBalances}
-                  onPositionOpened={() => {
-                    void bearPosition.refetch()
-                    void bullPosition.refetch()
-                  }}
+                  onPositionOpened={refetchBalances}
                 />
               )}
 
               {mainTab === 'lending' && (
                 <YieldCard
                   bearMarket={{
-                    suppliedAmount: lendingPosition.bearPosition.suppliedAssets,
-                    borrowedAmount: lendingPosition.bearPosition.borrowedAssets,
-                    availableToBorrow: bearBorrowable.availableToBorrow,
-                    collateral: bearBorrowable.collateralUsd,
+                    suppliedAmount: bearLending ? BigInt(bearLending.supplied) : 0n,
+                    borrowedAmount: bearLending ? BigInt(bearLending.borrowed) : 0n,
+                    availableToBorrow: bearLending ? BigInt(bearLending.availableToBorrow) : 0n,
+                    collateral: bearLending ? BigInt(bearLending.collateral) : 0n,
                   }}
                   bullMarket={{
-                    suppliedAmount: lendingPosition.bullPosition.suppliedAssets,
-                    borrowedAmount: lendingPosition.bullPosition.borrowedAssets,
-                    availableToBorrow: bullBorrowable.availableToBorrow,
-                    collateral: bullBorrowable.collateralUsd,
+                    suppliedAmount: bullLending ? BigInt(bullLending.supplied) : 0n,
+                    borrowedAmount: bullLending ? BigInt(bullLending.borrowed) : 0n,
+                    availableToBorrow: bullLending ? BigInt(bullLending.availableToBorrow) : 0n,
+                    collateral: bullLending ? BigInt(bullLending.collateral) : 0n,
                   }}
                   usdcBalance={usdcBalance}
-                  onSuccess={() => {
-                    void lendingPosition.refetch()
-                    void bearPosition.refetch()
-                    void bullPosition.refetch()
-                    refetchBalances()
-                  }}
+                  onSuccess={refetchBalances}
                 />
               )}
             </div>
@@ -274,11 +258,12 @@ export function Dashboard() {
                 setSelectedPosition(null)
               }}
               position={selectedPosition}
-              onSuccess={() => {
-                void bearPosition.refetch()
-                void bullPosition.refetch()
-                refetchBalances()
-              }}
+              collateralShares={
+                selectedPosition.side === 'BEAR'
+                  ? (dashLeverage?.bear ? BigInt(dashLeverage.bear.collateral) : 0n)
+                  : (dashLeverage?.bull ? BigInt(dashLeverage.bull.collateral) : 0n)
+              }
+              onSuccess={refetchBalances}
             />
           )}
         </>

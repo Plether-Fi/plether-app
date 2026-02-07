@@ -10,6 +10,7 @@ module Plether.Types.User
   , UserPositions (..)
   , LeveragePositions (..)
   , LendingPositions (..)
+  , MorphoAuthorization (..)
   ) where
 
 import Data.Aeson (ToJSON (..), object, (.=))
@@ -110,10 +111,25 @@ instance ToJSON LendingPositions where
       , "bull" .= lendPosBull
       ]
 
+data MorphoAuthorization = MorphoAuthorization
+  { authBearLeverageRouter :: Bool
+  , authBullLeverageRouter :: Bool
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON MorphoAuthorization where
+  toJSON MorphoAuthorization {..} =
+    object
+      [ "bearLeverageRouter" .= authBearLeverageRouter
+      , "bullLeverageRouter" .= authBullLeverageRouter
+      ]
+
 data UserDashboard = UserDashboard
   { dashBalances :: UserBalances
   , dashLeverage :: LeveragePositions
   , dashLending :: LendingPositions
+  , dashAllowances :: UserAllowances
+  , dashAuthorization :: MorphoAuthorization
   }
   deriving stock (Show, Generic)
 
@@ -123,6 +139,8 @@ instance ToJSON UserDashboard where
       [ "balances" .= dashBalances
       , "leverage" .= dashLeverage
       , "lending" .= dashLending
+      , "allowances" .= dashAllowances
+      , "authorization" .= dashAuthorization
       ]
 
 data UsdcAllowances = UsdcAllowances
@@ -130,6 +148,9 @@ data UsdcAllowances = UsdcAllowances
   , usdcAllowZap :: Integer
   , usdcAllowMorphoBear :: Integer
   , usdcAllowMorphoBull :: Integer
+  , usdcAllowCurvePool :: Integer
+  , usdcAllowLeverageRouter :: Integer
+  , usdcAllowBullLeverageRouter :: Integer
   }
   deriving stock (Show, Generic)
 
@@ -140,6 +161,9 @@ instance ToJSON UsdcAllowances where
       , "zap" .= show usdcAllowZap
       , "morphoBear" .= show usdcAllowMorphoBear
       , "morphoBull" .= show usdcAllowMorphoBull
+      , "curvePool" .= show usdcAllowCurvePool
+      , "leverageRouter" .= show usdcAllowLeverageRouter
+      , "bullLeverageRouter" .= show usdcAllowBullLeverageRouter
       ]
 
 data BearAllowances = BearAllowances
@@ -163,6 +187,7 @@ data BullAllowances = BullAllowances
   { bullAllowSplitter :: Integer
   , bullAllowStaking :: Integer
   , bullAllowLeverageRouter :: Integer
+  , bullAllowZapRouter :: Integer
   }
   deriving stock (Show, Generic)
 
@@ -172,6 +197,7 @@ instance ToJSON BullAllowances where
       [ "splitter" .= show bullAllowSplitter
       , "staking" .= show bullAllowStaking
       , "leverageRouter" .= show bullAllowLeverageRouter
+      , "zapRouter" .= show bullAllowZapRouter
       ]
 
 data UserAllowances = UserAllowances

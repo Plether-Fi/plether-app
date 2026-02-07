@@ -5,12 +5,10 @@ import { formatAmount, formatUsd } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
-import { useUserBalances, useMintQuote, useBurnQuote, apiQueryKeys } from '../api'
+import { useUserDashboard, useMintQuote, useBurnQuote, apiQueryKeys } from '../api'
 import { useQueryClient } from '@tanstack/react-query'
-import { useAllowance } from '../hooks/useAllowance'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
-import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 
 type MintMode = 'mint' | 'redeem'
 
@@ -24,16 +22,15 @@ function parsePairAmount(input: string): bigint {
 }
 
 export function Mint() {
-  const { isConnected, address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
+  const { isConnected, address } = useAccount()
   const txStore = useTransactionStore()
   const queryClient = useQueryClient()
 
   const [mode, setMode] = useState<MintMode>('mint')
   const [inputAmount, setInputAmount] = useState('')
 
-  const { data: balancesData } = useUserBalances(address)
-  const balances = balancesData?.data
+  const { data: dashboardData } = useUserDashboard(address)
+  const balances = dashboardData?.data.balances
 
   const usdcBalance = balances ? BigInt(balances.usdc) : 0n
   const bearBalance = balances ? BigInt(balances.bear) : 0n
@@ -41,7 +38,7 @@ export function Mint() {
 
   const refetchBalances = useCallback(() => {
     if (address) {
-      void queryClient.invalidateQueries({ queryKey: apiQueryKeys.user.balances(address) })
+      void queryClient.invalidateQueries({ queryKey: apiQueryKeys.user.dashboard(address) })
     }
   }, [address, queryClient])
 
@@ -70,29 +67,14 @@ export function Mint() {
   const usdcRequired = mintQuoteData ? BigInt(mintQuoteData.data.usdcIn) : 0n
   const usdcToReturn = burnQuoteData ? BigInt(burnQuoteData.data.usdcOut) : 0n
 
-  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
-    addresses.USDC,
-    addresses.SYNTHETIC_SPLITTER
-  )
-  const { allowance: bearAllowance, refetch: refetchBearAllowance } = useAllowance(
-    addresses.DXY_BEAR,
-    addresses.SYNTHETIC_SPLITTER
-  )
-  const { allowance: bullAllowance, refetch: refetchBullAllowance } = useAllowance(
-    addresses.DXY_BULL,
-    addresses.SYNTHETIC_SPLITTER
-  )
+  const dashAllowances = dashboardData?.data.allowances
+  const usdcAllowance = BigInt(dashAllowances?.usdc.splitter ?? '0')
+  const bearAllowance = BigInt(dashAllowances?.bear.splitter ?? '0')
+  const bullAllowance = BigInt(dashAllowances?.bull.splitter ?? '0')
 
   const needsUsdcApproval = usdcRequired > 0n && usdcAllowance < usdcRequired
   const needsBearApproval = pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt
   const needsBullApproval = pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
-
-  const handleRefetch = useCallback(() => {
-    refetchBalances()
-    void refetchUsdcAllowance()
-    void refetchBearAllowance()
-    void refetchBullAllowance()
-  }, [refetchBalances, refetchUsdcAllowance, refetchBearAllowance, refetchBullAllowance])
 
   const handleMint = useCallback(() => {
     if (pairAmountBigInt <= 0n) return
@@ -100,10 +82,10 @@ export function Mint() {
     void transactionManager.executeMint(pairAmountBigInt, usdcRequired, {
       onRetry: handleMint,
     }).then(() => {
-      handleRefetch()
+      refetchBalances()
       setInputAmount('')
     })
-  }, [pairAmountBigInt, usdcRequired, handleRefetch])
+  }, [pairAmountBigInt, usdcRequired, refetchBalances])
 
   const handleRedeem = useCallback(() => {
     if (pairAmountBigInt <= 0n) return
@@ -111,10 +93,10 @@ export function Mint() {
     void transactionManager.executeRedeem(pairAmountBigInt, {
       onRetry: handleRedeem,
     }).then(() => {
-      handleRefetch()
+      refetchBalances()
       setInputAmount('')
     })
-  }, [pairAmountBigInt, handleRefetch])
+  }, [pairAmountBigInt, refetchBalances])
 
   const isPreviewLoading = mode === 'mint' ? previewMintLoading : previewBurnLoading
   const previewAmount = mode === 'mint' ? usdcRequired : usdcToReturn

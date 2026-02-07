@@ -1,16 +1,14 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useAccount, useReadContract } from 'wagmi'
-import { parseUnits, zeroAddress } from 'viem'
+import { useAccount } from 'wagmi'
+import { parseUnits } from 'viem'
 import { InfoTooltip } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { usePreviewOpenLeverage, useAllowance } from '../hooks'
-import { useProtocolStatus } from '../api'
+import { usePreviewOpenLeverage } from '../hooks'
+import { useProtocolStatus, useUserDashboard } from '../api'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
-import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
-import { LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
 
 type TokenSide = 'BEAR' | 'BULL'
 
@@ -21,9 +19,9 @@ export interface LeverageCardProps {
 }
 
 export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }: LeverageCardProps) {
-  const { isConnected, address, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
+  const { isConnected, address } = useAccount()
   const slippage = useSettingsStore((s) => s.slippage)
+  const { data: dashboardData } = useUserDashboard(address)
   const transactions = useTransactionStore((s) => s.transactions)
   const activeOperations = useTransactionStore((s) => s.activeOperations)
 
@@ -32,7 +30,6 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const [targetLeverage, setTargetLeverage] = useState(2)
   const [trackedTxId, setTrackedTxId] = useState<string | null>(null)
 
-  const routerAddress = selectedSide === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER
   const operationKey = `leverage-open-${selectedSide}`
 
   const activeTransactionId = activeOperations[operationKey]
@@ -69,28 +66,15 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   // Position value = collateral tokens (18 dec) * token price (8 dec) / 10^20 = USDC (6 dec)
   const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
 
-  const { data: morphoAddress } = useReadContract({
-    address: routerAddress,
-    abi: LEVERAGE_ROUTER_ABI,
-    functionName: 'MORPHO',
-  })
+  const authorization = dashboardData?.data.authorization
+  const allowances = dashboardData?.data.allowances
+  const needsMorphoAuthorization = selectedSide === 'BEAR'
+    ? !(authorization?.bearLeverageRouter)
+    : !(authorization?.bullLeverageRouter)
 
-  const { data: isAuthorized, refetch: refetchAuthorization } = useReadContract({
-    address: morphoAddress,
-    abi: MORPHO_ABI,
-    functionName: 'isAuthorized',
-    args: [address ?? zeroAddress, routerAddress],
-    query: {
-      enabled: !!morphoAddress && !!address,
-    },
-  })
-
-  const needsMorphoAuthorization = !isAuthorized
-
-  const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
-    addresses.USDC,
-    routerAddress
-  )
+  const usdcAllowance = selectedSide === 'BEAR'
+    ? BigInt(allowances?.usdc.leverageRouter ?? '0')
+    : BigInt(allowances?.usdc.bullLeverageRouter ?? '0')
 
   const needsUsdcApproval = collateralBigInt > 0n && usdcAllowance < collateralBigInt
   const insufficientBalance = collateralBigInt > usdcBalance
@@ -98,12 +82,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const handleOpenSuccess = useCallback(() => {
     refetchBalances?.()
     onPositionOpened?.()
-    void refetchAuthorization()
-    void refetchUsdcAllowance()
     setCollateralAmount('')
     setTargetLeverage(2)
     setTrackedTxId(null)
-  }, [refetchBalances, onPositionOpened, refetchAuthorization, refetchUsdcAllowance])
+  }, [refetchBalances, onPositionOpened])
 
   const handleOpenPosition = useCallback(() => {
     if (collateralBigInt <= 0n) return

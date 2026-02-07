@@ -11,6 +11,7 @@ module Plether.Types.Protocol
   , Contracts (..)
   , Decimals (..)
   , Constants (..)
+  , MarketConfig (..)
   ) where
 
 import Data.Aeson (ToJSON (..), object, (.=))
@@ -207,10 +208,28 @@ instance ToJSON Constants where
       , "liquidationLtv" .= constLiquidationLtv
       ]
 
+data MarketConfig = MarketConfig
+  { marketBearId :: Text
+  , marketBullId :: Text
+  , marketBearLltv :: Text
+  , marketBullLltv :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON MarketConfig where
+  toJSON MarketConfig {..} =
+    object
+      [ "bearId" .= marketBearId
+      , "bullId" .= marketBullId
+      , "bearLltv" .= marketBearLltv
+      , "bullLltv" .= marketBullLltv
+      ]
+
 data ProtocolConfig = ProtocolConfig
   { configContracts :: Contracts
   , configDecimals :: Decimals
   , configConstants :: Constants
+  , configMarkets :: MarketConfig
   , configChainId :: Integer
   }
   deriving stock (Show, Generic)
@@ -221,5 +240,6 @@ instance ToJSON ProtocolConfig where
       [ "contracts" .= configContracts
       , "decimals" .= configDecimals
       , "constants" .= configConstants
+      , "markets" .= configMarkets
       , "chainId" .= configChainId
       ]

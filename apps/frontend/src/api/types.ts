@@ -78,6 +78,13 @@ export interface ApyStats {
   utilization: number;
 }
 
+export interface MarketConfig {
+  bearId: string;
+  bullId: string;
+  bearLltv: string;
+  bullLltv: string;
+}
+
 export interface ProtocolConfig {
   contracts: {
     usdc: string;
@@ -108,12 +115,18 @@ export interface ProtocolConfig {
     maxLeverage: number;
     liquidationLtv: number;
   };
+  markets: MarketConfig;
   chainId: number;
 }
 
 // =============================================================================
 // User Types
 // =============================================================================
+
+export interface MorphoAuthorization {
+  bearLeverageRouter: boolean;
+  bullLeverageRouter: boolean;
+}
 
 export interface UserDashboard {
   balances: UserBalances;
@@ -125,6 +138,8 @@ export interface UserDashboard {
     bear: LendingPosition | null;
     bull: LendingPosition | null;
   };
+  allowances: UserAllowances;
+  authorization: MorphoAuthorization;
 }
 
 export interface UserBalances {
@@ -163,6 +178,9 @@ export interface UserAllowances {
     zap: string;
     morphoBear: string;
     morphoBull: string;
+    curvePool: string;
+    leverageRouter: string;
+    bullLeverageRouter: string;
   };
   bear: {
     splitter: string;
@@ -174,6 +192,7 @@ export interface UserAllowances {
     splitter: string;
     staking: string;
     leverageRouter: string;
+    zapRouter: string;
   };
 }
 

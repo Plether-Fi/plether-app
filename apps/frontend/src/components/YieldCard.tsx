@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react'
 import { useAccount, useWriteContract } from 'wagmi'
-import { parseUnits, zeroAddress } from 'viem'
+import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { useTransactionSequence, useAllowance, type TransactionStep } from '../hooks'
-import { useProtocolStatus } from '../api'
+import { useTransactionSequence, type TransactionStep } from '../hooks'
+import { useProtocolStatus, useUserDashboard } from '../api'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { ERC20_ABI, MORPHO_ABI } from '../contracts/abis'
 import { useMarketConfig } from '../hooks/useMarketConfig'
@@ -38,6 +38,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const { morphoAddress, marketParams } = useMarketConfig(side)
+  const { data: dashboardData } = useUserDashboard(address)
   const { data: protocolData } = useProtocolStatus()
   const apyStats = protocolData?.data.apy[side === 'BEAR' ? 'bear' : 'bull']
   const supplyApy = apyStats?.supply ?? 0
@@ -52,9 +53,8 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
   const supplyBigInt = supplyAmount ? parseUnits(supplyAmount, 6) : 0n
   const borrowBigInt = borrowAmount ? parseUnits(borrowAmount, 6) : 0n
 
-  const { allowance: usdcAllowance, refetch: refetchAllowance } = useAllowance(
-    addresses.USDC,
-    morphoAddress ?? zeroAddress
+  const usdcAllowance = BigInt(
+    dashboardData?.data.allowances.usdc[side === 'BEAR' ? 'morphoBear' : 'morphoBull'] ?? '0'
   )
 
   const { writeContractAsync } = useWriteContract()
@@ -77,16 +77,12 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
       if (needsApprovalForSupply) {
         steps.push({
           label: 'Approve USDC',
-          action: async () => {
-            const hash = await writeContractAsync({
-              address: addresses.USDC,
-              abi: ERC20_ABI,
-              functionName: 'approve',
-              args: [morphoAddress, supplyBigInt],
-            })
-            await refetchAllowance()
-            return hash
-          },
+          action: () => writeContractAsync({
+            address: addresses.USDC,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [morphoAddress, supplyBigInt],
+          }),
         })
       }
 
@@ -112,7 +108,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
     }
 
     return steps
-  }, [supplyMode, supplyBigInt, needsApprovalForSupply, morphoAddress, marketParams, address, addresses, writeContractAsync, refetchAllowance])
+  }, [supplyMode, supplyBigInt, needsApprovalForSupply, morphoAddress, marketParams, address, addresses, writeContractAsync])
 
   const buildBorrowSteps = useCallback((): TransactionStep[] => {
     if (!morphoAddress || !marketParams || !address) return []
@@ -132,16 +128,12 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
       if (needsApprovalForRepay) {
         steps.push({
           label: 'Approve USDC',
-          action: async () => {
-            const hash = await writeContractAsync({
-              address: addresses.USDC,
-              abi: ERC20_ABI,
-              functionName: 'approve',
-              args: [morphoAddress, borrowBigInt],
-            })
-            await refetchAllowance()
-            return hash
-          },
+          action: () => writeContractAsync({
+            address: addresses.USDC,
+            abi: ERC20_ABI,
+            functionName: 'approve',
+            args: [morphoAddress, borrowBigInt],
+          }),
         })
       }
 
@@ -157,7 +149,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
     }
 
     return steps
-  }, [borrowMode, borrowBigInt, needsApprovalForRepay, morphoAddress, marketParams, address, addresses, writeContractAsync, refetchAllowance])
+  }, [borrowMode, borrowBigInt, needsApprovalForRepay, morphoAddress, marketParams, address, addresses, writeContractAsync])
 
   const handleSupply = useCallback(() => {
     if (supplyBigInt <= 0n || !morphoAddress || !marketParams) return

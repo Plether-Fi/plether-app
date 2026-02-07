@@ -20,6 +20,7 @@ export type {
   ProtocolStatus,
   ProtocolState,
   ProtocolConfig,
+  MarketConfig,
   StakingStats,
   ApyStats,
   // User types
@@ -29,6 +30,7 @@ export type {
   UserAllowances,
   LeveragePosition,
   LendingPosition,
+  MorphoAuthorization,
   // Quote types
   MintQuote,
   BurnQuote,

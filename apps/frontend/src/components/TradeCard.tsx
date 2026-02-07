@@ -3,13 +3,11 @@ import { useAccount } from 'wagmi'
 import { parseUnits } from 'viem'
 import { TokenInput } from './TokenInput'
 import { InfoTooltip, OutputDisplay, Modal, Button } from './ui'
-import { useTradeQuote, useZapQuote as useZapQuoteApi } from '../api'
+import { useTradeQuote, useZapQuote as useZapQuoteApi, useUserDashboard } from '../api'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
-import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { useSettingsStore } from '../stores/settingsStore'
 import { formatAmount } from '../utils/formatters'
-import { useAllowance } from '../hooks/useAllowance'
 
 type TradeMode = 'buy' | 'sell'
 type TokenSide = 'BEAR' | 'BULL'
@@ -22,8 +20,7 @@ export interface TradeCardProps {
 }
 
 export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalances }: TradeCardProps) {
-  const { isConnected, chainId } = useAccount()
-  const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
+  const { isConnected, address } = useAccount()
   const slippage = useSettingsStore((s) => s.slippage)
   const maxPriceImpact = useSettingsStore((s) => s.maxPriceImpact)
   const txStore = useTransactionStore()
@@ -69,7 +66,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   const quoteAmountOut = isBearTrade
     ? BigInt(bearQuoteData?.data.amountOut ?? '0')
-    : BigInt(bullQuoteData?.data.output?.amount ?? '0')
+    : BigInt(bullQuoteData?.data.output.amount ?? '0')
   const priceImpact = isBearTrade
     ? Number(bearQuoteData?.data.priceImpact ?? '0') / 100
     : Number(bullQuoteData?.data.priceImpact ?? '0') / 100
@@ -81,19 +78,27 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     }
   }, [priceImpact])
 
-  const spenderAddress = isBearTrade ? addresses.CURVE_POOL : addresses.ZAP_ROUTER
-  const tokenToApprove = mode === 'buy'
-    ? addresses.USDC
-    : (selectedToken === 'BEAR' ? addresses.DXY_BEAR : addresses.DXY_BULL)
+  const { data: dashboardData } = useUserDashboard(address)
+  const dashAllowances = dashboardData?.data.allowances
 
-  const { allowance, refetch: refetchAllowance } = useAllowance(tokenToApprove, spenderAddress)
+  const allowance = (() => {
+    if (!dashAllowances) return 0n
+    if (isBearTrade) {
+      return mode === 'buy'
+        ? BigInt(dashAllowances.usdc.curvePool)
+        : BigInt(dashAllowances.bear.curvePool)
+    } else {
+      return mode === 'buy'
+        ? BigInt(dashAllowances.usdc.zap)
+        : BigInt(dashAllowances.bull.zapRouter)
+    }
+  })()
   const needsApproval = inputAmountBigInt > 0n && allowance < inputAmountBigInt
 
   const insufficientBalance = inputAmountBigInt > inputBalance
 
   const handleSwapSuccess = () => {
     refetchBalances?.()
-    void refetchAllowance()
     setInputAmount('')
   }
 

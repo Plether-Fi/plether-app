@@ -40,7 +40,7 @@ function ModalWrapper({ position }: { position: LeveragePosition }) {
       >
         Open Modal
       </button>
-      <AdjustPositionModal isOpen={isOpen} onClose={() => setIsOpen(false)} position={position} />
+      <AdjustPositionModal isOpen={isOpen} onClose={() => setIsOpen(false)} position={position} collateralShares={BigInt(5000 * 1e18)} />
     </>
   )
 }
