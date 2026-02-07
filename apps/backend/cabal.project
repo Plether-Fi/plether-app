@@ -3,6 +3,9 @@ packages: .
 -- Allow newer versions of dependencies
 allow-newer: all
 
+-- scotty 0.30 has a HashMap/Map type mismatch bug (unfixed upstream)
+constraints: scotty < 0.30
+
 -- Optimization settings
 optimization: 1
 
