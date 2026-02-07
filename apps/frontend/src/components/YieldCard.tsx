@@ -3,7 +3,8 @@ import { useAccount, useWriteContract } from 'wagmi'
 import { parseUnits, zeroAddress } from 'viem'
 import { TokenInput } from './TokenInput'
 import { formatUsd } from '../utils/formatters'
-import { useTransactionSequence, useAllowance, useMorphoApy, type TransactionStep } from '../hooks'
+import { useTransactionSequence, useAllowance, type TransactionStep } from '../hooks'
+import { useProtocolStatus } from '../api'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { ERC20_ABI, MORPHO_ABI } from '../contracts/abis'
 import { useMarketConfig } from '../hooks/useMarketConfig'
@@ -37,7 +38,11 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
   const { isConnected, address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
   const { morphoAddress, marketParams } = useMarketConfig(side)
-  const { supplyApy, borrowApy, utilization } = useMorphoApy(side)
+  const { data: protocolData } = useProtocolStatus()
+  const apyStats = protocolData?.data.apy[side === 'BEAR' ? 'bear' : 'bull']
+  const supplyApy = apyStats?.supply ?? 0
+  const borrowApy = apyStats?.borrow ?? 0
+  const utilization = apyStats?.utilization ?? 0
 
   const [supplyMode, setSupplyMode] = useState<SupplyMode>('supply')
   const [borrowMode, setBorrowMode] = useState<BorrowMode>('borrow')

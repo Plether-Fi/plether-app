@@ -3,7 +3,7 @@ import { TokenIcon, OutputDisplay } from './ui'
 import { TokenInput } from './TokenInput'
 import { formatAmount } from '../utils/formatters'
 import { parseStakingAmount, getStakingDecimals, SHARE_DECIMALS } from '../utils/staking'
-import { useStakedBalance, usePreviewDeposit, usePreviewRedeem } from '../hooks/useStaking'
+import { useProtocolStatus } from '../api'
 import { useTransactionStore } from '../stores/transactionStore'
 import { transactionManager } from '../services/transactionManager'
 
@@ -12,10 +12,11 @@ type StakeMode = 'stake' | 'unstake'
 export interface StakingCardProps {
   side: 'BEAR' | 'BULL'
   tokenBalance: bigint
+  stakedBalance: bigint
   onSuccess?: () => void
 }
 
-export function StakingCard({ side, tokenBalance, onSuccess }: StakingCardProps) {
+export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: StakingCardProps) {
   const txStore = useTransactionStore()
   const [mode, setMode] = useState<StakeMode>('stake')
   const [amount, setAmount] = useState('')
@@ -35,19 +36,25 @@ export function StakingCard({ side, tokenBalance, onSuccess }: StakingCardProps)
   const isStakePending = stakeTx?.status === 'pending' || stakeTx?.status === 'confirming'
   const isUnstakePending = unstakeTx?.status === 'pending' || unstakeTx?.status === 'confirming'
 
-  const { shares: stakedBalance, refetch: refetchStaked } = useStakedBalance(side)
+  const { data: protocolData } = useProtocolStatus()
+  const stakingStats = protocolData?.data.staking[side === 'BEAR' ? 'bear' : 'bull']
+  const totalAssets = stakingStats ? BigInt(stakingStats.totalAssets) : 0n
+  const totalShares = stakingStats ? BigInt(stakingStats.totalShares) : 0n
 
   const decimals = getStakingDecimals(mode)
   const amountBigInt = parseStakingAmount(amount, mode)
 
-  const { shares: previewShares, isLoading: previewDepositLoading } = usePreviewDeposit(side, mode === 'stake' ? amountBigInt : 0n)
-  const { assets: previewAssets, isLoading: previewRedeemLoading } = usePreviewRedeem(side, mode === 'unstake' ? amountBigInt : 0n)
+  const previewShares = mode === 'stake' && amountBigInt > 0n && totalAssets > 0n
+    ? (amountBigInt * totalShares) / totalAssets
+    : 0n
+  const previewAssets = mode === 'unstake' && amountBigInt > 0n && totalShares > 0n
+    ? (amountBigInt * totalAssets) / totalShares
+    : 0n
 
   const handleStake = () => {
     void transactionManager.executeStake(side, amountBigInt, {
       onRetry: handleStake,
     }).then(() => {
-      refetchStaked()
       onSuccess?.()
       setAmount('')
     })
@@ -57,7 +64,6 @@ export function StakingCard({ side, tokenBalance, onSuccess }: StakingCardProps)
     void transactionManager.executeUnstake(side, amountBigInt, {
       onRetry: handleUnstake,
     }).then(() => {
-      refetchStaked()
       onSuccess?.()
       setAmount('')
     })
@@ -144,8 +150,8 @@ export function StakingCard({ side, tokenBalance, onSuccess }: StakingCardProps)
         <OutputDisplay
           label="You will receive"
           value={mode === 'stake'
-            ? (previewDepositLoading ? '...' : formatAmount(previewShares, SHARE_DECIMALS))
-            : (previewRedeemLoading ? '...' : formatAmount(previewAssets, 18))
+            ? formatAmount(previewShares, SHARE_DECIMALS)
+            : formatAmount(previewAssets, 18)
           }
           token={mode === 'stake' ? `splDXY-${side}` : `plDXY-${side}`}
           variant={side}

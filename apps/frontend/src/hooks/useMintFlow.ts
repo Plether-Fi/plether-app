@@ -2,8 +2,8 @@ import { useCallback } from 'react'
 import { useAccount, useWriteContract } from 'wagmi'
 import { type Address } from 'viem'
 import { useAllowance } from './useAllowance'
-import { usePreviewMint, usePreviewBurn } from './usePlethCore'
 import { useTransactionSequence, type TransactionStep } from './useTransactionSequence'
+import { useMintQuote, useBurnQuote } from '../api'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { ERC20_ABI, PLETH_CORE_ABI } from '../contracts/abis'
 
@@ -32,8 +32,11 @@ export function useMintFlow(pairAmount: bigint, options: UseMintFlowOptions = {}
     addresses.SYNTHETIC_SPLITTER
   )
 
-  const { usdcRequired, isLoading: previewMintLoading } = usePreviewMint(pairAmount)
-  const { usdcToReturn, isLoading: previewBurnLoading } = usePreviewBurn(pairAmount)
+  const amountStr = pairAmount > 0n ? pairAmount.toString() : undefined
+  const { data: mintQuoteData, isLoading: previewMintLoading } = useMintQuote(amountStr)
+  const { data: burnQuoteData, isLoading: previewBurnLoading } = useBurnQuote(amountStr)
+  const usdcRequired = mintQuoteData ? BigInt(mintQuoteData.data.usdcIn) : 0n
+  const usdcToReturn = burnQuoteData ? BigInt(burnQuoteData.data.usdcOut) : 0n
 
   const needsUsdcApproval = usdcRequired > 0n && usdcAllowance < usdcRequired
   const needsBearApproval = pairAmount > 0n && bearAllowance < pairAmount

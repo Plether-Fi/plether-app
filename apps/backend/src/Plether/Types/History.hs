@@ -140,14 +140,14 @@ data TransactionData = TransactionData
 instance ToJSON TransactionData where
   toJSON TransactionData {..} =
     object $
-      maybe [] (\v -> ["amount" .= v]) tdAmount
-        ++ maybe [] (\v -> ["amountOut" .= v]) tdAmountOut
+      maybe [] (\v -> ["amount" .= show v]) tdAmount
+        ++ maybe [] (\v -> ["amountOut" .= show v]) tdAmountOut
         ++ maybe [] (\v -> ["tokenIn" .= v]) tdTokenIn
         ++ maybe [] (\v -> ["tokenOut" .= v]) tdTokenOut
-        ++ maybe [] (\v -> ["principal" .= v]) tdPrincipal
-        ++ maybe [] (\v -> ["leverage" .= v]) tdLeverage
-        ++ maybe [] (\v -> ["collateral" .= v]) tdCollateral
-        ++ maybe [] (\v -> ["debt" .= v]) tdDebt
+        ++ maybe [] (\v -> ["principal" .= show v]) tdPrincipal
+        ++ maybe [] (\v -> ["leverage" .= show v]) tdLeverage
+        ++ maybe [] (\v -> ["collateral" .= show v]) tdCollateral
+        ++ maybe [] (\v -> ["debt" .= show v]) tdDebt
 
 instance FromJSON TransactionData
 

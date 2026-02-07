@@ -14,6 +14,8 @@ export function Stake() {
 
   const bearBalance = balances ? BigInt(balances.bear) : 0n
   const bullBalance = balances ? BigInt(balances.bull) : 0n
+  const stakedBear = balances ? BigInt(balances.stakedBear) : 0n
+  const stakedBull = balances ? BigInt(balances.stakedBull) : 0n
 
   const handleSuccess = useCallback(() => {
     if (address) {
@@ -33,11 +35,13 @@ export function Stake() {
           <StakingCard
             side="BULL"
             tokenBalance={bullBalance}
+            stakedBalance={stakedBull}
             onSuccess={handleSuccess}
           />
           <StakingCard
             side="BEAR"
             tokenBalance={bearBalance}
+            stakedBalance={stakedBear}
             onSuccess={handleSuccess}
           />
         </div>

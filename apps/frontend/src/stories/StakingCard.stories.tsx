@@ -5,6 +5,7 @@ import { StakingCard } from '../components/StakingCard'
 interface StakingCardArgs {
   side: 'BEAR' | 'BULL'
   tokenBalance: number
+  stakedBalance: number
 }
 
 const meta: Meta<StakingCardArgs> = {
@@ -20,6 +21,10 @@ const meta: Meta<StakingCardArgs> = {
       control: { type: 'number', min: 0 },
       description: 'Available token balance',
     },
+    stakedBalance: {
+      control: { type: 'number', min: 0 },
+      description: 'Currently staked shares balance',
+    },
   },
 }
 
@@ -30,16 +35,22 @@ function toTokenBigint(value: number): bigint {
   return BigInt(Math.floor(value * 1e18))
 }
 
+function toShareBigint(value: number): bigint {
+  return BigInt(Math.floor(value * 1e21))
+}
+
 export const BearStaking: Story = {
   args: {
     side: 'BEAR',
     tokenBalance: 5000,
+    stakedBalance: 1000,
   },
   render: (args) => (
     <div className="max-w-md">
       <StakingCard
         side={args.side}
         tokenBalance={toTokenBigint(args.tokenBalance)}
+        stakedBalance={toShareBigint(args.stakedBalance)}
       />
     </div>
   ),
@@ -49,12 +60,14 @@ export const BullStaking: Story = {
   args: {
     side: 'BULL',
     tokenBalance: 7500,
+    stakedBalance: 2000,
   },
   render: (args) => (
     <div className="max-w-md">
       <StakingCard
         side={args.side}
         tokenBalance={toTokenBigint(args.tokenBalance)}
+        stakedBalance={toShareBigint(args.stakedBalance)}
       />
     </div>
   ),
@@ -63,8 +76,8 @@ export const BullStaking: Story = {
 export const BothCards: Story = {
   render: () => (
     <div className="grid grid-cols-2 gap-6 max-w-4xl">
-      <StakingCard side="BULL" tokenBalance={toTokenBigint(7500)} />
-      <StakingCard side="BEAR" tokenBalance={toTokenBigint(5000)} />
+      <StakingCard side="BULL" tokenBalance={toTokenBigint(7500)} stakedBalance={toShareBigint(2000)} />
+      <StakingCard side="BEAR" tokenBalance={toTokenBigint(5000)} stakedBalance={toShareBigint(1000)} />
     </div>
   ),
 }
@@ -73,12 +86,14 @@ export const StakeBearFlow: Story = {
   args: {
     side: 'BEAR',
     tokenBalance: 5000,
+    stakedBalance: 1000,
   },
   render: (args) => (
     <div className="max-w-md">
       <StakingCard
         side={args.side}
         tokenBalance={toTokenBigint(args.tokenBalance)}
+        stakedBalance={toShareBigint(args.stakedBalance)}
       />
     </div>
   ),
@@ -107,12 +122,14 @@ export const UnstakeBullFlow: Story = {
   args: {
     side: 'BULL',
     tokenBalance: 7500,
+    stakedBalance: 2000,
   },
   render: (args) => (
     <div className="max-w-md">
       <StakingCard
         side={args.side}
         tokenBalance={toTokenBigint(args.tokenBalance)}
+        stakedBalance={toShareBigint(args.stakedBalance)}
       />
     </div>
   ),
@@ -138,12 +155,14 @@ export const ModeToggle: Story = {
   args: {
     side: 'BEAR',
     tokenBalance: 5000,
+    stakedBalance: 1000,
   },
   render: (args) => (
     <div className="max-w-md">
       <StakingCard
         side={args.side}
         tokenBalance={toTokenBigint(args.tokenBalance)}
+        stakedBalance={toShareBigint(args.stakedBalance)}
       />
     </div>
   ),

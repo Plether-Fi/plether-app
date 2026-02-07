@@ -29,13 +29,13 @@ data UserBalances = UserBalances
 instance ToJSON UserBalances where
   toJSON UserBalances {..} =
     object
-      [ "usdc" .= balUsdc
-      , "bear" .= balBear
-      , "bull" .= balBull
-      , "stakedBear" .= balStakedBear
-      , "stakedBull" .= balStakedBull
-      , "stakedBearAssets" .= balStakedBearAssets
-      , "stakedBullAssets" .= balStakedBullAssets
+      [ "usdc" .= show balUsdc
+      , "bear" .= show balBear
+      , "bull" .= show balBull
+      , "stakedBear" .= show balStakedBear
+      , "stakedBull" .= show balStakedBull
+      , "stakedBearAssets" .= show balStakedBearAssets
+      , "stakedBullAssets" .= show balStakedBullAssets
       ]
 
 data LeveragePosition = LeveragePosition
@@ -52,13 +52,13 @@ data LeveragePosition = LeveragePosition
 instance ToJSON LeveragePosition where
   toJSON LeveragePosition {..} =
     object
-      [ "collateral" .= levCollateral
-      , "collateralUsd" .= levCollateralUsd
-      , "debt" .= levDebt
-      , "healthFactor" .= levHealthFactor
-      , "liquidationPrice" .= levLiquidationPrice
-      , "leverage" .= levLeverage
-      , "netValue" .= levNetValue
+      [ "collateral" .= show levCollateral
+      , "collateralUsd" .= show levCollateralUsd
+      , "debt" .= show levDebt
+      , "healthFactor" .= show levHealthFactor
+      , "liquidationPrice" .= show levLiquidationPrice
+      , "leverage" .= show levLeverage
+      , "netValue" .= show levNetValue
       ]
 
 data LendingPosition = LendingPosition
@@ -75,13 +75,13 @@ data LendingPosition = LendingPosition
 instance ToJSON LendingPosition where
   toJSON LendingPosition {..} =
     object
-      [ "supplied" .= lendSupplied
-      , "suppliedShares" .= lendSuppliedShares
-      , "borrowed" .= lendBorrowed
-      , "borrowedShares" .= lendBorrowedShares
-      , "availableToBorrow" .= lendAvailableToBorrow
-      , "collateral" .= lendCollateral
-      , "healthFactor" .= lendHealthFactor
+      [ "supplied" .= show lendSupplied
+      , "suppliedShares" .= show lendSuppliedShares
+      , "borrowed" .= show lendBorrowed
+      , "borrowedShares" .= show lendBorrowedShares
+      , "availableToBorrow" .= show lendAvailableToBorrow
+      , "collateral" .= show lendCollateral
+      , "healthFactor" .= show lendHealthFactor
       ]
 
 data LeveragePositions = LeveragePositions
@@ -136,10 +136,10 @@ data UsdcAllowances = UsdcAllowances
 instance ToJSON UsdcAllowances where
   toJSON UsdcAllowances {..} =
     object
-      [ "splitter" .= usdcAllowSplitter
-      , "zap" .= usdcAllowZap
-      , "morphoBear" .= usdcAllowMorphoBear
-      , "morphoBull" .= usdcAllowMorphoBull
+      [ "splitter" .= show usdcAllowSplitter
+      , "zap" .= show usdcAllowZap
+      , "morphoBear" .= show usdcAllowMorphoBear
+      , "morphoBull" .= show usdcAllowMorphoBull
       ]
 
 data BearAllowances = BearAllowances
@@ -153,10 +153,10 @@ data BearAllowances = BearAllowances
 instance ToJSON BearAllowances where
   toJSON BearAllowances {..} =
     object
-      [ "splitter" .= bearAllowSplitter
-      , "staking" .= bearAllowStaking
-      , "leverageRouter" .= bearAllowLeverageRouter
-      , "curvePool" .= bearAllowCurvePool
+      [ "splitter" .= show bearAllowSplitter
+      , "staking" .= show bearAllowStaking
+      , "leverageRouter" .= show bearAllowLeverageRouter
+      , "curvePool" .= show bearAllowCurvePool
       ]
 
 data BullAllowances = BullAllowances
@@ -169,9 +169,9 @@ data BullAllowances = BullAllowances
 instance ToJSON BullAllowances where
   toJSON BullAllowances {..} =
     object
-      [ "splitter" .= bullAllowSplitter
-      , "staking" .= bullAllowStaking
-      , "leverageRouter" .= bullAllowLeverageRouter
+      [ "splitter" .= show bullAllowSplitter
+      , "staking" .= show bullAllowStaking
+      , "leverageRouter" .= show bullAllowLeverageRouter
       ]
 
 data UserAllowances = UserAllowances

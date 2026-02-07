@@ -37,9 +37,9 @@ data Prices = Prices
 instance ToJSON Prices where
   toJSON Prices {..} =
     object
-      [ "bear" .= priceBear
-      , "bull" .= priceBull
-      , "cap" .= priceCap
+      [ "bear" .= show priceBear
+      , "bull" .= show priceBull
+      , "cap" .= show priceCap
       ]
 
 data OracleInfo = OracleInfo
@@ -52,7 +52,7 @@ data OracleInfo = OracleInfo
 instance ToJSON OracleInfo where
   toJSON OracleInfo {..} =
     object
-      [ "price" .= oraclePrice
+      [ "price" .= show oraclePrice
       , "updatedAt" .= (round oracleUpdatedAt :: Integer)
       , "decimals" .= oracleDecimals
       ]
@@ -67,9 +67,9 @@ data StakingStats = StakingStats
 instance ToJSON StakingStats where
   toJSON StakingStats {..} =
     object
-      [ "totalAssets" .= stakingTotalAssets
-      , "totalShares" .= stakingTotalShares
-      , "exchangeRate" .= stakingExchangeRate
+      [ "totalAssets" .= show stakingTotalAssets
+      , "totalShares" .= show stakingTotalShares
+      , "exchangeRate" .= show stakingExchangeRate
       ]
 
 data StakingInfo = StakingInfo

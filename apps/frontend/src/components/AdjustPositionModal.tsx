@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { useAccount } from 'wagmi'
 import { parseUnits, formatUnits } from 'viem'
 import { Modal } from './ui'
-import { useAdjustCollateral, useApprovalFlow, useTokenBalances, useLeveragePosition } from '../hooks'
+import { useAdjustCollateral, useApprovalFlow, useLeveragePosition } from '../hooks'
+import { useUserBalances } from '../api'
 import { getAddresses, DEFAULT_CHAIN_ID } from '../contracts/addresses'
 import { formatUsd } from '../utils/formatters'
 import { getDeadline } from '../utils/deadline'
@@ -16,14 +17,15 @@ export interface AdjustPositionModalProps {
 }
 
 export function AdjustPositionModal({ isOpen, onClose, position, onSuccess }: AdjustPositionModalProps) {
-  const { chainId } = useAccount()
+  const { address, chainId } = useAccount()
   const addresses = getAddresses(chainId ?? DEFAULT_CHAIN_ID)
 
   const [action, setAction] = useState<'add' | 'remove'>('add')
   const [amount, setAmount] = useState('')
   const [isHidden, setIsHidden] = useState(false)
 
-  const { usdcBalance } = useTokenBalances()
+  const { data: balancesData } = useUserBalances(address)
+  const usdcBalance = balancesData ? BigInt(balancesData.data.usdc) : 0n
   const { collateral: collateralShares } = useLeveragePosition(position.side)
 
   const routerAddress = position.side === 'BEAR' ? addresses.LEVERAGE_ROUTER : addresses.BULL_LEVERAGE_ROUTER

@@ -50,10 +50,10 @@ data MintQuote = MintQuote
 instance ToJSON MintQuote where
   toJSON MintQuote {..} =
     object
-      [ "usdcIn" .= mintUsdcIn
-      , "bearOut" .= mintBearOut
-      , "bullOut" .= mintBullOut
-      , "pricePerToken" .= mintPricePerToken
+      [ "usdcIn" .= show mintUsdcIn
+      , "bearOut" .= show mintBearOut
+      , "bullOut" .= show mintBullOut
+      , "pricePerToken" .= show mintPricePerToken
       ]
 
 data BurnQuote = BurnQuote
@@ -67,10 +67,10 @@ data BurnQuote = BurnQuote
 instance ToJSON BurnQuote where
   toJSON BurnQuote {..} =
     object
-      [ "pairIn" .= burnPairIn
-      , "usdcOut" .= burnUsdcOut
-      , "bearIn" .= burnBearIn
-      , "bullIn" .= burnBullIn
+      [ "pairIn" .= show burnPairIn
+      , "usdcOut" .= show burnUsdcOut
+      , "bearIn" .= show burnBearIn
+      , "bullIn" .= show burnBullIn
       ]
 
 data ZapInput = ZapInput
@@ -83,7 +83,7 @@ instance ToJSON ZapInput where
   toJSON ZapInput {..} =
     object
       [ "token" .= zapInToken
-      , "amount" .= zapInAmount
+      , "amount" .= show zapInAmount
       ]
 
 data ZapOutput = ZapOutput
@@ -97,8 +97,8 @@ instance ToJSON ZapOutput where
   toJSON ZapOutput {..} =
     object
       [ "token" .= zapOutToken
-      , "amount" .= zapOutAmount
-      , "minAmount" .= zapOutMinAmount
+      , "amount" .= show zapOutAmount
+      , "minAmount" .= show zapOutMinAmount
       ]
 
 data ZapQuote = ZapQuote
@@ -116,7 +116,7 @@ instance ToJSON ZapQuote where
       [ "direction" .= zapDirection
       , "input" .= zapInput
       , "output" .= zapOutput
-      , "priceImpact" .= zapPriceImpact
+      , "priceImpact" .= show zapPriceImpact
       , "route" .= zapRoute
       ]
 
@@ -137,12 +137,12 @@ instance ToJSON TradeQuote where
     object
       [ "from" .= tradeFrom
       , "to" .= tradeTo
-      , "amountIn" .= tradeAmountIn
-      , "amountOut" .= tradeAmountOut
-      , "minAmountOut" .= tradeMinAmountOut
-      , "spotPrice" .= tradeSpotPrice
-      , "priceImpact" .= tradePriceImpact
-      , "fee" .= tradeFee
+      , "amountIn" .= show tradeAmountIn
+      , "amountOut" .= show tradeAmountOut
+      , "minAmountOut" .= show tradeMinAmountOut
+      , "spotPrice" .= show tradeSpotPrice
+      , "priceImpact" .= show tradePriceImpact
+      , "fee" .= show tradeFee
       ]
 
 data LeverageQuote = LeverageQuote
@@ -163,13 +163,13 @@ instance ToJSON LeverageQuote where
   toJSON LeverageQuote {..} =
     object
       [ "side" .= levqSide
-      , "principal" .= levqPrincipal
-      , "leverage" .= levqLeverage
-      , "positionSize" .= levqPositionSize
-      , "positionSizeUsd" .= levqPositionSizeUsd
-      , "debt" .= levqDebt
-      , "healthFactor" .= levqHealthFactor
-      , "liquidationPrice" .= levqLiquidationPrice
-      , "priceImpact" .= levqPriceImpact
-      , "borrowRate" .= levqBorrowRate
+      , "principal" .= show levqPrincipal
+      , "leverage" .= show levqLeverage
+      , "positionSize" .= show levqPositionSize
+      , "positionSizeUsd" .= show levqPositionSizeUsd
+      , "debt" .= show levqDebt
+      , "healthFactor" .= show levqHealthFactor
+      , "liquidationPrice" .= show levqLiquidationPrice
+      , "priceImpact" .= show levqPriceImpact
+      , "borrowRate" .= show levqBorrowRate
       ]

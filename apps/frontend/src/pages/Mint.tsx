@@ -5,8 +5,7 @@ import { formatAmount, formatUsd } from '../utils/formatters'
 import { getMinBalance } from '../utils/mint'
 import { Alert, TokenIcon } from '../components/ui'
 import { TokenInput } from '../components/TokenInput'
-import { usePreviewMint, usePreviewBurn } from '../hooks'
-import { useUserBalances, apiQueryKeys } from '../api'
+import { useUserBalances, useMintQuote, useBurnQuote, apiQueryKeys } from '../api'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAllowance } from '../hooks/useAllowance'
 import { useTransactionStore } from '../stores/transactionStore'
@@ -65,8 +64,11 @@ export function Mint() {
   const isRedeemPending = redeemTx?.status === 'pending' || redeemTx?.status === 'confirming'
   const isRunning = isMintPending || isRedeemPending
 
-  const { usdcRequired, isLoading: previewMintLoading } = usePreviewMint(pairAmountBigInt)
-  const { usdcToReturn, isLoading: previewBurnLoading } = usePreviewBurn(pairAmountBigInt)
+  const amountStr = pairAmountBigInt > 0n ? pairAmountBigInt.toString() : undefined
+  const { data: mintQuoteData, isLoading: previewMintLoading } = useMintQuote(amountStr)
+  const { data: burnQuoteData, isLoading: previewBurnLoading } = useBurnQuote(amountStr)
+  const usdcRequired = mintQuoteData ? BigInt(mintQuoteData.data.usdcIn) : 0n
+  const usdcToReturn = burnQuoteData ? BigInt(burnQuoteData.data.usdcOut) : 0n
 
   const { allowance: usdcAllowance, refetch: refetchUsdcAllowance } = useAllowance(
     addresses.USDC,
