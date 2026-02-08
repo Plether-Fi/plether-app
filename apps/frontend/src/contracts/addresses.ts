@@ -38,10 +38,9 @@ function loadAddresses(filename: string): ContractAddresses | null {
   const deployments = addressModules[`./${filename}`]
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- module can be undefined at runtime
   if (!deployments) return null
-  const sorted = [...deployments].sort((a, b) =>
-    b.RELEASE_DATE.localeCompare(a.RELEASE_DATE)
-  )
-  const { RELEASE_DATE: _, ...addresses } = sorted[0]
+  deployments.sort((a, b) => b.RELEASE_DATE.localeCompare(a.RELEASE_DATE))
+  const { RELEASE_DATE, ...addresses } = deployments[0]
+  void RELEASE_DATE
   return addresses
 }
 
