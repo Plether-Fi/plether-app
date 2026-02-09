@@ -8,11 +8,34 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
+import type { Plugin } from 'vite';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+
+// @reown/appkit is pulled transitively by @walletconnect/ethereum-provider.
+// It duplicates @web3modal's ModalController and w3m-modal custom element,
+// causing the wallet connect modal to never open (two separate state objects).
+// Since we use @web3modal/wagmi for the modal, stub out @reown/appkit entirely.
+function stubReownAppkit(): Plugin {
+  return {
+    name: 'stub-reown-appkit',
+    enforce: 'pre',
+    resolveId(source) {
+      if (source.startsWith('@reown/appkit')) {
+        return '\0reown-appkit-stub';
+      }
+    },
+    load(id) {
+      if (id === '\0reown-appkit-stub') {
+        return 'export default {};';
+      }
+    },
+  };
+}
 
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
   plugins: [
+    stubReownAppkit(),
     react(),
     visualizer({
       filename: 'bundle-stats.html',
@@ -34,7 +57,7 @@ export default defineConfig({
             if (id.includes('/wagmi/') || id.includes('@tanstack/react-query')) {
               return 'web3-wagmi';
             }
-            if (id.includes('@web3modal') || id.includes('@reown')) {
+            if (id.includes('@web3modal')) {
               return 'web3-modal';
             }
           }
