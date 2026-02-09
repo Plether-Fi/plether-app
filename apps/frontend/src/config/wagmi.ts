@@ -25,8 +25,8 @@ export const config = createConfig({
       metadata: {
         name: 'Plether',
         description: 'plDXY-BEAR and plDXY-BULL trading protocol',
-        url: 'https://app.plether.com',
-        icons: ['https://app.plether.com/logo.png'],
+        url: window.location.origin,
+        icons: [`${window.location.origin}/logo.png`],
       },
     }),
   ],
