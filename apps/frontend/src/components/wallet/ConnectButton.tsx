@@ -1,5 +1,5 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
-import { useAppKit } from '@reown/appkit/react'
+import { useAppKit } from '@reown/appkit/react-core'
 import { mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'

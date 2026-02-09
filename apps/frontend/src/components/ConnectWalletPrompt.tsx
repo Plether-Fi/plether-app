@@ -1,4 +1,4 @@
-import { useAppKit } from '@reown/appkit/react'
+import { useAppKit } from '@reown/appkit/react-core'
 
 export interface ConnectWalletPromptProps {
   description?: string
