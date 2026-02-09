@@ -52,3 +52,9 @@ screenshots/
 
 # Task files
 tasks/
+
+# Terraform secrets
+terraform.tfvars
+*.tfstate
+*.tfstate.backup
+.terraform/
