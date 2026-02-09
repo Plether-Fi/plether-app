@@ -12,9 +12,11 @@ import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.CurvePool as Curve
 import qualified Plether.Ethereum.Contracts.LeverageRouter as Leverage
+import qualified Plether.Ethereum.Contracts.Morpho as Morpho
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import qualified Plether.Ethereum.Contracts.ZapRouter as Zap
 import Plether.Types
+import Plether.Utils.Hex (hexToByteString)
 import Plether.Utils.Numeric (wad)
 
 calculatePriceImpact :: Integer -> Integer -> Integer -> Integer -> Integer
@@ -32,14 +34,15 @@ getMintQuote client cfg amount = do
   let addrs = currentAddresses (cfgDeployments cfg)
 
   eBlockNum <- ethBlockNumber client
-  eCap <- Splitter.getCap client (addrSyntheticSplitter addrs)
-  eOracle <- Oracle.latestRoundData client (addrBasketOracle addrs)
+  ePreview <- Splitter.previewMint client (addrSyntheticSplitter addrs) amount
 
-  case (eBlockNum, eCap, eOracle) of
-    (Right blockNum, Right cap, Right oracle) -> do
-      let oraclePrice = Oracle.rdAnswer oracle
-          usdcRequired = (amount * (oraclePrice + (cap - oraclePrice))) `div` (10 ^ (12 :: Integer))
-          pricePerToken = (usdcRequired * wad) `div` amount
+  case (eBlockNum, ePreview) of
+    (Right blockNum, Right preview) -> do
+      let usdcRequired = Splitter.pmUsdcRequired preview
+          pricePerToken =
+            if amount > 0
+              then (usdcRequired * wad) `div` amount
+              else 0
 
           quote =
             MintQuote
@@ -50,9 +53,8 @@ getMintQuote client cfg amount = do
               }
 
       pure $ Right $ mkResponse blockNum (cfgChainId cfg) quote
-    (Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+    (Left err, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, Left err) -> pure $ Left $ rpcErrorToApiError err
 
 getBurnQuote :: EthClient -> Config -> Integer -> IO (Either ApiError (ApiResponse BurnQuote))
 getBurnQuote client cfg amount = do
@@ -183,6 +185,11 @@ getTradeQuote client cfg from amount = do
 getLeverageQuote :: EthClient -> Config -> Text -> Integer -> Integer -> IO (Either ApiError (ApiResponse LeverageQuote))
 getLeverageQuote client cfg side principal leverage = do
   let addrs = currentAddresses (cfgDeployments cfg)
+      morphoAddr = addrMorpho addrs
+      marketIdHex = case side of
+        "bear" -> addrMorphoMarketBear addrs
+        _ -> addrMorphoMarketBull addrs
+      marketIdBs = hexToByteString marketIdHex
 
   eBlockNum <- ethBlockNumber client
 
@@ -195,14 +202,23 @@ getLeverageQuote client cfg side principal leverage = do
         _ -> Bull
 
   ePreview <- Leverage.previewOpenLeverage client router principal leverage
+  eOracle <- Oracle.latestRoundData client (addrBasketOracle addrs)
+  eCap <- Splitter.getCap client (addrSyntheticSplitter addrs)
+  eMarketParams <- Morpho.idToMarketParams client morphoAddr marketIdBs
 
-  case (eBlockNum, ePreview) of
-    (Right blockNum, Right preview) -> do
+  case (eBlockNum, ePreview, eOracle, eCap, eMarketParams) of
+    (Right blockNum, Right preview, Right oracle, Right cap, Right mp) -> do
       let positionSize = Leverage.polExpectedTokens preview
           debt = Leverage.polExpectedDebt preview
+          oraclePrice = Oracle.rdAnswer oracle
+          tokenPrice = case side of
+            "bear" -> oraclePrice
+            _ -> if cap > oraclePrice then cap - oraclePrice else 0
+          lltv = Morpho.mpLltv mp
+          positionSizeUsd = (positionSize * tokenPrice) `div` (10 ^ (23 :: Integer))
           healthFactor =
-            if debt > 0
-              then (positionSize * 86 * (10 ^ (16 :: Integer))) `div` debt
+            if debt > 0 && lltv > 0
+              then (positionSizeUsd * lltv * 100) `div` (debt * 10 ^ (18 :: Integer))
               else maxHealthFactor
 
           quote =
@@ -211,7 +227,7 @@ getLeverageQuote client cfg side principal leverage = do
               , levqPrincipal = principal
               , levqLeverage = leverage
               , levqPositionSize = positionSize
-              , levqPositionSizeUsd = positionSize
+              , levqPositionSizeUsd = positionSizeUsd
               , levqDebt = debt
               , levqHealthFactor = healthFactor
               , levqLiquidationPrice = 0
@@ -220,8 +236,11 @@ getLeverageQuote client cfg side principal leverage = do
               }
 
       pure $ Right $ mkResponse blockNum (cfgChainId cfg) quote
-    (Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err) -> pure $ Left $ rpcErrorToApiError err
+    (Left err, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, Left err, _, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
   where
     maxHealthFactor = 10 ^ (20 :: Integer)
 

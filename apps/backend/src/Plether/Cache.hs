@@ -44,7 +44,7 @@ newAppCache =
     <*> newTVarIO Map.empty
 
 isValid :: Integer -> CacheEntry a -> Bool
-isValid currentBlock entry = ceBlock entry >= currentBlock - 1
+isValid currentBlock entry = ceBlock entry >= currentBlock
 
 getCached :: TVar (Maybe (CacheEntry a)) -> Integer -> STM (Maybe (CacheEntry a))
 getCached cacheVar currentBlock = do
