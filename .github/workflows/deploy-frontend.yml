@@ -28,8 +28,6 @@ jobs:
 
       - name: Build
         working-directory: apps/frontend
-        env:
-          VITE_API_URL: /api/sepolia_v1
         run: npm run build
 
       - name: Deploy to Cloudflare Pages

@@ -6,7 +6,7 @@
  */
 
 // Client
-export { plethApi, PlethApiClient, PlethApiError } from './client';
+export { plethApi, PlethApiClient, PlethApiError, chainIdToApiPath } from './client';
 export type { PlethApiConfig } from './client';
 
 // Types
@@ -81,6 +81,8 @@ export {
   // WebSocket hooks
   useWebSocketPrices,
   useWebSocketConnection,
+  // Chain sync
+  useApiChainSync,
   // Query keys
   apiQueryKeys,
 } from './hooks';

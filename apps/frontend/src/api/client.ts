@@ -67,11 +67,21 @@ function deriveWsUrl(baseUrl: string): string {
   return `${proto}//${location.host}${baseUrl}`;
 }
 
-const BASE_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:3001/api';
+const DEV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+
+export function chainIdToApiPath(chainId: number): string {
+  if (chainId === 11155111) return '/api/sepolia_v1';
+  return '/api/v1';
+}
+
+function getInitialBaseUrl(): string {
+  if (DEV_API_URL) return DEV_API_URL;
+  return chainIdToApiPath(1);
+}
 
 const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
-  baseUrl: BASE_URL,
-  wsUrl: deriveWsUrl(BASE_URL),
+  baseUrl: getInitialBaseUrl(),
+  wsUrl: deriveWsUrl(getInitialBaseUrl()),
   timeout: 30000,
 };
 
@@ -155,9 +165,29 @@ export class PlethApiClient {
   private readonly maxReconnectAttempts = 5;
   private wsListeners = new Set<(message: WebSocketMessage) => void>();
   private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private chainId: number | undefined;
 
   constructor(config?: Partial<PlethApiConfig>) {
     this.config = { ...DEFAULT_CONFIG, ...config };
+  }
+
+  setChainId(chainId: number): void {
+    if (DEV_API_URL || chainId === this.chainId) return;
+    this.chainId = chainId;
+    const baseUrl = chainIdToApiPath(chainId);
+    this.config.baseUrl = baseUrl;
+    this.config.wsUrl = deriveWsUrl(baseUrl);
+    this.reconnectWebSocket();
+  }
+
+  private reconnectWebSocket(): void {
+    if (!this.ws && !this.reconnectTimeout) return;
+    const hadConnection = this.ws !== null || this.reconnectTimeout !== null;
+    this.disconnectWebSocket();
+    if (hadConnection) {
+      this.wsReconnectAttempts = 0;
+      this.connectWebSocket();
+    }
   }
 
   // ===========================================================================

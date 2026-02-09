@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
 import { Spinner } from './components/ui/Spinner'
+import { useApiChainSync } from './api'
 
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Mint = lazy(() => import('./pages/Mint'))
@@ -10,6 +11,8 @@ const Stake = lazy(() => import('./pages/Stake'))
 const History = lazy(() => import('./pages/History'))
 
 function App() {
+  useApiChainSync()
+
   return (
     <BrowserRouter>
       <Layout>

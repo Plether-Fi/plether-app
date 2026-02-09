@@ -5,8 +5,9 @@
  * automatic caching, refetching, and state management.
  */
 
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
+import { useChainId } from 'wagmi';
 import { Result } from 'better-result';
 import { plethApi, PlethApiError } from './client';
 import type {
@@ -24,14 +25,16 @@ import type {
 // Query Keys
 // =============================================================================
 
+let currentChainId: number | undefined;
+
 export const apiQueryKeys = {
   protocol: {
-    all: ['protocol'] as const,
-    status: () => [...apiQueryKeys.protocol.all, 'status'] as const,
-    config: () => [...apiQueryKeys.protocol.all, 'config'] as const,
+    all: () => ['protocol', currentChainId] as const,
+    status: () => [...apiQueryKeys.protocol.all(), 'status'] as const,
+    config: () => [...apiQueryKeys.protocol.all(), 'config'] as const,
   },
   user: {
-    all: (address: string) => ['user', address] as const,
+    all: (address: string) => ['user', currentChainId, address] as const,
     dashboard: (address: string) => [...apiQueryKeys.user.all(address), 'dashboard'] as const,
     balances: (address: string) => [...apiQueryKeys.user.all(address), 'balances'] as const,
     positions: (address: string) => [...apiQueryKeys.user.all(address), 'positions'] as const,
@@ -45,15 +48,15 @@ export const apiQueryKeys = {
       [...apiQueryKeys.user.all(address), 'lendingHistory', params] as const,
   },
   quotes: {
-    all: ['quotes'] as const,
-    mint: (amount: string) => [...apiQueryKeys.quotes.all, 'mint', amount] as const,
-    burn: (amount: string) => [...apiQueryKeys.quotes.all, 'burn', amount] as const,
+    all: () => ['quotes', currentChainId] as const,
+    mint: (amount: string) => [...apiQueryKeys.quotes.all(), 'mint', amount] as const,
+    burn: (amount: string) => [...apiQueryKeys.quotes.all(), 'burn', amount] as const,
     zap: (direction: ZapDirection, amount: string) =>
-      [...apiQueryKeys.quotes.all, 'zap', direction, amount] as const,
+      [...apiQueryKeys.quotes.all(), 'zap', direction, amount] as const,
     trade: (from: TradeFrom, amount: string) =>
-      [...apiQueryKeys.quotes.all, 'trade', from, amount] as const,
+      [...apiQueryKeys.quotes.all(), 'trade', from, amount] as const,
     leverage: (side: Side, principal: string, leverage: string) =>
-      [...apiQueryKeys.quotes.all, 'leverage', side, principal, leverage] as const,
+      [...apiQueryKeys.quotes.all(), 'leverage', side, principal, leverage] as const,
   },
 } as const;
 
@@ -284,6 +287,29 @@ export function useLendingHistory(address: string | undefined, params?: { side?:
     enabled: !!address,
     staleTime: 60_000,
   });
+}
+
+// =============================================================================
+// Chain Sync
+// =============================================================================
+
+export function useApiChainSync(): void {
+  const chainId = useChainId();
+  const queryClient = useQueryClient();
+  const prevChainId = useRef(chainId);
+
+  useEffect(() => {
+    if (chainId === prevChainId.current) return;
+    prevChainId.current = chainId;
+    currentChainId = chainId;
+    plethApi.setChainId(chainId);
+    void queryClient.invalidateQueries();
+  }, [chainId, queryClient]);
+
+  useEffect(() => {
+    currentChainId = chainId;
+    plethApi.setChainId(chainId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 }
 
 // =============================================================================
