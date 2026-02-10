@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
+import { ConnectModal } from './components/wallet/ConnectModal'
 import { Spinner } from './components/ui/Spinner'
 import { useApiChainSync } from './api'
 
@@ -28,6 +29,7 @@ function App() {
         </Suspense>
       </Layout>
       <TransactionModal />
+      <ConnectModal />
     </BrowserRouter>
   )
 }

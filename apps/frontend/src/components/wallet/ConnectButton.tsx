@@ -1,15 +1,15 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
-import { useAppKit } from '@reown/appkit/react-core'
 import { mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
+import { useWalletModalStore } from '../../stores/walletModalStore'
 
 const SUPPORTED_CHAIN_IDS = [mainnet.id, sepolia.id, anvil.id] as const
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
-  const { open } = useAppKit()
+  const { open } = useWalletModalStore()
   const chainId = useChainId()
 
   const getNetworkName = () => {
@@ -30,7 +30,7 @@ export function ConnectButton() {
   if (!isConnected) {
     return (
       <button
-        onClick={() => void open()}
+        onClick={open}
         className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 font-medium text-sm"
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
@@ -56,7 +56,8 @@ export function ConnectButton() {
 
       {/* Account button */}
       <button
-        onClick={() => void open({ view: 'Account' })}
+        onClick={() => { if (address) void navigator.clipboard.writeText(address) }}
+        title="Copy address"
         className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 group"
       >
         <div className="w-2 h-2 rounded-full bg-cyber-neon-green shadow-md shadow-cyber-neon-green/50" />
