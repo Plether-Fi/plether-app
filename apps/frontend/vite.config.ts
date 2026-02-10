@@ -55,6 +55,9 @@ export default defineConfig({
             if (id.includes('/wagmi/') || id.includes('@tanstack/react-query')) {
               return 'web3-wagmi';
             }
+            if (id.includes('@walletconnect/')) {
+              return 'web3-walletconnect';
+            }
             if (id.includes('qrcode')) {
               return 'web3-qr';
             }
