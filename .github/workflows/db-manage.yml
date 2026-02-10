@@ -3,6 +3,13 @@ name: Database Management
 on:
   workflow_dispatch:
     inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+          - mainnet
       action:
         description: Action to perform
         required: true
@@ -13,6 +20,7 @@ on:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ENV: ${{ inputs.environment }}
 
 jobs:
   manage:
@@ -31,7 +39,7 @@ jobs:
       - name: Get database URL
         id: db
         run: |
-          DB_URL=$(aws ssm get-parameter --name "/plether/sepolia/database-url" --with-decryption --query 'Parameter.Value' --output text)
+          DB_URL=$(aws ssm get-parameter --name "/plether/${{ env.ENV }}/database-url" --with-decryption --query 'Parameter.Value' --output text)
           echo "::add-mask::$DB_URL"
           echo "url=$DB_URL" >> "$GITHUB_OUTPUT"
 
@@ -40,11 +48,11 @@ jobs:
         env:
           DATABASE_URL: ${{ steps.db.outputs.url }}
         run: |
-          SUBNETS=$(aws ecs describe-services --cluster plether-sepolia --services plether-api \
+          SUBNETS=$(aws ecs describe-services --cluster plether-${{ env.ENV }} --services plether-api \
             --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text | tr '\t' ',')
-          SG=$(aws ecs describe-services --cluster plether-sepolia --services plether-api \
+          SG=$(aws ecs describe-services --cluster plether-${{ env.ENV }} --services plether-api \
             --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' --output text)
-          EXEC_ROLE=$(aws ecs describe-task-definition --task-definition plether-sepolia \
+          EXEC_ROLE=$(aws ecs describe-task-definition --task-definition plether-${{ env.ENV }} \
             --query 'taskDefinition.executionRoleArn' --output text)
 
           SQL_B64=$(base64 -w0 apps/backend/schema.sql)
@@ -63,7 +71,7 @@ jobs:
               \"logConfiguration\": {
                 \"logDriver\": \"awslogs\",
                 \"options\": {
-                  \"awslogs-group\": \"/ecs/plether-sepolia\",
+                  \"awslogs-group\": \"/ecs/plether-${{ env.ENV }}\",
                   \"awslogs-region\": \"${{ env.AWS_REGION }}\",
                   \"awslogs-stream-prefix\": \"db-manage\"
                 }
@@ -72,16 +80,16 @@ jobs:
             --query 'taskDefinition.taskDefinitionArn' --output text)
 
           TASK_ARN=$(aws ecs run-task \
-            --cluster plether-sepolia \
+            --cluster plether-${{ env.ENV }} \
             --launch-type FARGATE \
             --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
             --task-definition "$TASK_DEF_ARN" \
             --query 'tasks[0].taskArn' --output text)
 
           echo "Running task $TASK_ARN..."
-          aws ecs wait tasks-stopped --cluster plether-sepolia --tasks "$TASK_ARN"
+          aws ecs wait tasks-stopped --cluster plether-${{ env.ENV }} --tasks "$TASK_ARN"
 
-          EXIT_CODE=$(aws ecs describe-tasks --cluster plether-sepolia --tasks "$TASK_ARN" \
+          EXIT_CODE=$(aws ecs describe-tasks --cluster plether-${{ env.ENV }} --tasks "$TASK_ARN" \
             --query 'tasks[0].containers[0].exitCode' --output text)
           echo "Task exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ]
@@ -89,7 +97,7 @@ jobs:
       - name: Show connection info
         if: inputs.action == 'connect-info'
         run: |
-          ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier plether-sepolia --query 'DBInstances[0].Endpoint' --output json)
+          ENDPOINT=$(aws rds describe-db-instances --db-instance-identifier plether-${{ env.ENV }} --query 'DBInstances[0].Endpoint' --output json)
           echo "RDS Endpoint: $(echo $ENDPOINT | jq -r '.Address'):$(echo $ENDPOINT | jq -r '.Port')"
           echo "Database: plether"
           echo ""

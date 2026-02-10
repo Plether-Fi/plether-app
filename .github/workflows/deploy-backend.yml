@@ -5,19 +5,27 @@ on:
     branches: [master]
     paths: [apps/backend/**]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+          - mainnet
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   ECR_REPOSITORY: plether-api
-  ECS_CLUSTER: plether-sepolia
-  ECS_SERVICE: plether-api
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
+    outputs:
+      image: ${{ steps.build.outputs.image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -34,17 +42,40 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
+        id: build
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -f apps/backend/Dockerfile -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker build -f apps/backend/Dockerfile -t $IMAGE -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
+          docker push $IMAGE
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      matrix:
+        environment: ${{ fromJson(github.event_name == 'push' && '["sepolia","mainnet"]' || format('["{0}"]', inputs.environment)) }}
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Get current task definition
         run: |
-          aws ecs describe-task-definition --task-definition plether-sepolia --query taskDefinition > task-def.json
+          aws ecs describe-task-definition \
+            --task-definition plether-${{ matrix.environment }} \
+            --query taskDefinition > task-def.json
 
       - name: Update task definition image
         id: task-def
@@ -52,12 +83,12 @@ jobs:
         with:
           task-definition: task-def.json
           container-name: plether-api
-          image: ${{ steps.ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+          image: ${{ needs.build.outputs.image }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: ${{ env.ECS_SERVICE }}
-          cluster: ${{ env.ECS_CLUSTER }}
+          service: plether-api
+          cluster: plether-${{ matrix.environment }}
           wait-for-service-stability: true

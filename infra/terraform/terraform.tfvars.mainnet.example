@@ -1,0 +1,11 @@
+aws_region          = "us-east-1"
+environment         = "mainnet"
+rpc_url             = "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
+db_password         = "CHANGE_ME_STRONG_PASSWORD"
+db_username         = "plether"
+chain_id            = "1"
+cors_origins        = "*"
+indexer_start_block = "24427188"
+container_cpu       = 256
+container_memory    = 512
+db_instance_class   = "db.t4g.micro"

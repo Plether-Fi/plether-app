@@ -55,6 +55,8 @@ tasks/
 
 # Terraform secrets
 terraform.tfvars
+terraform.tfvars.*
+!terraform.tfvars.*.example
 *.tfstate
 *.tfstate.backup
 .terraform/
