@@ -67,16 +67,9 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
 
   const authorization = dashboardData?.data.authorization
-  const allowances = dashboardData?.data.allowances
   const needsMorphoAuthorization = selectedSide === 'BEAR'
     ? !(authorization?.bearLeverageRouter)
     : !(authorization?.bullLeverageRouter)
-
-  const usdcAllowance = selectedSide === 'BEAR'
-    ? BigInt(allowances?.usdc.leverageRouter ?? '0')
-    : BigInt(allowances?.usdc.bullLeverageRouter ?? '0')
-
-  const needsUsdcApproval = collateralBigInt > 0n && usdcAllowance < collateralBigInt
   const insufficientBalance = collateralBigInt > usdcBalance
 
   const handleOpenSuccess = useCallback(() => {
@@ -100,9 +93,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   const getButtonText = () => {
     if (isRunning) return 'Processing...'
     if (insufficientBalance) return 'Insufficient USDC'
-    if (needsMorphoAuthorization && needsUsdcApproval) return 'Authorize, Approve & Open'
     if (needsMorphoAuthorization) return 'Authorize & Open Position'
-    if (needsUsdcApproval) return 'Approve & Open Position'
     return `Open ${selectedSide} Position`
   }
 

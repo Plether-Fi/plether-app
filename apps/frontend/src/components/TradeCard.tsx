@@ -81,19 +81,19 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
   const { data: dashboardData } = useUserDashboard(address)
   const dashAllowances = dashboardData?.data.allowances
 
-  const allowance = (() => {
-    if (!dashAllowances) return 0n
+  const needsApproval = (() => {
+    if (!dashAllowances || inputAmountBigInt <= 0n) return false
     if (isBearTrade) {
-      return mode === 'buy'
+      const allowance = mode === 'buy'
         ? BigInt(dashAllowances.usdc.curvePool)
         : BigInt(dashAllowances.bear.curvePool)
-    } else {
-      return mode === 'buy'
-        ? BigInt(dashAllowances.usdc.zap)
-        : BigInt(dashAllowances.bull.zapRouter)
+      return allowance < inputAmountBigInt
     }
+    if (mode === 'sell') {
+      return BigInt(dashAllowances.bull.zapRouter) < inputAmountBigInt
+    }
+    return false
   })()
-  const needsApproval = inputAmountBigInt > 0n && allowance < inputAmountBigInt
 
   const insufficientBalance = inputAmountBigInt > inputBalance
 

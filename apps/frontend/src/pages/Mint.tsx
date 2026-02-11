@@ -70,15 +70,6 @@ export function Mint() {
   const usdcRequired = mintQuoteData ? BigInt(mintQuoteData.data.usdcIn) : 0n
   const usdcToReturn = burnQuoteData ? BigInt(burnQuoteData.data.usdcOut) : 0n
 
-  const dashAllowances = dashboardData?.data.allowances
-  const usdcAllowance = BigInt(dashAllowances?.usdc.splitter ?? '0')
-  const bearAllowance = BigInt(dashAllowances?.bear.splitter ?? '0')
-  const bullAllowance = BigInt(dashAllowances?.bull.splitter ?? '0')
-
-  const needsUsdcApproval = usdcRequired > 0n && usdcAllowance < usdcRequired
-  const needsBearApproval = pairAmountBigInt > 0n && bearAllowance < pairAmountBigInt
-  const needsBullApproval = pairAmountBigInt > 0n && bullAllowance < pairAmountBigInt
-
   const handleMint = useCallback(() => {
     if (pairAmountBigInt <= 0n) return
 
@@ -111,14 +102,12 @@ export function Mint() {
   const getMintButtonText = () => {
     if (isMintPending) return 'Processing...'
     if (usdcRequired > usdcBalance) return 'Insufficient USDC'
-    if (needsUsdcApproval) return 'Approve & Mint'
     return 'Mint Pairs'
   }
 
   const getRedeemButtonText = () => {
     if (isRedeemPending) return 'Processing...'
     if (pairAmountBigInt > minBalance) return 'Insufficient Balance'
-    if (needsBearApproval || needsBullApproval) return 'Approve & Redeem'
     return 'Redeem for USDC'
   }
 

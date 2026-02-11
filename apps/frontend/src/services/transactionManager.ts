@@ -559,25 +559,14 @@ class TransactionManager {
     const ctx = await this.getOperationContext(operationKey)
     if (!ctx) return
 
-    const { config, addresses, address } = ctx
+    const { config, addresses } = ctx
     const adjustedAmount = await this.adjustBurnAmount(addresses.SYNTHETIC_SPLITTER, pairAmount, config)
-
-    const hasBearAllowance = await this.checkAllowance(addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER, address, adjustedAmount)
-    const hasBullAllowance = await this.checkAllowance(addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER, address, adjustedAmount)
-
-    const prerequisites: Prerequisite[] = []
-    if (!hasBearAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite('Approve plDXY-BEAR', addresses.DXY_BEAR, addresses.SYNTHETIC_SPLITTER, adjustedAmount))
-    }
-    if (!hasBullAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite('Approve plDXY-BULL', addresses.DXY_BULL, addresses.SYNTHETIC_SPLITTER, adjustedAmount))
-    }
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'burn',
       title: 'Redeeming token pairs',
-      prerequisites,
+      prerequisites: [],
       mainStep: {
         label: 'Redeem pairs',
         execute: (config) => writeContract(config, {
