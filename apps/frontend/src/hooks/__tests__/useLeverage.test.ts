@@ -7,6 +7,7 @@ import type { LeverageError } from '../useLeverage'
 const mockWriteContract = vi.fn()
 const mockWriteContractAsync = vi.fn()
 const mockReset = vi.fn()
+const mockSignTypedDataAsync = vi.fn()
 
 const mockUseAccount = vi.fn()
 const mockUseReadContract = vi.fn()
@@ -19,6 +20,7 @@ vi.mock('wagmi', () => ({
   useReadContract: () => mockUseReadContract(),
   useWriteContract: () => mockUseWriteContract(),
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
+  useSignTypedData: () => ({ signTypedDataAsync: mockSignTypedDataAsync }),
   usePublicClient: () => ({
     waitForTransactionReceipt: mockWaitForTransactionReceipt,
   }),
@@ -433,6 +435,8 @@ describe('useCloseLeverage', () => {
   })
 })
 
+const MOCK_PERMIT_SIG = '0x' + 'ab'.repeat(32) + 'cd'.repeat(32) + '1b' as `0x${string}`
+
 describe('useAdjustCollateral', () => {
   beforeEach(() => {
     vi.resetAllMocks()
@@ -441,6 +445,13 @@ describe('useAdjustCollateral', () => {
     mockUseAccount.mockReturnValue({
       address: MOCK_ADDRESS,
       chainId: MOCK_CHAIN_ID,
+    })
+
+    mockUseReadContract.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
     })
 
     mockUseWriteContract.mockReturnValue({
@@ -453,18 +464,28 @@ describe('useAdjustCollateral', () => {
     mockWaitForTransactionReceipt.mockResolvedValue({
       status: 'success',
     })
+
+    mockSignTypedDataAsync.mockResolvedValue(MOCK_PERMIT_SIG)
   })
 
-  it('adds collateral and creates transaction', async () => {
+  it('adds collateral with permit and creates transaction', async () => {
+    let readCallCount = 0
+    mockUseReadContract.mockImplementation(() => {
+      readCallCount++
+      if (readCallCount === 1) return { data: 0n } // nonces
+      if (readCallCount === 2) return { data: 'USD Coin' } // name
+      return { data: undefined }
+    })
     mockWriteContractAsync.mockResolvedValue('0xaddcollateralhash')
 
     const { result } = renderHook(() => useAdjustCollateral('BEAR'))
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.addCollateral(500000000000000000n)
+      adjustResult = await result.current.addCollateral(500000000000000000n, 100n)
     })
 
+    expect(mockSignTypedDataAsync).toHaveBeenCalled()
     expect(adjustResult).toBeDefined()
     expect(Result.isOk(adjustResult!)).toBe(true)
 
@@ -479,7 +500,7 @@ describe('useAdjustCollateral', () => {
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.removeCollateral(250000000000000000n)
+      adjustResult = await result.current.removeCollateral(250000000000000000n, 100n, BigInt(Math.floor(Date.now() / 1000) + 3600))
     })
 
     expect(adjustResult).toBeDefined()
@@ -499,7 +520,7 @@ describe('useAdjustCollateral', () => {
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.addCollateral(500000000000000000n)
+      adjustResult = await result.current.addCollateral(500000000000000000n, 100n)
     })
 
     expect(adjustResult).toBeDefined()
@@ -519,7 +540,7 @@ describe('useAdjustCollateral', () => {
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.removeCollateral(250000000000000000n)
+      adjustResult = await result.current.removeCollateral(250000000000000000n, 100n, BigInt(Math.floor(Date.now() / 1000) + 3600))
     })
 
     expect(adjustResult).toBeDefined()
@@ -530,13 +551,20 @@ describe('useAdjustCollateral', () => {
   })
 
   it('handles writeContractAsync failure for addCollateral', async () => {
+    let readCallCount = 0
+    mockUseReadContract.mockImplementation(() => {
+      readCallCount++
+      if (readCallCount === 1) return { data: 0n }
+      if (readCallCount === 2) return { data: 'USD Coin' }
+      return { data: undefined }
+    })
     mockWriteContractAsync.mockRejectedValue(new Error('Insufficient funds'))
 
     const { result } = renderHook(() => useAdjustCollateral('BEAR'))
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.addCollateral(500000000000000000n)
+      adjustResult = await result.current.addCollateral(500000000000000000n, 100n)
     })
 
     expect(adjustResult).toBeDefined()
@@ -547,6 +575,13 @@ describe('useAdjustCollateral', () => {
   })
 
   it('handles transaction revert', async () => {
+    let readCallCount = 0
+    mockUseReadContract.mockImplementation(() => {
+      readCallCount++
+      if (readCallCount === 1) return { data: 0n }
+      if (readCallCount === 2) return { data: 'USD Coin' }
+      return { data: undefined }
+    })
     mockWriteContractAsync.mockResolvedValue('0xrevertedhash')
     mockWaitForTransactionReceipt.mockResolvedValue({
       status: 'reverted',
@@ -556,7 +591,7 @@ describe('useAdjustCollateral', () => {
     let adjustResult: Result<`0x${string}`, LeverageError> | undefined
 
     await act(async () => {
-      adjustResult = await result.current.addCollateral(500000000000000000n)
+      adjustResult = await result.current.addCollateral(500000000000000000n, 100n)
     })
 
     expect(adjustResult).toBeDefined()

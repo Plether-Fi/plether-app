@@ -27,6 +27,19 @@ export const PLETH_CORE_ABI = [
   },
   {
     type: 'function',
+    name: 'mintWithPermit',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'amount', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'burn',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'amount', type: 'uint256' }], // pair amount (18 decimals)
