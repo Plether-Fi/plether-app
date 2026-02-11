@@ -8,6 +8,7 @@ import { getDeadline } from '../utils/deadline'
 import { EIP2612_PERMIT_TYPES, splitSignature } from '../utils/permit'
 
 type OperationStatus = 'pending' | 'signing' | 'approving' | 'submitted' | 'confirming' | 'success' | 'error'
+type PermitResult = { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }
 
 interface PendingOperation {
   id: string
@@ -227,22 +228,23 @@ class TransactionManager {
     return hash
   }
 
-  private async signUsdcPermit(
+  private async signPermit(
+    tokenAddress: `0x${string}`,
     spender: `0x${string}`,
     amount: bigint,
     ctx: OperationContext,
   ): Promise<{ v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }> {
-    const { config, chainId, address, addresses } = ctx
+    const { config, chainId, address } = ctx
 
     const [nonce, eip712Domain] = await Promise.all([
       readContract(config, {
-        address: addresses.USDC,
+        address: tokenAddress,
         abi: ERC20_ABI,
         functionName: 'nonces',
         args: [address],
       }),
       readContract(config, {
-        address: addresses.USDC,
+        address: tokenAddress,
         abi: ERC20_ABI,
         functionName: 'eip712Domain',
       }),
@@ -256,7 +258,7 @@ class TransactionManager {
         name,
         version,
         chainId,
-        verifyingContract: addresses.USDC,
+        verifyingContract: tokenAddress,
       },
       types: EIP2612_PERMIT_TYPES,
       primaryType: 'Permit',
@@ -345,14 +347,14 @@ class TransactionManager {
     if (!ctx) return
 
     const { addresses } = ctx
-    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
+    let permit!: PermitResult
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'mint',
       title: 'Minting token pairs',
       permitSign: async () => {
-        permit = await this.signUsdcPermit(addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx)
+        permit = await this.signPermit(addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx)
       },
       prerequisites: [],
       mainStep: {
@@ -381,25 +383,23 @@ class TransactionManager {
     const tokenAddress = side === 'BEAR' ? addresses.DXY_BEAR : addresses.DXY_BULL
     const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
 
-    const hasAllowance = await this.checkAllowance(tokenAddress, stakingAddress, address, amount)
-
-    const prerequisites: Prerequisite[] = []
-    if (!hasAllowance) {
-      prerequisites.push(this.makeApprovalPrerequisite(`Approve plDXY-${side}`, tokenAddress, stakingAddress, amount))
-    }
+    let permit!: PermitResult
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'stake',
       title: `Staking plDXY-${side}`,
-      prerequisites,
+      permitSign: async () => {
+        permit = await this.signPermit(tokenAddress, stakingAddress, amount, ctx)
+      },
+      prerequisites: [],
       mainStep: {
         label: `Stake plDXY-${side}`,
         execute: (config) => writeContract(config, {
           address: stakingAddress,
           abi: STAKED_TOKEN_ABI,
-          functionName: 'deposit',
-          args: [amount, address],
+          functionName: 'depositWithPermit',
+          args: [amount, address, permit.deadline, permit.v, permit.r, permit.s],
         }),
       },
       onRetry: options?.onRetry ?? (() => void this.executeStake(side, amount, options)),
@@ -461,14 +461,14 @@ class TransactionManager {
     if (!ctx) return
 
     const { addresses } = ctx
-    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
+    let permit!: PermitResult
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'swap',
       title: 'Buying plDXY-BULL',
       permitSign: async () => {
-        permit = await this.signUsdcPermit(addresses.ZAP_ROUTER, usdcAmount, ctx)
+        permit = await this.signPermit(addresses.USDC, addresses.ZAP_ROUTER, usdcAmount, ctx)
       },
       prerequisites: [],
       mainStep: {
@@ -635,14 +635,14 @@ class TransactionManager {
       })
     }
 
-    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
+    let permit!: PermitResult
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'leverage',
       title: `Opening ${side} leverage position`,
       permitSign: async () => {
-        permit = await this.signUsdcPermit(routerAddress, principal, ctx)
+        permit = await this.signPermit(addresses.USDC, routerAddress, principal, ctx)
       },
       prerequisites,
       mainStep: {
