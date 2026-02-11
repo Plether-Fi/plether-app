@@ -288,7 +288,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
     usdcAmount: bigint,
     maxSlippageBps: bigint,
   ): Promise<Result<`0x${string}`, LeverageError>> => {
-    if (!routerAddress || !address || !chainId || !addresses || usdcNonce === undefined || !usdcName) {
+    if (!routerAddress || !address || !chainId || !addresses || usdcNonce === undefined || !usdcName || !usdcVersion) {
       return Result.err(new NotConnectedError())
     }
 
@@ -321,7 +321,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
         const signature = await signTypedDataAsync({
           domain: {
             name: usdcName,
-            version: usdcVersion!,
+            version: usdcVersion,
             chainId,
             verifyingContract: addresses.USDC,
           },

@@ -8,7 +8,7 @@ import { getDeadline } from '../utils/deadline'
 import { EIP2612_PERMIT_TYPES, splitSignature } from '../utils/permit'
 
 type OperationStatus = 'pending' | 'signing' | 'approving' | 'submitted' | 'confirming' | 'success' | 'error'
-type PermitResult = { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }
+interface PermitResult { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }
 
 interface PendingOperation {
   id: string
