@@ -22,27 +22,16 @@ interface Prerequisite {
   execute: (config: Config, onConfirming: () => void) => Promise<void>
 }
 
-type PermitResult = { v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }
-
-interface PermitConfig {
-  sign: () => Promise<PermitResult | null>
-  withPermit: (permit: PermitResult) => (config: Config) => Promise<`0x${string}`>
-  withoutPermit: {
-    additionalPrerequisites: Prerequisite[]
-    execute: (config: Config) => Promise<`0x${string}`>
-  }
-}
-
 interface OperationConfig {
   operationKey: string
   txType: TransactionType
   title: string
+  permitSign?: () => Promise<void>
   prerequisites: Prerequisite[]
   mainStep: {
     label: string
     execute: (config: Config) => Promise<`0x${string}`>
   }
-  permit?: PermitConfig
   onRetry: () => void
 }
 
@@ -106,21 +95,16 @@ class TransactionManager {
     }
   }
 
-  private buildStepLabels(prerequisites: Prerequisite[], mainStepLabel: string, includePermit: boolean): string[] {
+  private async executeOperation(ctx: OperationContext, opConfig: OperationConfig): Promise<void> {
+    const { config, chainId } = ctx
+    const { operationKey, txType, title, permitSign, prerequisites, mainStep, onRetry } = opConfig
+
     const steps: string[] = []
-    if (includePermit) steps.push('Sign permit')
+    if (permitSign) steps.push('Sign permit')
     for (const prereq of prerequisites) {
       steps.push(prereq.label, 'Confirming onchain (~12s)')
     }
-    steps.push(mainStepLabel, 'Confirming onchain (~12s)')
-    return steps
-  }
-
-  private async executeOperation(ctx: OperationContext, opConfig: OperationConfig): Promise<void> {
-    const { config, chainId } = ctx
-    const { operationKey, txType, title, prerequisites, mainStep, permit, onRetry } = opConfig
-
-    const steps = this.buildStepLabels(prerequisites, mainStep.label, !!permit)
+    steps.push(mainStep.label, 'Confirming onchain (~12s)')
 
     const transactionId = crypto.randomUUID()
     const txStore = useTransactionStore.getState()
@@ -141,38 +125,21 @@ class TransactionManager {
     const operation: PendingOperation = {
       id: operationKey,
       transactionId,
-      status: permit ? 'signing' : prerequisites.length > 0 ? 'approving' : 'submitted',
+      status: permitSign ? 'signing' : prerequisites.length > 0 ? 'approving' : 'submitted',
     }
     this.pendingOperations.set(operationKey, operation)
 
     try {
       let stepIndex = 0
-      let activePrerequisites = prerequisites
-      let activeMainExecute = mainStep.execute
 
-      if (permit) {
-        txStore.setStepInProgress(transactionId, 0)
-        const permitResult = await permit.sign()
-
-        if (permitResult) {
-          activeMainExecute = permit.withPermit(permitResult)
-          stepIndex = 1
-        } else {
-          const { additionalPrerequisites, execute } = permit.withoutPermit
-          activePrerequisites = [...prerequisites, ...additionalPrerequisites]
-          activeMainExecute = execute
-
-          const newSteps = this.buildStepLabels(activePrerequisites, mainStep.label, false)
-          txStore.updateTransaction(transactionId, {
-            steps: newSteps.map(label => ({ label, status: 'pending' as const })),
-          })
-          stepIndex = 0
-        }
-
-        operation.status = activePrerequisites.length > stepIndex / 2 ? 'approving' : 'submitted'
+      if (permitSign) {
+        txStore.setStepInProgress(transactionId, stepIndex)
+        await permitSign()
+        stepIndex = 1
+        operation.status = prerequisites.length > 0 ? 'approving' : 'submitted'
       }
 
-      for (const prereq of activePrerequisites.slice(stepIndex / 2)) {
+      for (const prereq of prerequisites) {
         txStore.setStepInProgress(transactionId, stepIndex)
         const confirmStep = stepIndex + 1
         await prereq.execute(config, () => {
@@ -184,7 +151,7 @@ class TransactionManager {
       operation.status = 'submitted'
       txStore.setStepInProgress(transactionId, stepIndex)
 
-      const hash = await activeMainExecute(config)
+      const hash = await mainStep.execute(config)
 
       operation.hash = hash
       operation.status = 'confirming'
@@ -264,50 +231,46 @@ class TransactionManager {
     spender: `0x${string}`,
     amount: bigint,
     ctx: OperationContext,
-  ): Promise<{ v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint } | null> {
+  ): Promise<{ v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }> {
     const { config, chainId, address, addresses } = ctx
 
-    try {
-      const [nonce, eip712Domain] = await Promise.all([
-        readContract(config, {
-          address: addresses.USDC,
-          abi: ERC20_ABI,
-          functionName: 'nonces',
-          args: [address],
-        }),
-        readContract(config, {
-          address: addresses.USDC,
-          abi: ERC20_ABI,
-          functionName: 'eip712Domain',
-        }),
-      ])
+    const [nonce, eip712Domain] = await Promise.all([
+      readContract(config, {
+        address: addresses.USDC,
+        abi: ERC20_ABI,
+        functionName: 'nonces',
+        args: [address],
+      }),
+      readContract(config, {
+        address: addresses.USDC,
+        abi: ERC20_ABI,
+        functionName: 'eip712Domain',
+      }),
+    ])
 
-      const [, name, version] = eip712Domain
-      const deadline = getDeadline(60)
+    const [, name, version] = eip712Domain
+    const deadline = getDeadline(60)
 
-      const signature = await signTypedData(config, {
-        domain: {
-          name,
-          version,
-          chainId,
-          verifyingContract: addresses.USDC,
-        },
-        types: EIP2612_PERMIT_TYPES,
-        primaryType: 'Permit',
-        message: {
-          owner: address,
-          spender,
-          value: amount,
-          nonce,
-          deadline,
-        },
-      })
+    const signature = await signTypedData(config, {
+      domain: {
+        name,
+        version,
+        chainId,
+        verifyingContract: addresses.USDC,
+      },
+      types: EIP2612_PERMIT_TYPES,
+      primaryType: 'Permit',
+      message: {
+        owner: address,
+        spender,
+        value: amount,
+        nonce,
+        deadline,
+      },
+    })
 
-      const { r, s, v } = splitSignature(signature)
-      return { v, r, s, deadline }
-    } catch {
-      return null
-    }
+    const { r, s, v } = splitSignature(signature)
+    return { v, r, s, deadline }
   }
 
   async executeUnstake(
@@ -381,43 +344,25 @@ class TransactionManager {
     const ctx = await this.getOperationContext(operationKey)
     if (!ctx) return
 
-    const { addresses, address } = ctx
-
-    const approvalNeeded = !(await this.checkAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER, address, usdcRequired))
+    const { addresses } = ctx
+    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'mint',
       title: 'Minting token pairs',
+      permitSign: async () => {
+        permit = await this.signUsdcPermit(addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx)
+      },
       prerequisites: [],
       mainStep: {
         label: 'Mint pairs',
         execute: (config) => writeContract(config, {
           address: addresses.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
-          functionName: 'mint',
-          args: [pairAmount],
-        }),
-      },
-      permit: {
-        sign: () => this.signUsdcPermit(addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx),
-        withPermit: (p) => (config) => writeContract(config, {
-          address: addresses.SYNTHETIC_SPLITTER,
-          abi: PLETH_CORE_ABI,
           functionName: 'mintWithPermit',
-          args: [pairAmount, p.deadline, p.v, p.r, p.s],
+          args: [pairAmount, permit.deadline, permit.v, permit.r, permit.s],
         }),
-        withoutPermit: {
-          additionalPrerequisites: approvalNeeded
-            ? [this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired)]
-            : [],
-          execute: (config) => writeContract(config, {
-            address: addresses.SYNTHETIC_SPLITTER,
-            abi: PLETH_CORE_ABI,
-            functionName: 'mint',
-            args: [pairAmount],
-          }),
-        },
       },
       onRetry: options?.onRetry ?? (() => void this.executeMint(pairAmount, usdcRequired, options)),
     })
@@ -515,43 +460,25 @@ class TransactionManager {
     const ctx = await this.getOperationContext(operationKey)
     if (!ctx) return
 
-    const { addresses, address } = ctx
-    const approvalNeeded = !(await this.checkAllowance(addresses.USDC, addresses.ZAP_ROUTER, address, usdcAmount))
-    const deadline = getDeadline()
+    const { addresses } = ctx
+    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'swap',
       title: 'Buying plDXY-BULL',
+      permitSign: async () => {
+        permit = await this.signUsdcPermit(addresses.ZAP_ROUTER, usdcAmount, ctx)
+      },
       prerequisites: [],
       mainStep: {
         label: 'Buy plDXY-BULL',
         execute: (config) => writeContract(config, {
           address: addresses.ZAP_ROUTER,
           abi: ZAP_ROUTER_ABI,
-          functionName: 'zapMint',
-          args: [usdcAmount, minBullOut, slippageBps, deadline],
-        }),
-      },
-      permit: {
-        sign: () => this.signUsdcPermit(addresses.ZAP_ROUTER, usdcAmount, ctx),
-        withPermit: (p) => (config) => writeContract(config, {
-          address: addresses.ZAP_ROUTER,
-          abi: ZAP_ROUTER_ABI,
           functionName: 'zapMintWithPermit',
-          args: [usdcAmount, minBullOut, slippageBps, p.deadline, p.v, p.r, p.s],
+          args: [usdcAmount, minBullOut, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
         }),
-        withoutPermit: {
-          additionalPrerequisites: approvalNeeded
-            ? [this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.ZAP_ROUTER, usdcAmount)]
-            : [],
-          execute: (config) => writeContract(config, {
-            address: addresses.ZAP_ROUTER,
-            abi: ZAP_ROUTER_ABI,
-            functionName: 'zapMint',
-            args: [usdcAmount, minBullOut, slippageBps, deadline],
-          }),
-        },
       },
       onRetry: options?.onRetry ?? (() => void this.executeZapBuy(usdcAmount, minBullOut, slippageBps, options)),
     })
@@ -708,42 +635,24 @@ class TransactionManager {
       })
     }
 
-    const approvalNeeded = !(await this.checkAllowance(addresses.USDC, routerAddress, address, principal))
-    const deadline = getDeadline()
+    let permit!: Awaited<ReturnType<TransactionManager['signUsdcPermit']>>
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'leverage',
       title: `Opening ${side} leverage position`,
+      permitSign: async () => {
+        permit = await this.signUsdcPermit(routerAddress, principal, ctx)
+      },
       prerequisites,
       mainStep: {
         label: `Open ${side} position`,
         execute: (cfg) => writeContract(cfg, {
           address: routerAddress,
           abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'openLeverage',
-          args: [principal, leverage, slippageBps, deadline],
-        }),
-      },
-      permit: {
-        sign: () => this.signUsdcPermit(routerAddress, principal, ctx),
-        withPermit: (p) => (cfg) => writeContract(cfg, {
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
           functionName: 'openLeverageWithPermit',
-          args: [principal, leverage, slippageBps, p.deadline, p.v, p.r, p.s],
+          args: [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
         }),
-        withoutPermit: {
-          additionalPrerequisites: approvalNeeded
-            ? [this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, routerAddress, principal)]
-            : [],
-          execute: (cfg) => writeContract(cfg, {
-            address: routerAddress,
-            abi: LEVERAGE_ROUTER_ABI,
-            functionName: 'openLeverage',
-            args: [principal, leverage, slippageBps, deadline],
-          }),
-        },
       },
       onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, options)),
     })
