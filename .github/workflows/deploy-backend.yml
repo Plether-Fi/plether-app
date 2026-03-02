@@ -61,7 +61,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        environment: ${{ fromJson(github.event_name == 'push' && '["sepolia","mainnet"]' || format('["{0}"]', inputs.environment)) }}
+        environment: ${{ fromJson(github.event_name == 'push' && '["mainnet"]' || format('["{0}"]', inputs.environment)) }}
 
     steps:
       - name: Configure AWS credentials
