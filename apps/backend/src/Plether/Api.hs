@@ -58,6 +58,10 @@ app :: AppCache -> EthClient -> Config -> Maybe DbPool -> ScottyM ()
 app cache client cfg mPool = do
   middleware $ corsMiddleware cfg
 
+  get "/api/health" $ do
+    status status200
+    json ("{\"status\":\"ok\"}" :: Text)
+
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg
     handleResult result
