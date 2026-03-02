@@ -2,11 +2,6 @@ resource "aws_ecs_cluster" "main" {
   name = "plether-${var.environment}"
 }
 
-resource "aws_cloudwatch_log_group" "api" {
-  name              = "/ecs/plether-${var.environment}"
-  retention_in_days = 30
-}
-
 resource "aws_ecs_task_definition" "api" {
   family                   = "plether-${var.environment}"
   requires_compatibilities = ["FARGATE"]
@@ -43,15 +38,6 @@ resource "aws_ecs_task_definition" "api" {
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ]
-
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.api.name
-        "awslogs-region"        = var.aws_region
-        "awslogs-stream-prefix" = "api"
-      }
-    }
   }])
 }
 
