@@ -2,7 +2,7 @@ import { useSwitchChain, useChainId } from 'wagmi'
 import { mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 
-const SUPPORTED_CHAIN_IDS = [mainnet.id, sepolia.id, anvil.id] as const
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, anvil.id as number]
 
 export function WrongNetworkBanner() {
   const chainId = useChainId()

@@ -3,37 +3,26 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 
-// https://vite.dev/config/
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 
-const stubbedPackages = ['@reown/appkit-scaffold-ui', '@reown/appkit-ui', '@reown/appkit-pay'];
-const STUB_PREFIX = '\0stub:';
+function parseHeadersFile(): Record<string, string> {
+  const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
+  const headers: Record<string, string> = {};
+  for (const line of raw.split('\n')) {
+    const match = /^\s+([A-Za-z-]+):\s*(.+)$/.exec(line);
+    if (match) headers[match[1]] = match[2];
+  }
+  return headers;
+}
 
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
   plugins: [
-    {
-      name: 'stub-appkit-ui',
-      enforce: 'pre',
-      resolveId(source) {
-        if (stubbedPackages.some(pkg => source === pkg || source.startsWith(pkg + '/'))) {
-          return STUB_PREFIX + source;
-        }
-      },
-      load(id) {
-        if (id.startsWith(STUB_PREFIX)) {
-          const source = id.slice(STUB_PREFIX.length);
-          if (source === '@reown/appkit-ui') {
-            return 'export const setColorTheme = () => {};\nexport const setThemeVariables = () => {};';
-          }
-          return 'export default {};';
-        }
-      },
-    },
     react(),
     visualizer({
       filename: 'bundle-stats.html',
@@ -41,6 +30,8 @@ export default defineConfig({
       brotliSize: true,
     }),
   ],
+  server: { headers: parseHeadersFile() },
+  preview: { headers: parseHeadersFile() },
   build: {
     modulePreload: { polyfill: false },
     rollupOptions: {
@@ -56,11 +47,8 @@ export default defineConfig({
             if (id.includes('/wagmi/') || id.includes('@tanstack/react-query')) {
               return 'web3-wagmi';
             }
-            if (id.includes('@walletconnect/')) {
+            if (id.includes('@walletconnect/') || id.includes('@reown/')) {
               return 'web3-walletconnect';
-            }
-            if (id.includes('qrcode')) {
-              return 'web3-qr';
             }
           }
         },

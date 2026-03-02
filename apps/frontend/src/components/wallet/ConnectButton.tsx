@@ -2,14 +2,14 @@ import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
-import { useWalletModalStore } from '../../stores/walletModalStore'
+import { useAppKit } from '@reown/appkit/react'
 
-const SUPPORTED_CHAIN_IDS = [mainnet.id, sepolia.id, anvil.id] as const
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, anvil.id as number]
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
   const { disconnect } = useDisconnect()
-  const { open } = useWalletModalStore()
+  const { open } = useAppKit()
   const chainId = useChainId()
 
   const getNetworkName = () => {
@@ -30,7 +30,7 @@ export function ConnectButton() {
   if (!isConnected) {
     return (
       <button
-        onClick={open}
+        onClick={() => void open()}
         className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 font-medium text-sm"
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
