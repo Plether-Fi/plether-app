@@ -10,7 +10,7 @@ import { MainTabNav } from '../components/MainTabNav'
 import { ConnectWalletPrompt } from '../components/ConnectWalletPrompt'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useTransactionSequence, type TransactionStep } from '../hooks'
-import { useUserDashboard, apiQueryKeys } from '../api'
+import { useUserDashboard, useProtocolStatus, apiQueryKeys } from '../api'
 import { useQueryClient } from '@tanstack/react-query'
 import { useWriteContract } from 'wagmi'
 import { LEVERAGE_ROUTER_ABI } from '../contracts/abis'
@@ -41,6 +41,7 @@ export function Dashboard() {
   const [adjustModalOpen, setAdjustModalOpen] = useState(false)
 
   const { data: dashboardData, isLoading: dashboardLoading } = useUserDashboard(address)
+  const { data: protocolData } = useProtocolStatus()
   const balances = dashboardData?.data.balances
 
   const usdcBalance = balances ? BigInt(balances.usdc) : 0n
@@ -133,6 +134,16 @@ export function Dashboard() {
   const totalSupplied = (bearLending ? BigInt(bearLending.supplied) : 0n)
     + (bullLending ? BigInt(bullLending.supplied) : 0n)
 
+  const lendingApy = (() => {
+    const bearApy = protocolData?.data.apy.bear.supply
+    const bullApy = protocolData?.data.apy.bull.supply
+    if (bearApy == null || bullApy == null) return undefined
+    if (totalSupplied === 0n) return (bearApy + bullApy) / 2
+    const bearSupplied = bearLending ? BigInt(bearLending.supplied) : 0n
+    const bullSupplied = bullLending ? BigInt(bullLending.supplied) : 0n
+    return (bearApy * Number(bearSupplied) + bullApy * Number(bullSupplied)) / Number(totalSupplied)
+  })()
+
   return (
     <div className="space-y-10">
       {/* Page title */}
@@ -165,6 +176,7 @@ export function Dashboard() {
           secondaryLabel="Total Lending"
           secondaryDecimals={6}
           secondaryToken="USDC"
+          apy={lendingApy}
           isLoading={isConnected && dashboardLoading}
         />
         <DashboardTile
