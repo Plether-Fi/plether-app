@@ -29,3 +29,13 @@ CREATE TABLE IF NOT EXISTS indexer_state (
 
 -- Initialize indexer state if not exists
 INSERT INTO indexer_state (last_indexed_block) VALUES (0) ON CONFLICT DO NOTHING;
+
+-- Price snapshots for 24h change tracking
+CREATE TABLE IF NOT EXISTS price_snapshots (
+    id SERIAL PRIMARY KEY,
+    block_number BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    oracle_price BIGINT NOT NULL,
+    UNIQUE (block_number)
+);
+CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON price_snapshots(timestamp DESC);

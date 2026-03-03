@@ -4,6 +4,7 @@ module Plether.Handlers.Protocol
   ) where
 
 import Control.Concurrent.STM (atomically)
+import Control.Exception (SomeException, try)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.Cache
   ( AppCache (..)
@@ -13,6 +14,8 @@ import Plether.Cache
   )
 import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..), currentAddresses)
+import Plether.Database (DbPool, withDb)
+import Plether.Database.Schema (insertPriceSnapshot, getPriceAt)
 import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
@@ -23,8 +26,8 @@ import Plether.Types
 import Plether.Utils.Hex (hexToByteString)
 import Plether.Utils.Numeric (wad)
 
-getProtocolStatus :: AppCache -> EthClient -> Config -> IO (Either ApiError (ApiResponse ProtocolStatus))
-getProtocolStatus cache client cfg = do
+getProtocolStatus :: AppCache -> EthClient -> Config -> Maybe DbPool -> IO (Either ApiError (ApiResponse ProtocolStatus))
+getProtocolStatus cache client cfg mPool = do
   eBlockNum <- ethBlockNumber client
   case eBlockNum of
     Left err -> pure $ Left $ rpcErrorToApiError err
@@ -34,10 +37,10 @@ getProtocolStatus cache client cfg = do
         Just entry ->
           pure $ Right $ mkCachedResponse blockNum (cfgChainId cfg) (ceCachedAt entry) False (ceValue entry)
         Nothing ->
-          fetchAndCacheProtocolStatus cache client cfg blockNum
+          fetchAndCacheProtocolStatus cache client cfg mPool blockNum
 
-fetchAndCacheProtocolStatus :: AppCache -> EthClient -> Config -> Integer -> IO (Either ApiError (ApiResponse ProtocolStatus))
-fetchAndCacheProtocolStatus cache client cfg blockNum = do
+fetchAndCacheProtocolStatus :: AppCache -> EthClient -> Config -> Maybe DbPool -> Integer -> IO (Either ApiError (ApiResponse ProtocolStatus))
+fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
   let addrs = currentAddresses (cfgDeployments cfg)
 
   eStatus <- Splitter.currentStatus client (addrSyntheticSplitter addrs)
@@ -77,6 +80,11 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
             Right a -> a
             Left _ -> ApyInfo { apyBear = ApyStats 0 0 0, apyBull = ApyStats 0 0 0 }
 
+      let nowUnix = round timestamp :: Integer
+      change24h <- case mPool of
+        Just pool -> computePriceChange pool blockNum nowUnix bearPrice bullPrice oraclePrice
+        Nothing -> pure Nothing
+
       let protoStatus =
             ProtocolStatus
               { statusPrices =
@@ -84,6 +92,7 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
                     { priceBear = bearPrice
                     , priceBull = bullPrice
                     , priceCap = cap
+                    , priceChange24h = change24h
                     }
               , statusState = protocolState
               , statusOracle =
@@ -120,6 +129,23 @@ fetchAndCacheProtocolStatus cache client cfg blockNum = do
     (_, _, _, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+
+computePriceChange :: DbPool -> Integer -> Integer -> Integer -> Integer -> Integer -> IO (Maybe PriceChange)
+computePriceChange pool blockNum nowUnix bearPrice bullPrice oraclePrice' = do
+  result <- try @SomeException $ withDb pool $ \conn -> do
+    insertPriceSnapshot conn blockNum nowUnix oraclePrice'
+    let oneDayAgo = nowUnix - 86400
+    getPriceAt conn oneDayAgo
+  case result of
+    Right (Just oldOracle) | oldOracle > 0 ->
+      let cap = bearPrice + bullPrice
+          oldBull = cap - oldOracle
+          bearChange = (fromIntegral bearPrice - fromIntegral oldOracle) / fromIntegral oldOracle :: Double
+          bullChange = if oldBull > 0
+            then (fromIntegral bullPrice - fromIntegral oldBull) / fromIntegral oldBull :: Double
+            else 0
+      in pure $ Just PriceChange { changeBear = bearChange, changeBull = bullChange }
+    _ -> pure Nothing
 
 getApyInfo :: EthClient -> Config -> IO (Either ApiError ApyInfo)
 getApyInfo client cfg = do

@@ -2,6 +2,7 @@ module Plether.Types.Protocol
   ( ProtocolStatus (..)
   , ProtocolState (..)
   , Prices (..)
+  , PriceChange (..)
   , OracleInfo (..)
   , StakingInfo (..)
   , StakingStats (..)
@@ -28,10 +29,24 @@ instance ToJSON ProtocolState where
     Paused -> "PAUSED"
     Settled -> "SETTLED"
 
+data PriceChange = PriceChange
+  { changeBear :: Double
+  , changeBull :: Double
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON PriceChange where
+  toJSON PriceChange {..} =
+    object
+      [ "bear" .= changeBear
+      , "bull" .= changeBull
+      ]
+
 data Prices = Prices
   { priceBear :: Integer
   , priceBull :: Integer
   , priceCap :: Integer
+  , priceChange24h :: Maybe PriceChange
   }
   deriving stock (Show, Generic)
 
@@ -41,6 +56,7 @@ instance ToJSON Prices where
       [ "bear" .= show priceBear
       , "bull" .= show priceBull
       , "cap" .= show priceCap
+      , "priceChange24h" .= priceChange24h
       ]
 
 data OracleInfo = OracleInfo

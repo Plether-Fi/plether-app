@@ -41,11 +41,17 @@ export type ApiErrorCode =
 // Protocol Types
 // =============================================================================
 
+export interface PriceChange {
+  bear: number;
+  bull: number;
+}
+
 export interface ProtocolStatus {
   prices: {
     bear: string;
     bull: string;
     cap: string;
+    priceChange24h: PriceChange | null;
   };
   status: ProtocolState;
   oracle: {

@@ -26,6 +26,8 @@ export function PriceDisplay({
   const priceUnknown = bullPrice === 0n
   const price = bullPrice > 0n ? Number(bullPrice) / 1e8 : 0
 
+  const bullChange = protocolData?.data.prices.priceChange24h?.bull ?? null
+
   const updatedAt = protocolData?.data.oracle.updatedAt ?? 0
   const isStale = updatedAt > 0 && (Date.now() / 1000 - updatedAt) > ORACLE_STALE_SECONDS
 
@@ -75,6 +77,11 @@ export function PriceDisplay({
             <span className="text-cyber-text-secondary font-semibold">--</span>
           ) : (
             <span className="text-cyber-text-primary font-semibold">{price.toFixed(4)} USDC</span>
+          )}
+          {bullChange !== null && bullChange !== 0 && (
+            <span className={`text-xs font-medium ${bullChange > 0 ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'}`}>
+              {bullChange > 0 ? '+' : ''}{(bullChange * 100).toFixed(2)}%
+            </span>
           )}
         </div>
         {isStale ? statusBadge : (

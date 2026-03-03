@@ -5,6 +5,8 @@ module Plether.Database.Schema
   , getLastIndexedBlock
   , setLastIndexedBlock
   , TransactionRow (..)
+  , insertPriceSnapshot
+  , getPriceAt
   ) where
 
 import Data.Aeson (Value, encode, decode)
@@ -215,3 +217,26 @@ setLastIndexedBlock :: Connection -> Integer -> IO ()
 setLastIndexedBlock conn block = do
   _ <- execute conn "UPDATE indexer_state SET last_indexed_block = ?, updated_at = NOW() WHERE id = 1" (Only block)
   pure ()
+
+insertPriceSnapshot
+  :: Connection
+  -> Integer    -- block_number
+  -> Integer    -- timestamp
+  -> Integer    -- oracle_price
+  -> IO ()
+insertPriceSnapshot conn blockNum timestamp oraclePrice' = do
+  _ <- execute conn
+    "INSERT INTO price_snapshots (block_number, timestamp, oracle_price) \
+    \VALUES (?, ?, ?) ON CONFLICT (block_number) DO NOTHING"
+    (blockNum, timestamp, oraclePrice')
+  pure ()
+
+getPriceAt :: Connection -> Integer -> IO (Maybe Integer)
+getPriceAt conn timestamp = do
+  result <- query conn
+    "SELECT oracle_price FROM price_snapshots \
+    \WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1"
+    (Only timestamp) :: IO [Only Integer]
+  case result of
+    [Only p] -> pure $ Just p
+    _ -> pure Nothing

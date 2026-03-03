@@ -63,7 +63,7 @@ app cache client cfg mPool = do
     json ("{\"status\":\"ok\"}" :: Text)
 
   get "/api/protocol/status" $ do
-    result <- liftIO $ getProtocolStatus cache client cfg
+    result <- liftIO $ getProtocolStatus cache client cfg mPool
     handleResult result
 
   get "/api/protocol/config" $ do
