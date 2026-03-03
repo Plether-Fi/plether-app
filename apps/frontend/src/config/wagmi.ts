@@ -33,7 +33,7 @@ const networks: [AppKitNetwork, ...AppKitNetwork[]] = [appKitMainnet, appKitSepo
 
 const metadata = {
   name: 'Plether',
-  description: 'plDXY-BEAR and plDXY-BULL trading protocol',
+  description: 'Synthetic Dollar Strength and Weakness Protocol by Plether Labs Limited',
   url: window.location.origin,
   icons: [`${window.location.origin}/logo.png`],
 }
