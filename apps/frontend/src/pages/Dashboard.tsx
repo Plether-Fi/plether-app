@@ -138,10 +138,12 @@ export function Dashboard() {
     const bearApy = protocolData?.data.apy.bear.supply
     const bullApy = protocolData?.data.apy.bull.supply
     if (bearApy == null || bullApy == null) return undefined
-    if (totalSupplied === 0n) return (bearApy + bullApy) / 2
-    const bearSupplied = bearLending ? BigInt(bearLending.supplied) : 0n
-    const bullSupplied = bullLending ? BigInt(bullLending.supplied) : 0n
-    return (bearApy * Number(bearSupplied) + bullApy * Number(bullSupplied)) / Number(totalSupplied)
+    const weighted = totalSupplied === 0n
+      ? (bearApy + bullApy) / 2
+      : (bearApy * Number(bearLending ? BigInt(bearLending.supplied) : 0n)
+        + bullApy * Number(bullLending ? BigInt(bullLending.supplied) : 0n))
+        / Number(totalSupplied)
+    return weighted * 100
   })()
 
   return (
