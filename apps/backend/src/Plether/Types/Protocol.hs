@@ -6,6 +6,7 @@ module Plether.Types.Protocol
   , OracleInfo (..)
   , StakingInfo (..)
   , StakingStats (..)
+  , StakingApy (..)
   , ApyInfo (..)
   , ApyStats (..)
   , ProtocolConfig (..)
@@ -89,9 +90,23 @@ instance ToJSON StakingStats where
       , "exchangeRate" .= show stakingExchangeRate
       ]
 
+data StakingApy = StakingApy
+  { stakingApyBear :: Maybe Double
+  , stakingApyBull :: Maybe Double
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON StakingApy where
+  toJSON StakingApy {..} =
+    object
+      [ "bear" .= stakingApyBear
+      , "bull" .= stakingApyBull
+      ]
+
 data StakingInfo = StakingInfo
   { stakingBear :: StakingStats
   , stakingBull :: StakingStats
+  , stakingApy7d :: StakingApy
   }
   deriving stock (Show, Generic)
 
@@ -100,6 +115,7 @@ instance ToJSON StakingInfo where
     object
       [ "bear" .= stakingBear
       , "bull" .= stakingBull
+      , "apy7d" .= stakingApy7d
       ]
 
 data ApyStats = ApyStats

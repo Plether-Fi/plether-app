@@ -166,6 +166,7 @@ export function Dashboard() {
           secondaryLabel="Staked Balance"
           secondaryDecimals={18}
           secondaryToken="plDXY-BULL"
+          apy={protocolData?.data.staking.apy7d.bull != null ? protocolData.data.staking.apy7d.bull * 100 : undefined}
           isLoading={isConnected && dashboardLoading}
         />
         <DashboardTile
@@ -191,6 +192,7 @@ export function Dashboard() {
           secondaryLabel="Staked Balance"
           secondaryDecimals={18}
           secondaryToken="plDXY-BEAR"
+          apy={protocolData?.data.staking.apy7d.bear != null ? protocolData.data.staking.apy7d.bear * 100 : undefined}
           isLoading={isConnected && dashboardLoading}
         />
       </div>

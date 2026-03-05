@@ -15,7 +15,7 @@ import Plether.Cache
 import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..), currentAddresses)
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (insertPriceSnapshot, getPriceAt)
+import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getOldestStakingRates)
 import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
@@ -85,6 +85,10 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
         Just pool -> computePriceChange pool blockNum nowUnix bearPrice bullPrice oraclePrice
         Nothing -> pure Nothing
 
+      stakingApy <- case mPool of
+        Just pool -> computeStakingApy pool blockNum nowUnix bearExchangeRate bullExchangeRate
+        Nothing -> pure $ StakingApy Nothing Nothing
+
       let protoStatus =
             ProtocolStatus
               { statusPrices =
@@ -115,6 +119,7 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
                           , stakingTotalShares = bullShares
                           , stakingExchangeRate = bullExchangeRate
                           }
+                    , stakingApy7d = stakingApy
                     }
               , statusApy = apy
               , statusTimestamp = timestamp
@@ -146,6 +151,26 @@ computePriceChange pool blockNum nowUnix bearPrice bullPrice oraclePrice' = do
             else 0
       in pure $ Just PriceChange { changeBear = bearChange, changeBull = bullChange }
     _ -> pure Nothing
+
+computeStakingApy :: DbPool -> Integer -> Integer -> Integer -> Integer -> IO StakingApy
+computeStakingApy pool blockNum nowUnix bearRate bullRate = do
+  result <- try @SomeException $ withDb pool $ \conn -> do
+    insertStakingSnapshot conn blockNum nowUnix bearRate bullRate
+    getOldestStakingRates conn
+  case result of
+    Right (Just (oldTs, oldBear, oldBull)) ->
+      let elapsed = nowUnix - oldTs
+          minElapsed = 86400
+      in if elapsed < minElapsed
+        then pure $ StakingApy Nothing Nothing
+        else
+          let days = fromIntegral elapsed / 86400 :: Double
+              annualize cur old =
+                if old > 0
+                  then Just $ (fromIntegral cur / fromIntegral old :: Double) ** (365 / days) - 1
+                  else Nothing
+          in pure $ StakingApy (annualize bearRate oldBear) (annualize bullRate oldBull)
+    _ -> pure $ StakingApy Nothing Nothing
 
 getApyInfo :: EthClient -> Config -> IO (Either ApiError ApyInfo)
 getApyInfo client cfg = do

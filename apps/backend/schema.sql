@@ -39,3 +39,14 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     UNIQUE (block_number)
 );
 CREATE INDEX IF NOT EXISTS idx_snapshots_timestamp ON price_snapshots(timestamp DESC);
+
+-- Staking exchange rate snapshots for 7d APY tracking
+CREATE TABLE IF NOT EXISTS staking_snapshots (
+    id SERIAL PRIMARY KEY,
+    block_number BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    bear_exchange_rate BIGINT NOT NULL,
+    bull_exchange_rate BIGINT NOT NULL,
+    UNIQUE (block_number)
+);
+CREATE INDEX IF NOT EXISTS idx_staking_snapshots_timestamp ON staking_snapshots(timestamp DESC);

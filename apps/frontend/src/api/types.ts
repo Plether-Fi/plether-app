@@ -62,6 +62,7 @@ export interface ProtocolStatus {
   staking: {
     bear: StakingStats;
     bull: StakingStats;
+    apy7d: { bear: number | null; bull: number | null };
   };
   apy: {
     bear: ApyStats;
