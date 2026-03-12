@@ -109,7 +109,7 @@ export function DashboardTile({
               </p>
             </div>
             <div className="text-right">
-              <p className="text-xs text-cyber-text-secondary uppercase tracking-wider">Current APY</p>
+              <p className="text-xs text-cyber-text-secondary uppercase tracking-wider">Current 7d APY</p>
               <p className={`text-lg font-semibold ${styles.text}`}>{(apy ?? 0).toFixed(2)}%</p>
             </div>
           </div>

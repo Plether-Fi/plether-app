@@ -15,7 +15,7 @@ import Plether.Cache
 import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..), currentAddresses)
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getOldestStakingRates)
+import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getStakingRateForApy)
 import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
@@ -156,7 +156,8 @@ computeStakingApy :: DbPool -> Integer -> Integer -> Integer -> Integer -> IO St
 computeStakingApy pool blockNum nowUnix bearRate bullRate = do
   result <- try @SomeException $ withDb pool $ \conn -> do
     insertStakingSnapshot conn blockNum nowUnix bearRate bullRate
-    getOldestStakingRates conn
+    let sevenDaysAgo = nowUnix - 7 * 86400
+    getStakingRateForApy conn sevenDaysAgo
   case result of
     Right (Just (oldTs, oldBear, oldBull)) ->
       let elapsed = nowUnix - oldTs

@@ -8,7 +8,7 @@ module Plether.Database.Schema
   , insertPriceSnapshot
   , getPriceAt
   , insertStakingSnapshot
-  , getOldestStakingRates
+  , getStakingRateForApy
   ) where
 
 import Data.Aeson (Value, encode, decode)
@@ -257,12 +257,19 @@ insertStakingSnapshot conn blockNum timestamp bearRate bullRate = do
     (blockNum, timestamp, bearRate, bullRate)
   pure ()
 
-getOldestStakingRates :: Connection -> IO (Maybe (Integer, Integer, Integer))
-getOldestStakingRates conn = do
+getStakingRateForApy :: Connection -> Integer -> IO (Maybe (Integer, Integer, Integer))
+getStakingRateForApy conn targetTs = do
   result <- query conn
     "SELECT timestamp, bear_exchange_rate, bull_exchange_rate FROM staking_snapshots \
-    \ORDER BY timestamp ASC LIMIT 1"
-    () :: IO [(Integer, Integer, Integer)]
+    \WHERE timestamp <= ? ORDER BY timestamp DESC LIMIT 1"
+    (Only targetTs) :: IO [(Integer, Integer, Integer)]
   case result of
     [(ts, bear, bull)] -> pure $ Just (ts, bear, bull)
-    _ -> pure Nothing
+    _ -> do
+      oldest <- query conn
+        "SELECT timestamp, bear_exchange_rate, bull_exchange_rate FROM staking_snapshots \
+        \ORDER BY timestamp ASC LIMIT 1"
+        () :: IO [(Integer, Integer, Integer)]
+      case oldest of
+        [(ts, bear, bull)] -> pure $ Just (ts, bear, bull)
+        _ -> pure Nothing
