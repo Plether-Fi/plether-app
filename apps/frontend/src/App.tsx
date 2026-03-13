@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
+import { RiskDisclaimer } from './components/RiskDisclaimer'
 import { Spinner } from './components/ui/Spinner'
 import { useApiChainSync } from './api'
 
@@ -9,6 +10,9 @@ const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Mint = lazy(() => import('./pages/Mint'))
 const Stake = lazy(() => import('./pages/Stake'))
 const History = lazy(() => import('./pages/History'))
+const Terms = lazy(() => import('./pages/Terms'))
+const Privacy = lazy(() => import('./pages/Privacy'))
+const RiskDisclosurePage = lazy(() => import('./pages/RiskDisclosure'))
 
 function App() {
   useApiChainSync()
@@ -24,10 +28,14 @@ function App() {
             <Route path="/mint" element={<Mint />} />
             <Route path="/stake" element={<Stake />} />
             <Route path="/history" element={<History />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/risk" element={<RiskDisclosurePage />} />
           </Routes>
         </Suspense>
       </Layout>
       <TransactionModal />
+      <RiskDisclaimer />
     </BrowserRouter>
   )
 }

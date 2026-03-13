@@ -1,5 +1,6 @@
 import { type ReactNode, useEffect } from 'react'
 import { Header } from './Header'
+import { Footer } from './Footer'
 import { MobileNav } from './MobileNav'
 import { ApiErrorBanner } from './ApiErrorBanner'
 import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
@@ -28,6 +29,7 @@ export function Layout({ children }: LayoutProps) {
       <main className="flex-grow max-w-7xl mx-auto px-6 lg:px-8 py-10 w-full pb-24 lg:pb-10">
         {children}
       </main>
+      <Footer />
       <MobileNav />
     </div>
   )
