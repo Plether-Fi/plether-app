@@ -1,7 +1,8 @@
 import { Link, useLocation } from 'react-router-dom'
 
 const navLinks = [
-  { path: '/', label: 'Trade', icon: 'swap_horiz', color: 'cyber-bright-blue' },
+  { path: '/', label: 'Perps', icon: 'trending_up', color: 'cyber-neon-green' },
+  { path: '/spot', label: 'Spot', icon: 'swap_horiz', color: 'cyber-bright-blue' },
   { path: '/stake', label: 'Stake', icon: 'paid', color: 'cyber-electric-fuchsia' },
   { path: '/mint', label: 'Mint', icon: 'add', color: 'cyber-neon-green' },
 ]
@@ -29,7 +30,7 @@ export function MobileNav() {
       <div className="flex items-center justify-around h-16">
         {navLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path ||
-            (path === '/' && ['/', '/leverage', '/lending'].includes(location.pathname))
+            (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
           const styles = colorStyles[color]
           return (
             <Link

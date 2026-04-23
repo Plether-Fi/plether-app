@@ -4,7 +4,8 @@ import { PendingTxBadge } from '../PendingTxBadge'
 import { PriceDisplay } from '../PriceDisplay'
 
 const navLinks = [
-  { path: '/', label: 'Trade' },
+  { path: '/', label: 'Perps' },
+  { path: '/spot', label: 'Spot' },
   { path: '/stake', label: 'Stake' },
   { path: '/mint', label: 'Mint & Redeem' },
 ]
@@ -24,7 +25,7 @@ export function Header() {
           <nav className="hidden md:flex items-center gap-1">
             {navLinks.map(({ path, label }) => {
               const isActive = location.pathname === path ||
-                (path === '/' && ['/', '/leverage', '/lending'].includes(location.pathname))
+                (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
               return (
                 <Link
                   key={path}

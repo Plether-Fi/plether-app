@@ -29,12 +29,13 @@ export function Dashboard() {
 
   const mainTab: MainTab =
     location.pathname === '/leverage' ? 'leverage' :
-    location.pathname === '/lending' ? 'lending' : 'trade'
+    location.pathname === '/lending' ? 'lending' :
+    'trade'
 
   const handleTabChange = (tab: MainTab) => {
     if (tab === 'leverage') void navigate('/leverage')
     else if (tab === 'lending') void navigate('/lending')
-    else void navigate('/')
+    else void navigate('/spot')
   }
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
