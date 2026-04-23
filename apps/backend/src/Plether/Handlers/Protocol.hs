@@ -15,7 +15,7 @@ import Plether.Cache
 import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..), currentAddresses)
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getStakingRateForApy)
+import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getStakingRatesAt)
 import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
@@ -157,20 +157,14 @@ computeStakingApy pool blockNum nowUnix bearRate bullRate = do
   result <- try @SomeException $ withDb pool $ \conn -> do
     insertStakingSnapshot conn blockNum nowUnix bearRate bullRate
     let sevenDaysAgo = nowUnix - 7 * 86400
-    getStakingRateForApy conn sevenDaysAgo
+    getStakingRatesAt conn sevenDaysAgo
   case result of
-    Right (Just (oldTs, oldBear, oldBull)) ->
-      let elapsed = nowUnix - oldTs
-          minElapsed = 86400
-      in if elapsed < minElapsed
-        then pure $ StakingApy Nothing Nothing
-        else
-          let days = fromIntegral elapsed / 86400 :: Double
-              annualize cur old =
-                if old > 0
-                  then Just $ (fromIntegral cur / fromIntegral old :: Double) ** (365 / days) - 1
-                  else Nothing
-          in pure $ StakingApy (annualize bearRate oldBear) (annualize bullRate oldBull)
+    Right (Just (oldBear, oldBull)) ->
+      let annualize cur old =
+            if old > 0
+              then Just $ (fromIntegral cur / fromIntegral old :: Double) ** (365 / 7) - 1
+              else Nothing
+      in pure $ StakingApy (annualize bearRate oldBear) (annualize bullRate oldBull)
     _ -> pure $ StakingApy Nothing Nothing
 
 getApyInfo :: EthClient -> Config -> IO (Either ApiError ApyInfo)
