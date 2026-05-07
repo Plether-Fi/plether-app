@@ -19,6 +19,7 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import Plether.Handlers.Perps (getBasketHistory)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -38,7 +39,8 @@ import Plether.Handlers.History
   , getLendingHistory
   )
 import Plether.Database (DbPool)
-import Plether.Types.History (HistoryParams (..), defaultHistoryParams)
+import Plether.Types.History (HistoryParams (..))
+import Plether.Types.Perps (BasketHistoryParams (..), defaultBasketHistoryParams)
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
@@ -182,6 +184,11 @@ app cache client cfg mPool = do
             result <- liftIO $ getLendingHistory pool client cfg addr params
             handleResult result
           else handleError $ E.invalidAddress addr
+
+      get "/api/perps/basket/history" $ do
+        params <- basketHistoryParams
+        result <- liftIO $ getBasketHistory pool cfg params
+        handleResult result
     Nothing -> pure ()
 
 historyParams :: ActionM HistoryParams
@@ -207,6 +214,33 @@ historyParams = do
       in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
            then Just $ read $ T.unpack stripped
            else Nothing
+
+basketHistoryParams :: ActionM BasketHistoryParams
+basketHistoryParams = do
+  mRange <- queryParamMaybe "range"
+  mInterval <- queryParamMaybe "interval"
+  pure
+    defaultBasketHistoryParams
+      { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
+      , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 3600) mInterval
+      }
+  where
+    normalizeRange :: Text -> Text
+    normalizeRange range =
+      case T.toLower (T.strip range) of
+        "24h" -> "24h"
+        "30d" -> "30d"
+        _ -> "7d"
+
+    parseIntegerOr :: Integer -> Text -> Integer
+    parseIntegerOr def txt = maybe def id (readMaybeInteger txt)
+
+    readMaybeInteger :: Text -> Maybe Integer
+    readMaybeInteger txt =
+      let stripped = T.strip txt
+       in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
+            then Just $ read $ T.unpack stripped
+            else Nothing
 
 handleResult :: (ToJSON a) => Either ApiError a -> ActionM ()
 handleResult = \case

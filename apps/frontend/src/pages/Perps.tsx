@@ -1,18 +1,18 @@
+import { DxyBasketPanel } from '../components/DxyBasketPanel'
+
 export function Perps() {
   return (
-    <div className="flex gap-6">
-      <div className="flex flex-col gap-6 w-3/4">
+    <div className="flex flex-col lg:flex-row gap-6">
+      <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
         <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
           A
         </div>
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
-          C
-        </div>
+        <DxyBasketPanel />
         <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
           D
         </div>
       </div>
-      <div className="w-1/4">
+      <div className="lg:w-1/4 min-w-0">
         <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
           B
         </div>

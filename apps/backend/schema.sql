@@ -50,3 +50,16 @@ CREATE TABLE IF NOT EXISTS staking_snapshots (
     UNIQUE (block_number)
 );
 CREATE INDEX IF NOT EXISTS idx_staking_snapshots_timestamp ON staking_snapshots(timestamp DESC);
+
+-- Perps DXY basket snapshots built from historical Pyth benchmark values
+CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
+    id SERIAL PRIMARY KEY,
+    timestamp BIGINT NOT NULL,
+    interval_seconds INTEGER NOT NULL,
+    basket_price BIGINT NOT NULL,
+    component_prices JSONB NOT NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'pyth_benchmarks',
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE (timestamp, interval_seconds)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);

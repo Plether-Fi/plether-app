@@ -19,6 +19,7 @@ import type {
   ApiResponse,
   PricesMessage,
   WebSocketMessage,
+  BasketHistoryRange,
 } from './types';
 
 // =============================================================================
@@ -32,6 +33,11 @@ export const apiQueryKeys = {
     all: () => ['protocol', currentChainId] as const,
     status: () => [...apiQueryKeys.protocol.all(), 'status'] as const,
     config: () => [...apiQueryKeys.protocol.all(), 'config'] as const,
+  },
+  perps: {
+    all: () => ['perps', currentChainId] as const,
+    basketHistory: (range: BasketHistoryRange) =>
+      [...apiQueryKeys.perps.all(), 'basketHistory', range] as const,
   },
   user: {
     all: (address: string) => ['user', currentChainId, address] as const,
@@ -90,6 +96,15 @@ export function useProtocolConfig() {
     queryKey: apiQueryKeys.protocol.config(),
     queryFn: async () => unwrapResult(await plethApi.getProtocolConfig()),
     staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function usePerpsBasketHistory(range: BasketHistoryRange = '7d') {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.basketHistory(range),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range)),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
   });
 }
 

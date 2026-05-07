@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 
@@ -20,6 +20,14 @@ function parseHeadersFile(): Record<string, string> {
   return headers;
 }
 
+function apiProxyConfig(): ProxyOptions {
+  return {
+    target: process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:3001',
+    changeOrigin: true,
+    rewrite: (proxyPath) => proxyPath.replace(/^\/api\/(?:v1|sepolia_v1)/, '/api'),
+  };
+}
+
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
   plugins: [
@@ -30,7 +38,14 @@ export default defineConfig({
       brotliSize: true,
     }),
   ],
-  server: { headers: parseHeadersFile() },
+  server: {
+    headers: parseHeadersFile(),
+    proxy: {
+      '/api/v1': apiProxyConfig(),
+      '/api/sepolia_v1': apiProxyConfig(),
+      '/api': apiProxyConfig(),
+    },
+  },
   preview: { headers: parseHeadersFile() },
   build: {
     modulePreload: { polyfill: false },

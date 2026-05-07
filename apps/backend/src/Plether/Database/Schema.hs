@@ -9,9 +9,14 @@ module Plether.Database.Schema
   , getPriceAt
   , insertStakingSnapshot
   , getStakingRatesAt
+  , ensureBasketSnapshotSchema
+  , insertBasketSnapshot
+  , getBasketSnapshots
+  , getLatestBasketSnapshotTime
+  , BasketSnapshotRow (..)
   ) where
 
-import Data.Aeson (Value, encode, decode)
+import Data.Aeson (Value, encode)
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -20,6 +25,7 @@ import Database.PostgreSQL.Simple
   , Only (..)
   , Query
   , execute
+  , execute_
   , query
   , query_
   )
@@ -265,4 +271,79 @@ getStakingRatesAt conn timestamp = do
     (Only timestamp) :: IO [(Integer, Integer)]
   case result of
     [(bear, bull)] -> pure $ Just (bear, bull)
+    _ -> pure Nothing
+
+data BasketSnapshotRow = BasketSnapshotRow
+  { bsrTimestamp :: Integer
+  , bsrIntervalSeconds :: Integer
+  , bsrBasketPrice :: Integer
+  , bsrComponents :: Value
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow BasketSnapshotRow where
+  fromRow = BasketSnapshotRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+
+ensureBasketSnapshotSchema :: Connection -> IO ()
+ensureBasketSnapshotSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_basket_snapshots (\
+    \id SERIAL PRIMARY KEY,\
+    \timestamp BIGINT NOT NULL,\
+    \interval_seconds INTEGER NOT NULL,\
+    \basket_price BIGINT NOT NULL,\
+    \component_prices JSONB NOT NULL,\
+    \source VARCHAR(32) NOT NULL DEFAULT 'pyth_benchmarks',\
+    \created_at TIMESTAMP DEFAULT NOW(),\
+    \UNIQUE (timestamp, interval_seconds)\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp \
+    \ON perps_basket_snapshots(timestamp DESC)"
+  pure ()
+
+insertBasketSnapshot
+  :: Connection
+  -> Integer -- timestamp
+  -> Integer -- interval_seconds
+  -> Integer -- basket_price
+  -> Value   -- component_prices
+  -> IO ()
+insertBasketSnapshot conn timestamp intervalSeconds basketPrice components = do
+  _ <- execute conn
+    "INSERT INTO perps_basket_snapshots \
+    \(timestamp, interval_seconds, basket_price, component_prices) \
+    \VALUES (?, ?, ?, ?) \
+    \ON CONFLICT (timestamp, interval_seconds) DO UPDATE SET \
+    \basket_price = EXCLUDED.basket_price, \
+    \component_prices = EXCLUDED.component_prices, \
+    \source = 'pyth_benchmarks'"
+    (timestamp, intervalSeconds, basketPrice, encode components)
+  pure ()
+
+getBasketSnapshots
+  :: Connection
+  -> Integer -- from timestamp
+  -> Integer -- to timestamp
+  -> Int     -- limit
+  -> IO [BasketSnapshotRow]
+getBasketSnapshots conn fromTimestamp toTimestamp limit = do
+  query conn
+    "SELECT timestamp, interval_seconds, basket_price, component_prices \
+    \FROM perps_basket_snapshots \
+    \WHERE timestamp >= ? AND timestamp <= ? \
+    \ORDER BY timestamp ASC LIMIT ?"
+    (fromTimestamp, toTimestamp, limit)
+
+getLatestBasketSnapshotTime :: Connection -> IO (Maybe Integer)
+getLatestBasketSnapshotTime conn = do
+  result <- query_ conn
+    "SELECT timestamp FROM perps_basket_snapshots ORDER BY timestamp DESC LIMIT 1"
+    :: IO [Only Integer]
+  case result of
+    [Only timestamp] -> pure $ Just timestamp
     _ -> pure Nothing

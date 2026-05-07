@@ -3,6 +3,7 @@ module Plether.Types
   , module Plether.Types.Protocol
   , module Plether.Types.User
   , module Plether.Types.Quote
+  , module Plether.Types.Perps
   , module Plether.Types.Error
   , module Plether.Types.History
   ) where
@@ -10,6 +11,7 @@ module Plether.Types
 import Plether.Types.Api
 import Plether.Types.Error
 import Plether.Types.History
+import Plether.Types.Perps
 import Plether.Types.Protocol
 import Plether.Types.Quote
 import Plether.Types.User

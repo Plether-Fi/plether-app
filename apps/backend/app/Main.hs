@@ -1,14 +1,17 @@
 module Main (main) where
 
 import Control.Concurrent (forkIO)
+import Control.Monad (when)
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
-import Plether.Database (DbPool, newDbPool)
+import Plether.Database (newDbPool, withDb)
+import Plether.Database.Schema (ensureBasketSnapshotSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
+import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Web.Scotty (scotty)
 
 main :: IO ()
@@ -38,6 +41,7 @@ main = do
         Just dbUrl -> do
           putStrLn "Database configured - enabling transaction history"
           pool <- newDbPool dbUrl
+          withDb pool ensureBasketSnapshotSchema
           manager <- newManager tlsManagerSettings
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
@@ -47,6 +51,21 @@ main = do
                 , icPollInterval = 12000000
                 }
           _ <- forkIO $ startIndexer manager pool indexerCfg
+          when (cfgPythIngestionEnabled cfg) $ do
+            let basketCfg = BasketIngestorConfig
+                  { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicBackfillDays = cfgPythBackfillDays cfg
+                  , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
+                  , bicPollSeconds = 15 * 60
+                  }
+            putStrLn $
+              "Pyth basket ingestor enabled - "
+                <> show (bicBackfillDays basketCfg)
+                <> "d backfill every "
+                <> show (bicSampleIntervalSeconds basketCfg)
+                <> "s"
+            _ <- forkIO $ startBasketHistoryIngestor manager pool basketCfg
+            pure ()
           pure $ Just pool
         Nothing -> do
           putStrLn "DATABASE_URL not set - transaction history disabled"
@@ -70,6 +89,7 @@ main = do
           putStrLn "  GET /api/user/:address/history"
           putStrLn "  GET /api/user/:address/history/leverage"
           putStrLn "  GET /api/user/:address/history/lending"
+          putStrLn "  GET /api/perps/basket/history?range="
         Nothing -> pure ()
       putStrLn ""
 
