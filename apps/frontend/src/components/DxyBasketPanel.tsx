@@ -18,6 +18,8 @@ import {
 } from '../api'
 import {
   DXY_BASKET_CHART_INTERVALS,
+  basketIntervalSecondsForChartInterval,
+  basketRequestIntervalSecondsForChartInterval,
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
@@ -29,6 +31,14 @@ const DEFAULT_LINE_COLOR = '#00FF99'
 interface ChartPoint {
   timestamp: number
   price: number
+}
+
+interface ChartCandle {
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
 }
 
 export type DxyBasketChartStyle = 'area' | 'candlestick'
@@ -83,6 +93,46 @@ interface DxyBasketChartProps {
 
 function areaTopColor(lineColor: string): string {
   return lineColor === '#00FF99' ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 0, 204, 0.24)'
+}
+
+function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {
+  const candles: ChartCandle[] = []
+  let currentCandle: ChartCandle | undefined
+  let previousClose: number | null = null
+
+  const sortedPoints = [...points].sort((left, right) => left.timestamp - right.timestamp)
+
+  for (const point of sortedPoints) {
+    const timestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
+
+    if (currentCandle?.timestamp === timestamp) {
+      currentCandle.high = Math.max(currentCandle.high, point.price)
+      currentCandle.low = Math.min(currentCandle.low, point.price)
+      currentCandle.close = point.price
+      previousClose = point.price
+      continue
+    }
+
+    if (currentCandle) {
+      candles.push(currentCandle)
+    }
+
+    const open = previousClose ?? point.price
+    currentCandle = {
+      timestamp,
+      open,
+      high: Math.max(open, point.price),
+      low: Math.min(open, point.price),
+      close: point.price,
+    }
+    previousClose = point.price
+  }
+
+  if (currentCandle) {
+    candles.push(currentCandle)
+  }
+
+  return candles
 }
 
 function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: DxyBasketChartProps) {
@@ -233,8 +283,8 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
 export function DxyBasketPanelView({
   history,
-  chartInterval = '1h',
-  chartStyle = 'area',
+  chartInterval = '1m',
+  chartStyle = 'candlestick',
   isLoading = false,
   isError = false,
   onChartIntervalChange,
@@ -248,26 +298,26 @@ export function DxyBasketPanelView({
       })),
     [points]
   )
+  const chartIntervalSeconds = basketIntervalSecondsForChartInterval(chartInterval)
+  const chartBuckets = useMemo(
+    () => buildCandles(chartPoints, chartIntervalSeconds),
+    [chartIntervalSeconds, chartPoints]
+  )
   const chartSeries = useMemo<AreaData<UTCTimestamp>[]>(() => {
-    return chartPoints.map((point) => ({
-      time: point.timestamp as UTCTimestamp,
-      value: point.price,
+    return chartBuckets.map((candle) => ({
+      time: candle.timestamp as UTCTimestamp,
+      value: candle.close,
     }))
-  }, [chartPoints])
+  }, [chartBuckets])
   const chartCandles = useMemo<CandlestickData<UTCTimestamp>[]>(() => {
-    return chartPoints.map((point, index) => {
-      const open = index === 0 ? point.price : chartPoints[index - 1].price
-      const close = point.price
-
-      return {
-        time: point.timestamp as UTCTimestamp,
-        open,
-        high: Math.max(open, close),
-        low: Math.min(open, close),
-        close,
-      }
-    })
-  }, [chartPoints])
+    return chartBuckets.map((candle) => ({
+      time: candle.timestamp as UTCTimestamp,
+      open: candle.open,
+      high: candle.high,
+      low: candle.low,
+      close: candle.close,
+    }))
+  }, [chartBuckets])
 
   const latestPoint = chartPoints.at(-1) ?? null
   const latestComponents = points.at(-1)?.components ?? []
@@ -297,7 +347,7 @@ export function DxyBasketPanelView({
           </div>
         </div>
 
-        <div className="inline-grid grid-cols-3 border border-cyber-border-glow/30 bg-cyber-bg/50 w-fit">
+        <div className="inline-grid grid-cols-4 border border-cyber-border-glow/30 bg-cyber-bg/50 w-fit">
           {DXY_BASKET_CHART_INTERVALS.map((item) => (
             <button
               key={item.value}
@@ -357,9 +407,10 @@ export function DxyBasketPanelView({
 }
 
 export function DxyBasketPanel() {
-  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1h')
+  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1m')
   const range = basketRangeForChartInterval(chartInterval)
-  const { data, isLoading, isError } = usePerpsBasketHistory(range)
+  const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
+  const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
 
   return (
     <DxyBasketPanelView

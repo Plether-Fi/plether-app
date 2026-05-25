@@ -21,7 +21,7 @@ getBasketHistory pool cfg params = do
       maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
 
   rows <- withDb pool $ \conn ->
-    getBasketSnapshots conn fromUnix nowUnix maxPoints
+    getBasketSnapshots conn fromUnix nowUnix interval maxPoints
 
   let points = map rowToPoint rows
       latest = case reverse rows of

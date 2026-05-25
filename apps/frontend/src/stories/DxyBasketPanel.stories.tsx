@@ -104,6 +104,7 @@ const INTERVAL_CONFIG: Record<
   DxyBasketChartInterval,
   { points: number; intervalSeconds: number; totalMove: number }
 > = {
+  '1m': { points: 24 * 60 + 1, intervalSeconds: 60, totalMove: 0.0065 },
   '5m': { points: 24 * 12 + 1, intervalSeconds: 5 * 60, totalMove: 0.0065 },
   '1h': { points: 7 * 24 + 1, intervalSeconds: 60 * 60, totalMove: 0.019 },
   '1d': { points: 30 + 1, intervalSeconds: 24 * 60 * 60, totalMove: 0.034 },
@@ -168,11 +169,13 @@ function makeHistory(interval: DxyBasketChartInterval, market: MarketShape): Bas
 
 const HISTORIES: Record<MarketShape, Record<DxyBasketChartInterval, BasketHistory>> = {
   rally: {
+    '1m': makeHistory('1m', 'rally'),
     '5m': makeHistory('5m', 'rally'),
     '1h': makeHistory('1h', 'rally'),
     '1d': makeHistory('1d', 'rally'),
   },
   selloff: {
+    '1m': makeHistory('1m', 'selloff'),
     '5m': makeHistory('5m', 'selloff'),
     '1h': makeHistory('1h', 'selloff'),
     '1d': makeHistory('1d', 'selloff'),
@@ -220,15 +223,15 @@ const meta: Meta<typeof DxyBasketStory> = {
     layout: 'fullscreen',
   },
   args: {
-    initialInterval: '1h',
+    initialInterval: '1m',
     market: 'rally',
-    chartStyle: 'area',
+    chartStyle: 'candlestick',
     state: 'ready',
   },
   argTypes: {
     initialInterval: {
       control: 'select',
-      options: ['5m', '1h', '1d'],
+      options: ['1m', '5m', '1h', '1d'],
     },
     market: {
       control: 'select',

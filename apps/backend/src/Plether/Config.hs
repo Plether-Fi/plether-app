@@ -113,7 +113,7 @@ loadConfig = do
       indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
       pythBenchmarksUrl <- fromMaybe "https://benchmarks.pyth.network" <$> lookupEnv "PYTH_BENCHMARKS_URL"
       pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
-      pythSampleIntervalStr <- fromMaybe "3600" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
+      pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
       pythIngestionStr <- fromMaybe "true" <$> lookupEnv "PYTH_INGESTION_ENABLED"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
@@ -121,7 +121,7 @@ loadConfig = do
           port = fromMaybe 3001 (readMaybe portStr)
           corsOrigins = filter (not . T.null) $ map T.strip $ T.splitOn " " $ T.pack corsStr
           pythBackfillDays = fromMaybe 7 (readMaybe pythBackfillDaysStr)
-          pythSampleIntervalSeconds = fromMaybe 3600 (readMaybe pythSampleIntervalStr)
+          pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"

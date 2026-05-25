@@ -22,7 +22,7 @@ defaultBasketHistoryParams :: BasketHistoryParams
 defaultBasketHistoryParams =
   BasketHistoryParams
     { bhpRange = "7d"
-    , bhpIntervalSeconds = 3600
+    , bhpIntervalSeconds = 60
     }
 
 basketRangeSeconds :: Text -> Integer

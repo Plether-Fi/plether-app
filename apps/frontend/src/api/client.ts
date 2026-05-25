@@ -276,9 +276,13 @@ export class PlethApiClient {
   // ===========================================================================
 
   async getPerpsBasketHistory(
-    range: BasketHistoryRange = '7d'
+    range: BasketHistoryRange = '7d',
+    intervalSeconds = 60 * 60
   ): Promise<Result<ApiResponse<BasketHistory>, PlethApiError>> {
-    return fetchApi<BasketHistory>(this.config, `/perps/basket/history?range=${range}`);
+    return fetchApi<BasketHistory>(
+      this.config,
+      `/perps/basket/history?range=${range}&interval=${String(intervalSeconds)}`
+    );
   }
 
   // ===========================================================================

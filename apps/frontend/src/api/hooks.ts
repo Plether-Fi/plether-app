@@ -36,8 +36,8 @@ export const apiQueryKeys = {
   },
   perps: {
     all: () => ['perps', currentChainId] as const,
-    basketHistory: (range: BasketHistoryRange) =>
-      [...apiQueryKeys.perps.all(), 'basketHistory', range] as const,
+    basketHistory: (range: BasketHistoryRange, intervalSeconds: number) =>
+      [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds] as const,
   },
   user: {
     all: (address: string) => ['user', currentChainId, address] as const,
@@ -99,12 +99,12 @@ export function useProtocolConfig() {
   });
 }
 
-export function usePerpsBasketHistory(range: BasketHistoryRange = '7d') {
+export function usePerpsBasketHistory(range: BasketHistoryRange = '7d', intervalSeconds = 60 * 60) {
   return useQuery({
-    queryKey: apiQueryKeys.perps.basketHistory(range),
-    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range)),
-    staleTime: 5 * 60 * 1000,
-    refetchInterval: 5 * 60 * 1000,
+    queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds)),
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
   });
 }
 

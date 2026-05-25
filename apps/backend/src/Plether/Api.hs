@@ -8,7 +8,7 @@ import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400)
+import Network.HTTP.Types.Status (status200, status400, status503)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
@@ -184,12 +184,17 @@ app cache client cfg mPool = do
             result <- liftIO $ getLendingHistory pool client cfg addr params
             handleResult result
           else handleError $ E.invalidAddress addr
+    Nothing -> pure ()
 
-      get "/api/perps/basket/history" $ do
-        params <- basketHistoryParams
+  get "/api/perps/basket/history" $ do
+    params <- basketHistoryParams
+    case mPool of
+      Just pool -> do
         result <- liftIO $ getBasketHistory pool cfg params
         handleResult result
-    Nothing -> pure ()
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
 
 historyParams :: ActionM HistoryParams
 historyParams = do
@@ -222,7 +227,7 @@ basketHistoryParams = do
   pure
     defaultBasketHistoryParams
       { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
-      , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 3600) mInterval
+      , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 60) mInterval
       }
   where
     normalizeRange :: Text -> Text
@@ -254,6 +259,12 @@ handleError :: ApiError -> ActionM ()
 handleError err = do
   setHeader "Content-Type" "application/json"
   status status400
+  json err
+
+handleServiceUnavailable :: ApiError -> ActionM ()
+handleServiceUnavailable err = do
+  setHeader "Content-Type" "application/json"
+  status status503
   json err
 
 parseAmount :: Text -> Maybe Integer

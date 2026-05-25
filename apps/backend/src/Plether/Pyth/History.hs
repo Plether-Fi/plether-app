@@ -81,8 +81,8 @@ parsePythPrice feedId = withObject "PythPrice" $ \v -> do
       , pppPublishTime = publishTime
       }
 
-fetchBasketSnapshotAt :: Manager -> Text -> Integer -> IO (Either Text (Integer, Value))
-fetchBasketSnapshotAt manager benchmarksUrl timestamp = do
+fetchBasketSnapshotAt :: Manager -> Text -> Integer -> Integer -> IO (Either Text (Integer, Value))
+fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
   requestBase <- parseRequest $ T.unpack requestUrl
   let request = setQueryString queryParams requestBase
   response <- httpLbs request manager
@@ -95,6 +95,10 @@ fetchBasketSnapshotAt manager benchmarksUrl timestamp = do
       stripTrailingSlash benchmarksUrl
         <> "/v1/updates/price/"
         <> T.pack (show timestamp)
+        <> "/"
+        <> T.pack (show benchmarkWindow)
+
+    benchmarkWindow = min 60 (max 1 intervalSeconds)
 
     queryParams =
       ("parsed", Just "true")
@@ -104,8 +108,19 @@ fetchBasketSnapshotAt manager benchmarksUrl timestamp = do
     decodeSnapshot body = do
       benchmark <-
         case eitherDecode body of
-          Left err -> Left $ "could not decode Pyth Benchmarks response: " <> T.pack err
           Right parsed -> Right parsed
+          Left objectErr ->
+            case eitherDecode body of
+              Left arrayErr ->
+                Left $
+                  "could not decode Pyth Benchmarks response: "
+                    <> T.pack objectErr
+                    <> "; interval response decode also failed: "
+                    <> T.pack arrayErr
+              Right parsed ->
+                case reverse parsed of
+                  [] -> Left "Pyth Benchmarks returned an empty interval response"
+                  latest : _ -> Right latest
       case computeBasketSnapshot (brParsed benchmark) of
         Left err -> Left err
         Right (basketPrice, components) -> Right (basketPrice, toJSON components)
@@ -122,7 +137,7 @@ runBasketBackfill manager pool cfg = do
       endTs = (now `div` interval) * interval
       earliestTs = endTs - fromIntegral (max 1 (bicBackfillDays cfg)) * 86_400
 
-  latest <- withDb pool getLatestBasketSnapshotTime
+  latest <- withDb pool $ \conn -> getLatestBasketSnapshotTime conn interval
   let startTs =
         case latest of
           Nothing -> earliestTs
@@ -135,16 +150,18 @@ runBasketBackfill manager pool cfg = do
         <> " to "
         <> show endTs
     forM_ [startTs, startTs + interval .. endTs] $ \ts -> do
-      result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) ts
+      result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) interval ts
       case result of
         Left err ->
           putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> displayException err
         Right (Left err) ->
-          putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> T.unpack err
+          do
+            putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> T.unpack err
+            when ("429" `T.isInfixOf` err) $ threadDelay 60_000_000
         Right (Right (basketPrice, components)) ->
           withDb pool $ \conn ->
             insertBasketSnapshot conn ts interval basketPrice components
-      threadDelay 100_000
+      threadDelay 1_000_000
 
 parseIntegerish :: Value -> Parser Integer
 parseIntegerish = \case

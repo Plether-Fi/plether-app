@@ -329,20 +329,24 @@ getBasketSnapshots
   :: Connection
   -> Integer -- from timestamp
   -> Integer -- to timestamp
+  -> Integer -- interval seconds
   -> Int     -- limit
   -> IO [BasketSnapshotRow]
-getBasketSnapshots conn fromTimestamp toTimestamp limit = do
+getBasketSnapshots conn fromTimestamp toTimestamp intervalSeconds limit = do
   query conn
     "SELECT timestamp, interval_seconds, basket_price, component_prices \
     \FROM perps_basket_snapshots \
-    \WHERE timestamp >= ? AND timestamp <= ? \
+    \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
     \ORDER BY timestamp ASC LIMIT ?"
-    (fromTimestamp, toTimestamp, limit)
+    (fromTimestamp, toTimestamp, intervalSeconds, limit)
 
-getLatestBasketSnapshotTime :: Connection -> IO (Maybe Integer)
-getLatestBasketSnapshotTime conn = do
-  result <- query_ conn
-    "SELECT timestamp FROM perps_basket_snapshots ORDER BY timestamp DESC LIMIT 1"
+getLatestBasketSnapshotTime :: Connection -> Integer -> IO (Maybe Integer)
+getLatestBasketSnapshotTime conn intervalSeconds = do
+  result <- query conn
+    "SELECT timestamp FROM perps_basket_snapshots \
+    \WHERE interval_seconds = ? \
+    \ORDER BY timestamp DESC LIMIT 1"
+    (Only intervalSeconds)
     :: IO [Only Integer]
   case result of
     [Only timestamp] -> pure $ Just timestamp
