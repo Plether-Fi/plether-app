@@ -1,21 +1,18 @@
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
+import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
+import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
+import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 
 export function Perps() {
   return (
     <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
-          A
-        </div>
+        <PerpsInstrumentPanel />
         <DxyBasketPanel />
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
-          D
-        </div>
+        <PerpsAccountPanel />
       </div>
       <div className="lg:w-1/4 min-w-0">
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-6">
-          B
-        </div>
+        <PerpsTradeTicket />
       </div>
     </div>
   )

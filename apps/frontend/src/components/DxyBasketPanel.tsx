@@ -48,14 +48,14 @@ function toOraclePrice(raw: string): number {
 }
 
 function formatPrice(value: number): string {
-  return value.toLocaleString(undefined, {
+  return value.toLocaleString('en-US', {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   })
 }
 
 function formatCompactPrice(value: number): string {
-  return value.toLocaleString(undefined, {
+  return value.toLocaleString('en-US', {
     minimumFractionDigits: 3,
     maximumFractionDigits: 3,
   })
