@@ -1,4 +1,4 @@
-import { Skeleton, TokenLabel, Tooltip } from './ui'
+import { Skeleton, TokenAmount, TokenLabel, Tooltip } from './ui'
 import { useProtocolStatus } from '../api'
 import type { ProtocolStatus } from '../config/constants'
 import { ORACLE_STALE_SECONDS } from '../config/constants'
@@ -76,7 +76,7 @@ export function PriceDisplay({
           ) : priceUnknown ? (
             <span className="text-cyber-text-secondary font-semibold">--</span>
           ) : (
-            <span className="text-cyber-text-primary font-semibold">{price.toFixed(4)} USDC</span>
+            <TokenAmount amount={price.toFixed(4)} className="font-semibold text-cyber-text-primary" />
           )}
           {bullChange !== null && bullChange !== 0 && (
             <span className={`text-xs font-medium ${bullChange > 0 ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'}`}>
@@ -111,7 +111,7 @@ export function PriceDisplay({
         </div>
       ) : (
         <div className="flex items-baseline gap-2">
-          <span className="text-3xl font-bold text-cyber-text-primary">{price.toFixed(2)} USDC</span>
+          <TokenAmount amount={price.toFixed(2)} className="text-3xl font-bold text-cyber-text-primary" />
         </div>
       )}
       <p className="text-xs mt-2 text-cyber-text-secondary">

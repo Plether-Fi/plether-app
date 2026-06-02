@@ -10,6 +10,7 @@ import Control.Monad (forM_, forever, when)
 import Data.Aeson (FromJSON (..), Value (..), eitherDecode, toJSON, withObject, (.:))
 import Data.Aeson.Types (Parser)
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Set as Set
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -26,7 +27,7 @@ import Network.HTTP.Client
 import Network.HTTP.Types.Status (statusCode)
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
-  ( getLatestBasketSnapshotTime
+  ( getBasketSnapshotTimes
   , insertBasketSnapshot
   )
 import Plether.Pyth.Basket
@@ -106,9 +107,9 @@ fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
 
     decodeSnapshot :: LBS.ByteString -> Either Text (Integer, Value)
     decodeSnapshot body = do
-      benchmark <-
+      benchmarks <-
         case eitherDecode body of
-          Right parsed -> Right parsed
+          Right parsed -> Right [parsed]
           Left objectErr ->
             case eitherDecode body of
               Left arrayErr ->
@@ -117,13 +118,17 @@ fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
                     <> T.pack objectErr
                     <> "; interval response decode also failed: "
                     <> T.pack arrayErr
-              Right parsed ->
-                case reverse parsed of
-                  [] -> Left "Pyth Benchmarks returned an empty interval response"
-                  latest : _ -> Right latest
+              Right (parsed :: [BenchmarkResponse]) -> Right $ reverse parsed
+      case firstCompleteSnapshot benchmarks of
+        Nothing -> Left "Pyth Benchmarks returned no complete six-feed basket snapshot"
+        Just result -> Right result
+
+    firstCompleteSnapshot :: [BenchmarkResponse] -> Maybe (Integer, Value)
+    firstCompleteSnapshot [] = Nothing
+    firstCompleteSnapshot (benchmark : rest) =
       case computeBasketSnapshot (brParsed benchmark) of
-        Left err -> Left err
-        Right (basketPrice, components) -> Right (basketPrice, toJSON components)
+        Left _ -> firstCompleteSnapshot rest
+        Right (basketPrice, components) -> Just (basketPrice, toJSON components)
 
 startBasketHistoryIngestor :: Manager -> DbPool -> BasketIngestorConfig -> IO ()
 startBasketHistoryIngestor manager pool cfg = forever $ do
@@ -137,19 +142,19 @@ runBasketBackfill manager pool cfg = do
       endTs = (now `div` interval) * interval
       earliestTs = endTs - fromIntegral (max 1 (bicBackfillDays cfg)) * 86_400
 
-  latest <- withDb pool $ \conn -> getLatestBasketSnapshotTime conn interval
-  let startTs =
-        case latest of
-          Nothing -> earliestTs
-          Just ts -> max earliestTs (((ts `div` interval) + 1) * interval)
+  existingTimes <- withDb pool $ \conn -> getBasketSnapshotTimes conn earliestTs endTs interval
+  let existing = Set.fromList existingTimes
+      missing = filter (`Set.notMember` existing) [earliestTs, earliestTs + interval .. endTs]
 
-  when (startTs <= endTs) $ do
+  when (not (null missing)) $ do
     putStrLn $
-      "Backfilling Pyth basket snapshots from "
-        <> show startTs
+      "Backfilling "
+        <> show (length missing)
+        <> " missing Pyth basket snapshots from "
+        <> show earliestTs
         <> " to "
         <> show endTs
-    forM_ [startTs, startTs + interval .. endTs] $ \ts -> do
+    forM_ missing $ \ts -> do
       result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) interval ts
       case result of
         Left err ->
@@ -161,7 +166,7 @@ runBasketBackfill manager pool cfg = do
         Right (Right (basketPrice, components)) ->
           withDb pool $ \conn ->
             insertBasketSnapshot conn ts interval basketPrice components
-      threadDelay 1_000_000
+      threadDelay 100_000
 
 parseIntegerish :: Value -> Parser Integer
 parseIntegerish = \case

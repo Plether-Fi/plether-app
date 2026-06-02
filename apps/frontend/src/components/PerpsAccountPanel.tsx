@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
+import { TokenAmount } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -10,9 +11,9 @@ interface AccountTab {
 interface PositionRow {
   market: string
   side: string
-  size: string
+  size: ReactNode
   entry: string
-  pnl: string
+  pnl: ReactNode
   tone?: 'positive' | 'negative'
 }
 
@@ -21,7 +22,7 @@ interface OrderRow {
   side: string
   type: string
   price: string
-  size: string
+  size: ReactNode
   status?: string
 }
 
@@ -30,8 +31,8 @@ interface TradeRow {
   market: string
   side: string
   price: string
-  size: string
-  fee: string
+  size: ReactNode
+  fee: ReactNode
 }
 
 const ACCOUNT_TABS: AccountTab[] = [
@@ -44,25 +45,25 @@ const ACCOUNT_TABS: AccountTab[] = [
 const CURRENT_POSITION: PositionRow = {
   market: 'DXY Perp',
   side: 'Long',
-  size: '8 200 USDC',
+  size: <TokenAmount amount="8 200" />,
   entry: '0.9874',
-  pnl: '+284.12 USDC',
+  pnl: <TokenAmount amount="+284.12" />,
   tone: 'positive',
 }
 
 const OPEN_ORDERS: OrderRow[] = [
-  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: '1 500 USDC' },
-  { market: 'DXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: '3 000 USDC' },
+  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
+  { market: 'DXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: <TokenAmount amount="3 000" /> },
 ]
 
 const ORDER_HISTORY: OrderRow[] = [
-  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9850', size: '2 500 USDC', status: 'Filled' },
-  { market: 'DXY Perp', side: 'Sell', type: 'Stop', price: '0.9790', size: '1 200 USDC', status: 'Cancelled' },
+  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9850', size: <TokenAmount amount="2 500" />, status: 'Filled' },
+  { market: 'DXY Perp', side: 'Sell', type: 'Stop', price: '0.9790', size: <TokenAmount amount="1 200" />, status: 'Cancelled' },
 ]
 
 const TRADE_HISTORY: TradeRow[] = [
-  { time: '12:42', market: 'DXY Perp', side: 'Buy', price: '0.9912', size: '1 000 USDC', fee: '0.42 USDC' },
-  { time: '11:08', market: 'DXY Perp', side: 'Sell', price: '0.9931', size: '650 USDC', fee: '0.27 USDC' },
+  { time: '12:42', market: 'DXY Perp', side: 'Buy', price: '0.9912', size: <TokenAmount amount="1 000" />, fee: <TokenAmount amount="0.42" /> },
+  { time: '11:08', market: 'DXY Perp', side: 'Sell', price: '0.9931', size: <TokenAmount amount="650" />, fee: <TokenAmount amount="0.27" /> },
 ]
 
 function pnlToneClass(tone: PositionRow['tone']): string {
@@ -79,7 +80,7 @@ function EmptyState({ label }: { label: string }) {
   )
 }
 
-function AccountMetric({ label, value, tone }: { label: string; value: string; tone?: PositionRow['tone'] }) {
+function AccountMetric({ label, value, tone }: { label: string; value: ReactNode; tone?: PositionRow['tone'] }) {
   return (
     <div className="min-w-0">
       <div className="text-xs font-medium uppercase text-cyber-text-secondary">{label}</div>

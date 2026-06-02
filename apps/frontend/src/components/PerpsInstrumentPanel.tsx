@@ -1,9 +1,12 @@
+import { type ReactNode } from 'react'
+import { TokenAmount } from './ui'
+
 export interface PerpsInstrumentStat {
   label: string
-  value?: string
+  value?: ReactNode
   values?: {
     label: string
-    value: string
+    value: ReactNode
     tone?: 'default' | 'positive' | 'negative'
   }[]
   tone?: 'default' | 'positive' | 'negative'
@@ -19,15 +22,15 @@ export interface PerpsInstrumentPanelProps {
 const DEFAULT_STATS: PerpsInstrumentStat[] = [
   { label: 'Oracle price', value: '0.9909' },
   { label: '24h change', value: '-0.16%', tone: 'negative' },
-  { label: '24h volume', value: '2.4M USDC' },
+  { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
   {
-    label: 'Open interest',
+    label: 'Open interest (LONG/SHORT)',
     values: [
-      { label: 'Long', value: '10.8M USDC', tone: 'positive' },
-      { label: 'Short', value: '7.9M USDC', tone: 'negative' },
+      { label: 'long', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
+      { label: 'short', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
     ],
   },
-  { label: 'Available liquidity', value: '6.3M USDC' },
+  { label: 'Available liquidity', value: <TokenAmount amount="6.3M" /> },
   { label: 'Cost of carry', value: '5.24%' },
 ]
 
@@ -43,7 +46,6 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
       <dd className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
         {stat.values.map((item) => (
           <span key={item.label} className="min-w-0">
-            <span className="mr-1 text-xs font-medium uppercase text-cyber-text-secondary">{item.label}</span>
             <span className={`text-xl font-semibold ${statToneClass(item.tone)}`}>{item.value}</span>
           </span>
         ))}

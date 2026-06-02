@@ -12,6 +12,7 @@ module Plether.Database.Schema
   , ensureBasketSnapshotSchema
   , insertBasketSnapshot
   , getBasketSnapshots
+  , getBasketSnapshotTimes
   , getLatestBasketSnapshotTime
   , BasketSnapshotRow (..)
   ) where
@@ -339,6 +340,22 @@ getBasketSnapshots conn fromTimestamp toTimestamp intervalSeconds limit = do
     \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
     \ORDER BY timestamp ASC LIMIT ?"
     (fromTimestamp, toTimestamp, intervalSeconds, limit)
+
+getBasketSnapshotTimes
+  :: Connection
+  -> Integer -- from timestamp
+  -> Integer -- to timestamp
+  -> Integer -- interval seconds
+  -> IO [Integer]
+getBasketSnapshotTimes conn fromTimestamp toTimestamp intervalSeconds = do
+  rows <-
+    query conn
+      "SELECT timestamp FROM perps_basket_snapshots \
+      \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
+      \ORDER BY timestamp ASC"
+      (fromTimestamp, toTimestamp, intervalSeconds)
+      :: IO [Only Integer]
+  pure [timestamp | Only timestamp <- rows]
 
 getLatestBasketSnapshotTime :: Connection -> Integer -> IO (Maybe Integer)
 getLatestBasketSnapshotTime conn intervalSeconds = do

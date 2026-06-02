@@ -1,12 +1,12 @@
 import { type ReactNode, useMemo, useState } from 'react'
-import { Button, Input, Modal } from './ui'
+import { Button, Input, Modal, TokenAmount, TokenLabel } from './ui'
 
 type Direction = 'long' | 'short'
 export type TradeTicketStatus = 'compose' | 'queued' | 'executed'
 
 interface PreviewRow {
   label: string
-  value: string
+  value: ReactNode
   tone?: 'default' | 'positive' | 'warning'
 }
 
@@ -16,8 +16,8 @@ interface PerpsTradeTicketProps {
 
 const PREVIEW_PRICE = 0.9909
 const COST_OF_CARRY = '5.24%'
-const AVAILABLE_TO_TRADE = '18 420 USDC'
-const CURRENT_POSITION = 'Long 8 200 USDC'
+const AVAILABLE_TO_TRADE_AMOUNT = '18 420'
+const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b...88e2'
 const EXECUTE_TX = '0xa91d...34bf'
@@ -30,19 +30,23 @@ const CLOSE_BOUNTY_USDC = 0.2
 const VPI_PRICE_IMPACT_USDC = 6.42
 
 function parseAmount(value: string): number {
-  const parsed = Number(value.replaceAll(',', ''))
+  const parsed = Number(value.replaceAll(',', '').replaceAll(' ', ''))
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-function formatUsdc(value: number): string {
-  return `${value.toLocaleString('en-US', {
+function formatUsdcAmount(value: number): string {
+  return value.toLocaleString('en-US', {
     maximumFractionDigits: 2,
-  }).replaceAll(',', ' ')} USDC`
+  }).replaceAll(',', ' ')
 }
 
-function formatVpi(value: number): string {
-  if (value < 0) return `-${formatUsdc(Math.abs(value))}`
-  return formatUsdc(value)
+function formatUsdc(value: number): ReactNode {
+  return <TokenAmount amount={formatUsdcAmount(value)} />
+}
+
+function formatVpi(value: number): ReactNode {
+  if (value < 0) return <TokenAmount amount={`-${formatUsdcAmount(Math.abs(value))}`} />
+  return <TokenAmount amount={formatUsdcAmount(value)} />
 }
 
 function vpiTone(value: number): PreviewRow['tone'] {
@@ -130,12 +134,28 @@ function StatusChip({ label, value, tone = 'positive' }: { label: string; value:
   )
 }
 
-function AccountContextRow({ label, value }: { label: string; value: string }) {
+function AccountContextRow({
+  label,
+  value,
+  valueTone = 'default',
+  onClick,
+}: {
+  label: string
+  value: ReactNode
+  valueTone?: 'default' | 'positive'
+  onClick: () => void
+}) {
+  const valueColor = valueTone === 'positive' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'
+
   return (
-    <div className="flex items-center justify-between gap-3 text-sm">
+    <button
+      type="button"
+      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-cyber-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+      onClick={onClick}
+    >
       <span className="text-cyber-text-secondary">{label}</span>
-      <span className="text-right font-semibold text-cyber-neon-green">{value}</span>
-    </div>
+      <span className={`text-right font-semibold group-hover:underline group-focus-visible:underline ${valueColor}`}>{value}</span>
+    </button>
   )
 }
 
@@ -178,7 +198,7 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
       },
       { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
       { label: 'Cost of carry', value: COST_OF_CARRY },
-      { label: 'Pool capacity', value: '6.3M USDC', tone: 'positive' },
+      { label: 'Pool capacity', value: <TokenAmount amount="6.3M" />, tone: 'positive' },
       { label: 'Skew', value: '42% used' },
       { label: 'Oracle freshness', value: 'Fresh', tone: 'positive' },
       { label: 'Protocol status', value: 'Active', tone: 'positive' },
@@ -289,8 +309,12 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
                 type="button"
                 className={`px-3 py-3 text-sm font-semibold transition-colors ${
                   direction === item
-                    ? 'bg-cyber-bright-blue text-cyber-bg'
-                    : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                    ? item === 'long'
+                      ? 'bg-cyber-neon-green text-cyber-bg'
+                      : 'bg-cyber-electric-fuchsia text-cyber-bg'
+                    : item === 'long'
+                      ? 'text-cyber-neon-green hover:bg-cyber-neon-green/10'
+                      : 'text-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/10'
                 }`}
                 onClick={() => {
                   setDirection(item)
@@ -303,18 +327,47 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
         </div>
 
         <div className="grid gap-2">
-          <AccountContextRow label="Available to Trade" value={AVAILABLE_TO_TRADE} />
-          <AccountContextRow label="Current Position" value={CURRENT_POSITION} />
+          <AccountContextRow
+            label="Available to Trade"
+            value={<TokenAmount amount={AVAILABLE_TO_TRADE_AMOUNT} />}
+            onClick={() => {
+              setSize(AVAILABLE_TO_TRADE_AMOUNT)
+            }}
+          />
+          <AccountContextRow
+            label="Current Position"
+            value={<TokenAmount amount={CURRENT_POSITION_AMOUNT} />}
+            valueTone="positive"
+            onClick={() => {
+              setSize(CURRENT_POSITION_AMOUNT)
+            }}
+          />
         </div>
 
-        <Input
-          label="Size"
-          value={size}
-          onChange={(event) => {
-            setSize(event.target.value)
-          }}
-          rightElement={<span className="text-sm font-semibold text-cyber-text-secondary">USDC</span>}
-        />
+        <div>
+          <Input
+            label="Size"
+            value={size}
+            onChange={(event) => {
+              setSize(event.target.value)
+            }}
+            rightElement={<TokenLabel token="USDC" />}
+          />
+          <div className="mt-1.5 flex justify-end">
+            <button
+              type="button"
+              className="group cursor-pointer text-right text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-cyber-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+              onClick={() => {
+                setSize(AVAILABLE_TO_TRADE_AMOUNT)
+              }}
+            >
+              <span>Max: </span>
+              <span className="group-hover:underline group-focus-visible:underline">
+                <TokenAmount amount={AVAILABLE_TO_TRADE_AMOUNT} />
+              </span>
+            </button>
+          </div>
+        </div>
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-sm font-medium text-cyber-text-secondary" htmlFor="perps-leverage">
