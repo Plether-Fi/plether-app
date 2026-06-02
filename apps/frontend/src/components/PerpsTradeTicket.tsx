@@ -200,10 +200,17 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
       { label: 'Cost of carry', value: COST_OF_CARRY },
       { label: 'Pool capacity', value: <TokenAmount amount="6.3M" />, tone: 'positive' },
       { label: 'Skew', value: '42% used' },
-      { label: 'Oracle freshness', value: 'Fresh', tone: 'positive' },
-      { label: 'Protocol status', value: 'Active', tone: 'positive' },
     ],
-    [executionLimit, keeperBounty, leverage, liquidationPrice, marginNumber, protocolExecutionFee, sizeNumber, slippageNumber]
+    [
+      executionLimit,
+      keeperBounty,
+      leverage,
+      liquidationPrice,
+      marginNumber,
+      protocolExecutionFee,
+      sizeNumber,
+      slippageNumber,
+    ]
   )
 
   const reviewTitle = `Review ${direction === 'long' ? 'Long' : 'Short'}`
@@ -368,6 +375,19 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
             </button>
           </div>
         </div>
+
+        <label className="flex cursor-pointer items-center gap-3 py-1">
+          <input
+            type="checkbox"
+            checked={isReduceOnly}
+            onChange={(event) => {
+              setIsReduceOnly(event.target.checked)
+            }}
+            className="h-4 w-4 accent-cyber-bright-blue"
+          />
+          <span className="text-sm font-semibold text-cyber-text-primary">Reduce only</span>
+        </label>
+
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-sm font-medium text-cyber-text-secondary" htmlFor="perps-leverage">
@@ -391,23 +411,6 @@ export function PerpsTradeTicket({ initialStatus = 'compose' }: PerpsTradeTicket
             <span>1x</span>
             <span>100x</span>
           </div>
-        </div>
-
-        <label className="flex cursor-pointer items-center gap-3 border border-cyber-border-glow/30 bg-cyber-bg/50 px-4 py-3 transition-colors hover:border-cyber-bright-blue/50">
-          <input
-            type="checkbox"
-            checked={isReduceOnly}
-            onChange={(event) => {
-              setIsReduceOnly(event.target.checked)
-            }}
-            className="h-4 w-4 accent-cyber-bright-blue"
-          />
-          <span className="text-sm font-semibold text-cyber-text-primary">Reduce only</span>
-        </label>
-
-        <div className="grid grid-cols-2 gap-2">
-          <StatusChip label="Oracle" value="Fresh" />
-          <StatusChip label="Protocol" value="Active" />
         </div>
 
         <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">

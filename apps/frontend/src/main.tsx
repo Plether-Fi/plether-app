@@ -4,6 +4,7 @@ import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { config } from './config/wagmi'
+import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
 

@@ -151,7 +151,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: '#A6B3D9',
-        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
+        fontFamily: 'Uncut Sans, ui-sans-serif, system-ui, sans-serif',
         fontSize: 12,
       },
       grid: {

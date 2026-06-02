@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
+import { TokenAmount } from '../components/ui'
 
 const meta: Meta<typeof PerpsInstrumentPanel> = {
   title: 'Perps/Instrument Panel',
@@ -13,17 +14,12 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
     name: 'DXY Perp',
     description: 'DXY Basket Perpetual',
     stats: [
-      { label: 'Oracle price', value: '0.9909' },
+      { label: 'Oracle price', value: '0.9909', freshness: 'fresh' },
       { label: '24h change', value: '-0.16%', tone: 'negative' },
-      { label: '24h volume', value: '2.4M USDC' },
-      {
-        label: 'Open interest',
-        values: [
-          { label: 'Long', value: '10.8M USDC', tone: 'positive' },
-          { label: 'Short', value: '7.9M USDC', tone: 'negative' },
-        ],
-      },
-      { label: 'Available liquidity', value: '6.3M USDC' },
+      { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
+      { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
+      { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
+      { label: 'Available liquidity', value: <TokenAmount amount="6.3M" /> },
       { label: 'Cost of carry', value: '5.24%' },
     ],
   },
@@ -45,17 +41,12 @@ export const Default: Story = {
 export const PositiveSession: Story = {
   args: {
     stats: [
-      { label: 'Oracle price', value: '0.9934' },
+      { label: 'Oracle price', value: '0.9934', freshness: 'fresh' },
       { label: '24h change', value: '+0.21%', tone: 'positive' },
-      { label: '24h volume', value: '3.1M USDC' },
-      {
-        label: 'Open interest',
-        values: [
-          { label: 'Long', value: '13.2M USDC', tone: 'positive' },
-          { label: 'Short', value: '8.2M USDC', tone: 'negative' },
-        ],
-      },
-      { label: 'Available liquidity', value: '8.7M USDC' },
+      { label: '24h volume', value: <TokenAmount amount="3.1M" /> },
+      { label: 'Long open interest', value: <TokenAmount amount="13.2M" />, tone: 'positive' },
+      { label: 'Short open interest', value: <TokenAmount amount="8.2M" />, tone: 'negative' },
+      { label: 'Available liquidity', value: <TokenAmount amount="8.7M" /> },
       { label: 'Cost of carry', value: '4.87%' },
     ],
   },

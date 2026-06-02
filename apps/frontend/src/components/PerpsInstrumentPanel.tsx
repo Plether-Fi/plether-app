@@ -10,6 +10,7 @@ export interface PerpsInstrumentStat {
     tone?: 'default' | 'positive' | 'negative'
   }[]
   tone?: 'default' | 'positive' | 'negative'
+  freshness?: 'fresh' | 'stale'
 }
 
 export interface PerpsInstrumentPanelProps {
@@ -20,16 +21,11 @@ export interface PerpsInstrumentPanelProps {
 }
 
 const DEFAULT_STATS: PerpsInstrumentStat[] = [
-  { label: 'Oracle price', value: '0.9909' },
+  { label: 'Oracle price', value: '0.9909', freshness: 'fresh' },
   { label: '24h change', value: '-0.16%', tone: 'negative' },
   { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
-  {
-    label: 'Open interest (LONG/SHORT)',
-    values: [
-      { label: 'long', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
-      { label: 'short', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
-    ],
-  },
+  { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
+  { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
   { label: 'Available liquidity', value: <TokenAmount amount="6.3M" /> },
   { label: 'Cost of carry', value: '5.24%' },
 ]
@@ -38,6 +34,10 @@ function statToneClass(tone: PerpsInstrumentStat['tone']): string {
   if (tone === 'positive') return 'text-cyber-neon-green'
   if (tone === 'negative') return 'text-cyber-electric-fuchsia'
   return 'text-cyber-text-primary'
+}
+
+function freshnessToneClass(freshness: NonNullable<PerpsInstrumentStat['freshness']>): string {
+  return freshness === 'fresh' ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'
 }
 
 function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
@@ -53,7 +53,18 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
     )
   }
 
-  return <dd className={`mt-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>{stat.value}</dd>
+  return (
+    <dd className={`mt-2 flex items-center gap-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>
+      {stat.freshness ? (
+        <span
+          className={`h-2 w-2 shrink-0 rounded-full bg-current ${freshnessToneClass(stat.freshness)}`}
+          aria-label={`Oracle ${stat.freshness}`}
+          title={`Oracle ${stat.freshness}`}
+        />
+      ) : null}
+      <span>{stat.value}</span>
+    </dd>
+  )
 }
 
 export function PerpsInstrumentPanel({
@@ -77,7 +88,7 @@ export function PerpsInstrumentPanel({
 
         <div className="hidden h-14 w-px shrink-0 bg-cyber-border-glow/25 lg:block" />
 
-        <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-6">
+        <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-7">
           {stats.map((stat) => (
             <div key={stat.label} className="min-w-0">
               <dt className="text-xs font-medium uppercase text-cyber-text-secondary">{stat.label}</dt>
