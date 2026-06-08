@@ -1,10 +1,10 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
@@ -18,6 +18,8 @@ export function ConnectButton() {
         return 'Mainnet'
       case sepolia.id:
         return 'Sepolia'
+      case arbitrumSepolia.id:
+        return 'Arbitrum Sepolia'
       case anvil.id:
         return 'Anvil - dev'
       default:
@@ -46,7 +48,7 @@ export function ConnectButton() {
         px-2 py-0.5 text-xs font-medium border
         ${isWrongNetwork
           ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border-cyber-electric-fuchsia/30'
-          : chainId === sepolia.id
+          : chainId === sepolia.id || chainId === arbitrumSepolia.id
             ? 'bg-cyber-warning-bg text-cyber-warning-text border-cyber-warning-text/30'
             : chainId === mainnet.id
               ? 'bg-cyber-neon-green/20 text-cyber-neon-green border-cyber-neon-green/30 shadow-sm shadow-cyber-neon-green/10'

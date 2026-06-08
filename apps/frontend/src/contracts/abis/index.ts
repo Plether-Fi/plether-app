@@ -8,3 +8,4 @@ export { LEVERAGE_ROUTER_ABI, BEAR_LEVERAGE_ROUTER_ABI, BULL_LEVERAGE_ROUTER_ABI
 export { MORPHO_ABI } from './Morpho'
 export { MORPHO_ORACLE_ABI } from './MorphoOracle'
 export { MORPHO_IRM_ABI } from './MorphoIrm'
+export { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_PUBLIC_LENS_ABI } from './Perps'

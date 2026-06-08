@@ -1,8 +1,8 @@
 import { useSwitchChain, useChainId } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 
-const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, anvil.id as number]
+const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 
 export function WrongNetworkBanner() {
   const chainId = useChainId()
@@ -18,11 +18,11 @@ export function WrongNetworkBanner() {
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-cyber-electric-fuchsia">warning</span>
           <p className="text-cyber-electric-fuchsia text-sm">
-            Please connect to Ethereum Mainnet or Sepolia to use Plether.
+            Please connect to Ethereum Mainnet, Sepolia, or Arbitrum Sepolia to use Plether.
           </p>
         </div>
         <button
-          onClick={() => { switchChain({ chainId: mainnet.id }) }}
+          onClick={() => { switchChain({ chainId: arbitrumSepolia.id }) }}
           disabled={isPending}
           className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyber-electric-fuchsia/20"
         >
@@ -36,7 +36,7 @@ export function WrongNetworkBanner() {
           ) : (
             <>
               <span className="material-symbols-outlined text-lg">swap_horiz</span>
-              Switch to Mainnet
+              Switch to Arbitrum Sepolia
             </>
           )}
         </button>

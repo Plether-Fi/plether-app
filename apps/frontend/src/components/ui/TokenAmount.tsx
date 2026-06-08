@@ -15,7 +15,7 @@ export function TokenAmount({
   amountClassName = '',
 }: TokenAmountProps) {
   return (
-    <span className={`inline-flex items-baseline gap-1.5 ${className}`}>
+    <span className={`inline-flex items-baseline gap-1.5 whitespace-nowrap ${className}`}>
       <span className={amountClassName}>{amount}</span>
       <TokenLabel token={token} />
     </span>

@@ -5,6 +5,8 @@ interface ModalProps {
   isOpen: boolean
   onClose: () => void
   title?: string
+  headerContent?: ReactNode
+  showCloseButton?: boolean
   children: ReactNode
   size?: 'sm' | 'md' | 'lg'
 }
@@ -19,6 +21,8 @@ export function Modal({
   isOpen,
   onClose,
   title,
+  headerContent,
+  showCloseButton = true,
   children,
   size = 'md',
 }: ModalProps) {
@@ -61,16 +65,29 @@ export function Modal({
           shadow-2xl shadow-cyber-border-glow/20 animate-in fade-in zoom-in-95 duration-200
         `}
       >
-        {/* Header */}
-        {title && (
-          <div className="flex items-center justify-between px-6 py-4 border-b border-cyber-border-glow/30">
-            <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
-            <button
-              onClick={onClose}
-              className="text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
-            >
-              <span className="material-symbols-outlined">close</span>
-            </button>
+        {(title || headerContent) && (
+          <div className="relative border-b border-cyber-border-glow/30 px-6 py-4">
+            {title ? (
+              <div className="flex items-center justify-between">
+                <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
+                {showCloseButton ? (
+                  <button
+                    onClick={onClose}
+                    className="text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
+                  >
+                    <span className="material-symbols-outlined">close</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : showCloseButton ? (
+              <button
+                onClick={onClose}
+                className="absolute right-4 top-3 text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            ) : null}
+            {headerContent ? <div className={title ? 'mt-4' : showCloseButton ? 'pr-8' : ''}>{headerContent}</div> : null}
           </div>
         )}
 
