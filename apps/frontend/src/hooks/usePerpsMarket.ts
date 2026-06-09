@@ -3,12 +3,8 @@ import { formatUnits } from 'viem'
 import { useReadContracts } from 'wagmi'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../components/PerpsMarketStatePanel'
-
-const PRICE_DECIMALS = 8
-const USDC_DECIMALS = 6
-const POSITION_SIZE_DECIMALS = 18
-const POSITION_SIZE_TO_USDC_SCALE = 10n ** BigInt(POSITION_SIZE_DECIMALS + PRICE_DECIMALS - USDC_DECIMALS)
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -46,7 +42,7 @@ function compactNumber(value: number): string {
 function formatPrice(price: bigint | undefined): string | undefined {
   if (price === undefined || price === 0n) return undefined
 
-  return Number(formatUnits(price, PRICE_DECIMALS)).toLocaleString('en-US', {
+  return Number(formatUnits(price, PERPS_DECIMALS.PRICE)).toLocaleString('en-US', {
     minimumFractionDigits: 4,
     maximumFractionDigits: 4,
   }).replaceAll(',', ' ')
@@ -54,7 +50,7 @@ function formatPrice(price: bigint | undefined): string | undefined {
 
 function formatCompactUsdc(amount: bigint | undefined): string | undefined {
   if (amount === undefined) return undefined
-  return compactNumber(Number(formatUnits(amount, USDC_DECIMALS)))
+  return compactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
 }
 
 function formatBpsAsPercent(bps: bigint | undefined): string | undefined {
@@ -67,7 +63,7 @@ function formatBpsAsPercent(bps: bigint | undefined): string | undefined {
 
 function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
   if (openInterest === undefined || markPrice === undefined) return undefined
-  return (openInterest * markPrice) / POSITION_SIZE_TO_USDC_SCALE
+  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
 }
 
 function protocolPhaseToMarketPhase(
@@ -76,8 +72,8 @@ function protocolPhaseToMarketPhase(
   oracleFrozen: boolean | undefined,
   fadWindow: boolean | undefined
 ): PerpsMarketPhase {
-  if (phase === 2) return 'degraded'
-  if (!tradingActive || phase === 0) return 'closed'
+  if (phase === PERPS_PROTOCOL_PHASE.DEGRADED) return 'degraded'
+  if (!tradingActive || phase === PERPS_PROTOCOL_PHASE.CONFIGURING) return 'closed'
   if (oracleFrozen || fadWindow) return 'close-only'
   return 'open'
 }

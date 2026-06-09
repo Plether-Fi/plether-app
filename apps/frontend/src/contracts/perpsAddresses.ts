@@ -3,6 +3,7 @@ import type { Address } from 'viem'
 export const PERPS_ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
 export interface PerpsContractAddresses {
+  pyth: Address
   usdc: Address
   perpsPublicLens: Address
   marginClearinghouse: Address
@@ -12,9 +13,12 @@ export interface PerpsContractAddresses {
   seniorVault: Address
   juniorVault: Address
   pletherOracle: Address
+  cfdEngineLens: Address
+  cfdEngineAccountLens: Address
 }
 
 export const PERPS_ARBITRUM_SEPOLIA = {
+  pyth: '0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF',
   usdc: '0x55E007D79906572cCCA8e75B1Beb302787348D6E',
   perpsPublicLens: '0xf3871a2e8247515CC913aad682951Eb3f2A673FB',
   marginClearinghouse: '0x00B89B6e696A43129DA7Ec8a814bb61C9A6189b8',
@@ -24,4 +28,6 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   seniorVault: '0x17eC59e7284CB9fb17B5625153c6Af7f58708981',
   juniorVault: '0xfED1D3F433d74148F9C04b34ed6d49752f34ff8E',
   pletherOracle: '0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb',
+  cfdEngineLens: '0xE3452be7c1703c3f16fD80fCaEB61732F43bDAA6',
+  cfdEngineAccountLens: '0x74f0a25BcC4b243E915Df1CA6385250aCff1eeE9',
 } satisfies PerpsContractAddresses
