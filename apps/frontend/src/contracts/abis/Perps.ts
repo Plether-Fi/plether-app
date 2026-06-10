@@ -283,6 +283,20 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'function',
+    name: 'maxOrderAge',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'ageSeconds', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxPendingOrders',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'limit', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'executeOrder',
     stateMutability: 'payable',
     inputs: [
@@ -415,6 +429,13 @@ export const PERPS_PLETHER_ORACLE_ABI = [
     stateMutability: 'view',
     inputs: [{ name: 'pythUpdateData', type: 'bytes[]' }],
     outputs: [{ name: 'pythFee', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'orderSettlementWindow',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'windowSeconds', type: 'uint256' }],
   },
   {
     type: 'function',

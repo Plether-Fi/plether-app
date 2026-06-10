@@ -22,6 +22,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Plether.Types.Protocol (ProtocolStatus)
+import Plether.Types.Perps (PythUpdateResponse)
 import Plether.Types.User (UserAllowances, UserDashboard)
 
 data CacheEntry a = CacheEntry
@@ -34,6 +35,8 @@ data AppCache = AppCache
   { cacheProtocolStatus :: !(TVar (Maybe (CacheEntry ProtocolStatus)))
   , cacheUserDashboards :: !(TVar (Map Text (CacheEntry UserDashboard)))
   , cacheUserAllowances :: !(TVar (Map Text (CacheEntry UserAllowances)))
+  , cachePythUpdates :: !(TVar (Map Text (PythUpdateResponse, POSIXTime)))
+  , cachePythRateLimitUntil :: !(TVar (Maybe POSIXTime))
   }
 
 newAppCache :: IO AppCache
@@ -42,6 +45,8 @@ newAppCache =
     <$> newTVarIO Nothing
     <*> newTVarIO Map.empty
     <*> newTVarIO Map.empty
+    <*> newTVarIO Map.empty
+    <*> newTVarIO Nothing
 
 isValid :: Integer -> CacheEntry a -> Bool
 isValid currentBlock entry = ceBlock entry >= currentBlock

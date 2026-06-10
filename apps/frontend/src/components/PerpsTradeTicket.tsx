@@ -1,9 +1,22 @@
-import { type ReactNode, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { useAppKit } from '@reown/appkit/react'
+import { useAccount, useChainId, useSwitchChain } from 'wagmi'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import type { PerpsPosition } from '../hooks'
+import { usePerpsTrading } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
+import {
+  formatPerpsPrice,
+  formatSignedPerpsUsdc,
+  formatPerpsUsdc,
+  getPerpsTargetPrice,
+  parsePerpsUsdc,
+  type PerpsDirection,
+} from '../utils/perps'
+import { getPerpsOrderFailureMessage } from '../utils/perpsErrors'
 import { Button, Input, Modal, TokenAmount, TokenLabel } from './ui'
 
-type Direction = 'long' | 'short'
+type Direction = PerpsDirection
 export type TradeLifecycleState =
   | 'preview'
   | 'commitPending'
@@ -15,6 +28,14 @@ export type TradeLifecycleState =
   | 'executed'
   | 'failed'
 type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
+type MarginAction = 'deposit' | 'withdraw'
+type MarginActionStatus = 'idle' | 'pending' | 'failed'
+type CleanupStatus = 'idle' | 'pending' | 'failed'
+interface PositionSnapshot {
+  exists: boolean
+  side?: Direction
+  size: bigint
+}
 
 interface PreviewRow {
   label: string
@@ -30,6 +51,26 @@ interface PerpsTradeTicketProps {
   initialReduceOnly?: boolean
   currentPositionSide?: Direction
   currentPositionAmount?: string
+  enableLiveTrading?: boolean
+  oraclePriceRaw?: bigint
+  oraclePriceDisplay?: string
+  availableToTradeRaw?: bigint
+  availableToTradeAmount?: string
+  portfolioValueRaw?: bigint
+  withdrawableUsdcRaw?: bigint
+  walletUsdcRaw?: bigint
+  marginAllowanceUsdc?: bigint
+  currentPosition?: PerpsPosition
+  pendingOrderCount?: number
+  pendingOrderIds?: bigint[]
+  maxPendingOrders?: bigint
+  firstPendingOrderId?: bigint
+  firstPendingOrderExpiryTime?: bigint
+  longOpenCapacityUsdc?: bigint
+  shortOpenCapacityUsdc?: bigint
+  minOpenNotionalUsdc?: bigint
+  executionFeeBps?: bigint
+  onAccountRefresh?: () => void
 }
 
 const PREVIEW_PRICE = 0.9909
@@ -44,8 +85,60 @@ const EXECUTION_FEE_BPS = 4
 const OPEN_BOUNTY_BPS = 1
 const MIN_OPEN_BOUNTY_USDC = 0.01
 const MAX_OPEN_BOUNTY_USDC = 0.2
+const USDC_UNIT = 1_000_000n
+const OPEN_BOUNTY_BPS_RAW = 1n
+const MIN_OPEN_BOUNTY_USDC_RAW = 10_000n
+const MAX_OPEN_BOUNTY_USDC_RAW = 200_000n
 const CLOSE_BOUNTY_USDC = 0.2
+const CLOSE_BOUNTY_USDC_RAW = 200_000n
 const VPI_PRICE_IMPACT_USDC = 6.42
+
+function isPythExpiryMessage(message: string): boolean {
+  const lowerMessage = message.toLowerCase()
+  return (
+    lowerMessage.includes('pyth price data expired') ||
+    lowerMessage.includes('stale-price error') ||
+    lowerMessage.includes('historical pyth update was unavailable') ||
+    lowerMessage.includes('router could not use the historical pyth update') ||
+    lowerMessage.includes('hermes rate limit reached')
+  )
+}
+
+function isHermesRateLimitMessage(message: string): boolean {
+  return message.toLowerCase().includes('hermes rate limit reached')
+}
+
+function isOrderNoLongerPendingMessage(message: string): boolean {
+  return message.toLowerCase().includes('no longer pending')
+}
+
+function didPositionMoveAsExpected({
+  before,
+  after,
+  direction,
+  isReduceOnly,
+}: {
+  before: PositionSnapshot | undefined
+  after: PerpsPosition | undefined
+  direction: Direction
+  isReduceOnly: boolean
+}): boolean {
+  if (!before) return false
+  const afterExists = Boolean(after?.exists)
+  const afterSize = after?.size ?? 0n
+  const afterSide = after?.direction
+
+  if (!before.exists) {
+    return afterExists && afterSide === direction && afterSize > 0n
+  }
+
+  if (isReduceOnly) {
+    if (!afterExists) return true
+    return afterSide === before.side && afterSize < before.size
+  }
+
+  return afterExists && afterSide === direction && afterSize > before.size
+}
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
   { id: 'preview', label: 'Preview' },
@@ -90,8 +183,61 @@ function formatLeverage(value: number): string {
   return `${value.toString()}x`
 }
 
+function formatDuration(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return 'now'
+
+  const days = Math.floor(seconds / 86_400)
+  const hours = Math.floor((seconds % 86_400) / 3_600)
+  const minutes = Math.floor((seconds % 3_600) / 60)
+  const remainingSeconds = seconds % 60
+  const parts = [
+    days > 0 ? `${days}d` : '',
+    hours > 0 ? `${hours}h` : '',
+    minutes > 0 ? `${minutes}m` : '',
+    days === 0 && hours === 0 ? `${remainingSeconds}s` : '',
+  ].filter(Boolean)
+
+  return parts.join(' ')
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
+}
+
+function clampBigInt(value: bigint, min: bigint, max: bigint): bigint {
+  if (value < min) return min
+  if (value > max) return max
+  return value
+}
+
+function minBigInt(a: bigint, b: bigint): bigint {
+  return a < b ? a : b
+}
+
+function estimateOpenBountyUsdcRaw(notionalUsdc: bigint): bigint {
+  if (notionalUsdc <= 0n) return 0n
+  const rawBounty = (notionalUsdc * OPEN_BOUNTY_BPS_RAW) / 10_000n
+  return clampBigInt(rawBounty, MIN_OPEN_BOUNTY_USDC_RAW, MAX_OPEN_BOUNTY_USDC_RAW)
+}
+
+function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigint {
+  if (availableUsdc <= 0n || leverage <= 0) return 0n
+
+  const leverageRaw = BigInt(leverage)
+  let low = 0n
+  let high = availableUsdc * leverageRaw
+
+  while (low < high) {
+    const midpoint = (low + high + 1n) / 2n
+    const requiredUsdc = (midpoint / leverageRaw) + estimateOpenBountyUsdcRaw(midpoint)
+    if (requiredUsdc <= availableUsdc) {
+      low = midpoint
+    } else {
+      high = midpoint - 1n
+    }
+  }
+
+  return (low / USDC_UNIT) * USDC_UNIT
 }
 
 function directionLabel(direction: Direction): string {
@@ -322,7 +468,7 @@ function PendingStateCard({
         <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-text-primary">{title}</div>
-      <div className="mt-2 max-w-sm text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
     </div>
   )
 }
@@ -334,7 +480,7 @@ function SuccessStateCard({ title, description }: { title: string; description: 
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-text-primary">{title}</div>
-      <div className="mt-2 max-w-sm text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
     </div>
   )
 }
@@ -346,7 +492,7 @@ function FailedStateCard({ title, description }: { title: string; description: s
         <span className="material-symbols-outlined text-4xl">close</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-electric-fuchsia">{title}</div>
-      <div className="mt-2 max-w-sm text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
     </div>
   )
 }
@@ -356,18 +502,21 @@ function AccountContextRow({
   value,
   valueTone = 'default',
   onClick,
+  disabled = false,
 }: {
   label: string
   value: ReactNode
   valueTone?: 'default' | 'positive'
   onClick: () => void
+  disabled?: boolean
 }) {
   const valueColor = valueTone === 'positive' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'
 
   return (
     <button
       type="button"
-      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-cyber-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+      disabled={disabled}
+      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-cyber-text-primary disabled:cursor-default disabled:hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
       onClick={onClick}
     >
       <span className="text-cyber-text-secondary">{label}</span>
@@ -376,15 +525,67 @@ function AccountContextRow({
   )
 }
 
+function AccountSummaryRow({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'positive' | 'negative'
+}) {
+  const valueClass = tone === 'positive'
+    ? 'text-cyber-neon-green'
+    : tone === 'negative'
+      ? 'text-cyber-electric-fuchsia'
+      : 'text-cyber-text-primary'
+
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="text-cyber-text-secondary">{label}</span>
+      <span className={`text-right font-semibold ${valueClass}`}>{value}</span>
+    </div>
+  )
+}
+
+function isNumericInput(value: string): boolean {
+  return /^[0-9., ]*$/.test(value)
+}
+
 export function PerpsTradeTicket({
   initialLifecycleState = 'preview',
   initialReviewOpen = false,
   initialDirection = 'long',
-  initialSize = '5000',
+  initialSize = '0',
   initialReduceOnly = false,
   currentPositionSide = 'long',
   currentPositionAmount = CURRENT_POSITION_AMOUNT,
+  enableLiveTrading = false,
+  oraclePriceRaw,
+  oraclePriceDisplay,
+  availableToTradeRaw,
+  availableToTradeAmount,
+  portfolioValueRaw,
+  withdrawableUsdcRaw,
+  walletUsdcRaw,
+  marginAllowanceUsdc,
+  currentPosition,
+  pendingOrderCount,
+  pendingOrderIds = [],
+  maxPendingOrders,
+  firstPendingOrderId,
+  firstPendingOrderExpiryTime,
+  longOpenCapacityUsdc,
+  shortOpenCapacityUsdc,
+  minOpenNotionalUsdc,
+  executionFeeBps,
+  onAccountRefresh,
 }: PerpsTradeTicketProps) {
+  const { isConnected } = useAccount()
+  const chainId = useChainId()
+  const { open } = useAppKit()
+  const { switchChain } = useSwitchChain()
+  const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [size, setSize] = useState(initialSize)
@@ -393,31 +594,178 @@ export function PerpsTradeTicket({
   const [lifecycleState, setLifecycleState] = useState<TradeLifecycleState>(initialLifecycleState)
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
+  const [orderId, setOrderId] = useState<bigint | undefined>()
+  const [commitTxHash, setCommitTxHash] = useState<string | undefined>()
+  const [executeTxHash, setExecuteTxHash] = useState<string | undefined>()
+  const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>()
+  const [flowError, setFlowError] = useState<string | undefined>()
+  const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
+  const [marginActionAmount, setMarginActionAmount] = useState('')
+  const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
+  const [marginActionError, setMarginActionError] = useState<string | undefined>()
+  const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
+  const [cleanupError, setCleanupError] = useState<string | undefined>()
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>()
+
+  useEffect(() => {
+    if (firstPendingOrderExpiryTime === undefined) return undefined
+    const interval = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [firstPendingOrderExpiryTime])
+
+  useEffect(() => {
+    if (!enableLiveTrading || orderId === undefined) return
+    if (!['revealPending', 'selfExecuteAvailable', 'selfExecutePending', 'selfExecuteFailed'].includes(lifecycleState)) return
+    if (pendingOrderIds.some((pendingOrderId) => pendingOrderId === orderId)) return
+    if (!didPositionMoveAsExpected({
+      before: positionSnapshotAtCommit,
+      after: currentPosition,
+      direction,
+      isReduceOnly,
+    })) {
+      return
+    }
+
+    setFlowError(undefined)
+    setFinalExecutionPrice(currentPosition?.entryPrice)
+    setLifecycleState('executed')
+  }, [
+    currentPosition,
+    direction,
+    enableLiveTrading,
+    isReduceOnly,
+    lifecycleState,
+    orderId,
+    pendingOrderIds,
+    positionSnapshotAtCommit,
+  ])
 
   const sizeNumber = parseAmount(size)
-  const currentPositionNumber = parseAmount(currentPositionAmount)
+  const currentPositionSideValue = currentPosition?.exists ? currentPosition.direction : currentPositionSide
+  const currentPositionDisplayAmount = currentPosition?.exists
+    ? formatPerpsUsdc(currentPosition.estimatedNotionalUsdc)
+    : currentPositionAmount
+  const currentPositionNumber = parseAmount(currentPositionDisplayAmount)
+  const unrealizedPnlRaw = currentPosition?.exists ? currentPosition.unrealizedPnlUsdc : undefined
+  const accountSummaryPnlTone = unrealizedPnlRaw === undefined || unrealizedPnlRaw === 0n
+    ? 'default'
+    : unrealizedPnlRaw > 0n ? 'positive' : 'negative'
+  const availableToTradeDisplayAmount = availableToTradeAmount ?? AVAILABLE_TO_TRADE_AMOUNT
+  const canUseAvailableToTrade = parseAmount(availableToTradeDisplayAmount) > 0
+  const canUseCurrentPosition = parseAmount(currentPositionDisplayAmount) > 0
+  const currentPositionRawNotional = currentPosition?.estimatedNotionalUsdc ?? 0n
+  const availableToTradeForMaxRaw = availableToTradeRaw ?? parsePerpsUsdc(availableToTradeDisplayAmount)
+  const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
+  const maxNotionalFromFundingRaw = canUseAvailableToTrade
+    ? maxOpenNotionalForMargin(availableToTradeForMaxRaw, leverage)
+    : 0n
+  const maxOpenNotionalRaw = selectedOpenCapacityUsdc === undefined
+    ? maxNotionalFromFundingRaw
+    : minBigInt(maxNotionalFromFundingRaw, selectedOpenCapacityUsdc)
+  const maxNotionalForSizeInputRaw = isReduceOnly
+    ? currentPositionRawNotional
+    : maxOpenNotionalRaw
+  const maxNotionalFromLeverageAmount = formatPerpsUsdc(maxNotionalForSizeInputRaw)
+  const canUseMaxNotional = parseAmount(maxNotionalFromLeverageAmount) > 0
   const marginNumber = leverage > 0 ? sizeNumber / leverage : 0
-  const protocolExecutionFee = (sizeNumber * EXECUTION_FEE_BPS) / 10_000
+  const executionFeeBpsNumber = Number(executionFeeBps ?? BigInt(EXECUTION_FEE_BPS))
+  const protocolExecutionFee = (sizeNumber * executionFeeBpsNumber) / 10_000
   const keeperBounty = isReduceOnly
     ? CLOSE_BOUNTY_USDC
     : clamp((sizeNumber * OPEN_BOUNTY_BPS) / 10_000, MIN_OPEN_BOUNTY_USDC, MAX_OPEN_BOUNTY_USDC)
   const slippageNumber = Math.max(slippage, 0)
-  const executionLimit = Number.isFinite(slippageNumber)
-    ? PREVIEW_PRICE * (direction === 'long' ? 1 + slippageNumber / 100 : 1 - slippageNumber / 100)
-    : null
-  const liquidationPrice = direction === 'long' ? PREVIEW_PRICE * 0.945 : PREVIEW_PRICE * 1.055
+  const previewPrice = oraclePriceRaw ? Number(formatPerpsPrice(oraclePriceRaw)) : PREVIEW_PRICE
+  const rawExecutionLimit = oraclePriceRaw
+    ? getPerpsTargetPrice({ direction, isClose: isReduceOnly, oraclePrice: oraclePriceRaw, slippagePercent: slippageNumber })
+    : undefined
+  const executionLimit = rawExecutionLimit === 0n
+    ? null
+    : rawExecutionLimit ? Number(formatPerpsPrice(rawExecutionLimit)) : Number.isFinite(slippageNumber)
+      ? PREVIEW_PRICE * (direction === 'long' ? 1 - slippageNumber / 100 : 1 + slippageNumber / 100)
+      : null
+  const liquidationPrice = direction === 'long' ? previewPrice * 0.945 : previewPrice * 1.055
   const orderSummary = buildOrderSummary({
-    currentPositionSide,
+    currentPositionSide: currentPositionSideValue,
     currentPositionSize: currentPositionNumber,
     direction,
     isReduceOnly,
     leverage,
     size: sizeNumber,
   })
+  const notionalUsdc = parsePerpsUsdc(size)
+  const marginUsdc = leverage > 0 ? notionalUsdc / BigInt(leverage) : 0n
+  const estimatedKeeperBountyUsdc = isReduceOnly ? CLOSE_BOUNTY_USDC_RAW : estimateOpenBountyUsdcRaw(notionalUsdc)
+  const orderFundingRequirementUsdc = !isReduceOnly ? marginUsdc + estimatedKeeperBountyUsdc : estimatedKeeperBountyUsdc
+  const marginShortfall = availableToTradeRaw !== undefined && orderFundingRequirementUsdc > availableToTradeRaw
+    ? orderFundingRequirementUsdc - availableToTradeRaw
+    : 0n
+  const isCorrectChain = chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+  const isZeroSize = notionalUsdc <= 0n
+  const oldestPendingOrderSecondsToExpiry = firstPendingOrderExpiryTime === undefined
+    ? undefined
+    : Number(firstPendingOrderExpiryTime) - nowSeconds
+  const canCleanupOldestPendingOrder = enableLiveTrading &&
+    firstPendingOrderId !== undefined &&
+    oldestPendingOrderSecondsToExpiry !== undefined &&
+    oldestPendingOrderSecondsToExpiry <= 0
+  const liveValidationError = (() => {
+    if (!enableLiveTrading) return undefined
+    if (!isConnected) return 'Connect wallet to trade.'
+    if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'Oracle price is not available.'
+    if (isZeroSize) return 'Enter an order size.'
+    if (
+      !isReduceOnly &&
+      selectedOpenCapacityUsdc !== undefined &&
+      minOpenNotionalUsdc !== undefined &&
+      selectedOpenCapacityUsdc < minOpenNotionalUsdc
+    ) {
+      return `New ${directionLabel(direction)} opens are unavailable right now. Max open size is ${formatPerpsUsdc(selectedOpenCapacityUsdc)} USDC, below the ${formatPerpsUsdc(minOpenNotionalUsdc)} USDC minimum. Add LP liquidity or loosen the skew cap before opening this side.`
+    }
+    if (!isReduceOnly && minOpenNotionalUsdc !== undefined && notionalUsdc < minOpenNotionalUsdc) {
+      return `Minimum open size is ${formatPerpsUsdc(minOpenNotionalUsdc)} USDC.`
+    }
+    if (!isReduceOnly && selectedOpenCapacityUsdc !== undefined && notionalUsdc > selectedOpenCapacityUsdc) {
+      return `Max ${directionLabel(direction)} open size is ${formatPerpsUsdc(selectedOpenCapacityUsdc)} USDC before hitting the market skew cap.`
+    }
+    if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
+    if (isReduceOnly && currentPosition?.exists && direction !== currentPosition.direction) {
+      return 'Reduce orders must use the current position side.'
+    }
+    if (isReduceOnly && currentPositionRawNotional > 0n && notionalUsdc > currentPositionRawNotional) {
+      return 'Reduce size exceeds the current position.'
+    }
+    if (!isReduceOnly && currentPosition?.exists && direction !== currentPosition.direction) {
+      return 'Close the current position before opening the other side.'
+    }
+    if (
+      pendingOrderCount !== undefined &&
+      maxPendingOrders !== undefined &&
+      BigInt(pendingOrderCount) >= maxPendingOrders
+    ) {
+      const expiryContext = oldestPendingOrderSecondsToExpiry === undefined
+        ? 'Waiting for expiry data.'
+        : oldestPendingOrderSecondsToExpiry <= 0
+          ? Math.abs(oldestPendingOrderSecondsToExpiry) <= 1
+            ? 'Oldest pending order expires now.'
+            : `Oldest pending order expired ${formatDuration(Math.abs(oldestPendingOrderSecondsToExpiry))} ago.`
+          : `Oldest pending order expires in ${formatDuration(oldestPendingOrderSecondsToExpiry)}.`
+
+      return `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
+    }
+    if (marginShortfall > 0n) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
+    return undefined
+  })()
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
-      { label: 'Oracle price', value: PREVIEW_PRICE.toFixed(4) },
+      { label: 'Oracle price', value: oraclePriceDisplay ?? previewPrice.toFixed(4) },
       { label: 'Notional', value: formatUsdc(sizeNumber) },
       { label: 'Initial margin', value: formatUsdc(marginNumber) },
       { label: 'Leverage', value: formatLeverage(leverage) },
@@ -441,6 +789,8 @@ export function PerpsTradeTicket({
       leverage,
       liquidationPrice,
       marginNumber,
+      oraclePriceDisplay,
+      previewPrice,
       protocolExecutionFee,
       sizeNumber,
       slippageNumber,
@@ -448,6 +798,156 @@ export function PerpsTradeTicket({
   )
 
   const currentLifecycleStep = lifecycleStep(lifecycleState)
+  const displayOrderId = orderId === undefined ? ORDER_ID : orderId.toString()
+  const displayCommitTx = commitTxHash ?? COMMIT_TX
+  const displayExecuteTx = executeTxHash ?? EXECUTE_TX
+  const reviewCtaLabel = enableLiveTrading && !isConnected
+    ? 'Connect Wallet'
+    : enableLiveTrading && !isCorrectChain
+      ? 'Switch Network'
+      : direction === 'long' ? 'Review Long' : 'Review Short'
+  const isConnectWalletCta = enableLiveTrading && !isConnected
+  const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
+  const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
+  const isMarginActionPending = marginActionStatus === 'pending'
+  const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
+  const marginActionCtaLabel = enableLiveTrading && !isConnected
+    ? 'Connect Wallet'
+    : enableLiveTrading && !isCorrectChain
+      ? 'Switch Network'
+      : marginActionLabel
+  const marginActionLimit = marginAction === 'withdraw' ? withdrawableUsdcRaw : walletUsdcRaw
+  const marginActionLimitLabel = marginAction === 'withdraw' ? 'Withdrawable' : 'Wallet balance'
+  const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
+  const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
+  const isMarginActionInvalid = marginActionAmountRaw <= 0n || isMarginActionInsufficient
+  const isMarginActionSubmitDisabled = isMarginActionPending
+    || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
+
+  function openMarginAction(action: MarginAction) {
+    setMarginAction(action)
+    setMarginActionAmount('')
+    setMarginActionStatus('idle')
+    setMarginActionError(undefined)
+  }
+
+  async function handleMarginActionSubmit() {
+    if (!marginAction) return
+    if (enableLiveTrading && !isConnected) {
+      void open()
+      return
+    }
+    if (enableLiveTrading && !isCorrectChain) {
+      switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+      return
+    }
+    if (isMarginActionInvalid) return
+
+    try {
+      setMarginActionStatus('pending')
+      setMarginActionError(undefined)
+      if (marginAction === 'deposit') {
+        await depositMargin(marginActionAmountRaw, marginAllowanceUsdc)
+      } else {
+        await withdrawMargin(marginActionAmountRaw)
+      }
+      setMarginActionStatus('idle')
+      setMarginAction(null)
+      setMarginActionAmount('')
+      onAccountRefresh?.()
+    } catch (error) {
+      setMarginActionStatus('failed')
+      setMarginActionError(error instanceof Error ? error.message : `${marginActionLabel} failed. Check wallet and retry.`)
+    }
+  }
+
+  async function handleConfirmCommit() {
+    setFlowError(undefined)
+    if (!enableLiveTrading) {
+      setLifecycleState('commitPending')
+      return
+    }
+    if (liveValidationError) {
+      setFlowError(liveValidationError)
+      return
+    }
+
+    try {
+      setLifecycleState('commitPending')
+      setPositionSnapshotAtCommit({
+        exists: Boolean(currentPosition?.exists),
+        side: currentPosition?.direction,
+        size: currentPosition?.size ?? 0n,
+      })
+      const result = await commitOrder({
+        direction,
+        notionalUsdc,
+        marginUsdc,
+        oraclePrice: oraclePriceRaw ?? 0n,
+        slippagePercent: slippageNumber,
+        isClose: isReduceOnly,
+      })
+      setCommitTxHash(result.hash)
+      setOrderId(result.orderId)
+      setLifecycleState('revealPending')
+      onAccountRefresh?.()
+    } catch (error) {
+      setFlowError(error instanceof Error ? error.message : 'Commit transaction failed')
+      setLifecycleState('failed')
+    }
+  }
+
+  async function handleCleanupOldestOrder() {
+    if (firstPendingOrderId === undefined) {
+      setCleanupError('Missing pending order ID. Refresh account state and retry.')
+      setCleanupStatus('failed')
+      return
+    }
+
+    try {
+      setCleanupError(undefined)
+      setCleanupStatus('pending')
+      await cleanupExpiredOrder(firstPendingOrderId)
+      setCleanupStatus('idle')
+      onAccountRefresh?.()
+    } catch (error) {
+      setCleanupStatus('failed')
+      setCleanupError(error instanceof Error ? error.message : 'Expired-order cleanup failed')
+      onAccountRefresh?.()
+    }
+  }
+
+  async function handleSelfExecute() {
+    if (!enableLiveTrading) {
+      setLifecycleState('selfExecutePending')
+      return
+    }
+    if (orderId === undefined) {
+      setFlowError('Missing order ID from commit transaction.')
+      setLifecycleState('selfExecuteFailed')
+      return
+    }
+
+    try {
+      setFlowError(undefined)
+      setLifecycleState('selfExecutePending')
+      const result = await executeOrder(orderId)
+      setExecuteTxHash(result.hash)
+      if (result.failedReason !== undefined) {
+        setFlowError(getPerpsOrderFailureMessage(result.failedReason))
+        setLifecycleState('selfExecuteFailed')
+        return
+      }
+      setFinalExecutionPrice(result.executionPrice)
+      setLifecycleState('executed')
+      onAccountRefresh?.()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Self-execute transaction failed'
+      setFlowError(message)
+      setLifecycleState(isPythExpiryMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
+      onAccountRefresh?.()
+    }
+  }
 
   return (
     <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
@@ -479,17 +979,18 @@ export function PerpsTradeTicket({
         <div className="grid gap-2">
           <AccountContextRow
             label="Available to Trade"
-            value={<TokenAmount amount={AVAILABLE_TO_TRADE_AMOUNT} />}
+            value={<TokenAmount amount={availableToTradeDisplayAmount} />}
+            disabled={!canUseAvailableToTrade}
             onClick={() => {
-              setSize(AVAILABLE_TO_TRADE_AMOUNT)
+              if (canUseAvailableToTrade) setSize(availableToTradeDisplayAmount)
             }}
           />
           <AccountContextRow
             label="Current Position"
-            value={<TokenAmount amount={currentPositionAmount} />}
-            valueTone="positive"
+            value={<TokenAmount amount={currentPositionDisplayAmount} />}
+            disabled={!canUseCurrentPosition}
             onClick={() => {
-              setSize(currentPositionAmount)
+              if (canUseCurrentPosition) setSize(currentPositionDisplayAmount)
             }}
           />
         </div>
@@ -499,7 +1000,9 @@ export function PerpsTradeTicket({
             label="Size"
             value={size}
             onChange={(event) => {
-              setSize(event.target.value)
+              if (isNumericInput(event.target.value)) {
+                setSize(event.target.value)
+              }
             }}
             rightElement={<TokenLabel token="USDC" />}
           />
@@ -507,13 +1010,14 @@ export function PerpsTradeTicket({
             <button
               type="button"
               className="group cursor-pointer text-right text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-cyber-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+              disabled={!canUseMaxNotional}
               onClick={() => {
-                setSize(AVAILABLE_TO_TRADE_AMOUNT)
+                if (canUseMaxNotional) setSize(maxNotionalFromLeverageAmount)
               }}
             >
               <span>Max: </span>
               <span className="group-hover:underline group-focus-visible:underline">
-                <TokenAmount amount={AVAILABLE_TO_TRADE_AMOUNT} />
+                <TokenAmount amount={maxNotionalFromLeverageAmount} />
               </span>
             </button>
           </div>
@@ -591,15 +1095,71 @@ export function PerpsTradeTicket({
         </div>
 
         <Button
-          className="w-full"
+          className={`w-full ${
+            isConnectWalletCta
+              ? '!bg-cyber-text-primary !text-cyber-bg hover:!bg-cyber-text-primary/90 !shadow-lg !shadow-cyber-text-primary/20'
+              : isSwitchNetworkCta
+                ? '!bg-cyber-bright-blue !text-cyber-bg hover:!bg-cyber-bright-blue/85 !shadow-lg !shadow-cyber-bright-blue/20'
+                : ''
+          }`}
           size="lg"
-          variant={direction === 'short' ? 'danger' : 'primary'}
+          variant={isConnectWalletCta || isSwitchNetworkCta ? 'secondary' : direction === 'short' ? 'danger' : 'primary'}
+          disabled={enableLiveTrading && isConnected && isCorrectChain && isZeroSize}
           onClick={() => {
+            if (enableLiveTrading && !isConnected) {
+              void open()
+              return
+            }
+            if (enableLiveTrading && !isCorrectChain) {
+              switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+              return
+            }
             setIsReviewOpen(true)
           }}
         >
-          {direction === 'long' ? 'Review Long' : 'Review Short'}
+          {isConnectWalletCta ? <span className="material-symbols-outlined text-xl">account_balance_wallet</span> : null}
+          {reviewCtaLabel}
         </Button>
+
+        <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+          <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Margin Account</div>
+          <div className="space-y-2">
+            <AccountSummaryRow label="Portfolio value" value={<TokenAmount amount={formatPerpsUsdc(portfolioValueRaw)} />} />
+            <AccountSummaryRow
+              label="Unrealized PnL"
+              value={<TokenAmount amount={formatSignedPerpsUsdc(unrealizedPnlRaw)} />}
+              tone={accountSummaryPnlTone}
+            />
+            <AccountSummaryRow
+              label="Maintenance margin"
+              value={<TokenAmount amount={formatPerpsUsdc(currentPosition?.maintenanceMarginUsdc)} />}
+            />
+            <AccountSummaryRow label="Withdrawable" value={<TokenAmount amount={formatPerpsUsdc(withdrawableUsdcRaw)} />} />
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            onClick={() => {
+              openMarginAction('deposit')
+            }}
+          >
+            Deposit
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className="w-full"
+            onClick={() => {
+              openMarginAction('withdraw')
+            }}
+          >
+            Withdraw
+          </Button>
+        </div>
       </div>
 
       <Modal
@@ -630,6 +1190,47 @@ export function PerpsTradeTicket({
                 </div>
               </div>
 
+              {enableLiveTrading && liveValidationError ? (
+                <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4 text-sm text-cyber-electric-fuchsia">
+                  {liveValidationError}
+                  {!isCorrectChain ? (
+                    <Button
+                      className="mt-3 w-full"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+                      }}
+                    >
+                      Switch Network
+                    </Button>
+                  ) : null}
+                  {canCleanupOldestPendingOrder ? (
+                    <Button
+                      className="mt-3 w-full"
+                      size="sm"
+                      variant="secondary"
+                      disabled={cleanupStatus === 'pending'}
+                      onClick={() => {
+                        void handleCleanupOldestOrder()
+                      }}
+                    >
+                      {cleanupStatus === 'pending' ? 'Cleaning Up...' : 'Clean Up Oldest Order'}
+                    </Button>
+                  ) : null}
+                  {cleanupError ? (
+                    <div className="mt-3 text-xs text-cyber-text-primary">
+                      {cleanupError}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+              {flowError && lifecycleState === 'preview' ? (
+                <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4 text-sm text-cyber-electric-fuchsia">
+                  {flowError}
+                </div>
+              ) : null}
+
               <div className="flex gap-3">
                 <Button
                   className="flex-1"
@@ -643,8 +1244,9 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   variant={direction === 'short' ? 'danger' : 'primary'}
+                  disabled={enableLiveTrading && Boolean(liveValidationError)}
                   onClick={() => {
-                    setLifecycleState('commitPending')
+                    void handleConfirmCommit()
                   }}
                 >
                   Confirm Commit
@@ -674,25 +1276,27 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  className="w-full"
-                  variant="secondary"
-                  onClick={() => {
-                    setLifecycleState('failed')
-                  }}
-                >
-                  Transaction Failed
-                </Button>
-                <Button
-                  className="w-full"
-                  onClick={() => {
-                    setLifecycleState('revealPending')
-                  }}
-                >
-                  Transaction Confirmed
-                </Button>
-              </div>
+              {!enableLiveTrading ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    className="w-full"
+                    variant="secondary"
+                    onClick={() => {
+                      setLifecycleState('failed')
+                    }}
+                  >
+                    Transaction Failed
+                  </Button>
+                  <Button
+                    className="w-full"
+                    onClick={() => {
+                      setLifecycleState('revealPending')
+                    }}
+                  >
+                    Transaction Confirmed
+                  </Button>
+                </div>
+              ) : null}
             </>
           ) : null}
 
@@ -701,8 +1305,8 @@ export function PerpsTradeTicket({
               <SuccessStateCard title="Commit confirmed" description="The order has entered the reveal queue." />
               <PreviewRows
                 rows={[
-                  { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
-                  { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
+                  { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
+                  { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
                 ]}
               />
               <Button
@@ -720,40 +1324,53 @@ export function PerpsTradeTicket({
             <>
               <PendingStateCard
                 title="Waiting for keeper reveal"
-                description="The keeper can now execute the committed order and settle the final contract price."
+                description="The keeper can now execute the committed order and settle the final contract price. Self-execute fetches historical Pyth data for the order window."
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
-                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
+                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
+                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
                     { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
                     { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Self execute', value: 'Available after 04:38' },
+                    { label: 'Self execute', value: enableLiveTrading ? 'Fetches historical Pyth data' : 'Available after 04:38' },
                   ]}
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <Button
-                  className="w-full"
-                  variant="secondary"
-                  onClick={() => {
-                    setLifecycleState('selfExecuteAvailable')
-                  }}
-                >
-                  Timeout Reached
-                </Button>
-                <Button
-                  className="w-full"
-                  onClick={() => {
-                    setLifecycleState('executed')
-                  }}
-                >
-                  Keeper Executed
-                </Button>
+                {!enableLiveTrading ? (
+                  <>
+                    <Button
+                      className="w-full"
+                      variant="secondary"
+                      onClick={() => {
+                        setLifecycleState('selfExecuteAvailable')
+                      }}
+                    >
+                      Timeout Reached
+                    </Button>
+                    <Button
+                      className="w-full"
+                      onClick={() => {
+                        setLifecycleState('executed')
+                      }}
+                    >
+                      Keeper Executed
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    className="col-span-2 w-full"
+                    onClick={() => {
+                      void handleSelfExecute()
+                    }}
+                  >
+                    Self Execute
+                  </Button>
+                )}
               </div>
             </>
           ) : null}
@@ -761,19 +1378,33 @@ export function PerpsTradeTicket({
           {lifecycleState === 'selfExecuteAvailable' ? (
             <>
               <PendingStateCard
-                title="Keeper reveal overdue"
-                description="The keeper has not executed within the timeout. You can self execute the reveal transaction now."
+                title={
+                  flowError && isHermesRateLimitMessage(flowError)
+                    ? 'Hermes rate limit reached'
+                    : flowError && isPythExpiryMessage(flowError)
+                      ? 'Historical Pyth data required'
+                      : 'Keeper reveal overdue'
+                }
+                description={
+                  flowError && isPythExpiryMessage(flowError)
+                    ? flowError
+                    : 'The keeper has not executed within the timeout. You can self execute the reveal transaction now.'
+                }
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
-                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
+                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
+                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
                     { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
                     { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Self execute', value: 'Available now', tone: 'positive' },
+                    {
+                      label: 'Self execute',
+                      value: flowError && isPythExpiryMessage(flowError) ? 'Retry with historical Pyth data' : 'Available now',
+                      tone: flowError && isPythExpiryMessage(flowError) ? 'warning' : 'positive',
+                    },
                   ]}
                 />
               </div>
@@ -782,10 +1413,10 @@ export function PerpsTradeTicket({
                 className="w-full"
                 size="lg"
                 onClick={() => {
-                  setLifecycleState('selfExecutePending')
+                  void handleSelfExecute()
                 }}
               >
-                Self Execute
+                {flowError && isPythExpiryMessage(flowError) ? 'Retry Self Execute' : 'Self Execute'}
               </Button>
             </>
           ) : null}
@@ -794,15 +1425,15 @@ export function PerpsTradeTicket({
             <>
               <PendingStateCard
                 title="Waiting for self-execute confirmation"
-                description="Confirm the reveal transaction in your wallet, then wait for it to settle the order onchain."
+                description="Confirm promptly in your wallet. The order can expire if the reveal transaction takes too long to submit."
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Self Execute Transaction</div>
                 <PreviewRows
                   rows={[
-                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
+                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
+                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
                     { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
                     { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
                     { label: 'Transaction', value: 'Awaiting confirmation' },
@@ -810,41 +1441,43 @@ export function PerpsTradeTicket({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  className="w-full"
-                  variant="secondary"
-                  onClick={() => {
-                    setLifecycleState('selfExecuteFailed')
-                  }}
-                >
-                  Transaction Failed
-                </Button>
-                <Button
-                  className="w-full"
-                  onClick={() => {
-                    setLifecycleState('executed')
-                  }}
-                >
-                  Transaction Confirmed
-                </Button>
-              </div>
+              {!enableLiveTrading ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <Button
+                    className="w-full"
+                    variant="secondary"
+                    onClick={() => {
+                      setLifecycleState('selfExecuteFailed')
+                    }}
+                  >
+                    Transaction Failed
+                  </Button>
+                  <Button
+                    className="w-full"
+                    onClick={() => {
+                      setLifecycleState('executed')
+                    }}
+                  >
+                    Transaction Confirmed
+                  </Button>
+                </div>
+              ) : null}
             </>
           ) : null}
 
           {lifecycleState === 'selfExecuteFailed' ? (
             <>
               <FailedStateCard
-                title="Self-execute transaction failed"
-                description="The wallet rejected the transaction or the reveal transaction failed before settling the order."
+                title={flowError && isOrderNoLongerPendingMessage(flowError) ? 'Order no longer pending' : 'Self-execute transaction failed'}
+                description={flowError ?? 'The wallet rejected the transaction or the reveal transaction failed before settling the order.'}
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
-                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
+                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
+                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
                     { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
                     { label: 'Self execute', value: 'Retry available', tone: 'warning' },
                   ]}
@@ -864,7 +1497,7 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   onClick={() => {
-                    setLifecycleState('selfExecutePending')
+                    void handleSelfExecute()
                   }}
                 >
                   Retry Self Execute
@@ -880,9 +1513,9 @@ export function PerpsTradeTicket({
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Final Result</div>
                 <PreviewRows
                   rows={[
-                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={ORDER_ID} /> },
+                    { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'Final price', value: '0.9911' },
+                    { label: 'Final price', value: finalExecutionPrice ? formatPerpsPrice(finalExecutionPrice) : '0.9911' },
                     { label: 'Position size', value: formatUsdc(sizeNumber) },
                     { label: 'Margin used', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdc(protocolExecutionFee) },
@@ -892,8 +1525,8 @@ export function PerpsTradeTicket({
                       tone: vpiTone(VPI_PRICE_IMPACT_USDC),
                     },
                     { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Commit tx', value: <TxHashActions hash={COMMIT_TX} /> },
-                    { label: 'Reveal tx', value: <TxHashActions hash={EXECUTE_TX} /> },
+                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
+                    { label: 'Reveal tx', value: <TxHashActions hash={displayExecuteTx} /> },
                   ]}
                 />
               </div>
@@ -914,7 +1547,7 @@ export function PerpsTradeTicket({
             <>
               <FailedStateCard
                 title="Commit transaction failed"
-                description="The wallet rejected the transaction or the commit failed before reaching the reveal queue."
+                description={flowError ?? 'The wallet rejected the transaction or the commit failed before reaching the reveal queue.'}
               />
               <div className="flex gap-3">
                 <Button
@@ -929,7 +1562,7 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   onClick={() => {
-                    setLifecycleState('commitPending')
+                    void handleConfirmCommit()
                   }}
                 >
                   Retry Commit
@@ -937,6 +1570,81 @@ export function PerpsTradeTicket({
               </div>
             </>
           ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={marginAction !== null}
+        onClose={() => {
+          if (!isMarginActionPending) {
+            setMarginAction(null)
+          }
+        }}
+        title={`${marginActionLabel} Margin`}
+        size="md"
+      >
+        <div className="space-y-5">
+          <p className="text-sm leading-6 text-cyber-text-secondary">
+            {marginAction === 'withdraw'
+              ? 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
+              : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
+          </p>
+
+          <Input
+            label="Amount"
+            value={marginActionAmount}
+            onChange={(event) => {
+              if (isNumericInput(event.target.value)) {
+                setMarginActionAmount(event.target.value)
+                setMarginActionStatus('idle')
+                setMarginActionError(undefined)
+              }
+            }}
+            rightElement={<TokenLabel token="USDC" />}
+            autoFocus
+          />
+
+          <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+            <div className="space-y-2">
+              <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
+              <AccountSummaryRow label="Amount" value={<TokenAmount amount={formatPerpsUsdc(marginActionAmountRaw)} />} />
+            </div>
+          </div>
+
+          {isMarginActionInsufficient ? (
+            <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-3 text-sm text-cyber-electric-fuchsia">
+              Amount exceeds {marginActionLimitLabel.toLowerCase()}.
+            </div>
+          ) : null}
+
+          {marginActionError ? (
+            <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-3 text-sm text-cyber-electric-fuchsia">
+              {marginActionError}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={isMarginActionPending}
+              onClick={() => {
+                setMarginAction(null)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              isLoading={isMarginActionPending}
+              disabled={isMarginActionSubmitDisabled}
+              onClick={() => {
+                void handleMarginActionSubmit()
+              }}
+            >
+              {marginActionCtaLabel}
+            </Button>
+          </div>
         </div>
       </Modal>
     </section>

@@ -28,6 +28,14 @@ function apiProxyConfig(): ProxyOptions {
   };
 }
 
+function pythHermesProxyConfig(): ProxyOptions {
+  return {
+    target: process.env.VITE_PYTH_HERMES_PROXY_TARGET ?? 'https://hermes.pyth.network',
+    changeOrigin: true,
+    rewrite: (proxyPath) => proxyPath.replace(/^\/pyth-hermes/, ''),
+  };
+}
+
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
   plugins: [
@@ -44,6 +52,7 @@ export default defineConfig({
       '/api/v1': apiProxyConfig(),
       '/api/sepolia_v1': apiProxyConfig(),
       '/api': apiProxyConfig(),
+      '/pyth-hermes': pythHermesProxyConfig(),
     },
   },
   preview: { headers: parseHeadersFile() },

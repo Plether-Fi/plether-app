@@ -166,7 +166,9 @@ runBasketBackfill manager pool cfg = do
         Right (Right (basketPrice, components)) ->
           withDb pool $ \conn ->
             insertBasketSnapshot conn ts interval basketPrice components
-      threadDelay 100_000
+      -- Public Pyth endpoints are IP-rate-limited. Keep historical backfills
+      -- below one request per second so chart ingestion cannot starve order reveal.
+      threadDelay 1_250_000
 
 parseIntegerish :: Value -> Parser Integer
 parseIntegerish = \case

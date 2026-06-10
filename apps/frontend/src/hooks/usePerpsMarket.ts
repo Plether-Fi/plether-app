@@ -6,6 +6,8 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../components/PerpsMarketStatePanel'
 
+const WAD = 10n ** 18n
+
 interface ContractResult {
   status: 'failure' | 'success'
   result?: unknown
@@ -64,6 +66,37 @@ function formatBpsAsPercent(bps: bigint | undefined): string | undefined {
 function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
   if (openInterest === undefined || markPrice === undefined) return undefined
   return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
+}
+
+function openCapacityUsdc({
+  selectedOpenInterestUsdc,
+  oppositeOpenInterestUsdc,
+  poolAssetsUsdc,
+  maxSkewRatio,
+}: {
+  selectedOpenInterestUsdc: bigint | undefined
+  oppositeOpenInterestUsdc: bigint | undefined
+  poolAssetsUsdc: bigint | undefined
+  maxSkewRatio: bigint | undefined
+}): bigint | undefined {
+  if (
+    selectedOpenInterestUsdc === undefined ||
+    oppositeOpenInterestUsdc === undefined ||
+    poolAssetsUsdc === undefined ||
+    maxSkewRatio === undefined
+  ) {
+    return undefined
+  }
+
+  const maxSkewUsdc = (poolAssetsUsdc * maxSkewRatio) / WAD
+  return maxSkewUsdc + oppositeOpenInterestUsdc > selectedOpenInterestUsdc
+    ? maxSkewUsdc + oppositeOpenInterestUsdc - selectedOpenInterestUsdc
+    : 0n
+}
+
+function minOpenNotionalUsdc(minBountyUsdc: bigint | undefined, bountyBps: bigint | undefined): bigint | undefined {
+  if (minBountyUsdc === undefined || bountyBps === undefined || bountyBps === 0n) return undefined
+  return (minBountyUsdc * 10_000n) / bountyBps
 }
 
 function protocolPhaseToMarketPhase(
@@ -140,10 +173,28 @@ export function usePerpsMarket() {
     const fadWindow = tupleValue(protocolStatus, 4, 'fadWindow') as boolean | undefined
     const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
     const markFresh = tupleValue(poolLiquidity, 8, 'markFresh') as boolean | undefined
+    const poolAssetsUsdc = tupleValue(poolLiquidity, 0, 'totalAssetsUsdc') as bigint | undefined
     const freeUsdc = tupleValue(poolLiquidity, 1, 'freeUsdc') as bigint | undefined
     const bullOpenInterest = tupleValue(bullSide, 1, 'openInterest') as bigint | undefined
     const bearOpenInterest = tupleValue(bearSide, 1, 'openInterest') as bigint | undefined
+    const maxSkewRatio = tupleValue(riskParams, 1, 'maxSkewRatio') as bigint | undefined
     const baseCarryBps = tupleValue(riskParams, 5, 'baseCarryBps') as bigint | undefined
+    const minBountyUsdc = tupleValue(riskParams, 6, 'minBountyUsdc') as bigint | undefined
+    const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
+    const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
+    const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const longOpenCapacityUsdc = openCapacityUsdc({
+      selectedOpenInterestUsdc: bullOpenInterestUsdc,
+      oppositeOpenInterestUsdc: bearOpenInterestUsdc,
+      poolAssetsUsdc,
+      maxSkewRatio,
+    })
+    const shortOpenCapacityUsdc = openCapacityUsdc({
+      selectedOpenInterestUsdc: bearOpenInterestUsdc,
+      oppositeOpenInterestUsdc: bullOpenInterestUsdc,
+      poolAssetsUsdc,
+      maxSkewRatio,
+    })
 
     const phase = phaseValue === undefined ? undefined : Number(phaseValue)
     const marketPhase = protocolPhaseToMarketPhase(phase, tradingActive, oracleFrozen, fadWindow)
@@ -153,11 +204,26 @@ export function usePerpsMarket() {
     return {
       chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
       addresses: PERPS_ARBITRUM_SEPOLIA,
+      raw: {
+        markPrice,
+        poolAssetsUsdc,
+        freeUsdc,
+        bullOpenInterest,
+        bearOpenInterest,
+        bullOpenInterestUsdc,
+        bearOpenInterestUsdc,
+        longOpenCapacityUsdc,
+        shortOpenCapacityUsdc,
+        maxSkewRatio,
+        minOpenNotionalUsdc: minOpenNotionalUsdc(minBountyUsdc, bountyBps),
+        baseCarryBps,
+        executionFeeBps,
+      },
       oraclePrice: formatPrice(markPrice),
       oracleFreshness: oracleFresh ? 'fresh' as const : 'stale' as const,
       lastMarkTime: lastMarkTime === undefined ? undefined : Number(lastMarkTime),
-      longOpenInterest: formatCompactUsdc(openInterestNotionalUsdc(bullOpenInterest, markPrice)),
-      shortOpenInterest: formatCompactUsdc(openInterestNotionalUsdc(bearOpenInterest, markPrice)),
+      longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
+      shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
       availableLiquidity: formatCompactUsdc(freeUsdc),
       costOfCarry: formatBpsAsPercent(baseCarryBps),
       executionFeeBps,

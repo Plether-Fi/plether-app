@@ -26,6 +26,8 @@ data Config = Config
   , cfgDatabaseUrl :: Maybe Text
   , cfgIndexerStartBlock :: Integer
   , cfgPythBenchmarksUrl :: Text
+  , cfgPythHermesUrl :: Text
+  , cfgPythApiKey :: Maybe Text
   , cfgPythBackfillDays :: Int
   , cfgPythSampleIntervalSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
@@ -112,9 +114,11 @@ loadConfig = do
       mDatabaseUrl <- lookupEnv "DATABASE_URL"
       indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
       pythBenchmarksUrl <- fromMaybe "https://benchmarks.pyth.network" <$> lookupEnv "PYTH_BENCHMARKS_URL"
+      pythHermesUrl <- fromMaybe "https://hermes.pyth.network" <$> lookupEnv "PYTH_HERMES_URL"
+      mPythApiKey <- lookupEnv "PYTH_API_KEY"
       pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
-      pythIngestionStr <- fromMaybe "true" <$> lookupEnv "PYTH_INGESTION_ENABLED"
+      pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -144,6 +148,8 @@ loadConfig = do
                 , cfgDatabaseUrl = fmap T.pack mDatabaseUrl
                 , cfgIndexerStartBlock = indexerStartBlock
                 , cfgPythBenchmarksUrl = T.pack pythBenchmarksUrl
+                , cfgPythHermesUrl = T.pack pythHermesUrl
+                , cfgPythApiKey = fmap T.pack mPythApiKey
                 , cfgPythBackfillDays = max 1 pythBackfillDays
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled

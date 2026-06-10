@@ -8,11 +8,13 @@ module Plether.Types.Error
   , rpcError
   , rpcErrorToApiError
   , rateLimited
+  , rateLimitedWithDetails
   , internalError
   , networkError
   ) where
 
 import Data.Aeson (ToJSON (..), Value, object, (.=))
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Text as T
 import Data.Text (Text)
 import GHC.Generics (Generic)
@@ -74,6 +76,18 @@ rpcError msg = mkError RpcError $ "RPC error: " <> msg
 
 rateLimited :: ApiError
 rateLimited = mkError RateLimited "Rate limit exceeded"
+
+rateLimitedWithDetails :: Maybe BS8.ByteString -> ApiError
+rateLimitedWithDetails retryAfter =
+  ApiError
+    { errCode = RateLimited
+    , errMessage = "Hermes rate limit exceeded"
+    , errDetails =
+        Just $
+          object
+            [ "retryAfter" .= fmap BS8.unpack retryAfter
+            ]
+    }
 
 internalError :: Text -> ApiError
 internalError msg = mkError InternalError $ "Internal error: " <> msg

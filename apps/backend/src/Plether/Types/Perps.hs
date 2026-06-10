@@ -2,6 +2,7 @@ module Plether.Types.Perps
   ( BasketHistory (..)
   , BasketHistoryParams (..)
   , BasketHistoryPoint (..)
+  , PythUpdateResponse (..)
   , basketRangeSeconds
   , defaultBasketHistoryParams
   ) where
@@ -68,4 +69,21 @@ instance ToJSON BasketHistory where
       , "latestPrice" .= fmap show bhLatestPrice
       , "changePct" .= bhChangePct
       , "points" .= bhPoints
+      ]
+
+data PythUpdateResponse = PythUpdateResponse
+  { purUpdateData :: [Text]
+  , purFetchedAt :: Integer
+  , purPublishTimes :: [Integer]
+  , purSource :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON PythUpdateResponse where
+  toJSON PythUpdateResponse {..} =
+    object
+      [ "updateData" .= purUpdateData
+      , "fetchedAt" .= purFetchedAt
+      , "publishTimes" .= purPublishTimes
+      , "source" .= purSource
       ]

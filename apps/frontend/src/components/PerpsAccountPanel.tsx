@@ -1,4 +1,6 @@
 import { type ReactNode, useState } from 'react'
+import type { PerpsPendingOrder, PerpsPosition } from '../hooks'
+import { formatPerpsPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { TokenAmount } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
@@ -35,21 +37,19 @@ interface TradeRow {
   fee: ReactNode
 }
 
+interface PerpsAccountPanelProps {
+  position?: PerpsPosition
+  pendingOrders?: PerpsPendingOrder[]
+  isConnected?: boolean
+  isLoading?: boolean
+}
+
 const ACCOUNT_TABS: AccountTab[] = [
   { id: 'position', label: 'Position' },
   { id: 'openOrders', label: 'Open Orders' },
   { id: 'orderHistory', label: 'Order History' },
   { id: 'tradeHistory', label: 'Trade History' },
 ]
-
-const CURRENT_POSITION: PositionRow = {
-  market: 'DXY Perp',
-  side: 'Long',
-  size: <TokenAmount amount="8 200" />,
-  entry: '0.9874',
-  pnl: <TokenAmount amount="+284.12" />,
-  tone: 'positive',
-}
 
 const OPEN_ORDERS: OrderRow[] = [
   { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
@@ -89,22 +89,44 @@ function AccountMetric({ label, value, tone }: { label: string; value: ReactNode
   )
 }
 
-function PositionView() {
+function PositionView({
+  position,
+  isConnected,
+  isLoading,
+}: {
+  position?: PerpsPosition
+  isConnected?: boolean
+  isLoading?: boolean
+}) {
+  if (isConnected === false) return <EmptyState label="connected wallet" />
+  if (isLoading) return <EmptyState label="position data" />
+  if (!position?.exists) return <EmptyState label="current position" />
+
+  const currentPnl = position.unrealizedPnlUsdc
+  const currentPosition: PositionRow = {
+    market: 'DXY Perp',
+    side: perpsSideLabel(position.side),
+    size: <TokenAmount amount={formatPerpsUsdc(position.estimatedNotionalUsdc)} />,
+    entry: formatPerpsPrice(position.entryPrice),
+    pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
+    tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
+  }
+
   return (
     <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-cyber-text-secondary">Current Position</div>
         <div className="mt-2 flex items-center gap-3">
           <span className="border border-cyber-neon-green/40 px-3 py-1 text-sm font-semibold text-cyber-neon-green">
-            {CURRENT_POSITION.side}
+            {currentPosition.side}
           </span>
-          <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{CURRENT_POSITION.market}</div>
+          <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{currentPosition.market}</div>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-4">
-        <AccountMetric label="Size" value={CURRENT_POSITION.size} />
-        <AccountMetric label="Entry" value={CURRENT_POSITION.entry} />
-        <AccountMetric label="PnL" value={CURRENT_POSITION.pnl} tone={CURRENT_POSITION.tone} />
+        <AccountMetric label="Size" value={currentPosition.size} />
+        <AccountMetric label="Entry" value={currentPosition.entry} />
+        <AccountMetric label="PnL" value={currentPosition.pnl} tone={currentPosition.tone} />
       </div>
     </div>
   )
@@ -176,14 +198,49 @@ function TradeHistoryView() {
   )
 }
 
-function AccountTabContent({ activeTab }: { activeTab: PerpsAccountTab }) {
-  if (activeTab === 'position') return <PositionView />
-  if (activeTab === 'openOrders') return <OrdersView rows={OPEN_ORDERS} />
+function AccountTabContent({
+  activeTab,
+  position,
+  pendingOrders,
+  isConnected,
+  isLoading,
+}: PerpsAccountPanelProps & { activeTab: PerpsAccountTab }) {
+  const mockPosition: PerpsPosition = {
+    exists: true,
+    side: 0,
+    direction: 'long',
+    size: 0n,
+    entryPrice: 98740000n,
+    marginUsdc: 0n,
+    unrealizedPnlUsdc: 284120000n,
+    maintenanceMarginUsdc: 0n,
+    liquidatable: false,
+    estimatedNotionalUsdc: 8200000000n,
+  }
+  const liveOpenOrders = pendingOrders?.map((order) => ({
+    market: 'DXY Perp',
+    side: perpsSideLabel(order.side),
+    type: order.isReduceOnly ? 'Reduce' : 'Open',
+    price: order.acceptablePrice === 0n ? 'Market' : formatPerpsPrice(order.acceptablePrice),
+    size: <TokenAmount amount={formatPerpsUsdc(order.estimatedNotionalUsdc)} />,
+    status: `Status ${order.status}`,
+  }))
+
+  if (activeTab === 'position') {
+    return (
+      <PositionView
+        position={position ?? (isConnected === undefined ? mockPosition : undefined)}
+        isConnected={isConnected}
+        isLoading={isLoading}
+      />
+    )
+  }
+  if (activeTab === 'openOrders') return <OrdersView rows={liveOpenOrders ?? OPEN_ORDERS} />
   if (activeTab === 'orderHistory') return <OrdersView rows={ORDER_HISTORY} includeStatus />
   return <TradeHistoryView />
 }
 
-export function PerpsAccountPanel() {
+export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   const [activeTab, setActiveTab] = useState<PerpsAccountTab>('position')
 
   return (
@@ -211,7 +268,7 @@ export function PerpsAccountPanel() {
       </div>
 
       <div className="px-5 py-4">
-        <AccountTabContent activeTab={activeTab} />
+        <AccountTabContent activeTab={activeTab} {...props} />
       </div>
     </section>
   )

@@ -8,7 +8,8 @@ import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400, status503)
+import Network.HTTP.Types.Status (status200, status400, status429, status503)
+import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
@@ -19,7 +20,7 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
-import Plether.Handlers.Perps (getBasketHistory)
+import Plether.Handlers.Perps (getBasketHistory, getPythUpdate)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -56,8 +57,8 @@ import Web.Scotty
   , status
   )
 
-app :: AppCache -> EthClient -> Config -> Maybe DbPool -> ScottyM ()
-app cache client cfg mPool = do
+app :: AppCache -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
+app cache client cfg mPool manager = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -196,6 +197,15 @@ app cache client cfg mPool = do
         handleServiceUnavailable $
           E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
 
+  get "/api/perps/pyth/update" $ do
+    mPublishTime <- queryParamMaybe "publishTime"
+    case traverse parsePositiveInteger mPublishTime of
+      Just mTs -> do
+        result <- liftIO $ getPythUpdate cache manager cfg mTs
+        handleResult result
+      Nothing ->
+        handleError $ E.invalidAmount "publishTime must be a positive integer"
+
 historyParams :: ActionM HistoryParams
 historyParams = do
   mPage <- queryParamMaybe "page"
@@ -258,7 +268,10 @@ handleResult = \case
 handleError :: ApiError -> ActionM ()
 handleError err = do
   setHeader "Content-Type" "application/json"
-  status status400
+  status $
+    case E.errCode err of
+      E.RateLimited -> status429
+      _ -> status400
   json err
 
 handleServiceUnavailable :: ApiError -> ActionM ()
@@ -273,6 +286,11 @@ parseAmount txt =
    in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
         then Just $ read $ T.unpack stripped
         else Nothing
+
+parsePositiveInteger :: Text -> Maybe Integer
+parsePositiveInteger txt = do
+  value <- parseAmount txt
+  if value > 0 then Just value else Nothing
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ const $ Just policy

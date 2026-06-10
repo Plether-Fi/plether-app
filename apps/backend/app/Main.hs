@@ -37,12 +37,12 @@ main = do
       putStrLn $ "Chain ID: " <> show (cfgChainId cfg)
       putStrLn ""
 
+      manager <- newManager tlsManagerSettings
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           putStrLn "Database configured - enabling transaction history"
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
-          manager <- newManager tlsManagerSettings
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
                 , icDeployments = cfgDeployments cfg
@@ -91,8 +91,9 @@ main = do
           putStrLn "  GET /api/user/:address/history/lending"
           putStrLn "  GET /api/perps/basket/history?range="
         Nothing -> pure ()
+      putStrLn "  GET /api/perps/pyth/update?publishTime="
       putStrLn ""
 
       client <- newClient (cfgRpcUrl cfg)
       cache <- newAppCache
-      scotty (cfgPort cfg) (app cache client cfg mPool)
+      scotty (cfgPort cfg) (app cache client cfg mPool manager)
