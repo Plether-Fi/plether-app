@@ -103,6 +103,14 @@ const CLOSE_REVERT_MESSAGES: Record<number, string> = {
   3: 'This partial close would leave the position underwater. Reduce less or close the full position.',
 }
 
+const CLOSE_INVALID_REASON_MESSAGES: Record<number, string> = {
+  0: 'The close order is valid.',
+  1: 'No current position to reduce or close.',
+  2: 'Reduce size is invalid for the current position.',
+  3: 'The remaining position would be too small. Reduce less or close the full position.',
+  4: 'This partial close would leave the position underwater. Reduce less or close the full position.',
+}
+
 export const PERPS_ORDER_FAILURE_MESSAGES: Record<number, string> = {
   0: 'The order expired before it could be revealed. Create a fresh order.',
   1: 'The market switched to close-only before execution.',
@@ -223,8 +231,8 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
   }
 
   const zeroFeedId = feedId === '0x0000000000000000000000000000000000000000000000000000000000000000'
-  if (zeroFeedId && ageSeconds === 0) {
-    return `Router could not use the historical Pyth update for order execution. Router check time: ${currentLabel} (${currentTimestamp}); order-execution staleness limit: ${maxStaleness}s. The update may be missing required historical data, outside the commit settlement window, or rejected by oracle policy. Retry self-execute promptly; if this repeats, clean up the expired order and create a fresh one.`
+  if (zeroFeedId && ageSeconds <= maxStaleness) {
+    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestamp}); candidate publish time: ${publishLabel} (${publishTime}); decoded age: ${ageSeconds}s; staleness limit: ${maxStaleness}s. Retry self-execute with exact historical Hermes data; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
   }
 
   if (ageSeconds <= maxStaleness) {
@@ -336,7 +344,7 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'PletherOracle__PriceOutOfOrder':
       return 'The oracle update is older than the stored mark. Refresh the mark or retry with newer Pyth data.'
     case 'OrderRouter__MevDetected':
-      return 'Execution must happen after the commit block and after the commit timestamp. Wait a moment and retry.'
+      return 'Reveal is not ready yet. Wait a few seconds and retry self-execute.'
     case 'OrderRouter__NoOrdersToExecute':
       return 'This order is no longer pending. It likely expired or was already processed; your reserved margin has been released.'
     case 'OrderRouter__OrderNotQueueHead':
@@ -418,6 +426,10 @@ export function getPerpsOpenRevertMessage(code: number | undefined): string {
   return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code})`}.`
 }
 
+export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): string {
+  return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${reason === undefined ? '' : ` (${reason})`}.`
+}
+
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {
   const decoded = decodePerpsError(error)
   const decodedMessage = messageForDecodedError(decoded.name, decoded.args)
@@ -425,6 +437,9 @@ export function getPerpsErrorMessage(error: unknown, action: PerpsAction): strin
 
   const rawMessage = getNestedString(error, ['shortMessage', 'message']) ?? (typeof error === 'string' ? error : '')
   const lower = rawMessage.toLowerCase()
+  if (lower.includes('commit reverted after wallet confirmation')) {
+    return rawMessage
+  }
   const rawDecodedMessage = messageForRawError(lower)
   if (rawDecodedMessage) return rawDecodedMessage
 

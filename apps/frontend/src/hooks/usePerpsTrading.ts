@@ -1,22 +1,24 @@
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { parseEventLogs, type Hex } from 'viem'
+import { parseEventLogs, type Address, type Hex } from 'viem'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
 import { ERC20_ABI, PERPS_CFD_ENGINE_LENS_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   directionToPerpsSide,
   fetchPerpsPythUpdatePayloadForWindow,
+  formatPerpsUsdc,
   getPerpsTargetPrice,
   notionalUsdcToSizeDelta,
   type PerpsDirection,
   type PerpsPythUpdatePayload,
 } from '../utils/perps'
-import { getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
+import { getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
 
 interface CommitOrderInput {
   direction: PerpsDirection
   notionalUsdc: bigint
+  sizeDelta?: bigint
   marginUsdc: bigint
   oraclePrice: bigint
   slippagePercent: number
@@ -40,6 +42,7 @@ interface CleanupExpiredOrderResult {
 
 type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
 type PerpsTransactionReceipt = Awaited<ReturnType<PerpsPublicClient['waitForTransactionReceipt']>>
+type CommitOrderArgs = readonly [number, bigint, bigint, bigint, boolean]
 type BufferedFeeParams =
   | { maxFeePerGas: bigint; maxPriorityFeePerGas?: bigint }
   | { gasPrice: bigint }
@@ -83,7 +86,8 @@ function withPythFetchTiming(message: string, payload: PerpsPythUpdatePayload | 
     lowerMessage.includes('pyth price data expired') ||
     lowerMessage.includes('stale-price error') ||
     lowerMessage.includes('historical pyth update was unavailable') ||
-    lowerMessage.includes('router could not use the historical pyth update')
+    lowerMessage.includes('router could not use the historical pyth update') ||
+    lowerMessage.includes('historical pyth update was rejected')
   if (!isOracleTimingMessage) {
     return message
   }
@@ -127,6 +131,27 @@ function readArrayLength(value: unknown): number {
   return 0
 }
 
+function readBoolean(value: unknown, key: string, index: number): boolean | undefined {
+  const rawValue = readRecordValue(value, key, index)
+  return typeof rawValue === 'boolean' ? rawValue : undefined
+}
+
+function readNumber(value: unknown, key: string, index: number): number | undefined {
+  const rawValue = readRecordValue(value, key, index)
+  if (typeof rawValue === 'number') return rawValue
+  if (typeof rawValue === 'bigint') return Number(rawValue)
+  if (typeof rawValue === 'string') return Number(rawValue)
+  return undefined
+}
+
+function readBigInt(value: unknown, key: string, index: number): bigint | undefined {
+  const rawValue = readRecordValue(value, key, index)
+  if (typeof rawValue === 'bigint') return rawValue
+  if (typeof rawValue === 'number') return BigInt(rawValue)
+  if (typeof rawValue === 'string') return BigInt(rawValue)
+  return undefined
+}
+
 function isOrderEventFor(orderEventId: bigint | number | undefined, orderId: bigint): boolean {
   if (orderEventId === undefined) return false
   return BigInt(orderEventId) === orderId
@@ -154,6 +179,108 @@ async function getBufferedFeeParams(client: PerpsPublicClient): Promise<Buffered
   return {
     gasPrice: bumpFee(await client.getGasPrice()),
   }
+}
+
+async function describeCommitFailure({
+  client,
+  address,
+  hash,
+  args,
+  isClose,
+  side,
+  sizeDelta,
+  marginDelta,
+  oraclePrice,
+}: {
+  client: PerpsPublicClient
+  address: Address
+  hash: Hex
+  args: CommitOrderArgs
+  isClose: boolean
+  side: number
+  sizeDelta: bigint
+  marginDelta: bigint
+  oraclePrice: bigint
+}): Promise<string> {
+  const context: string[] = [`Failed tx: ${hash}.`]
+
+  try {
+    const [pendingOrders, maxPendingOrders, accountView] = await Promise.all([
+      client.readContract({
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getPendingOrders',
+        args: [address],
+      }),
+      client.readContract({
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'maxPendingOrders',
+      }),
+      client.readContract({
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getTraderAccount',
+        args: [address],
+      }),
+    ])
+    const equityUsdc = readBigInt(accountView, 'equityUsdc', 0)
+    const withdrawableUsdc = readBigInt(accountView, 'withdrawableUsdc', 1)
+    const pendingMarginUsdc = readBigInt(accountView, 'pendingOrderMarginUsdc', 2)
+    const pendingBountyUsdc = readBigInt(accountView, 'pendingExecutionBountyUsdc', 3)
+    context.push(
+      `Current account state: ${readArrayLength(pendingOrders)}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} USDC, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} USDC, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} USDC, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} USDC.`
+    )
+  } catch {
+    context.push('Could not refresh account diagnostics after the failed commit.')
+  }
+
+  try {
+    if (!isClose) {
+      const latestBlock = await client.getBlock({ blockTag: 'latest' })
+      const openRevertCode = await client.readContract({
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+        abi: PERPS_CFD_ENGINE_LENS_ABI,
+        functionName: 'previewOpenRevertCode',
+        args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
+      })
+      if (openRevertCode !== 0) {
+        context.push(`Latest open preview now fails: ${getPerpsOpenRevertMessage(Number(openRevertCode))}`)
+      } else {
+        context.push('Latest open preview still passes.')
+      }
+    } else {
+      const closePreview = await client.readContract({
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+        abi: PERPS_CFD_ENGINE_LENS_ABI,
+        functionName: 'previewClose',
+        args: [address, sizeDelta, oraclePrice],
+      })
+      const isValidClose = readBoolean(closePreview, 'valid', 0)
+      if (isValidClose === false) {
+        context.push(`Latest close preview now fails: ${getPerpsCloseInvalidReasonMessage(readNumber(closePreview, 'invalidReason', 1))}`)
+      } else {
+        context.push('Latest close preview still passes.')
+      }
+    }
+  } catch {
+    context.push('Could not rerun the order preview after the failed commit.')
+  }
+
+  try {
+    await client.simulateContract({
+      account: address,
+      address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      abi: PERPS_ORDER_ROUTER_ABI,
+      functionName: 'commitOrder',
+      args,
+    })
+    context.push('A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.')
+  } catch (simulationError) {
+    context.push(`A fresh commit simulation now fails: ${getPerpsErrorMessage(simulationError, 'commit')}`)
+  }
+
+  return `Commit reverted after wallet confirmation, but the receipt did not include decodable revert data. ${context.join(' ')}`
 }
 
 export function usePerpsTrading() {
@@ -273,6 +400,7 @@ export function usePerpsTrading() {
   const commitOrder = useCallback(async ({
     direction,
     notionalUsdc,
+    sizeDelta: sizeDeltaOverride,
     marginUsdc,
     oraclePrice,
     slippagePercent,
@@ -290,7 +418,10 @@ export function usePerpsTrading() {
       }
 
       const side = directionToPerpsSide(direction)
-      const sizeDelta = notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
+      const sizeDelta = sizeDeltaOverride ?? notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
+      if (sizeDelta <= 0n) {
+        throw new Error('Order size is too small')
+      }
       const marginDelta = isClose ? 0n : marginUsdc
       const targetPrice = getPerpsTargetPrice({
         direction,
@@ -330,6 +461,17 @@ export function usePerpsTrading() {
         if (openRevertCode !== 0) {
           throw new Error(getPerpsOpenRevertMessage(Number(openRevertCode)))
         }
+      } else {
+        const closePreview = await client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+          abi: PERPS_CFD_ENGINE_LENS_ABI,
+          functionName: 'previewClose',
+          args: [address, sizeDelta, oraclePrice],
+        })
+        const isValidClose = readBoolean(closePreview, 'valid', 0)
+        if (isValidClose === false) {
+          throw new Error(getPerpsCloseInvalidReasonMessage(readNumber(closePreview, 'invalidReason', 1)))
+        }
       }
       await client.simulateContract({
         account: address,
@@ -347,10 +489,20 @@ export function usePerpsTrading() {
         args,
         ...fees,
       })
-      const receipt = assertSuccessfulReceipt(
-        await client.waitForTransactionReceipt({ hash }),
-        'Commit transaction reverted before creating an order'
-      )
+      const receipt = await client.waitForTransactionReceipt({ hash })
+      if (receipt.status !== 'success') {
+        throw new Error(await describeCommitFailure({
+          client,
+          address,
+          hash,
+          args,
+          isClose,
+          side,
+          sizeDelta,
+          marginDelta,
+          oraclePrice,
+        }))
+      }
       const [committed] = parseEventLogs({
         abi: PERPS_ORDER_ROUTER_ABI,
         eventName: 'OrderCommitted',

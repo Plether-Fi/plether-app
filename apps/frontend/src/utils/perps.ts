@@ -31,6 +31,15 @@ export function formatPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): st
   return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)), maxDecimals)
 }
 
+export function formatPerpsUsdcFloor(amount: bigint | undefined, maxDecimals = 2): string {
+  if (amount === undefined) return '--'
+
+  const decimals = Math.max(0, Math.min(maxDecimals, PERPS_DECIMALS.USDC))
+  const scale = 10n ** BigInt(PERPS_DECIMALS.USDC - decimals)
+  const flooredAmount = (amount / scale) * scale
+  return formatPerpsNumber(Number(formatUnits(flooredAmount, PERPS_DECIMALS.USDC)), decimals)
+}
+
 export function formatSignedPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
   const sign = amount < 0n ? '-' : amount > 0n ? '+' : ''
@@ -269,9 +278,11 @@ export async function fetchPerpsPythUpdatePayloadForWindow(
 ): Promise<PerpsPythUpdatePayload> {
   let lastNotFound: Error | undefined
   const maxAttempts = 2
+  // Pyth parsePriceFeedUpdatesUnique expects the first unique update after commit.
+  // Newer updates can be inside the settlement window but still fail uniqueness.
   const publishTimeCandidates = Array.from(
     { length: Math.max(0, maxPublishTime - minPublishTime + 1) },
-    (_, index) => maxPublishTime - index
+    (_, index) => minPublishTime + index
   )
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {

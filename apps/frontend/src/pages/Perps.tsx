@@ -67,6 +67,10 @@ export function Perps() {
           pendingOrders={perpsAccount.pendingOrders}
           isConnected={perpsAccount.isConnected}
           isLoading={perpsAccount.isLoading}
+          onAccountRefresh={() => {
+            void perpsAccount.refetch()
+            void perpsMarket.refetch()
+          }}
         />
       </div>
       <div className="flex flex-col gap-2 lg:w-1/4 min-w-0">

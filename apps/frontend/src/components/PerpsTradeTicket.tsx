@@ -9,11 +9,14 @@ import {
   formatPerpsPrice,
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
+  formatPerpsUsdcFloor,
   getPerpsTargetPrice,
   parsePerpsUsdc,
+  sizeDeltaToNotionalUsdc,
   type PerpsDirection,
 } from '../utils/perps'
 import { getPerpsOrderFailureMessage } from '../utils/perpsErrors'
+import { resolvePerpsSizeDelta } from '../utils/perpsOrder'
 import { Button, Input, Modal, TokenAmount, TokenLabel } from './ui'
 
 type Direction = PerpsDirection
@@ -73,8 +76,7 @@ interface PerpsTradeTicketProps {
   onAccountRefresh?: () => void
 }
 
-const PREVIEW_PRICE = 0.9909
-const COST_OF_CARRY = '5.24%'
+const MOCK_PREVIEW_PRICE = 0.9909
 const AVAILABLE_TO_TRADE_AMOUNT = '18 420'
 const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
@@ -91,7 +93,7 @@ const MIN_OPEN_BOUNTY_USDC_RAW = 10_000n
 const MAX_OPEN_BOUNTY_USDC_RAW = 200_000n
 const CLOSE_BOUNTY_USDC = 0.2
 const CLOSE_BOUNTY_USDC_RAW = 200_000n
-const VPI_PRICE_IMPACT_USDC = 6.42
+const SUMMARY_CLOSE_DUST_USDC_RAW = 10_000n
 
 function isPythExpiryMessage(message: string): boolean {
   const lowerMessage = message.toLowerCase()
@@ -100,12 +102,28 @@ function isPythExpiryMessage(message: string): boolean {
     lowerMessage.includes('stale-price error') ||
     lowerMessage.includes('historical pyth update was unavailable') ||
     lowerMessage.includes('router could not use the historical pyth update') ||
+    lowerMessage.includes('historical pyth update was rejected') ||
     lowerMessage.includes('hermes rate limit reached')
   )
 }
 
 function isHermesRateLimitMessage(message: string): boolean {
   return message.toLowerCase().includes('hermes rate limit reached')
+}
+
+function isHistoricalPythRejectedMessage(message: string): boolean {
+  return message.toLowerCase().includes('historical pyth update was rejected')
+}
+
+function isRevealNotReadyMessage(message: string): boolean {
+  const lowerMessage = message.toLowerCase()
+  return lowerMessage.includes('execution must happen after the commit block') ||
+    lowerMessage.includes('reveal is not ready yet') ||
+    lowerMessage.includes('order reveal is not ready yet')
+}
+
+function isRetryableSelfExecuteMessage(message: string): boolean {
+  return isPythExpiryMessage(message) || isRevealNotReadyMessage(message)
 }
 
 function isOrderNoLongerPendingMessage(message: string): boolean {
@@ -132,7 +150,7 @@ function didPositionMoveAsExpected({
     return afterExists && afterSide === direction && afterSize > 0n
   }
 
-  if (isReduceOnly) {
+  if (isReduceOnly || direction !== before.side) {
     if (!afterExists) return true
     return afterSide === before.side && afterSize < before.size
   }
@@ -161,13 +179,8 @@ function formatUsdc(value: number): ReactNode {
   return <TokenAmount amount={formatUsdcAmount(value)} />
 }
 
-function formatVpi(value: number): ReactNode {
-  if (value < 0) return <TokenAmount amount={`-${formatUsdcAmount(Math.abs(value))}`} />
-  return <TokenAmount amount={formatUsdcAmount(value)} />
-}
-
-function vpiTone(value: number): PreviewRow['tone'] {
-  return value < 0 ? 'positive' : 'default'
+function formatUsdcRaw(value: bigint | undefined): ReactNode {
+  return <TokenAmount amount={formatPerpsUsdc(value)} />
 }
 
 function formatPercent(value: number): string {
@@ -220,6 +233,11 @@ function estimateOpenBountyUsdcRaw(notionalUsdc: bigint): bigint {
   return clampBigInt(rawBounty, MIN_OPEN_BOUNTY_USDC_RAW, MAX_OPEN_BOUNTY_USDC_RAW)
 }
 
+function executionFeeUsdcRaw(notionalUsdc: bigint, executionFeeBps: bigint): bigint {
+  if (notionalUsdc <= 0n || executionFeeBps <= 0n) return 0n
+  return (notionalUsdc * executionFeeBps) / 10_000n
+}
+
 function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigint {
   if (availableUsdc <= 0n || leverage <= 0) return 0n
 
@@ -244,12 +262,18 @@ function directionLabel(direction: Direction): string {
   return direction === 'long' ? 'Long DXY' : 'Short DXY'
 }
 
-function OrderSummaryAmount({ value }: { value: number }) {
-  return <span className="whitespace-nowrap">{formatUsdcAmount(value)} USDC</span>
+function OrderSummaryRawAmount({ value }: { value: bigint }) {
+  return <span className="whitespace-nowrap">{formatPerpsUsdc(value)} USDC</span>
 }
 
 function truncateHash(hash: string): string {
   return `${hash.slice(0, 6)}...${hash.slice(-4)}`
+}
+
+function formatOptionalPrice(value: number | null | undefined): string {
+  if (value === null) return 'Market'
+  if (value === undefined || !Number.isFinite(value)) return '--'
+  return value.toFixed(4)
 }
 
 function TxHashActions({ hash }: { hash: string }) {
@@ -363,48 +387,52 @@ function oppositeDirection(direction: Direction): Direction {
 
 function buildOrderSummary({
   currentPositionSide,
-  currentPositionSize,
+  currentPositionNotionalUsdc,
   direction,
   isReduceOnly,
   leverage,
-  size,
+  notionalUsdc,
 }: {
   currentPositionSide: Direction
-  currentPositionSize: number
+  currentPositionNotionalUsdc: bigint
   direction: Direction
   isReduceOnly: boolean
   leverage: number
-  size: number
+  notionalUsdc: bigint
 }): ReactNode {
-  const orderAmount = <OrderSummaryAmount value={size} />
+  const orderAmount = <OrderSummaryRawAmount value={notionalUsdc} />
   const selectedDirection = directionLabel(direction)
   const currentDirection = directionLabel(currentPositionSide)
+  const remainingPositionNotionalUsdc = currentPositionNotionalUsdc > notionalUsdc
+    ? currentPositionNotionalUsdc - notionalUsdc
+    : 0n
+  const isFullClose = currentPositionNotionalUsdc > 0n && remainingPositionNotionalUsdc <= SUMMARY_CLOSE_DUST_USDC_RAW
 
-  if (currentPositionSize <= 0) {
+  if (currentPositionNotionalUsdc <= 0n) {
     if (isReduceOnly) {
-      return <>You are submitting a reduce-only {selectedDirection} order with {orderAmount} notional.</>
+      return <>You are submitting a reduce-only {selectedDirection} order with {orderAmount} target notional.</>
     }
-    return <>You are opening a {selectedDirection} position with {orderAmount} notional at up to {formatLeverage(leverage)} leverage.</>
+    return <>You are opening a {selectedDirection} position with {orderAmount} target notional at up to {formatLeverage(leverage)} leverage.</>
   }
 
   if (isReduceOnly) {
-    if (size >= currentPositionSize) return <>You are closing your {currentDirection} position.</>
-    return <>You are reducing your {currentDirection} position by {orderAmount} notional to <OrderSummaryAmount value={currentPositionSize - size} />.</>
+    if (isFullClose) return <>You are closing your {currentDirection} position.</>
+    return <>You are reducing your {currentDirection} position by {orderAmount} target notional to <OrderSummaryRawAmount value={remainingPositionNotionalUsdc} />.</>
   }
 
   if (direction === currentPositionSide) {
-    return <>You are increasing your {selectedDirection} position by {orderAmount} notional to <OrderSummaryAmount value={currentPositionSize + size} />.</>
+    return <>You are increasing your {selectedDirection} position by {orderAmount} target notional to <OrderSummaryRawAmount value={currentPositionNotionalUsdc + notionalUsdc} />.</>
   }
 
-  if (size < currentPositionSize) {
-    return <>You are reducing your {currentDirection} position by {orderAmount} notional to <OrderSummaryAmount value={currentPositionSize - size} />.</>
+  if (!isFullClose && notionalUsdc < currentPositionNotionalUsdc) {
+    return <>You are reducing your {currentDirection} position by {orderAmount} target notional to <OrderSummaryRawAmount value={remainingPositionNotionalUsdc} />.</>
   }
 
-  if (size === currentPositionSize) {
+  if (isFullClose) {
     return <>You are closing your {currentDirection} position.</>
   }
 
-  return <>You are closing your {currentDirection} position and opening a {directionLabel(oppositeDirection(currentPositionSide))} position with <OrderSummaryAmount value={size - currentPositionSize} /> notional.</>
+  return <>You are closing your {currentDirection} position and opening a {directionLabel(oppositeDirection(currentPositionSide))} position with <OrderSummaryRawAmount value={notionalUsdc - currentPositionNotionalUsdc} /> target notional.</>
 }
 
 function OrderLifecycleSteps({
@@ -559,7 +587,7 @@ export function PerpsTradeTicket({
   initialSize = '0',
   initialReduceOnly = false,
   currentPositionSide = 'long',
-  currentPositionAmount = CURRENT_POSITION_AMOUNT,
+  currentPositionAmount,
   enableLiveTrading = false,
   oraclePriceRaw,
   oraclePriceDisplay,
@@ -598,6 +626,7 @@ export function PerpsTradeTicket({
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>()
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>()
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>()
+  const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>()
   const [flowError, setFlowError] = useState<string | undefined>()
   const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
   const [marginActionAmount, setMarginActionAmount] = useState('')
@@ -650,17 +679,23 @@ export function PerpsTradeTicket({
   const currentPositionSideValue = currentPosition?.exists ? currentPosition.direction : currentPositionSide
   const currentPositionDisplayAmount = currentPosition?.exists
     ? formatPerpsUsdc(currentPosition.estimatedNotionalUsdc)
-    : currentPositionAmount
-  const currentPositionNumber = parseAmount(currentPositionDisplayAmount)
+    : currentPositionAmount ?? (enableLiveTrading ? '0' : CURRENT_POSITION_AMOUNT)
   const unrealizedPnlRaw = currentPosition?.exists ? currentPosition.unrealizedPnlUsdc : undefined
   const accountSummaryPnlTone = unrealizedPnlRaw === undefined || unrealizedPnlRaw === 0n
     ? 'default'
     : unrealizedPnlRaw > 0n ? 'positive' : 'negative'
-  const availableToTradeDisplayAmount = availableToTradeAmount ?? AVAILABLE_TO_TRADE_AMOUNT
+  const availableToTradeDisplayAmount = availableToTradeAmount ?? (enableLiveTrading ? '0' : AVAILABLE_TO_TRADE_AMOUNT)
   const canUseAvailableToTrade = parseAmount(availableToTradeDisplayAmount) > 0
   const canUseCurrentPosition = parseAmount(currentPositionDisplayAmount) > 0
-  const currentPositionRawNotional = currentPosition?.estimatedNotionalUsdc ?? 0n
-  const availableToTradeForMaxRaw = availableToTradeRaw ?? parsePerpsUsdc(availableToTradeDisplayAmount)
+  const currentPositionRawNotional = currentPosition?.estimatedNotionalUsdc ?? parsePerpsUsdc(currentPositionDisplayAmount)
+  const notionalUsdc = parsePerpsUsdc(size)
+  const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionRawNotional > 0n)
+  const isOppositePositionDirection = Boolean(hasCurrentPosition && currentPosition && direction !== currentPosition.direction)
+  const isReducingCurrentPosition = Boolean(hasCurrentPosition && (isReduceOnly || isOppositePositionDirection))
+  const effectiveOrderDirection = isReducingCurrentPosition && currentPosition?.direction
+    ? currentPosition.direction
+    : direction
+  const availableToTradeForMaxRaw = availableToTradeRaw ?? (enableLiveTrading ? 0n : parsePerpsUsdc(availableToTradeDisplayAmount))
   const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
   const maxNotionalFromFundingRaw = canUseAvailableToTrade
     ? maxOpenNotionalForMargin(availableToTradeForMaxRaw, leverage)
@@ -668,40 +703,57 @@ export function PerpsTradeTicket({
   const maxOpenNotionalRaw = selectedOpenCapacityUsdc === undefined
     ? maxNotionalFromFundingRaw
     : minBigInt(maxNotionalFromFundingRaw, selectedOpenCapacityUsdc)
-  const maxNotionalForSizeInputRaw = isReduceOnly
+  const maxNotionalForSizeInputRaw = isReducingCurrentPosition
     ? currentPositionRawNotional
     : maxOpenNotionalRaw
-  const maxNotionalFromLeverageAmount = formatPerpsUsdc(maxNotionalForSizeInputRaw)
+  const maxNotionalFromLeverageAmount = formatPerpsUsdcFloor(maxNotionalForSizeInputRaw)
+  const maxNotionalFromLeverageRaw = parsePerpsUsdc(maxNotionalFromLeverageAmount)
   const canUseMaxNotional = parseAmount(maxNotionalFromLeverageAmount) > 0
-  const marginNumber = leverage > 0 ? sizeNumber / leverage : 0
-  const executionFeeBpsNumber = Number(executionFeeBps ?? BigInt(EXECUTION_FEE_BPS))
-  const protocolExecutionFee = (sizeNumber * executionFeeBpsNumber) / 10_000
-  const keeperBounty = isReduceOnly
+  const marginNumber = isReducingCurrentPosition ? 0 : leverage > 0 ? sizeNumber / leverage : 0
+  const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
+  const protocolExecutionFeeRaw = executionFeeUsdcRaw(notionalUsdc, executionFeeBpsRaw)
+  const keeperBounty = isReducingCurrentPosition
     ? CLOSE_BOUNTY_USDC
     : clamp((sizeNumber * OPEN_BOUNTY_BPS) / 10_000, MIN_OPEN_BOUNTY_USDC, MAX_OPEN_BOUNTY_USDC)
   const slippageNumber = Math.max(slippage, 0)
-  const previewPrice = oraclePriceRaw ? Number(formatPerpsPrice(oraclePriceRaw)) : PREVIEW_PRICE
+  const previewPrice = oraclePriceRaw
+    ? Number(formatPerpsPrice(oraclePriceRaw))
+    : enableLiveTrading
+      ? undefined
+      : MOCK_PREVIEW_PRICE
   const rawExecutionLimit = oraclePriceRaw
-    ? getPerpsTargetPrice({ direction, isClose: isReduceOnly, oraclePrice: oraclePriceRaw, slippagePercent: slippageNumber })
+    ? getPerpsTargetPrice({ direction: effectiveOrderDirection, isClose: isReducingCurrentPosition, oraclePrice: oraclePriceRaw, slippagePercent: slippageNumber })
     : undefined
   const executionLimit = rawExecutionLimit === 0n
     ? null
-    : rawExecutionLimit ? Number(formatPerpsPrice(rawExecutionLimit)) : Number.isFinite(slippageNumber)
-      ? PREVIEW_PRICE * (direction === 'long' ? 1 - slippageNumber / 100 : 1 + slippageNumber / 100)
-      : null
-  const liquidationPrice = direction === 'long' ? previewPrice * 0.945 : previewPrice * 1.055
+    : rawExecutionLimit ? Number(formatPerpsPrice(rawExecutionLimit)) : !enableLiveTrading && Number.isFinite(slippageNumber)
+      ? MOCK_PREVIEW_PRICE * (direction === 'long' ? 1 - slippageNumber / 100 : 1 + slippageNumber / 100)
+      : undefined
+  const liquidationPrice = previewPrice === undefined
+    ? undefined
+    : direction === 'long'
+      ? previewPrice * 0.945
+      : previewPrice * 1.055
+  const sideCapacityValue = selectedOpenCapacityUsdc === undefined
+    ? 'Unavailable'
+    : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />
+  const sideCapacityTone = selectedOpenCapacityUsdc === undefined ? undefined : 'positive'
+  const summaryNotionalUsdc = isReducingCurrentPosition &&
+    maxNotionalFromLeverageRaw > 0n &&
+    notionalUsdc >= maxNotionalFromLeverageRaw
+    ? currentPositionRawNotional
+    : notionalUsdc
   const orderSummary = buildOrderSummary({
     currentPositionSide: currentPositionSideValue,
-    currentPositionSize: currentPositionNumber,
+    currentPositionNotionalUsdc: currentPositionRawNotional,
     direction,
     isReduceOnly,
     leverage,
-    size: sizeNumber,
+    notionalUsdc: summaryNotionalUsdc,
   })
-  const notionalUsdc = parsePerpsUsdc(size)
-  const marginUsdc = leverage > 0 ? notionalUsdc / BigInt(leverage) : 0n
-  const estimatedKeeperBountyUsdc = isReduceOnly ? CLOSE_BOUNTY_USDC_RAW : estimateOpenBountyUsdcRaw(notionalUsdc)
-  const orderFundingRequirementUsdc = !isReduceOnly ? marginUsdc + estimatedKeeperBountyUsdc : estimatedKeeperBountyUsdc
+  const marginUsdc = isReducingCurrentPosition ? 0n : leverage > 0 ? notionalUsdc / BigInt(leverage) : 0n
+  const estimatedKeeperBountyUsdc = isReducingCurrentPosition ? CLOSE_BOUNTY_USDC_RAW : estimateOpenBountyUsdcRaw(notionalUsdc)
+  const orderFundingRequirementUsdc = !isReducingCurrentPosition ? marginUsdc + estimatedKeeperBountyUsdc : estimatedKeeperBountyUsdc
   const marginShortfall = availableToTradeRaw !== undefined && orderFundingRequirementUsdc > availableToTradeRaw
     ? orderFundingRequirementUsdc - availableToTradeRaw
     : 0n
@@ -721,6 +773,14 @@ export function PerpsTradeTicket({
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'Oracle price is not available.'
     if (isZeroSize) return 'Enter an order size.'
     if (
+      isOppositePositionDirection &&
+      currentPositionRawNotional > 0n &&
+      notionalUsdc > currentPositionRawNotional
+    ) {
+      return 'One-step flips are not supported yet. Reduce or close the current position first, then open the other side.'
+    }
+    if (
+      !isReducingCurrentPosition &&
       !isReduceOnly &&
       selectedOpenCapacityUsdc !== undefined &&
       minOpenNotionalUsdc !== undefined &&
@@ -728,21 +788,15 @@ export function PerpsTradeTicket({
     ) {
       return `New ${directionLabel(direction)} opens are unavailable right now. Max open size is ${formatPerpsUsdc(selectedOpenCapacityUsdc)} USDC, below the ${formatPerpsUsdc(minOpenNotionalUsdc)} USDC minimum. Add LP liquidity or loosen the skew cap before opening this side.`
     }
-    if (!isReduceOnly && minOpenNotionalUsdc !== undefined && notionalUsdc < minOpenNotionalUsdc) {
+    if (!isReducingCurrentPosition && !isReduceOnly && minOpenNotionalUsdc !== undefined && notionalUsdc < minOpenNotionalUsdc) {
       return `Minimum open size is ${formatPerpsUsdc(minOpenNotionalUsdc)} USDC.`
     }
-    if (!isReduceOnly && selectedOpenCapacityUsdc !== undefined && notionalUsdc > selectedOpenCapacityUsdc) {
+    if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenCapacityUsdc !== undefined && notionalUsdc > selectedOpenCapacityUsdc) {
       return `Max ${directionLabel(direction)} open size is ${formatPerpsUsdc(selectedOpenCapacityUsdc)} USDC before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
-    if (isReduceOnly && currentPosition?.exists && direction !== currentPosition.direction) {
-      return 'Reduce orders must use the current position side.'
-    }
-    if (isReduceOnly && currentPositionRawNotional > 0n && notionalUsdc > currentPositionRawNotional) {
+    if (isReducingCurrentPosition && currentPositionRawNotional > 0n && notionalUsdc > currentPositionRawNotional) {
       return 'Reduce size exceeds the current position.'
-    }
-    if (!isReduceOnly && currentPosition?.exists && direction !== currentPosition.direction) {
-      return 'Close the current position before opening the other side.'
     }
     if (
       pendingOrderCount !== undefined &&
@@ -765,25 +819,20 @@ export function PerpsTradeTicket({
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
-      { label: 'Oracle price', value: oraclePriceDisplay ?? previewPrice.toFixed(4) },
-      { label: 'Notional', value: formatUsdc(sizeNumber) },
+      { label: 'Oracle price', value: oraclePriceDisplay ?? formatOptionalPrice(previewPrice) },
+      { label: 'Target notional', value: formatUsdc(sizeNumber) },
       { label: 'Initial margin', value: formatUsdc(marginNumber) },
       { label: 'Leverage', value: formatLeverage(leverage) },
       { label: 'Slippage', value: formatPercent(slippageNumber) },
-      { label: 'Execution limit', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
-      { label: 'Liquidation price', value: liquidationPrice.toFixed(4) },
-      { label: 'Protocol execution fee', value: formatUsdc(protocolExecutionFee) },
-      {
-        label: 'VPI / Price impact',
-        value: formatVpi(VPI_PRICE_IMPACT_USDC),
-        tone: vpiTone(VPI_PRICE_IMPACT_USDC),
-      },
-      { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
-      { label: 'Cost of carry', value: COST_OF_CARRY },
-      { label: 'Pool capacity', value: <TokenAmount amount="6.3M" />, tone: 'positive' },
-      { label: 'Skew', value: '42% used' },
+      { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+      { label: 'Liquidation price', value: enableLiveTrading ? 'Unavailable' : formatOptionalPrice(liquidationPrice) },
+      { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
+      { label: 'VPI / Price impact', value: 'Unavailable' },
+      { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+      { label: 'Side capacity', value: sideCapacityValue, tone: sideCapacityTone },
     ],
     [
+      enableLiveTrading,
       executionLimit,
       keeperBounty,
       leverage,
@@ -791,16 +840,29 @@ export function PerpsTradeTicket({
       marginNumber,
       oraclePriceDisplay,
       previewPrice,
-      protocolExecutionFee,
+      protocolExecutionFeeRaw,
+      sideCapacityTone,
+      sideCapacityValue,
       sizeNumber,
       slippageNumber,
     ]
   )
 
   const currentLifecycleStep = lifecycleStep(lifecycleState)
-  const displayOrderId = orderId === undefined ? ORDER_ID : orderId.toString()
-  const displayCommitTx = commitTxHash ?? COMMIT_TX
-  const displayExecuteTx = executeTxHash ?? EXECUTE_TX
+  const displayOrderId = orderId === undefined ? (enableLiveTrading ? '--' : ORDER_ID) : orderId.toString()
+  const displayCommitTx = commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
+  const displayExecuteTx = executeTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
+  const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
+  const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
+  const finalExecutedNotionalUsdc = finalExecutionPrice
+    ? sizeDeltaToNotionalUsdc(committedSizeDelta, finalExecutionPrice)
+    : undefined
+  const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? notionalUsdc, executionFeeBpsRaw)
+  const finalPriceDisplay = finalExecutionPrice
+    ? formatPerpsPrice(finalExecutionPrice)
+    : enableLiveTrading
+      ? '--'
+      : '0.9911'
   const reviewCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
     : enableLiveTrading && !isCorrectChain
@@ -879,13 +941,22 @@ export function PerpsTradeTicket({
         side: currentPosition?.direction,
         size: currentPosition?.size ?? 0n,
       })
-      const result = await commitOrder({
-        direction,
+      const sizeDelta = resolvePerpsSizeDelta({
+        isReducingCurrentPosition,
+        currentPositionSize: currentPosition?.size,
         notionalUsdc,
+        maxNotionalUsdc: maxNotionalFromLeverageRaw,
+        oraclePrice: oraclePriceRaw ?? 0n,
+      })
+      setCommittedSizeDelta(sizeDelta)
+      const result = await commitOrder({
+        direction: effectiveOrderDirection,
+        notionalUsdc,
+        sizeDelta,
         marginUsdc,
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
-        isClose: isReduceOnly,
+        isClose: isReducingCurrentPosition,
       })
       setCommitTxHash(result.hash)
       setOrderId(result.orderId)
@@ -944,7 +1015,7 @@ export function PerpsTradeTicket({
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Self-execute transaction failed'
       setFlowError(message)
-      setLifecycleState(isPythExpiryMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
+      setLifecycleState(isRetryableSelfExecuteMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
       onAccountRefresh?.()
     }
   }
@@ -997,7 +1068,7 @@ export function PerpsTradeTicket({
 
         <div>
           <Input
-            label="Size"
+            label="Target notional"
             value={size}
             onChange={(event) => {
               if (isNumericInput(event.target.value)) {
@@ -1267,11 +1338,11 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'Size', value: formatUsdc(sizeNumber) },
+                    { label: 'Target notional', value: formatUsdc(sizeNumber) },
                     { label: 'Slippage', value: formatPercent(slippageNumber) },
-                    { label: 'Execution limit', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
-                    { label: 'Protocol execution fee', value: formatUsdc(protocolExecutionFee) },
-                    { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
+                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
                   ]}
                 />
               </div>
@@ -1306,7 +1377,7 @@ export function PerpsTradeTicket({
               <PreviewRows
                 rows={[
                   { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                  { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
+                  { label: 'Commit tx', value: displayCommitTxValue },
                 ]}
               />
               <Button
@@ -1332,9 +1403,9 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
-                    { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
-                    { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Commit tx', value: displayCommitTxValue },
+                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
                     { label: 'Self execute', value: enableLiveTrading ? 'Fetches historical Pyth data' : 'Available after 04:38' },
                   ]}
                 />
@@ -1381,6 +1452,10 @@ export function PerpsTradeTicket({
                 title={
                   flowError && isHermesRateLimitMessage(flowError)
                     ? 'Hermes rate limit reached'
+                    : flowError && isHistoricalPythRejectedMessage(flowError)
+                      ? 'Historical Pyth data rejected'
+                    : flowError && isRevealNotReadyMessage(flowError)
+                      ? 'Reveal not ready yet'
                     : flowError && isPythExpiryMessage(flowError)
                       ? 'Historical Pyth data required'
                       : 'Keeper reveal overdue'
@@ -1397,13 +1472,17 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
-                    { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
-                    { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Commit tx', value: displayCommitTxValue },
+                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
                     {
                       label: 'Self execute',
-                      value: flowError && isPythExpiryMessage(flowError) ? 'Retry with historical Pyth data' : 'Available now',
-                      tone: flowError && isPythExpiryMessage(flowError) ? 'warning' : 'positive',
+                      value: flowError && isRevealNotReadyMessage(flowError)
+                        ? 'Retry shortly'
+                        : flowError && isPythExpiryMessage(flowError)
+                          ? 'Retry with historical Pyth data'
+                          : 'Available now',
+                      tone: flowError && isRetryableSelfExecuteMessage(flowError) ? 'warning' : 'positive',
                     },
                   ]}
                 />
@@ -1416,7 +1495,7 @@ export function PerpsTradeTicket({
                   void handleSelfExecute()
                 }}
               >
-                {flowError && isPythExpiryMessage(flowError) ? 'Retry Self Execute' : 'Self Execute'}
+                {flowError && isRetryableSelfExecuteMessage(flowError) ? 'Retry Self Execute' : 'Self Execute'}
               </Button>
             </>
           ) : null}
@@ -1433,9 +1512,9 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
-                    { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
-                    { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Commit tx', value: displayCommitTxValue },
+                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
                     { label: 'Transaction', value: 'Awaiting confirmation' },
                   ]}
                 />
@@ -1468,7 +1547,13 @@ export function PerpsTradeTicket({
           {lifecycleState === 'selfExecuteFailed' ? (
             <>
               <FailedStateCard
-                title={flowError && isOrderNoLongerPendingMessage(flowError) ? 'Order no longer pending' : 'Self-execute transaction failed'}
+                title={
+                  flowError && isOrderNoLongerPendingMessage(flowError)
+                    ? 'Order no longer pending'
+                    : flowError && isHistoricalPythRejectedMessage(flowError)
+                      ? 'Historical Pyth data rejected'
+                      : 'Self-execute transaction failed'
+                }
                 description={flowError ?? 'The wallet rejected the transaction or the reveal transaction failed before settling the order.'}
               />
 
@@ -1477,8 +1562,8 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
-                    { label: 'Acceptable price', value: executionLimit === null ? 'Market' : executionLimit.toFixed(4) },
+                    { label: 'Commit tx', value: displayCommitTxValue },
+                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
                     { label: 'Self execute', value: 'Retry available', tone: 'warning' },
                   ]}
                 />
@@ -1515,18 +1600,15 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'Final price', value: finalExecutionPrice ? formatPerpsPrice(finalExecutionPrice) : '0.9911' },
-                    { label: 'Position size', value: formatUsdc(sizeNumber) },
-                    { label: 'Margin used', value: formatUsdc(marginNumber) },
-                    { label: 'Protocol execution fee', value: formatUsdc(protocolExecutionFee) },
-                    {
-                      label: 'VPI / Price impact',
-                      value: formatVpi(VPI_PRICE_IMPACT_USDC),
-                      tone: vpiTone(VPI_PRICE_IMPACT_USDC),
-                    },
+                    { label: 'Final price', value: finalPriceDisplay },
+                    { label: 'Target notional', value: formatUsdc(sizeNumber) },
+                    { label: 'Execution notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdc(sizeNumber) : formatUsdcRaw(finalExecutedNotionalUsdc) },
+                    { label: 'Margin posted', value: formatUsdc(marginNumber) },
+                    { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
+                    { label: 'VPI / Price impact', value: 'Unavailable' },
                     { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Commit tx', value: <TxHashActions hash={displayCommitTx} /> },
-                    { label: 'Reveal tx', value: <TxHashActions hash={displayExecuteTx} /> },
+                    { label: 'Commit tx', value: displayCommitTxValue },
+                    { label: 'Reveal tx', value: displayExecuteTxValue },
                   ]}
                 />
               </div>

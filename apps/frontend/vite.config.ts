@@ -107,7 +107,12 @@ export default defineConfig({
           name: 'unit',
           environment: 'happy-dom',
           include: ['src/**/*.test.{ts,tsx}'],
-          exclude: ['src/**/*.stories.tsx', 'src/**/*.integration.test.{ts,tsx}'],
+          exclude: [
+            'src/**/*.stories.tsx',
+            'src/**/*.integration.test.{ts,tsx}',
+            'src/**/*.perps-integration.test.{ts,tsx}',
+            'src/**/*.perps-fork.test.{ts,tsx}',
+          ],
           setupFiles: ['./src/test/setup.ts'],
           globals: true,
         }
@@ -122,6 +127,29 @@ export default defineConfig({
           globals: true,
           testTimeout: 30000,
           hookTimeout: 30000,
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'perps-integration',
+          environment: 'happy-dom',
+          include: ['src/**/*.perps-integration.test.{ts,tsx}'],
+          setupFiles: ['./src/test/setup.ts'],
+          globals: true,
+          testTimeout: 30000,
+          hookTimeout: 30000,
+        }
+      },
+      {
+        extends: true,
+        test: {
+          name: 'perps-fork',
+          environment: 'node',
+          include: ['src/**/*.perps-fork.test.{ts,tsx}'],
+          globals: true,
+          testTimeout: 120000,
+          hookTimeout: 60000,
         }
       }
     ]

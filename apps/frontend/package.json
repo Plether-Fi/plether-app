@@ -14,6 +14,8 @@
     "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
     "test:integration:watch": "vitest --project integration",
+    "test:perps-integration": "vitest run --project perps-integration",
+    "test:perps-fork": "vitest run --project perps-fork",
     "anvil": "dotenv -- sh -c 'anvil --fork-url $SEPOLIA_RPC_URL --chain-id 31337 --port 8546'",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
