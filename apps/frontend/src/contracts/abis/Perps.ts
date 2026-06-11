@@ -351,6 +351,28 @@ export const PERPS_ORDER_ROUTER_ABI = [
 
 export const PERPS_CFD_ENGINE_ABI = [
   {
+    type: 'event',
+    name: 'PositionOpened',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'sizeDelta', type: 'uint256', indexed: false },
+      { name: 'price', type: 'uint256', indexed: false },
+      { name: 'marginDelta', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'PositionClosed',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'sizeDelta', type: 'uint256', indexed: false },
+      { name: 'price', type: 'uint256', indexed: false },
+      { name: 'pnl', type: 'int256', indexed: false },
+    ],
+  },
+  {
     type: 'function',
     name: 'sides',
     stateMutability: 'view',

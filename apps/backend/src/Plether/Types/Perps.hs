@@ -2,7 +2,9 @@ module Plether.Types.Perps
   ( BasketHistory (..)
   , BasketHistoryParams (..)
   , BasketHistoryPoint (..)
+  , BasketLatest (..)
   , PythUpdateResponse (..)
+  , RevealPayloadResponse (..)
   , basketRangeSeconds
   , defaultBasketHistoryParams
   ) where
@@ -71,6 +73,25 @@ instance ToJSON BasketHistory where
       , "points" .= bhPoints
       ]
 
+data BasketLatest = BasketLatest
+  { blTimestamp :: Integer
+  , blBasketPrice :: Integer
+  , blComponents :: Value
+  , blGeneratedAt :: POSIXTime
+  , blSource :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON BasketLatest where
+  toJSON BasketLatest {..} =
+    object
+      [ "timestamp" .= blTimestamp
+      , "basketPrice" .= show blBasketPrice
+      , "components" .= blComponents
+      , "generatedAt" .= (round blGeneratedAt :: Integer)
+      , "source" .= blSource
+      ]
+
 data PythUpdateResponse = PythUpdateResponse
   { purUpdateData :: [Text]
   , purFetchedAt :: Integer
@@ -86,4 +107,27 @@ instance ToJSON PythUpdateResponse where
       , "fetchedAt" .= purFetchedAt
       , "publishTimes" .= purPublishTimes
       , "source" .= purSource
+      ]
+
+data RevealPayloadResponse = RevealPayloadResponse
+  { rprOrderId :: Integer
+  , rprUpdateData :: [Text]
+  , rprFetchedAt :: Integer
+  , rprPublishTimes :: [Integer]
+  , rprMinPublishTime :: Integer
+  , rprMaxPublishTime :: Integer
+  , rprSource :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance ToJSON RevealPayloadResponse where
+  toJSON RevealPayloadResponse {..} =
+    object
+      [ "orderId" .= show rprOrderId
+      , "updateData" .= rprUpdateData
+      , "fetchedAt" .= rprFetchedAt
+      , "publishTimes" .= rprPublishTimes
+      , "minPublishTime" .= rprMinPublishTime
+      , "maxPublishTime" .= rprMaxPublishTime
+      , "source" .= rprSource
       ]

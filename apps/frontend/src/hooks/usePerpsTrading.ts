@@ -6,7 +6,7 @@ import { ERC20_ABI, PERPS_CFD_ENGINE_LENS_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, P
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   directionToPerpsSide,
-  fetchPerpsPythUpdatePayloadForWindow,
+  fetchPerpsRevealPayload,
   formatPerpsUsdc,
   getPerpsTargetPrice,
   notionalUsdcToSizeDelta,
@@ -62,11 +62,11 @@ function assertSuccessfulReceipt(receipt: PerpsTransactionReceipt, message: stri
 }
 
 function bumpFee(value: bigint): bigint {
-  return value + (value / 2n) + 1n
+  return value + (value / 4n) + 1n
 }
 
 function bumpGas(value: bigint): bigint {
-  return value + (value / 2n) + 25_000n
+  return value + (value / 5n) + 10_000n
 }
 
 function formatUnixTime(seconds: number | undefined): string | undefined {
@@ -414,7 +414,7 @@ export function usePerpsTrading() {
         throw new Error('Order size must be greater than zero')
       }
       if (oraclePrice <= 0n) {
-        throw new Error('Oracle price is not available')
+        throw new Error('DXY price is not available')
       }
 
       const side = directionToPerpsSide(direction)
@@ -572,8 +572,8 @@ export function usePerpsTrading() {
           `Order expired before self-execute. Commit time: ${describeTime(commitTime)}; expiry: ${describeTime(expiryTime)}; chain time: ${describeTime(chainNow)}; max age: ${maxOrderAge.toString()}s. Commit a new order and execute it before expiry.`
         )
       }
-      executeStage = 'fetching historical Pyth update data from the backend'
-      pythPayload = await fetchPerpsPythUpdatePayloadForWindow(Number(minPublishTime), Number(maxPublishTime))
+      executeStage = 'fetching cached reveal payload from the backend'
+      pythPayload = await fetchPerpsRevealPayload(orderId, Number(minPublishTime), Number(maxPublishTime))
       if (!pythPayload.publishTimes.length) {
         throw new Error('Hermes returned Pyth update data without parsed publish times, so the app could not verify the order settlement window.')
       }
@@ -650,6 +650,8 @@ export function usePerpsTrading() {
       const lowerMessage = message.toLowerCase()
       const shouldAddStage = lowerMessage.includes('network request failed') ||
         lowerMessage.includes('could not fetch pyth update data') ||
+        lowerMessage.includes('could not fetch cached reveal payload') ||
+        lowerMessage.includes('reveal payload unavailable') ||
         lowerMessage.includes('pyth update request failed') ||
         lowerMessage.includes('hermes rate limit reached')
       throw new Error(shouldAddStage ? `${message} Failed while ${executeStage}.` : message)

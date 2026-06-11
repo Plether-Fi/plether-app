@@ -11,10 +11,15 @@ module Plether.Database.Schema
   , getStakingRatesAt
   , ensureBasketSnapshotSchema
   , insertBasketSnapshot
+  , insertBasketSnapshotWithSource
   , getBasketSnapshots
   , getBasketSnapshotTimes
+  , getLatestBasketSnapshot
   , getLatestBasketSnapshotTime
   , BasketSnapshotRow (..)
+  , insertPythUpdatePayload
+  , getPythUpdatePayloadForWindow
+  , PythUpdatePayloadRow (..)
   ) where
 
 import Data.Aeson (Value, encode)
@@ -305,6 +310,21 @@ ensureBasketSnapshotSchema conn = do
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp \
     \ON perps_basket_snapshots(timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (\
+    \id SERIAL PRIMARY KEY,\
+    \min_publish_time BIGINT NOT NULL,\
+    \max_publish_time BIGINT NOT NULL,\
+    \publish_times JSONB NOT NULL,\
+    \update_data JSONB NOT NULL,\
+    \source VARCHAR(32) NOT NULL DEFAULT 'backend_hermes',\
+    \fetched_at BIGINT NOT NULL,\
+    \created_at TIMESTAMP DEFAULT NOW(),\
+    \UNIQUE (min_publish_time, max_publish_time)\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window \
+    \ON perps_pyth_update_payloads(min_publish_time, max_publish_time)"
   pure ()
 
 insertBasketSnapshot
@@ -315,15 +335,26 @@ insertBasketSnapshot
   -> Value   -- component_prices
   -> IO ()
 insertBasketSnapshot conn timestamp intervalSeconds basketPrice components = do
+  insertBasketSnapshotWithSource conn timestamp intervalSeconds basketPrice components "pyth_benchmarks"
+
+insertBasketSnapshotWithSource
+  :: Connection
+  -> Integer -- timestamp
+  -> Integer -- interval_seconds
+  -> Integer -- basket_price
+  -> Value   -- component_prices
+  -> Text    -- source
+  -> IO ()
+insertBasketSnapshotWithSource conn timestamp intervalSeconds basketPrice components source = do
   _ <- execute conn
     "INSERT INTO perps_basket_snapshots \
-    \(timestamp, interval_seconds, basket_price, component_prices) \
-    \VALUES (?, ?, ?, ?) \
+    \(timestamp, interval_seconds, basket_price, component_prices, source) \
+    \VALUES (?, ?, ?, ?, ?) \
     \ON CONFLICT (timestamp, interval_seconds) DO UPDATE SET \
     \basket_price = EXCLUDED.basket_price, \
     \component_prices = EXCLUDED.component_prices, \
-    \source = 'pyth_benchmarks'"
-    (timestamp, intervalSeconds, basketPrice, encode components)
+    \source = EXCLUDED.source"
+    (timestamp, intervalSeconds, basketPrice, encode components, source)
   pure ()
 
 getBasketSnapshots
@@ -357,6 +388,16 @@ getBasketSnapshotTimes conn fromTimestamp toTimestamp intervalSeconds = do
       :: IO [Only Integer]
   pure [timestamp | Only timestamp <- rows]
 
+getLatestBasketSnapshot :: Connection -> IO (Maybe BasketSnapshotRow)
+getLatestBasketSnapshot conn = do
+  rows <- query_ conn
+    "SELECT timestamp, interval_seconds, basket_price, component_prices \
+    \FROM perps_basket_snapshots \
+    \ORDER BY timestamp DESC LIMIT 1"
+  case rows of
+    [row] -> pure $ Just row
+    _ -> pure Nothing
+
 getLatestBasketSnapshotTime :: Connection -> Integer -> IO (Maybe Integer)
 getLatestBasketSnapshotTime conn intervalSeconds = do
   result <- query conn
@@ -367,4 +408,61 @@ getLatestBasketSnapshotTime conn intervalSeconds = do
     :: IO [Only Integer]
   case result of
     [Only timestamp] -> pure $ Just timestamp
+    _ -> pure Nothing
+
+data PythUpdatePayloadRow = PythUpdatePayloadRow
+  { puprMinPublishTime :: Integer
+  , puprMaxPublishTime :: Integer
+  , puprPublishTimes :: Value
+  , puprUpdateData :: Value
+  , puprFetchedAt :: Integer
+  , puprSource :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PythUpdatePayloadRow where
+  fromRow = PythUpdatePayloadRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+
+insertPythUpdatePayload
+  :: Connection
+  -> Integer -- min publish time
+  -> Integer -- max publish time
+  -> Value   -- publish_times
+  -> Value   -- update_data
+  -> Integer -- fetched_at
+  -> Text    -- source
+  -> IO ()
+insertPythUpdatePayload conn minPublishTime maxPublishTime publishTimes updateData fetchedAt source = do
+  _ <- execute conn
+    "INSERT INTO perps_pyth_update_payloads \
+    \(min_publish_time, max_publish_time, publish_times, update_data, source, fetched_at) \
+    \VALUES (?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (min_publish_time, max_publish_time) DO UPDATE SET \
+    \publish_times = EXCLUDED.publish_times, \
+    \update_data = EXCLUDED.update_data, \
+    \source = EXCLUDED.source, \
+    \fetched_at = EXCLUDED.fetched_at"
+    (minPublishTime, maxPublishTime, encode publishTimes, encode updateData, source, fetchedAt)
+  pure ()
+
+getPythUpdatePayloadForWindow
+  :: Connection
+  -> Integer -- min publish time
+  -> Integer -- max publish time
+  -> IO (Maybe PythUpdatePayloadRow)
+getPythUpdatePayloadForWindow conn minPublishTime maxPublishTime = do
+  rows <- query conn
+    "SELECT min_publish_time, max_publish_time, publish_times, update_data, fetched_at, source \
+    \FROM perps_pyth_update_payloads \
+    \WHERE min_publish_time >= ? AND max_publish_time <= ? \
+    \ORDER BY min_publish_time ASC LIMIT 1"
+    (minPublishTime, maxPublishTime)
+  case rows of
+    [row] -> pure $ Just row
     _ -> pure Nothing

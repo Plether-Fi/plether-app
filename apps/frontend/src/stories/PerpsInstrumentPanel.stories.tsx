@@ -12,9 +12,9 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
   args: {
     icon: 'token',
     name: 'DXY Perp',
-    description: 'DXY Basket Perpetual',
+    description: 'DXY Perpetual',
     stats: [
-      { label: 'Oracle price', value: '0.9909', freshness: 'fresh' },
+      { label: 'DXY price', value: '1.0091', freshness: 'fresh', freshnessTooltip: 'updated 24s ago' },
       { label: '24h change', value: '-0.16%', tone: 'negative' },
       { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
       { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
@@ -41,7 +41,7 @@ export const Default: Story = {
 export const PositiveSession: Story = {
   args: {
     stats: [
-      { label: 'Oracle price', value: '0.9934', freshness: 'fresh' },
+      { label: 'DXY price', value: '1.0066', freshness: 'fresh', freshnessTooltip: 'updated 1m 12s ago' },
       { label: '24h change', value: '+0.21%', tone: 'positive' },
       { label: '24h volume', value: <TokenAmount amount="3.1M" /> },
       { label: 'Long open interest', value: <TokenAmount amount="13.2M" />, tone: 'positive' },

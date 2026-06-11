@@ -216,7 +216,7 @@ function DxyBasketStory({ initialInterval, market, chartStyle, state }: DxyBaske
 }
 
 const meta: Meta<typeof DxyBasketStory> = {
-  title: 'Perps/DXY Basket Panel',
+  title: 'Perps/DXY Price Panel',
   component: DxyBasketStory,
   tags: ['autodocs'],
   parameters: {

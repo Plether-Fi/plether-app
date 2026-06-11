@@ -50,7 +50,9 @@ library
         Plether.Database
         Plether.Database.Schema
         Plether.Pyth.Basket
+        Plether.Pyth.Hermes
         Plether.Pyth.History
+        Plether.Pyth.RevealPayload
         Plether.Types.History
         Plether.Indexer
         Plether.Indexer.Contracts
@@ -110,6 +112,22 @@ executable plether-api
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-basket-worker
+    import:           warnings
+    main-is:          BasketWorker.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        aeson >= 2.1,
+        text >= 2.0,
+        http-client >= 0.7,
+        http-client-tls >= 0.3
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
@@ -120,6 +138,7 @@ test-suite plether-api-test
         Plether.Ethereum.AbiSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Pyth.RevealPayloadSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

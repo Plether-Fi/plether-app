@@ -20,7 +20,7 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
-import Plether.Handlers.Perps (getBasketHistory, getPythUpdate)
+import Plether.Handlers.Perps (getBasketHistory, getBasketLatest, getPythUpdate, getRevealPayload)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -196,6 +196,36 @@ app cache client cfg mPool manager = do
       Nothing ->
         handleServiceUnavailable $
           E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
+
+  get "/api/perps/basket/latest" $ do
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getBasketLatest pool cfg
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
+
+  get "/api/perps/orders/:orderId/reveal-payload" $ do
+    rawOrderId <- pathParam "orderId"
+    mMinPublishTime <- queryParamMaybe "minPublishTime"
+    mMaxPublishTime <- queryParamMaybe "maxPublishTime"
+    case (parsePositiveInteger rawOrderId, mMinPublishTime >>= parsePositiveInteger, mMaxPublishTime >>= parsePositiveInteger, mPool) of
+      (Just orderId, Just minPublishTime, Just maxPublishTime, Just pool)
+        | minPublishTime <= maxPublishTime -> do
+            result <- liftIO $ getRevealPayload pool cfg orderId minPublishTime maxPublishTime
+            handleResult result
+      (Nothing, _, _, _) ->
+        handleError $ E.invalidAmount "orderId must be a positive integer"
+      (_, Nothing, _, _) ->
+        handleError $ E.invalidAmount "minPublishTime must be a positive integer"
+      (_, _, Nothing, _) ->
+        handleError $ E.invalidAmount "maxPublishTime must be a positive integer"
+      (_, _, _, Nothing) ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; reveal payload cache is unavailable"
+      _ ->
+        handleError $ E.invalidAmount "minPublishTime must be less than or equal to maxPublishTime"
 
   get "/api/perps/pyth/update" $ do
     mPublishTime <- queryParamMaybe "publishTime"

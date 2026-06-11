@@ -25,8 +25,10 @@ export type {
   ApyStats,
   BasketHistory,
   BasketHistoryPoint,
+  BasketLatest,
   BasketComponentPrice,
   BasketHistoryRange,
+  PerpsRevealPayload,
   // User types
   UserDashboard,
   UserBalances,
@@ -68,6 +70,7 @@ export {
   useProtocolStatus,
   useProtocolConfig,
   usePerpsBasketHistory,
+  usePerpsBasketLatest,
   // User hooks
   useUserDashboard,
   useUserBalances,

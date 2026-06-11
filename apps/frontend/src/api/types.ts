@@ -162,6 +162,24 @@ export interface BasketHistory {
   points: BasketHistoryPoint[];
 }
 
+export interface BasketLatest {
+  timestamp: number;
+  basketPrice: string;
+  components: BasketComponentPrice[];
+  generatedAt: number;
+  source: string;
+}
+
+export interface PerpsRevealPayload {
+  orderId: string;
+  updateData: string[];
+  fetchedAt: number;
+  publishTimes: number[];
+  minPublishTime: number;
+  maxPublishTime: number;
+  source: string;
+}
+
 // =============================================================================
 // User Types
 // =============================================================================

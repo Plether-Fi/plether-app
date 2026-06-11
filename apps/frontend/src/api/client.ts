@@ -31,7 +31,9 @@ import type {
   AllowancesParams,
   PricesMessage,
   BasketHistory,
+  BasketLatest,
   BasketHistoryRange,
+  PerpsRevealPayload,
 } from './types';
 
 // =============================================================================
@@ -282,6 +284,25 @@ export class PlethApiClient {
     return fetchApi<BasketHistory>(
       this.config,
       `/perps/basket/history?range=${range}&interval=${String(intervalSeconds)}`
+    );
+  }
+
+  async getPerpsBasketLatest(): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
+    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest');
+  }
+
+  async getPerpsRevealPayload(
+    orderId: string,
+    minPublishTime: number,
+    maxPublishTime: number
+  ): Promise<Result<ApiResponse<PerpsRevealPayload>, PlethApiError>> {
+    const params = new URLSearchParams({
+      minPublishTime: String(minPublishTime),
+      maxPublishTime: String(maxPublishTime),
+    });
+    return fetchApi<PerpsRevealPayload>(
+      this.config,
+      `/perps/orders/${orderId}/reveal-payload?${params.toString()}`
     );
   }
 

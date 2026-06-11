@@ -36,6 +36,7 @@ export const apiQueryKeys = {
   },
   perps: {
     all: () => ['perps', currentChainId] as const,
+    basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
     basketHistory: (range: BasketHistoryRange, intervalSeconds: number) =>
       [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds] as const,
   },
@@ -105,6 +106,16 @@ export function usePerpsBasketHistory(range: BasketHistoryRange = '7d', interval
     queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds)),
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
+  });
+}
+
+export function usePerpsBasketLatest() {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.basketLatest(),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketLatest()),
+    staleTime: 5 * 1000,
+    refetchInterval: 5 * 1000,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }
 

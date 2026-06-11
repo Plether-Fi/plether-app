@@ -3,7 +3,7 @@ import { type Address, zeroAddress } from 'viem'
 import { useAccount, useReadContracts } from 'wagmi'
 import { ERC20_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
-import { formatPerpsPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -252,7 +252,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         availableToTrade: formatPerpsUsdc(freeBuyingPowerUsdc ?? withdrawableUsdc),
         equity: formatPerpsUsdc(equityUsdc),
         positionNotional: formatPerpsUsdc(position?.estimatedNotionalUsdc),
-        entryPrice: formatPerpsPrice(position?.entryPrice),
+        entryPrice: formatDisplayDxyPrice(position?.entryPrice),
         pnl: formatSignedPerpsUsdc(position?.unrealizedPnlUsdc),
       },
     }

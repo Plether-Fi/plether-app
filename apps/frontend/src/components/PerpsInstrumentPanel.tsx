@@ -11,6 +11,7 @@ export interface PerpsInstrumentStat {
   }[]
   tone?: 'default' | 'positive' | 'negative'
   freshness?: 'fresh' | 'stale'
+  freshnessTooltip?: string
 }
 
 export interface PerpsInstrumentPanelProps {
@@ -21,7 +22,7 @@ export interface PerpsInstrumentPanelProps {
 }
 
 const DEFAULT_STATS: PerpsInstrumentStat[] = [
-  { label: 'Oracle price', value: '0.9909', freshness: 'fresh' },
+  { label: 'DXY price', value: '1.0091', freshness: 'fresh' },
   { label: '24h change', value: '-0.16%', tone: 'negative' },
   { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
   { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
@@ -57,10 +58,17 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
     <dd className={`mt-2 flex items-center gap-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>
       {stat.freshness ? (
         <span
-          className={`h-2 w-2 shrink-0 rounded-full bg-current ${freshnessToneClass(stat.freshness)}`}
+          className={`group relative h-2 w-2 shrink-0 rounded-full bg-current ${freshnessToneClass(stat.freshness)}`}
           aria-label={`Oracle ${stat.freshness}`}
-          title={`Oracle ${stat.freshness}`}
-        />
+          tabIndex={0}
+          title={stat.freshnessTooltip ?? `Oracle ${stat.freshness}`}
+        >
+          {stat.freshnessTooltip ? (
+            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-max max-w-56 -translate-x-1/2 border border-cyber-border-glow/30 bg-cyber-bg px-2.5 py-1.5 text-xs font-medium leading-4 text-cyber-text-primary shadow-lg shadow-cyber-border-glow/10 group-hover:block group-focus:block">
+              {stat.freshnessTooltip}
+            </span>
+          ) : null}
+        </span>
       ) : null}
       <span>{stat.value}</span>
     </dd>
@@ -70,7 +78,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
 export function PerpsInstrumentPanel({
   icon = 'token',
   name = 'DXY Perp',
-  description = 'DXY Basket Perpetual',
+  description = 'DXY Perpetual',
   stats = DEFAULT_STATS,
 }: PerpsInstrumentPanelProps) {
   return (

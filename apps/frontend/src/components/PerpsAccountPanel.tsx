@@ -1,7 +1,9 @@
 import { type ReactNode, useEffect, useState } from 'react'
-import type { PerpsPendingOrder, PerpsPosition } from '../hooks'
+import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
-import { formatPerpsPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { getExplorerTxUrl } from '../utils/explorer'
+import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { Button, TokenAmount } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
@@ -22,6 +24,7 @@ interface PositionRow {
 
 interface OrderRow {
   orderId?: bigint
+  time?: string
   market: string
   side: string
   type: string
@@ -29,6 +32,8 @@ interface OrderRow {
   size: ReactNode
   status?: string
   expiryTime?: bigint
+  commitTxHash?: string
+  revealTxHash?: string
 }
 
 interface TradeRow {
@@ -37,14 +42,19 @@ interface TradeRow {
   side: string
   price: string
   size: ReactNode
-  fee: ReactNode
+  pnl?: ReactNode
+  txHash?: string
 }
 
 interface PerpsAccountPanelProps {
   position?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
+  orderHistory?: PerpsOrderHistoryRow[]
+  tradeHistory?: PerpsTradeHistoryRow[]
   isConnected?: boolean
   isLoading?: boolean
+  isHistoryLoading?: boolean
+  historyError?: Error
   onAccountRefresh?: () => void
 }
 
@@ -61,13 +71,34 @@ const OPEN_ORDERS: OrderRow[] = [
 ]
 
 const ORDER_HISTORY: OrderRow[] = [
-  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9850', size: <TokenAmount amount="2 500" />, status: 'Filled' },
-  { market: 'DXY Perp', side: 'Sell', type: 'Stop', price: '0.9790', size: <TokenAmount amount="1 200" />, status: 'Cancelled' },
+  {
+    orderId: 101n,
+    time: '12:42',
+    market: 'DXY Perp',
+    side: 'Long',
+    type: 'Open',
+    price: '0.9850',
+    size: <TokenAmount amount="2 500" />,
+    status: 'Executed',
+    commitTxHash: '0x0000000000000000000000000000000000000000000000000000000000000101',
+    revealTxHash: '0x0000000000000000000000000000000000000000000000000000000000000201',
+  },
+  {
+    orderId: 100n,
+    time: '11:08',
+    market: 'DXY Perp',
+    side: 'Short',
+    type: 'Close',
+    price: '0.9790',
+    size: <TokenAmount amount="1 200" />,
+    status: 'Expired',
+    commitTxHash: '0x0000000000000000000000000000000000000000000000000000000000000100',
+  },
 ]
 
 const TRADE_HISTORY: TradeRow[] = [
-  { time: '12:42', market: 'DXY Perp', side: 'Buy', price: '0.9912', size: <TokenAmount amount="1 000" />, fee: <TokenAmount amount="0.42" /> },
-  { time: '11:08', market: 'DXY Perp', side: 'Sell', price: '0.9931', size: <TokenAmount amount="650" />, fee: <TokenAmount amount="0.27" /> },
+  { time: '12:42', market: 'DXY Perp', side: 'Open Long', price: '0.9912', size: <TokenAmount amount="1 000" /> },
+  { time: '11:08', market: 'DXY Perp', side: 'Close Long', price: '0.9931', size: <TokenAmount amount="650" />, pnl: <TokenAmount amount="+12.2" /> },
 ]
 
 function pnlToneClass(tone: PositionRow['tone']): string {
@@ -80,6 +111,22 @@ function EmptyState({ label }: { label: string }) {
   return (
     <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35">
       <span className="text-sm text-cyber-text-secondary">No {label.toLowerCase()}</span>
+    </div>
+  )
+}
+
+function LoadingState({ label }: { label: string }) {
+  return (
+    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35">
+      <span className="text-sm text-cyber-text-secondary">Loading {label.toLowerCase()}...</span>
+    </div>
+  )
+}
+
+function ErrorState({ message }: { message: string }) {
+  return (
+    <div className="flex min-h-[150px] items-center justify-center border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4">
+      <span className="text-sm text-cyber-electric-fuchsia">{message}</span>
     </div>
   )
 }
@@ -136,6 +183,23 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
   )
 }
 
+function TxLink({ hash }: { hash?: string }) {
+  if (!hash) return <span className="text-cyber-text-secondary">--</span>
+
+  return (
+    <a
+      aria-label="Open transaction in block explorer"
+      title="Open in block explorer"
+      href={getExplorerTxUrl(PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, hash)}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="inline-flex h-5 w-5 items-center justify-center text-cyber-text-secondary transition-colors hover:text-cyber-bright-blue"
+    >
+      <span className="material-symbols-outlined !text-[16px] !leading-none">open_in_new</span>
+    </a>
+  )
+}
+
 function PositionView({
   position,
   isConnected,
@@ -154,7 +218,7 @@ function PositionView({
     market: 'DXY Perp',
     side: perpsSideLabel(position.side),
     size: <TokenAmount amount={formatPerpsUsdc(position.estimatedNotionalUsdc)} />,
-    entry: formatPerpsPrice(position.entryPrice),
+    entry: formatDisplayDxyPrice(position.entryPrice),
     pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
@@ -175,6 +239,9 @@ function PositionView({
         <AccountMetric label="Entry price" value={currentPosition.entry} />
         <AccountMetric label="Unrealized PnL" value={currentPosition.pnl} tone={currentPosition.tone} />
       </div>
+      <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
+        Mark notional is current exposure. Unrealized PnL shows whether the position is currently up or down.
+      </p>
     </div>
   )
 }
@@ -202,12 +269,16 @@ function OrdersView({
         <table className="w-full min-w-[760px] text-left">
           <thead className="text-xs uppercase text-cyber-text-secondary">
             <tr className="border-b border-cyber-border-glow/20">
+              {includeStatus ? <th className="py-3 font-medium">Order ID</th> : null}
+              {includeStatus ? <th className="py-3 font-medium">Time</th> : null}
               <th className="py-3 font-medium">Market</th>
               <th className="py-3 font-medium">Side</th>
               <th className="py-3 font-medium">Type</th>
               <th className="py-3 font-medium">Price</th>
               <th className="py-3 font-medium">Size</th>
               {includeStatus ? <th className="py-3 font-medium">Status</th> : null}
+              {includeStatus ? <th className="py-3 text-right font-medium">Commit</th> : null}
+              {includeStatus ? <th className="py-3 text-right font-medium">Reveal</th> : null}
               {!includeStatus ? <th className="py-3 font-medium">Status</th> : null}
               {!includeStatus ? <th className="py-3 text-right font-medium">Action</th> : null}
             </tr>
@@ -222,12 +293,16 @@ function OrdersView({
 
               return (
                 <tr key={`${row.market}-${row.side}-${row.type}-${row.price}-${row.orderId?.toString() ?? 'mock'}`}>
+                  {includeStatus ? <td className="py-4 font-mono text-xs text-cyber-text-secondary">{row.orderId?.toString() ?? '--'}</td> : null}
+                  {includeStatus ? <td className="py-4">{row.time ?? '--'}</td> : null}
                   <td className="py-4 font-semibold">{row.market}</td>
                   <td className="py-4">{row.side}</td>
                   <td className="py-4">{row.type}</td>
                   <td className="py-4">{row.price}</td>
                   <td className="py-4">{row.size}</td>
                   {includeStatus ? <td className="py-4">{row.status}</td> : null}
+                  {includeStatus ? <td className="py-3 text-right"><TxLink hash={row.commitTxHash} /></td> : null}
+                  {includeStatus ? <td className="py-3 text-right"><TxLink hash={row.revealTxHash} /></td> : null}
                   {!includeStatus ? (
                     <td className="py-4">
                       <OpenOrderStatus secondsToExpiry={secondsToExpiry} />
@@ -268,8 +343,8 @@ function OrdersView({
   )
 }
 
-function TradeHistoryView() {
-  if (TRADE_HISTORY.length === 0) return <EmptyState label="trade history" />
+function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
+  if (rows.length === 0) return <EmptyState label="trade history" />
 
   return (
     <div className="overflow-x-auto">
@@ -281,18 +356,20 @@ function TradeHistoryView() {
             <th className="py-3 font-medium">Side</th>
             <th className="py-3 font-medium">Price</th>
             <th className="py-3 font-medium">Size</th>
-            <th className="py-3 font-medium">Fee</th>
+            <th className="py-3 font-medium">PnL</th>
+            <th className="py-3 text-right font-medium">Tx</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-cyber-border-glow/10 text-sm text-cyber-text-primary">
-          {TRADE_HISTORY.map((row) => (
+          {rows.map((row) => (
             <tr key={`${row.time}-${row.side}-${row.price}`}>
               <td className="py-4">{row.time}</td>
               <td className="py-4 font-semibold">{row.market}</td>
               <td className="py-4">{row.side}</td>
               <td className="py-4">{row.price}</td>
               <td className="py-4">{row.size}</td>
-              <td className="py-4">{row.fee}</td>
+              <td className="py-4">{row.pnl ?? '--'}</td>
+              <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
             </tr>
           ))}
         </tbody>
@@ -305,8 +382,12 @@ function AccountTabContent({
   activeTab,
   position,
   pendingOrders,
+  orderHistory,
+  tradeHistory,
   isConnected,
   isLoading,
+  isHistoryLoading,
+  historyError,
   nowSeconds,
   cleanupOrderId,
   cleanupError,
@@ -335,10 +416,31 @@ function AccountTabContent({
     market: 'DXY Perp',
     side: perpsSideLabel(order.side),
     type: order.isReduceOnly ? 'Reduce' : 'Open',
-    price: order.acceptablePrice === 0n ? 'Market' : formatPerpsPrice(order.acceptablePrice),
+    price: order.acceptablePrice === 0n ? 'Market' : formatDisplayDxyPrice(order.acceptablePrice),
     size: <TokenAmount amount={formatPerpsUsdc(order.estimatedNotionalUsdc)} />,
     status: `Status ${order.status}`,
     expiryTime: order.expiryTime,
+  }))
+  const liveOrderHistory = orderHistory?.map((order) => ({
+    orderId: order.orderId,
+    time: order.time,
+    market: order.market,
+    side: order.side,
+    type: order.type,
+    price: order.price,
+    size: order.size === '--' ? '--' : <TokenAmount amount={order.size} />,
+    status: order.status,
+    commitTxHash: order.commitTxHash,
+    revealTxHash: order.revealTxHash,
+  }))
+  const liveTradeHistory = tradeHistory?.map((trade) => ({
+    time: trade.time,
+    market: trade.market,
+    side: trade.side,
+    price: trade.price,
+    size: trade.size === '--' ? '--' : <TokenAmount amount={trade.size} />,
+    pnl: trade.pnl === undefined ? undefined : <TokenAmount amount={trade.pnl} />,
+    txHash: trade.txHash,
   }))
 
   if (activeTab === 'position') {
@@ -361,8 +463,14 @@ function AccountTabContent({
       />
     )
   }
-  if (activeTab === 'orderHistory') return <OrdersView rows={ORDER_HISTORY} includeStatus />
-  return <TradeHistoryView />
+  if (activeTab === 'orderHistory') {
+    if (historyError) return <ErrorState message="Could not load order history. Check RPC access and retry." />
+    if (isHistoryLoading) return <LoadingState label="order history" />
+    return <OrdersView rows={liveOrderHistory ?? ORDER_HISTORY} includeStatus />
+  }
+  if (historyError) return <ErrorState message="Could not load trade history. Check RPC access and retry." />
+  if (isHistoryLoading) return <LoadingState label="trade history" />
+  return <TradeHistoryView rows={liveTradeHistory ?? TRADE_HISTORY} />
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {

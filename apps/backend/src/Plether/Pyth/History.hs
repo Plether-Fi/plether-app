@@ -1,6 +1,7 @@
 module Plether.Pyth.History
   ( BasketIngestorConfig (..)
   , fetchBasketSnapshotAt
+  , runBasketBackfill
   , startBasketHistoryIngestor
   ) where
 

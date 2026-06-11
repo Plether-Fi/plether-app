@@ -1,9 +1,12 @@
 module Plether.Handlers.Perps
   ( getBasketHistory
+  , getBasketLatest
   , getPythUpdate
+  , getRevealPayload
   ) where
 
-import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.:), (.:?), (.!=))
+import Data.Aeson (FromJSON (..), Value, eitherDecode, withObject, (.:), (.:?), (.!=))
+import qualified Data.Aeson as Aeson
 import Control.Concurrent.STM
   ( atomically
   , modifyTVar'
@@ -32,7 +35,13 @@ import Network.HTTP.Types.Status (statusCode)
 import Plether.Cache (AppCache (..))
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (BasketSnapshotRow (..), getBasketSnapshots)
+import Plether.Database.Schema
+  ( BasketSnapshotRow (..)
+  , PythUpdatePayloadRow (..)
+  , getBasketSnapshots
+  , getLatestBasketSnapshot
+  , getPythUpdatePayloadForWindow
+  )
 import Plether.Types
 import qualified Plether.Types.Error as E
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
@@ -85,6 +94,74 @@ computeChange rows =
       Just $
         (fromIntegral (bsrBasketPrice lastRow - bsrBasketPrice first) / fromIntegral (bsrBasketPrice first) :: Double)
     _ -> Nothing
+
+getBasketLatest
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse BasketLatest))
+getBasketLatest pool cfg = do
+  now <- getPOSIXTime
+  mRow <- withDb pool getLatestBasketSnapshot
+  pure $ case mRow of
+    Nothing ->
+      Left $ E.internalError "No perps basket snapshots are available yet. Start plether-basket-worker --once or --latest-loop."
+    Just BasketSnapshotRow {..} ->
+      Right $
+        mkResponse 0 (cfgChainId cfg) $
+          BasketLatest
+            { blTimestamp = bsrTimestamp
+            , blBasketPrice = bsrBasketPrice
+            , blComponents = bsrComponents
+            , blGeneratedAt = now
+            , blSource = "database"
+            }
+
+getRevealPayload
+  :: DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO (Either ApiError (ApiResponse RevealPayloadResponse))
+getRevealPayload pool cfg orderId minPublishTime maxPublishTime = do
+  mRow <- withDb pool $ \conn ->
+    getPythUpdatePayloadForWindow conn minPublishTime maxPublishTime
+  pure $ case mRow of
+    Nothing ->
+      Left $
+        E.networkError $
+          "Reveal payload unavailable for order "
+            <> T.pack (show orderId)
+            <> ". The basket worker has not cached a six-feed Pyth update inside publish window "
+            <> T.pack (show minPublishTime)
+            <> " to "
+            <> T.pack (show maxPublishTime)
+            <> ". Keep plether-basket-worker --latest-loop running and retry before the order expires."
+    Just row ->
+      case rowToRevealPayload orderId row of
+        Left err -> Left $ E.internalError err
+        Right payload -> Right $ mkResponse 0 (cfgChainId cfg) payload
+
+rowToRevealPayload :: Integer -> PythUpdatePayloadRow -> Either Text RevealPayloadResponse
+rowToRevealPayload orderId PythUpdatePayloadRow {..} = do
+  publishTimes <- decodeValue "publish_times" puprPublishTimes
+  updateData <- decodeValue "update_data" puprUpdateData
+  pure
+    RevealPayloadResponse
+      { rprOrderId = orderId
+      , rprUpdateData = updateData
+      , rprFetchedAt = puprFetchedAt
+      , rprPublishTimes = publishTimes
+      , rprMinPublishTime = puprMinPublishTime
+      , rprMaxPublishTime = puprMaxPublishTime
+      , rprSource = puprSource
+      }
+
+decodeValue :: (FromJSON a) => Text -> Value -> Either Text a
+decodeValue label value =
+  case Aeson.fromJSON value of
+    Aeson.Success parsed -> Right parsed
+    Aeson.Error err -> Left $ "Could not decode cached reveal " <> label <> ": " <> T.pack err
 
 data HermesBinary = HermesBinary
   { hbData :: [Text]

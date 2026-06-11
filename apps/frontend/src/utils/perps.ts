@@ -2,6 +2,7 @@ import { formatUnits, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
+export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
 export function cleanNumericInput(value: string): string {
   return value.replaceAll(' ', '').replaceAll(',', '.')
@@ -52,6 +53,20 @@ export function formatPerpsPrice(price: bigint | undefined, decimals = 4): strin
   return formatPerpsNumber(Number(formatUnits(price, PERPS_DECIMALS.PRICE)), decimals, decimals)
 }
 
+export function oraclePriceToDisplayDxyPrice(rawOraclePrice: bigint | undefined): bigint | undefined {
+  if (rawOraclePrice === undefined || rawOraclePrice === 0n) return undefined
+  return PERPS_DXY_PRICE_CAP > rawOraclePrice ? PERPS_DXY_PRICE_CAP - rawOraclePrice : 0n
+}
+
+export function formatDisplayDxyPrice(rawOraclePrice: bigint | undefined, decimals = 4): string {
+  return formatPerpsPrice(oraclePriceToDisplayDxyPrice(rawOraclePrice), decimals)
+}
+
+export function displayDxyPriceToOraclePrice(displayDxyPrice: bigint | undefined): bigint | undefined {
+  if (displayDxyPrice === undefined || displayDxyPrice === 0n) return undefined
+  return PERPS_DXY_PRICE_CAP > displayDxyPrice ? PERPS_DXY_PRICE_CAP - displayDxyPrice : 0n
+}
+
 export function directionToPerpsSide(direction: PerpsDirection): PerpsSide {
   return direction === 'long' ? PERPS_SIDE.BULL : PERPS_SIDE.BEAR
 }
@@ -66,7 +81,7 @@ export function perpsSideLabel(side: number | bigint | undefined): string {
 
 export function notionalUsdcToSizeDelta(notionalUsdc: bigint, oraclePrice: bigint): bigint {
   if (oraclePrice === 0n) return 0n
-  return (notionalUsdc * PERPS_POSITION_SIZE_TO_USDC_SCALE) / oraclePrice
+  return ((notionalUsdc * PERPS_POSITION_SIZE_TO_USDC_SCALE) + oraclePrice - 1n) / oraclePrice
 }
 
 export function sizeDeltaToNotionalUsdc(sizeDelta: bigint | undefined, oraclePrice: bigint | undefined): bigint | undefined {
@@ -110,6 +125,17 @@ interface BackendPythUpdateResponse {
     updateData?: string[]
     fetchedAt?: number
     publishTimes?: number[]
+  }
+}
+
+interface BackendRevealPayloadResponse {
+  data?: {
+    updateData?: string[]
+    fetchedAt?: number
+    publishTimes?: number[]
+    minPublishTime?: number
+    maxPublishTime?: number
+    source?: string
   }
 }
 
@@ -205,6 +231,16 @@ async function parseBackendPythError(response: Response): Promise<Error> {
   }
 
   return new Error(message ?? `Pyth update request failed: ${response.status}`)
+}
+
+async function parseRevealPayloadError(response: Response, orderId: bigint): Promise<Error> {
+  const parsed = await response.json().catch(() => undefined) as BackendErrorResponse | undefined
+  const message = parsed?.error?.message
+
+  return new Error(
+    message ??
+      `Reveal payload unavailable for order ${orderId.toString()}. Keep the basket worker running and retry before the order expires.`
+  )
 }
 
 async function fetchPerpsPythUpdatePayloadUncached(publishTime?: number): Promise<PerpsPythUpdatePayload> {
@@ -318,6 +354,43 @@ export async function fetchPerpsPythUpdatePayloadForWindow(
       lastNotFound?.message ?? ''
     }`.trim()
   )
+}
+
+export async function fetchPerpsRevealPayload(
+  orderId: bigint,
+  minPublishTime: number,
+  maxPublishTime: number
+): Promise<PerpsPythUpdatePayload> {
+  const requestUrl = perpsApiUrl(`/perps/orders/${orderId.toString()}/reveal-payload`)
+  requestUrl.searchParams.set('minPublishTime', String(minPublishTime))
+  requestUrl.searchParams.set('maxPublishTime', String(maxPublishTime))
+
+  let response: Response
+  try {
+    response = await fetch(requestUrl)
+  } catch (error) {
+    throw new Error(
+      `Could not fetch cached reveal payload from the backend. Check that the backend and plether-basket-worker are running. ${
+        error instanceof Error ? error.message : ''
+      }`.trim()
+    )
+  }
+
+  if (!response.ok) {
+    throw await parseRevealPayloadError(response, orderId)
+  }
+
+  const payload = await response.json() as BackendRevealPayloadResponse
+  const updates = payload.data?.updateData
+  if (!updates?.length) {
+    throw new Error(`Cached reveal payload for order ${orderId.toString()} did not include Pyth update data`)
+  }
+
+  return {
+    updateData: updates.map((item) => item.startsWith('0x') ? item as Hex : `0x${item}` as Hex),
+    fetchedAt: payload.data?.fetchedAt ?? Math.floor(Date.now() / 1000),
+    publishTimes: payload.data?.publishTimes ?? [],
+  }
 }
 
 export async function fetchPerpsPythUpdateData(): Promise<Hex[]> {

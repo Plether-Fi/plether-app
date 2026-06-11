@@ -6,7 +6,7 @@ import type { PerpsPosition } from '../hooks'
 import { usePerpsTrading } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
-  formatPerpsPrice,
+  formatDisplayDxyPrice,
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
   formatPerpsUsdcFloor,
@@ -274,6 +274,13 @@ function formatOptionalPrice(value: number | null | undefined): string {
   if (value === null) return 'Market'
   if (value === undefined || !Number.isFinite(value)) return '--'
   return value.toFixed(4)
+}
+
+function displayDxyPriceNumber(rawOraclePrice: bigint | undefined): number | undefined {
+  const formatted = formatDisplayDxyPrice(rawOraclePrice)
+  if (formatted === '--') return undefined
+  const value = Number(formatted.replaceAll(' ', ''))
+  return Number.isFinite(value) ? value : undefined
 }
 
 function TxHashActions({ hash }: { hash: string }) {
@@ -717,17 +724,17 @@ export function PerpsTradeTicket({
     : clamp((sizeNumber * OPEN_BOUNTY_BPS) / 10_000, MIN_OPEN_BOUNTY_USDC, MAX_OPEN_BOUNTY_USDC)
   const slippageNumber = Math.max(slippage, 0)
   const previewPrice = oraclePriceRaw
-    ? Number(formatPerpsPrice(oraclePriceRaw))
+    ? displayDxyPriceNumber(oraclePriceRaw)
     : enableLiveTrading
       ? undefined
-      : MOCK_PREVIEW_PRICE
+      : 2 - MOCK_PREVIEW_PRICE
   const rawExecutionLimit = oraclePriceRaw
     ? getPerpsTargetPrice({ direction: effectiveOrderDirection, isClose: isReducingCurrentPosition, oraclePrice: oraclePriceRaw, slippagePercent: slippageNumber })
     : undefined
   const executionLimit = rawExecutionLimit === 0n
     ? null
-    : rawExecutionLimit ? Number(formatPerpsPrice(rawExecutionLimit)) : !enableLiveTrading && Number.isFinite(slippageNumber)
-      ? MOCK_PREVIEW_PRICE * (direction === 'long' ? 1 - slippageNumber / 100 : 1 + slippageNumber / 100)
+    : rawExecutionLimit ? displayDxyPriceNumber(rawExecutionLimit) : !enableLiveTrading && Number.isFinite(slippageNumber)
+      ? (2 - MOCK_PREVIEW_PRICE) * (direction === 'long' ? 1 + slippageNumber / 100 : 1 - slippageNumber / 100)
       : undefined
   const liquidationPrice = previewPrice === undefined
     ? undefined
@@ -770,7 +777,7 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
-    if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'Oracle price is not available.'
+    if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'DXY price is not available.'
     if (isZeroSize) return 'Enter an order size.'
     if (
       isOppositePositionDirection &&
@@ -819,7 +826,7 @@ export function PerpsTradeTicket({
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
-      { label: 'Oracle price', value: oraclePriceDisplay ?? formatOptionalPrice(previewPrice) },
+      { label: 'DXY price', value: oraclePriceDisplay ?? formatOptionalPrice(previewPrice) },
       { label: 'Target notional', value: formatUsdc(sizeNumber) },
       { label: 'Initial margin', value: formatUsdc(marginNumber) },
       { label: 'Leverage', value: formatLeverage(leverage) },
@@ -859,10 +866,10 @@ export function PerpsTradeTicket({
     : undefined
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? notionalUsdc, executionFeeBpsRaw)
   const finalPriceDisplay = finalExecutionPrice
-    ? formatPerpsPrice(finalExecutionPrice)
+    ? formatDisplayDxyPrice(finalExecutionPrice)
     : enableLiveTrading
       ? '--'
-      : '0.9911'
+      : formatDisplayDxyPrice(99_110_000n)
   const reviewCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
     : enableLiveTrading && !isCorrectChain
@@ -883,6 +890,7 @@ export function PerpsTradeTicket({
   const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
   const isMarginActionInvalid = marginActionAmountRaw <= 0n || isMarginActionInsufficient
+  const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isMarginActionPending
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
 
@@ -1214,7 +1222,10 @@ export function PerpsTradeTicket({
             type="button"
             variant="secondary"
             className="w-full"
+            disabled={areMarginActionsDisabled}
+            title={areMarginActionsDisabled ? 'Connect wallet to deposit margin' : undefined}
             onClick={() => {
+              if (areMarginActionsDisabled) return
               openMarginAction('deposit')
             }}
           >
@@ -1224,7 +1235,10 @@ export function PerpsTradeTicket({
             type="button"
             variant="secondary"
             className="w-full"
+            disabled={areMarginActionsDisabled}
+            title={areMarginActionsDisabled ? 'Connect wallet to withdraw margin' : undefined}
             onClick={() => {
+              if (areMarginActionsDisabled) return
               openMarginAction('withdraw')
             }}
           >
@@ -1252,6 +1266,9 @@ export function PerpsTradeTicket({
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Commit Preview</div>
                 <PreviewRows rows={previewRows} />
+                <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
+                  The contract commits position size. Executed notional may differ from target notional within your slippage limit.
+                </p>
               </div>
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
@@ -1611,6 +1628,9 @@ export function PerpsTradeTicket({
                     { label: 'Reveal tx', value: displayExecuteTxValue },
                   ]}
                 />
+                <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
+                  Target notional is what you submitted. Execution notional is the committed size valued by contract accounting at reveal.
+                </p>
               </div>
               <Button
                 className="w-full"

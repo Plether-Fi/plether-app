@@ -5,6 +5,7 @@ import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_PUBLIC_LENS_ABI } fro
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../components/PerpsMarketStatePanel'
+import { formatDisplayDxyPrice } from '../utils/perps'
 
 const WAD = 10n ** 18n
 
@@ -38,15 +39,6 @@ function compactNumber(value: number): string {
 
   return value.toLocaleString('en-US', {
     maximumFractionDigits: 2,
-  }).replaceAll(',', ' ')
-}
-
-function formatPrice(price: bigint | undefined): string | undefined {
-  if (price === undefined || price === 0n) return undefined
-
-  return Number(formatUnits(price, PERPS_DECIMALS.PRICE)).toLocaleString('en-US', {
-    minimumFractionDigits: 4,
-    maximumFractionDigits: 4,
   }).replaceAll(',', ' ')
 }
 
@@ -219,7 +211,7 @@ export function usePerpsMarket() {
         baseCarryBps,
         executionFeeBps,
       },
-      oraclePrice: formatPrice(markPrice),
+      oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       oracleFreshness: oracleFresh ? 'fresh' as const : 'stale' as const,
       lastMarkTime: lastMarkTime === undefined ? undefined : Number(lastMarkTime),
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),

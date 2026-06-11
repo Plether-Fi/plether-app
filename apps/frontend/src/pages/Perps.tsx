@@ -1,11 +1,11 @@
-import { useMemo, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
-import { usePerpsAccount, usePerpsMarket } from '../hooks'
+import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -17,16 +17,53 @@ function usdcValue(value: string | undefined, isLoading: boolean): ReactNode {
   return isLoading ? '...' : '--'
 }
 
+function formatMarkAge(ageSeconds: number): string {
+  if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
+  if (ageSeconds < 60) return `${ageSeconds}s ago`
+
+  const minutes = Math.floor(ageSeconds / 60)
+  const seconds = ageSeconds % 60
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+}
+
 export function Perps() {
   const perpsMarket = usePerpsMarket()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
+  const perpsHistory = usePerpsHistory(perpsMarket.raw.markPrice)
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNowSeconds(Math.floor(Date.now() / 1000))
+    }, 5_000)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  const dxyFreshnessTooltip = useMemo(() => {
+    if (!perpsMarket.lastMarkTime) return undefined
+
+    const ageSeconds = Math.max(0, nowSeconds - perpsMarket.lastMarkTime)
+    return `updated ${formatMarkAge(ageSeconds)}`
+  }, [nowSeconds, perpsMarket.lastMarkTime])
 
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
     () => [
       {
-        label: 'Oracle price',
+        label: 'DXY price',
         value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
         freshness: perpsMarket.oracleFreshness,
+        freshnessTooltip: dxyFreshnessTooltip,
       },
       { label: '24h change', value: '--' },
       { label: '24h volume', value: '--' },
@@ -49,6 +86,7 @@ export function Perps() {
     [
       perpsMarket.availableLiquidity,
       perpsMarket.costOfCarry,
+      dxyFreshnessTooltip,
       perpsMarket.isLoading,
       perpsMarket.longOpenInterest,
       perpsMarket.oracleFreshness,
@@ -65,8 +103,12 @@ export function Perps() {
         <PerpsAccountPanel
           position={perpsAccount.position}
           pendingOrders={perpsAccount.pendingOrders}
+          orderHistory={perpsHistory.orderHistory}
+          tradeHistory={perpsHistory.tradeHistory}
           isConnected={perpsAccount.isConnected}
           isLoading={perpsAccount.isLoading}
+          isHistoryLoading={perpsHistory.isLoading}
+          historyError={perpsHistory.error}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()
