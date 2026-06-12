@@ -3,7 +3,7 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTrade
 import { usePerpsTrading } from '../hooks'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideLabel } from '../utils/perps'
 import { Button, TokenAmount } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
@@ -17,7 +17,9 @@ interface PositionRow {
   market: string
   side: string
   size: ReactNode
+  entryNotional: ReactNode
   entry: string
+  liquidationPrice: ReactNode
   pnl: ReactNode
   tone?: 'positive' | 'negative'
 }
@@ -105,6 +107,46 @@ function pnlToneClass(tone: PositionRow['tone']): string {
   if (tone === 'positive') return 'text-cyber-neon-green'
   if (tone === 'negative') return 'text-cyber-electric-fuchsia'
   return 'text-cyber-text-primary'
+}
+
+function formatLiquidationDistance(currentPrice?: bigint, liquidationPrice?: bigint): string | undefined {
+  const displayLiquidationPrice = oraclePriceToDisplayDxyPrice(liquidationPrice)
+  if (
+    currentPrice === undefined ||
+    displayLiquidationPrice === undefined ||
+    currentPrice <= 0n
+  ) {
+    return undefined
+  }
+
+  const distance = currentPrice > displayLiquidationPrice
+    ? currentPrice - displayLiquidationPrice
+    : displayLiquidationPrice - currentPrice
+  const sign = displayLiquidationPrice >= currentPrice ? '+' : '-'
+  const distanceBps = (distance * 10_000n) / currentPrice
+  const whole = distanceBps / 100n
+  const decimals = distanceBps % 100n
+
+  return `${sign}${whole.toString()}.${decimals.toString().padStart(2, '0')}% away`
+}
+
+function LiquidationPriceValue({
+  currentPrice,
+  liquidationPrice,
+}: {
+  currentPrice?: bigint
+  liquidationPrice?: bigint
+}) {
+  const distance = formatLiquidationDistance(currentPrice, liquidationPrice)
+
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <span>{formatDisplayDxyPrice(liquidationPrice)}</span>
+      {distance ? (
+        <span className="text-xs font-medium text-cyber-text-secondary">{distance}</span>
+      ) : null}
+    </span>
+  )
 }
 
 function EmptyState({ label }: { label: string }) {
@@ -217,8 +259,15 @@ function PositionView({
   const currentPosition: PositionRow = {
     market: 'DXY Perp',
     side: perpsSideLabel(position.side),
-    size: <TokenAmount amount={formatPerpsUsdc(position.estimatedNotionalUsdc)} />,
+    size: <TokenAmount amount={formatPerpsUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} />,
+    entryNotional: <TokenAmount amount={formatPerpsUsdc(position.entryNotionalUsdc)} />,
     entry: formatDisplayDxyPrice(position.entryPrice),
+    liquidationPrice: (
+      <LiquidationPriceValue
+        currentPrice={position.displayDxyPrice}
+        liquidationPrice={position.liquidationPrice}
+      />
+    ),
     pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
@@ -234,13 +283,15 @@ function PositionView({
           <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{currentPosition.market}</div>
         </div>
       </div>
-      <div className="grid grid-cols-3 gap-4">
-        <AccountMetric label="Mark notional" value={currentPosition.size} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
+        <AccountMetric label="DXY exposure" value={currentPosition.size} />
+        <AccountMetric label="Entry notional" value={currentPosition.entryNotional} />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
+        <AccountMetric label="Liquidation price" value={currentPosition.liquidationPrice} />
         <AccountMetric label="Unrealized PnL" value={currentPosition.pnl} tone={currentPosition.tone} />
       </div>
       <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-        Mark notional is current exposure. Unrealized PnL shows whether the position is currently up or down.
+        Entry notional is the executed order size. DXY exposure is current displayed exposure.
       </p>
     </div>
   )
@@ -410,6 +461,7 @@ function AccountTabContent({
     maintenanceMarginUsdc: 0n,
     liquidatable: false,
     estimatedNotionalUsdc: 8200000000n,
+    liquidationPrice: 110000000n,
   }
   const liveOpenOrders = pendingOrders?.map((order) => ({
     orderId: order.orderId,

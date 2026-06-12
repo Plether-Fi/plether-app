@@ -28,6 +28,6 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   seniorVault: '0x17eC59e7284CB9fb17B5625153c6Af7f58708981',
   juniorVault: '0xfED1D3F433d74148F9C04b34ed6d49752f34ff8E',
   pletherOracle: '0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb',
-  cfdEngineLens: '0xE3452be7c1703c3f16fD80fCaEB61732F43bDAA6',
+  cfdEngineLens: '0xEEE25f5bdC515E3676198dE7262b5aF043b8a37a',
   cfdEngineAccountLens: '0x74f0a25BcC4b243E915Df1CA6385250aCff1eeE9',
 } satisfies PerpsContractAddresses

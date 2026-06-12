@@ -120,6 +120,7 @@ export function Perps() {
         <PerpsTradeTicket
           enableLiveTrading
           oraclePriceRaw={perpsMarket.raw.markPrice}
+          oraclePublishTime={perpsMarket.lastMarkTime}
           oraclePriceDisplay={perpsMarket.oraclePrice}
           availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
           availableToTradeAmount={perpsAccount.display.availableToTrade}
@@ -130,6 +131,7 @@ export function Perps() {
           currentPosition={perpsAccount.position}
           currentPositionSide={perpsAccount.position?.direction}
           currentPositionAmount={perpsAccount.display.positionNotional}
+          pendingOrders={perpsAccount.pendingOrders}
           pendingOrderCount={perpsAccount.pendingOrders.length}
           pendingOrderIds={perpsAccount.pendingOrders.map((order) => order.orderId)}
           maxPendingOrders={perpsAccount.maxPendingOrders}

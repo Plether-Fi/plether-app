@@ -6,6 +6,7 @@ import { ERC20_ABI, PERPS_CFD_ENGINE_LENS_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, P
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   directionToPerpsSide,
+  fetchPerpsPythUpdatePayloadForWindow,
   fetchPerpsRevealPayload,
   formatPerpsUsdc,
   getPerpsTargetPrice,
@@ -107,6 +108,15 @@ function withPythFetchTiming(message: string, payload: PerpsPythUpdatePayload | 
       : ` Hermes publish time: ${publishLabel};`
 
   return `${message}${publishWindow} app fetch time: ${fetchedLabel}; age at fetch: ${payload.fetchedAt - oldestPublishTime}s; oracle staleness limit: 60s.`
+}
+
+function shouldFallbackToHistoricalPythPayload(message: string): boolean {
+  const lowerMessage = message.toLowerCase()
+  return (
+    lowerMessage.includes('historical pyth update was rejected') ||
+    lowerMessage.includes('reveal payload unavailable') ||
+    lowerMessage.includes('could not fetch cached reveal payload')
+  )
 }
 
 function readRecordValue(value: unknown, key: string, index: number): unknown {
@@ -572,39 +582,64 @@ export function usePerpsTrading() {
           `Order expired before self-execute. Commit time: ${describeTime(commitTime)}; expiry: ${describeTime(expiryTime)}; chain time: ${describeTime(chainNow)}; max age: ${maxOrderAge.toString()}s. Commit a new order and execute it before expiry.`
         )
       }
-      executeStage = 'fetching cached reveal payload from the backend'
-      pythPayload = await fetchPerpsRevealPayload(orderId, Number(minPublishTime), Number(maxPublishTime))
-      if (!pythPayload.publishTimes.length) {
-        throw new Error('Hermes returned Pyth update data without parsed publish times, so the app could not verify the order settlement window.')
+      const minPublishTimeNumber = Number(minPublishTime)
+      const maxPublishTimeNumber = Number(maxPublishTime)
+
+      const prepareExecution = async (payload: PerpsPythUpdatePayload) => {
+        pythPayload = payload
+        if (!payload.publishTimes.length) {
+          throw new Error('Hermes returned Pyth update data without parsed publish times, so the app could not verify the order settlement window.')
+        }
+        const returnedMinPublishTime = BigInt(Math.min(...payload.publishTimes))
+        const returnedMaxPublishTime = BigInt(Math.max(...payload.publishTimes))
+        if (returnedMinPublishTime < minPublishTime || returnedMaxPublishTime > maxPublishTime) {
+          throw new Error(
+            `Historical Pyth update was outside the order settlement window. Commit time: ${describeTime(commitTime)}; valid publish window: ${describeTime(minPublishTime)} to ${describeTime(maxPublishTime)}; Hermes returned: ${describeTime(returnedMinPublishTime)} to ${describeTime(returnedMaxPublishTime)}. Retry with a new order.`
+          )
+        }
+
+        const pythUpdateData = payload.updateData
+        executeStage = 'calculating Pyth update fee'
+        const updateFee = await client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.pletherOracle,
+          abi: PERPS_PLETHER_ORACLE_ABI,
+          functionName: 'getUpdateFee',
+          args: [pythUpdateData],
+        })
+        const args = [orderId, pythUpdateData] as const
+        executeStage = 'estimating self-execute transaction gas'
+        const [fees, estimatedGas] = await Promise.all([
+          getBufferedFeeParams(client),
+          client.estimateContractGas({
+            account: address,
+            address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+            abi: PERPS_ORDER_ROUTER_ABI,
+            functionName: 'executeOrder',
+            args,
+            value: updateFee,
+          }),
+        ])
+
+        return { args, updateFee, fees, estimatedGas }
       }
-      const returnedMinPublishTime = BigInt(Math.min(...pythPayload.publishTimes))
-      const returnedMaxPublishTime = BigInt(Math.max(...pythPayload.publishTimes))
-      if (returnedMinPublishTime < minPublishTime || returnedMaxPublishTime > maxPublishTime) {
-        throw new Error(
-          `Historical Pyth update was outside the order settlement window. Commit time: ${describeTime(commitTime)}; valid publish window: ${describeTime(minPublishTime)} to ${describeTime(maxPublishTime)}; Hermes returned: ${describeTime(returnedMinPublishTime)} to ${describeTime(returnedMaxPublishTime)}. Retry with a new order.`
+
+      executeStage = 'fetching cached reveal payload from the backend'
+      let preparedExecution
+      try {
+        preparedExecution = await prepareExecution(
+          await fetchPerpsRevealPayload(orderId, minPublishTimeNumber, maxPublishTimeNumber)
+        )
+      } catch (error) {
+        const message = getPerpsErrorMessage(error, 'execute')
+        if (!shouldFallbackToHistoricalPythPayload(message)) {
+          throw error
+        }
+
+        executeStage = 'fetching exact historical reveal payload from the backend'
+        preparedExecution = await prepareExecution(
+          await fetchPerpsPythUpdatePayloadForWindow(minPublishTimeNumber, maxPublishTimeNumber)
         )
       }
-      const pythUpdateData = pythPayload.updateData
-      executeStage = 'calculating Pyth update fee'
-      const updateFee = await client.readContract({
-        address: PERPS_ARBITRUM_SEPOLIA.pletherOracle,
-        abi: PERPS_PLETHER_ORACLE_ABI,
-        functionName: 'getUpdateFee',
-        args: [pythUpdateData],
-      })
-      const args = [orderId, pythUpdateData] as const
-      executeStage = 'estimating self-execute transaction gas'
-      const [fees, estimatedGas] = await Promise.all([
-        getBufferedFeeParams(client),
-        client.estimateContractGas({
-          account: address,
-          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-          abi: PERPS_ORDER_ROUTER_ABI,
-          functionName: 'executeOrder',
-          args,
-          value: updateFee,
-        }),
-      ])
 
       executeStage = 'submitting self-execute transaction to the wallet'
       const hash = await writeContractAsync({
@@ -612,10 +647,10 @@ export function usePerpsTrading() {
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'executeOrder',
-        args,
-        value: updateFee,
-        gas: bumpGas(estimatedGas),
-        ...fees,
+        args: preparedExecution.args,
+        value: preparedExecution.updateFee,
+        gas: bumpGas(preparedExecution.estimatedGas),
+        ...preparedExecution.fees,
       })
       executeStage = 'waiting for self-execute transaction confirmation'
       const receipt = assertSuccessfulReceipt(

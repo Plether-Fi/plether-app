@@ -65,6 +65,33 @@ const CLOSE_PREVIEW_COMPONENTS = [
   { name: 'maxLiabilityAfterUsdc', type: 'uint256' },
 ] as const
 
+const OPEN_PREVIEW_COMPONENTS = [
+  { name: 'valid', type: 'bool' },
+  { name: 'invalidReason', type: 'uint8' },
+  { name: 'failureCategory', type: 'uint8' },
+  { name: 'executionPrice', type: 'uint256' },
+  { name: 'sizeDelta', type: 'uint256' },
+  { name: 'notionalUsdc', type: 'uint256' },
+  { name: 'marginDeltaUsdc', type: 'uint256' },
+  { name: 'vpiUsdc', type: 'int256' },
+  { name: 'executionFeeUsdc', type: 'uint256' },
+  { name: 'tradeCostUsdc', type: 'int256' },
+  { name: 'poolRebatePayoutUsdc', type: 'uint256' },
+  { name: 'pendingCarryUsdc', type: 'uint256' },
+  { name: 'initialMarginRequirementUsdc', type: 'uint256' },
+  { name: 'maintenanceMarginUsdc', type: 'uint256' },
+  { name: 'postSize', type: 'uint256' },
+  { name: 'postMarginUsdc', type: 'uint256' },
+  { name: 'postEntryPrice', type: 'uint256' },
+  { name: 'postVpiAccrued', type: 'int256' },
+  { name: 'postUnrealizedPnlUsdc', type: 'int256' },
+  { name: 'postEquityUsdc', type: 'int256' },
+  { name: 'postHealthBps', type: 'uint256' },
+  { name: 'postLiquidatable', type: 'bool' },
+  { name: 'hasLiquidationPrice', type: 'bool' },
+  { name: 'liquidationPrice', type: 'uint256' },
+] as const
+
 const LIQUIDATION_PREVIEW_COMPONENTS = [
   { name: 'liquidatable', type: 'bool' },
   { name: 'oraclePrice', type: 'uint256' },
@@ -402,6 +429,35 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     type: 'function',
+    name: 'CAP_PRICE',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'isFadWindow',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'positions',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [
+      { name: 'size', type: 'uint256' },
+      { name: 'margin', type: 'uint256' },
+      { name: 'entryPrice', type: 'uint256' },
+      { name: 'maxProfitUsdc', type: 'uint256' },
+      { name: 'side', type: 'uint8' },
+      { name: 'lastUpdateTime', type: 'uint64' },
+      { name: 'vpiAccrued', type: 'int256' },
+    ],
+  },
+  {
+    type: 'function',
     name: 'executionFeeBps',
     stateMutability: 'view',
     inputs: [],
@@ -509,6 +565,26 @@ export const PERPS_PLETHER_ORACLE_ABI = [
 ] as const
 
 export const PERPS_CFD_ENGINE_LENS_ABI = [
+  {
+    type: 'function',
+    name: 'previewOpen',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'side', type: 'uint8' },
+      { name: 'sizeDelta', type: 'uint256' },
+      { name: 'marginDelta', type: 'uint256' },
+      { name: 'oraclePrice', type: 'uint256' },
+      { name: 'publishTime', type: 'uint64' },
+    ],
+    outputs: [
+      {
+        name: 'preview',
+        type: 'tuple',
+        components: OPEN_PREVIEW_COMPONENTS,
+      },
+    ],
+  },
   {
     type: 'function',
     name: 'previewOpenRevertCode',

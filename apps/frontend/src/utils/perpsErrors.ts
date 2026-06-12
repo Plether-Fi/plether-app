@@ -232,7 +232,7 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
 
   const zeroFeedId = feedId === '0x0000000000000000000000000000000000000000000000000000000000000000'
   if (zeroFeedId && ageSeconds <= maxStaleness) {
-    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestamp}); candidate publish time: ${publishLabel} (${publishTime}); decoded age: ${ageSeconds}s; staleness limit: ${maxStaleness}s. Retry self-execute with exact historical Hermes data; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
+    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestamp}); oracle max publish bound: ${publishLabel} (${publishTime}); decoded bound age: ${ageSeconds}s; staleness limit: ${maxStaleness}s. The app will retry with exact historical Hermes data when possible; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
   }
 
   if (ageSeconds <= maxStaleness) {
