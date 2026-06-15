@@ -17,9 +17,9 @@ export function Header() {
     <header className="border-b border-cyber-border-glow/30 bg-cyber-surface-dark py-4 will-change-transform shadow-lg shadow-cyber-border-glow/10">
       <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-10">
-          <Link to="/" className="flex items-center gap-2">
-            <img src="/icon.svg" alt="Plether" className="w-12 h-12 -my-2" />
-            <span className="text-xl font-semibold tracking-wide text-cyber-neon-green drop-shadow-[0_0_0px_var(--color-cyber-neon-green)] hover:drop-shadow-[0_0_8px_var(--color-cyber-neon-green)] transition-[filter] duration-300">Plether</span>
+          <Link to="/" className="flex items-center gap-2.5">
+            <img src="/logomark.svg" alt="Plether" className="h-8 w-8" />
+            <img src="/logotype.svg" alt="" aria-hidden="true" className="h-7 w-auto" />
           </Link>
 
           <nav className="hidden md:flex items-center gap-1">
