@@ -6,6 +6,7 @@ import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
+import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -15,6 +16,11 @@ function displayValue(value: string | undefined, isLoading: boolean): string {
 function usdcValue(value: string | undefined, isLoading: boolean): ReactNode {
   if (value) return <TokenAmount amount={value} />
   return isLoading ? '...' : '--'
+}
+
+function capacityTooltipValue(value: bigint | undefined, markPrice: bigint | undefined): string {
+  if (value === undefined) return '--'
+  return formatPerpsUsdc(dxyExposureFromContractNotional(value, markPrice) ?? value)
 }
 
 function formatMarkAge(ageSeconds: number): string {
@@ -58,31 +64,67 @@ export function Perps() {
   }, [nowSeconds, perpsMarket.lastMarkTime])
 
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
-    () => [
-      {
-        label: 'DXY price',
-        value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
-        freshness: perpsMarket.oracleFreshness,
-        freshnessTooltip: dxyFreshnessTooltip,
-      },
-      { label: '24h change', value: '--' },
-      { label: '24h volume', value: '--' },
-      {
-        label: 'Long open interest',
-        value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
-        tone: 'positive',
-      },
-      {
-        label: 'Short open interest',
-        value: usdcValue(perpsMarket.shortOpenInterest, perpsMarket.isLoading),
-        tone: 'negative',
-      },
-      {
-        label: 'Available liquidity',
-        value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
-      },
-      { label: 'Cost of carry', value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading) },
-    ],
+    () => {
+      const poolLiquidityTooltip = (
+        <div className="space-y-1 text-left">
+          <div className="flex min-w-48 items-center justify-between gap-4">
+            <span className="text-cyber-text-secondary">Long capacity</span>
+            <span className="font-semibold text-cyber-text-primary">
+              {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
+            </span>
+          </div>
+          <div className="flex min-w-48 items-center justify-between gap-4">
+            <span className="text-cyber-text-secondary">Short capacity</span>
+            <span className="font-semibold text-cyber-text-primary">
+              {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
+            </span>
+          </div>
+          <div className="flex min-w-48 items-center justify-between gap-4">
+            <span className="text-cyber-text-secondary">Minimum order size</span>
+            <span className="font-semibold text-cyber-text-primary">
+              {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
+            </span>
+          </div>
+          <div className="flex min-w-48 items-center justify-between gap-4">
+            <span className="text-cyber-text-secondary">Minimum new position</span>
+            <span className="font-semibold text-cyber-text-primary">
+              {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
+            </span>
+          </div>
+        </div>
+      )
+
+      return [
+        {
+          label: 'DXY price',
+          value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
+          freshness: perpsMarket.oracleFreshness,
+          freshnessTooltip: dxyFreshnessTooltip,
+        },
+        { label: '24h change', value: '--' },
+        { label: '24h volume', value: '--' },
+        {
+          label: 'Long open interest',
+          value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
+          tone: 'positive',
+        },
+        {
+          label: 'Short open interest',
+          value: usdcValue(perpsMarket.shortOpenInterest, perpsMarket.isLoading),
+          tone: 'negative',
+        },
+        {
+          label: 'Pool liquidity',
+          value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
+          tooltip: poolLiquidityTooltip,
+        },
+        {
+          label: 'Cost of carry',
+          value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
+          tooltip: 'Annualized cost of holding the position.',
+        },
+      ]
+    },
     [
       perpsMarket.availableLiquidity,
       perpsMarket.costOfCarry,
@@ -91,6 +133,11 @@ export function Perps() {
       perpsMarket.longOpenInterest,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
+      perpsMarket.raw.longOpenCapacityUsdc,
+      perpsMarket.raw.markPrice,
+      perpsMarket.raw.minOpenNotionalUsdc,
+      perpsMarket.raw.minNewPositionNotionalUsdc,
+      perpsMarket.raw.shortOpenCapacityUsdc,
       perpsMarket.shortOpenInterest,
     ]
   )
@@ -140,6 +187,7 @@ export function Perps() {
           longOpenCapacityUsdc={perpsMarket.raw.longOpenCapacityUsdc}
           shortOpenCapacityUsdc={perpsMarket.raw.shortOpenCapacityUsdc}
           minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
+          minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
           executionFeeBps={perpsMarket.raw.executionFeeBps}
           onAccountRefresh={() => {
             void perpsAccount.refetch()

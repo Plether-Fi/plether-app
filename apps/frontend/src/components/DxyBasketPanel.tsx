@@ -25,7 +25,7 @@ import {
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
-import { Alert, Skeleton } from './ui'
+import { Alert, Skeleton, Tooltip } from './ui'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -134,16 +134,13 @@ function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: numb
   const isFresh = ageSeconds <= COMPONENT_PRICE_FRESH_SECONDS
 
   return (
-    <span
-      className={`group relative h-2 w-2 shrink-0 rounded-full ${isFresh ? 'bg-cyber-neon-green' : 'bg-cyber-electric-fuchsia'}`}
-      aria-label={isFresh ? 'Price fresh' : 'Price stale'}
-      tabIndex={0}
-      title={tooltip}
-    >
-      <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-max max-w-56 -translate-x-1/2 border border-cyber-border-glow/30 bg-cyber-bg px-2.5 py-1.5 text-xs font-medium leading-4 text-cyber-text-primary shadow-lg shadow-cyber-border-glow/10 group-hover:block group-focus:block">
-        {tooltip}
-      </span>
-    </span>
+    <Tooltip content={tooltip} position="top">
+      <span
+        className={`h-2 w-2 shrink-0 rounded-full ${isFresh ? 'bg-cyber-neon-green' : 'bg-cyber-electric-fuchsia'}`}
+        aria-label={isFresh ? 'Price fresh' : 'Price stale'}
+        tabIndex={0}
+      />
+    </Tooltip>
   )
 }
 

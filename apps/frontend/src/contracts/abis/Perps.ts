@@ -324,6 +324,13 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'function',
+    name: 'minOpenNotionalUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'amount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'executeOrder',
     stateMutability: 'payable',
     inputs: [

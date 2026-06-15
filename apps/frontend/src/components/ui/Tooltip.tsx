@@ -1,4 +1,4 @@
-import { type ReactNode, useState } from 'react'
+import { type ReactNode } from 'react'
 
 interface TooltipProps {
   content: ReactNode
@@ -14,26 +14,19 @@ const positionStyles = {
 }
 
 export function Tooltip({ content, children, position = 'top' }: TooltipProps) {
-  const [isVisible, setIsVisible] = useState(false)
-
   return (
-    <div
-      className="relative inline-flex"
-      onMouseEnter={() => { setIsVisible(true); }}
-      onMouseLeave={() => { setIsVisible(false); }}
-    >
+    <div className="group/tooltip relative inline-flex">
       {children}
-      {isVisible && (
-        <div
-          className={`
-            absolute z-50 px-3 py-2 text-sm text-cyber-text-primary bg-cyber-surface-dark
-            border border-cyber-border-glow/50  shadow-lg shadow-cyber-border-glow/20 whitespace-nowrap
-            ${positionStyles[position]}
-          `}
-        >
-          {content}
-        </div>
-      )}
+      <div
+        className={`
+          pointer-events-none absolute z-[1000] hidden whitespace-nowrap border border-cyber-border-glow/50
+          bg-cyber-surface-dark px-3 py-2 text-sm text-cyber-text-primary shadow-lg shadow-cyber-border-glow/20
+          group-hover/tooltip:block group-focus-within/tooltip:block
+          ${positionStyles[position]}
+        `}
+      >
+        {content}
+      </div>
     </div>
   )
 }

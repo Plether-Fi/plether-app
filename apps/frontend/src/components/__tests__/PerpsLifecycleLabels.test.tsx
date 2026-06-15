@@ -100,6 +100,25 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Entry notional is the executed order size. DXY exposure is current displayed exposure.')).toBeInTheDocument()
   })
 
+  it('resets the review modal lifecycle when it closes', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="2 000"
+      />
+    )
+
+    expect(screen.getByText('Final Result')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+
+    expect(screen.getByText('Commit Preview')).toBeInTheDocument()
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+  })
+
   it('renders order and trade history tabs from live rows', () => {
     render(
       <PerpsAccountPanel
@@ -176,6 +195,25 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
 
     expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+  })
+
+  it('uses the engine new-position minimum when opening from zero', () => {
+    mockIsConnected = true
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialSize="104"
+        oraclePriceRaw={98434897n}
+        oraclePublishTime={1781267148}
+        minOpenNotionalUsdc={100000000n}
+        minNewPositionNotionalUsdc={1000000000n}
+      />
+    )
+
+    expect(screen.getByText('Minimum new position is 1 031.8 USDC.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
   it('explains when a pending full close already reserves the position', () => {

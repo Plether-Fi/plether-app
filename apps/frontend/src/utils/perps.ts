@@ -89,6 +89,20 @@ export function sizeDeltaToNotionalUsdc(sizeDelta: bigint | undefined, oraclePri
   return (sizeDelta * oraclePrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
 }
 
+export function dxyExposureFromContractNotional(
+  contractNotionalUsdc: bigint,
+  rawOraclePrice: bigint | undefined
+): bigint | undefined {
+  if (contractNotionalUsdc <= 0n) return 0n
+  const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
+  if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
+    return undefined
+  }
+
+  const sizeDelta = notionalUsdcToSizeDelta(contractNotionalUsdc, rawOraclePrice)
+  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
+}
+
 function applyBps(price: bigint, bps: number, mode: 'up' | 'down'): bigint {
   const bpsInt = BigInt(Math.round(bps * 100))
   const denominator = 10_000n

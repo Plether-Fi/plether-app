@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { formatUnits } from 'viem'
 import { useReadContracts } from 'wagmi'
-import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
+import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../components/PerpsMarketStatePanel'
@@ -86,9 +86,12 @@ function openCapacityUsdc({
     : 0n
 }
 
-function minOpenNotionalUsdc(minBountyUsdc: bigint | undefined, bountyBps: bigint | undefined): bigint | undefined {
+function minNewPositionNotionalUsdc(
+  minBountyUsdc: bigint | undefined,
+  bountyBps: bigint | undefined
+): bigint | undefined {
   if (minBountyUsdc === undefined || bountyBps === undefined || bountyBps === 0n) return undefined
-  return (minBountyUsdc * 10_000n) / bountyBps
+  return (minBountyUsdc * 10_000n + bountyBps - 1n) / bountyBps
 }
 
 function protocolPhaseToMarketPhase(
@@ -144,6 +147,12 @@ export function usePerpsMarket() {
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'executionFeeBps',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'minOpenNotionalUsdc',
+      },
     ],
     query: {
       refetchInterval: 15_000,
@@ -157,6 +166,7 @@ export function usePerpsMarket() {
     const bearSide = readResult(data, 3)
     const riskParams = readResult(data, 4)
     const executionFeeBps = readResult(data, 5) as bigint | undefined
+    const minOpenNotionalUsdc = readResult(data, 6) as bigint | undefined
 
     const markPrice = tupleValue(protocolStatus, 1, 'lastMarkPrice') as bigint | undefined
     const phaseValue = tupleValue(protocolStatus, 0, 'phase') as number | bigint | undefined
@@ -207,7 +217,8 @@ export function usePerpsMarket() {
         longOpenCapacityUsdc,
         shortOpenCapacityUsdc,
         maxSkewRatio,
-        minOpenNotionalUsdc: minOpenNotionalUsdc(minBountyUsdc, bountyBps),
+        minOpenNotionalUsdc,
+        minNewPositionNotionalUsdc: minNewPositionNotionalUsdc(minBountyUsdc, bountyBps),
         baseCarryBps,
         executionFeeBps,
       },

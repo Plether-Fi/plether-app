@@ -9,6 +9,7 @@ import { usePerpsTrading } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
   directionToPerpsSide,
+  dxyExposureFromContractNotional,
   formatDisplayDxyPrice,
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
@@ -128,6 +129,7 @@ interface PerpsTradeTicketProps {
   longOpenCapacityUsdc?: bigint
   shortOpenCapacityUsdc?: bigint
   minOpenNotionalUsdc?: bigint
+  minNewPositionNotionalUsdc?: bigint
   executionFeeBps?: bigint
   onAccountRefresh?: () => void
 }
@@ -367,6 +369,10 @@ function minBigInt(a: bigint, b: bigint): bigint {
   return a < b ? a : b
 }
 
+function maxBigInt(a: bigint, b: bigint): bigint {
+  return a > b ? a : b
+}
+
 function estimateOpenBountyUsdcRaw(notionalUsdc: bigint): bigint {
   if (notionalUsdc <= 0n) return 0n
   const rawBounty = (notionalUsdc * OPEN_BOUNTY_BPS_RAW) / 10_000n
@@ -427,17 +433,6 @@ function dxyExposureToSizeDelta(dxyExposureUsdc: bigint, rawOraclePrice: bigint 
   const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
   if (displayDxyPrice === undefined || displayDxyPrice <= 0n) return undefined
   return notionalUsdcToSizeDelta(dxyExposureUsdc, displayDxyPrice)
-}
-
-function dxyExposureFromContractNotional(contractNotionalUsdc: bigint, rawOraclePrice: bigint | undefined): bigint | undefined {
-  if (contractNotionalUsdc <= 0n) return 0n
-  const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
-  if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
-    return undefined
-  }
-
-  const sizeDelta = notionalUsdcToSizeDelta(contractNotionalUsdc, rawOraclePrice)
-  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
 }
 
 function TxHashActions({ hash }: { hash: string }) {
@@ -773,6 +768,7 @@ export function PerpsTradeTicket({
   longOpenCapacityUsdc,
   shortOpenCapacityUsdc,
   minOpenNotionalUsdc,
+  minNewPositionNotionalUsdc,
   executionFeeBps,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
@@ -1088,6 +1084,13 @@ export function PerpsTradeTicket({
   const minOpenDxyExposureUsdc = minOpenNotionalUsdc === undefined
     ? undefined
     : dxyExposureFromContractNotional(minOpenNotionalUsdc, oraclePriceRaw) ?? minOpenNotionalUsdc
+  const minNewPositionDxyExposureUsdc = minNewPositionNotionalUsdc === undefined
+    ? undefined
+    : dxyExposureFromContractNotional(minNewPositionNotionalUsdc, oraclePriceRaw) ?? minNewPositionNotionalUsdc
+  const isOpeningFromZero = !currentPosition?.exists && !isReducingCurrentPosition
+  const effectiveMinOpenDxyExposureUsdc = isOpeningFromZero
+    ? maxBigInt(minOpenDxyExposureUsdc ?? 0n, minNewPositionDxyExposureUsdc ?? 0n)
+    : minOpenDxyExposureUsdc
   const selectedOpenDxyCapacityUsdc = selectedOpenCapacityUsdc === undefined
     ? undefined
     : dxyExposureFromContractNotional(selectedOpenCapacityUsdc, oraclePriceRaw) ?? selectedOpenCapacityUsdc
@@ -1115,13 +1118,20 @@ export function PerpsTradeTicket({
       !isReducingCurrentPosition &&
       !isReduceOnly &&
       selectedOpenDxyCapacityUsdc !== undefined &&
-      minOpenDxyExposureUsdc !== undefined &&
-      selectedOpenDxyCapacityUsdc < minOpenDxyExposureUsdc
+      effectiveMinOpenDxyExposureUsdc !== undefined &&
+      selectedOpenDxyCapacityUsdc < effectiveMinOpenDxyExposureUsdc
     ) {
-      return `New ${directionLabel(direction)} opens are unavailable right now. Max DXY exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC, below the ${formatPerpsUsdc(minOpenDxyExposureUsdc)} USDC minimum. Add LP liquidity or loosen the skew cap before opening this side.`
+      const minimumLabel = isOpeningFromZero ? 'minimum new position' : 'minimum order size'
+      return `New ${directionLabel(direction)} opens are unavailable right now. Max DXY exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC, below the ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC ${minimumLabel}. Add LP liquidity or loosen the skew cap before opening this side.`
     }
-    if (!isReducingCurrentPosition && !isReduceOnly && minOpenDxyExposureUsdc !== undefined && dxyExposureUsdc < minOpenDxyExposureUsdc) {
-      return `Minimum DXY exposure is ${formatPerpsUsdc(minOpenDxyExposureUsdc)} USDC.`
+    if (
+      !isReducingCurrentPosition &&
+      !isReduceOnly &&
+      effectiveMinOpenDxyExposureUsdc !== undefined &&
+      dxyExposureUsdc < effectiveMinOpenDxyExposureUsdc
+    ) {
+      const minimumLabel = isOpeningFromZero ? 'Minimum new position' : 'Minimum order size'
+      return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC.`
     }
     if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityUsdc !== undefined && dxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
       return `Max ${directionLabel(direction)} DXY exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
@@ -1422,6 +1432,22 @@ export function PerpsTradeTicket({
     }
   }
 
+  function resetReviewLifecycle() {
+    setLifecycleState('preview')
+    setOrderId(undefined)
+    setCommitTxHash(undefined)
+    setExecuteTxHash(undefined)
+    setFinalExecutionPrice(undefined)
+    setCommittedSizeDelta(undefined)
+    setFlowError(undefined)
+    setPositionSnapshotAtCommit(undefined)
+  }
+
+  function closeReviewModal() {
+    resetReviewLifecycle()
+    setIsReviewOpen(false)
+  }
+
   return (
     <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
       <div className="space-y-5 px-5 py-4">
@@ -1654,9 +1680,7 @@ export function PerpsTradeTicket({
 
       <Modal
         isOpen={isReviewOpen}
-        onClose={() => {
-          setIsReviewOpen(false)
-        }}
+        onClose={closeReviewModal}
         headerContent={<OrderLifecycleSteps currentStep={currentLifecycleStep} />}
         showCloseButton={false}
         size="lg"
@@ -1728,9 +1752,7 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   variant="secondary"
-                  onClick={() => {
-                    setIsReviewOpen(false)
-                  }}
+                  onClick={closeReviewModal}
                 >
                   Cancel
                 </Button>
@@ -2042,10 +2064,7 @@ export function PerpsTradeTicket({
               <Button
                 className="w-full"
                 variant="secondary"
-                onClick={() => {
-                  setLifecycleState('preview')
-                  setIsReviewOpen(false)
-                }}
+                onClick={closeReviewModal}
               >
                 Done
               </Button>

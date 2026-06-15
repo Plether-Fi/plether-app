@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react'
-import { TokenAmount } from './ui'
+import { TokenAmount, Tooltip } from './ui'
 
 export interface PerpsInstrumentStat {
   label: string
@@ -12,6 +12,7 @@ export interface PerpsInstrumentStat {
   tone?: 'default' | 'positive' | 'negative'
   freshness?: 'fresh' | 'stale'
   freshnessTooltip?: string
+  tooltip?: ReactNode
 }
 
 export interface PerpsInstrumentPanelProps {
@@ -27,7 +28,7 @@ const DEFAULT_STATS: PerpsInstrumentStat[] = [
   { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
   { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
   { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
-  { label: 'Available liquidity', value: <TokenAmount amount="6.3M" /> },
+  { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
   { label: 'Cost of carry', value: '5.24%' },
 ]
 
@@ -57,18 +58,13 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
   return (
     <dd className={`mt-2 flex items-center gap-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>
       {stat.freshness ? (
-        <span
-          className={`group relative h-2 w-2 shrink-0 rounded-full bg-current ${freshnessToneClass(stat.freshness)}`}
-          aria-label={`Oracle ${stat.freshness}`}
-          tabIndex={0}
-          title={stat.freshnessTooltip ?? `Oracle ${stat.freshness}`}
-        >
-          {stat.freshnessTooltip ? (
-            <span className="pointer-events-none absolute bottom-full left-1/2 z-20 mb-2 hidden w-max max-w-56 -translate-x-1/2 border border-cyber-border-glow/30 bg-cyber-bg px-2.5 py-1.5 text-xs font-medium leading-4 text-cyber-text-primary shadow-lg shadow-cyber-border-glow/10 group-hover:block group-focus:block">
-              {stat.freshnessTooltip}
-            </span>
-          ) : null}
-        </span>
+        <Tooltip content={stat.freshnessTooltip ?? `Oracle ${stat.freshness}`} position="bottom">
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full bg-current ${freshnessToneClass(stat.freshness)}`}
+            aria-label={`Oracle ${stat.freshness}`}
+            tabIndex={0}
+          />
+        </Tooltip>
       ) : null}
       <span>{stat.value}</span>
     </dd>
@@ -82,7 +78,7 @@ export function PerpsInstrumentPanel({
   stats = DEFAULT_STATS,
 }: PerpsInstrumentPanelProps) {
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-visible">
       <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">
         <div className="flex min-w-[220px] shrink-0 items-center gap-4">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center border border-cyber-bright-blue/50 bg-cyber-bg/50 text-cyber-bright-blue">
@@ -99,7 +95,20 @@ export function PerpsInstrumentPanel({
         <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-7">
           {stats.map((stat) => (
             <div key={stat.label} className="min-w-0">
-              <dt className="text-xs font-medium uppercase text-cyber-text-secondary">{stat.label}</dt>
+              <dt className="flex items-center gap-1.5 text-xs font-medium uppercase text-cyber-text-secondary">
+                <span>{stat.label}</span>
+                {stat.tooltip ? (
+                  <Tooltip content={stat.tooltip} position="bottom">
+                    <span
+                      className="material-symbols-outlined cursor-help text-sm leading-none text-cyber-text-secondary/80 transition-colors hover:text-cyber-bright-blue"
+                      aria-label={`${stat.label} details`}
+                      tabIndex={0}
+                    >
+                      info
+                    </span>
+                  </Tooltip>
+                ) : null}
+              </dt>
               <StatValue stat={stat} />
             </div>
           ))}
