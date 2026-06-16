@@ -11,10 +11,14 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantStyles: Record<ButtonVariant, string> = {
-  primary: 'bg-cyber-neon-green hover:bg-cyber-neon-green/80 text-cyber-bg shadow-lg shadow-cyber-neon-green/30',
-  secondary: 'bg-cyber-surface-light hover:bg-cyber-surface-light/80 text-cyber-text-primary border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50',
-  danger: 'bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary shadow-lg shadow-cyber-electric-fuchsia/30',
-  ghost: 'bg-transparent hover:bg-cyber-surface-light text-cyber-text-secondary hover:text-cyber-bright-blue',
+  primary:
+    'border border-cyber-neon-green bg-cyber-neon-green text-cyber-bg enabled:hover:border-[#00CC77] enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4',
+  secondary:
+    'border border-cyber-border-glow/30 bg-cyber-surface-light text-cyber-text-primary enabled:hover:border-[#FFAB96] enabled:hover:bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4',
+  danger:
+    'border border-cyber-electric-fuchsia bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:border-[#CC00AA] enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4',
+  ghost:
+    'border border-transparent bg-transparent text-cyber-text-secondary enabled:hover:bg-[#3B212D] enabled:hover:text-cyber-text-primary enabled:hover:underline enabled:hover:underline-offset-4',
 }
 
 const sizeStyles: Record<ButtonSize, string> = {
@@ -38,7 +42,7 @@ export function Button({
       className={`
         inline-flex items-center justify-center gap-2 font-medium cursor-pointer
         transition-all duration-200
-        disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none
+        disabled:opacity-50 disabled:cursor-not-allowed
         ${variantStyles[variant]}
         ${sizeStyles[size]}
         ${className}

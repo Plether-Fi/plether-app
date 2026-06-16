@@ -66,37 +66,49 @@ export function Perps() {
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
     () => {
       const poolLiquidityTooltip = (
-        <div className="space-y-1 text-left">
-          <div className="flex min-w-48 items-center justify-between gap-4">
-            <span className="text-cyber-text-secondary">Long capacity</span>
-            <span className="font-semibold text-cyber-text-primary">
+        <div className="w-full space-y-2 text-left">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+            <span className="min-w-0 text-cyber-text-secondary">Long capacity</span>
+            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
               {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
-          <div className="flex min-w-48 items-center justify-between gap-4">
-            <span className="text-cyber-text-secondary">Short capacity</span>
-            <span className="font-semibold text-cyber-text-primary">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+            <span className="min-w-0 text-cyber-text-secondary">Short capacity</span>
+            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
               {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
-          <div className="flex min-w-48 items-center justify-between gap-4">
-            <span className="text-cyber-text-secondary">Minimum order size</span>
-            <span className="font-semibold text-cyber-text-primary">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+            <span className="min-w-0 text-cyber-text-secondary">Minimum order size</span>
+            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
               {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
-          <div className="flex min-w-48 items-center justify-between gap-4">
-            <span className="text-cyber-text-secondary">Minimum new position</span>
-            <span className="font-semibold text-cyber-text-primary">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
+            <span className="min-w-0 text-cyber-text-secondary">Minimum new position</span>
+            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
               {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
         </div>
       )
+      const costOfCarryTooltip = (
+        <div className="w-full space-y-3 text-left leading-5">
+          <p>
+            Annualized max carry paid by traders to LPs for the part of a position&apos;s worst-case
+            payout backed by pool capital.
+          </p>
+          <p>
+            This is not a funding rate; both sides can pay carry at the same time. The actual
+            USDC amount depends on borrow base, side utilization, and elapsed time.
+          </p>
+        </div>
+      )
 
       return [
         {
-          label: 'DXY price',
+          label: 'plDXY Perp price',
           value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
           freshness: perpsMarket.oracleFreshness,
           freshnessTooltip: dxyFreshnessTooltip,
@@ -117,11 +129,15 @@ export function Perps() {
           label: 'Pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           tooltip: poolLiquidityTooltip,
+          tooltipClassName: 'w-[400px] whitespace-normal p-4',
+          tooltipPosition: 'left',
         },
         {
           label: 'Cost of carry',
           value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
-          tooltip: 'Annualized cost of holding the position.',
+          tooltip: costOfCarryTooltip,
+          tooltipClassName: 'w-[520px] whitespace-normal p-4',
+          tooltipPosition: 'left',
         },
       ]
     },

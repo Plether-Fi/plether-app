@@ -46,6 +46,7 @@ export interface PerpsPosition {
   dxyExposureUsdc?: bigint
   displayDxyPrice?: bigint
   liquidationPrice?: bigint
+  pendingCarryUsdc?: bigint
 }
 
 function readResult(data: readonly ContractResult[] | undefined, index: number): unknown {
@@ -129,6 +130,31 @@ function readBigInt(value: unknown, index: number, key: string): bigint | undefi
   if (typeof raw === 'number') return BigInt(raw)
   if (typeof raw === 'string') return BigInt(raw)
   return undefined
+}
+
+function derivePendingCarryUsdc({
+  terminalReachableUsdc,
+  unrealizedPnlUsdc,
+  netEquityUsdc,
+  vpiAccrued,
+}: {
+  terminalReachableUsdc?: bigint
+  unrealizedPnlUsdc?: bigint
+  netEquityUsdc?: bigint
+  vpiAccrued?: bigint
+}): bigint | undefined {
+  if (
+    terminalReachableUsdc === undefined ||
+    unrealizedPnlUsdc === undefined ||
+    netEquityUsdc === undefined
+  ) {
+    return undefined
+  }
+
+  const vpiClawbackUsdc = vpiAccrued !== undefined && vpiAccrued < 0n ? -vpiAccrued : 0n
+  const pendingCarryUsdc = terminalReachableUsdc - vpiClawbackUsdc + unrealizedPnlUsdc - netEquityUsdc
+
+  return pendingCarryUsdc > 0n ? pendingCarryUsdc : 0n
 }
 
 function isLiquidatableAtPrice({
@@ -373,10 +399,18 @@ export function usePerpsAccount(markPrice?: bigint) {
     const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
     const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'terminalReachableUsdc')
+    const snapshotUnrealizedPnlUsdc = readBigInt(accountLedgerSnapshot, 20, 'unrealizedPnlUsdc')
+    const netEquityUsdc = readBigInt(accountLedgerSnapshot, 21, 'netEquityUsdc')
     const maintenanceMarginBps = isFadWindow
       ? readBigInt(riskParams, 4, 'fadMarginBps')
       : readBigInt(riskParams, 2, 'maintMarginBps')
     const vpiAccrued = readBigInt(enginePosition, 6, 'vpiAccrued')
+    const pendingCarryUsdc = derivePendingCarryUsdc({
+      terminalReachableUsdc,
+      unrealizedPnlUsdc: snapshotUnrealizedPnlUsdc,
+      netEquityUsdc,
+      vpiAccrued,
+    })
     const liquidationPrice = position?.exists
       ? findLiquidationPrice({
           capPrice,
@@ -390,7 +424,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       : undefined
     const positionWithLiquidationPrice = position === undefined
       ? undefined
-      : { ...position, liquidationPrice }
+      : { ...position, liquidationPrice, pendingCarryUsdc }
     const pendingOrders = basicPendingOrders.map((order, index) => {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
       const expiryTime = commitTime !== undefined && maxOrderAge !== undefined

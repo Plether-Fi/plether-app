@@ -10,7 +10,7 @@ const navLinks = [
 const colorStyles: Record<string, { active: string; hover: string }> = {
   'cyber-bright-blue': {
     active: 'text-cyber-bright-blue bg-cyber-bright-blue/10',
-    hover: 'hover:text-cyber-bright-blue',
+    hover: 'hover:text-[#FFAB96]',
   },
   'cyber-electric-fuchsia': {
     active: 'text-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10',
@@ -26,7 +26,7 @@ export function MobileNav() {
   const location = useLocation()
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-cyber-surface-dark border-t border-cyber-border-glow/30 safe-area-bottom shadow-lg shadow-cyber-border-glow/10">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-cyber-surface-dark border-t border-cyber-border-glow/30 safe-area-bottom">
       <div className="flex items-center justify-around h-16">
         {navLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path ||

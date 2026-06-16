@@ -49,7 +49,7 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = false
   })
 
-  it('distinguishes DXY exposure from contract and entry notionals', () => {
+  it('distinguishes plDXY Perp exposure from contract and entry notionals', () => {
     render(
       <>
         <PerpsTradeTicket
@@ -73,22 +73,24 @@ describe('perps lifecycle labels', () => {
             estimatedNotionalUsdc: 1999920000n,
             entryNotionalUsdc: 2000000000n,
             dxyExposureUsdc: 2069380000n,
+            pendingCarryUsdc: 1250000n,
           }}
         />
       </>
     )
 
-    expect(screen.getAllByText('DXY exposure').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Contract notional').length).toBeGreaterThan(0)
+    expect(screen.getByText('Trade executed at 1.0089 USDC')).toBeInTheDocument()
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const finalResultQueries = within(finalResult!)
-    expect(finalResultQueries.getByText('Target DXY exposure')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Execution DXY exposure')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Target plDXY Perp exposure')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Execution plDXY Perp exposure')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Keeper bounty')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Target DXY exposure is what you submitted. Execution DXY exposure is the committed size valued with the displayed DXY price at reveal.')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at reveal.')).toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated keeper bounty')).not.toBeInTheDocument()
 
@@ -97,7 +99,9 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('1.0170')).toBeInTheDocument()
     expect(screen.queryByText('0.9830')).not.toBeInTheDocument()
     expect(screen.getAllByText('Unrealized PnL').length).toBeGreaterThan(0)
-    expect(screen.getByText('Entry notional is the executed order size. DXY exposure is current displayed exposure.')).toBeInTheDocument()
+    expect(screen.getByText('Cost of carry')).toBeInTheDocument()
+    expect(screen.getByText('1.25')).toBeInTheDocument()
+    expect(screen.getByText('Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure.')).toBeInTheDocument()
   })
 
   it('resets the review modal lifecycle when it closes', () => {
@@ -127,7 +131,7 @@ describe('perps lifecycle labels', () => {
           {
             orderId: 30n,
             time: '10 Jun, 14:05',
-            market: 'DXY Perp',
+            market: 'plDXY Perp',
             side: 'Long',
             type: 'Open',
             price: '1.0170',
@@ -140,7 +144,7 @@ describe('perps lifecycle labels', () => {
         tradeHistory={[
           {
             time: '10 Jun, 14:06',
-            market: 'DXY Perp',
+            market: 'plDXY Perp',
             side: 'Open Long',
             price: '1.0170',
             size: '1 999.67',
@@ -164,7 +168,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('1 999.67')).toBeInTheDocument()
   })
 
-  it('fills current position and max with exact DXY exposure instead of rounded display value', () => {
+  it('fills current position and max with exact plDXY Perp exposure instead of rounded display value', () => {
     render(
       <PerpsTradeTicket
         initialDirection="short"
@@ -195,6 +199,44 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
 
     expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+  })
+
+  it('shows resulting position leverage in the margin action modal', () => {
+    mockIsConnected = true
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        walletUsdcRaw={1000000000n}
+        portfolioValueRaw={1000000000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 0n,
+          entryPrice: 98300000n,
+          marginUsdc: 400000000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 0n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 2000000000n,
+          entryNotionalUsdc: 2000000000n,
+          dxyExposureUsdc: 2069380000n,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+
+    expect(screen.getByText('Deposit Margin')).toBeInTheDocument()
+    expect(screen.getByText('Position margin')).toBeInTheDocument()
+    expect(screen.getByText(/Deposit and withdraw change free margin only/i)).toBeInTheDocument()
+    expect(screen.queryByText('Current leverage')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByDisplayValue(''), { target: { value: '500' } })
+
+    expect(screen.queryByText('Resulting leverage')).not.toBeInTheDocument()
+    expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
   })
 
   it('uses the engine new-position minimum when opening from zero', () => {
@@ -259,7 +301,7 @@ describe('perps lifecycle labels', () => {
     )
 
     expect(screen.getByText(/Order #33 is already closing the full current position/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Review Short' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Max:/ })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Max:/ })).toHaveTextContent('Max: 0')
 

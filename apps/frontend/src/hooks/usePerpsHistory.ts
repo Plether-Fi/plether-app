@@ -233,7 +233,7 @@ export function usePerpsHistory(markPrice?: bigint) {
             return {
               orderId: row.orderId,
               time: shortTime(blockTimestamps.get(blockNumber)),
-              market: 'DXY Perp',
+              market: 'plDXY Perp',
               side: perpsSideLabel(row.side),
               type: orderKind(row, trade),
               price: row.executionPrice ? formatDisplayDxyPrice(row.executionPrice) : trade?.price ? formatDisplayDxyPrice(trade.price) : '--',
@@ -248,7 +248,7 @@ export function usePerpsHistory(markPrice?: bigint) {
           .slice(0, 30)
           .map((trade) => ({
             time: shortTime(blockTimestamps.get(trade.blockNumber)),
-            market: 'DXY Perp',
+            market: 'plDXY Perp',
             side: `${trade.kind} ${perpsSideLabel(trade.side)}`,
             price: formatDisplayDxyPrice(trade.price),
             size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(trade.sizeDelta, trade.price ?? markPrice)),

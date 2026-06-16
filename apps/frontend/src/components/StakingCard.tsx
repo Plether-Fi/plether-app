@@ -74,7 +74,6 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
   const isBear = side === 'BEAR'
   const textColor = isBear ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
   const bgColor = isBear ? 'bg-cyber-electric-fuchsia' : 'bg-cyber-neon-green'
-  const shadowColor = isBear ? 'shadow-cyber-electric-fuchsia' : 'shadow-cyber-neon-green'
 
   const balance = mode === 'stake' ? tokenBalance : stakedBalance
   const insufficientBalance = amountBigInt > balance
@@ -95,7 +94,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
     isStakePending || isUnstakePending || insufficientBalance
 
   return (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg overflow-hidden">
+    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
       <div className={`px-6 py-4 border-b border-cyber-border-glow/30 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}>
         <div className="flex items-center gap-3">
           <TokenIcon side={side} />
@@ -119,20 +118,20 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         <div className="bg-cyber-surface-light p-1 flex text-sm font-medium border border-cyber-border-glow/30">
           <button
             onClick={() => { setMode('stake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all cursor-pointer ${
+            className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'stake'
-                ? `bg-cyber-surface-dark ${textColor} shadow-sm ${shadowColor}/10 border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                ? `bg-cyber-surface-dark ${textColor} border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >
             Stake
           </button>
           <button
             onClick={() => { setMode('unstake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 transition-all cursor-pointer ${
+            className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'unstake'
-                ? `bg-cyber-surface-dark ${textColor} shadow-sm ${shadowColor}/10 border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                ? `bg-cyber-surface-dark ${textColor} border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >
             Unstake
@@ -160,7 +159,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         <button
           onClick={() => { handleAction() }}
           disabled={isDisabled}
-          className={`w-full ${bgColor} hover:opacity-90 ${isBear ? 'text-cyber-text-primary' : 'text-cyber-bg'} font-semibold py-4 px-6 shadow-lg ${shadowColor}/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none`}
+          className={`w-full ${bgColor} ${isBear ? 'text-cyber-text-primary enabled:hover:bg-[#CC00AA]' : 'text-cyber-bg enabled:hover:bg-[#00CC77]'} px-6 py-4 text-lg font-semibold transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50`}
         >
           {getButtonText()}
         </button>

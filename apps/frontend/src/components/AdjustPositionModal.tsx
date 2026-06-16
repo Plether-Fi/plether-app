@@ -89,7 +89,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
             className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'add'
                 ? 'bg-cyber-neon-green/20 text-cyber-neon-green border border-cyber-neon-green/50'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue'
+                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-[#FFAB96]'
             }`}
           >
             Add Collateral
@@ -99,7 +99,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
             className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'remove'
                 ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border border-cyber-electric-fuchsia/50'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-cyber-bright-blue'
+                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-[#FFAB96]'
             }`}
           >
             Remove
@@ -127,7 +127,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
               value={amount}
               onChange={(e) => { setAmount(e.target.value); }}
               placeholder="0.00"
-              className="w-full bg-cyber-surface-light border border-cyber-border-glow/30 py-3 pl-4 pr-24 text-lg font-medium text-cyber-text-primary focus:ring-1 focus:ring-cyber-bright-blue focus:border-cyber-bright-blue outline-none"
+              className="w-full bg-cyber-bg border border-cyber-border-glow/30 py-3 pl-4 pr-24 text-lg font-medium text-cyber-text-primary focus:border-[#FFAB96] outline-none"
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2">
               <span className="font-medium text-cyber-text-secondary">
@@ -151,7 +151,7 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
         <button
           onClick={handleConfirm}
           disabled={isDisabled}
-          className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-3 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full bg-cyber-neon-green px-6 py-3 font-semibold text-cyber-bg transition-colors enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {getButtonText()}
         </button>

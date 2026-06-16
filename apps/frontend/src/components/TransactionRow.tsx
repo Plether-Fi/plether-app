@@ -82,7 +82,7 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
   const decimals = transaction.tokenSymbol === 'USDC' ? 6 : 18
 
   return (
-    <div className="grid grid-cols-[1fr_7rem_7rem_14rem_5rem] items-center gap-x-4 px-6 py-4 hover:bg-cyber-surface-light/50 transition-colors">
+    <div className="grid grid-cols-[1fr_7rem_7rem_14rem_5rem] items-center gap-x-4 px-6 py-4 hover:bg-[#3B212D] transition-colors">
       <div className="flex items-center gap-4">
         <div className={`w-10 h-10 ${getIconBg(transaction.type)} flex items-center justify-center`}>
           <span className={`material-symbols-outlined ${getIconColor(transaction.type)}`}>
@@ -123,7 +123,7 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
         href={getExplorerTxUrl(chainId, transaction.hash)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-sm text-cyber-bright-blue hover:text-cyber-bright-blue/80 inline-flex items-center gap-1"
+        className="text-sm text-cyber-bright-blue hover:text-[#FFAB96]/80 inline-flex items-center gap-1"
       >
         {truncatedHash}
         <span className="material-symbols-outlined text-sm">open_in_new</span>

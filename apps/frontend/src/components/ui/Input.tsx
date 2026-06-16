@@ -18,10 +18,10 @@ export const Input = ({ ref, label, error, rightElement, className = '', ...prop
           <input
             ref={ref}
             className={`
-              w-full px-4 py-3 bg-cyber-surface-light border  text-cyber-text-primary
-              placeholder-cyber-text-secondary/50 focus:outline-none focus:ring-1
-              focus:ring-cyber-bright-blue focus:border-cyber-bright-blue
-              transition-all shadow-sm shadow-cyber-border-glow/10
+              w-full px-4 py-3 bg-cyber-bg border  text-cyber-text-primary
+              placeholder-cyber-text-secondary/50 focus:outline-none
+              focus:border-[#FFAB96]
+              transition-all
               ${error ? 'border-cyber-electric-fuchsia' : 'border-cyber-border-glow/30'}
               ${rightElement ? 'pr-20' : ''}
               ${className}

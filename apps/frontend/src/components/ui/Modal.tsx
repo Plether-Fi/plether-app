@@ -53,7 +53,7 @@ export function Modal({
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       {/* Backdrop */}
       <div
-        className="absolute inset-0 bg-cyber-bg/80 backdrop-blur-sm"
+        className="absolute inset-0 cursor-pointer bg-cyber-bg"
         onClick={onClose}
       />
 
@@ -62,7 +62,6 @@ export function Modal({
         className={`
           relative w-full ${sizeStyles[size]} mx-4
           bg-cyber-surface-dark  border border-cyber-border-glow/50
-          shadow-2xl shadow-cyber-border-glow/20 animate-in fade-in zoom-in-95 duration-200
         `}
       >
         {(title || headerContent) && (
@@ -73,7 +72,7 @@ export function Modal({
                 {showCloseButton ? (
                   <button
                     onClick={onClose}
-                    className="text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
+                    className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
@@ -82,7 +81,7 @@ export function Modal({
             ) : showCloseButton ? (
               <button
                 onClick={onClose}
-                className="absolute right-4 top-3 text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
+                className="absolute right-4 top-3 text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>

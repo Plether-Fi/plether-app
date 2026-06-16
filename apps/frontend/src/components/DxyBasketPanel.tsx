@@ -29,6 +29,9 @@ import { Alert, Skeleton, Tooltip } from './ui'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
+const CHART_GRID_COLOR = 'rgba(255, 171, 150, 0.16)'
+const CHART_AXIS_COLOR = 'rgba(255, 171, 150, 0.32)'
+const CHART_TEXT_COLOR = '#D9CCD3'
 const COMPONENT_PRICE_FRESH_SECONDS = 10 * 60
 
 export interface ChartPoint {
@@ -199,37 +202,37 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
       height: CHART_HEIGHT,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#A6B3D9',
+        textColor: CHART_TEXT_COLOR,
         fontFamily: 'Uncut Sans, ui-sans-serif, system-ui, sans-serif',
         fontSize: 12,
       },
       grid: {
-        vertLines: { color: 'rgba(74, 0, 255, 0.1)' },
-        horzLines: { color: 'rgba(74, 0, 255, 0.18)' },
+        vertLines: { color: CHART_GRID_COLOR },
+        horzLines: { color: CHART_GRID_COLOR },
       },
       crosshair: {
         mode: CrosshairMode.Normal,
         vertLine: {
-          color: 'rgba(0, 204, 255, 0.48)',
-          labelBackgroundColor: '#00CCFF',
+          color: 'rgba(255, 171, 150, 0.48)',
+          labelBackgroundColor: '#FFAB96',
         },
         horzLine: {
-          color: 'rgba(0, 204, 255, 0.28)',
-          labelBackgroundColor: '#00CCFF',
+          color: 'rgba(255, 171, 150, 0.28)',
+          labelBackgroundColor: '#FFAB96',
         },
       },
       localization: {
         priceFormatter: formatPrice,
       },
       rightPriceScale: {
-        borderColor: 'rgba(74, 0, 255, 0.28)',
+        borderColor: CHART_AXIS_COLOR,
         scaleMargins: {
           top: 0.14,
           bottom: 0.12,
         },
       },
       timeScale: {
-        borderColor: 'rgba(74, 0, 255, 0.28)',
+        borderColor: CHART_AXIS_COLOR,
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 4,
@@ -323,7 +326,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
     <div
       className="relative h-[320px] w-full overflow-hidden"
       role="img"
-      aria-label="DXY price performance chart"
+      aria-label="plDXY Perp price performance chart"
     >
       <div ref={containerRef} className="h-full w-full" />
     </div>
@@ -390,12 +393,12 @@ export function DxyBasketPanelView({
   }, [])
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
       <div className="px-5 py-4 border-b border-cyber-border-glow/20 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-2 text-cyber-text-secondary text-sm">
             <span className="material-symbols-outlined text-base text-cyber-bright-blue">show_chart</span>
-            <span>DXY Price</span>
+            <span>plDXY Perp Price</span>
           </div>
           <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
             {isLoading ? (
@@ -411,17 +414,17 @@ export function DxyBasketPanelView({
           </div>
         </div>
 
-        <div className="inline-grid grid-cols-4 border border-cyber-border-glow/30 bg-cyber-bg/50 w-fit">
+        <div className="inline-grid grid-cols-4 border border-cyber-border-glow/30 bg-cyber-bg w-fit">
           {DXY_BASKET_CHART_INTERVALS.map((item) => (
             <button
               key={item.value}
               type="button"
               aria-label={item.ariaLabel}
               aria-pressed={chartInterval === item.value}
-              className={`px-4 py-2 text-sm font-semibold transition-colors ${
+              className={`border px-4 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                 chartInterval === item.value
-                  ? 'bg-cyber-bright-blue text-cyber-bg'
-                  : 'text-cyber-text-secondary hover:text-cyber-text-primary hover:bg-cyber-surface-light/70'
+                  ? 'border-[#FFAB96] bg-[#FFAB96] text-cyber-bg'
+                  : 'border-transparent text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
               }`}
               onClick={() => {
                 onChartIntervalChange(item.value)
@@ -455,7 +458,7 @@ export function DxyBasketPanelView({
 
         <div className="mt-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
           {latestComponents.map((component) => (
-            <div key={component.feedId} className="border border-cyber-border-glow/20 bg-cyber-bg/35 px-3 py-2 min-h-[74px]">
+            <div key={component.feedId} className="border border-cyber-border-glow/20 bg-cyber-bg px-3 py-2 min-h-[74px]">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />

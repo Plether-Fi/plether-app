@@ -13,9 +13,9 @@ const sizeStyles: Record<TokenIconSize, string> = {
 }
 
 const colorStyles: Record<TokenSide, string> = {
-  BEAR: 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia shadow-cyber-electric-fuchsia/10',
-  BULL: 'bg-cyber-neon-green/20 text-cyber-neon-green shadow-cyber-neon-green/10',
-  USDC: 'bg-cyber-bright-blue/20 text-cyber-bright-blue shadow-cyber-bright-blue/10',
+  BEAR: 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia',
+  BULL: 'bg-cyber-neon-green/20 text-cyber-neon-green',
+  USDC: 'bg-cyber-bright-blue/20 text-cyber-bright-blue',
 }
 
 const labels: Record<TokenSide, string> = {
@@ -28,7 +28,7 @@ export function TokenIcon({ side, size = 'md' }: TokenIconProps) {
   return (
     <div
       className={`
-         flex items-center justify-center font-bold shadow-md
+         flex items-center justify-center font-bold
         ${sizeStyles[size]}
         ${colorStyles[side]}
       `}

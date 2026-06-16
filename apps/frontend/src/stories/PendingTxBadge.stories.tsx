@@ -26,7 +26,7 @@ function MockPendingBadge({ count }: MockPendingBadgeProps) {
   if (count === 0) return <p className="text-cyber-text-secondary text-sm">No pending transactions</p>
 
   return (
-    <div className="flex items-center gap-2 px-3 py-1.5 bg-cyber-bright-blue/20 border border-cyber-bright-blue/50 shadow-sm shadow-cyber-bright-blue/20">
+    <div className="flex items-center gap-2 px-3 py-1.5 bg-cyber-bright-blue/20 border border-cyber-bright-blue/50">
       <div className="w-4 h-4 relative">
         <div className="absolute inset-0 border-2 border-cyber-bright-blue/30 border-t-cyber-bright-blue animate-spin" />
       </div>

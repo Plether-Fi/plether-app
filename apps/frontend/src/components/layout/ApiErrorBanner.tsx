@@ -30,7 +30,7 @@ export function ApiErrorBanner() {
         </p>
         <button
           onClick={() => { window.location.reload() }}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-cyber-warning-text/20 hover:bg-cyber-warning-text/30 text-cyber-warning-text text-sm font-medium transition-colors"
+          className="flex items-center gap-1.5 border border-cyber-warning-text/50 bg-cyber-warning-text/20 px-3 py-1.5 text-sm font-medium text-cyber-warning-text transition-colors hover:bg-cyber-warning-text/30 hover:underline hover:underline-offset-4"
         >
           <span className="material-symbols-outlined text-base">refresh</span>
           Refresh

@@ -424,7 +424,7 @@ export function usePerpsTrading() {
         throw new Error('Order size must be greater than zero')
       }
       if (oraclePrice <= 0n) {
-        throw new Error('DXY price is not available')
+        throw new Error('plDXY Perp price is not available')
       }
 
       const side = directionToPerpsSide(direction)

@@ -24,7 +24,7 @@ export function WrongNetworkBanner() {
         <button
           onClick={() => { switchChain({ chainId: arbitrumSepolia.id }) }}
           disabled={isPending}
-          className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-cyber-electric-fuchsia/20"
+          className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isPending ? (
             <>

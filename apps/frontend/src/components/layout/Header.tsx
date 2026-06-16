@@ -14,10 +14,10 @@ export function Header() {
   const location = useLocation()
 
   return (
-    <header className="border-b border-cyber-border-glow/30 bg-cyber-surface-dark py-4 will-change-transform shadow-lg shadow-cyber-border-glow/10">
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center justify-between">
+    <header className="border-b border-cyber-border-glow/30 bg-cyber-surface-dark py-4">
+      <div className="w-full px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-10">
-          <Link to="/" className="flex items-center gap-2.5">
+          <Link to="/" className="flex items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
             <img src="/logomark.svg" alt="Plether" className="h-8 w-8" />
             <img src="/logotype.svg" alt="" aria-hidden="true" className="h-7 w-auto" />
           </Link>
@@ -31,11 +31,11 @@ export function Header() {
                   key={path}
                   to={path}
                   className={`
-                    px-4 py-2  text-sm font-semibold transition-colors
+                    border px-4 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4
                     ${
                       isActive
-                        ? 'bg-cyber-surface-light text-cyber-neon-green border border-cyber-neon-green/50 shadow-md shadow-cyber-neon-green/10'
-                        : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                        ? 'border-[#FF572D] bg-[#FF572D] text-[#FFF5F9]'
+                        : 'border-transparent text-cyber-text-secondary hover:border-[#FF572D]/50 hover:bg-[#FF572D]/15 hover:text-[#FFF5F9]'
                     }
                   `}
                 >

@@ -11,6 +11,7 @@ import {
   directionToPerpsSide,
   dxyExposureFromContractNotional,
   formatDisplayDxyPrice,
+  formatPerpsNumber,
   formatSignedPerpsUsdc,
   formatPerpsUsdc,
   getPerpsTargetPrice,
@@ -26,7 +27,7 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
-import { Button, Input, Modal, TokenAmount, TokenLabel } from './ui'
+import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -141,6 +142,9 @@ const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
 const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
+const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
+const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
+const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
 const EXECUTION_FEE_BPS = 4
 const USDC_UNIT = 1_000_000n
 const OPEN_BOUNTY_BPS_RAW = 1n
@@ -148,6 +152,7 @@ const MIN_OPEN_BOUNTY_USDC_RAW = 10_000n
 const MAX_OPEN_BOUNTY_USDC_RAW = 200_000n
 const CLOSE_BOUNTY_USDC_RAW = 200_000n
 const SUMMARY_CLOSE_DUST_USDC_RAW = 10_000n
+const ORACLE_PRICE_FRESH_SECONDS = 60
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
 
@@ -342,6 +347,11 @@ function formatLeverage(value: number): string {
   return `${value.toString()}x`
 }
 
+function formatLeverageRaw(notionalUsdc: bigint | undefined, marginUsdc: bigint | undefined): string {
+  if (notionalUsdc === undefined || marginUsdc === undefined || marginUsdc <= 0n) return '--'
+  return `${formatPerpsNumber(Number(notionalUsdc) / Number(marginUsdc), 2)}x`
+}
+
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'now'
 
@@ -405,7 +415,7 @@ function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigi
 }
 
 function directionLabel(direction: Direction): string {
-  return direction === 'long' ? 'Long DXY' : 'Short DXY'
+  return direction === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
 }
 
 function OrderSummaryRawAmount({ value }: { value: bigint }) {
@@ -420,6 +430,53 @@ function formatOptionalPrice(value: number | null | undefined): string {
   if (value === null) return 'Market'
   if (value === undefined || !Number.isFinite(value)) return '--'
   return value.toFixed(4)
+}
+
+function formatOracleAge(ageSeconds: number): string {
+  if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
+  if (ageSeconds < 60) return `${ageSeconds}s ago`
+
+  const minutes = Math.floor(ageSeconds / 60)
+  const seconds = ageSeconds % 60
+  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+
+  const hours = Math.floor(minutes / 60)
+  const remainingMinutes = minutes % 60
+  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+}
+
+function DxyPricePreviewValue({
+  value,
+  publishTime,
+  nowSeconds,
+}: {
+  value: ReactNode
+  publishTime?: number
+  nowSeconds: number
+}) {
+  const ageSeconds = publishTime === undefined ? undefined : Math.max(0, nowSeconds - publishTime)
+  const freshness = ageSeconds === undefined ? undefined : ageSeconds <= ORACLE_PRICE_FRESH_SECONDS ? 'fresh' : 'stale'
+  const dotClass = freshness === 'fresh' ? 'bg-cyber-neon-green' : 'bg-cyber-electric-fuchsia'
+  const freshnessTooltip = ageSeconds === undefined ? undefined : `updated ${formatOracleAge(ageSeconds)}`
+
+  return (
+    <span className="inline-flex min-h-6 items-center justify-end gap-2 whitespace-nowrap">
+      {freshness && freshnessTooltip ? (
+        <Tooltip content={freshnessTooltip} position="top">
+          <span
+            aria-label={`plDXY Perp price ${freshness}`}
+            className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`}
+            tabIndex={0}
+          />
+        </Tooltip>
+      ) : null}
+      <span>{value}</span>
+    </span>
+  )
 }
 
 function displayDxyPriceNumber(rawOraclePrice: bigint | undefined): number | undefined {
@@ -443,7 +500,7 @@ function TxHashActions({ hash }: { hash: string }) {
         type="button"
         aria-label="Copy tx hash"
         title="Copy tx hash"
-        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-cyber-bright-blue"
+        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-[#FFAB96]"
         onClick={() => {
           void navigator.clipboard.writeText(hash)
         }}
@@ -456,7 +513,7 @@ function TxHashActions({ hash }: { hash: string }) {
         href={getExplorerTxUrl(PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, hash)}
         target="_blank"
         rel="noopener noreferrer"
-        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-cyber-bright-blue"
+        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-[#FFAB96]"
       >
         <span className="material-symbols-outlined !text-[14px] !leading-none">open_in_new</span>
       </a>
@@ -478,7 +535,7 @@ function CopyableValue({
         type="button"
         aria-label={ariaLabel}
         title={ariaLabel}
-        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-cyber-bright-blue"
+        className="inline-flex h-4 w-4 items-center justify-center text-cyber-text-secondary/70 transition-colors hover:text-[#FFAB96]"
         onClick={() => {
           void navigator.clipboard.writeText(value)
         }}
@@ -508,16 +565,18 @@ function PreviewRows({
   return (
     <dl className="space-y-2">
       {rows.map((row) => {
-        if (row.label === 'Slippage' && onSlippageClick) {
+        if (row.label === 'Max slippage' && onSlippageClick) {
           return (
             <div key={row.label}>
               <button
                 type="button"
-                className="flex min-h-6 w-full items-center justify-between gap-3 text-left text-sm text-cyber-bright-blue transition-colors hover:text-cyber-neon-green"
+                className="group flex min-h-6 w-full items-center justify-between gap-3 text-left text-sm text-[#FFAB96] transition-colors hover:text-cyber-text-primary"
                 onClick={onSlippageClick}
               >
-                <span>{row.label}</span>
-                <span className="flex min-h-6 items-center justify-end text-right font-semibold">{row.value}</span>
+                <span className="group-hover:underline group-focus-visible:underline">{row.label}</span>
+                <span className="flex min-h-6 items-center justify-end text-right font-semibold group-hover:underline group-focus-visible:underline">
+                  {row.value}
+                </span>
               </button>
               {slippageConfig}
             </div>
@@ -570,9 +629,9 @@ function buildOrderSummary({
 
   if (currentPositionDxyExposureUsdc <= 0n) {
     if (isReduceOnly) {
-      return <>You are submitting a reduce-only {selectedDirection} order with {orderAmount} DXY exposure.</>
+      return <>You are submitting a reduce-only {selectedDirection} order with {orderAmount} plDXY Perp exposure.</>
     }
-    return <>You are opening a {selectedDirection} position with {orderAmount} DXY exposure at up to {formatLeverage(leverage)} leverage.</>
+    return <>You are opening a {selectedDirection} position with {orderAmount} plDXY Perp exposure at up to {formatLeverage(leverage)} leverage.</>
   }
 
   if (isReduceOnly) {
@@ -592,7 +651,7 @@ function buildOrderSummary({
     return <>You are closing your {currentDirection} position.</>
   }
 
-  return <>You are closing your {currentDirection} position and opening a {directionLabel(oppositeDirection(currentPositionSide))} position with <OrderSummaryRawAmount value={dxyExposureUsdc - currentPositionDxyExposureUsdc} /> DXY exposure.</>
+  return <>You are closing your {currentDirection} position and opening a {directionLabel(oppositeDirection(currentPositionSide))} position with <OrderSummaryRawAmount value={dxyExposureUsdc - currentPositionDxyExposureUsdc} /> plDXY Perp exposure.</>
 }
 
 function OrderLifecycleSteps({
@@ -617,7 +676,7 @@ function OrderLifecycleSteps({
           const isCurrent = step.id === currentStep
           const isFuture = index > currentIndex
           const dotClass = isCurrent
-            ? 'border-cyber-bright-blue bg-cyber-bright-blue shadow-[0_0_0_5px_rgba(56,189,248,0.16)]'
+            ? 'border-cyber-bright-blue bg-cyber-bright-blue'
             : isFuture
               ? 'border-cyber-border-glow/30 bg-cyber-surface-dark'
               : 'border-cyber-text-secondary/50 bg-cyber-text-secondary/50'
@@ -651,7 +710,7 @@ function PendingStateCard({
   description: string
 }) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35 px-6 py-8 text-center">
+    <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg px-6 py-8 text-center">
       <div className="relative h-14 w-14 shrink-0">
         <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
       </div>
@@ -663,8 +722,8 @@ function PendingStateCard({
 
 function SuccessStateCard({ title, description }: { title: string; description: string }) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35 px-6 py-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center border border-cyber-neon-green/40 bg-cyber-bg/50 text-cyber-neon-green">
+    <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg px-6 py-8 text-center">
+      <div className="flex h-14 w-14 items-center justify-center border border-cyber-neon-green/40 bg-cyber-bg text-cyber-neon-green">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-text-primary">{title}</div>
@@ -704,7 +763,7 @@ function AccountContextRow({
     <button
       type="button"
       disabled={disabled}
-      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-cyber-text-primary disabled:cursor-default disabled:hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-cyber-text-primary disabled:cursor-default disabled:hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
       onClick={onClick}
     >
       <span className="text-cyber-text-secondary">{label}</span>
@@ -717,10 +776,12 @@ function AccountSummaryRow({
   label,
   value,
   tone = 'default',
+  tooltip,
 }: {
   label: string
   value: ReactNode
   tone?: 'default' | 'positive' | 'negative'
+  tooltip?: ReactNode
 }) {
   const valueClass = tone === 'positive'
     ? 'text-cyber-neon-green'
@@ -730,7 +791,23 @@ function AccountSummaryRow({
 
   return (
     <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-cyber-text-secondary">{label}</span>
+      <span className="inline-flex items-center gap-1.5 text-cyber-text-secondary">
+        {label}
+        {tooltip ? (
+          <Tooltip
+            content={tooltip}
+            position="bottom-end"
+            className="w-[320px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+          >
+            <span
+              aria-label={`${label} info`}
+              className="material-symbols-outlined cursor-help text-base leading-none text-cyber-text-secondary"
+            >
+              info
+            </span>
+          </Tooltip>
+        ) : null}
+      </span>
       <span className={`text-right font-semibold ${valueClass}`}>{value}</span>
     </div>
   )
@@ -801,7 +878,7 @@ export function PerpsTradeTicket({
   const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>()
 
   useEffect(() => {
-    if (firstPendingOrderExpiryTime === undefined) return undefined
+    if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
     const interval = window.setInterval(() => {
       setNowSeconds(Math.floor(Date.now() / 1000))
     }, 1_000)
@@ -809,7 +886,7 @@ export function PerpsTradeTicket({
     return () => {
       window.clearInterval(interval)
     }
-  }, [firstPendingOrderExpiryTime])
+  }, [firstPendingOrderExpiryTime, oraclePublishTime])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -1105,7 +1182,7 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
-    if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'DXY price is not available.'
+    if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
     if (isZeroSize) return 'Enter an order size.'
     if (
       isOppositePositionDirection &&
@@ -1122,7 +1199,7 @@ export function PerpsTradeTicket({
       selectedOpenDxyCapacityUsdc < effectiveMinOpenDxyExposureUsdc
     ) {
       const minimumLabel = isOpeningFromZero ? 'minimum new position' : 'minimum order size'
-      return `New ${directionLabel(direction)} opens are unavailable right now. Max DXY exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC, below the ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC ${minimumLabel}. Add LP liquidity or loosen the skew cap before opening this side.`
+      return `New ${directionLabel(direction)} opens are unavailable right now. Max plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC, below the ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC ${minimumLabel}. Add LP liquidity or loosen the skew cap before opening this side.`
     }
     if (
       !isReducingCurrentPosition &&
@@ -1134,7 +1211,7 @@ export function PerpsTradeTicket({
       return `${minimumLabel} is ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC.`
     }
     if (!isReducingCurrentPosition && !isReduceOnly && selectedOpenDxyCapacityUsdc !== undefined && dxyExposureUsdc > selectedOpenDxyCapacityUsdc) {
-      return `Max ${directionLabel(direction)} DXY exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
+      return `Max ${directionLabel(direction)} plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC before hitting the market skew cap.`
     }
     if (isReduceOnly && !currentPosition?.exists) return 'No current position to reduce.'
     if (
@@ -1152,7 +1229,7 @@ export function PerpsTradeTicket({
       availableCloseDxyExposureRaw > 0n &&
       dxyExposureUsdc > availableCloseDxyExposureRaw + SUMMARY_CLOSE_DUST_USDC_RAW
     ) {
-      return `Only ${formatPerpsUsdc(availableCloseDxyExposureRaw)} USDC DXY exposure is available to reduce because ${formatPerpsUsdc(pendingCloseDxyExposureRaw)} USDC is already reserved by pending close orders.`
+      return `Only ${formatPerpsUsdc(availableCloseDxyExposureRaw)} USDC plDXY Perp exposure is available to reduce because ${formatPerpsUsdc(pendingCloseDxyExposureRaw)} USDC is already reserved by pending close orders.`
     }
     if (
       pendingOrderCount !== undefined &&
@@ -1213,16 +1290,46 @@ export function PerpsTradeTicket({
     if (!openPreview.hasLiquidationPrice) return PREVIEW_UNAVAILABLE_VALUE
     return formatDisplayDxyPrice(openPreview.liquidationPrice)
   })()
+  const previewResultingLeverage = (() => {
+    if (!enableLiveTrading) return formatLeverage(leverage)
+    if (isTradePreviewPending) return PREVIEW_LOADING_VALUE
+
+    if (isReducingCurrentPosition) {
+      if (closePreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(leverage)
+      if (closePreview.remainingSize <= 0n) return 'Closed'
+
+      return formatLeverageRaw(
+        sizeDeltaToNotionalUsdc(closePreview.remainingSize, closePreview.executionPrice),
+        closePreview.remainingMargin
+      )
+    }
+
+    if (openPreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(leverage)
+
+    return formatLeverageRaw(
+      sizeDeltaToNotionalUsdc(openPreview.postSize, openPreview.executionPrice),
+      openPreview.postMarginUsdc
+    )
+  })()
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
-      { label: 'DXY price', value: oraclePriceDisplay ?? formatOptionalPrice(previewPrice) },
-      { label: 'DXY exposure', value: formatUsdc(dxyExposureNumber) },
+      {
+        label: 'plDXY Perp price',
+        value: (
+          <DxyPricePreviewValue
+            value={oraclePriceDisplay ?? formatOptionalPrice(previewPrice)}
+            publishTime={oraclePublishTime}
+            nowSeconds={nowSeconds}
+          />
+        ),
+      },
+      { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
       { label: 'Contract notional', value: formatUsdcRaw(previewContractNotionalUsdc) },
       { label: 'Initial margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
       { label: 'Maintenance margin', value: previewMaintenanceMarginValue, tone: previewMaintenanceMarginUsdc === undefined ? previewLensFallbackTone : undefined },
-      { label: 'Leverage', value: formatLeverage(leverage) },
-      { label: 'Slippage', value: formatPercent(slippageNumber) },
+      { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
+      { label: 'Max slippage', value: formatPercent(slippageNumber) },
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
@@ -1236,10 +1343,13 @@ export function PerpsTradeTicket({
       keeperBounty,
       leverage,
       oraclePriceDisplay,
+      oraclePublishTime,
+      nowSeconds,
       previewPrice,
       previewContractNotionalUsdc,
       previewExecutionFeeUsdc,
       previewInitialMarginUsdc,
+      previewResultingLeverage,
       previewLiquidationPrice,
       previewMaintenanceMarginValue,
       previewVpiValue,
@@ -1253,7 +1363,7 @@ export function PerpsTradeTicket({
     ]
   )
   const sidePanelPreviewRows = useMemo(
-    () => previewRows.filter((row) => row.label !== 'Leverage'),
+    () => previewRows.filter((row) => row.label !== 'Resulting leverage'),
     [previewRows]
   )
 
@@ -1275,10 +1385,18 @@ export function PerpsTradeTicket({
     : enableLiveTrading
       ? '--'
       : formatDisplayDxyPrice(99_110_000n)
+  const executedTitle = finalPriceDisplay === '--'
+    ? 'Trade executed'
+    : `Trade executed at ${finalPriceDisplay} USDC`
+  const isReviewingFullClose = isReducingCurrentPosition &&
+    availableCloseDxyExposureRaw > 0n &&
+    availableCloseDxyExposureRaw <= dxyExposureUsdc + SUMMARY_CLOSE_DUST_USDC_RAW
   const reviewCtaLabel = enableLiveTrading && !isConnected
     ? 'Connect Wallet'
     : enableLiveTrading && !isCorrectChain
       ? 'Switch Network'
+      : isReducingCurrentPosition
+        ? isReviewingFullClose ? 'Review Close' : 'Review Reduce'
       : direction === 'long' ? 'Review Long' : 'Review Short'
   const isConnectWalletCta = enableLiveTrading && !isConnected
   const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
@@ -1300,6 +1418,10 @@ export function PerpsTradeTicket({
   const canUseMarginActionMax = marginActionLimit !== undefined && marginActionLimit > 0n
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
   const isMarginActionInvalid = marginActionAmountRaw <= 0n || isMarginActionInsufficient
+  const marginActionCurrentCollateral = currentPosition?.exists
+    ? currentPosition.marginUsdc
+    : undefined
+  const shouldShowMarginActionPositionContext = currentPosition?.exists && marginActionCurrentCollateral !== undefined
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isMarginActionPending
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
@@ -1444,26 +1566,30 @@ export function PerpsTradeTicket({
   }
 
   function closeReviewModal() {
+    const shouldResetSize = lifecycleState === 'executed'
     resetReviewLifecycle()
+    if (shouldResetSize) {
+      setSize('0')
+    }
     setIsReviewOpen(false)
   }
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-visible">
       <div className="space-y-5 px-5 py-4">
         <div>
           <div className="mb-2 text-xs font-medium uppercase text-cyber-text-secondary">Direction</div>
-          <div className="grid grid-cols-2 border border-cyber-border-glow/30 bg-cyber-bg/50">
+          <div className="grid grid-cols-2 border border-cyber-border-glow/30 bg-cyber-bg">
             {(['long', 'short'] as Direction[]).map((item) => (
               <button
                 key={item}
                 type="button"
-                className={`px-3 py-3 text-sm font-semibold transition-colors ${
+                className={`border px-3 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                   direction === item
                     ? item === 'long'
-                      ? 'bg-cyber-neon-green text-cyber-bg'
-                      : 'bg-cyber-electric-fuchsia text-cyber-bg'
-                    : 'text-cyber-text-primary hover:bg-cyber-surface-light/60'
+                      ? 'border-cyber-neon-green bg-cyber-neon-green text-cyber-bg'
+                      : 'border-cyber-electric-fuchsia bg-cyber-electric-fuchsia text-cyber-bg'
+                    : 'border-transparent text-cyber-text-primary hover:bg-[#3B212D]'
                 }`}
                 onClick={() => {
                   setDirection(item)
@@ -1496,7 +1622,7 @@ export function PerpsTradeTicket({
 
         <div>
           <Input
-            label="DXY exposure"
+            label="plDXY Perp exposure"
             value={size}
             onChange={(event) => {
               if (isNumericInput(event.target.value)) {
@@ -1508,7 +1634,7 @@ export function PerpsTradeTicket({
           <div className="mt-1.5 flex justify-end">
             <button
               type="button"
-              className="group cursor-pointer text-right text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-cyber-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyber-bright-blue"
+              className="group cursor-pointer text-right text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-cyber-text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-cyber-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
               disabled={!canUseMaxNotional}
               onClick={() => {
                 if (canUseMaxNotional) setSize(maxDxyExposureInputAmount)
@@ -1522,16 +1648,16 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        <label className="flex cursor-pointer items-center gap-3 py-1">
+        <label className="flex cursor-pointer items-center gap-3 py-1 text-cyber-text-primary transition-colors hover:text-[#FFAB96]">
           <input
             type="checkbox"
             checked={isReduceOnly}
             onChange={(event) => {
               setIsReduceOnly(event.target.checked)
             }}
-            className="h-4 w-4 accent-cyber-bright-blue"
+            className="h-4 w-4 accent-[#FFAB96]"
           />
-          <span className="text-sm font-semibold text-cyber-text-primary">Reduce only</span>
+          <span className="text-sm font-semibold">Reduce only</span>
         </label>
 
         <div>
@@ -1539,7 +1665,7 @@ export function PerpsTradeTicket({
             <label className="text-sm font-medium text-cyber-text-secondary" htmlFor="perps-leverage">
               Leverage
             </label>
-            <span className="text-lg font-semibold text-cyber-bright-blue">{formatLeverage(leverage)}</span>
+            <span className="text-lg font-semibold text-[#FFAB96]">{formatLeverage(leverage)}</span>
           </div>
           <input
             id="perps-leverage"
@@ -1551,7 +1677,7 @@ export function PerpsTradeTicket({
             onChange={(event) => {
               setLeverage(Number(event.target.value))
             }}
-            className="h-2 w-full cursor-pointer appearance-none bg-cyber-surface-light accent-cyber-bright-blue"
+            className="perps-leverage-slider h-2 w-full cursor-pointer appearance-none accent-[#FFAB96]"
           />
           <div className="mt-2 flex items-center justify-between text-xs font-semibold text-cyber-text-secondary">
             <span>1x</span>
@@ -1559,7 +1685,7 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+        <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
           <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Preview</div>
           <PreviewRows
             rows={sidePanelPreviewRows.slice(0, 11)}
@@ -1568,16 +1694,16 @@ export function PerpsTradeTicket({
             }}
             slippageConfig={
               isSlippageConfigOpen ? (
-                <div className="mt-3 border-y border-cyber-border-glow/20 py-3">
+                <div className="mt-3 py-3">
                   <div className="grid grid-cols-5 gap-2">
                     {SLIPPAGE_OPTIONS.map((option) => (
                       <button
                         key={option.toString()}
                         type="button"
-                        className={`border px-2 py-2 text-sm font-semibold transition-colors ${
+                        className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                           slippage === option
-                            ? 'border-cyber-bright-blue bg-cyber-bright-blue text-cyber-bg'
-                            : 'border-cyber-border-glow/30 text-cyber-text-secondary hover:text-cyber-text-primary'
+                            ? 'border-[#FFAB96] bg-[#FFAB96] text-cyber-bg'
+                            : 'border-cyber-border-glow/30 text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
                         }`}
                         onClick={() => {
                           setSlippage(option)
@@ -1602,9 +1728,9 @@ export function PerpsTradeTicket({
         <Button
           className={`w-full ${
             isConnectWalletCta
-              ? '!bg-cyber-text-primary !text-cyber-bg hover:!bg-cyber-text-primary/90 !shadow-lg !shadow-cyber-text-primary/20'
+              ? CONNECT_WALLET_ACTION_BUTTON_CLASS
               : isSwitchNetworkCta
-                ? '!bg-cyber-bright-blue !text-cyber-bg hover:!bg-cyber-bright-blue/85 !shadow-lg !shadow-cyber-bright-blue/20'
+                ? LIGHT_ORANGE_ACTION_BUTTON_CLASS
                 : ''
           }`}
           size="lg"
@@ -1631,7 +1757,7 @@ export function PerpsTradeTicket({
           {reviewCtaLabel}
         </Button>
 
-        <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+        <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
           <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Margin Account</div>
           <div className="space-y-2">
             <AccountSummaryRow label="Portfolio value" value={<TokenAmount amount={formatPerpsUsdc(portfolioValueRaw)} />} />
@@ -1644,7 +1770,16 @@ export function PerpsTradeTicket({
               label="Maintenance margin"
               value={<TokenAmount amount={formatPerpsUsdc(currentPosition?.maintenanceMarginUsdc)} />}
             />
-            <AccountSummaryRow label="Withdrawable" value={<TokenAmount amount={formatPerpsUsdc(withdrawableUsdcRaw)} />} />
+            <AccountSummaryRow
+              label="Withdrawable"
+              value={<TokenAmount amount={formatPerpsUsdc(withdrawableUsdcRaw)} />}
+              tooltip={
+                <span>
+                  Amount that can leave the protocol right now. It can be lower than available to trade because withdrawals
+                  require a fresh mark and must pass protocol state, pending carry, and post-withdraw margin checks.
+                </span>
+              }
+            />
           </div>
         </div>
 
@@ -1652,7 +1787,7 @@ export function PerpsTradeTicket({
           <Button
             type="button"
             variant="secondary"
-            className="w-full"
+            className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
             disabled={areMarginActionsDisabled}
             title={areMarginActionsDisabled ? 'Connect wallet to deposit margin' : undefined}
             onClick={() => {
@@ -1665,7 +1800,7 @@ export function PerpsTradeTicket({
           <Button
             type="button"
             variant="secondary"
-            className="w-full"
+            className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
             disabled={areMarginActionsDisabled}
             title={areMarginActionsDisabled ? 'Connect wallet to withdraw margin' : undefined}
             onClick={() => {
@@ -1692,15 +1827,15 @@ export function PerpsTradeTicket({
                 {orderSummary}
               </p>
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Commit Preview</div>
                 <PreviewRows rows={previewRows} />
                 <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-                  DXY exposure is the size you choose. Contract notional is derived from the raw basket price for protocol accounting.
+                  plDXY Perp exposure is the size you choose. Contract notional is derived from the raw basket price for protocol accounting.
                 </p>
               </div>
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="text-sm font-semibold text-cyber-text-primary">Delayed execution</div>
                 <div className="mt-2 text-sm text-cyber-text-secondary">
                   This submits a committed order. Execution settles after the reveal window using the accepted price constraints.
@@ -1712,7 +1847,7 @@ export function PerpsTradeTicket({
                   {liveValidationError}
                   {!isCorrectChain ? (
                     <Button
-                      className="mt-3 w-full"
+                      className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                       size="sm"
                       variant="secondary"
                       onClick={() => {
@@ -1724,7 +1859,7 @@ export function PerpsTradeTicket({
                   ) : null}
                   {canCleanupOldestPendingOrder ? (
                     <Button
-                      className="mt-3 w-full"
+                      className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                       size="sm"
                       variant="secondary"
                       disabled={cleanupStatus === 'pending'}
@@ -1750,7 +1885,7 @@ export function PerpsTradeTicket({
 
               <div className="flex gap-3">
                 <Button
-                  className="flex-1"
+                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
                   onClick={closeReviewModal}
                 >
@@ -1777,14 +1912,14 @@ export function PerpsTradeTicket({
                 description="Confirm the commit transaction in your wallet, then wait for it to be included onchain."
               />
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Commit Transaction</div>
                 <PreviewRows
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
-                    { label: 'DXY exposure', value: formatUsdc(dxyExposureNumber) },
+                    { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
                     { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
-                    { label: 'Slippage', value: formatPercent(slippageNumber) },
+                    { label: 'Max slippage', value: formatPercent(slippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
                     { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
@@ -1795,7 +1930,7 @@ export function PerpsTradeTicket({
               {!enableLiveTrading ? (
                 <div className="grid grid-cols-2 gap-3">
                   <Button
-                    className="w-full"
+                    className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
                     onClick={() => {
                       setLifecycleState('failed')
@@ -1804,7 +1939,7 @@ export function PerpsTradeTicket({
                     Transaction Failed
                   </Button>
                   <Button
-                    className="w-full"
+                    className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                     onClick={() => {
                       setLifecycleState('revealPending')
                     }}
@@ -1826,7 +1961,7 @@ export function PerpsTradeTicket({
                 ]}
               />
               <Button
-                className="w-full"
+                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                 onClick={() => {
                   setLifecycleState('revealPending')
                 }}
@@ -1843,7 +1978,7 @@ export function PerpsTradeTicket({
                 description="The keeper can now execute the committed order and settle the final contract price. Self-execute fetches historical Pyth data for the order window."
               />
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
@@ -1860,7 +1995,7 @@ export function PerpsTradeTicket({
                 {!enableLiveTrading ? (
                   <>
                     <Button
-                      className="w-full"
+                      className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                       variant="secondary"
                       onClick={() => {
                         setLifecycleState('selfExecuteAvailable')
@@ -1869,7 +2004,7 @@ export function PerpsTradeTicket({
                       Timeout Reached
                     </Button>
                     <Button
-                      className="w-full"
+                      className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                       onClick={() => {
                         setLifecycleState('executed')
                       }}
@@ -1879,7 +2014,7 @@ export function PerpsTradeTicket({
                   </>
                 ) : (
                   <Button
-                    className="col-span-2 w-full"
+                    className={`col-span-2 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                     onClick={() => {
                       void handleSelfExecute()
                     }}
@@ -1912,7 +2047,7 @@ export function PerpsTradeTicket({
                 }
               />
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
@@ -1934,7 +2069,7 @@ export function PerpsTradeTicket({
               </div>
 
               <Button
-                className="w-full"
+                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                 size="lg"
                 onClick={() => {
                   void handleSelfExecute()
@@ -1952,7 +2087,7 @@ export function PerpsTradeTicket({
                 description="Confirm promptly in your wallet. The order can expire if the reveal transaction takes too long to submit."
               />
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Self Execute Transaction</div>
                 <PreviewRows
                   rows={[
@@ -1968,7 +2103,7 @@ export function PerpsTradeTicket({
               {!enableLiveTrading ? (
                 <div className="grid grid-cols-2 gap-3">
                   <Button
-                    className="w-full"
+                    className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
                     onClick={() => {
                       setLifecycleState('selfExecuteFailed')
@@ -1977,7 +2112,7 @@ export function PerpsTradeTicket({
                     Transaction Failed
                   </Button>
                   <Button
-                    className="w-full"
+                    className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                     onClick={() => {
                       setLifecycleState('executed')
                     }}
@@ -2002,7 +2137,7 @@ export function PerpsTradeTicket({
                 description={flowError ?? 'The wallet rejected the transaction or the reveal transaction failed before settling the order.'}
               />
 
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
                 <PreviewRows
                   rows={[
@@ -2016,7 +2151,7 @@ export function PerpsTradeTicket({
 
               <div className="flex gap-3">
                 <Button
-                  className="flex-1"
+                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
                   onClick={() => {
                     setLifecycleState('selfExecuteAvailable')
@@ -2025,7 +2160,7 @@ export function PerpsTradeTicket({
                   Back
                 </Button>
                 <Button
-                  className="flex-1"
+                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                   onClick={() => {
                     void handleSelfExecute()
                   }}
@@ -2038,16 +2173,16 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'executed' ? (
             <>
-              <SuccessStateCard title="Trade executed" description="Execution settled onchain and the final price is confirmed." />
-              <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+              <SuccessStateCard title={executedTitle} description="Execution settled onchain and the final price is confirmed." />
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Final Result</div>
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Direction', value: directionLabel(direction) },
                     { label: 'Final price', value: finalPriceDisplay },
-                    { label: 'Target DXY exposure', value: formatUsdc(dxyExposureNumber) },
-                    { label: 'Execution DXY exposure', value: finalExecutedDxyExposureUsdc === undefined ? formatUsdc(dxyExposureNumber) : formatUsdcRaw(finalExecutedDxyExposureUsdc) },
+                    { label: 'Target plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
+                    { label: 'Execution plDXY Perp exposure', value: finalExecutedDxyExposureUsdc === undefined ? formatUsdc(dxyExposureNumber) : formatUsdcRaw(finalExecutedDxyExposureUsdc) },
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
@@ -2058,11 +2193,11 @@ export function PerpsTradeTicket({
                   ]}
                 />
                 <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-                  Target DXY exposure is what you submitted. Execution DXY exposure is the committed size valued with the displayed DXY price at reveal.
+                  Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at reveal.
                 </p>
               </div>
               <Button
-                className="w-full"
+                className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                 variant="secondary"
                 onClick={closeReviewModal}
               >
@@ -2079,7 +2214,7 @@ export function PerpsTradeTicket({
               />
               <div className="flex gap-3">
                 <Button
-                  className="flex-1"
+                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
                   onClick={() => {
                     setLifecycleState('preview')
@@ -2088,7 +2223,7 @@ export function PerpsTradeTicket({
                   Back to Preview
                 </Button>
                 <Button
-                  className="flex-1"
+                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                   onClick={() => {
                     void handleConfirmCommit()
                   }}
@@ -2135,7 +2270,7 @@ export function PerpsTradeTicket({
             <button
               type="button"
               disabled={!canUseMarginActionMax || isMarginActionPending}
-              className="group inline-flex items-center gap-1 text-xs font-semibold text-cyber-text-secondary transition-colors enabled:hover:text-cyber-bright-blue disabled:cursor-not-allowed disabled:opacity-50"
+              className="group inline-flex items-center gap-1 text-xs font-semibold text-cyber-text-secondary transition-colors enabled:hover:text-cyber-text-primary disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => {
                 if (!canUseMarginActionMax) return
                 setMarginActionAmount(marginActionLimitDisplay)
@@ -2150,10 +2285,18 @@ export function PerpsTradeTicket({
             </button>
           </div>
 
-          <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+          <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
             <div className="space-y-2">
               <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
               <AccountSummaryRow label="Amount" value={<TokenAmount amount={formatPerpsUsdc(marginActionAmountRaw)} />} />
+              {shouldShowMarginActionPositionContext ? (
+                <>
+                  <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />
+                  <p className="pt-2 text-xs leading-5 text-cyber-text-secondary">
+                    Deposit and withdraw change free margin only. Position leverage changes when you open, increase, reduce, close, or add isolated position margin.
+                  </p>
+                </>
+              ) : null}
             </div>
           </div>
 
@@ -2173,6 +2316,7 @@ export function PerpsTradeTicket({
             <Button
               type="button"
               variant="secondary"
+              className={DARK_CANCEL_BUTTON_CLASS}
               disabled={isMarginActionPending}
               onClick={() => {
                 setMarginAction(null)
@@ -2182,6 +2326,7 @@ export function PerpsTradeTicket({
             </Button>
             <Button
               type="button"
+              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
               isLoading={isMarginActionPending}
               disabled={isMarginActionSubmitDisabled}
               onClick={() => {

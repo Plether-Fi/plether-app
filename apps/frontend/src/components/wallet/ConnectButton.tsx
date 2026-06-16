@@ -5,6 +5,8 @@ import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
+const WALLET_BUTTON_CLASS =
+  'flex items-center gap-2 border border-[#FF572D] bg-[#FF572D] px-4 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
@@ -33,7 +35,7 @@ export function ConnectButton() {
     return (
       <button
         onClick={() => void open()}
-        className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 font-medium text-sm"
+        className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
         Connect Wallet
@@ -51,7 +53,7 @@ export function ConnectButton() {
           : chainId === sepolia.id || chainId === arbitrumSepolia.id
             ? 'bg-cyber-warning-bg text-cyber-warning-text border-cyber-warning-text/30'
             : chainId === mainnet.id
-              ? 'bg-cyber-neon-green/20 text-cyber-neon-green border-cyber-neon-green/30 shadow-sm shadow-cyber-neon-green/10'
+              ? 'bg-cyber-neon-green/20 text-cyber-neon-green border-cyber-neon-green/30'
               : 'bg-cyber-surface-light text-cyber-text-secondary border-cyber-border-glow/30'
         }
       `}>
@@ -62,9 +64,9 @@ export function ConnectButton() {
       <button
         onClick={() => { if (address) void navigator.clipboard.writeText(address) }}
         title="Copy address"
-        className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary  px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 group"
+        className={`group ${WALLET_BUTTON_CLASS}`}
       >
-        <div className="w-2 h-2 rounded-full bg-cyber-neon-green shadow-md shadow-cyber-neon-green/50" />
+        <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
         <span className="font-medium text-xs sm:text-sm">
           {formatAddress(address ?? '')}
         </span>
@@ -73,7 +75,7 @@ export function ConnectButton() {
       {/* Disconnect button */}
       <button
         onClick={() => { disconnect(); }}
-        className="p-2 text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors"
+        className="p-2 text-cyber-text-secondary transition-colors hover:text-cyber-text-primary"
         title="Disconnect"
       >
         <span className="material-symbols-outlined text-xl">logout</span>

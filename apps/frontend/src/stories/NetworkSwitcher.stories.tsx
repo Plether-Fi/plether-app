@@ -42,8 +42,8 @@ function MockNetworkSwitcher({ initialChainId = 1 }: { initialChainId?: number }
                 className={`
                   w-full flex items-center gap-3 px-4 py-3 transition-all
                   ${isActive
-                    ? 'bg-cyber-neon-green/20 border border-cyber-neon-green/50 shadow-sm shadow-cyber-neon-green/20'
-                    : 'bg-cyber-surface-light border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 hover:bg-cyber-surface-light/80'
+                    ? 'bg-cyber-neon-green/20 border border-cyber-neon-green/50'
+                    : 'bg-cyber-surface-light border border-cyber-border-glow/30 hover:border-[#FFAB96]/50 hover:bg-[#3B212D]'
                   }
                 `}
               >
@@ -78,7 +78,7 @@ function MockWrongNetworkBanner() {
             Please connect to Ethereum Mainnet or Sepolia to use Plether.
           </p>
         </div>
-        <button className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary text-sm font-medium transition-colors shadow-lg shadow-cyber-electric-fuchsia/20">
+        <button className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary text-sm font-medium transition-colors">
           <span className="material-symbols-outlined text-lg">swap_horiz</span>
           Switch to Mainnet
         </button>

@@ -3,8 +3,8 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTrade
 import { usePerpsTrading } from '../hooks'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideLabel } from '../utils/perps'
-import { Button, TokenAmount } from './ui'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideLabel } from '../utils/perps'
+import { Button, TokenAmount, Tooltip } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -19,8 +19,10 @@ interface PositionRow {
   size: ReactNode
   entryNotional: ReactNode
   entry: string
+  leverage: string
   liquidationPrice: ReactNode
   pnl: ReactNode
+  costOfCarryUsdc: ReactNode
   tone?: 'positive' | 'negative'
 }
 
@@ -68,15 +70,15 @@ const ACCOUNT_TABS: AccountTab[] = [
 ]
 
 const OPEN_ORDERS: OrderRow[] = [
-  { market: 'DXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
-  { market: 'DXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: <TokenAmount amount="3 000" /> },
+  { market: 'plDXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
+  { market: 'plDXY Perp', side: 'Sell', type: 'Take profit', price: '1.0040', size: <TokenAmount amount="3 000" /> },
 ]
 
 const ORDER_HISTORY: OrderRow[] = [
   {
     orderId: 101n,
     time: '12:42',
-    market: 'DXY Perp',
+    market: 'plDXY Perp',
     side: 'Long',
     type: 'Open',
     price: '0.9850',
@@ -88,7 +90,7 @@ const ORDER_HISTORY: OrderRow[] = [
   {
     orderId: 100n,
     time: '11:08',
-    market: 'DXY Perp',
+    market: 'plDXY Perp',
     side: 'Short',
     type: 'Close',
     price: '0.9790',
@@ -99,8 +101,8 @@ const ORDER_HISTORY: OrderRow[] = [
 ]
 
 const TRADE_HISTORY: TradeRow[] = [
-  { time: '12:42', market: 'DXY Perp', side: 'Open Long', price: '0.9912', size: <TokenAmount amount="1 000" /> },
-  { time: '11:08', market: 'DXY Perp', side: 'Close Long', price: '0.9931', size: <TokenAmount amount="650" />, pnl: <TokenAmount amount="+12.2" /> },
+  { time: '12:42', market: 'plDXY Perp', side: 'Open Long', price: '0.9912', size: <TokenAmount amount="1 000" /> },
+  { time: '11:08', market: 'plDXY Perp', side: 'Close Long', price: '0.9931', size: <TokenAmount amount="650" />, pnl: <TokenAmount amount="+12.2" /> },
 ]
 
 function pnlToneClass(tone: PositionRow['tone']): string {
@@ -130,6 +132,15 @@ function formatLiquidationDistance(currentPrice?: bigint, liquidationPrice?: big
   return `${sign}${whole.toString()}.${decimals.toString().padStart(2, '0')}% away`
 }
 
+function formatPositionLeverage(position: PerpsPosition): string {
+  if (position.marginUsdc <= 0n) return '--'
+
+  const notionalUsdc = position.estimatedNotionalUsdc ?? position.entryNotionalUsdc
+  if (notionalUsdc === undefined) return '--'
+
+  return `${formatPerpsNumber(Number(notionalUsdc) / Number(position.marginUsdc), 2)}x`
+}
+
 function LiquidationPriceValue({
   currentPrice,
   liquidationPrice,
@@ -137,6 +148,14 @@ function LiquidationPriceValue({
   currentPrice?: bigint
   liquidationPrice?: bigint
 }) {
+  if (liquidationPrice === undefined) {
+    return (
+      <span className="text-base font-medium text-cyber-text-secondary">
+        Not in range
+      </span>
+    )
+  }
+
   const distance = formatLiquidationDistance(currentPrice, liquidationPrice)
 
   return (
@@ -151,7 +170,7 @@ function LiquidationPriceValue({
 
 function EmptyState({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35">
+    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg">
       <span className="text-sm text-cyber-text-secondary">No {label.toLowerCase()}</span>
     </div>
   )
@@ -159,7 +178,7 @@ function EmptyState({ label }: { label: string }) {
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg/35">
+    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg">
       <span className="text-sm text-cyber-text-secondary">Loading {label.toLowerCase()}...</span>
     </div>
   )
@@ -173,10 +192,37 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
-function AccountMetric({ label, value, tone }: { label: string; value: ReactNode; tone?: PositionRow['tone'] }) {
+function AccountMetric({
+  label,
+  value,
+  tone,
+  tooltip,
+}: {
+  label: string
+  value: ReactNode
+  tone?: PositionRow['tone']
+  tooltip?: ReactNode
+}) {
   return (
     <div className="min-w-0">
-      <div className="text-xs font-medium uppercase text-cyber-text-secondary">{label}</div>
+      <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-cyber-text-secondary">
+        <span>{label}</span>
+        {tooltip ? (
+          <Tooltip
+            content={tooltip}
+            position="left"
+            className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
+          >
+            <span
+              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+              aria-label={`${label} details`}
+              tabIndex={0}
+            >
+              i
+            </span>
+          </Tooltip>
+        ) : null}
+      </div>
       <div className={`mt-2 text-xl font-semibold ${pnlToneClass(tone)}`}>{value}</div>
     </div>
   )
@@ -235,7 +281,7 @@ function TxLink({ hash }: { hash?: string }) {
       href={getExplorerTxUrl(PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, hash)}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex h-5 w-5 items-center justify-center text-cyber-text-secondary transition-colors hover:text-cyber-bright-blue"
+      className="inline-flex h-5 w-5 items-center justify-center text-cyber-text-secondary transition-colors hover:text-[#FFAB96]"
     >
       <span className="material-symbols-outlined !text-[16px] !leading-none">open_in_new</span>
     </a>
@@ -256,12 +302,29 @@ function PositionView({
   if (!position?.exists) return <EmptyState label="current position" />
 
   const currentPnl = position.unrealizedPnlUsdc
+  const pendingCarryTooltip = (
+    <span>
+      Pending carry is unpaid carry accrued since the last position checkpoint. It is a position liability:
+      it reduces equity, can consume free balance or margin, reduces close payout, and can push the
+      position toward liquidation.
+    </span>
+  )
+  const liquidationTooltip = (
+    <span>
+      Liquidation is based on account equity versus maintenance margin, not isolated position margin alone.
+      <br />
+      <br />
+      <strong>Not in range</strong> means this account is not liquidatable anywhere inside the protocol&apos;s
+      bounded oracle price range, so there is no single liquidation threshold to show right now.
+    </span>
+  )
   const currentPosition: PositionRow = {
-    market: 'DXY Perp',
+    market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
     size: <TokenAmount amount={formatPerpsUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} />,
     entryNotional: <TokenAmount amount={formatPerpsUsdc(position.entryNotionalUsdc)} />,
     entry: formatDisplayDxyPrice(position.entryPrice),
+    leverage: formatPositionLeverage(position),
     liquidationPrice: (
       <LiquidationPriceValue
         currentPrice={position.displayDxyPrice}
@@ -269,11 +332,12 @@ function PositionView({
       />
     ),
     pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
+    costOfCarryUsdc: <TokenAmount amount={formatPerpsUsdc(position.pendingCarryUsdc)} />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
 
   return (
-    <div className="border border-cyber-border-glow/20 bg-cyber-bg/35 p-4">
+    <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-cyber-text-secondary">Current Position</div>
         <div className="mt-2 flex items-center gap-3">
@@ -283,15 +347,26 @@ function PositionView({
           <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{currentPosition.market}</div>
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-5">
-        <AccountMetric label="DXY exposure" value={currentPosition.size} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
+        <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric label="Entry notional" value={currentPosition.entryNotional} />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
-        <AccountMetric label="Liquidation price" value={currentPosition.liquidationPrice} />
+        <AccountMetric label="Leverage" value={currentPosition.leverage} />
+        <AccountMetric
+          label="Liquidation price"
+          value={currentPosition.liquidationPrice}
+          tooltip={liquidationTooltip}
+        />
         <AccountMetric label="Unrealized PnL" value={currentPosition.pnl} tone={currentPosition.tone} />
+        <AccountMetric
+          label="Cost of carry"
+          value={currentPosition.costOfCarryUsdc}
+          tooltip={pendingCarryTooltip}
+        />
       </div>
       <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-        Entry notional is the executed order size. DXY exposure is current displayed exposure.
+        Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure. This is a
+        shared-collateral account, so free margin outside the position can still protect it from liquidation.
       </p>
     </div>
   )
@@ -462,10 +537,11 @@ function AccountTabContent({
     liquidatable: false,
     estimatedNotionalUsdc: 8200000000n,
     liquidationPrice: 110000000n,
+    pendingCarryUsdc: 0n,
   }
   const liveOpenOrders = pendingOrders?.map((order) => ({
     orderId: order.orderId,
-    market: 'DXY Perp',
+    market: 'plDXY Perp',
     side: perpsSideLabel(order.side),
     type: order.isReduceOnly ? 'Reduce' : 'Open',
     price: order.acceptablePrice === 0n ? 'Market' : formatDisplayDxyPrice(order.acceptablePrice),
@@ -557,7 +633,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   }
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-visible">
       <div className="border-b border-cyber-border-glow/20 px-4 pt-4">
         <div className="flex gap-1 overflow-x-auto">
           {ACCOUNT_TABS.map((tab) => (
@@ -565,9 +641,9 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
               key={tab.id}
               type="button"
               aria-pressed={activeTab === tab.id}
-              className={`shrink-0 px-4 py-3 text-sm font-semibold transition-colors ${
+              className={`shrink-0 px-4 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                 activeTab === tab.id
-                  ? 'border-b-2 border-cyber-bright-blue text-cyber-bright-blue'
+                  ? 'border-b-2 border-[#FFAB96] text-[#FFAB96]'
                   : 'text-cyber-text-secondary hover:text-cyber-text-primary'
               }`}
               onClick={() => {

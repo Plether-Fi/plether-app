@@ -213,7 +213,7 @@ export function Dashboard() {
       {isConnected ? (
         <>
           {/* Trade / Leverage / Yield widget */}
-          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden shadow-lg shadow-cyber-border-glow/10">
+          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
             <MainTabNav activeTab={mainTab} onTabChange={handleTabChange} />
 
             {/* Tab content */}
