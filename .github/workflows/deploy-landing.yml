@@ -1,0 +1,38 @@
+name: Deploy Landing
+
+on:
+  push:
+    branches: [master]
+    paths: [apps/landing/**]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25
+          cache: npm
+          cache-dependency-path: apps/landing/package-lock.json
+
+      - name: Install dependencies
+        working-directory: apps/landing
+        run: npm install
+
+      - name: Build
+        working-directory: apps/landing
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy apps/landing/dist --project-name=plether-landing --branch=master
