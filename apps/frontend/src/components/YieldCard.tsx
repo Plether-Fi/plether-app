@@ -218,7 +218,6 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
     (borrowMode === 'repay' && insufficientBalanceRepay) ||
     !isConnected
 
-  const accentColor = side === 'BEAR' ? 'cyber-electric-fuchsia' : 'cyber-neon-green'
   const accentColorClass = side === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
   const borderClass = side === 'BEAR' ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'
   const bgClass = side === 'BEAR' ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'
@@ -270,20 +269,20 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
         <div className="flex text-xs font-medium mb-3 border border-cyber-border-glow/30">
           <button
             onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
               supplyMode === 'supply'
                 ? `${bgClass} ${accentColorClass}`
-                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
             }`}
           >
             Supply
           </button>
           <button
             onClick={() => { setSupplyMode('withdraw'); setSupplyAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
               supplyMode === 'withdraw'
                 ? `${bgClass} ${accentColorClass}`
-                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
             }`}
           >
             Withdraw
@@ -300,11 +299,11 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           <button
             onClick={handleSupply}
             disabled={isSupplyDisabled}
-            className={`w-full bg-${accentColor} hover:bg-${accentColor}/90 text-cyber-bg font-semibold py-2 px-4 text-sm shadow-lg shadow-${accentColor}/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
-            style={{
-              backgroundColor: isSupplyDisabled ? undefined : (side === 'BEAR' ? '#FF00CC' : '#00FF99'),
-              boxShadow: isSupplyDisabled ? undefined : `0 10px 15px -3px ${side === 'BEAR' ? 'rgba(255,0,204,0.3)' : 'rgba(0,255,153,0.3)'}`,
-            }}
+            className={`w-full px-4 py-2 text-sm font-semibold text-cyber-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
+              side === 'BEAR'
+                ? 'bg-cyber-electric-fuchsia enabled:hover:bg-[#CC00AA]'
+                : 'bg-cyber-neon-green enabled:hover:bg-[#00CC77]'
+            }`}
           >
             {getSupplyButtonText()}
           </button>
@@ -316,20 +315,20 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
         <div className="flex text-xs font-medium mb-3 border border-cyber-border-glow/30">
           <button
             onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
               borrowMode === 'borrow'
                 ? `${bgClass} ${accentColorClass}`
-                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
             }`}
           >
             Borrow
           </button>
           <button
             onClick={() => { setBorrowMode('repay'); setBorrowAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-all cursor-pointer ${
+            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
               borrowMode === 'repay'
                 ? `${bgClass} ${accentColorClass}`
-                : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
             }`}
           >
             Repay
@@ -352,11 +351,11 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           <button
             onClick={handleBorrow}
             disabled={isBorrowDisabled}
-            className={`w-full bg-${accentColor} hover:bg-${accentColor}/90 text-cyber-bg font-semibold py-2 px-4 text-sm shadow-lg shadow-${accentColor}/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed`}
-            style={{
-              backgroundColor: isBorrowDisabled ? undefined : (side === 'BEAR' ? '#FF00CC' : '#00FF99'),
-              boxShadow: isBorrowDisabled ? undefined : `0 10px 15px -3px ${side === 'BEAR' ? 'rgba(255,0,204,0.3)' : 'rgba(0,255,153,0.3)'}`,
-            }}
+            className={`w-full px-4 py-2 text-sm font-semibold text-cyber-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
+              side === 'BEAR'
+                ? 'bg-cyber-electric-fuchsia enabled:hover:bg-[#CC00AA]'
+                : 'bg-cyber-neon-green enabled:hover:bg-[#00CC77]'
+            }`}
           >
             {getBorrowButtonText()}
           </button>

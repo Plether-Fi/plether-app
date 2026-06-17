@@ -117,10 +117,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => { setSelectedSide('BULL'); }}
-            className={`relative p-4 text-center transition-all cursor-pointer ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedSide === 'BULL'
-                ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 opacity-60 hover:opacity-100'
+                ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10'
+                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedSide === 'BULL' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'}`}>plDXY-BULL</div>
@@ -128,10 +128,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
           </button>
           <button
             onClick={() => { setSelectedSide('BEAR'); }}
-            className={`relative p-4 text-center transition-all cursor-pointer ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedSide === 'BEAR'
-                ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 opacity-60 hover:opacity-100'
+                ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10'
+                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedSide === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-text-primary'}`}>plDXY-BEAR</div>
@@ -194,7 +194,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         <button
           onClick={handleOpenPosition}
           disabled={isDisabled}
-          className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+          className="w-full bg-cyber-electric-fuchsia text-cyber-bg enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {getButtonText()}
         </button>

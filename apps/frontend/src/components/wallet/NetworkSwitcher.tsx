@@ -1,5 +1,5 @@
 import { useSwitchChain, useChainId } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { anvil } from '../../config/wagmi'
 import { Modal } from '../ui'
 
@@ -12,13 +12,16 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   const chainId = useChainId()
   const { switchChain, isPending } = useSwitchChain()
 
+  type SupportedChainId = typeof mainnet.id | typeof sepolia.id | typeof arbitrumSepolia.id | typeof anvil.id
+
   const networks = [
     { chain: mainnet, name: 'Ethereum Mainnet', icon: 'diamond' },
     { chain: sepolia, name: 'Sepolia Testnet', icon: 'science' },
+    { chain: arbitrumSepolia, name: 'Arbitrum Sepolia', icon: 'hub' },
     { chain: anvil, name: 'Anvil (Local)', icon: 'terminal' },
-  ]
+  ] as const
 
-  const handleSwitch = (targetChainId: typeof mainnet.id | typeof sepolia.id | typeof anvil.id) => {
+  const handleSwitch = (targetChainId: SupportedChainId) => {
     switchChain({ chainId: targetChainId })
     onClose()
   }
@@ -34,10 +37,10 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
               onClick={() => { handleSwitch(chain.id) }}
               disabled={isPending}
               className={`
-                w-full flex items-center gap-3 px-4 py-3  transition-all
+                w-full flex items-center gap-3 px-4 py-3 transition-colors hover:underline hover:underline-offset-4
                 ${isActive
-                  ? 'bg-cyber-neon-green/20 border border-cyber-neon-green/50 shadow-sm shadow-cyber-neon-green/20'
-                  : 'bg-cyber-surface-light border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 hover:bg-cyber-surface-light/80'
+                  ? 'bg-cyber-neon-green/20 border border-cyber-neon-green/50'
+                  : 'bg-cyber-surface-light border border-cyber-border-glow/30 hover:border-[#FFAB96]/50 hover:bg-[#3B212D]'
                 }
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}

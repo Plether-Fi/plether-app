@@ -131,14 +131,14 @@ export function Mint() {
         </Alert>
       )}
 
-      <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 shadow-lg shadow-cyber-border-glow/10 overflow-hidden">
+      <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
         <div className="flex border-b border-cyber-border-glow/30">
           <button
             onClick={() => { setMode('mint'); setInputAmount('') }}
-            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors cursor-pointer ${
+            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'mint'
                 ? 'bg-cyber-surface-light text-cyber-neon-green border-b-2 border-cyber-neon-green'
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue border-b-2 border-transparent'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
             }`}
           >
             <span className="material-symbols-outlined text-xl">add_circle</span>
@@ -146,10 +146,10 @@ export function Mint() {
           </button>
           <button
             onClick={() => { setMode('redeem'); setInputAmount('') }}
-            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors cursor-pointer ${
+            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'redeem'
                 ? 'bg-cyber-surface-light text-cyber-electric-fuchsia border-b-2 border-cyber-electric-fuchsia'
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue border-b-2 border-transparent'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
             }`}
           >
             <span className="material-symbols-outlined text-xl">swap_horiz</span>
@@ -211,7 +211,7 @@ export function Mint() {
                 <button
                   onClick={handleMint}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-neon-green hover:bg-cyber-neon-green/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-neon-green/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                  className="w-full bg-cyber-neon-green text-cyber-bg enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {getMintButtonText()}
                 </button>
@@ -275,7 +275,7 @@ export function Mint() {
                 <button
                   onClick={handleRedeem}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/90 text-cyber-text-primary font-semibold py-4 px-6 shadow-lg shadow-cyber-electric-fuchsia/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+                  className="w-full bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {getRedeemButtonText()}
                 </button>

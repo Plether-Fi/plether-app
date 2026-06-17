@@ -80,7 +80,7 @@ function MockSlippageSelector() {
               onChange={(e) => handleCustomChange(e.target.value)}
               placeholder="0.5"
               rightElement={<span className="text-cyber-text-secondary">%</span>}
-              className={isCustom ? 'ring-2 ring-cyber-neon-green' : ''}
+              className={isCustom ? 'border-cyber-neon-green' : ''}
             />
           </div>
 

@@ -1,20 +1,19 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap');
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @theme {
-  /* Cyberpunk Neon Nights Palette */
-  --color-cyber-bg: #0D0A1C;
-  --color-cyber-surface-dark: #1C153A;
-  --color-cyber-surface-light: #2F255A;
+  /* Plether redesign base palette */
+  --color-cyber-bg: #250917;
+  --color-cyber-surface-dark: #3B212D;
+  --color-cyber-surface-light: #3B212D;
   --color-cyber-text-primary: #E0E0FF;
   --color-cyber-text-secondary: #A6B3D9;
   --color-cyber-neon-green: #00FF99;
   --color-cyber-electric-fuchsia: #FF00CC;
-  --color-cyber-bright-blue: #00CCFF;
+  --color-cyber-bright-blue: #FFAB96;
   --color-cyber-warning-bg: #3A2000;
   --color-cyber-warning-text: #FFD700;
-  --color-cyber-border-glow: #4A00FF;
+  --color-cyber-border-glow: #FFAB96;
 
   /* Accent for BEAR (bearish/red) - use fuchsia for cyberpunk */
   --color-bear: #FF00CC;
@@ -32,14 +31,14 @@
   --color-primary-400: #33FFAA;
 
   /* Surface colors mapped to cyber */
-  --color-surface: #0D0A1C;
-  --color-surface-50: #2F255A;
-  --color-surface-100: #1C153A;
-  --color-surface-200: #1C153A;
-  --color-surface-300: #0D0A1C;
+  --color-surface: #250917;
+  --color-surface-50: #3B212D;
+  --color-surface-100: #3B212D;
+  --color-surface-200: #3B212D;
+  --color-surface-300: #250917;
 
   /* Font family */
-  --font-family-sans: 'Rajdhani', sans-serif;
+  --font-family-sans: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
 }
 
 :root {
@@ -50,14 +49,27 @@
 }
 
 html {
-  background-color: #0D0A1C;
+  background-color: #250917;
   color: #E0E0FF;
 }
 
 body {
   min-height: 100vh;
-  background-color: #0D0A1C;
-  font-family: 'Rajdhani', sans-serif;
+  background-color: #250917;
+  font-family: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+button:not(:disabled),
+a[href]:not([aria-disabled="true"]),
+[role="button"]:not([aria-disabled="true"]),
+summary,
+label:has(input[type="checkbox"]:not(:disabled)),
+label:has(input[type="radio"]:not(:disabled)),
+input[type="checkbox"]:not(:disabled),
+input[type="radio"]:not(:disabled),
+input[type="range"]:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
 }
 
 #root {
@@ -79,12 +91,62 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #00CCFF;
+  background: #FFAB96;
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #00E5FF;
+  background: #FFC0B0;
+}
+
+.perps-leverage-slider {
+  background: #FFAB96;
+  transition: background-color 150ms ease;
+}
+
+.perps-leverage-slider:hover {
+  background: #FF572D;
+}
+
+.perps-leverage-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #FFF5F9;
+  background: #FFAB96;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.perps-leverage-slider:hover::-webkit-slider-thumb {
+  border-color: #FFF5F9;
+  background: #FF572D;
+}
+
+.perps-leverage-slider::-moz-range-track {
+  height: 8px;
+  background: #FFAB96;
+  transition: background-color 150ms ease;
+}
+
+.perps-leverage-slider:hover::-moz-range-track {
+  background: #FF572D;
+}
+
+.perps-leverage-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #FFF5F9;
+  border-radius: 0;
+  background: #FFAB96;
+  cursor: pointer;
+  transition: background-color 150ms ease, border-color 150ms ease;
+}
+
+.perps-leverage-slider:hover::-moz-range-thumb {
+  border-color: #FFF5F9;
+  background: #FF572D;
 }
 
 /* Material Symbols styling */

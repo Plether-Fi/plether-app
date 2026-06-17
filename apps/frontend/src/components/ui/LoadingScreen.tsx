@@ -38,10 +38,10 @@ export function LoadingScreen({
           <div
             className={`h-full transition-all duration-500 ${
               hasError
-                ? 'bg-cyber-electric-fuchsia shadow-[0_0_12px_rgba(255,0,204,0.8)]'
+                ? 'bg-cyber-electric-fuchsia'
                 : isComplete
-                  ? 'bg-cyber-neon-green shadow-[0_0_12px_rgba(0,255,153,0.8)]'
-                  : 'bg-cyber-warning-text shadow-[0_0_12px_rgba(255,215,0,0.8)]'
+                  ? 'bg-cyber-neon-green'
+                  : 'bg-cyber-warning-text'
             }`}
             style={{ width: `${String(progress)}%` }}
           />
@@ -56,7 +56,7 @@ export function LoadingScreen({
           {onClose && (
             <button
               onClick={onClose}
-              className="text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors -mt-1 -mr-2"
+              className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors -mt-1 -mr-2"
             >
               <span className="material-symbols-outlined">close</span>
             </button>
@@ -108,7 +108,7 @@ export function LoadingScreen({
               href={transactionUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center gap-2 w-full px-4 py-2 bg-cyber-neon-green hover:bg-cyber-neon-green/80 text-cyber-bg font-medium transition-all duration-200"
+              className="flex w-full items-center justify-center gap-2 bg-cyber-neon-green px-4 py-2 font-medium text-cyber-bg transition-colors hover:bg-[#00CC77] hover:underline hover:underline-offset-4"
             >
               Show transaction
               <span className="material-symbols-outlined text-lg">open_in_new</span>

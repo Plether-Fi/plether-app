@@ -4,7 +4,7 @@ import { formatUsd } from '../utils/formatters'
 
 function SkeletonCard() {
   return (
-    <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 shadow-md h-full">
+    <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 h-full">
       <Skeleton className="h-3 w-24 mb-3" />
       <Skeleton className="h-8 w-32 mb-2" />
       <Skeleton className="h-3 w-40" />
@@ -28,7 +28,7 @@ export function PortfolioCard({ title, value, description, link, isLoading, colo
 
   return (
     <Link to={link}>
-      <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 shadow-md hover:border-cyber-bright-blue/50 transition-colors cursor-pointer h-full">
+      <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/30 hover:border-[#FFAB96]/50 transition-colors cursor-pointer h-full">
         <p className="text-xs text-cyber-text-secondary uppercase tracking-wider font-medium mb-2">{title}</p>
         <div className={`text-2xl font-bold mb-1 ${colorClass}`}>{formatUsd(value)} USDC</div>
         <p className="text-xs text-cyber-text-secondary truncate">{description}</p>

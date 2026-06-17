@@ -1,5 +1,5 @@
 import { http, type Config } from 'wagmi'
-import { mainnet, sepolia } from 'wagmi/chains'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { defineChain } from 'viem'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
 import { createAppKit } from '@reown/appkit/react'
@@ -29,7 +29,26 @@ const appKitAnvil = {
   },
 } satisfies AppKitNetwork
 
-const networks: [AppKitNetwork, ...AppKitNetwork[]] = [appKitMainnet, appKitSepolia, appKitAnvil]
+const appKitArbitrumSepolia = {
+  id: arbitrumSepolia.id,
+  name: 'Arbitrum Sepolia',
+  chainNamespace: 'eip155' as const,
+  caipNetworkId: 'eip155:421614' as const,
+  nativeCurrency: arbitrumSepolia.nativeCurrency,
+  rpcUrls: {
+    default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] },
+  },
+  blockExplorers: {
+    default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' },
+  },
+} satisfies AppKitNetwork
+
+const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
+  appKitMainnet,
+  appKitSepolia,
+  appKitArbitrumSepolia,
+  appKitAnvil,
+]
 
 const metadata = {
   name: 'Plether',
@@ -44,6 +63,7 @@ const wagmiAdapter = new WagmiAdapter({
   transports: {
     [mainnet.id]: http('https://eth-mainnet.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
     [sepolia.id]: http('https://eth-sepolia.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
+    [arbitrumSepolia.id]: http('https://sepolia-rollup.arbitrum.io/rpc'),
     [anvil.id]: http('http://127.0.0.1:8545'),
   },
 })
@@ -62,7 +82,7 @@ createAppKit({
   },
 })
 
-type Chains = readonly [typeof mainnet, typeof sepolia, typeof anvil]
+type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof anvil]
 export const config = wagmiAdapter.wagmiConfig as Config<Chains>
 
 declare module 'wagmi' {

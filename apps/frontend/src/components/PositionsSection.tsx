@@ -38,7 +38,7 @@ export function PositionsSection({
       ) : (
         <>
           {hasLowHealth && (
-            <Alert variant="warning" title="Low Health Factor Warning" className="mb-6 shadow-lg shadow-cyber-warning-text/10">
+            <Alert variant="warning" title="Low Health Factor Warning" className="mb-6">
               One or more positions have low health factors and may be at risk of liquidation.
             </Alert>
           )}

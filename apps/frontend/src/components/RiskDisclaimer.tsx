@@ -20,9 +20,9 @@ export function RiskDisclaimer() {
 
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-cyber-bg/90 backdrop-blur-sm" />
+      <div className="absolute inset-0 bg-cyber-bg" />
 
-      <div className="relative w-full max-w-lg mx-4 bg-cyber-surface-dark border border-cyber-border-glow/50 shadow-2xl shadow-cyber-border-glow/20">
+      <div className="relative w-full max-w-lg mx-4 bg-cyber-surface-dark border border-cyber-border-glow/50">
         <div className="px-6 py-4 border-b border-cyber-border-glow/30">
           <h2 className="text-lg font-semibold text-cyber-text-primary">
             Risk Disclaimer
@@ -91,7 +91,7 @@ export function RiskDisclaimer() {
           <button
             onClick={acceptRisk}
             disabled={!checked}
-            className="w-full py-3 bg-cyber-electric-fuchsia text-white font-semibold hover:bg-cyber-electric-fuchsia/80 transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-full bg-cyber-electric-fuchsia py-3 font-semibold text-white transition-colors enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Proceed
           </button>

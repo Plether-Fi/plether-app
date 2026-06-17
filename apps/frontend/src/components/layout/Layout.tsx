@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect } from 'react'
+import { useLocation } from 'react-router-dom'
 import { Header } from './Header'
 import { Footer } from './Footer'
 import { MobileNav } from './MobileNav'
@@ -13,6 +14,8 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const { isConnected } = useAccount()
+  const { pathname } = useLocation()
+  const fullWidth = pathname === '/'
   const cleanupOldTransactions = useTransactionStore((s) => s.cleanupOldTransactions)
 
   useEffect(() => {
@@ -26,7 +29,7 @@ export function Layout({ children }: LayoutProps) {
         <Header />
         <ApiErrorBanner />
       </div>
-      <main className="flex-grow max-w-7xl mx-auto px-6 lg:px-8 py-10 w-full pb-24 lg:pb-10">
+      <main className={`flex-grow px-6 lg:px-8 py-10 w-full pb-24 lg:pb-10 ${fullWidth ? '' : 'max-w-7xl mx-auto'}`}>
         {children}
       </main>
       <Footer />

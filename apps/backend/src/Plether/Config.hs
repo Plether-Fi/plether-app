@@ -25,6 +25,12 @@ data Config = Config
   , cfgDeployments :: [Deployment]
   , cfgDatabaseUrl :: Maybe Text
   , cfgIndexerStartBlock :: Integer
+  , cfgPythBenchmarksUrl :: Text
+  , cfgPythHermesUrl :: Text
+  , cfgPythApiKey :: Maybe Text
+  , cfgPythBackfillDays :: Int
+  , cfgPythSampleIntervalSeconds :: Integer
+  , cfgPythIngestionEnabled :: Bool
   }
   deriving stock (Show)
 
@@ -107,11 +113,20 @@ loadConfig = do
       corsStr <- fromMaybe "http://localhost:5173" <$> lookupEnv "CORS_ORIGINS"
       mDatabaseUrl <- lookupEnv "DATABASE_URL"
       indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
+      pythBenchmarksUrl <- fromMaybe "https://benchmarks.pyth.network" <$> lookupEnv "PYTH_BENCHMARKS_URL"
+      pythHermesUrl <- fromMaybe "https://hermes.pyth.network" <$> lookupEnv "PYTH_HERMES_URL"
+      mPythApiKey <- lookupEnv "PYTH_API_KEY"
+      pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
+      pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
+      pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
           port = fromMaybe 3001 (readMaybe portStr)
           corsOrigins = filter (not . T.null) $ map T.strip $ T.splitOn " " $ T.pack corsStr
+          pythBackfillDays = fromMaybe 7 (readMaybe pythBackfillDaysStr)
+          pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
+          pythIngestionEnabled = parseBool pythIngestionStr
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"
             11155111 -> "config/addresses.sepolia.json"
@@ -132,4 +147,19 @@ loadConfig = do
                 , cfgDeployments = deployments
                 , cfgDatabaseUrl = fmap T.pack mDatabaseUrl
                 , cfgIndexerStartBlock = indexerStartBlock
+                , cfgPythBenchmarksUrl = T.pack pythBenchmarksUrl
+                , cfgPythHermesUrl = T.pack pythHermesUrl
+                , cfgPythApiKey = fmap T.pack mPythApiKey
+                , cfgPythBackfillDays = max 1 pythBackfillDays
+                , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
+                , cfgPythIngestionEnabled = pythIngestionEnabled
                 }
+
+parseBool :: String -> Bool
+parseBool value =
+  case T.toLower (T.pack value) of
+    "0" -> False
+    "false" -> False
+    "no" -> False
+    "off" -> False
+    _ -> True

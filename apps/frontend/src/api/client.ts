@@ -30,6 +30,10 @@ import type {
   HistoryParams,
   AllowancesParams,
   PricesMessage,
+  BasketHistory,
+  BasketLatest,
+  BasketHistoryRange,
+  PerpsRevealPayload,
 } from './types';
 
 // =============================================================================
@@ -85,6 +89,78 @@ const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
   timeout: 30000,
 };
 
+const API_ERROR_CODES = new Set<string>([
+  'INVALID_ADDRESS',
+  'INVALID_AMOUNT',
+  'INVALID_SIDE',
+  'RPC_ERROR',
+  'RATE_LIMITED',
+  'INTERNAL_ERROR',
+  'NETWORK_ERROR',
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isApiErrorCode(code: unknown): code is ApiErrorCode {
+  return typeof code === 'string' && API_ERROR_CODES.has(code);
+}
+
+function isApiError(value: unknown): value is ApiError {
+  if (!isRecord(value)) return false;
+
+  const { error } = value;
+  if (!isRecord(error)) return false;
+
+  return isApiErrorCode(error.code) && typeof error.message === 'string';
+}
+
+function isJsonResponse(response: Response): boolean {
+  return response.headers.get('content-type')?.toLowerCase().includes('application/json') ?? false;
+}
+
+async function readResponsePreview(response: Response): Promise<string> {
+  const body = await response.text().catch(() => '');
+  return body.trim().slice(0, 180);
+}
+
+function createNonJsonApiError(response: Response, url: string, preview: string): PlethApiError {
+  return new PlethApiError(
+    'NETWORK_ERROR',
+    'network: backend API returned a non-JSON response. Check that the backend is running and the frontend API URL points to it.',
+    response.status,
+    {
+      url,
+      contentType: response.headers.get('content-type'),
+      preview,
+    }
+  );
+}
+
+async function parseErrorResponse(response: Response, url: string): Promise<PlethApiError> {
+  if (!isJsonResponse(response)) {
+    return createNonJsonApiError(response, url, await readResponsePreview(response));
+  }
+
+  const parsed: unknown = await response.json().catch(() => undefined);
+  if (isApiError(parsed)) {
+    return new PlethApiError(
+      parsed.error.code,
+      parsed.error.message,
+      response.status,
+      parsed.error.details
+    );
+  }
+
+  return new PlethApiError(
+    'INTERNAL_ERROR',
+    response.statusText || 'Backend API request failed',
+    response.status,
+    parsed
+  );
+}
+
 // =============================================================================
 // HTTP Client
 // =============================================================================
@@ -119,19 +195,14 @@ async function fetchApi<T>(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errorBody = (await response.json().catch(() => ({
-        error: {
-          code: 'INTERNAL_ERROR' as ApiErrorCode,
-          message: response.statusText,
-        },
-      }))) as ApiError;
+      const apiError = await parseErrorResponse(response, url);
 
-      const apiError = new PlethApiError(
-        errorBody.error.code,
-        errorBody.error.message,
-        response.status,
-        errorBody.error.details
-      );
+      config.onError?.(apiError);
+      return Result.err(apiError);
+    }
+
+    if (!isJsonResponse(response)) {
+      const apiError = createNonJsonApiError(response, url, await readResponsePreview(response));
 
       config.onError?.(apiError);
       return Result.err(apiError);
@@ -200,6 +271,39 @@ export class PlethApiClient {
 
   async getProtocolConfig(): Promise<Result<ApiResponse<ProtocolConfig>, PlethApiError>> {
     return fetchApi<ProtocolConfig>(this.config, '/protocol/config');
+  }
+
+  // ===========================================================================
+  // Perps Endpoints
+  // ===========================================================================
+
+  async getPerpsBasketHistory(
+    range: BasketHistoryRange = '7d',
+    intervalSeconds = 60 * 60
+  ): Promise<Result<ApiResponse<BasketHistory>, PlethApiError>> {
+    return fetchApi<BasketHistory>(
+      this.config,
+      `/perps/basket/history?range=${range}&interval=${String(intervalSeconds)}`
+    );
+  }
+
+  async getPerpsBasketLatest(): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
+    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest');
+  }
+
+  async getPerpsRevealPayload(
+    orderId: string,
+    minPublishTime: number,
+    maxPublishTime: number
+  ): Promise<Result<ApiResponse<PerpsRevealPayload>, PlethApiError>> {
+    const params = new URLSearchParams({
+      minPublishTime: String(minPublishTime),
+      maxPublishTime: String(maxPublishTime),
+    });
+    return fetchApi<PerpsRevealPayload>(
+      this.config,
+      `/perps/orders/${orderId}/reveal-payload?${params.toString()}`
+    );
   }
 
   // ===========================================================================

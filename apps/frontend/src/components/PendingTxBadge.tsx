@@ -20,12 +20,12 @@ export function PendingTxBadge() {
   return (
     <button
       onClick={handleClick}
-      className="flex items-center gap-2 px-3 py-1.5 bg-cyber-bright-blue/20 border border-cyber-bright-blue/50 rounded-full shadow-sm shadow-cyber-bright-blue/20 hover:bg-cyber-bright-blue/30 transition-colors cursor-pointer"
+      className="flex cursor-pointer items-center gap-2 border border-[#FFAB96] bg-[#FFAB96]/20 px-3 py-1.5 transition-colors hover:bg-[#FFAB96]/30"
     >
       <div className="w-4 h-4 relative">
-        <div className="absolute inset-0 rounded-full border-2 border-cyber-bright-blue/30 border-t-cyber-bright-blue animate-spin" />
+        <div className="absolute inset-0 rounded-full border-2 border-[#FFAB96]/30 border-t-[#FFAB96] animate-spin" />
       </div>
-      <span className="text-sm text-cyber-bright-blue font-medium">
+      <span className="text-sm font-medium text-[#FFAB96]">
         {count} pending
       </span>
     </button>

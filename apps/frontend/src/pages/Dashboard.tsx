@@ -29,12 +29,13 @@ export function Dashboard() {
 
   const mainTab: MainTab =
     location.pathname === '/leverage' ? 'leverage' :
-    location.pathname === '/lending' ? 'lending' : 'trade'
+    location.pathname === '/lending' ? 'lending' :
+    'trade'
 
   const handleTabChange = (tab: MainTab) => {
     if (tab === 'leverage') void navigate('/leverage')
     else if (tab === 'lending') void navigate('/lending')
-    else void navigate('/')
+    else void navigate('/spot')
   }
 
   const [selectedPosition, setSelectedPosition] = useState<LeveragePosition | null>(null)
@@ -212,7 +213,7 @@ export function Dashboard() {
       {isConnected ? (
         <>
           {/* Trade / Leverage / Yield widget */}
-          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden shadow-lg shadow-cyber-border-glow/10">
+          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
             <MainTabNav activeTab={mainTab} onTabChange={handleTabChange} />
 
             {/* Tab content */}

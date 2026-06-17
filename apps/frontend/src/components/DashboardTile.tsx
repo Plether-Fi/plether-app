@@ -17,21 +17,18 @@ interface DashboardTileProps {
   isLoading?: boolean
 }
 
-const variantStyles: Record<TileVariant, { glow: string; text: string; border: string; divider: string }> = {
+const variantStyles: Record<TileVariant, { text: string; border: string; divider: string }> = {
   BULL: {
-    glow: 'shadow-[0_0_8px_rgba(0,255,153,0.1)] hover:shadow-[0_0_20px_rgba(0,255,153,0.4)]',
     text: 'text-cyber-neon-green',
     border: 'border-cyber-neon-green/50',
     divider: 'border-cyber-neon-green/30',
   },
   USDC: {
-    glow: 'shadow-[0_0_8px_rgba(0,200,255,0.1)] hover:shadow-[0_0_20px_rgba(0,200,255,0.4)]',
     text: 'text-cyber-bright-blue',
     border: 'border-cyber-bright-blue/50',
     divider: 'border-cyber-bright-blue/30',
   },
   BEAR: {
-    glow: 'shadow-[0_0_8px_rgba(255,0,204,0.1)] hover:shadow-[0_0_20px_rgba(255,0,204,0.4)]',
     text: 'text-cyber-electric-fuchsia',
     border: 'border-cyber-electric-fuchsia/50',
     divider: 'border-cyber-electric-fuchsia/30',
@@ -40,7 +37,7 @@ const variantStyles: Record<TileVariant, { glow: string; text: string; border: s
 
 function TileSkeleton() {
   return (
-    <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/50 shadow-md h-full">
+    <div className="bg-cyber-surface-dark p-5 border border-cyber-border-glow/50 h-full">
       <div className="flex items-center justify-between mb-2">
         <Skeleton className="h-5 w-32" />
         <Skeleton className="h-8 w-8 rounded-full" />
@@ -85,7 +82,7 @@ export function DashboardTile({
 
   return (
     <div
-      className={`bg-cyber-surface-dark p-5 border ${styles.border} shadow-md ${styles.glow} h-full transition-shadow duration-200`}
+      className={`bg-cyber-surface-dark p-5 border ${styles.border} h-full transition-colors duration-200`}
     >
         <div className="flex items-center justify-between mb-2">
           <h3 className={`font-semibold ${styles.text}`}>{title}</h3>

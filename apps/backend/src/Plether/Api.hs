@@ -8,7 +8,8 @@ import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400)
+import Network.HTTP.Types.Status (status200, status400, status429, status503)
+import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
@@ -19,6 +20,7 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import Plether.Handlers.Perps (getBasketHistory, getBasketLatest, getPythUpdate, getRevealPayload)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -38,7 +40,8 @@ import Plether.Handlers.History
   , getLendingHistory
   )
 import Plether.Database (DbPool)
-import Plether.Types.History (HistoryParams (..), defaultHistoryParams)
+import Plether.Types.History (HistoryParams (..))
+import Plether.Types.Perps (BasketHistoryParams (..), defaultBasketHistoryParams)
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
@@ -54,8 +57,8 @@ import Web.Scotty
   , status
   )
 
-app :: AppCache -> EthClient -> Config -> Maybe DbPool -> ScottyM ()
-app cache client cfg mPool = do
+app :: AppCache -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
+app cache client cfg mPool manager = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -184,6 +187,55 @@ app cache client cfg mPool = do
           else handleError $ E.invalidAddress addr
     Nothing -> pure ()
 
+  get "/api/perps/basket/history" $ do
+    params <- basketHistoryParams
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getBasketHistory pool cfg params
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
+
+  get "/api/perps/basket/latest" $ do
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getBasketLatest pool cfg
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; perps basket latest is unavailable"
+
+  get "/api/perps/orders/:orderId/reveal-payload" $ do
+    rawOrderId <- pathParam "orderId"
+    mMinPublishTime <- queryParamMaybe "minPublishTime"
+    mMaxPublishTime <- queryParamMaybe "maxPublishTime"
+    case (parsePositiveInteger rawOrderId, mMinPublishTime >>= parsePositiveInteger, mMaxPublishTime >>= parsePositiveInteger, mPool) of
+      (Just orderId, Just minPublishTime, Just maxPublishTime, Just pool)
+        | minPublishTime <= maxPublishTime -> do
+            result <- liftIO $ getRevealPayload pool cfg orderId minPublishTime maxPublishTime
+            handleResult result
+      (Nothing, _, _, _) ->
+        handleError $ E.invalidAmount "orderId must be a positive integer"
+      (_, Nothing, _, _) ->
+        handleError $ E.invalidAmount "minPublishTime must be a positive integer"
+      (_, _, Nothing, _) ->
+        handleError $ E.invalidAmount "maxPublishTime must be a positive integer"
+      (_, _, _, Nothing) ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; reveal payload cache is unavailable"
+      _ ->
+        handleError $ E.invalidAmount "minPublishTime must be less than or equal to maxPublishTime"
+
+  get "/api/perps/pyth/update" $ do
+    mPublishTime <- queryParamMaybe "publishTime"
+    case traverse parsePositiveInteger mPublishTime of
+      Just mTs -> do
+        result <- liftIO $ getPythUpdate cache manager cfg mTs
+        handleResult result
+      Nothing ->
+        handleError $ E.invalidAmount "publishTime must be a positive integer"
+
 historyParams :: ActionM HistoryParams
 historyParams = do
   mPage <- queryParamMaybe "page"
@@ -208,6 +260,33 @@ historyParams = do
            then Just $ read $ T.unpack stripped
            else Nothing
 
+basketHistoryParams :: ActionM BasketHistoryParams
+basketHistoryParams = do
+  mRange <- queryParamMaybe "range"
+  mInterval <- queryParamMaybe "interval"
+  pure
+    defaultBasketHistoryParams
+      { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
+      , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 60) mInterval
+      }
+  where
+    normalizeRange :: Text -> Text
+    normalizeRange range =
+      case T.toLower (T.strip range) of
+        "24h" -> "24h"
+        "30d" -> "30d"
+        _ -> "7d"
+
+    parseIntegerOr :: Integer -> Text -> Integer
+    parseIntegerOr def txt = maybe def id (readMaybeInteger txt)
+
+    readMaybeInteger :: Text -> Maybe Integer
+    readMaybeInteger txt =
+      let stripped = T.strip txt
+       in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
+            then Just $ read $ T.unpack stripped
+            else Nothing
+
 handleResult :: (ToJSON a) => Either ApiError a -> ActionM ()
 handleResult = \case
   Right response -> do
@@ -219,7 +298,16 @@ handleResult = \case
 handleError :: ApiError -> ActionM ()
 handleError err = do
   setHeader "Content-Type" "application/json"
-  status status400
+  status $
+    case E.errCode err of
+      E.RateLimited -> status429
+      _ -> status400
+  json err
+
+handleServiceUnavailable :: ApiError -> ActionM ()
+handleServiceUnavailable err = do
+  setHeader "Content-Type" "application/json"
+  status status503
   json err
 
 parseAmount :: Text -> Maybe Integer
@@ -228,6 +316,11 @@ parseAmount txt =
    in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
         then Just $ read $ T.unpack stripped
         else Nothing
+
+parsePositiveInteger :: Text -> Maybe Integer
+parsePositiveInteger txt = do
+  value <- parseAmount txt
+  if value > 0 then Just value else Nothing
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ const $ Just policy

@@ -157,20 +157,20 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       <div className="bg-cyber-surface-light p-1 flex text-sm font-medium mb-8 border border-cyber-border-glow/30">
         <button
           onClick={() => { setMode('buy'); setInputAmount('') }}
-          className={`flex-1 py-2 px-4 transition-all cursor-pointer ${
+          className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'buy'
-              ? 'bg-cyber-surface-dark text-cyber-bright-blue shadow-sm shadow-cyber-bright-blue/10 border border-cyber-bright-blue/50'
-              : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+              ? 'bg-cyber-surface-dark text-cyber-bright-blue border border-cyber-bright-blue/50'
+              : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >
           Buy
         </button>
         <button
           onClick={() => { setMode('sell'); setInputAmount('') }}
-          className={`flex-1 py-2 px-4 transition-all cursor-pointer ${
+          className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'sell'
-              ? 'bg-cyber-surface-dark text-cyber-bright-blue shadow-sm shadow-cyber-bright-blue/10 border border-cyber-bright-blue/50'
-              : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+              ? 'bg-cyber-surface-dark text-cyber-bright-blue border border-cyber-bright-blue/50'
+              : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >
           Sell
@@ -182,10 +182,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => { setSelectedToken('BULL'); }}
-            className={`relative p-4 text-center transition-all cursor-pointer ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedToken === 'BULL'
-                ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10 shadow-md shadow-cyber-neon-green/20'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 opacity-60 hover:opacity-100'
+                ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10'
+                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedToken === 'BULL' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'}`}>plDXY-BULL</div>
@@ -193,10 +193,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           </button>
           <button
             onClick={() => { setSelectedToken('BEAR'); }}
-            className={`relative p-4 text-center transition-all cursor-pointer ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedToken === 'BEAR'
-                ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10 shadow-md shadow-cyber-electric-fuchsia/20'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 opacity-60 hover:opacity-100'
+                ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10'
+                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedToken === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-text-primary'}`}>plDXY-BEAR</div>
@@ -215,7 +215,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         />
 
         <div className="flex justify-center z-10 relative">
-          <div className="bg-cyber-surface-light w-9 h-9 rounded-full border border-cyber-border-glow/30 shadow-sm shadow-cyber-border-glow/10 flex items-center justify-center">
+          <div className="bg-cyber-surface-light w-9 h-9 rounded-full border border-cyber-border-glow/30 flex items-center justify-center">
             <span className="material-symbols-outlined text-cyber-bright-blue text-lg">arrow_downward</span>
           </div>
         </div>
@@ -236,7 +236,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       <div className="border-t border-cyber-border-glow/30 pt-4">
         <button
           onClick={() => { setShowDetails(!showDetails); }}
-          className="w-full flex justify-between items-center text-sm text-cyber-text-secondary hover:text-cyber-bright-blue cursor-pointer"
+          className="flex w-full items-center justify-between text-sm text-cyber-text-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
         >
           <span>Swap details</span>
           <span className="material-symbols-outlined text-lg">{showDetails ? 'expand_less' : 'expand_more'}</span>
@@ -279,7 +279,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <button
           onClick={() => { handleSwap() }}
           disabled={isDisabled}
-          className="w-full bg-cyber-bright-blue hover:bg-cyber-bright-blue/90 text-cyber-bg font-semibold py-4 px-6 shadow-lg shadow-cyber-bright-blue/40 transition-all transform hover:-translate-y-0.5 active:translate-y-0 text-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none disabled:shadow-none"
+          className="w-full border border-[#FFAB96] bg-[#FFAB96] px-6 py-4 text-lg font-semibold text-[#250917] transition-colors hover:bg-[#FF572D] hover:text-[#FFF5F9] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
         >
           {getButtonText()}
         </button>

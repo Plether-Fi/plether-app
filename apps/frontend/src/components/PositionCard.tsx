@@ -20,7 +20,7 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
       : 'text-cyber-electric-fuchsia'
 
   return (
-    <div className="bg-cyber-surface-dark p-4 border border-cyber-border-glow/30 hover:border-cyber-bright-blue/50 transition-all shadow-md">
+    <div className="bg-cyber-surface-dark p-4 border border-cyber-border-glow/30 hover:border-[#FFAB96]/50 transition-all">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <TokenIcon side={position.side} />
@@ -63,14 +63,14 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
           <div className="flex items-center gap-2 mt-2 md:mt-0">
             <button
               onClick={onAdjust}
-              className="px-3 py-1.5 text-sm border border-cyber-border-glow/30 text-cyber-text-secondary hover:bg-cyber-surface-light hover:text-cyber-bright-blue transition-colors"
+              className="border border-cyber-border-glow/30 px-3 py-1.5 text-sm text-cyber-text-secondary transition-colors hover:bg-[#3B212D] hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
             >
               Adjust
             </button>
             <button
               onClick={onClose}
               disabled={isClosing}
-              className="px-3 py-1.5 text-sm bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary transition-colors shadow-md shadow-cyber-electric-fuchsia/20 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-3 py-1.5 text-sm bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isClosing ? 'Closing...' : 'Close'}
             </button>

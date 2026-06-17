@@ -2,8 +2,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { WagmiProvider } from 'wagmi'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools'
 import { config } from './config/wagmi'
+import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
 
@@ -31,7 +31,6 @@ createRoot(rootElement).render(
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <App />
-        <ReactQueryDevtools initialIsOpen={false} />
       </QueryClientProvider>
     </WagmiProvider>
   </StrictMode>

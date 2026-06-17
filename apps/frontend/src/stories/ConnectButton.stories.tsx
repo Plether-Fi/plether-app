@@ -10,7 +10,7 @@ type Story = StoryObj
 
 function MockDisconnectedButton() {
   return (
-    <button className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 font-medium text-sm">
+    <button className="flex items-center gap-2 bg-[#FF572D] text-[#FFF5F9] hover:bg-[#FF572D]/90 px-4 py-2 transition-colors border border-[#FF572D]/25 font-medium text-sm">
       <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
       Connect Wallet
     </button>
@@ -32,12 +32,12 @@ function MockConnectedButton({ network = 'Mainnet', isWrongNetwork = false }: { 
         {isWrongNetwork ? 'Wrong Network' : network}
       </span>
 
-      <button className="flex items-center gap-2 bg-cyber-electric-fuchsia hover:bg-cyber-electric-fuchsia/80 text-cyber-text-primary px-4 py-2 transition-colors border border-transparent shadow-lg shadow-cyber-electric-fuchsia/20 group">
-        <div className="w-2 h-2 rounded-full bg-cyber-neon-green shadow-md shadow-cyber-neon-green/50" />
+      <button className="flex items-center gap-2 bg-[#FF572D] text-[#FFF5F9] hover:bg-[#FF572D]/90 px-4 py-2 transition-colors border border-[#FF572D]/25 group">
+        <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
         <span className="font-medium text-xs sm:text-sm">0x1234...5678</span>
       </button>
 
-      <button className="p-2 text-cyber-text-secondary hover:text-cyber-bright-blue transition-colors" title="Disconnect">
+      <button className="p-2 text-cyber-text-secondary transition-colors hover:text-[#FFAB96]" title="Disconnect">
         <span className="material-symbols-outlined text-xl">logout</span>
       </button>
     </div>

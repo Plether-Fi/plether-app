@@ -49,7 +49,7 @@ export function Toast({ id, type, title, message, txHash, duration = 5000, onClo
 
   return (
     <div
-      className={`${bgColor} border rounded-lg p-4 shadow-lg backdrop-blur-sm transition-all duration-300 ${
+      className={`${bgColor} border rounded-lg p-4 transition-all duration-300 ${
         isLeaving ? 'opacity-0 translate-x-full' : 'opacity-100 translate-x-0'
       }`}
     >

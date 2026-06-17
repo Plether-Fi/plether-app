@@ -14,6 +14,8 @@
     "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
     "test:integration:watch": "vitest --project integration",
+    "test:perps-integration": "vitest run --project perps-integration",
+    "test:perps-fork": "vitest run --project perps-fork",
     "anvil": "dotenv -- sh -c 'anvil --fork-url $SEPOLIA_RPC_URL --chain-id 31337 --port 8546'",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
@@ -21,11 +23,13 @@
     "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui"
   },
   "dependencies": {
+    "@fontsource/uncut-sans": "^5.2.5",
     "@reown/appkit": "^1.8.18",
     "@reown/appkit-adapter-wagmi": "^1.8.18",
     "@tanstack/react-query": "^5.90.16",
     "better-result": "^2.1.0",
     "idb-keyval": "^6.2.2",
+    "lightweight-charts": "^5.2.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router-dom": "^7.11.0",

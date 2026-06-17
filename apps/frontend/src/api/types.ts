@@ -127,6 +127,60 @@ export interface ProtocolConfig {
 }
 
 // =============================================================================
+// Perps Basket Types
+// =============================================================================
+
+export type BasketHistoryRange = '24h' | '7d' | '30d';
+
+export interface BasketComponentPrice {
+  symbol: string;
+  feedSymbol: string;
+  feedId: string;
+  price: string;
+  rawPrice: string;
+  confidence: string;
+  exponent: number;
+  publishTime: number;
+  inverted: boolean;
+  weightBps: number;
+  basePrice: string;
+}
+
+export interface BasketHistoryPoint {
+  timestamp: number;
+  basketPrice: string;
+  components: BasketComponentPrice[];
+}
+
+export interface BasketHistory {
+  range: BasketHistoryRange;
+  intervalSeconds: number;
+  source: 'pyth_benchmarks';
+  generatedAt: number;
+  latestPrice: string | null;
+  changePct: number | null;
+  points: BasketHistoryPoint[];
+}
+
+export interface BasketLatest {
+  timestamp: number;
+  basketPrice: string;
+  components: BasketComponentPrice[];
+  generatedAt: number;
+  source: string;
+}
+
+export interface PerpsRevealPayload {
+  orderId: string;
+  updateData: string[];
+  fetchedAt: number;
+  publishTimes: number[];
+  minPublishTime: number;
+  maxPublishTime: number;
+  source: string;
+}
+
+// =============================================================================
 // User Types
 // =============================================================================
 

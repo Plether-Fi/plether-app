@@ -19,6 +19,7 @@ import type {
   ApiResponse,
   PricesMessage,
   WebSocketMessage,
+  BasketHistoryRange,
 } from './types';
 
 // =============================================================================
@@ -32,6 +33,12 @@ export const apiQueryKeys = {
     all: () => ['protocol', currentChainId] as const,
     status: () => [...apiQueryKeys.protocol.all(), 'status'] as const,
     config: () => [...apiQueryKeys.protocol.all(), 'config'] as const,
+  },
+  perps: {
+    all: () => ['perps', currentChainId] as const,
+    basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
+    basketHistory: (range: BasketHistoryRange, intervalSeconds: number) =>
+      [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds] as const,
   },
   user: {
     all: (address: string) => ['user', currentChainId, address] as const,
@@ -90,6 +97,25 @@ export function useProtocolConfig() {
     queryKey: apiQueryKeys.protocol.config(),
     queryFn: async () => unwrapResult(await plethApi.getProtocolConfig()),
     staleTime: 60 * 60 * 1000,
+  });
+}
+
+export function usePerpsBasketHistory(range: BasketHistoryRange = '7d', intervalSeconds = 60 * 60) {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds)),
+    staleTime: 60 * 1000,
+    refetchInterval: 60 * 1000,
+  });
+}
+
+export function usePerpsBasketLatest() {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.basketLatest(),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketLatest()),
+    staleTime: 5 * 1000,
+    refetchInterval: 5 * 1000,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }
 

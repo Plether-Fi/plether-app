@@ -23,6 +23,12 @@ export type {
   MarketConfig,
   StakingStats,
   ApyStats,
+  BasketHistory,
+  BasketHistoryPoint,
+  BasketLatest,
+  BasketComponentPrice,
+  BasketHistoryRange,
+  PerpsRevealPayload,
   // User types
   UserDashboard,
   UserBalances,
@@ -63,6 +69,8 @@ export {
   // Protocol hooks
   useProtocolStatus,
   useProtocolConfig,
+  usePerpsBasketHistory,
+  usePerpsBasketLatest,
   // User hooks
   useUserDashboard,
   useUserBalances,

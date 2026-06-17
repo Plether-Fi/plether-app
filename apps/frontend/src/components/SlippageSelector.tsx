@@ -94,7 +94,7 @@ export function SlippageSelector() {
                 onChange={(e) => { handleSlippageCustomChange(e.target.value); }}
                 placeholder={`Custom (max ${String(MAX_SLIPPAGE)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
-                className={isSlippageCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
+                className={isSlippageCustom ? 'border-cyber-bright-blue' : ''}
               />
             </div>
           </div>
@@ -127,7 +127,7 @@ export function SlippageSelector() {
                 onChange={(e) => { handlePriceImpactCustomChange(e.target.value); }}
                 placeholder={`Custom (max ${String(MAX_PRICE_IMPACT)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
-                className={isPriceImpactCustom ? 'ring-2 ring-cyber-bright-blue' : ''}
+                className={isPriceImpactCustom ? 'border-cyber-bright-blue' : ''}
               />
             </div>
           </div>

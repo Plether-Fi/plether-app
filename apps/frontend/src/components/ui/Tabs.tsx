@@ -17,11 +17,11 @@ export function Tabs({ tabs, activeTab, onChange }: TabsProps) {
           key={tab.id}
           onClick={() => { onChange(tab.id); }}
           className={`
-            flex-1 px-4 py-2 text-sm font-medium transition-all cursor-pointer
+            flex-1 px-4 py-2 text-sm font-medium transition-colors hover:underline hover:underline-offset-4
             ${
               activeTab === tab.id
-                ? 'bg-cyber-surface-dark text-cyber-neon-green shadow-sm shadow-cyber-neon-green/10 border border-cyber-neon-green/50'
-                : 'text-cyber-text-secondary hover:text-cyber-bright-blue'
+                ? 'bg-cyber-surface-dark text-cyber-neon-green border border-cyber-neon-green/50'
+                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }
           `}
         >
