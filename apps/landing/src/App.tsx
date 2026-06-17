@@ -84,6 +84,44 @@ function Brand() {
   )
 }
 
+function AnimatedFooterLogomark() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="footer__mark footer-logomark"
+      fill="none"
+      viewBox="0 0 211 211"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <defs>
+        <clipPath id="footer-logomark-center-clip">
+          <rect height="64.82" width="64.86" x="73.13" y="72.82" />
+        </clipPath>
+      </defs>
+
+      <g className="footer-logomark__mark">
+        <circle className="footer-logomark__falling-circle footer-logomark__falling-circle--cream" cx="105.56" cy="105.23" r="28.85" />
+
+        <rect className="footer-logomark__center-square" height="64.82" width="64.86" x="73.13" y="72.82" />
+
+        <g clipPath="url(#footer-logomark-center-clip)">
+          <circle className="footer-logomark__falling-circle footer-logomark__falling-circle--orange" cx="105.56" cy="105.23" r="28.85" />
+        </g>
+
+        <rect className="footer-logomark__square footer-logomark__square--top-left" height="64.82" width="64.85" x="0.28" y="0" />
+        <rect className="footer-logomark__square footer-logomark__square--top-center" height="64.82" width="64.85" x="73.13" y="0" />
+        <rect className="footer-logomark__square footer-logomark__square--top-right" height="64.82" width="64.86" x="145.98" y="0" />
+        <rect className="footer-logomark__square footer-logomark__square--middle-left" height="64.82" width="64.86" x="0.27" y="72.82" />
+        <rect className="footer-logomark__square footer-logomark__square--middle-right" height="64.82" width="64.86" x="145.98" y="72.82" />
+        <rect className="footer-logomark__square footer-logomark__square--bottom-left" height="64.83" width="65.4" x="0" y="145.64" />
+        <rect className="footer-logomark__square footer-logomark__square--bottom-center" height="64.83" width="64.86" x="73.13" y="145.64" />
+        <rect className="footer-logomark__square footer-logomark__square--bottom-right" height="64.83" width="64.86" x="145.98" y="145.64" />
+        <circle className="footer-logomark__bottom-right-dot" cx="178.41" cy="178.06" r="28.85" />
+      </g>
+    </svg>
+  )
+}
+
 function DividerDot() {
   return <span className="nav-dot" aria-hidden="true" />
 }
@@ -478,7 +516,7 @@ export function App() {
 
         <footer ref={footerRef} className="footer">
           <div className="footer__brand" aria-hidden="true">
-            <img className="footer__mark" src="/logomark.svg" alt="" />
+            <AnimatedFooterLogomark />
             <img className="footer__type" src="/logotype.svg" alt="" />
           </div>
           <div className="footer__bottom">
