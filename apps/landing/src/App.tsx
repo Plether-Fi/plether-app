@@ -1,12 +1,14 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject, type ReactNode } from 'react'
 import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
 
-const APP_URL = 'http://localhost:5173'
+const APP_URL = 'https://app.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
 const MANIFESTO_URL = 'https://plether.com/manifesto'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
+const FOOTER_LOGO_SCRUB_END_PROGRESS = 0.517
+const FOOTER_LOGO_DURATION_MS = 10400
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const TRUST_ITEMS = [
   {
@@ -119,6 +121,78 @@ function AnimatedFooterLogomark() {
         <circle className="footer-logomark__bottom-right-dot" cx="178.41" cy="178.06" r="28.85" />
       </g>
     </svg>
+  )
+}
+
+function FooterBrand() {
+  const brandRef = useRef<HTMLDivElement | null>(null)
+  const logotypeRef = useRef<HTMLImageElement | null>(null)
+  const [isScrubbing, setIsScrubbing] = useState(false)
+
+  const clamp = (value: number) => Math.min(1, Math.max(0, value))
+  const ease = (value: number) => {
+    const clamped = clamp(value)
+    return clamped * clamped * (3 - 2 * clamped)
+  }
+  const stage = (progress: number, start: number, end: number) => ease((progress - start) / (end - start))
+  const setRevealVars = (brand: HTMLDivElement, name: string, progress: number, start: number, end: number) => {
+    const reveal = stage(progress, start, end)
+
+    brand.style.setProperty(`--footer-logo-${name}-opacity`, reveal.toFixed(3))
+    brand.style.setProperty(`--footer-logo-${name}-scale`, (0.34 + 0.66 * reveal).toFixed(3))
+  }
+
+  const updateScrubProgress = (clientX: number) => {
+    const brand = brandRef.current
+    const logotype = logotypeRef.current
+
+    if (!brand || !logotype) {
+      return
+    }
+
+    const { left, width } = logotype.getBoundingClientRect()
+    const rawProgress = width > 0 ? (clientX - left) / width : 0
+    const progress = clamp(rawProgress) * FOOTER_LOGO_SCRUB_END_PROGRESS
+    const fallingProgress = stage(progress, 0.037, 0.148)
+
+    brand.style.setProperty('--footer-logo-progress', progress.toFixed(3))
+    brand.style.setProperty('--footer-logo-resume-delay', `${(-progress * FOOTER_LOGO_DURATION_MS).toFixed(0)}ms`)
+    brand.style.setProperty('--footer-logo-rotation', (180 * stage(progress, 0.418, 0.517)).toFixed(2))
+    brand.style.setProperty('--footer-logo-center-scale', (0.78 + 0.22 * stage(progress, 0, 0.074)).toFixed(3))
+    brand.style.setProperty('--footer-logo-falling-y', (-124 + 124 * fallingProgress).toFixed(2))
+    brand.style.setProperty('--footer-logo-falling-opacity', stage(progress, 0.037, 0.062).toFixed(3))
+
+    setRevealVars(brand, 'top-center', progress, 0.16, 0.191)
+    setRevealVars(brand, 'top-right', progress, 0.191, 0.222)
+    setRevealVars(brand, 'middle-right', progress, 0.222, 0.252)
+    setRevealVars(brand, 'bottom-right', progress, 0.252, 0.283)
+    setRevealVars(brand, 'bottom-center', progress, 0.283, 0.314)
+    setRevealVars(brand, 'bottom-left', progress, 0.314, 0.345)
+    setRevealVars(brand, 'middle-left', progress, 0.345, 0.375)
+    setRevealVars(brand, 'dot', progress, 0.375, 0.406)
+  }
+
+  const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
+    setIsScrubbing(true)
+    updateScrubProgress(event.clientX)
+  }
+
+  const handleMouseLeave = () => {
+    setIsScrubbing(false)
+  }
+
+  return (
+    <div
+      ref={brandRef}
+      aria-hidden="true"
+      className={`footer__brand${isScrubbing ? ' footer__brand--scrubbing' : ''}`}
+      onMouseEnter={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      onMouseMove={handleMouseMove}
+    >
+      <AnimatedFooterLogomark />
+      <img ref={logotypeRef} className="footer__type" src="/logotype.svg" alt="" />
+    </div>
   )
 }
 
@@ -515,10 +589,7 @@ export function App() {
         </div>
 
         <footer ref={footerRef} className="footer">
-          <div className="footer__brand" aria-hidden="true">
-            <AnimatedFooterLogomark />
-            <img className="footer__type" src="/logotype.svg" alt="" />
-          </div>
+          <FooterBrand />
           <div className="footer__bottom">
             <p>© Plether 2026</p>
             <nav className="footer__nav" aria-label="Footer navigation">
