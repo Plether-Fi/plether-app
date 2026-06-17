@@ -475,9 +475,7 @@ a {
   top: 50%;
   aspect-ratio: 1;
   transform: translate(-50%, -50%);
-  transition:
-    left 1440ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 1440ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: left 1440ms cubic-bezier(0.2, 0.8, 0.2, 1);
   width: 24%;
   border-radius: 50%;
   z-index: 1;
@@ -565,7 +563,6 @@ a {
 .feature-card:hover .split-illustration__circle--left,
 .feature-card:focus-within .split-illustration__circle--left {
   left: -16%;
-  opacity: 0;
 }
 
 .split-illustration:hover .split-illustration__circle--right,
@@ -941,6 +938,284 @@ a {
   width: clamp(230px, 22vw, 414px);
   height: auto;
   flex: 0 0 auto;
+}
+
+.footer-logomark {
+  --logo-duration: 10400ms;
+  color: var(--plether-cream);
+  overflow: visible;
+}
+
+.footer-logomark__mark {
+  transform-box: view-box;
+  transform-origin: 105.56px 105.23px;
+  animation: footer-logomark-morph var(--logo-duration) cubic-bezier(0.62, 0, 0.2, 1) infinite;
+}
+
+.footer-logomark__center-square,
+.footer-logomark__square,
+.footer-logomark__bottom-right-dot,
+.footer-logomark__falling-circle--cream {
+  fill: currentColor;
+}
+
+.footer-logomark__falling-circle--orange {
+  fill: var(--plether-orange);
+}
+
+.footer-logomark__center-square,
+.footer-logomark__square,
+.footer-logomark__bottom-right-dot,
+.footer-logomark__falling-circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: opacity, transform;
+}
+
+.footer-logomark__center-square {
+  animation: footer-logomark-center var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__falling-circle {
+  opacity: 0;
+  transform: translateY(-124px);
+  animation: footer-logomark-falling-circle var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square,
+.footer-logomark__bottom-right-dot {
+  opacity: 0;
+  transform: scale(0.34);
+}
+
+.footer-logomark__square--top-center {
+  animation: footer-logomark-square-top-center var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--top-right {
+  animation: footer-logomark-square-top-right var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--middle-right {
+  animation: footer-logomark-square-middle-right var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--middle-left {
+  animation: footer-logomark-square-middle-left var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--bottom-center {
+  animation: footer-logomark-square-bottom-center var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--bottom-right {
+  animation: footer-logomark-square-bottom-right var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--bottom-left {
+  animation: footer-logomark-square-bottom-left var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__square--top-left {
+  animation: none;
+}
+
+.footer-logomark__bottom-right-dot {
+  transform: translate(-145.71px, -145.65px);
+  animation: footer-logomark-bottom-right-dot var(--logo-duration) cubic-bezier(0.2, 0.82, 0.18, 1) infinite;
+}
+
+.footer-logomark__mark,
+.footer-logomark__center-square,
+.footer-logomark__falling-circle,
+.footer-logomark__square--top-center,
+.footer-logomark__square--top-right,
+.footer-logomark__square--middle-right,
+.footer-logomark__square--middle-left,
+.footer-logomark__square--bottom-center,
+.footer-logomark__square--bottom-right,
+.footer-logomark__square--bottom-left,
+.footer-logomark__bottom-right-dot {
+  animation-direction: alternate;
+}
+
+@keyframes footer-logomark-morph {
+  0%,
+  41.8% {
+    transform: rotate(0deg) scale(1);
+  }
+
+  51.7%,
+  100% {
+    transform: rotate(180deg) scale(1);
+  }
+}
+
+@keyframes footer-logomark-center {
+  0% {
+    opacity: 1;
+    transform: scale(0.78);
+  }
+
+  7.4%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-falling-circle {
+  0%,
+  3.7% {
+    opacity: 0;
+    transform: translateY(-124px) scale(1);
+  }
+
+  6.2% {
+    opacity: 1;
+  }
+
+  14.8%,
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-top-center {
+  0%,
+  16% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  19.1%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-top-right {
+  0%,
+  19.1% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  22.2%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-middle-right {
+  0%,
+  22.2% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  25.2%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-bottom-right {
+  0%,
+  25.2% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  28.3%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-bottom-center {
+  0%,
+  28.3% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  31.4%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-bottom-left {
+  0%,
+  31.4% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  34.5%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-square-middle-left {
+  0%,
+  34.5% {
+    opacity: 0;
+    transform: scale(0.34);
+  }
+
+  37.5%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes footer-logomark-bottom-right-dot {
+  0%,
+  37.5% {
+    opacity: 0;
+    transform: translate(-145.71px, -145.65px) scale(0.34);
+  }
+
+  40.6%,
+  100% {
+    opacity: 1;
+    transform: translate(-145.71px, -145.65px) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .footer-logomark__mark,
+  .footer-logomark__center-square,
+  .footer-logomark__square,
+  .footer-logomark__bottom-right-dot,
+  .footer-logomark__falling-circle {
+    animation: none;
+  }
+
+  .footer-logomark__mark,
+  .footer-logomark__center-square,
+  .footer-logomark__square,
+  .footer-logomark__bottom-right-dot,
+  .footer-logomark__falling-circle--orange {
+    opacity: 1;
+    transform: none;
+  }
+
+  .footer-logomark__falling-circle--cream,
+  .footer-logomark__square--bottom-right {
+    display: none;
+  }
 }
 
 .footer__type {
