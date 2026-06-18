@@ -25,6 +25,7 @@ body,
 #root {
   min-height: 100%;
   margin: 0;
+  overflow-x: clip;
 }
 
 body {
@@ -110,6 +111,7 @@ a {
 
 .brand {
   display: inline-flex;
+  min-height: 44px;
   align-items: center;
   gap: 12px;
 }
@@ -146,6 +148,11 @@ a {
 
 .site-nav a:not(.launch-button) {
   position: relative;
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
   padding: 10px 0;
 }
 
@@ -163,6 +170,14 @@ a {
   transform: scaleX(0);
   transform-origin: left;
   transition: transform 160ms ease;
+}
+
+.text-link,
+.cta__title-link {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  vertical-align: middle;
 }
 
 .site-nav a:not(.launch-button):hover::after,
@@ -202,12 +217,17 @@ a {
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
 }
 
-.launch-button::after,
-.docs-button::after {
+.button-label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.button-label::after {
   position: absolute;
-  right: 34px;
-  bottom: 18px;
-  left: 34px;
+  right: 0;
+  bottom: -0.34em;
+  left: 0;
   height: 2px;
   background: currentColor;
   content: "";
@@ -216,10 +236,10 @@ a {
   transition: transform 160ms ease;
 }
 
-.launch-button:hover::after,
-.launch-button:focus-visible::after,
-.docs-button:hover::after,
-.docs-button:focus-visible::after {
+.launch-button:hover .button-label::after,
+.launch-button:focus-visible .button-label::after,
+.docs-button:hover .button-label::after,
+.docs-button:focus-visible .button-label::after {
   transform: scaleX(1);
 }
 
@@ -285,9 +305,9 @@ a {
 .hero__copy h1 {
   max-width: 1420px;
   margin: 0;
-  font-size: clamp(68px, 6.75vw, 124px);
+  font-size: clamp(64px, 5vw, 96px);
   font-weight: 700;
-  letter-spacing: 0;
+  letter-spacing: -0.04em;
   line-height: 0.9;
 }
 
@@ -305,9 +325,10 @@ a {
 
 .hero__actions p {
   margin: 0 0 56px;
-  font-size: clamp(34px, 2.45vw, 45px);
-  font-weight: 700;
-  line-height: 1.2;
+  font-size: clamp(28px, 1.875vw, 36px);
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1;
 }
 
 .button-row {
@@ -319,9 +340,10 @@ a {
 .onchain-word {
   margin: 0;
   justify-self: end;
-  font-size: clamp(78px, 7vw, 132px);
+  font-size: clamp(64px, 5vw, 96px);
   font-weight: 700;
-  line-height: 0.86;
+  letter-spacing: -0.04em;
+  line-height: 0.9;
 }
 
 .primitive {
@@ -787,10 +809,18 @@ a {
   line-height: 1.36;
 }
 
+.trust-item--expanded .trust-item__panel,
 .trust-item:hover .trust-item__panel,
 .trust-item:focus-within .trust-item__panel {
   grid-template-rows: 1fr;
   opacity: 1;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .trust-item__panel {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
 }
 
 @keyframes trust-marker-spin {
@@ -832,6 +862,9 @@ a {
 .text-link {
   position: relative;
   display: inline-block;
+  min-height: auto;
+  line-height: inherit;
+  vertical-align: baseline;
 }
 
 .text-link::after {
@@ -1325,6 +1358,11 @@ a {
 
 .footer__nav a {
   position: relative;
+  display: inline-flex;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
   padding: 8px 0;
 }
 
@@ -1424,21 +1462,35 @@ a {
 @media (max-width: 680px) {
   .landing-section {
     min-height: 100svh;
-    padding: 0 20px 36px;
+    padding: 0 20px 30px;
   }
 
   .site-header {
     flex-direction: column;
-    padding: 26px 20px 28px;
+    gap: 12px;
+    padding: 14px 20px 16px;
+  }
+
+  .brand__mark {
+    width: 32px;
+    height: 32px;
+  }
+
+  .brand__type {
+    width: 120px;
+  }
+
+  .site-nav {
+    gap: 10px;
   }
 
   .landing-section--hero {
-    padding-top: 176px;
+    padding-top: 164px;
   }
 
   .exposure,
   .built {
-    padding-top: 190px;
+    padding-top: 150px;
   }
 
   .site-nav {
@@ -1448,6 +1500,7 @@ a {
 
   .hero {
     padding-top: 0;
+    justify-content: flex-start;
   }
 
   .hero__copy h1 {
@@ -1455,8 +1508,12 @@ a {
   }
 
   .hero__bottom {
-    gap: 54px;
-    padding-top: 92px;
+    display: contents;
+  }
+
+  .hero__actions {
+    order: 2;
+    margin-top: auto;
   }
 
   .hero__actions p {
@@ -1468,8 +1525,8 @@ a {
     gap: 14px;
   }
 
-  .launch-button,
-  .docs-button {
+  .button-row .launch-button,
+  .button-row .docs-button {
     min-width: 0;
     min-height: 56px;
     flex: 1 1 160px;
@@ -1478,15 +1535,18 @@ a {
   }
 
   .onchain-word {
-    font-size: clamp(58px, 18vw, 92px);
+    order: 1;
+    margin-top: 14px;
+    justify-self: start;
+    font-size: clamp(52px, 16vw, 74px);
   }
 
   .primitive {
-    padding-top: 72px;
+    padding-top: 56px;
   }
 
   .primitive__mark {
-    margin-bottom: 72px;
+    margin-bottom: 56px;
   }
 
   .primitive h2 {
@@ -1510,7 +1570,7 @@ a {
   }
 
   .feature-grid {
-    margin-top: 46px;
+    margin-top: 36px;
   }
 
   .feature-card h3 {
@@ -1524,7 +1584,7 @@ a {
   }
 
   .trust {
-    padding-top: 170px;
+    padding-top: 126px;
   }
 
   .trust-list {
@@ -1535,6 +1595,11 @@ a {
     font-size: clamp(42px, 12vw, 62px);
   }
 
+  .trust-item__panel {
+    grid-template-rows: 1fr;
+    opacity: 1;
+  }
+
   .trust-item__panel p {
     font-size: 20px;
   }
@@ -1542,11 +1607,11 @@ a {
   .trust__marker {
     width: 34px;
     height: 34px;
-    margin-bottom: 72px;
+    margin-bottom: 54px;
   }
 
   .trust__marker--bottom {
-    margin-top: 72px;
+    margin-top: 54px;
   }
 
   .principle-grid {
@@ -1563,8 +1628,20 @@ a {
     font-size: 30px;
   }
 
+  .landing-section--source {
+    min-height: auto;
+    padding-bottom: 32px;
+  }
+
   .source {
-    padding-top: 190px;
+    flex: 0 0 auto;
+    padding-top: 150px;
+    padding-bottom: 0;
+  }
+
+  .landing-section--cta {
+    min-height: auto;
+    padding: 0;
   }
 
   .source h2,
@@ -1588,12 +1665,22 @@ a {
   }
 
   .cta {
-    min-height: 52vh;
-    padding-top: 180px;
+    min-height: auto;
+    padding: 88px 20px 72px;
+  }
+
+  .cta__button {
+    min-width: 180px;
+    min-height: 56px;
+    flex: 0 0 auto;
+    margin-top: 40px;
   }
 
   .footer {
-    min-height: 48vh;
+    min-height: auto;
+    gap: 44px;
+    padding-top: 48px;
+    padding-bottom: 32px;
   }
 
   .footer__bottom,
@@ -1602,9 +1689,22 @@ a {
     flex-direction: column;
   }
 
+  .footer__bottom {
+    gap: 24px;
+  }
+
+  .footer__nav {
+    gap: 6px;
+  }
+
+  .footer .nav-dot {
+    display: none;
+  }
+
   .footer__brand {
     align-items: flex-start;
     flex-direction: column;
+    gap: 18px;
   }
 
   .footer__mark {
