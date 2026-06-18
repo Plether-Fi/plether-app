@@ -16,6 +16,7 @@ dist-ssr
 storybook-static
 coverage
 bundle-stats.html
+*.tsbuildinfo
 
 # Local config
 *.local

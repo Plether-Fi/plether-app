@@ -215,7 +215,9 @@ function SiteHeader({
         <DividerDot />
         <a href={DOCS_URL}>Docs</a>
         <DividerDot />
-        <a className="launch-button launch-button--nav" href={APP_URL}>Launch App</a>
+        <a className="launch-button launch-button--nav" href={APP_URL}>
+          <span className="button-label">Launch App</span>
+        </a>
       </nav>
     </header>
   )
@@ -332,6 +334,7 @@ export function App() {
   const footerRef = useRef<HTMLElement | null>(null)
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
+  const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
   const [trustSpinKey, setTrustSpinKey] = useState(0)
 
   const spinTrustMarkers = () => {
@@ -407,8 +410,12 @@ export function App() {
             <div className="hero__actions">
               <p>Immutable contracts. No ADL.<br />MEV-resistant. Settled in USDC.</p>
               <div className="button-row">
-                <a className="launch-button" href={APP_URL}>Launch App</a>
-                <a className="docs-button" href={DOCS_URL}>Read Docs</a>
+                <a className="launch-button" href={APP_URL}>
+                  <span className="button-label">Launch App</span>
+                </a>
+                <a className="docs-button" href={DOCS_URL}>
+                  <span className="button-label">Read Docs</span>
+                </a>
               </div>
             </div>
 
@@ -522,7 +529,7 @@ export function App() {
 
               return (
                 <div
-                  className="trust-item"
+                  className={`trust-item${expandedTrustIndex === index ? ' trust-item--expanded' : ''}`}
                   role="listitem"
                   key={item.title}
                   onFocus={spinTrustMarkers}
@@ -532,6 +539,11 @@ export function App() {
                     className="trust-item__button"
                     type="button"
                     aria-controls={panelId}
+                    aria-expanded={expandedTrustIndex === index}
+                    onClick={() => {
+                      setExpandedTrustIndex((currentIndex) => (currentIndex === index ? null : index))
+                      spinTrustMarkers()
+                    }}
                   >
                     {item.title}
                   </button>
@@ -585,7 +597,9 @@ export function App() {
               here.
             </a>
           </h2>
-          <a className="launch-button cta__button" href={APP_URL}>Launch App</a>
+          <a className="launch-button cta__button" href={APP_URL}>
+            <span className="button-label">Launch App</span>
+          </a>
         </div>
 
         <footer ref={footerRef} className="footer">
