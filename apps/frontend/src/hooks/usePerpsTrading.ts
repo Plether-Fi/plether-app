@@ -2,7 +2,7 @@ import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { parseEventLogs, type Address, type Hex } from 'viem'
 import { useAccount, usePublicClient, useWriteContract } from 'wagmi'
-import { ERC20_ABI, PERPS_CFD_ENGINE_LENS_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
+import { ERC20_ABI, PERPS_CFD_ENGINE_ABI, PERPS_CFD_ENGINE_LENS_ABI, PERPS_MARGIN_CLEARINGHOUSE_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PLETHER_ORACLE_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   directionToPerpsSide,
@@ -24,6 +24,7 @@ interface CommitOrderInput {
   oraclePrice: bigint
   slippagePercent: number
   isClose: boolean
+  onWalletRequestStart?: () => void
 }
 
 interface CommitOrderResult {
@@ -45,8 +46,38 @@ type PerpsPublicClient = NonNullable<ReturnType<typeof usePublicClient>>
 type PerpsTransactionReceipt = Awaited<ReturnType<PerpsPublicClient['waitForTransactionReceipt']>>
 type CommitOrderArgs = readonly [number, bigint, bigint, bigint, boolean]
 type BufferedFeeParams =
+  | Record<string, never>
   | { maxFeePerGas: bigint; maxPriorityFeePerGas?: bigint }
   | { gasPrice: bigint }
+type InjectedEthereumProvider = {
+  chainId?: string
+  selectedAddress?: string
+  isMetaMask?: boolean
+  request?: (args: { method: string; params?: unknown[] }) => Promise<unknown>
+}
+
+const FEE_ESTIMATE_TIMEOUT_MS = 2_500
+const WALLET_PROBE_TIMEOUT_MS = 1_500
+
+function isPerpsCommitDebugEnabled(): boolean {
+  if (import.meta.env.MODE === 'test') return false
+  if (import.meta.env.DEV) return true
+
+  try {
+    return globalThis.localStorage?.getItem('PLETHER_PERPS_DEBUG') === '1'
+  } catch {
+    return false
+  }
+}
+
+function debugPerpsCommit(stage: string, details?: Record<string, unknown>): void {
+  if (!isPerpsCommitDebugEnabled()) return
+  if (details === undefined) {
+    console.info(`[perps:commit] ${stage}`)
+    return
+  }
+  console.info(`[perps:commit] ${stage}`, details)
+}
 
 function requireClient<T>(client: T | undefined): T {
   if (!client) {
@@ -68,6 +99,69 @@ function bumpFee(value: bigint): bigint {
 
 function bumpGas(value: bigint): bigint {
   return value + (value / 5n) + 10_000n
+}
+
+function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeout = globalThis.setTimeout(() => {
+      reject(new Error(`RPC request timed out after ${milliseconds}ms`))
+    }, milliseconds)
+
+    promise.then(
+      (value) => {
+        globalThis.clearTimeout(timeout)
+        resolve(value)
+      },
+      (error: unknown) => {
+        globalThis.clearTimeout(timeout)
+        reject(error)
+      }
+    )
+  })
+}
+
+function getInjectedEthereumProvider(): InjectedEthereumProvider | undefined {
+  return (globalThis as unknown as { ethereum?: InjectedEthereumProvider }).ethereum
+}
+
+async function probeInjectedWalletProvider(): Promise<void> {
+  if (!isPerpsCommitDebugEnabled()) return
+
+  const ethereum = getInjectedEthereumProvider()
+  if (!ethereum?.request) {
+    debugPerpsCommit('provider-probe:missing-window-ethereum')
+    return
+  }
+
+  debugPerpsCommit('provider-probe:present', {
+    isMetaMask: ethereum.isMetaMask,
+    chainId: ethereum.chainId,
+    selectedAddress: ethereum.selectedAddress,
+  })
+
+  try {
+    const chainId = await withTimeout(
+      ethereum.request({ method: 'eth_chainId' }),
+      WALLET_PROBE_TIMEOUT_MS
+    )
+    debugPerpsCommit('provider-probe:eth_chainId:success', { chainId })
+  } catch (error) {
+    debugPerpsCommit('provider-probe:eth_chainId:failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
+
+  try {
+    const accounts = await withTimeout(
+      ethereum.request({ method: 'eth_accounts' }),
+      WALLET_PROBE_TIMEOUT_MS
+    )
+    debugPerpsCommit('provider-probe:eth_accounts:success', { accounts })
+  } catch (error) {
+    debugPerpsCommit('provider-probe:eth_accounts:failed', {
+      message: error instanceof Error ? error.message : String(error),
+    })
+  }
 }
 
 function formatUnixTime(seconds: number | undefined): string | undefined {
@@ -171,23 +265,45 @@ function describeTime(seconds: bigint): string {
   return formatUnixTime(Number(seconds)) ?? `${seconds.toString()}`
 }
 
-async function getBufferedFeeParams(client: PerpsPublicClient): Promise<BufferedFeeParams> {
+async function getBufferedFeeParams(client: PerpsPublicClient, context = 'transaction'): Promise<BufferedFeeParams> {
   try {
-    const fees = await client.estimateFeesPerGas()
+    debugPerpsCommit(`${context}:fee-estimate:eip1559:start`, {
+      timeoutMs: FEE_ESTIMATE_TIMEOUT_MS,
+    })
+    const fees = await withTimeout(client.estimateFeesPerGas(), FEE_ESTIMATE_TIMEOUT_MS)
     if ('maxFeePerGas' in fees && fees.maxFeePerGas !== undefined) {
-      return {
+      const bufferedFees = {
         maxFeePerGas: bumpFee(fees.maxFeePerGas),
         maxPriorityFeePerGas: fees.maxPriorityFeePerGas === undefined
           ? undefined
           : bumpFee(fees.maxPriorityFeePerGas),
       }
+      debugPerpsCommit(`${context}:fee-estimate:eip1559:success`, bufferedFees)
+      return bufferedFees
     }
-  } catch {
+  } catch (error) {
+    debugPerpsCommit(`${context}:fee-estimate:eip1559:fallback`, {
+      reason: error instanceof Error ? error.message : String(error),
+    })
     // Fall back to legacy gas price below if the RPC does not expose EIP-1559 fee estimates.
   }
 
-  return {
-    gasPrice: bumpFee(await client.getGasPrice()),
+  try {
+    debugPerpsCommit(`${context}:fee-estimate:gas-price:start`, {
+      timeoutMs: FEE_ESTIMATE_TIMEOUT_MS,
+    })
+    const legacyFees = {
+      gasPrice: bumpFee(await withTimeout(client.getGasPrice(), FEE_ESTIMATE_TIMEOUT_MS)),
+    }
+    debugPerpsCommit(`${context}:fee-estimate:gas-price:success`, legacyFees)
+    return legacyFees
+  } catch (error) {
+    debugPerpsCommit(`${context}:fee-estimate:none`, {
+      reason: error instanceof Error ? error.message : String(error),
+    })
+    // Fee estimation is a convenience, not a precondition for opening the wallet.
+    // Let the connected wallet/provider estimate fees instead of blocking the prompt.
+    return {}
   }
 }
 
@@ -407,6 +523,44 @@ export function usePerpsTrading() {
     }
   }, [address, invalidatePerpsReads, publicClient, writeContractAsync])
 
+  const addPositionMargin = useCallback(async (amount: bigint) => {
+    try {
+      if (!address) {
+        throw new Error('Connect wallet before adding position margin')
+      }
+      if (amount <= 0n) {
+        throw new Error('Position margin amount must be greater than zero')
+      }
+
+      const client = requireClient(publicClient)
+      await client.simulateContract({
+        account: address,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'addMargin',
+        args: [address, amount],
+      })
+      const fees = await getBufferedFeeParams(client)
+      const hash = await writeContractAsync({
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'addMargin',
+        args: [address, amount],
+        ...fees,
+      })
+
+      assertSuccessfulReceipt(
+        await client.waitForTransactionReceipt({ hash }),
+        'Add position margin transaction reverted'
+      )
+      invalidatePerpsReads()
+      return hash
+    } catch (error) {
+      throw new Error(getPerpsErrorMessage(error, 'addPositionMargin'))
+    }
+  }, [address, invalidatePerpsReads, publicClient, writeContractAsync])
+
   const commitOrder = useCallback(async ({
     direction,
     notionalUsdc,
@@ -415,8 +569,20 @@ export function usePerpsTrading() {
     oraclePrice,
     slippagePercent,
     isClose,
+    onWalletRequestStart,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
     try {
+      debugPerpsCommit('start', {
+        address,
+        direction,
+        notionalUsdc,
+        sizeDeltaOverride,
+        marginUsdc,
+        oraclePrice,
+        slippagePercent,
+        isClose,
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+      })
       if (!address) {
         throw new Error('Connect wallet before committing an order')
       }
@@ -440,57 +606,23 @@ export function usePerpsTrading() {
         slippagePercent,
       })
       const args = [side, sizeDelta, marginDelta, targetPrice, isClose] as const
-      const client = requireClient(publicClient)
-      const [pendingOrders, maxPendingOrders] = await Promise.all([
-        client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
-          abi: PERPS_PUBLIC_LENS_ABI,
-          functionName: 'getPendingOrders',
-          args: [address],
-        }),
-        client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-          abi: PERPS_ORDER_ROUTER_ABI,
-          functionName: 'maxPendingOrders',
-        }),
-      ])
-      const pendingOrderCount = readArrayLength(pendingOrders)
-      if (BigInt(pendingOrderCount) >= maxPendingOrders) {
-        throw new Error(
-          `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. Execute or let existing orders expire/clean up before committing a new order.`
-        )
-      }
-      if (!isClose) {
-        const latestBlock = await client.getBlock({ blockTag: 'latest' })
-        const openRevertCode = await client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-          abi: PERPS_CFD_ENGINE_LENS_ABI,
-          functionName: 'previewOpenRevertCode',
-          args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
-        })
-        if (openRevertCode !== 0) {
-          throw new Error(getPerpsOpenRevertMessage(Number(openRevertCode)))
-        }
-      } else {
-        const closePreview = await client.readContract({
-          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-          abi: PERPS_CFD_ENGINE_LENS_ABI,
-          functionName: 'previewClose',
-          args: [address, sizeDelta, oraclePrice],
-        })
-        const isValidClose = readBoolean(closePreview, 'valid', 0)
-        if (isValidClose === false) {
-          throw new Error(getPerpsCloseInvalidReasonMessage(readNumber(closePreview, 'invalidReason', 1)))
-        }
-      }
-      await client.simulateContract({
-        account: address,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-        abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'commitOrder',
-        args,
+      debugPerpsCommit('args-ready', {
+        side,
+        sizeDelta,
+        marginDelta,
+        targetPrice,
+        isClose,
       })
-      const fees = await getBufferedFeeParams(client)
+      const client = requireClient(publicClient)
+      debugPerpsCommit('client-ready')
+      const fees = await getBufferedFeeParams(client, 'commit')
+      await probeInjectedWalletProvider()
+      debugPerpsCommit('wallet-request:start', {
+        orderRouter: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        args,
+        fees,
+      })
+      onWalletRequestStart?.()
       const hash = await writeContractAsync({
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
@@ -499,7 +631,13 @@ export function usePerpsTrading() {
         args,
         ...fees,
       })
+      debugPerpsCommit('wallet-request:accepted', { hash })
+      debugPerpsCommit('receipt-wait:start', { hash })
       const receipt = await client.waitForTransactionReceipt({ hash })
+      debugPerpsCommit('receipt-wait:done', {
+        hash,
+        status: receipt.status,
+      })
       if (receipt.status !== 'success') {
         throw new Error(await describeCommitFailure({
           client,
@@ -521,6 +659,10 @@ export function usePerpsTrading() {
       if (committed?.args.orderId === undefined) {
         throw new Error('Commit transaction succeeded, but no OrderCommitted event was found in the receipt. Refresh account state before retrying.')
       }
+      debugPerpsCommit('order-committed', {
+        hash,
+        orderId: committed.args.orderId,
+      })
 
       invalidatePerpsReads()
       return {
@@ -528,6 +670,9 @@ export function usePerpsTrading() {
         orderId: committed.args.orderId,
       }
     } catch (error) {
+      debugPerpsCommit('failed', {
+        message: error instanceof Error ? error.message : String(error),
+      })
       throw new Error(getPerpsErrorMessage(error, 'commit'))
     }
   }, [address, invalidatePerpsReads, publicClient, writeContractAsync])
@@ -767,6 +912,7 @@ export function usePerpsTrading() {
     approveUsdcForMargin,
     depositMargin,
     withdrawMargin,
+    addPositionMargin,
     commitOrder,
     executeOrder,
     cleanupExpiredOrder,

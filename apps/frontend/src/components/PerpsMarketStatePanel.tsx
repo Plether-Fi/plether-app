@@ -30,7 +30,7 @@ function PhaseText({ phase }: { phase: PerpsMarketPhase }) {
   return <span className={`font-medium ${phaseToneClass(phase)}`}>{phase}</span>
 }
 
-function formatDuration(ms: number): string {
+export function formatPerpsMarketDuration(ms: number): string {
   const totalMinutes = Math.max(0, Math.floor(ms / 60_000))
   const days = Math.floor(totalMinutes / (24 * 60))
   const hours = Math.floor((totalMinutes % (24 * 60)) / 60)
@@ -70,38 +70,38 @@ function previousUtcBoundary(date: Date, targetDay: number, hour: number): Date 
   return boundary
 }
 
-function weeklySchedule(now: Date, currentPhase: PerpsMarketPhase) {
+export function getPerpsMarketSchedule(now: Date, currentPhase: PerpsMarketPhase) {
   if (currentPhase === 'open') {
     const endsAt = utcBoundary(now, FRIDAY, 19)
     return {
-      currentDuration: formatDuration(endsAt.getTime() - now.getTime()),
+      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'close-only' as const,
-      nextDuration: formatDuration(utcBoundary(endsAt, SUNDAY, 22).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, SUNDAY, 22).getTime() - endsAt.getTime()),
     }
   }
 
   if (currentPhase === 'close-only') {
     const endsAt = utcBoundary(now, SUNDAY, 22)
     return {
-      currentDuration: formatDuration(endsAt.getTime() - now.getTime()),
+      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'open' as const,
-      nextDuration: formatDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
     }
   }
 
   if (currentPhase === 'closed') {
     const endsAt = utcBoundary(now, SUNDAY, 22)
     return {
-      currentDuration: formatDuration(endsAt.getTime() - now.getTime()),
+      currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'open' as const,
-      nextDuration: formatDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
     }
   }
 
   return {
     currentDuration: undefined,
     nextPhase: 'open' as const,
-    nextDuration: formatDuration(utcBoundary(now, FRIDAY, 19).getTime() - previousUtcBoundary(now, SUNDAY, 22).getTime()),
+    nextDuration: formatPerpsMarketDuration(utcBoundary(now, FRIDAY, 19).getTime() - previousUtcBoundary(now, SUNDAY, 22).getTime()),
   }
 }
 
@@ -129,7 +129,7 @@ export function PerpsMarketStatePanel({
     }
   }, [now])
 
-  const schedule = useMemo(() => weeklySchedule(clock, currentPhase), [clock, currentPhase])
+  const schedule = useMemo(() => getPerpsMarketSchedule(clock, currentPhase), [clock, currentPhase])
   const displayedCurrentDuration = currentDuration ?? schedule.currentDuration
   const displayedNextPhase = nextPhase ?? schedule.nextPhase
   const displayedNextDuration = nextDuration ?? schedule.nextDuration

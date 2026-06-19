@@ -8,6 +8,11 @@ import type { AppKitNetwork } from '@reown/appkit/networks'
 import { transactionManager } from '../services/transactionManager'
 
 const WALLETCONNECT_PROJECT_ID = '1ac6ecffb101d037c113363688a6ef8e'
+const ARBITRUM_SEPOLIA_RPC_URL =
+  import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc'
+const APPKIT_THEME_OVERRIDE_ID = 'plether-appkit-theme-overrides'
+
+let appKitThemeObserver: MutationObserver | undefined
 
 export const anvil = defineChain({
   id: 31337,
@@ -29,14 +34,14 @@ const appKitAnvil = {
   },
 } satisfies AppKitNetwork
 
-const appKitArbitrumSepolia = {
+export const appKitArbitrumSepolia = {
   id: arbitrumSepolia.id,
   name: 'Arbitrum Sepolia',
   chainNamespace: 'eip155' as const,
   caipNetworkId: 'eip155:421614' as const,
   nativeCurrency: arbitrumSepolia.nativeCurrency,
   rpcUrls: {
-    default: { http: ['https://sepolia-rollup.arbitrum.io/rpc'] },
+    default: { http: [ARBITRUM_SEPOLIA_RPC_URL] },
   },
   blockExplorers: {
     default: { name: 'Arbiscan', url: 'https://sepolia.arbiscan.io' },
@@ -49,6 +54,13 @@ const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   appKitArbitrumSepolia,
   appKitAnvil,
 ]
+
+export const appKitNetworksByChainId = {
+  [mainnet.id]: appKitMainnet,
+  [sepolia.id]: appKitSepolia,
+  [arbitrumSepolia.id]: appKitArbitrumSepolia,
+  [anvil.id]: appKitAnvil,
+} satisfies Record<number, AppKitNetwork>
 
 const metadata = {
   name: 'Plether',
@@ -63,10 +75,76 @@ const wagmiAdapter = new WagmiAdapter({
   transports: {
     [mainnet.id]: http('https://eth-mainnet.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
     [sepolia.id]: http('https://eth-sepolia.g.alchemy.com/v2/7RXotrWbfzbfZZvA4ARaZ'),
-    [arbitrumSepolia.id]: http('https://sepolia-rollup.arbitrum.io/rpc'),
+    [arbitrumSepolia.id]: http(ARBITRUM_SEPOLIA_RPC_URL),
     [anvil.id]: http('http://127.0.0.1:8545'),
   },
 })
+
+function installAppKitThemeOverrides() {
+  const existingStyle = document.getElementById(APPKIT_THEME_OVERRIDE_ID)
+  const style = document.createElement('style')
+
+  style.id = APPKIT_THEME_OVERRIDE_ID
+  style.textContent = `
+    :root {
+      --apkt-tokens-theme-overlay: rgba(37, 9, 23, 0.78);
+      --apkt-tokens-theme-backgroundPrimary: #3B212D;
+      --apkt-tokens-theme-backgroundInvert: #FFF5F9;
+      --apkt-tokens-theme-foregroundPrimary: #250917;
+      --apkt-tokens-theme-foregroundSecondary: #3B212D;
+      --apkt-tokens-theme-foregroundTertiary: #4B2A39;
+      --apkt-tokens-theme-borderPrimary: rgba(255, 171, 150, 0.18);
+      --apkt-tokens-theme-borderPrimaryDark: rgba(255, 171, 150, 0.18);
+      --apkt-tokens-theme-borderSecondary: rgba(255, 171, 150, 0.28);
+      --apkt-tokens-theme-textPrimary: #FFF5F9;
+      --apkt-tokens-theme-textSecondary: #E0E0FF;
+      --apkt-tokens-theme-textTertiary: #A6B3D9;
+      --apkt-tokens-theme-textInvert: #FFF5F9;
+      --apkt-tokens-theme-iconDefault: #FFF5F9;
+      --apkt-tokens-theme-iconInverse: #FFF5F9;
+
+      --apkt-tokens-core-backgroundAccentPrimary: #FF572D;
+      --apkt-tokens-core-borderAccentPrimary: #FF572D;
+      --apkt-tokens-core-foregroundAccent010: rgba(255, 87, 45, 0.12);
+      --apkt-tokens-core-foregroundAccent020: rgba(255, 87, 45, 0.2);
+      --apkt-tokens-core-foregroundAccent040: rgba(255, 87, 45, 0.4);
+      --apkt-tokens-core-foregroundAccent060: rgba(255, 87, 45, 0.6);
+      --apkt-tokens-core-iconAccentPrimary: #FF572D;
+      --apkt-tokens-core-textAccentPrimary: #FFAB96;
+
+      --apkt-tokens-core-backgroundSuccess: rgba(255, 171, 150, 0.16);
+      --apkt-tokens-core-borderSuccess: #FFAB96;
+      --apkt-tokens-core-iconSuccess: #FFAB96;
+      --apkt-tokens-core-textSuccess: #FFAB96;
+      --apkt-tokens-core-backgroundWarning: rgba(255, 87, 45, 0.18);
+      --apkt-tokens-core-borderWarning: #FF572D;
+      --apkt-tokens-core-iconWarning: #FF572D;
+      --apkt-tokens-core-textWarning: #FFAB96;
+      --apkt-tokens-core-backgroundError: rgba(255, 87, 45, 0.18);
+      --apkt-tokens-core-borderError: #FF572D;
+      --apkt-tokens-core-iconError: #FF572D;
+      --apkt-tokens-core-textError: #FF572D;
+    }
+  `
+
+  if (existingStyle) {
+    existingStyle.remove()
+  }
+
+  document.head.appendChild(style)
+
+  if (!appKitThemeObserver) {
+    appKitThemeObserver = new MutationObserver(() => {
+      const overrideStyle = document.getElementById(APPKIT_THEME_OVERRIDE_ID)
+
+      if (overrideStyle && document.head.lastElementChild !== overrideStyle) {
+        document.head.appendChild(overrideStyle)
+      }
+    })
+
+    appKitThemeObserver.observe(document.head, { childList: true })
+  }
+}
 
 createAppKit({
   adapters: [wagmiAdapter],
@@ -75,12 +153,16 @@ createAppKit({
   metadata,
   themeMode: 'dark',
   themeVariables: {
-    '--w3m-accent': '#FF00CC',
-    '--w3m-color-mix': '#00FF99',
-    '--w3m-color-mix-strength': 10,
+    '--w3m-font-family': "'Uncut Sans', ui-sans-serif, system-ui, sans-serif",
+    '--w3m-accent': '#FF572D',
+    '--w3m-color-mix': '#250917',
+    '--w3m-color-mix-strength': 18,
     '--w3m-border-radius-master': '0px',
+    '--w3m-z-index': 80,
   },
 })
+installAppKitThemeOverrides()
+setTimeout(installAppKitThemeOverrides, 0)
 
 type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof anvil]
 export const config = wagmiAdapter.wagmiConfig as Config<Chains>

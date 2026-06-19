@@ -90,6 +90,9 @@ main = do
           putStrLn "  GET /api/user/:address/history/leverage"
           putStrLn "  GET /api/user/:address/history/lending"
           putStrLn "  GET /api/perps/basket/history?range="
+          putStrLn "  GET /api/perps/basket/latest"
+          putStrLn "  GET /api/perps/orders/:orderId/reveal-payload"
+          putStrLn "  GET /api/perps/pyth/cached-latest"
         Nothing -> pure ()
       putStrLn "  GET /api/perps/pyth/update?publishTime="
       putStrLn ""

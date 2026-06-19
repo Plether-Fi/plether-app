@@ -44,16 +44,177 @@ echo 'DATABASE_URL=postgresql://localhost/plether' >> .env
 
 The indexer runs automatically on startup and polls for new blocks every 12 seconds.
 
+## Local Perps Stack
+
+For local perps work, run the API, the basket cache worker, and any UI servers as separate foreground processes in separate terminals. This keeps logs visible and makes it obvious which service failed.
+
+### 1. Start PostgreSQL
+
+The local Docker database used by this workspace is exposed on host port `55432` and uses the `postgres` role:
+
+```bash
+docker ps --format '{{.Names}} {{.Ports}} {{.Status}}'
+```
+
+Expected container:
+
+```text
+plether-postgres 0.0.0.0:55432->5432/tcp ... Up
+```
+
+Use this database URL with the backend services:
+
+```bash
+export DATABASE_URL=postgresql://postgres@localhost:55432/plether
+```
+
+If you run PostgreSQL directly on `5432` instead, adjust `DATABASE_URL` accordingly, for example `postgresql://localhost/plether`.
+
+### 2. Start The Backend API
+
+The perps frontend talks to the backend API for cached basket prices, historical chart data, reveal payloads, and older protocol endpoints.
+
+```bash
+cd apps/backend
+
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+PORT=3001 \
+CORS_ORIGINS="http://localhost:5173 http://127.0.0.1:5173" \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-api
+```
+
+The API should print the route list and start on:
+
+```text
+http://localhost:3001
+```
+
+Useful checks:
+
+```bash
+curl http://127.0.0.1:3001/api/perps/basket/latest
+curl http://127.0.0.1:3001/api/perps/pyth/cached-latest
+```
+
+### 3. Start The Basket Worker
+
+`plether-basket-worker` is separate from the API server. It keeps the six-feed Pyth basket cache fresh and stores the update payloads that self-execution can later use.
+
+Latest loop:
+
+```bash
+cd apps/backend
+
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-basket-worker -- --latest-loop
+```
+
+Useful one-off modes:
+
+```bash
+# Fetch one latest six-feed Hermes batch and exit.
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-basket-worker -- --once
+
+# Backfill historical chart data from Pyth Benchmarks.
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-basket-worker -- --backfill-once --backfill-days 7
+```
+
+Notes:
+
+- `--latest-loop` defaults to one batched six-feed Hermes request every `5s`.
+- On Hermes `429`, the worker backs off before polling again.
+- The worker writes to `perps_basket_snapshots` and `perps_pyth_update_payloads`.
+- The worker does not update the on-chain oracle by itself.
+
+### 4. Optional: Start The On-Chain Oracle Updater
+
+The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions. This is the only service in this local stack that sends transactions.
+
+```bash
+cd apps/frontend
+
+ARBITRUM_SEPOLIA_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+PERPS_ORACLE_UPDATER_BACKEND_URL=http://127.0.0.1:3001 \
+PERPS_ORACLE_UPDATER_PRIVATE_KEY=0xYOUR_UPDATER_PRIVATE_KEY \
+npm run perps:oracle-worker -- --loop
+```
+
+For a no-transaction check:
+
+```bash
+cd apps/frontend
+
+DRY_RUN=true \
+ARBITRUM_SEPOLIA_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+PERPS_ORACLE_UPDATER_BACKEND_URL=http://127.0.0.1:3001 \
+npm run perps:oracle-worker -- --once
+```
+
+Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
+
+### 5. Companion Frontend Services
+
+The API and workers can run without UI servers, but the usual local perps development stack is:
+
+```bash
+# Trading UI
+cd apps/frontend
+npm run dev -- --host 127.0.0.1
+
+# Storybook
+cd apps/frontend
+npm run storybook
+
+# Landing page
+cd apps/landing
+npm run dev -- --host 127.0.0.1 --port 5174
+```
+
+Local URLs:
+
+| Service | URL |
+|---------|-----|
+| Trading UI | `http://127.0.0.1:5173/` |
+| Landing page | `http://127.0.0.1:5174/` |
+| Storybook | `http://127.0.0.1:6006/` |
+| Backend API | `http://127.0.0.1:3001/` |
+
+### Troubleshooting
+
+| Symptom | Fix |
+|---------|-----|
+| `role "stan" does not exist` | Use `postgresql://postgres@localhost:55432/plether`; libpq otherwise defaults to your macOS username. |
+| Basket/history endpoints return `DATABASE_URL is not configured` | Start the API with `DATABASE_URL` set. |
+| Currency cards are stale | Keep `plether-basket-worker -- --latest-loop` running. |
+| On-chain DXY price is stale | Run the optional oracle updater with `PERPS_ORACLE_UPDATER_PRIVATE_KEY`; the basket worker only updates the database cache. |
+| Browser CORS error from `127.0.0.1:5173` | Include `http://127.0.0.1:5173` in `CORS_ORIGINS`. |
+
 ## Configuration
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `RPC_URL` | Yes | - | Ethereum RPC endpoint |
-| `CHAIN_ID` | No | `11155111` | Chain ID (1=mainnet, 11155111=sepolia, 31337=local) |
+| `CHAIN_ID` | No | `11155111` | Chain ID (1=mainnet, 11155111=sepolia, 421614=Arbitrum Sepolia, 31337=local) |
 | `PORT` | No | `3001` | Server port |
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
+| `PYTH_HERMES_URL` | No | `https://hermes.pyth.network` | Hermes endpoint used by the basket worker |
+| `PYTH_API_KEY` | No | - | Optional bearer token for API-key backed Hermes providers |
+| `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
+| `PYTH_BACKFILL_DAYS` | No | `7` | Default historical backfill window |
+| `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
+| `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
 
 ## API Endpoints
 

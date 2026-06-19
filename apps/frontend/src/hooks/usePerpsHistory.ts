@@ -41,22 +41,37 @@ interface OrderEventState {
 }
 
 interface TradeEventState {
-  kind: 'Open' | 'Close'
+  kind: 'Open' | 'Close' | 'Liquidated'
   account: Address
   side: number
   sizeDelta: bigint
   price: bigint
   marginDelta?: bigint
   pnl?: bigint
+  keeperBountyUsdc?: bigint
   blockNumber: bigint
   txHash: Hex
 }
+
+interface MarginActivityEventState {
+  kind: 'Deposit' | 'Withdraw' | 'Add margin'
+  account: Address
+  amountUsdc: bigint
+  blockNumber: bigint
+  txHash: Hex
+}
+
+type AccountActivityEventState = TradeEventState | MarginActivityEventState
 
 const ORDER_COMMITTED_EVENT = parseAbiItem('event OrderCommitted(uint64 indexed orderId, address indexed account, uint8 side)')
 const ORDER_EXECUTED_EVENT = parseAbiItem('event OrderExecuted(uint64 indexed orderId, uint256 executionPrice)')
 const ORDER_FAILED_EVENT = parseAbiItem('event OrderFailed(uint64 indexed orderId, uint8 reason)')
 const POSITION_OPENED_EVENT = parseAbiItem('event PositionOpened(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, uint256 marginDelta)')
 const POSITION_CLOSED_EVENT = parseAbiItem('event PositionClosed(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, int256 pnl)')
+const POSITION_LIQUIDATED_EVENT = parseAbiItem('event PositionLiquidated(address indexed account, uint8 side, uint256 size, uint256 price, uint256 keeperBounty)')
+const MARGIN_DEPOSIT_EVENT = parseAbiItem('event Deposit(address indexed account, address indexed asset, uint256 amount)')
+const MARGIN_WITHDRAW_EVENT = parseAbiItem('event Withdraw(address indexed account, address indexed asset, uint256 amount)')
+const POSITION_MARGIN_ADDED_EVENT = parseAbiItem('event MarginAdded(address indexed account, uint256 amount)')
 const HISTORY_BLOCK_LOOKBACK = BigInt(import.meta.env.VITE_PERPS_HISTORY_BLOCK_LOOKBACK ?? '50000')
 
 function shortTime(timestamp: bigint | undefined): string {
@@ -92,6 +107,10 @@ function sortByNewestBlock<T extends { blockNumber?: bigint; commitBlockNumber?:
   })
 }
 
+function isTradeEvent(activity: AccountActivityEventState): activity is TradeEventState {
+  return activity.kind === 'Open' || activity.kind === 'Close' || activity.kind === 'Liquidated'
+}
+
 export function usePerpsHistory(markPrice?: bigint) {
   const { address, isConnected } = useAccount()
   const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
@@ -119,7 +138,7 @@ export function usePerpsHistory(markPrice?: bigint) {
       try {
         const latestBlock = await publicClient!.getBlockNumber()
         const fromBlock = latestBlock > HISTORY_BLOCK_LOOKBACK ? latestBlock - HISTORY_BLOCK_LOOKBACK : 0n
-        const [commitLogs, executedLogs, failedLogs, openedLogs, closedLogs] = await Promise.all([
+        const [commitLogs, executedLogs, failedLogs, openedLogs, closedLogs, liquidatedLogs, marginAddedLogs, marginDepositLogs, marginWithdrawLogs] = await Promise.all([
           publicClient!.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
             event: ORDER_COMMITTED_EVENT,
@@ -149,6 +168,34 @@ export function usePerpsHistory(markPrice?: bigint) {
           publicClient!.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
             event: POSITION_CLOSED_EVENT,
+            args: { account },
+            fromBlock,
+            toBlock: latestBlock,
+          }),
+          publicClient!.getLogs({
+            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+            event: POSITION_LIQUIDATED_EVENT,
+            args: { account },
+            fromBlock,
+            toBlock: latestBlock,
+          }),
+          publicClient!.getLogs({
+            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+            event: POSITION_MARGIN_ADDED_EVENT,
+            args: { account },
+            fromBlock,
+            toBlock: latestBlock,
+          }),
+          publicClient!.getLogs({
+            address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
+            event: MARGIN_DEPOSIT_EVENT,
+            args: { account },
+            fromBlock,
+            toBlock: latestBlock,
+          }),
+          publicClient!.getLogs({
+            address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
+            event: MARGIN_WITHDRAW_EVENT,
             args: { account },
             fromBlock,
             toBlock: latestBlock,
@@ -211,11 +258,58 @@ export function usePerpsHistory(markPrice?: bigint) {
               txHash: log.transactionHash,
             }]
           }),
+          ...liquidatedLogs.flatMap((log) => {
+            if (!log.args.account) return []
+            return [{
+              kind: 'Liquidated' as const,
+              account: log.args.account,
+              side: Number(log.args.side ?? 0),
+              sizeDelta: log.args.size ?? 0n,
+              price: log.args.price ?? 0n,
+              keeperBountyUsdc: log.args.keeperBounty,
+              blockNumber: log.blockNumber,
+              txHash: log.transactionHash,
+            }]
+          }),
         ].filter((trade) => normalizeAddress(trade.account) === accountLower)
+
+        const marginActivities: MarginActivityEventState[] = [
+          ...marginDepositLogs.flatMap((log) => {
+            if (!log.args.account) return []
+            return [{
+              kind: 'Deposit' as const,
+              account: log.args.account,
+              amountUsdc: log.args.amount ?? 0n,
+              blockNumber: log.blockNumber,
+              txHash: log.transactionHash,
+            }]
+          }),
+          ...marginWithdrawLogs.flatMap((log) => {
+            if (!log.args.account) return []
+            return [{
+              kind: 'Withdraw' as const,
+              account: log.args.account,
+              amountUsdc: log.args.amount ?? 0n,
+              blockNumber: log.blockNumber,
+              txHash: log.transactionHash,
+            }]
+          }),
+          ...marginAddedLogs.flatMap((log) => {
+            if (!log.args.account) return []
+            return [{
+              kind: 'Add margin' as const,
+              account: log.args.account,
+              amountUsdc: log.args.amount ?? 0n,
+              blockNumber: log.blockNumber,
+              txHash: log.transactionHash,
+            }]
+          }),
+        ].filter((activity) => normalizeAddress(activity.account) === accountLower)
 
         const blockNumbers = new Set<bigint>()
         for (const row of orderById.values()) blockNumbers.add(row.executionBlockNumber ?? row.commitBlockNumber)
         for (const trade of trades) blockNumbers.add(trade.blockNumber)
+        for (const activity of marginActivities) blockNumbers.add(activity.blockNumber)
         const blockTimestamps = new Map<bigint, bigint>()
         await Promise.all([...blockNumbers].map(async (blockNumber) => {
           const block = await publicClient!.getBlock({ blockNumber })
@@ -244,17 +338,37 @@ export function usePerpsHistory(markPrice?: bigint) {
             }
           })
 
-        const nextTradeHistory = sortByNewestBlock(trades)
+        const nextTradeHistory = sortByNewestBlock<AccountActivityEventState>([
+          ...trades,
+          ...marginActivities,
+        ])
           .slice(0, 30)
-          .map((trade) => ({
-            time: shortTime(blockTimestamps.get(trade.blockNumber)),
-            market: 'plDXY Perp',
-            side: `${trade.kind} ${perpsSideLabel(trade.side)}`,
-            price: formatDisplayDxyPrice(trade.price),
-            size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(trade.sizeDelta, trade.price ?? markPrice)),
-            pnl: trade.pnl === undefined ? undefined : formatSignedPerpsUsdc(trade.pnl),
-            txHash: trade.txHash,
-          }))
+          .map((activity) => {
+            if (!isTradeEvent(activity)) {
+              return {
+                time: shortTime(blockTimestamps.get(activity.blockNumber)),
+                market: activity.kind === 'Add margin' ? 'plDXY Perp' : 'Margin Account',
+                side: activity.kind,
+                price: '--',
+                size: formatPerpsUsdc(activity.amountUsdc),
+                txHash: activity.txHash,
+              }
+            }
+
+            return {
+              time: shortTime(blockTimestamps.get(activity.blockNumber)),
+              market: 'plDXY Perp',
+              side: activity.kind === 'Liquidated'
+                ? `Liquidated ${perpsSideLabel(activity.side)}`
+                : `${activity.kind} ${perpsSideLabel(activity.side)}`,
+              price: formatDisplayDxyPrice(activity.price),
+              size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(activity.sizeDelta, activity.price ?? markPrice)),
+              pnl: activity.kind === 'Liquidated' && activity.keeperBountyUsdc !== undefined
+                ? `Keeper bounty ${formatPerpsUsdc(activity.keeperBountyUsdc)}`
+                : activity.pnl === undefined ? undefined : formatSignedPerpsUsdc(activity.pnl),
+              txHash: activity.txHash,
+            }
+          })
 
         if (!cancelled) {
           setOrderHistory(nextOrderHistory)

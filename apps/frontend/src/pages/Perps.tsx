@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
-import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
+import { getPerpsMarketSchedule, PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
@@ -57,11 +57,34 @@ export function Perps() {
   }, [])
 
   const dxyFreshnessTooltip = useMemo(() => {
-    if (!perpsMarket.lastMarkTime) return undefined
+    if (perpsMarket.oracleFreshness === 'checking') return 'checking backend for a newer update'
 
-    const ageSeconds = Math.max(0, nowSeconds - perpsMarket.lastMarkTime)
+    if (perpsMarket.oracleFreshness === 'backend-fresh' && perpsMarket.backendLatestBasketTime) {
+      const backendAgeSeconds = Math.max(0, nowSeconds - perpsMarket.backendLatestBasketTime)
+      const onchainAge = perpsMarket.lastMarkTime === undefined
+        ? undefined
+        : formatMarkAge(Math.max(0, nowSeconds - perpsMarket.lastMarkTime))
+      return onchainAge
+        ? `backend updated ${formatMarkAge(backendAgeSeconds)}; on-chain mark updated ${onchainAge}`
+        : `backend updated ${formatMarkAge(backendAgeSeconds)}`
+    }
+
+    if (!perpsMarket.oracleFreshnessTime) return undefined
+
+    const ageSeconds = Math.max(0, nowSeconds - perpsMarket.oracleFreshnessTime)
     return `updated ${formatMarkAge(ageSeconds)}`
-  }, [nowSeconds, perpsMarket.lastMarkTime])
+  }, [
+    nowSeconds,
+    perpsMarket.backendLatestBasketTime,
+    perpsMarket.lastMarkTime,
+    perpsMarket.oracleFreshness,
+    perpsMarket.oracleFreshnessTime,
+  ])
+
+  const marketSchedule = useMemo(
+    () => getPerpsMarketSchedule(new Date(nowSeconds * 1000), perpsMarket.marketPhase),
+    [nowSeconds, perpsMarket.marketPhase]
+  )
 
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
     () => {
@@ -165,6 +188,8 @@ export function Perps() {
         <DxyBasketPanel />
         <PerpsAccountPanel
           position={perpsAccount.position}
+          equityUsdc={perpsAccount.equityUsdc}
+          freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
           pendingOrders={perpsAccount.pendingOrders}
           orderHistory={perpsHistory.orderHistory}
           tradeHistory={perpsHistory.tradeHistory}
@@ -185,6 +210,8 @@ export function Perps() {
           oraclePriceRaw={perpsMarket.raw.markPrice}
           oraclePublishTime={perpsMarket.lastMarkTime}
           oraclePriceDisplay={perpsMarket.oraclePrice}
+          oracleFreshness={perpsMarket.oracleFreshness}
+          oracleFreshnessTooltip={dxyFreshnessTooltip}
           availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
           availableToTradeAmount={perpsAccount.display.availableToTrade}
           portfolioValueRaw={perpsAccount.equityUsdc}
@@ -204,7 +231,10 @@ export function Perps() {
           shortOpenCapacityUsdc={perpsMarket.raw.shortOpenCapacityUsdc}
           minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
           minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
+          maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
           executionFeeBps={perpsMarket.raw.executionFeeBps}
+          marketPhase={perpsMarket.marketPhase}
+          marketCurrentDuration={marketSchedule.currentDuration}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()

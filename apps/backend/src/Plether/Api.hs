@@ -20,7 +20,13 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
-import Plether.Handlers.Perps (getBasketHistory, getBasketLatest, getPythUpdate, getRevealPayload)
+import Plether.Handlers.Perps
+  ( getBasketHistory
+  , getBasketLatest
+  , getCachedLatestPythUpdate
+  , getPythUpdate
+  , getRevealPayload
+  )
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -235,6 +241,15 @@ app cache client cfg mPool manager = do
         handleResult result
       Nothing ->
         handleError $ E.invalidAmount "publishTime must be a positive integer"
+
+  get "/api/perps/pyth/cached-latest" $ do
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getCachedLatestPythUpdate pool cfg
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; cached Pyth updates are unavailable"
 
 historyParams :: ActionM HistoryParams
 historyParams = do

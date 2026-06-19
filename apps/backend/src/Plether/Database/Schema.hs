@@ -19,6 +19,7 @@ module Plether.Database.Schema
   , BasketSnapshotRow (..)
   , insertPythUpdatePayload
   , getPythUpdatePayloadForWindow
+  , getLatestPythUpdatePayload
   , PythUpdatePayloadRow (..)
   ) where
 
@@ -463,6 +464,16 @@ getPythUpdatePayloadForWindow conn minPublishTime maxPublishTime = do
     \WHERE min_publish_time >= ? AND max_publish_time <= ? \
     \ORDER BY min_publish_time ASC LIMIT 1"
     (minPublishTime, maxPublishTime)
+  case rows of
+    [row] -> pure $ Just row
+    _ -> pure Nothing
+
+getLatestPythUpdatePayload :: Connection -> IO (Maybe PythUpdatePayloadRow)
+getLatestPythUpdatePayload conn = do
+  rows <- query_ conn
+    "SELECT min_publish_time, max_publish_time, publish_times, update_data, fetched_at, source \
+    \FROM perps_pyth_update_payloads \
+    \ORDER BY max_publish_time DESC LIMIT 1"
   case rows of
     [row] -> pure $ Just row
     _ -> pure Nothing
