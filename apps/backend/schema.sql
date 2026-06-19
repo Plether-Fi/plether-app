@@ -63,3 +63,52 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
     UNIQUE (timestamp, interval_seconds)
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
+
+-- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution
+CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
+    id SERIAL PRIMARY KEY,
+    min_publish_time BIGINT NOT NULL,
+    max_publish_time BIGINT NOT NULL,
+    publish_times JSONB NOT NULL,
+    update_data JSONB NOT NULL,
+    source VARCHAR(32) NOT NULL DEFAULT 'backend_hermes',
+    fetched_at BIGINT NOT NULL,
+    created_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE (min_publish_time, max_publish_time)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window
+    ON perps_pyth_update_payloads(min_publish_time, max_publish_time);
+
+-- Perps keeper indexer state
+CREATE TABLE IF NOT EXISTS perps_keeper_state (
+    id INTEGER PRIMARY KEY DEFAULT 1,
+    last_indexed_block BIGINT NOT NULL,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT perps_keeper_state_single_row CHECK (id = 1)
+);
+
+INSERT INTO perps_keeper_state (id, last_indexed_block) VALUES (1, 0) ON CONFLICT DO NOTHING;
+
+-- Perps keeper pending/executed/failed order queue
+CREATE TABLE IF NOT EXISTS perps_orders (
+    order_id NUMERIC(20,0) PRIMARY KEY,
+    account VARCHAR(42) NOT NULL,
+    side INTEGER NOT NULL,
+    commit_block BIGINT NOT NULL,
+    commit_time BIGINT NOT NULL,
+    commit_tx_hash VARCHAR(66) NOT NULL,
+    status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    execution_tx_hash VARCHAR(66),
+    execution_block BIGINT,
+    execution_price NUMERIC(78,0),
+    failure_tx_hash VARCHAR(66),
+    failure_block BIGINT,
+    failure_reason INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_attempt_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_perps_orders_pending ON perps_orders(order_id ASC) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_perps_orders_commit_block ON perps_orders(commit_block DESC);

@@ -2,7 +2,7 @@ FROM debian:bookworm-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc g++ make libffi-dev libgmp-dev zlib1g-dev \
-    libpq-dev pkg-config ca-certificates && \
+    libpq-dev libsecp256k1-dev pkg-config ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 ENV GHCUP_INSTALL_BASE_PREFIX=/opt
@@ -22,16 +22,20 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api && \
-    cp "$(cabal list-bin plether-api)" /build/plether-api-bin
+RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper && \
+    cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
+    cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
+    cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin
 
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 ca-certificates && \
+    libpq5 libsecp256k1-1 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
+COPY --from=builder /build/plether-basket-worker-bin /usr/local/bin/plether-basket-worker
+COPY --from=builder /build/plether-keeper-bin /usr/local/bin/plether-keeper
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 

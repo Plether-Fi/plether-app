@@ -2,6 +2,7 @@ module Plether.Ethereum.Client
   ( EthClient (..)
   , RpcError (..)
   , newClient
+  , rpcCall
   , ethCall
   , ethBlockNumber
   , CallParams (..)
@@ -165,4 +166,3 @@ decodeHex :: Text -> ByteString
 decodeHex txt = case B16.decode (TE.encodeUtf8 $ T.toLower txt) of
   Right bs -> bs
   Left _ -> mempty
-

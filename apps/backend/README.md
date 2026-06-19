@@ -54,6 +54,16 @@ The indexer runs automatically on startup and polls for new blocks every 12 seco
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
+| `PERPS_RPC_URL` | Keeper | - | Arbitrum Sepolia RPC endpoint for `plether-keeper` |
+| `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
+| `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_INDEXER_START_BLOCK` | No | `0` | Perps order-router block to start keeper indexing from |
+| `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
+| `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
+| `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
+| `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
 
 ## API Endpoints
 
@@ -128,6 +138,9 @@ cabal build
 
 # Run tests
 cabal test
+
+# Run the perps keeper once without submitting transactions
+cabal run plether-keeper -- --once --dry-run
 
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"

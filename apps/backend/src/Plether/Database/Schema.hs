@@ -20,6 +20,18 @@ module Plether.Database.Schema
   , insertPythUpdatePayload
   , getPythUpdatePayloadForWindow
   , PythUpdatePayloadRow (..)
+  , ensurePerpsKeeperSchema
+  , tryPerpsKeeperLock
+  , unlockPerpsKeeperLock
+  , getPerpsKeeperLastIndexedBlock
+  , setPerpsKeeperLastIndexedBlock
+  , upsertPerpsOrderCommitted
+  , markPerpsOrderExecuted
+  , markPerpsOrderFailed
+  , recordPerpsOrderAttempt
+  , recordPerpsOrderError
+  , getPendingPerpsOrders
+  , PerpsOrderRow (..)
   ) where
 
 import Data.Aeson (Value, encode)
@@ -325,6 +337,48 @@ ensureBasketSnapshotSchema conn = do
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window \
     \ON perps_pyth_update_payloads(min_publish_time, max_publish_time)"
+  ensurePerpsKeeperSchema conn
+  pure ()
+
+ensurePerpsKeeperSchema :: Connection -> IO ()
+ensurePerpsKeeperSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_keeper_state (\
+    \id INTEGER PRIMARY KEY DEFAULT 1,\
+    \last_indexed_block BIGINT NOT NULL,\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \CONSTRAINT perps_keeper_state_single_row CHECK (id = 1)\
+    \)"
+  _ <- execute_ conn
+    "INSERT INTO perps_keeper_state (id, last_indexed_block) \
+    \VALUES (1, 0) ON CONFLICT (id) DO NOTHING"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_orders (\
+    \order_id NUMERIC(20,0) PRIMARY KEY,\
+    \account VARCHAR(42) NOT NULL,\
+    \side INTEGER NOT NULL,\
+    \commit_block BIGINT NOT NULL,\
+    \commit_time BIGINT NOT NULL,\
+    \commit_tx_hash VARCHAR(66) NOT NULL,\
+    \status VARCHAR(16) NOT NULL DEFAULT 'pending',\
+    \execution_tx_hash VARCHAR(66),\
+    \execution_block BIGINT,\
+    \execution_price NUMERIC(78,0),\
+    \failure_tx_hash VARCHAR(66),\
+    \failure_block BIGINT,\
+    \failure_reason INTEGER,\
+    \attempt_count INTEGER NOT NULL DEFAULT 0,\
+    \last_error TEXT,\
+    \last_attempt_at TIMESTAMP,\
+    \created_at TIMESTAMP DEFAULT NOW(),\
+    \updated_at TIMESTAMP DEFAULT NOW()\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_pending \
+    \ON perps_orders(order_id ASC) WHERE status = 'pending'"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_commit_block \
+    \ON perps_orders(commit_block DESC)"
   pure ()
 
 insertBasketSnapshot
@@ -466,3 +520,152 @@ getPythUpdatePayloadForWindow conn minPublishTime maxPublishTime = do
   case rows of
     [row] -> pure $ Just row
     _ -> pure Nothing
+
+data PerpsOrderRow = PerpsOrderRow
+  { porOrderId :: Integer
+  , porAccount :: Text
+  , porSide :: Integer
+  , porCommitBlock :: Integer
+  , porCommitTime :: Integer
+  , porCommitTxHash :: Text
+  , porStatus :: Text
+  , porAttemptCount :: Int
+  , porLastError :: Maybe Text
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsOrderRow where
+  fromRow =
+    PerpsOrderRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+keeperLockId :: Int
+keeperLockId = 421614485
+
+tryPerpsKeeperLock :: Connection -> IO Bool
+tryPerpsKeeperLock conn = do
+  rows <- query conn "SELECT pg_try_advisory_lock(?)" (Only keeperLockId) :: IO [Only Bool]
+  pure $ case rows of
+    [Only acquired] -> acquired
+    _ -> False
+
+unlockPerpsKeeperLock :: Connection -> IO ()
+unlockPerpsKeeperLock conn = do
+  _ <- query conn "SELECT pg_advisory_unlock(?)" (Only keeperLockId) :: IO [Only Bool]
+  pure ()
+
+getPerpsKeeperLastIndexedBlock :: Connection -> IO Integer
+getPerpsKeeperLastIndexedBlock conn = do
+  result <- query_ conn "SELECT last_indexed_block FROM perps_keeper_state WHERE id = 1" :: IO [Only Integer]
+  case result of
+    [Only block] -> pure block
+    _ -> pure 0
+
+setPerpsKeeperLastIndexedBlock :: Connection -> Integer -> IO ()
+setPerpsKeeperLastIndexedBlock conn block = do
+  _ <- execute conn
+    "INSERT INTO perps_keeper_state (id, last_indexed_block, updated_at) \
+    \VALUES (1, ?, NOW()) \
+    \ON CONFLICT (id) DO UPDATE SET \
+    \last_indexed_block = EXCLUDED.last_indexed_block, \
+    \updated_at = NOW()"
+    (Only block)
+  pure ()
+
+upsertPerpsOrderCommitted
+  :: Connection
+  -> Integer -- order_id
+  -> Text    -- account
+  -> Integer -- side
+  -> Integer -- commit_block
+  -> Integer -- commit_time
+  -> Text    -- commit_tx_hash
+  -> IO ()
+upsertPerpsOrderCommitted conn orderId account side commitBlock commitTime commitTxHash = do
+  _ <- execute conn
+    "INSERT INTO perps_orders \
+    \(order_id, account, side, commit_block, commit_time, commit_tx_hash, status) \
+    \VALUES (?, ?, ?, ?, ?, ?, 'pending') \
+    \ON CONFLICT (order_id) DO NOTHING"
+    (orderId, T.toLower account, side, commitBlock, commitTime, T.toLower commitTxHash)
+  pure ()
+
+markPerpsOrderExecuted
+  :: Connection
+  -> Integer -- order_id
+  -> Text    -- tx_hash
+  -> Integer -- block_number
+  -> Integer -- execution_price
+  -> IO ()
+markPerpsOrderExecuted conn orderId txHash blockNumber executionPrice = do
+  _ <- execute conn
+    "UPDATE perps_orders SET \
+    \status = 'executed', \
+    \execution_tx_hash = ?, \
+    \execution_block = ?, \
+    \execution_price = ?, \
+    \last_error = NULL, \
+    \updated_at = NOW() \
+    \WHERE order_id = ?"
+    (T.toLower txHash, blockNumber, executionPrice, orderId)
+  pure ()
+
+markPerpsOrderFailed
+  :: Connection
+  -> Integer -- order_id
+  -> Text    -- tx_hash
+  -> Integer -- block_number
+  -> Integer -- failure_reason
+  -> IO ()
+markPerpsOrderFailed conn orderId txHash blockNumber failureReason = do
+  _ <- execute conn
+    "UPDATE perps_orders SET \
+    \status = 'failed', \
+    \failure_tx_hash = ?, \
+    \failure_block = ?, \
+    \failure_reason = ?, \
+    \last_error = NULL, \
+    \updated_at = NOW() \
+    \WHERE order_id = ?"
+    (T.toLower txHash, blockNumber, failureReason, orderId)
+  pure ()
+
+recordPerpsOrderAttempt :: Connection -> Integer -> IO ()
+recordPerpsOrderAttempt conn orderId = do
+  _ <- execute conn
+    "UPDATE perps_orders SET \
+    \attempt_count = attempt_count + 1, \
+    \last_attempt_at = NOW(), \
+    \updated_at = NOW() \
+    \WHERE order_id = ?"
+    (Only orderId)
+  pure ()
+
+recordPerpsOrderError :: Connection -> Integer -> Text -> IO ()
+recordPerpsOrderError conn orderId err = do
+  _ <- execute conn
+    "UPDATE perps_orders SET \
+    \last_error = ?, \
+    \updated_at = NOW() \
+    \WHERE order_id = ?"
+    (err, orderId)
+  pure ()
+
+getPendingPerpsOrders :: Connection -> Int -> IO [PerpsOrderRow]
+getPendingPerpsOrders conn limitRows =
+  query conn
+    "SELECT order_id, account, side, commit_block, commit_time, commit_tx_hash, \
+    \status, attempt_count, last_error \
+    \FROM perps_orders \
+    \WHERE status = 'pending' \
+    \AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '5 seconds') \
+    \ORDER BY order_id ASC LIMIT ?"
+    (Only limitRows)
