@@ -21,10 +21,27 @@ module Plether.Database.Schema
   , getPythUpdatePayloadForWindow
   , getLatestPythUpdatePayload
   , PythUpdatePayloadRow (..)
+  , ensurePerpsHistorySchema
+  , PerpsOrderRow (..)
+  , PerpsActivityRow (..)
+  , PerpsIndexerStatusRow (..)
+  , insertPerpsEvent
+  , upsertPerpsOrderCommitted
+  , upsertPerpsOrderTerminal
+  , insertPerpsActivity
+  , getPerpsOrdersByAccount
+  , getPerpsActivityByAccount
+  , getPerpsOrderAccountSide
+  , insertPerpsExpiredCleanupActivityIfReady
+  , getPerpsIndexerStatus
+  , getPerpsIndexerLastBlock
+  , setPerpsIndexerState
+  , deletePerpsHistoryFromBlock
   ) where
 
-import Data.Aeson (Value, encode)
+import Data.Aeson (Value, encode, object, (.=))
 import qualified Data.ByteString.Lazy as LBS
+import Data.Scientific (Scientific, base10Exponent, coefficient)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
@@ -37,6 +54,7 @@ import Database.PostgreSQL.Simple
   , query_
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Database.PostgreSQL.Simple.Internal (RowParser)
 import Database.PostgreSQL.Simple.ToField (ToField (..))
 import Database.PostgreSQL.Simple.ToRow (ToRow (..))
 import GHC.Generics (Generic)
@@ -477,3 +495,489 @@ getLatestPythUpdatePayload conn = do
   case rows of
     [row] -> pure $ Just row
     _ -> pure Nothing
+
+data PerpsOrderRow = PerpsOrderRow
+  { porOrderId :: Integer
+  , porAccount :: Maybe Text
+  , porSide :: Maybe Int
+  , porCommitTxHash :: Maybe Text
+  , porCommitBlockNumber :: Maybe Integer
+  , porCommitTimestamp :: Maybe Integer
+  , porTerminalTxHash :: Maybe Text
+  , porTerminalBlockNumber :: Maybe Integer
+  , porTerminalTimestamp :: Maybe Integer
+  , porTerminalStatus :: Text
+  , porFailureReason :: Maybe Text
+  , porExecutionPrice :: Maybe Integer
+  , porCleanupActor :: Maybe Text
+  , porActivityType :: Maybe Text
+  , porActivitySizeDelta :: Maybe Integer
+  , porActivityPrice :: Maybe Integer
+  , porActivityPnlUsdc :: Maybe Integer
+  , porSortBlock :: Integer
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsOrderRow where
+  fromRow = PerpsOrderRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> numericIntegerField
+    <*> field
+    <*> field
+    <*> numericIntegerField
+    <*> numericIntegerField
+    <*> field
+    <*> field
+
+data PerpsActivityRow = PerpsActivityRow
+  { parActivityType :: Text
+  , parAccount :: Text
+  , parActor :: Maybe Text
+  , parOrderId :: Maybe Integer
+  , parSide :: Maybe Int
+  , parPrice :: Maybe Integer
+  , parSizeDelta :: Maybe Integer
+  , parAmountUsdc :: Maybe Integer
+  , parPnlUsdc :: Maybe Integer
+  , parTxHash :: Text
+  , parBlockNumber :: Integer
+  , parTimestamp :: Integer
+  , parData :: Value
+  , parLogIndex :: Integer
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsActivityRow where
+  fromRow = PerpsActivityRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> numericIntegerField
+    <*> numericIntegerField
+    <*> numericIntegerField
+    <*> numericIntegerField
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+
+numericIntegerField :: RowParser (Maybe Integer)
+numericIntegerField = fmap scientificToInteger <$> (field :: RowParser (Maybe Scientific))
+
+scientificToInteger :: Scientific -> Integer
+scientificToInteger value
+  | scale >= 0 = coeff * (10 ^ scale)
+  | otherwise = coeff `div` (10 ^ negate scale)
+  where
+    coeff = coefficient value
+    scale = base10Exponent value
+
+data PerpsIndexerStatusRow = PerpsIndexerStatusRow
+  { pisIndexerName :: Text
+  , pisChainId :: Integer
+  , pisLastIndexedBlock :: Integer
+  , pisLastIndexedBlockHash :: Maybe Text
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsIndexerStatusRow where
+  fromRow = PerpsIndexerStatusRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+
+ensurePerpsHistorySchema :: Connection -> IO ()
+ensurePerpsHistorySchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_events (\
+    \id SERIAL PRIMARY KEY,\
+    \chain_id BIGINT NOT NULL,\
+    \contract_address TEXT NOT NULL,\
+    \event_name TEXT NOT NULL,\
+    \tx_hash TEXT NOT NULL,\
+    \block_number BIGINT NOT NULL,\
+    \block_hash TEXT NOT NULL,\
+    \tx_index BIGINT NOT NULL,\
+    \log_index BIGINT NOT NULL,\
+    \timestamp BIGINT NOT NULL,\
+    \account TEXT,\
+    \order_id BIGINT,\
+    \side INTEGER,\
+    \data JSONB NOT NULL,\
+    \created_at TIMESTAMP DEFAULT NOW(),\
+    \UNIQUE (chain_id, tx_hash, log_index)\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_events_account_block \
+    \ON perps_events(account, block_number DESC, log_index DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_events_order_id \
+    \ON perps_events(chain_id, order_id)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_orders (\
+    \chain_id BIGINT NOT NULL,\
+    \order_id BIGINT NOT NULL,\
+    \account TEXT,\
+    \side INTEGER,\
+    \commit_tx_hash TEXT,\
+    \commit_block_number BIGINT,\
+    \commit_timestamp BIGINT,\
+    \terminal_tx_hash TEXT,\
+    \terminal_block_number BIGINT,\
+    \terminal_timestamp BIGINT,\
+    \terminal_status TEXT NOT NULL DEFAULT 'Committed',\
+    \failure_reason TEXT,\
+    \execution_price NUMERIC,\
+    \cleanup_actor TEXT,\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \PRIMARY KEY (chain_id, order_id)\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_orders_account_block \
+    \ON perps_orders(account, COALESCE(terminal_block_number, commit_block_number) DESC)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_account_activity (\
+    \id SERIAL PRIMARY KEY,\
+    \chain_id BIGINT NOT NULL,\
+    \event_key TEXT NOT NULL UNIQUE,\
+    \account TEXT NOT NULL,\
+    \actor TEXT,\
+    \activity_type TEXT NOT NULL,\
+    \order_id BIGINT,\
+    \side INTEGER,\
+    \price NUMERIC,\
+    \size_delta NUMERIC,\
+    \amount_usdc NUMERIC,\
+    \pnl_usdc NUMERIC,\
+    \tx_hash TEXT NOT NULL,\
+    \block_number BIGINT NOT NULL,\
+    \block_hash TEXT NOT NULL,\
+    \tx_index BIGINT NOT NULL,\
+    \log_index BIGINT NOT NULL,\
+    \timestamp BIGINT NOT NULL,\
+    \data JSONB NOT NULL,\
+    \created_at TIMESTAMP DEFAULT NOW()\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_account_block \
+    \ON perps_account_activity(account, block_number DESC, log_index DESC)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_indexer_state (\
+    \indexer_name TEXT NOT NULL,\
+    \chain_id BIGINT NOT NULL,\
+    \last_indexed_block BIGINT NOT NULL,\
+    \last_indexed_block_hash TEXT,\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \PRIMARY KEY (indexer_name, chain_id)\
+    \)"
+  pure ()
+
+insertPerpsEvent
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Int
+  -> Value
+  -> IO ()
+insertPerpsEvent conn chainId contractAddress eventName txHash blockNumber blockHash txIndex logIndex timestamp account orderId side payload = do
+  _ <- execute conn
+    "INSERT INTO perps_events \
+    \(chain_id, contract_address, event_name, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, account, order_id, side, data) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (chain_id, tx_hash, log_index) DO NOTHING"
+    ( chainId
+    , T.toLower contractAddress
+    , eventName
+    , T.toLower txHash
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , logIndex
+    , timestamp
+    , fmap T.toLower account
+    , orderId
+    , side
+    , encode payload
+    )
+  pure ()
+
+upsertPerpsOrderCommitted
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Text
+  -> Int
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO ()
+upsertPerpsOrderCommitted conn chainId orderId account side txHash blockNumber timestamp = do
+  _ <- execute conn
+    "INSERT INTO perps_orders \
+    \(chain_id, order_id, account, side, commit_tx_hash, commit_block_number, commit_timestamp, terminal_status) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, 'Committed') \
+    \ON CONFLICT (chain_id, order_id) DO UPDATE SET \
+    \account = COALESCE(perps_orders.account, EXCLUDED.account),\
+    \side = COALESCE(perps_orders.side, EXCLUDED.side),\
+    \commit_tx_hash = COALESCE(perps_orders.commit_tx_hash, EXCLUDED.commit_tx_hash),\
+    \commit_block_number = COALESCE(perps_orders.commit_block_number, EXCLUDED.commit_block_number),\
+    \commit_timestamp = COALESCE(perps_orders.commit_timestamp, EXCLUDED.commit_timestamp),\
+    \updated_at = NOW()"
+    (chainId, orderId, T.toLower account, side, T.toLower txHash, blockNumber, timestamp)
+  pure ()
+
+upsertPerpsOrderTerminal
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Text
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO ()
+upsertPerpsOrderTerminal conn chainId orderId status failureReason executionPrice cleanupActor txHash blockNumber timestamp = do
+  _ <- execute conn
+    "INSERT INTO perps_orders \
+    \(chain_id, order_id, terminal_tx_hash, terminal_block_number, terminal_timestamp, terminal_status, failure_reason, execution_price, cleanup_actor) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (chain_id, order_id) DO UPDATE SET \
+    \terminal_tx_hash = EXCLUDED.terminal_tx_hash,\
+    \terminal_block_number = EXCLUDED.terminal_block_number,\
+    \terminal_timestamp = EXCLUDED.terminal_timestamp,\
+    \terminal_status = EXCLUDED.terminal_status,\
+    \failure_reason = EXCLUDED.failure_reason,\
+    \execution_price = EXCLUDED.execution_price,\
+    \cleanup_actor = EXCLUDED.cleanup_actor,\
+    \updated_at = NOW()"
+    ( chainId
+    , orderId
+    , T.toLower txHash
+    , blockNumber
+    , timestamp
+    , status
+    , failureReason
+    , executionPrice
+    , fmap T.toLower cleanupActor
+    )
+  pure ()
+
+insertPerpsActivity
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Int
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Value
+  -> IO ()
+insertPerpsActivity conn chainId eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
+  _ <- execute conn
+    "INSERT INTO perps_account_activity \
+    \(chain_id, event_key, account, actor, activity_type, order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (event_key) DO NOTHING"
+    ( chainId
+    , eventKey
+    , T.toLower account
+    , fmap T.toLower actor
+    , activityType
+    , orderId
+    , side
+    , price
+    , sizeDelta
+    , amountUsdc
+    , pnlUsdc
+    , T.toLower txHash
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , logIndex
+    , timestamp
+    , encode payload
+    )
+  pure ()
+
+getPerpsOrdersByAccount :: Connection -> Integer -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsOrderRow]
+getPerpsOrdersByAccount conn chainId account limit cursor = do
+  case cursor of
+    Nothing ->
+      query conn baseQuery (chainId, T.toLower account, limit)
+    Just (cursorBlock, cursorOrderId) ->
+      query conn cursorQuery (chainId, T.toLower account, cursorBlock, cursorBlock, cursorOrderId, limit)
+  where
+    baseSelect :: Query
+    baseSelect =
+      "SELECT o.order_id, o.account, o.side, o.commit_tx_hash, o.commit_block_number, o.commit_timestamp, \
+      \o.terminal_tx_hash, o.terminal_block_number, o.terminal_timestamp, o.terminal_status, o.failure_reason, \
+      \o.execution_price, o.cleanup_actor, a.activity_type, a.size_delta, a.price, a.pnl_usdc, \
+      \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
+      \FROM perps_orders o \
+      \LEFT JOIN LATERAL (\
+      \  SELECT activity_type, size_delta, price, pnl_usdc \
+      \  FROM perps_account_activity a \
+      \  WHERE a.chain_id = o.chain_id AND a.account = o.account AND a.tx_hash = o.terminal_tx_hash \
+      \    AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
+      \  ORDER BY a.log_index ASC LIMIT 1\
+      \) a ON TRUE \
+      \WHERE o.chain_id = ? AND o.account = ?"
+
+    baseQuery :: Query
+    baseQuery =
+      baseSelect <> " \
+      \ORDER BY COALESCE(o.terminal_block_number, o.commit_block_number) DESC, o.order_id DESC \
+      \LIMIT ?"
+
+    cursorQuery :: Query
+    cursorQuery =
+      baseSelect <> " \
+      \AND (COALESCE(o.terminal_block_number, o.commit_block_number, 0) < ? \
+      \  OR (COALESCE(o.terminal_block_number, o.commit_block_number, 0) = ? AND o.order_id < ?)) \
+      \ORDER BY COALESCE(o.terminal_block_number, o.commit_block_number) DESC, o.order_id DESC \
+      \LIMIT ?"
+
+getPerpsActivityByAccount :: Connection -> Integer -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsActivityRow]
+getPerpsActivityByAccount conn chainId account limit cursor = do
+  case cursor of
+    Nothing ->
+      query conn baseQuery (chainId, T.toLower account, limit)
+    Just (cursorBlock, cursorLogIndex) ->
+      query conn cursorQuery (chainId, T.toLower account, cursorBlock, cursorBlock, cursorLogIndex, limit)
+  where
+    baseQuery :: Query
+    baseQuery =
+      "SELECT activity_type, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      \tx_hash, block_number, timestamp, data, log_index \
+      \FROM perps_account_activity \
+      \WHERE chain_id = ? AND account = ? \
+      \ORDER BY block_number DESC, log_index DESC LIMIT ?"
+
+    cursorQuery :: Query
+    cursorQuery =
+      "SELECT activity_type, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      \tx_hash, block_number, timestamp, data, log_index \
+      \FROM perps_account_activity \
+      \WHERE chain_id = ? AND account = ? \
+      \AND (block_number < ? OR (block_number = ? AND log_index < ?)) \
+      \ORDER BY block_number DESC, log_index DESC LIMIT ?"
+
+getPerpsOrderAccountSide :: Connection -> Integer -> Integer -> IO (Maybe (Text, Maybe Int))
+getPerpsOrderAccountSide conn chainId orderId = do
+  rows <- query conn
+    "SELECT account, side FROM perps_orders WHERE chain_id = ? AND order_id = ?"
+    (chainId, orderId)
+  case rows of
+    [(Just account, side)] -> pure $ Just (account, side)
+    _ -> pure Nothing
+
+insertPerpsExpiredCleanupActivityIfReady :: Connection -> Integer -> Integer -> IO ()
+insertPerpsExpiredCleanupActivityIfReady conn chainId orderId = do
+  rows <- query conn
+    "SELECT o.account, o.side, o.cleanup_actor, e.tx_hash, e.block_number, e.block_hash, \
+    \e.tx_index, e.log_index, e.timestamp \
+    \FROM perps_orders o \
+    \JOIN perps_events e ON e.chain_id = o.chain_id AND e.order_id = o.order_id AND e.event_name = 'OrderFailed' \
+    \WHERE o.chain_id = ? AND o.order_id = ? AND o.terminal_status = 'Expired / Cleaned up' \
+    \AND o.account IS NOT NULL \
+    \ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1"
+    (chainId, orderId)
+  case rows of
+    [(Just account, side, actor, txHash, blockNumber, blockHash, txIndex, logIndex, timestamp)] ->
+      insertPerpsActivity conn chainId (cleanupActivityKey txHash logIndex orderId) account
+        "Cleaned up expired order" actor (Just orderId) side Nothing Nothing Nothing Nothing
+        txHash blockNumber blockHash txIndex logIndex timestamp
+        (object ["orderId" .= show orderId, "reason" .= ("Expired" :: Text), "actor" .= actor])
+    _ -> pure ()
+  where
+    cleanupActivityKey :: Text -> Integer -> Integer -> Text
+    cleanupActivityKey txHash logIndex orderId' =
+      T.intercalate ":"
+        [ T.toLower txHash
+        , T.pack $ show logIndex
+        , "cleanup"
+        , T.pack $ show orderId'
+        ]
+
+getPerpsIndexerStatus :: Connection -> Integer -> Text -> IO (Maybe PerpsIndexerStatusRow)
+getPerpsIndexerStatus conn chainId indexerName = do
+  rows <- query conn
+    "SELECT indexer_name, chain_id, last_indexed_block, last_indexed_block_hash \
+    \FROM perps_indexer_state WHERE chain_id = ? AND indexer_name = ?"
+    (chainId, indexerName)
+  case rows of
+    [row] -> pure $ Just row
+    _ -> pure Nothing
+
+getPerpsIndexerLastBlock :: Connection -> Integer -> Text -> IO (Integer, Maybe Text)
+getPerpsIndexerLastBlock conn chainId indexerName = do
+  statusRow <- getPerpsIndexerStatus conn chainId indexerName
+  pure $ case statusRow of
+    Just row -> (pisLastIndexedBlock row, pisLastIndexedBlockHash row)
+    Nothing -> (0, Nothing)
+
+setPerpsIndexerState :: Connection -> Integer -> Text -> Integer -> Maybe Text -> IO ()
+setPerpsIndexerState conn chainId indexerName blockNumber blockHash = do
+  _ <- execute conn
+    "INSERT INTO perps_indexer_state (indexer_name, chain_id, last_indexed_block, last_indexed_block_hash) \
+    \VALUES (?, ?, ?, ?) \
+    \ON CONFLICT (indexer_name, chain_id) DO UPDATE SET \
+    \last_indexed_block = EXCLUDED.last_indexed_block,\
+    \last_indexed_block_hash = EXCLUDED.last_indexed_block_hash,\
+    \updated_at = NOW()"
+    (indexerName, chainId, blockNumber, fmap T.toLower blockHash)
+  pure ()
+
+deletePerpsHistoryFromBlock :: Connection -> Integer -> Integer -> IO ()
+deletePerpsHistoryFromBlock conn chainId blockNumber = do
+  _ <- execute conn
+    "DELETE FROM perps_account_activity WHERE chain_id = ? AND block_number >= ?"
+    (chainId, blockNumber)
+  _ <- execute conn
+    "DELETE FROM perps_events WHERE chain_id = ? AND block_number >= ?"
+    (chainId, blockNumber)
+  _ <- execute conn
+    "UPDATE perps_orders SET terminal_tx_hash = NULL, terminal_block_number = NULL, terminal_timestamp = NULL, \
+    \terminal_status = 'Committed', failure_reason = NULL, execution_price = NULL, cleanup_actor = NULL, updated_at = NOW() \
+    \WHERE chain_id = ? AND terminal_block_number >= ?"
+    (chainId, blockNumber)
+  _ <- execute conn
+    "DELETE FROM perps_orders WHERE chain_id = ? AND commit_block_number >= ?"
+    (chainId, blockNumber)
+  pure ()

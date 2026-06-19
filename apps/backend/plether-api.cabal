@@ -53,11 +53,13 @@ library
         Plether.Pyth.Hermes
         Plether.Pyth.History
         Plether.Pyth.RevealPayload
+        Plether.Perps.HistoryIndexer
         Plether.Types.History
         Plether.Indexer
         Plether.Indexer.Contracts
         Plether.Indexer.Events
         Plether.Handlers.History
+        Plether.Handlers.PerpsHistory
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -128,6 +130,21 @@ executable plether-basket-worker
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-perps-indexer
+    import:           warnings
+    main-is:          PerpsIndexer.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0,
+        http-client >= 0.7,
+        http-client-tls >= 0.3
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
@@ -139,6 +156,7 @@ test-suite plether-api-test
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
         Plether.Pyth.RevealPayloadSpec
+        Plether.Perps.HistoryIndexerSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

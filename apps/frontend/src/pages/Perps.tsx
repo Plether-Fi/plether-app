@@ -43,7 +43,7 @@ function formatMarkAge(ageSeconds: number): string {
 export function Perps() {
   const perpsMarket = usePerpsMarket()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
-  const perpsHistory = usePerpsHistory(perpsMarket.raw.markPrice)
+  const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
 
   useEffect(() => {

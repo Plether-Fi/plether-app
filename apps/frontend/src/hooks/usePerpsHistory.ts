@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { parseAbiItem, type Address, type Hex } from 'viem'
-import { useAccount, usePublicClient } from 'wagmi'
-import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import type { Hex } from 'viem'
+import { useAccount } from 'wagmi'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
-import { getPerpsOrderFailureMessage } from '../utils/perpsErrors'
 
 export interface PerpsOrderHistoryRow {
   orderId: bigint
@@ -28,99 +26,234 @@ export interface PerpsTradeHistoryRow {
   txHash: Hex
 }
 
-interface OrderEventState {
-  orderId: bigint
-  account: Address
-  side: number
-  commitBlockNumber: bigint
-  commitTxHash: Hex
-  executionBlockNumber?: bigint
-  executionTxHash?: Hex
-  executionPrice?: bigint
-  failureReason?: number
+interface BackendOrdersResponse {
+  data?: {
+    orders?: BackendOrderRow[]
+  }
 }
 
-interface TradeEventState {
-  kind: 'Open' | 'Close' | 'Liquidated'
-  account: Address
-  side: number
-  sizeDelta: bigint
-  price: bigint
-  marginDelta?: bigint
-  pnl?: bigint
-  keeperBountyUsdc?: bigint
-  blockNumber: bigint
-  txHash: Hex
+interface BackendActivityResponse {
+  data?: {
+    activity?: BackendActivityRow[]
+  }
 }
 
-interface MarginActivityEventState {
-  kind: 'Deposit' | 'Withdraw' | 'Add margin'
-  account: Address
-  amountUsdc: bigint
-  blockNumber: bigint
-  txHash: Hex
+interface BackendErrorResponse {
+  error?: {
+    message?: string
+  }
 }
 
-type AccountActivityEventState = TradeEventState | MarginActivityEventState
+interface BackendOrderRow {
+  orderId?: string
+  account?: string
+  side?: number
+  commitTxHash?: string
+  commitBlockNumber?: string
+  commitTimestamp?: number
+  terminalTxHash?: string
+  terminalBlockNumber?: string
+  terminalTimestamp?: number
+  terminalStatus?: string
+  failureReason?: string
+  executionPrice?: string
+  cleanupActor?: string
+  activityType?: string
+  activitySizeDelta?: string
+  activityPrice?: string
+  activityPnlUsdc?: string
+}
 
-const ORDER_COMMITTED_EVENT = parseAbiItem('event OrderCommitted(uint64 indexed orderId, address indexed account, uint8 side)')
-const ORDER_EXECUTED_EVENT = parseAbiItem('event OrderExecuted(uint64 indexed orderId, uint256 executionPrice)')
-const ORDER_FAILED_EVENT = parseAbiItem('event OrderFailed(uint64 indexed orderId, uint8 reason)')
-const POSITION_OPENED_EVENT = parseAbiItem('event PositionOpened(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, uint256 marginDelta)')
-const POSITION_CLOSED_EVENT = parseAbiItem('event PositionClosed(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, int256 pnl)')
-const POSITION_LIQUIDATED_EVENT = parseAbiItem('event PositionLiquidated(address indexed account, uint8 side, uint256 size, uint256 price, uint256 keeperBounty)')
-const MARGIN_DEPOSIT_EVENT = parseAbiItem('event Deposit(address indexed account, address indexed asset, uint256 amount)')
-const MARGIN_WITHDRAW_EVENT = parseAbiItem('event Withdraw(address indexed account, address indexed asset, uint256 amount)')
-const POSITION_MARGIN_ADDED_EVENT = parseAbiItem('event MarginAdded(address indexed account, uint256 amount)')
-const HISTORY_BLOCK_LOOKBACK = BigInt(import.meta.env.VITE_PERPS_HISTORY_BLOCK_LOOKBACK ?? '50000')
+interface BackendActivityRow {
+  activityType?: string
+  account?: string
+  actor?: string
+  orderId?: string
+  side?: number
+  price?: string
+  sizeDelta?: string
+  amountUsdc?: string
+  pnlUsdc?: string
+  txHash?: string
+  blockNumber?: string
+  timestamp?: number
+  data?: unknown
+}
 
-function shortTime(timestamp: bigint | undefined): string {
+function shortTime(timestamp: number | undefined): string {
   if (timestamp === undefined) return '--'
   return new Intl.DateTimeFormat(undefined, {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(Number(timestamp) * 1000))
+  }).format(new Date(timestamp * 1000))
 }
 
-function normalizeAddress(value: Address): string {
-  return value.toLowerCase()
+function perpsApiUrl(path: string): URL {
+  const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api/v1'
+  const normalizedBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase
+  return new URL(`${normalizedBase}${path}`, window.location.origin)
 }
 
-function orderKind(row: OrderEventState, trade?: TradeEventState): string {
-  if (trade?.kind) return trade.kind
-  return row.executionPrice ? 'Executed' : 'Commit'
+function parseBigInt(value: string | undefined): bigint | undefined {
+  if (!value) return undefined
+  try {
+    return BigInt(value)
+  } catch {
+    return undefined
+  }
 }
 
-function orderStatus(row: OrderEventState): string {
-  if (row.failureReason !== undefined) return getPerpsOrderFailureMessage(row.failureReason)
-  if (row.executionPrice !== undefined) return 'Executed'
+function asHex(value: string | undefined): Hex | undefined {
+  if (!value) return undefined
+  return value.startsWith('0x') ? value as Hex : `0x${value}` as Hex
+}
+
+function orderKind(row: BackendOrderRow): string {
+  if (row.activityType === 'Open' || row.activityType === 'Close' || row.activityType === 'Liquidated') {
+    return row.activityType
+  }
+  if (row.terminalStatus === 'Executed') return 'Executed'
+  if (row.terminalStatus === 'Expired / Cleaned up') return 'Cleanup'
+  return 'Commit'
+}
+
+function orderStatus(row: BackendOrderRow): string {
+  if (row.terminalStatus) return row.terminalStatus
   return 'Committed'
 }
 
-function sortByNewestBlock<T extends { blockNumber?: bigint; commitBlockNumber?: bigint; executionBlockNumber?: bigint }>(rows: T[]): T[] {
-  return [...rows].sort((a, b) => {
-    const aBlock = a.executionBlockNumber ?? a.commitBlockNumber ?? a.blockNumber ?? 0n
-    const bBlock = b.executionBlockNumber ?? b.commitBlockNumber ?? b.blockNumber ?? 0n
-    return aBlock > bBlock ? -1 : aBlock < bBlock ? 1 : 0
-  })
+function orderSize(row: BackendOrderRow): string {
+  const sizeDelta = parseBigInt(row.activitySizeDelta)
+  const price = parseBigInt(row.activityPrice ?? row.executionPrice)
+  const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
+  return notional === undefined ? '--' : formatPerpsUsdc(notional)
 }
 
-function isTradeEvent(activity: AccountActivityEventState): activity is TradeEventState {
-  return activity.kind === 'Open' || activity.kind === 'Close' || activity.kind === 'Liquidated'
+function orderPrice(row: BackendOrderRow): string {
+  const price = parseBigInt(row.executionPrice ?? row.activityPrice)
+  return price === undefined ? '--' : formatDisplayDxyPrice(price)
 }
 
-export function usePerpsHistory(markPrice?: bigint) {
+function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
+  const orderId = parseBigInt(row.orderId)
+  const commitTxHash = asHex(row.commitTxHash)
+  if (orderId === undefined || commitTxHash === undefined) return undefined
+
+  return {
+    orderId,
+    time: shortTime(row.terminalTimestamp ?? row.commitTimestamp),
+    market: 'plDXY Perp',
+    side: perpsSideLabel(row.side),
+    type: orderKind(row),
+    price: orderPrice(row),
+    size: orderSize(row),
+    status: orderStatus(row),
+    commitTxHash,
+    revealTxHash: asHex(row.terminalTxHash),
+  }
+}
+
+function activityMarket(activityType: string | undefined): string {
+  if (activityType === 'Deposit' || activityType === 'Withdraw') return 'Margin Account'
+  return 'plDXY Perp'
+}
+
+function activitySide(row: BackendActivityRow): string {
+  const side = perpsSideLabel(row.side)
+  switch (row.activityType) {
+    case 'Open':
+      return `Open ${side}`
+    case 'Close':
+      return `Close ${side}`
+    case 'Liquidated':
+      return `Liquidated ${side}`
+    case 'Deposit':
+      return 'Deposit'
+    case 'Withdraw':
+      return 'Withdraw'
+    case 'Add margin':
+      return 'Add margin'
+    case 'Cleaned up expired order':
+      return 'Cleaned up expired order'
+    default:
+      return row.activityType ?? 'Activity'
+  }
+}
+
+function activityPrice(row: BackendActivityRow): string {
+  const price = parseBigInt(row.price)
+  return price === undefined ? '--' : formatDisplayDxyPrice(price)
+}
+
+function activitySize(row: BackendActivityRow): string {
+  if (row.activityType === 'Cleaned up expired order') return '--'
+
+  const amountUsdc = parseBigInt(row.amountUsdc)
+  if (amountUsdc !== undefined) return formatPerpsUsdc(amountUsdc)
+
+  const sizeDelta = parseBigInt(row.sizeDelta)
+  const price = parseBigInt(row.price)
+  const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
+  return notional === undefined ? '--' : formatPerpsUsdc(notional)
+}
+
+function activityResult(row: BackendActivityRow): string | undefined {
+  if (row.activityType === 'Cleaned up expired order' && row.orderId) return `Order ${row.orderId}`
+  if (row.activityType === 'Liquidated') {
+    const keeperBounty = parseBigInt(row.amountUsdc)
+    return keeperBounty === undefined ? undefined : `Keeper bounty ${formatPerpsUsdc(keeperBounty)}`
+  }
+
+  const pnl = parseBigInt(row.pnlUsdc)
+  return pnl === undefined ? undefined : formatSignedPerpsUsdc(pnl)
+}
+
+function mapActivityRow(row: BackendActivityRow): PerpsTradeHistoryRow | undefined {
+  const txHash = asHex(row.txHash)
+  if (!txHash) return undefined
+
+  return {
+    time: shortTime(row.timestamp),
+    market: activityMarket(row.activityType),
+    side: activitySide(row),
+    price: activityPrice(row),
+    size: activitySize(row),
+    pnl: activityResult(row),
+    txHash,
+  }
+}
+
+async function fetchJson<T>(url: URL): Promise<T> {
+  let response: Response
+  try {
+    response = await fetch(url)
+  } catch (error) {
+    throw new Error(
+      `Could not reach backend history API. Check that the backend and plether-perps-indexer are running. ${
+        error instanceof Error ? error.message : ''
+      }`.trim()
+    )
+  }
+
+  if (!response.ok) {
+    const parsed = await response.json().catch(() => undefined) as BackendErrorResponse | undefined
+    throw new Error(parsed?.error?.message ?? `Backend history API returned HTTP ${response.status}`)
+  }
+
+  return await response.json() as T
+}
+
+export function usePerpsHistory() {
   const { address, isConnected } = useAccount()
-  const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
   const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
   const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
 
   useEffect(() => {
-    if (!isConnected || !address || !publicClient) {
+    if (!isConnected || !address) {
       setOrderHistory([])
       setTradeHistory([])
       setError(undefined)
@@ -129,250 +262,31 @@ export function usePerpsHistory(markPrice?: bigint) {
     }
 
     let cancelled = false
-    const account = address
 
     async function loadHistory() {
       setIsLoading(true)
       setError(undefined)
 
       try {
-        const latestBlock = await publicClient!.getBlockNumber()
-        const fromBlock = latestBlock > HISTORY_BLOCK_LOOKBACK ? latestBlock - HISTORY_BLOCK_LOOKBACK : 0n
-        const [commitLogs, executedLogs, failedLogs, openedLogs, closedLogs, liquidatedLogs, marginAddedLogs, marginDepositLogs, marginWithdrawLogs] = await Promise.all([
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-            event: ORDER_COMMITTED_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-            event: ORDER_EXECUTED_EVENT,
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-            event: ORDER_FAILED_EVENT,
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
-            event: POSITION_OPENED_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
-            event: POSITION_CLOSED_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
-            event: POSITION_LIQUIDATED_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
-            event: POSITION_MARGIN_ADDED_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
-            event: MARGIN_DEPOSIT_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
-          publicClient!.getLogs({
-            address: PERPS_ARBITRUM_SEPOLIA.marginClearinghouse,
-            event: MARGIN_WITHDRAW_EVENT,
-            args: { account },
-            fromBlock,
-            toBlock: latestBlock,
-          }),
+        const ordersUrl = perpsApiUrl(`/perps/accounts/${address}/orders`)
+        ordersUrl.searchParams.set('limit', '30')
+        const activityUrl = perpsApiUrl(`/perps/accounts/${address}/activity`)
+        activityUrl.searchParams.set('limit', '30')
+
+        const [ordersResponse, activityResponse] = await Promise.all([
+          fetchJson<BackendOrdersResponse>(ordersUrl),
+          fetchJson<BackendActivityResponse>(activityUrl),
         ])
-
-        const accountLower = normalizeAddress(account)
-        const orderById = new Map<bigint, OrderEventState>()
-        for (const log of commitLogs) {
-          if (!log.args.orderId || !log.args.account || log.args.side === undefined) continue
-          orderById.set(log.args.orderId, {
-            orderId: log.args.orderId,
-            account: log.args.account,
-            side: Number(log.args.side),
-            commitBlockNumber: log.blockNumber,
-            commitTxHash: log.transactionHash,
-          })
-        }
-        for (const log of executedLogs) {
-          if (!log.args.orderId) continue
-          const row = orderById.get(log.args.orderId)
-          if (!row) continue
-          row.executionBlockNumber = log.blockNumber
-          row.executionTxHash = log.transactionHash
-          row.executionPrice = log.args.executionPrice
-        }
-        for (const log of failedLogs) {
-          if (!log.args.orderId) continue
-          const row = orderById.get(log.args.orderId)
-          if (!row) continue
-          row.executionBlockNumber = log.blockNumber
-          row.executionTxHash = log.transactionHash
-          row.failureReason = log.args.reason === undefined ? undefined : Number(log.args.reason)
-        }
-
-        const trades: TradeEventState[] = [
-          ...openedLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Open' as const,
-              account: log.args.account,
-              side: Number(log.args.side ?? 0),
-              sizeDelta: log.args.sizeDelta ?? 0n,
-              price: log.args.price ?? 0n,
-              marginDelta: log.args.marginDelta,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-          ...closedLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Close' as const,
-              account: log.args.account,
-              side: Number(log.args.side ?? 0),
-              sizeDelta: log.args.sizeDelta ?? 0n,
-              price: log.args.price ?? 0n,
-              pnl: log.args.pnl,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-          ...liquidatedLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Liquidated' as const,
-              account: log.args.account,
-              side: Number(log.args.side ?? 0),
-              sizeDelta: log.args.size ?? 0n,
-              price: log.args.price ?? 0n,
-              keeperBountyUsdc: log.args.keeperBounty,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-        ].filter((trade) => normalizeAddress(trade.account) === accountLower)
-
-        const marginActivities: MarginActivityEventState[] = [
-          ...marginDepositLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Deposit' as const,
-              account: log.args.account,
-              amountUsdc: log.args.amount ?? 0n,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-          ...marginWithdrawLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Withdraw' as const,
-              account: log.args.account,
-              amountUsdc: log.args.amount ?? 0n,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-          ...marginAddedLogs.flatMap((log) => {
-            if (!log.args.account) return []
-            return [{
-              kind: 'Add margin' as const,
-              account: log.args.account,
-              amountUsdc: log.args.amount ?? 0n,
-              blockNumber: log.blockNumber,
-              txHash: log.transactionHash,
-            }]
-          }),
-        ].filter((activity) => normalizeAddress(activity.account) === accountLower)
-
-        const blockNumbers = new Set<bigint>()
-        for (const row of orderById.values()) blockNumbers.add(row.executionBlockNumber ?? row.commitBlockNumber)
-        for (const trade of trades) blockNumbers.add(trade.blockNumber)
-        for (const activity of marginActivities) blockNumbers.add(activity.blockNumber)
-        const blockTimestamps = new Map<bigint, bigint>()
-        await Promise.all([...blockNumbers].map(async (blockNumber) => {
-          const block = await publicClient!.getBlock({ blockNumber })
-          blockTimestamps.set(blockNumber, block.timestamp)
-        }))
-
-        const tradeByTxHash = new Map<string, TradeEventState>()
-        for (const trade of trades) tradeByTxHash.set(trade.txHash.toLowerCase(), trade)
-
-        const nextOrderHistory = sortByNewestBlock([...orderById.values()])
-          .slice(0, 30)
-          .map((row) => {
-            const trade = row.executionTxHash ? tradeByTxHash.get(row.executionTxHash.toLowerCase()) : undefined
-            const blockNumber = row.executionBlockNumber ?? row.commitBlockNumber
-            return {
-              orderId: row.orderId,
-              time: shortTime(blockTimestamps.get(blockNumber)),
-              market: 'plDXY Perp',
-              side: perpsSideLabel(row.side),
-              type: orderKind(row, trade),
-              price: row.executionPrice ? formatDisplayDxyPrice(row.executionPrice) : trade?.price ? formatDisplayDxyPrice(trade.price) : '--',
-              size: trade ? formatPerpsUsdc(sizeDeltaToNotionalUsdc(trade.sizeDelta, trade.price)) : '--',
-              status: orderStatus(row),
-              commitTxHash: row.commitTxHash,
-              revealTxHash: row.executionTxHash,
-            }
-          })
-
-        const nextTradeHistory = sortByNewestBlock<AccountActivityEventState>([
-          ...trades,
-          ...marginActivities,
-        ])
-          .slice(0, 30)
-          .map((activity) => {
-            if (!isTradeEvent(activity)) {
-              return {
-                time: shortTime(blockTimestamps.get(activity.blockNumber)),
-                market: activity.kind === 'Add margin' ? 'plDXY Perp' : 'Margin Account',
-                side: activity.kind,
-                price: '--',
-                size: formatPerpsUsdc(activity.amountUsdc),
-                txHash: activity.txHash,
-              }
-            }
-
-            return {
-              time: shortTime(blockTimestamps.get(activity.blockNumber)),
-              market: 'plDXY Perp',
-              side: activity.kind === 'Liquidated'
-                ? `Liquidated ${perpsSideLabel(activity.side)}`
-                : `${activity.kind} ${perpsSideLabel(activity.side)}`,
-              price: formatDisplayDxyPrice(activity.price),
-              size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(activity.sizeDelta, activity.price ?? markPrice)),
-              pnl: activity.kind === 'Liquidated' && activity.keeperBountyUsdc !== undefined
-                ? `Keeper bounty ${formatPerpsUsdc(activity.keeperBountyUsdc)}`
-                : activity.pnl === undefined ? undefined : formatSignedPerpsUsdc(activity.pnl),
-              txHash: activity.txHash,
-            }
-          })
 
         if (!cancelled) {
-          setOrderHistory(nextOrderHistory)
-          setTradeHistory(nextTradeHistory)
+          setOrderHistory((ordersResponse.data?.orders ?? []).flatMap((row) => {
+            const mapped = mapOrderRow(row)
+            return mapped ? [mapped] : []
+          }))
+          setTradeHistory((activityResponse.data?.activity ?? []).flatMap((row) => {
+            const mapped = mapActivityRow(row)
+            return mapped ? [mapped] : []
+          }))
           setIsLoading(false)
         }
       } catch (cause) {
@@ -394,7 +308,7 @@ export function usePerpsHistory(markPrice?: bigint) {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [address, isConnected, markPrice, publicClient])
+  }, [address, isConnected])
 
   return useMemo(() => ({
     orderHistory,

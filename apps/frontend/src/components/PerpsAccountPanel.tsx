@@ -811,11 +811,11 @@ function AccountTabContent({
     )
   }
   if (activeTab === 'orderHistory') {
-    if (historyError) return <ErrorState message="Could not load order history. Check RPC access and retry." />
+    if (historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
     if (isHistoryLoading) return <LoadingState label="order history" />
     return <OrdersView rows={liveOrderHistory ?? ORDER_HISTORY} includeStatus />
   }
-  if (historyError) return <ErrorState message="Could not load transaction history. Check RPC access and retry." />
+  if (historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
   if (isHistoryLoading) return <LoadingState label="transaction history" />
   return <TradeHistoryView rows={liveTradeHistory ?? TRADE_HISTORY} />
 }

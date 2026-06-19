@@ -136,7 +136,52 @@ Notes:
 - The worker writes to `perps_basket_snapshots` and `perps_pyth_update_payloads`.
 - The worker does not update the on-chain oracle by itself.
 
-### 4. Optional: Start The On-Chain Oracle Updater
+### 4. Start The Perps History Indexer
+
+`plether-perps-indexer` owns Perps order and activity history. The frontend reads this indexed database history instead of scanning browser RPC logs.
+
+```bash
+cd apps/backend
+
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+PERPS_INDEXER_START_BLOCK=0 \
+cabal run plether-perps-indexer -- --loop
+```
+
+Useful one-off modes:
+
+```bash
+# Index one safe block range and exit.
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-perps-indexer -- --once
+
+# Backfill a known range.
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-perps-indexer -- --backfill --from 123 --to 456
+```
+
+Notes:
+
+- The indexer only writes finalized/safe history. Default finality delay is `120` blocks.
+- Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
+- It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
+- Expired-order cleanup appears in Order History as `Expired / Cleaned up` and in Transaction History as `Cleaned up expired order`.
+
+Useful checks:
+
+```bash
+curl http://127.0.0.1:3001/api/perps/indexer/status
+curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/orders?limit=10"
+curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/activity?limit=10"
+```
+
+### 5. Optional: Start The On-Chain Oracle Updater
 
 The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions. This is the only service in this local stack that sends transactions.
 
@@ -162,7 +207,7 @@ npm run perps:oracle-worker -- --once
 
 Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
 
-### 5. Companion Frontend Services
+### 6. Companion Frontend Services
 
 The API and workers can run without UI servers, but the usual local perps development stack is:
 
@@ -197,6 +242,7 @@ Local URLs:
 | Basket/history endpoints return `DATABASE_URL is not configured` | Start the API with `DATABASE_URL` set. |
 | Currency cards are stale | Keep `plether-basket-worker -- --latest-loop` running. |
 | On-chain DXY price is stale | Run the optional oracle updater with `PERPS_ORACLE_UPDATER_PRIVATE_KEY`; the basket worker only updates the database cache. |
+| Order or transaction history is stale | Keep `plether-perps-indexer -- --loop` running and check `/api/perps/indexer/status`. |
 | Browser CORS error from `127.0.0.1:5173` | Include `http://127.0.0.1:5173` in `CORS_ORIGINS`. |
 
 ## Configuration
@@ -209,6 +255,11 @@ Local URLs:
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
+| `PERPS_INDEXER_START_BLOCK` | No | `INDEXER_START_BLOCK` | Perps history indexer start block |
+| `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
+| `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
+| `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
+| `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `PYTH_HERMES_URL` | No | `https://hermes.pyth.network` | Hermes endpoint used by the basket worker |
 | `PYTH_API_KEY` | No | - | Optional bearer token for API-key backed Hermes providers |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
@@ -251,8 +302,13 @@ Local URLs:
 | `GET /api/user/:address/history` | Transaction history |
 | `GET /api/user/:address/history/leverage` | Leverage positions only |
 | `GET /api/user/:address/history/lending` | Lending activity only |
+| `GET /api/perps/accounts/:address/orders` | Indexed Perps order history |
+| `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
+| `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
 
 Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
+
+Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
 
 ## Response Format
 
