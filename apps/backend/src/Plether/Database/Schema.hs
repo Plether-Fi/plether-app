@@ -536,7 +536,7 @@ instance FromRow PerpsOrderRow where
     <*> field
     <*> numericIntegerField
     <*> numericIntegerField
-    <*> field
+    <*> numericIntegerField
     <*> field
 
 data PerpsActivityRow = PerpsActivityRow
