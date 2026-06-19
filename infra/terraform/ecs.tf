@@ -100,6 +100,7 @@ resource "aws_ecs_task_definition" "keeper" {
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
       { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
+      { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
       { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
       { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
     ]

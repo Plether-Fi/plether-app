@@ -27,6 +27,7 @@ spec = do
       let selected =
             selectBatchCandidates
               110
+              11
               50
               15
               [101, 102, 103, 104, 105, 106]
@@ -34,21 +35,35 @@ spec = do
               [order 1 100, order 2 99, order 3 101]
       map porOrderId selected `shouldBe` [1, 2]
 
-    it "stops before an expired contiguous order" $ do
+    it "includes expired terminal orders in a contiguous batch" $ do
       let selected =
             selectBatchCandidates
               120
+              11
               10
               15
               [101, 102, 103, 104, 105, 106]
               20
               [order 1 100, order 2 99]
+      map porOrderId selected `shouldBe` [1, 2]
+
+    it "stops at the same-block guard" $ do
+      let selected =
+            selectBatchCandidates
+              110
+              10
+              50
+              15
+              [101, 102, 103, 104, 105, 106]
+              20
+              [order 1 100]
       map porOrderId selected `shouldBe` []
 
     it "honors the max batch size" $ do
       let selected =
             selectBatchCandidates
               110
+              11
               50
               15
               [101, 102, 103, 104, 105, 106]

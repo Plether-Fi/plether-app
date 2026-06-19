@@ -89,6 +89,20 @@ spec = do
             , poeBlockNumber = 125
             }
 
+  describe "orderFailureReasonText" $ do
+    it "decodes current router failure reason enum values" $ do
+      map orderFailureReasonText [0 .. 5]
+        `shouldBe` [ "Expired"
+                   , "CloseOnly"
+                   , "SlippageExceeded"
+                   , "EnginePanic"
+                   , "AccountLiquidated"
+                   , "EngineRevert"
+                   ]
+
+    it "labels unknown future values without failing" $ do
+      orderFailureReasonText 99 `shouldBe` "Unknown(99)"
+
 word :: BS.ByteString -> Int -> Integer
 word call index = decodeUint256 $ wordBytes call index
 

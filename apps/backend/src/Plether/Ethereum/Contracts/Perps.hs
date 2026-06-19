@@ -13,11 +13,14 @@ module Plether.Ethereum.Contracts.Perps
   , executeOrderCall
   , executeOrderBatchCall
   , getUpdateFeeCall
+  , orderFailureReasonText
   ) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Plether.Ethereum.Abi
   ( decodeAddress
   , decodeBool
@@ -28,7 +31,6 @@ import Plether.Ethereum.Abi
   )
 import Plether.Ethereum.Client (CallParams (..), EthClient, RpcError, ethCall)
 import Plether.Ethereum.Rpc (RpcLog (..))
-import qualified Data.Text.Encoding as TE
 
 data PerpsOrderEvent
   = OrderCommitted
@@ -134,6 +136,16 @@ getUpdateFee :: EthClient -> Text -> [ByteString] -> IO (Either RpcError Integer
 getUpdateFee client oracle updateData = do
   result <- ethCall client (CallParams oracle (getUpdateFeeCall updateData))
   pure $ fmap decodeUint256 result
+
+orderFailureReasonText :: Integer -> Text
+orderFailureReasonText = \case
+  0 -> "Expired"
+  1 -> "CloseOnly"
+  2 -> "SlippageExceeded"
+  3 -> "EnginePanic"
+  4 -> "AccountLiquidated"
+  5 -> "EngineRevert"
+  n -> "Unknown(" <> T.pack (show n) <> ")"
 
 getPendingOrderViewCall :: Integer -> ByteString
 getPendingOrderViewCall orderId =
