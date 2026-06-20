@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCandles, oracleNumberToDisplayDxyPrice } from '../DxyBasketPanel'
+import { buildCandles, oracleNumberToDisplayDxyPrice } from '../../utils/dxyBasketChart'
 
 describe('DXY basket chart display transform', () => {
   it('plots raw basket prices as reversed DXY display prices', () => {

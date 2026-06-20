@@ -37,9 +37,9 @@ function formatDuration(ms: number): string {
   const minutes = totalMinutes % 60
   const parts: string[] = []
 
-  if (days > 0) parts.push(`${days}d`)
-  if (hours > 0 || days > 0) parts.push(`${hours}h`)
-  if (minutes > 0 || parts.length === 0) parts.push(`${minutes}m`)
+  if (days > 0) parts.push(`${days.toString()}d`)
+  if (hours > 0 || days > 0) parts.push(`${hours.toString()}h`)
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes.toString()}m`)
 
   return parts.join(' ')
 }
@@ -112,13 +112,10 @@ export function PerpsMarketStatePanel({
   nextDuration,
   now,
 }: PerpsMarketStatePanelProps) {
-  const [clock, setClock] = useState(() => now ?? new Date())
+  const [clock, setClock] = useState(() => new Date())
 
   useEffect(() => {
-    if (now) {
-      setClock(now)
-      return
-    }
+    if (now) return undefined
 
     const interval = window.setInterval(() => {
       setClock(new Date())
@@ -129,7 +126,8 @@ export function PerpsMarketStatePanel({
     }
   }, [now])
 
-  const schedule = useMemo(() => weeklySchedule(clock, currentPhase), [clock, currentPhase])
+  const currentClock = now ?? clock
+  const schedule = useMemo(() => weeklySchedule(currentClock, currentPhase), [currentClock, currentPhase])
   const displayedCurrentDuration = currentDuration ?? schedule.currentDuration
   const displayedNextPhase = nextPhase ?? schedule.nextPhase
   const displayedNextDuration = nextDuration ?? schedule.nextDuration
@@ -147,7 +145,7 @@ export function PerpsMarketStatePanel({
               <span className="font-medium text-cyber-text-primary">{displayedCurrentDuration}</span>
             </>
           ) : null}
-          {displayedNextPhase && displayedNextDuration ? (
+          {displayedNextDuration ? (
             <>
               <span>. Then </span>
               <PhaseText phase={displayedNextPhase} />

@@ -25,6 +25,11 @@ import {
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
+import {
+  buildCandles,
+  oracleNumberToDisplayDxyPrice,
+  type ChartPoint,
+} from '../utils/dxyBasketChart'
 import { Alert, Skeleton, Tooltip } from './ui'
 
 const CHART_HEIGHT = 320
@@ -34,28 +39,10 @@ const CHART_AXIS_COLOR = 'rgba(255, 171, 150, 0.32)'
 const CHART_TEXT_COLOR = '#D9CCD3'
 const COMPONENT_PRICE_FRESH_SECONDS = 10 * 60
 
-export interface ChartPoint {
-  timestamp: number
-  price: number
-}
-
-export interface ChartCandle {
-  timestamp: number
-  open: number
-  high: number
-  low: number
-  close: number
-}
-
 export type DxyBasketChartStyle = 'area' | 'candlestick'
 
 function toOraclePrice(raw: string): number {
   return Number(raw) / 1e8
-}
-
-export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
-  if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
-  return Math.max(0, 2 - rawOraclePrice)
 }
 
 function formatPrice(value: number): string {
@@ -80,19 +67,19 @@ function formatPercent(value: number | null | undefined): string {
 
 function formatUpdateAge(ageSeconds: number): string {
   if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
-  if (ageSeconds < 60) return `${ageSeconds}s ago`
+  if (ageSeconds < 60) return `${ageSeconds.toString()}s ago`
 
   const minutes = Math.floor(ageSeconds / 60)
   const seconds = ageSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+  if (minutes < 60) return seconds > 0 ? `${minutes.toString()}m ${seconds.toString()}s ago` : `${minutes.toString()}m ago`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+  if (hours < 24) return remainingMinutes > 0 ? `${hours.toString()}h ${remainingMinutes.toString()}m ago` : `${hours.toString()}h ago`
 
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+  return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
 }
 
 function freshnessTooltip(publishTime: number | undefined, nowSeconds: number): string | undefined {
@@ -145,46 +132,6 @@ function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: numb
       />
     </Tooltip>
   )
-}
-
-export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {
-  const candles: ChartCandle[] = []
-  let currentCandle: ChartCandle | undefined
-  let previousClose: number | null = null
-
-  const sortedPoints = [...points].sort((left, right) => left.timestamp - right.timestamp)
-
-  for (const point of sortedPoints) {
-    const timestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
-
-    if (currentCandle?.timestamp === timestamp) {
-      currentCandle.high = Math.max(currentCandle.high, point.price)
-      currentCandle.low = Math.min(currentCandle.low, point.price)
-      currentCandle.close = point.price
-      previousClose = point.price
-      continue
-    }
-
-    if (currentCandle) {
-      candles.push(currentCandle)
-    }
-
-    const open = previousClose ?? point.price
-    currentCandle = {
-      timestamp,
-      open,
-      high: Math.max(open, point.price),
-      low: Math.min(open, point.price),
-      close: point.price,
-    }
-    previousClose = point.price
-  }
-
-  if (currentCandle) {
-    candles.push(currentCandle)
-  }
-
-  return candles
 }
 
 function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: DxyBasketChartProps) {
@@ -375,7 +322,7 @@ export function DxyBasketPanelView({
   const latestPoint = chartPoints.at(-1) ?? null
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const firstPoint = chartPoints[0] ?? null
+  const firstPoint = chartPoints.at(0) ?? null
   const changePct = firstPoint && latestPoint && firstPoint.price > 0
     ? (latestPoint.price - firstPoint.price) / firstPoint.price
     : null

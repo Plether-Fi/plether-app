@@ -1,4 +1,4 @@
-import { formatUnits, parseUnits, type Hex } from 'viem'
+import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
@@ -185,13 +185,13 @@ function describeRetryAfter(value: string | null): string {
 
   const seconds = Number(value)
   if (Number.isFinite(seconds) && seconds > 0) {
-    return `Retry after ${Math.ceil(seconds)}s.`
+    return `Retry after ${Math.ceil(seconds).toString()}s.`
   }
 
   const retryAt = Date.parse(value)
   if (Number.isFinite(retryAt)) {
     const waitSeconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))
-    return `Retry after ${waitSeconds}s.`
+    return `Retry after ${waitSeconds.toString()}s.`
   }
 
   return 'Wait about 60 seconds before retrying.'
@@ -211,6 +211,10 @@ function retryAfterMs(value: string | null): number {
   }
 
   return HERMES_DEFAULT_RATE_LIMIT_MS
+}
+
+function normalizeHex(value: string): Hex {
+  return isHex(value) ? value : `0x${value}`
 }
 
 function cacheHistoricalPythPayload(publishTime: number, payload: PerpsPythUpdatePayload): void {
@@ -244,7 +248,7 @@ async function parseBackendPythError(response: Response): Promise<Error> {
     return pythRateLimitError(retryAfter)
   }
 
-  return new Error(message ?? `Pyth update request failed: ${response.status}`)
+  return new Error(message ?? `Pyth update request failed: ${response.status.toString()}`)
 }
 
 async function parseRevealPayloadError(response: Response, orderId: bigint): Promise<Error> {
@@ -261,7 +265,7 @@ async function fetchPerpsPythUpdatePayloadUncached(publishTime?: number): Promis
   const now = Date.now()
   if (now < hermesRateLimitUntil) {
     throw new Error(
-      `Hermes rate limit reached. Retry after ${Math.ceil((hermesRateLimitUntil - now) / 1000)}s. Public Hermes is shared and can temporarily block requests; a reveal order may expire before the public endpoint unblocks.`
+      `Hermes rate limit reached. Retry after ${Math.ceil((hermesRateLimitUntil - now) / 1000).toString()}s. Public Hermes is shared and can temporarily block requests; a reveal order may expire before the public endpoint unblocks.`
     )
   }
 
@@ -292,7 +296,7 @@ async function fetchPerpsPythUpdatePayloadUncached(publishTime?: number): Promis
   }
 
   return {
-    updateData: updates.map((item) => item.startsWith('0x') ? item as Hex : `0x${item}` as Hex),
+    updateData: updates.map(normalizeHex),
     fetchedAt: payload.data?.fetchedAt ?? Math.floor(Date.now() / 1000),
     publishTimes: payload.data?.publishTimes ?? [],
   }
@@ -364,7 +368,7 @@ export async function fetchPerpsPythUpdatePayloadForWindow(
   }
 
   throw new Error(
-    `Hermes did not return Pyth update data for the valid reveal window ${minPublishTime} to ${maxPublishTime}. ${
+    `Hermes did not return Pyth update data for the valid reveal window ${minPublishTime.toString()} to ${maxPublishTime.toString()}. ${
       lastNotFound?.message ?? ''
     }`.trim()
   )
@@ -401,7 +405,7 @@ export async function fetchPerpsRevealPayload(
   }
 
   return {
-    updateData: updates.map((item) => item.startsWith('0x') ? item as Hex : `0x${item}` as Hex),
+    updateData: updates.map(normalizeHex),
     fetchedAt: payload.data?.fetchedAt ?? Math.floor(Date.now() / 1000),
     publishTimes: payload.data?.publishTimes ?? [],
   }
