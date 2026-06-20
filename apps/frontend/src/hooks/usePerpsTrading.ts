@@ -49,7 +49,7 @@ type BufferedFeeParams =
   | Record<string, never>
   | { maxFeePerGas: bigint; maxPriorityFeePerGas?: bigint }
   | { gasPrice: bigint }
-type InjectedEthereumProvider = {
+interface InjectedEthereumProvider {
   chainId?: string
   selectedAddress?: string
   isMetaMask?: boolean
@@ -64,7 +64,7 @@ function isPerpsCommitDebugEnabled(): boolean {
   if (import.meta.env.DEV) return true
 
   try {
-    return globalThis.localStorage?.getItem('PLETHER_PERPS_DEBUG') === '1'
+    return globalThis.localStorage.getItem('PLETHER_PERPS_DEBUG') === '1'
   } catch {
     return false
   }
@@ -104,7 +104,7 @@ function bumpGas(value: bigint): bigint {
 function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
   return new Promise((resolve, reject) => {
     const timeout = globalThis.setTimeout(() => {
-      reject(new Error(`RPC request timed out after ${milliseconds}ms`))
+      reject(new Error(`RPC request timed out after ${milliseconds.toString()}ms`))
     }, milliseconds)
 
     promise.then(
@@ -114,7 +114,7 @@ function withTimeout<T>(promise: Promise<T>, milliseconds: number): Promise<T> {
       },
       (error: unknown) => {
         globalThis.clearTimeout(timeout)
-        reject(error)
+        reject(error instanceof Error ? error : new Error(String(error)))
       }
     )
   })
@@ -201,7 +201,7 @@ function withPythFetchTiming(message: string, payload: PerpsPythUpdatePayload | 
       ? ` Hermes publish window: ${publishLabel} to ${newestPublishLabel};`
       : ` Hermes publish time: ${publishLabel};`
 
-  return `${message}${publishWindow} app fetch time: ${fetchedLabel}; age at fetch: ${payload.fetchedAt - oldestPublishTime}s; oracle staleness limit: 60s.`
+  return `${message}${publishWindow} app fetch time: ${fetchedLabel}; age at fetch: ${(payload.fetchedAt - oldestPublishTime).toString()}s; oracle staleness limit: 60s.`
 }
 
 function shouldFallbackToHistoricalPythPayload(message: string): boolean {
@@ -262,7 +262,7 @@ function isOrderEventFor(orderEventId: bigint | number | undefined, orderId: big
 }
 
 function describeTime(seconds: bigint): string {
-  return formatUnixTime(Number(seconds)) ?? `${seconds.toString()}`
+  return formatUnixTime(Number(seconds)) ?? seconds.toString()
 }
 
 async function getBufferedFeeParams(client: PerpsPublicClient, context = 'transaction'): Promise<BufferedFeeParams> {
@@ -271,16 +271,12 @@ async function getBufferedFeeParams(client: PerpsPublicClient, context = 'transa
       timeoutMs: FEE_ESTIMATE_TIMEOUT_MS,
     })
     const fees = await withTimeout(client.estimateFeesPerGas(), FEE_ESTIMATE_TIMEOUT_MS)
-    if ('maxFeePerGas' in fees && fees.maxFeePerGas !== undefined) {
-      const bufferedFees = {
-        maxFeePerGas: bumpFee(fees.maxFeePerGas),
-        maxPriorityFeePerGas: fees.maxPriorityFeePerGas === undefined
-          ? undefined
-          : bumpFee(fees.maxPriorityFeePerGas),
-      }
-      debugPerpsCommit(`${context}:fee-estimate:eip1559:success`, bufferedFees)
-      return bufferedFees
+    const bufferedFees = {
+      maxFeePerGas: bumpFee(fees.maxFeePerGas),
+      maxPriorityFeePerGas: bumpFee(fees.maxPriorityFeePerGas),
     }
+    debugPerpsCommit(`${context}:fee-estimate:eip1559:success`, bufferedFees)
+    return bufferedFees
   } catch (error) {
     debugPerpsCommit(`${context}:fee-estimate:eip1559:fallback`, {
       reason: error instanceof Error ? error.message : String(error),
@@ -355,7 +351,7 @@ async function describeCommitFailure({
     const pendingMarginUsdc = readBigInt(accountView, 'pendingOrderMarginUsdc', 2)
     const pendingBountyUsdc = readBigInt(accountView, 'pendingExecutionBountyUsdc', 3)
     context.push(
-      `Current account state: ${readArrayLength(pendingOrders)}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} USDC, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} USDC, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} USDC, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} USDC.`
+      `Current account state: ${readArrayLength(pendingOrders).toString()}/${maxPendingOrders.toString()} pending orders, equity ${formatPerpsUsdc(equityUsdc)} USDC, free/withdrawable ${formatPerpsUsdc(withdrawableUsdc)} USDC, pending margin ${formatPerpsUsdc(pendingMarginUsdc)} USDC, pending bounty ${formatPerpsUsdc(pendingBountyUsdc)} USDC.`
     )
   } catch {
     context.push('Could not refresh account diagnostics after the failed commit.')
@@ -371,7 +367,7 @@ async function describeCommitFailure({
         args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
       })
       if (openRevertCode !== 0) {
-        context.push(`Latest open preview now fails: ${getPerpsOpenRevertMessage(Number(openRevertCode))}`)
+        context.push(`Latest open preview now fails: ${getPerpsOpenRevertMessage(openRevertCode)}`)
       } else {
         context.push('Latest open preview still passes.')
       }
@@ -651,12 +647,12 @@ export function usePerpsTrading() {
           oraclePrice,
         }))
       }
-      const [committed] = parseEventLogs({
+      const committed = parseEventLogs({
         abi: PERPS_ORDER_ROUTER_ABI,
         eventName: 'OrderCommitted',
         logs: receipt.logs,
-      })
-      if (committed?.args.orderId === undefined) {
+      }).at(0)
+      if (committed === undefined) {
         throw new Error('Commit transaction succeeded, but no OrderCommitted event was found in the receipt. Refresh account state before retrying.')
       }
       debugPerpsCommit('order-committed', {
@@ -802,18 +798,18 @@ export function usePerpsTrading() {
         await client.waitForTransactionReceipt({ hash }),
         'Self-execute transaction reverted before settling the order'
       )
-      const [executed] = parseEventLogs({
+      const executed = parseEventLogs({
         abi: PERPS_ORDER_ROUTER_ABI,
         eventName: 'OrderExecuted',
         logs: receipt.logs,
-      }).filter((event) => isOrderEventFor(event.args.orderId, orderId))
-      const [failed] = parseEventLogs({
+      }).find((event) => isOrderEventFor(event.args.orderId, orderId))
+      const failed = parseEventLogs({
         abi: PERPS_ORDER_ROUTER_ABI,
         eventName: 'OrderFailed',
         logs: receipt.logs,
-      }).filter((event) => isOrderEventFor(event.args.orderId, orderId))
+      }).find((event) => isOrderEventFor(event.args.orderId, orderId))
 
-      if (executed === undefined && failed === undefined) {
+      if (!executed && !failed) {
         throw new Error(
           `Self-execute transaction confirmed, but order ${orderId.toString()} did not emit OrderExecuted or OrderFailed. The transaction may have only cleaned earlier queue orders. Refresh account state before retrying.`
         )
@@ -823,7 +819,7 @@ export function usePerpsTrading() {
       return {
         hash,
         executionPrice: executed?.args.executionPrice,
-        failedReason: failed?.args.reason === undefined ? undefined : Number(failed.args.reason),
+        failedReason: failed ? failed.args.reason : undefined,
       }
     } catch (error) {
       const message = withPythFetchTiming(getPerpsErrorMessage(error, 'execute'), pythPayload)

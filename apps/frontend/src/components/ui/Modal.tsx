@@ -64,7 +64,7 @@ export function Modal({
           bg-cyber-surface-dark  border border-cyber-border-glow/50
         `}
       >
-        {(title || headerContent) && (
+        {(title !== undefined || headerContent !== undefined) && (
           <div className="relative border-b border-cyber-border-glow/30 px-6 py-4">
             {title ? (
               <div className="flex items-center justify-between">

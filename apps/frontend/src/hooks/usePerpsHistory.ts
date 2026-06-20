@@ -107,7 +107,7 @@ function parseBigInt(value: string | undefined): bigint | undefined {
 
 function asHex(value: string | undefined): Hex | undefined {
   if (!value) return undefined
-  return value.startsWith('0x') ? value as Hex : `0x${value}` as Hex
+  return value.startsWith('0x') ? value as Hex : `0x${value}`
 }
 
 function orderKind(row: BackendOrderRow): string {
@@ -239,7 +239,7 @@ async function fetchJson<T>(url: URL): Promise<T> {
 
   if (!response.ok) {
     const parsed = await response.json().catch(() => undefined) as BackendErrorResponse | undefined
-    throw new Error(parsed?.error?.message ?? `Backend history API returned HTTP ${response.status}`)
+    throw new Error(parsed?.error?.message ?? `Backend history API returned HTTP ${response.status.toString()}`)
   }
 
   return await response.json() as T
@@ -254,23 +254,26 @@ export function usePerpsHistory() {
 
   useEffect(() => {
     if (!isConnected || !address) {
-      setOrderHistory([])
-      setTradeHistory([])
-      setError(undefined)
-      setIsLoading(false)
+      window.setTimeout(() => {
+        setOrderHistory([])
+        setTradeHistory([])
+        setError(undefined)
+        setIsLoading(false)
+      }, 0)
       return undefined
     }
 
     let cancelled = false
+    const accountAddress = address
 
     async function loadHistory() {
       setIsLoading(true)
       setError(undefined)
 
       try {
-        const ordersUrl = perpsApiUrl(`/perps/accounts/${address}/orders`)
+        const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
         ordersUrl.searchParams.set('limit', '30')
-        const activityUrl = perpsApiUrl(`/perps/accounts/${address}/activity`)
+        const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
         activityUrl.searchParams.set('limit', '30')
 
         const [ordersResponse, activityResponse] = await Promise.all([

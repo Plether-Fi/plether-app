@@ -8,8 +8,11 @@ import type { AppKitNetwork } from '@reown/appkit/networks'
 import { transactionManager } from '../services/transactionManager'
 
 const WALLETCONNECT_PROJECT_ID = '1ac6ecffb101d037c113363688a6ef8e'
+const envArbitrumSepoliaRpcUrl: unknown = import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL
 const ARBITRUM_SEPOLIA_RPC_URL =
-  import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL ?? 'https://sepolia-rollup.arbitrum.io/rpc'
+  typeof envArbitrumSepoliaRpcUrl === 'string' && envArbitrumSepoliaRpcUrl.length > 0
+    ? envArbitrumSepoliaRpcUrl
+    : 'https://sepolia-rollup.arbitrum.io/rpc'
 const APPKIT_THEME_OVERRIDE_ID = 'plether-appkit-theme-overrides'
 
 let appKitThemeObserver: MutationObserver | undefined

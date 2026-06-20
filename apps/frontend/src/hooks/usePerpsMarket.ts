@@ -5,7 +5,7 @@ import { usePerpsBasketLatest } from '../api'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
-import type { PerpsMarketPhase } from '../components/PerpsMarketStatePanel'
+import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, type PerpsOracleFreshness } from '../utils/perps'
 
 const WAD = 10n ** 18n
@@ -112,7 +112,6 @@ export function usePerpsMarket() {
   const {
     data: latestBasket,
     isLoading: isLatestBasketLoading,
-    isError: isLatestBasketError,
   } = usePerpsBasketLatest()
   const { data, isLoading, error, refetch } = useReadContracts({
     contracts: [
@@ -231,7 +230,7 @@ export function usePerpsMarket() {
         ? 'fresh'
         : backendBasketFresh
           ? 'backend-fresh'
-          : isLatestBasketLoading && latestBasket === undefined && !isLatestBasketError
+          : isLatestBasketLoading
             ? 'checking'
             : hasStoredMark || latestBasketTimestamp !== undefined
               ? 'stale'
@@ -282,5 +281,5 @@ export function usePerpsMarket() {
       error,
       refetch,
     }
-  }, [data, error, isLatestBasketError, isLatestBasketLoading, isLoading, latestBasket, refetch])
+  }, [data, error, isLatestBasketLoading, isLoading, latestBasket, refetch])
 }

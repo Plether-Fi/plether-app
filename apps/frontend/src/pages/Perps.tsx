@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
-import { getPerpsMarketSchedule, PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
+import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
+import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
@@ -25,19 +26,19 @@ function capacityTooltipValue(value: bigint | undefined, markPrice: bigint | und
 
 function formatMarkAge(ageSeconds: number): string {
   if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
-  if (ageSeconds < 60) return `${ageSeconds}s ago`
+  if (ageSeconds < 60) return `${ageSeconds.toString()}s ago`
 
   const minutes = Math.floor(ageSeconds / 60)
   const seconds = ageSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+  if (minutes < 60) return seconds > 0 ? `${minutes.toString()}m ${seconds.toString()}s ago` : `${minutes.toString()}m ago`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+  if (hours < 24) return remainingMinutes > 0 ? `${hours.toString()}h ${remainingMinutes.toString()}m ago` : `${hours.toString()}h ago`
 
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+  return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
 }
 
 function marketFreshnessLabel(phase: string | undefined): string {

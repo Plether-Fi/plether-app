@@ -26,7 +26,6 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
 
   const handleSwitch = async (targetChainId: SupportedChainId) => {
     const targetNetwork = appKitNetworksByChainId[targetChainId]
-    if (!targetNetwork) return
 
     setIsPending(true)
     try {

@@ -82,7 +82,7 @@ const PERPS_ERROR_ABI = parseAbi([
   'error CfdEngine__InsufficientCloseOrderBountyBacking()',
 ])
 
-const OPEN_REVERT_MESSAGES: Record<number, string> = {
+const OPEN_REVERT_MESSAGES: Partial<Record<number, string>> = {
   0: 'The order is valid.',
   1: 'You have an opposing position. Close or reduce it before opening this side.',
   2: 'The market is degraded, so new risk cannot be opened right now.',
@@ -93,18 +93,18 @@ const OPEN_REVERT_MESSAGES: Record<number, string> = {
   7: 'The LP pool does not have enough solvency buffer for this order.',
 }
 
-const COMMIT_VALIDATION_MESSAGES: Record<number, string> = {
+const COMMIT_VALIDATION_MESSAGES: Partial<Record<number, string>> = {
   11: 'Order size is below the minimum executable size.',
 }
 
-const CLOSE_REVERT_MESSAGES: Record<number, string> = {
+const CLOSE_REVERT_MESSAGES: Partial<Record<number, string>> = {
   0: 'The close order is valid.',
   1: 'Reduce size is larger than the current position.',
   2: 'The remaining position would be too small. Reduce less or close the full position.',
   3: 'This partial close would leave the position underwater. Reduce less or close the full position.',
 }
 
-const CLOSE_INVALID_REASON_MESSAGES: Record<number, string> = {
+const CLOSE_INVALID_REASON_MESSAGES: Partial<Record<number, string>> = {
   0: 'The close order is valid.',
   1: 'No current position to reduce or close.',
   2: 'Reduce size is invalid for the current position.',
@@ -112,7 +112,7 @@ const CLOSE_INVALID_REASON_MESSAGES: Record<number, string> = {
   4: 'This partial close would leave the position underwater. Reduce less or close the full position.',
 }
 
-export const PERPS_ORDER_FAILURE_MESSAGES: Record<number, string> = {
+export const PERPS_ORDER_FAILURE_MESSAGES: Partial<Record<number, string>> = {
   0: 'The order expired before it could be revealed. Create a fresh order.',
   1: 'The market switched to close-only before execution.',
   2: 'Execution exceeded your slippage setting. Increase slippage or retry with a fresh order.',
@@ -138,7 +138,7 @@ function getNestedString(error: unknown, keys: string[], depth = 0): string | un
 function getNestedArgs(error: unknown, depth = 0): readonly unknown[] | undefined {
   if (!error || typeof error !== 'object' || depth > 6) return undefined
   const record = error as Record<string, unknown>
-  if (Array.isArray(record.args)) return record.args
+  if (Array.isArray(record.args)) return record.args as readonly unknown[]
   for (const value of Object.values(record)) {
     const nested = getNestedArgs(value, depth + 1)
     if (nested) return nested
@@ -223,6 +223,8 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
     : currentTimestamp - publishTime
 
   if (
+    publishTime === undefined ||
+    currentTimestamp === undefined ||
     publishLabel === undefined ||
     currentLabel === undefined ||
     ageSeconds === undefined ||
@@ -232,15 +234,19 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
   }
 
   const zeroFeedId = feedId === '0x0000000000000000000000000000000000000000000000000000000000000000'
+  const publishTimestamp = publishTime.toString()
+  const currentTimestampLabel = currentTimestamp.toString()
+  const ageLabel = ageSeconds.toString()
+  const maxStalenessLabel = maxStaleness.toString()
   if (zeroFeedId && ageSeconds <= maxStaleness) {
-    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestamp}); oracle max publish bound: ${publishLabel} (${publishTime}); decoded bound age: ${ageSeconds}s; staleness limit: ${maxStaleness}s. The app will retry with exact historical Hermes data when possible; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
+    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestampLabel}); oracle max publish bound: ${publishLabel} (${publishTimestamp}); decoded bound age: ${ageLabel}s; staleness limit: ${maxStalenessLabel}s. The app will retry with exact historical Hermes data when possible; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
   }
 
   if (ageSeconds <= maxStaleness) {
-    return `Oracle returned a stale-price error, but the decoded timestamps are inconsistent. Decoded publish time: ${publishLabel} (${publishTime}); decoded chain check time: ${currentLabel} (${currentTimestamp}); decoded age: ${ageSeconds}s; limit: ${maxStaleness}s. Retry self-execute; if this repeats, send this line to the team.`
+    return `Oracle returned a stale-price error, but the decoded timestamps are inconsistent. Decoded publish time: ${publishLabel} (${publishTimestamp}); decoded chain check time: ${currentLabel} (${currentTimestampLabel}); decoded age: ${ageLabel}s; limit: ${maxStalenessLabel}s. Retry self-execute; if this repeats, send this line to the team.`
   }
 
-  return `Pyth price data expired before the transaction landed. Price publish time: ${publishLabel}; chain check time: ${currentLabel}; age: ${ageSeconds}s; limit: ${maxStaleness}s. Retry self-execute and confirm promptly.`
+  return `Pyth price data expired before the transaction landed. Price publish time: ${publishLabel}; chain check time: ${currentLabel}; age: ${ageLabel}s; limit: ${maxStalenessLabel}s. Retry self-execute and confirm promptly.`
 }
 
 function messageForDecodedError(name: string | undefined, args: readonly unknown[] | undefined): string | undefined {
@@ -260,17 +266,17 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Order size must be greater than zero.'
     case 'OrderRouter__CommitValidation': {
       const code = argNumber(args)
-      return COMMIT_VALIDATION_MESSAGES[code ?? -1] ?? `Order commit failed validation${code === undefined ? '' : ` (${code})`}.`
+      return COMMIT_VALIDATION_MESSAGES[code ?? -1] ?? `Order commit failed validation${code === undefined ? '' : ` (${code.toString()})`}.`
     }
     case 'OrderRouter__PredictableOpenInvalid': {
       const code = argNumber(args)
-      return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code})`}.`
+      return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code.toString()})`}.`
     }
     case 'CfdEngine__TypedOrderFailure': {
       const code = argNumber(args, 1)
       const isClose = args?.[2] === true
       const message = isClose ? CLOSE_REVERT_MESSAGES[code ?? -1] : OPEN_REVERT_MESSAGES[code ?? -1]
-      return message ?? `The engine rejected this ${isClose ? 'close' : 'open'} order${code === undefined ? '' : ` (${code})`}.`
+      return message ?? `The engine rejected this ${isClose ? 'close' : 'open'} order${code === undefined ? '' : ` (${code.toString()})`}.`
     }
     case 'CfdEngine__NotAccountOwner':
       return 'This wallet can only add margin to its own position.'
@@ -424,15 +430,15 @@ function messageForRawError(lowerMessage: string): string | undefined {
 
 export function getPerpsOrderFailureMessage(reason: number | undefined): string {
   if (reason === undefined) return 'Order failed during reveal.'
-  return PERPS_ORDER_FAILURE_MESSAGES[reason] ?? `Order failed during reveal. Reason code: ${reason}.`
+  return PERPS_ORDER_FAILURE_MESSAGES[reason] ?? `Order failed during reveal. Reason code: ${reason.toString()}.`
 }
 
 export function getPerpsOpenRevertMessage(code: number | undefined): string {
-  return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code})`}.`
+  return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code.toString()})`}.`
 }
 
 export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): string {
-  return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${reason === undefined ? '' : ` (${reason})`}.`
+  return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${reason === undefined ? '' : ` (${reason.toString()})`}.`
 }
 
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {

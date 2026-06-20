@@ -112,7 +112,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
     }
 
     return steps
-  }, [supplyMode, supplyBigInt, needsApprovalForSupply, morphoAddress, marketParams, address, addresses, writeContractAsync])
+  }, [supplyMode, supplyBigInt, needsApprovalForSupply, morphoAddress, marketParams, address, addresses, market.suppliedAmount, market.suppliedShares, writeContractAsync])
 
   const buildBorrowSteps = useCallback((): TransactionStep[] => {
     if (!morphoAddress || !marketParams || !address) return []
