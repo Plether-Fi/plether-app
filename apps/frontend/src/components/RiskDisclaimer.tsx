@@ -83,7 +83,9 @@ export function RiskDisclaimer() {
             <input
               type="checkbox"
               checked={checked}
-              onChange={(e) => setChecked(e.target.checked)}
+              onChange={(e) => {
+                setChecked(e.target.checked)
+              }}
               className="accent-cyber-electric-fuchsia w-4 h-4"
             />
             I understand and accept the risks described above

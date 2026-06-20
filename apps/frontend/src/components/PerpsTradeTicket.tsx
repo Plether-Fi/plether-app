@@ -360,10 +360,10 @@ function formatDuration(seconds: number): string {
   const minutes = Math.floor((seconds % 3_600) / 60)
   const remainingSeconds = seconds % 60
   const parts = [
-    days > 0 ? `${days}d` : '',
-    hours > 0 ? `${hours}h` : '',
-    minutes > 0 ? `${minutes}m` : '',
-    days === 0 && hours === 0 ? `${remainingSeconds}s` : '',
+    days > 0 ? `${days.toString()}d` : '',
+    hours > 0 ? `${hours.toString()}h` : '',
+    minutes > 0 ? `${minutes.toString()}m` : '',
+    days === 0 && hours === 0 ? `${remainingSeconds.toString()}s` : '',
   ].filter(Boolean)
 
   return parts.join(' ')
@@ -434,19 +434,19 @@ function formatOptionalPrice(value: number | null | undefined): string {
 
 function formatOracleAge(ageSeconds: number): string {
   if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
-  if (ageSeconds < 60) return `${ageSeconds}s ago`
+  if (ageSeconds < 60) return `${ageSeconds.toString()}s ago`
 
   const minutes = Math.floor(ageSeconds / 60)
   const seconds = ageSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+  if (minutes < 60) return seconds > 0 ? `${minutes.toString()}m ${seconds.toString()}s ago` : `${minutes.toString()}m ago`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+  if (hours < 24) return remainingMinutes > 0 ? `${hours.toString()}h ${remainingMinutes.toString()}m ago` : `${hours.toString()}h ago`
 
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+  return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
 }
 
 function DxyPricePreviewValue({
@@ -935,8 +935,8 @@ export function PerpsTradeTicket({
   const hasCurrentPositionDisplayAmount = parseAmount(currentPositionInputAmount) > 0
   const dxyExposureUsdc = parsePerpsUsdc(size)
   const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionDxyExposureRaw > 0n)
-  const isOppositePositionDirection = Boolean(hasCurrentPosition && currentPosition && direction !== currentPosition.direction)
-  const isReducingCurrentPosition = Boolean(hasCurrentPosition && (isReduceOnly || isOppositePositionDirection))
+  const isOppositePositionDirection = hasCurrentPosition && currentPosition !== undefined && direction !== currentPosition.direction
+  const isReducingCurrentPosition = hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
   const effectiveOrderDirection = isReducingCurrentPosition && currentPosition?.direction
     ? currentPosition.direction
     : direction
@@ -970,7 +970,7 @@ export function PerpsTradeTicket({
       const aExpiry = a.expiryTime ?? 0n
       const bExpiry = b.expiryTime ?? 0n
       return aExpiry < bExpiry ? -1 : aExpiry > bExpiry ? 1 : 0
-    })[0] ?? pendingCloseOrders[0]
+    }).at(0) ?? pendingCloseOrders.at(0)
   const firstPendingCloseSecondsToExpiry = firstPendingCloseOrder?.expiryTime === undefined
     ? undefined
     : Number(firstPendingCloseOrder.expiryTime) - nowSeconds
@@ -1044,10 +1044,6 @@ export function PerpsTradeTicket({
     : direction === 'long'
       ? previewPrice * 0.945
       : previewPrice * 1.055
-  const sideCapacityValue = selectedOpenCapacityUsdc === undefined
-    ? 'Unavailable'
-    : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />
-  const sideCapacityTone = selectedOpenCapacityUsdc === undefined ? undefined : 'positive'
   const summaryDxyExposureUsdc = isReducingCurrentPosition &&
     maxDxyExposureRaw > 0n &&
     dxyExposureUsdc >= maxDxyExposureRaw
@@ -1094,7 +1090,7 @@ export function PerpsTradeTicket({
                 address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
                 abi: PERPS_CFD_ENGINE_LENS_ABI,
                 functionName: 'previewClose',
-                args: [address ?? zeroAddress, orderSizeDelta, oraclePriceRaw ?? 0n],
+                args: [address ?? zeroAddress, orderSizeDelta, oraclePriceRaw],
               } as const
             : {
                 chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -1106,7 +1102,7 @@ export function PerpsTradeTicket({
                   directionToPerpsSide(effectiveOrderDirection),
                   orderSizeDelta,
                   marginUsdc,
-                  oraclePriceRaw ?? 0n,
+                  oraclePriceRaw,
                   previewPublishTime,
                 ],
               } as const,
@@ -1335,13 +1331,17 @@ export function PerpsTradeTicket({
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined },
       { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
-      { label: 'Contract side capacity', value: sideCapacityValue, tone: sideCapacityTone },
+      {
+        label: 'Contract side capacity',
+        value: selectedOpenCapacityUsdc === undefined
+          ? 'Unavailable'
+          : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />,
+        tone: selectedOpenCapacityUsdc === undefined ? undefined : 'positive',
+      },
     ],
     [
-      enableLiveTrading,
       executionLimit,
       keeperBounty,
-      leverage,
       oraclePriceDisplay,
       oraclePublishTime,
       nowSeconds,
@@ -1356,8 +1356,7 @@ export function PerpsTradeTicket({
       previewLensFallbackTone,
       previewMaintenanceMarginUsdc,
       previewVpiUsdc,
-      sideCapacityTone,
-      sideCapacityValue,
+      selectedOpenCapacityUsdc,
       dxyExposureNumber,
       slippageNumber,
     ]
@@ -1877,7 +1876,7 @@ export function PerpsTradeTicket({
                   ) : null}
                 </div>
               ) : null}
-              {flowError && lifecycleState === 'preview' ? (
+              {flowError ? (
                 <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4 text-sm text-cyber-electric-fuchsia">
                   {flowError}
                 </div>

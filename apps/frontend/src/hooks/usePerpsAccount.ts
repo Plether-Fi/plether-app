@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { type Address, zeroAddress } from 'viem'
+import { zeroAddress } from 'viem'
 import { useAccount, useReadContracts } from 'wagmi'
 import {
   ERC20_ABI,
@@ -450,7 +450,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       })[0]?.orderId
 
     return {
-      address: address as Address | undefined,
+      address: address,
       isConnected,
       isLoading: isLoading || pendingOrderViewsLoading,
       error,

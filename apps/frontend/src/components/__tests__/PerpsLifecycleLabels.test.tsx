@@ -101,7 +101,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('Unrealized PnL').length).toBeGreaterThan(0)
     expect(screen.getByText('Cost of carry')).toBeInTheDocument()
     expect(screen.getByText('1.25')).toBeInTheDocument()
-    expect(screen.getByText('Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure.')).toBeInTheDocument()
+    expect(screen.getByText(/Entry notional is the executed order size\. plDXY Perp exposure is current displayed exposure\./)).toBeInTheDocument()
   })
 
   it('resets the review modal lifecycle when it closes', () => {

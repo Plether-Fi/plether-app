@@ -233,13 +233,13 @@ function formatDuration(seconds: number): string {
 
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
-  if (minutes <= 0) return `${remainingSeconds}s`
+  if (minutes <= 0) return `${remainingSeconds.toString()}s`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours <= 0) return `${minutes}m ${remainingSeconds}s`
+  if (hours <= 0) return `${minutes.toString()}m ${remainingSeconds.toString()}s`
 
-  return `${hours}h ${remainingMinutes}m`
+  return `${hours.toString()}h ${remainingMinutes.toString()}m`
 }
 
 function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
@@ -546,7 +546,7 @@ function AccountTabContent({
     type: order.isReduceOnly ? 'Reduce' : 'Open',
     price: order.acceptablePrice === 0n ? 'Market' : formatDisplayDxyPrice(order.acceptablePrice),
     size: <TokenAmount amount={formatPerpsUsdc(order.estimatedNotionalUsdc)} />,
-    status: `Status ${order.status}`,
+    status: `Status ${order.status.toString()}`,
     expiryTime: order.expiryTime,
   }))
   const liveOrderHistory = orderHistory?.map((order) => ({

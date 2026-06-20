@@ -26,6 +26,8 @@ export function Modal({
   children,
   size = 'md',
 }: ModalProps) {
+  const hasHeader = Boolean(title) || Boolean(headerContent)
+
   useEffect(() => {
     if (isOpen) {
       document.body.style.overflow = 'hidden'
@@ -64,7 +66,7 @@ export function Modal({
           bg-cyber-surface-dark  border border-cyber-border-glow/50
         `}
       >
-        {(title || headerContent) && (
+        {hasHeader ? (
           <div className="relative border-b border-cyber-border-glow/30 px-6 py-4">
             {title ? (
               <div className="flex items-center justify-between">
@@ -88,7 +90,7 @@ export function Modal({
             ) : null}
             {headerContent ? <div className={title ? 'mt-4' : showCloseButton ? 'pr-8' : ''}>{headerContent}</div> : null}
           </div>
-        )}
+        ) : null}
 
         {/* Body */}
         <div className="p-6">{children}</div>

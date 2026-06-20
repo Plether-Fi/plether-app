@@ -57,7 +57,7 @@ const ORDER_EXECUTED_EVENT = parseAbiItem('event OrderExecuted(uint64 indexed or
 const ORDER_FAILED_EVENT = parseAbiItem('event OrderFailed(uint64 indexed orderId, uint8 reason)')
 const POSITION_OPENED_EVENT = parseAbiItem('event PositionOpened(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, uint256 marginDelta)')
 const POSITION_CLOSED_EVENT = parseAbiItem('event PositionClosed(address indexed account, uint8 side, uint256 sizeDelta, uint256 price, int256 pnl)')
-const HISTORY_BLOCK_LOOKBACK = BigInt(import.meta.env.VITE_PERPS_HISTORY_BLOCK_LOOKBACK ?? '50000')
+const HISTORY_BLOCK_LOOKBACK = BigInt((import.meta.env.VITE_PERPS_HISTORY_BLOCK_LOOKBACK as string | undefined) ?? '50000')
 
 function shortTime(timestamp: bigint | undefined): string {
   if (timestamp === undefined) return '--'
@@ -101,7 +101,7 @@ export function usePerpsHistory(markPrice?: bigint) {
   const [error, setError] = useState<Error | undefined>()
 
   useEffect(() => {
-    if (!isConnected || !address || !publicClient) {
+    if (!isConnected || !address) {
       setOrderHistory([])
       setTradeHistory([])
       setError(undefined)
@@ -117,36 +117,36 @@ export function usePerpsHistory(markPrice?: bigint) {
       setError(undefined)
 
       try {
-        const latestBlock = await publicClient!.getBlockNumber()
+        const latestBlock = await publicClient.getBlockNumber()
         const fromBlock = latestBlock > HISTORY_BLOCK_LOOKBACK ? latestBlock - HISTORY_BLOCK_LOOKBACK : 0n
         const [commitLogs, executedLogs, failedLogs, openedLogs, closedLogs] = await Promise.all([
-          publicClient!.getLogs({
+          publicClient.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
             event: ORDER_COMMITTED_EVENT,
             args: { account },
             fromBlock,
             toBlock: latestBlock,
           }),
-          publicClient!.getLogs({
+          publicClient.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
             event: ORDER_EXECUTED_EVENT,
             fromBlock,
             toBlock: latestBlock,
           }),
-          publicClient!.getLogs({
+          publicClient.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
             event: ORDER_FAILED_EVENT,
             fromBlock,
             toBlock: latestBlock,
           }),
-          publicClient!.getLogs({
+          publicClient.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
             event: POSITION_OPENED_EVENT,
             args: { account },
             fromBlock,
             toBlock: latestBlock,
           }),
-          publicClient!.getLogs({
+          publicClient.getLogs({
             address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
             event: POSITION_CLOSED_EVENT,
             args: { account },
@@ -162,7 +162,7 @@ export function usePerpsHistory(markPrice?: bigint) {
           orderById.set(log.args.orderId, {
             orderId: log.args.orderId,
             account: log.args.account,
-            side: Number(log.args.side),
+            side: log.args.side,
             commitBlockNumber: log.blockNumber,
             commitTxHash: log.transactionHash,
           })
@@ -181,7 +181,7 @@ export function usePerpsHistory(markPrice?: bigint) {
           if (!row) continue
           row.executionBlockNumber = log.blockNumber
           row.executionTxHash = log.transactionHash
-          row.failureReason = log.args.reason === undefined ? undefined : Number(log.args.reason)
+          row.failureReason = log.args.reason
         }
 
         const trades: TradeEventState[] = [
@@ -190,7 +190,7 @@ export function usePerpsHistory(markPrice?: bigint) {
             return [{
               kind: 'Open' as const,
               account: log.args.account,
-              side: Number(log.args.side ?? 0),
+              side: log.args.side ?? 0,
               sizeDelta: log.args.sizeDelta ?? 0n,
               price: log.args.price ?? 0n,
               marginDelta: log.args.marginDelta,
@@ -203,7 +203,7 @@ export function usePerpsHistory(markPrice?: bigint) {
             return [{
               kind: 'Close' as const,
               account: log.args.account,
-              side: Number(log.args.side ?? 0),
+              side: log.args.side ?? 0,
               sizeDelta: log.args.sizeDelta ?? 0n,
               price: log.args.price ?? 0n,
               pnl: log.args.pnl,
@@ -218,7 +218,7 @@ export function usePerpsHistory(markPrice?: bigint) {
         for (const trade of trades) blockNumbers.add(trade.blockNumber)
         const blockTimestamps = new Map<bigint, bigint>()
         await Promise.all([...blockNumbers].map(async (blockNumber) => {
-          const block = await publicClient!.getBlock({ blockNumber })
+          const block = await publicClient.getBlock({ blockNumber })
           blockTimestamps.set(blockNumber, block.timestamp)
         }))
 
@@ -251,7 +251,7 @@ export function usePerpsHistory(markPrice?: bigint) {
             market: 'plDXY Perp',
             side: `${trade.kind} ${perpsSideLabel(trade.side)}`,
             price: formatDisplayDxyPrice(trade.price),
-            size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(trade.sizeDelta, trade.price ?? markPrice)),
+            size: formatPerpsUsdc(sizeDeltaToNotionalUsdc(trade.sizeDelta, trade.price)),
             pnl: trade.pnl === undefined ? undefined : formatSignedPerpsUsdc(trade.pnl),
             txHash: trade.txHash,
           }))
