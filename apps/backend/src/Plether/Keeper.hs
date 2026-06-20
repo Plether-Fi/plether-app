@@ -20,19 +20,19 @@ import Database.PostgreSQL.Simple (Connection)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
-  ( PerpsOrderRow (..)
+  ( PerpsKeeperOrderRow (..)
   , PythUpdatePayloadRow (..)
-  , getPendingPerpsOrders
+  , getPendingPerpsKeeperOrders
   , getPerpsKeeperLastIndexedBlock
   , getPythUpdatePayloadForWindow
-  , markPerpsOrderExecuted
-  , markPerpsOrderFailed
-  , recordPerpsOrderAttempt
-  , recordPerpsOrderError
+  , markPerpsKeeperOrderExecuted
+  , markPerpsKeeperOrderFailed
+  , recordPerpsKeeperOrderAttempt
+  , recordPerpsKeeperOrderError
   , setPerpsKeeperLastIndexedBlock
   , tryPerpsKeeperLock
   , unlockPerpsKeeperLock
-  , upsertPerpsOrderCommitted
+  , upsertPerpsKeeperOrderCommitted
   )
 import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.Perps as Perps
@@ -62,8 +62,8 @@ data KeeperMode
   deriving stock (Show, Eq)
 
 data ExecutionIntent
-  = CleanupExpired PerpsOrderRow
-  | ExecuteReady [PerpsOrderRow] PythUpdatePayloadRow [Integer] [ByteString]
+  = CleanupExpired PerpsKeeperOrderRow
+  | ExecuteReady [PerpsKeeperOrderRow] PythUpdatePayloadRow [Integer] [ByteString]
 
 runKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
 runKeeper cfg pool client mode dryRun =
@@ -136,7 +136,7 @@ applyOrderEvent cfg conn client = \case
     case metadataResult of
       Nothing -> pure ()
       Just (commitBlock, commitTime) ->
-        upsertPerpsOrderCommitted
+        upsertPerpsKeeperOrderCommitted
           conn
           poeOrderId
           poeAccount
@@ -145,9 +145,9 @@ applyOrderEvent cfg conn client = \case
           commitTime
           poeTxHash
   Perps.OrderExecuted {..} ->
-    markPerpsOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
+    markPerpsKeeperOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
   Perps.OrderFailed {..} ->
-    markPerpsOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
+    markPerpsKeeperOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
 
 readCommitMetadata :: Config -> EthClient -> Integer -> Integer -> IO (Maybe (Integer, Integer))
 readCommitMetadata cfg client orderId fallbackBlock = do
@@ -169,7 +169,7 @@ readCommitMetadata cfg client orderId fallbackBlock = do
 
 processQueueHead :: Config -> Connection -> EthClient -> Bool -> IO ()
 processQueueHead cfg conn client dryRun = do
-  pending <- getPendingPerpsOrders conn (cfgKeeperMaxBatchSize cfg)
+  pending <- getPendingPerpsKeeperOrders conn (cfgKeeperMaxBatchSize cfg)
   case pending of
     [] -> pure ()
     headOrder : _ -> do
@@ -196,8 +196,8 @@ decideExecution
   -> Connection
   -> EthClient
   -> Bool
-  -> [PerpsOrderRow]
-  -> PerpsOrderRow
+  -> [PerpsKeeperOrderRow]
+  -> PerpsKeeperOrderRow
   -> Integer
   -> Integer
   -> Integer
@@ -207,20 +207,20 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
   freshHeadResult <- refreshPendingOrder cfg client headOrder
   case freshHeadResult of
     Left err -> do
-      recordPerpsOrderError conn (porOrderId headOrder) err
+      recordPerpsKeeperOrderError conn (pkorOrderId headOrder) err
       putStrLn $ "queue head re-read skipped execution: " <> T.unpack err
     Right freshHead
       | not (isPastCommitBlock latestBlock freshHead) ->
           putStrLn $
             "queue head order "
-              <> show (porOrderId freshHead)
+              <> show (pkorOrderId freshHead)
               <> " is waiting for the post-commit block"
       | isOrderExpired chainNow maxAge freshHead ->
           submitIntent cfg conn client dryRun $ CleanupExpired freshHead
-      | chainNow < porCommitTime freshHead + 1 ->
+      | chainNow < pkorCommitTime freshHead + 1 ->
           putStrLn $
             "queue head order "
-              <> show (porOrderId freshHead)
+              <> show (pkorOrderId freshHead)
               <> " is waiting for reveal window"
       | otherwise ->
           executeReadyHead (freshHead : drop 1 pending) freshHead
@@ -229,25 +229,25 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
       mPayload <-
         getPythUpdatePayloadForWindow
           conn
-          (porCommitTime freshHead + 1)
-          (porCommitTime freshHead + settlementWindow)
+          (pkorCommitTime freshHead + 1)
+          (pkorCommitTime freshHead + settlementWindow)
       case mPayload of
         Nothing ->
           putStrLn $
             "queue head order "
-              <> show (porOrderId freshHead)
+              <> show (pkorOrderId freshHead)
               <> " is waiting for cached Pyth payload"
         Just payload ->
           case decodePayload payload of
             Left err -> do
-              recordPerpsOrderError conn (porOrderId freshHead) err
+              recordPerpsKeeperOrderError conn (pkorOrderId freshHead) err
               putStrLn $ "cached Pyth payload could not be decoded: " <> T.unpack err
             Right (publishTimes, updateData) ->
-              case validateRevealWindow (porCommitTime freshHead) settlementWindow publishTimes of
+              case validateRevealWindow (pkorCommitTime freshHead) settlementWindow publishTimes of
                 Left err -> do
                   putStrLn $
                     "cached Pyth payload is not valid for order "
-                      <> show (porOrderId freshHead)
+                      <> show (pkorOrderId freshHead)
                       <> ": "
                       <> T.unpack err
                 Right _ -> do
@@ -274,36 +274,36 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                     [] ->
                       putStrLn $
                         "cached Pyth payload is not valid for queue head order "
-                          <> show (porOrderId freshHead)
+                          <> show (pkorOrderId freshHead)
                     orders ->
                       submitIntent cfg conn client dryRun $
                         ExecuteReady orders payload publishTimes updateData
 
-refreshPendingOrder :: Config -> EthClient -> PerpsOrderRow -> IO (Either Text PerpsOrderRow)
+refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text PerpsKeeperOrderRow)
 refreshPendingOrder cfg client order = do
-  viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) (porOrderId order)
+  viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) (pkorOrderId order)
   pure $ case viewResult of
-    Right view | Perps.povOrderId view == porOrderId order ->
+    Right view | Perps.povOrderId view == pkorOrderId order ->
       Right
         order
-          { porSide = Perps.povSide view
-          , porCommitBlock = Perps.povCommitBlock view
-          , porCommitTime = Perps.povCommitTime view
+          { pkorSide = Perps.povSide view
+          , pkorCommitBlock = Perps.povCommitBlock view
+          , pkorCommitTime = Perps.povCommitTime view
           }
     Right view ->
       Left $
         "router returned pending order "
           <> T.pack (show $ Perps.povOrderId view)
           <> " while re-reading order "
-          <> T.pack (show $ porOrderId order)
+          <> T.pack (show $ pkorOrderId order)
     Left err ->
       Left $
         "could not re-read pending order "
-          <> T.pack (show $ porOrderId order)
+          <> T.pack (show $ pkorOrderId order)
           <> ": "
           <> rpcErrorText err
 
-refreshContiguousOrders :: Config -> EthClient -> [PerpsOrderRow] -> IO [PerpsOrderRow]
+refreshContiguousOrders :: Config -> EthClient -> [PerpsKeeperOrderRow] -> IO [PerpsKeeperOrderRow]
 refreshContiguousOrders _ _ [] = pure []
 refreshContiguousOrders cfg client (order : orders) = do
   result <- refreshPendingOrder cfg client order
@@ -316,13 +316,13 @@ refreshContiguousOrders cfg client (order : orders) = do
 submitIntent :: Config -> Connection -> EthClient -> Bool -> ExecutionIntent -> IO ()
 submitIntent cfg conn client dryRun intent = do
   let targetOrders = intentOrders intent
-      targetIds = map porOrderId targetOrders
+      targetIds = map pkorOrderId targetOrders
       callData =
         case intent of
-          CleanupExpired order -> Perps.executeOrderCall (porOrderId order) []
-          ExecuteReady [order] _ _ updateData -> Perps.executeOrderCall (porOrderId order) updateData
+          CleanupExpired order -> Perps.executeOrderCall (pkorOrderId order) []
+          ExecuteReady [order] _ _ updateData -> Perps.executeOrderCall (pkorOrderId order) updateData
           ExecuteReady orders _ _ updateData ->
-            Perps.executeOrderBatchCall (maximum $ map porOrderId orders) updateData
+            Perps.executeOrderBatchCall (maximum $ map pkorOrderId orders) updateData
   valueResult <- intentValue cfg client intent
   case valueResult of
     Left err -> recordAllErrors conn targetIds err
@@ -335,7 +335,7 @@ submitIntent cfg conn client dryRun intent = do
               <> " with value "
               <> show value
         else do
-          forM_ targetIds (recordPerpsOrderAttempt conn)
+          forM_ targetIds (recordPerpsKeeperOrderAttempt conn)
           sent <- submitKeeperTransaction cfg client value callData
           case sent of
             Left err -> recordAllErrors conn targetIds err
@@ -418,20 +418,20 @@ applyReceipt conn targetIds receipt = do
   if receiptSucceeded receipt
     then
       forM_ missingIds $ \orderId ->
-        recordPerpsOrderError
+        recordPerpsKeeperOrderError
           conn
           orderId
           ("confirmed in " <> receiptTxHash receipt <> " without target order event")
     else
       forM_ targetIds $ \orderId ->
-        recordPerpsOrderError conn orderId ("transaction reverted: " <> receiptTxHash receipt)
+        recordPerpsKeeperOrderError conn orderId ("transaction reverted: " <> receiptTxHash receipt)
   where
     applyEvent seen = \case
       Perps.OrderExecuted {..} -> do
-        markPerpsOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
+        markPerpsKeeperOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
         pure $ poeOrderId : seen
       Perps.OrderFailed {..} -> do
-        markPerpsOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
+        markPerpsKeeperOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
         putStrLn $
           "order "
             <> show poeOrderId
@@ -442,7 +442,7 @@ applyReceipt conn targetIds receipt = do
 
 recordAllErrors :: Connection -> [Integer] -> Text -> IO ()
 recordAllErrors conn orderIds err = do
-  forM_ orderIds $ \orderId -> recordPerpsOrderError conn orderId err
+  forM_ orderIds $ \orderId -> recordPerpsKeeperOrderError conn orderId err
   putStrLn $ "keeper transaction skipped/failed: " <> T.unpack err
 
 decodePayload :: PythUpdatePayloadRow -> Either Text ([Integer], [ByteString])
@@ -464,14 +464,14 @@ decodeHexUpdate value =
     Right bytes -> Right bytes
     Left err -> Left $ "invalid updateData hex: " <> T.pack err
 
-isOrderExpired :: Integer -> Integer -> PerpsOrderRow -> Bool
+isOrderExpired :: Integer -> Integer -> PerpsKeeperOrderRow -> Bool
 isOrderExpired chainNow maxAge order =
-  maxAge > 0 && chainNow > porCommitTime order + maxAge
+  maxAge > 0 && chainNow > pkorCommitTime order + maxAge
 
-isOrderRevealReady :: Integer -> [Integer] -> PerpsOrderRow -> Bool
+isOrderRevealReady :: Integer -> [Integer] -> PerpsKeeperOrderRow -> Bool
 isOrderRevealReady settlementWindow publishTimes order =
   either (const False) (const True) $
-    validateRevealWindow (porCommitTime order) settlementWindow publishTimes
+    validateRevealWindow (pkorCommitTime order) settlementWindow publishTimes
 
 selectBatchCandidates
   :: Integer -- chain now
@@ -480,8 +480,8 @@ selectBatchCandidates
   -> Integer -- settlement window
   -> [Integer] -- payload publish times
   -> Int -- max batch size
-  -> [PerpsOrderRow]
-  -> [PerpsOrderRow]
+  -> [PerpsKeeperOrderRow]
+  -> [PerpsKeeperOrderRow]
 selectBatchCandidates chainNow currentBlock maxAge settlementWindow publishTimes maxBatchSize =
   take maxBatchSize
     . takeWhile
@@ -492,22 +492,22 @@ selectBatchCandidates chainNow currentBlock maxAge settlementWindow publishTimes
                )
       )
 
-isPastCommitBlock :: Integer -> PerpsOrderRow -> Bool
+isPastCommitBlock :: Integer -> PerpsKeeperOrderRow -> Bool
 isPastCommitBlock currentBlock order =
-  currentBlock > porCommitBlock order
+  currentBlock > pkorCommitBlock order
 
-intentOrders :: ExecutionIntent -> [PerpsOrderRow]
+intentOrders :: ExecutionIntent -> [PerpsKeeperOrderRow]
 intentOrders = \case
   CleanupExpired order -> [order]
   ExecuteReady orders _ _ _ -> orders
 
 describeIntent :: ExecutionIntent -> String
 describeIntent = \case
-  CleanupExpired order -> "expired-order cleanup for " <> show (porOrderId order)
-  ExecuteReady [order] _ _ _ -> "single-order execution for " <> show (porOrderId order)
+  CleanupExpired order -> "expired-order cleanup for " <> show (pkorOrderId order)
+  ExecuteReady [order] _ _ _ -> "single-order execution for " <> show (pkorOrderId order)
   ExecuteReady orders _ _ _ ->
     "batch execution through order "
-      <> show (maximum $ map porOrderId orders)
+      <> show (maximum $ map pkorOrderId orders)
       <> " ("
       <> show (length orders)
       <> " orders)"

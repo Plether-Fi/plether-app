@@ -2,6 +2,7 @@ import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
+export type PerpsOracleFreshness = 'fresh' | 'backend-fresh' | 'checking' | 'market-closed' | 'stale'
 export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
 export function cleanNumericInput(value: string): string {
@@ -169,6 +170,10 @@ let hermesRateLimitUntil = 0
 const historicalPythCache = new Map<number, PerpsPythUpdatePayload>()
 const historicalPythInFlight = new Map<number, Promise<PerpsPythUpdatePayload>>()
 
+function normalizeHex(value: string): Hex {
+  return isHex(value) ? value : `0x${value}`
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
@@ -211,10 +216,6 @@ function retryAfterMs(value: string | null): number {
   }
 
   return HERMES_DEFAULT_RATE_LIMIT_MS
-}
-
-function normalizeHex(value: string): Hex {
-  return isHex(value) ? value : `0x${value}`
 }
 
 function cacheHistoricalPythPayload(publishTime: number, payload: PerpsPythUpdatePayload): void {

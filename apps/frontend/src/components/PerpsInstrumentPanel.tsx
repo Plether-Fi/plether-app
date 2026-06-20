@@ -1,4 +1,5 @@
 import { type ReactNode } from 'react'
+import type { PerpsOracleFreshness } from '../utils/perps'
 import { TokenAmount, Tooltip } from './ui'
 
 export interface PerpsInstrumentStat {
@@ -10,7 +11,7 @@ export interface PerpsInstrumentStat {
     tone?: 'default' | 'positive' | 'negative'
   }[]
   tone?: 'default' | 'positive' | 'negative'
-  freshness?: 'fresh' | 'stale'
+  freshness?: PerpsOracleFreshness
   freshnessTooltip?: string
   tooltip?: ReactNode
   tooltipClassName?: string
@@ -41,7 +42,10 @@ function statToneClass(tone: PerpsInstrumentStat['tone']): string {
 }
 
 function freshnessToneClass(freshness: NonNullable<PerpsInstrumentStat['freshness']>): string {
-  return freshness === 'fresh' ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'
+  if (freshness === 'fresh') return 'text-cyber-neon-green'
+  if (freshness === 'market-closed') return 'text-cyber-warning-text'
+  if (freshness === 'stale') return 'text-cyber-electric-fuchsia'
+  return 'text-[#FFAB96]'
 }
 
 function StatValue({ stat }: { stat: PerpsInstrumentStat }) {

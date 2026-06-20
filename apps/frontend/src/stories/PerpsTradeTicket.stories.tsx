@@ -17,7 +17,7 @@ function TicketFrame(args: React.ComponentProps<typeof PerpsTradeTicket>) {
   return (
     <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
       <div className="ml-auto max-w-md">
-        <PerpsTradeTicket {...args} />
+        <PerpsTradeTicket maintenanceMarginBps={100n} {...args} />
       </div>
     </div>
   )

@@ -25,12 +25,12 @@ import {
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
+import { Alert, Skeleton, Tooltip } from './ui'
 import {
   buildCandles,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
 } from '../utils/dxyBasketChart'
-import { Alert, Skeleton, Tooltip } from './ui'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -323,7 +323,7 @@ export function DxyBasketPanelView({
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const firstPoint = chartPoints.at(0) ?? null
-  const changePct = firstPoint && latestPoint && firstPoint.price > 0
+  const changePct = firstPoint !== null && latestPoint !== null && firstPoint.price > 0
     ? (latestPoint.price - firstPoint.price) / firstPoint.price
     : null
   const positiveChange = changePct == null || changePct >= 0

@@ -1,6 +1,7 @@
 module Plether.Handlers.Perps
   ( getBasketHistory
   , getBasketLatest
+  , getCachedLatestPythUpdate
   , getPythUpdate
   , getRevealPayload
   ) where
@@ -40,6 +41,7 @@ import Plether.Database.Schema
   , PythUpdatePayloadRow (..)
   , getBasketSnapshots
   , getLatestBasketSnapshot
+  , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
   )
 import Plether.Types
@@ -162,6 +164,33 @@ decodeValue label value =
   case Aeson.fromJSON value of
     Aeson.Success parsed -> Right parsed
     Aeson.Error err -> Left $ "Could not decode cached reveal " <> label <> ": " <> T.pack err
+
+getCachedLatestPythUpdate
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse PythUpdateResponse))
+getCachedLatestPythUpdate pool cfg = do
+  mRow <- withDb pool getLatestPythUpdatePayload
+  pure $ case mRow of
+    Nothing ->
+      Left $
+        E.networkError
+          "No cached Pyth update payload is available yet. Keep plether-basket-worker --latest-loop running."
+    Just PythUpdatePayloadRow {..} ->
+      case (decodeValue "publish_times" puprPublishTimes, decodeValue "update_data" puprUpdateData) of
+        (Right publishTimes, Right updateData) ->
+          let payload =
+                PythUpdateResponse
+                  { purUpdateData = updateData
+                  , purFetchedAt = puprFetchedAt
+                  , purPublishTimes = publishTimes
+                  , purSource = puprSource
+                  }
+           in Right $ mkResponse 0 (cfgChainId cfg) payload
+        (Left err, _) ->
+          Left $ E.internalError err
+        (_, Left err) ->
+          Left $ E.internalError err
 
 data HermesBinary = HermesBinary
   { hbData :: [Text]

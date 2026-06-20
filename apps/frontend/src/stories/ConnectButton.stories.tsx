@@ -17,9 +17,17 @@ function MockDisconnectedButton() {
   )
 }
 
-function MockConnectedButton({ network = 'Mainnet', isWrongNetwork = false }: { network?: string; isWrongNetwork?: boolean }) {
+function MockConnectedButton({
+  network = 'Mainnet',
+  isWrongNetwork = false,
+  needsSwitch = true,
+}: {
+  network?: string
+  isWrongNetwork?: boolean
+  needsSwitch?: boolean
+}) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-4">
       <span className={`
         px-2 py-0.5 text-xs font-medium border
         ${isWrongNetwork
@@ -31,6 +39,13 @@ function MockConnectedButton({ network = 'Mainnet', isWrongNetwork = false }: { 
       `}>
         {isWrongNetwork ? 'Wrong Network' : network}
       </span>
+
+      {needsSwitch ? (
+        <button className="flex cursor-pointer items-center gap-2 border border-[#FFAB96] bg-[#FFAB96] px-3 py-2 text-xs font-semibold text-[#250917] transition-colors hover:border-[#FFAB96] hover:bg-[#250917] hover:text-[#FFAB96] hover:underline hover:underline-offset-4">
+          <span className="material-symbols-outlined text-base">swap_horiz</span>
+          Switch Network
+        </button>
+      ) : null}
 
       <button className="flex items-center gap-2 bg-[#FF572D] text-[#FFF5F9] hover:bg-[#FF572D]/90 px-4 py-2 transition-colors border border-[#FF572D]/25 group">
         <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
@@ -56,6 +71,10 @@ export const ConnectedSepolia: Story = {
   render: () => <MockConnectedButton network="Sepolia" />,
 }
 
+export const ConnectedArbitrumSepolia: Story = {
+  render: () => <MockConnectedButton network="Arbitrum Sepolia" needsSwitch={false} />,
+}
+
 export const WrongNetwork: Story = {
   render: () => <MockConnectedButton isWrongNetwork />,
 }
@@ -74,6 +93,10 @@ export const AllStates: Story = {
       <div>
         <p className="text-cyber-text-secondary text-sm mb-2">Connected (Sepolia):</p>
         <MockConnectedButton network="Sepolia" />
+      </div>
+      <div>
+        <p className="text-cyber-text-secondary text-sm mb-2">Connected (Arbitrum Sepolia):</p>
+        <MockConnectedButton network="Arbitrum Sepolia" needsSwitch={false} />
       </div>
       <div>
         <p className="text-cyber-text-secondary text-sm mb-2">Wrong Network:</p>

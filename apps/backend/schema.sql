@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS perps_keeper_state (
 INSERT INTO perps_keeper_state (id, last_indexed_block) VALUES (1, 0) ON CONFLICT DO NOTHING;
 
 -- Perps keeper pending/executed/failed order queue
-CREATE TABLE IF NOT EXISTS perps_orders (
+CREATE TABLE IF NOT EXISTS perps_keeper_orders (
     order_id NUMERIC(20,0) PRIMARY KEY,
     account VARCHAR(42) NOT NULL,
     side INTEGER NOT NULL,
@@ -110,5 +110,5 @@ CREATE TABLE IF NOT EXISTS perps_orders (
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_perps_orders_pending ON perps_orders(order_id ASC) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS idx_perps_orders_commit_block ON perps_orders(commit_block DESC);
+CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending ON perps_keeper_orders(order_id ASC) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block ON perps_keeper_orders(commit_block DESC);

@@ -26,7 +26,7 @@ export function Modal({
   children,
   size = 'md',
 }: ModalProps) {
-  const hasHeader = Boolean(title) || Boolean(headerContent)
+  const hasHeader = title !== undefined || headerContent !== undefined
 
   useEffect(() => {
     if (isOpen) {

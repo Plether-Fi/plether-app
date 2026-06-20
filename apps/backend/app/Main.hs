@@ -8,7 +8,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
-import Plether.Database.Schema (ensureBasketSnapshotSchema)
+import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
@@ -43,6 +43,7 @@ main = do
           putStrLn "Database configured - enabling transaction history"
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
+          withDb pool ensurePerpsHistorySchema
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
                 , icDeployments = cfgDeployments cfg
@@ -90,6 +91,12 @@ main = do
           putStrLn "  GET /api/user/:address/history/leverage"
           putStrLn "  GET /api/user/:address/history/lending"
           putStrLn "  GET /api/perps/basket/history?range="
+          putStrLn "  GET /api/perps/basket/latest"
+          putStrLn "  GET /api/perps/accounts/:address/orders"
+          putStrLn "  GET /api/perps/accounts/:address/activity"
+          putStrLn "  GET /api/perps/indexer/status"
+          putStrLn "  GET /api/perps/orders/:orderId/reveal-payload"
+          putStrLn "  GET /api/perps/pyth/cached-latest"
         Nothing -> pure ()
       putStrLn "  GET /api/perps/pyth/update?publishTime="
       putStrLn ""

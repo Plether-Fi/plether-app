@@ -29,6 +29,7 @@ export const ConnectedPosition: Story = {
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected
+          equityUsdc={700000000n}
           position={{
             exists: true,
             side: 0,

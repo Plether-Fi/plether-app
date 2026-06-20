@@ -1,6 +1,6 @@
 import { decodeErrorResult, parseAbi } from 'viem'
 
-type PerpsAction = 'approve' | 'deposit' | 'withdraw' | 'commit' | 'execute'
+type PerpsAction = 'approve' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'commit' | 'execute'
 
 const PERPS_ERROR_ABI = parseAbi([
   'error EnforcedPause()',
@@ -63,6 +63,7 @@ const PERPS_ERROR_ABI = parseAbi([
   'error PletherOracle__ZeroBasketPrice()',
 
   'error CfdEngine__TypedOrderFailure(uint8 failureCategory,uint8 failureCode,bool isClose)',
+  'error CfdEngine__NotAccountOwner()',
   'error CfdEngine__MustCloseOpposingPosition()',
   'error CfdEngine__DegradedMode()',
   'error CfdEngine__PositionTooSmall()',
@@ -223,11 +224,11 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
     : currentTimestamp - publishTime
 
   if (
+    publishTime === undefined ||
+    currentTimestamp === undefined ||
     publishLabel === undefined ||
     currentLabel === undefined ||
     ageSeconds === undefined ||
-    publishTime === undefined ||
-    currentTimestamp === undefined ||
     maxStaleness === undefined
   ) {
     return 'Pyth price data expired before the transaction landed. Retry self-execute and confirm promptly.'
@@ -282,6 +283,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       const message = isClose ? CLOSE_REVERT_MESSAGES[code ?? -1] : OPEN_REVERT_MESSAGES[code ?? -1]
       return message ?? `The engine rejected this ${isClose ? 'close' : 'open'} order${codeSuffix(code)}.`
     }
+    case 'CfdEngine__NotAccountOwner':
+      return 'This wallet can only add margin to its own position.'
     case 'CfdEngine__MustCloseOpposingPosition':
       return OPEN_REVERT_MESSAGES[1]
     case 'CfdEngine__DegradedMode':
@@ -304,7 +307,7 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'CfdEngine__PartialCloseUnderwaterCarry':
       return CLOSE_REVERT_MESSAGES[3]
     case 'CfdEngine__NoOpenPosition':
-      return 'There is no open position to reduce or close.'
+      return 'There is no open position for this account.'
     case 'CfdEngine__WithdrawBlockedByOpenPosition':
       return 'Withdrawal is blocked while this account has an open position.'
     case 'CfdEngine__MarkPriceStale':
@@ -387,6 +390,8 @@ function fallbackMessage(action: PerpsAction): string {
       return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
     case 'withdraw':
       return 'Withdraw failed. Check free margin and pending orders.'
+    case 'addPositionMargin':
+      return 'Add position margin failed. Check free margin, open position state, and wallet gas.'
     case 'commit':
       return 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
     case 'execute':

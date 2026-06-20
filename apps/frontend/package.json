@@ -16,6 +16,7 @@
     "test:integration:watch": "vitest --project integration",
     "test:perps-integration": "vitest run --project perps-integration",
     "test:perps-fork": "vitest run --project perps-fork",
+    "perps:oracle-worker": "node scripts/perps-oracle-worker.mjs",
     "anvil": "dotenv -- sh -c 'anvil --fork-url $SEPOLIA_RPC_URL --chain-id 31337 --port 8546'",
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",

@@ -1,6 +1,6 @@
 module Plether.KeeperSpec (spec) where
 
-import Plether.Database.Schema (PerpsOrderRow (..))
+import Plether.Database.Schema (PerpsKeeperOrderRow (..))
 import Plether.Keeper (isOrderExpired, isOrderRevealReady, selectBatchCandidates)
 import Test.Hspec
 
@@ -33,7 +33,7 @@ spec = do
               [101, 102, 103, 104, 105, 106]
               20
               [order 1 100, order 2 99, order 3 101]
-      map porOrderId selected `shouldBe` [1, 2]
+      map pkorOrderId selected `shouldBe` [1, 2]
 
     it "includes expired terminal orders in a contiguous batch" $ do
       let selected =
@@ -45,7 +45,7 @@ spec = do
               [101, 102, 103, 104, 105, 106]
               20
               [order 1 100, order 2 99]
-      map porOrderId selected `shouldBe` [1, 2]
+      map pkorOrderId selected `shouldBe` [1, 2]
 
     it "stops at the same-block guard" $ do
       let selected =
@@ -57,7 +57,7 @@ spec = do
               [101, 102, 103, 104, 105, 106]
               20
               [order 1 100]
-      map porOrderId selected `shouldBe` []
+      map pkorOrderId selected `shouldBe` []
 
     it "honors the max batch size" $ do
       let selected =
@@ -69,18 +69,18 @@ spec = do
               [101, 102, 103, 104, 105, 106]
               1
               [order 1 100, order 2 99]
-      map porOrderId selected `shouldBe` [1]
+      map pkorOrderId selected `shouldBe` [1]
 
-order :: Integer -> Integer -> PerpsOrderRow
+order :: Integer -> Integer -> PerpsKeeperOrderRow
 order orderId commitTime =
-  PerpsOrderRow
-    { porOrderId = orderId
-    , porAccount = "0x1111111111111111111111111111111111111111"
-    , porSide = 0
-    , porCommitBlock = 10
-    , porCommitTime = commitTime
-    , porCommitTxHash = "0xcommit"
-    , porStatus = "pending"
-    , porAttemptCount = 0
-    , porLastError = Nothing
+  PerpsKeeperOrderRow
+    { pkorOrderId = orderId
+    , pkorAccount = "0x1111111111111111111111111111111111111111"
+    , pkorSide = 0
+    , pkorCommitBlock = 10
+    , pkorCommitTime = commitTime
+    , pkorCommitTxHash = "0xcommit"
+    , pkorStatus = "pending"
+    , pkorAttemptCount = 0
+    , pkorLastError = Nothing
     }

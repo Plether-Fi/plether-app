@@ -2,7 +2,7 @@ module Main (main) where
 
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
-import Plether.Database.Schema (ensureBasketSnapshotSchema)
+import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsKeeperSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Ethereum.Transaction (deriveAddress)
 import Plether.Keeper (KeeperMode (..), runKeeper)
@@ -30,7 +30,9 @@ main = do
         Right keeperAddress ->
           putStrLn $ "Starting plether-keeper from " <> show keeperAddress
       pool <- newDbPool dbUrl
-      withDb pool ensureBasketSnapshotSchema
+      withDb pool $ \conn -> do
+        ensureBasketSnapshotSchema conn
+        ensurePerpsKeeperSchema conn
       client <- newClient (cfgPerpsRpcUrl cfg)
       runKeeper cfg pool client (kaMode args) (kaDryRun args)
 
