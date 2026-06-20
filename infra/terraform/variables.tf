@@ -78,6 +78,11 @@ variable "keeper_max_batch_size" {
   default = "20"
 }
 
+variable "keeper_confirmations" {
+  type    = string
+  default = "1"
+}
+
 variable "keeper_gas_buffer_bps" {
   type    = string
   default = "2000"

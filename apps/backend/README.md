@@ -62,6 +62,7 @@ The indexer runs automatically on startup and polls for new blocks every 12 seco
 | `PERPS_INDEXER_START_BLOCK` | No | `0` | Perps order-router block to start keeper indexing from |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
+| `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
 

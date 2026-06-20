@@ -39,6 +39,7 @@ data Config = Config
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
   , cfgKeeperMaxBatchSize :: Int
+  , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
   , cfgKeeperFeeBufferBps :: Integer
   }
@@ -137,6 +138,7 @@ loadConfig = do
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
+      keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
 
@@ -151,6 +153,7 @@ loadConfig = do
           perpsIndexerStartBlock = fromMaybe 0 (readMaybe perpsIndexerStartBlockStr)
           keeperPollSeconds = fromMaybe 1 (readMaybe keeperPollSecondsStr)
           keeperMaxBatchSize = fromMaybe 20 (readMaybe keeperMaxBatchSizeStr)
+          keeperConfirmations = fromMaybe 1 (readMaybe keeperConfirmationsStr)
           keeperGasBufferBps = fromMaybe 2000 (readMaybe keeperGasBufferBpsStr)
           keeperFeeBufferBps = fromMaybe 2500 (readMaybe keeperFeeBufferBpsStr)
           addressFile = case chainId of
@@ -187,6 +190,7 @@ loadConfig = do
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = max 1 keeperPollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
+                , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
                 }
