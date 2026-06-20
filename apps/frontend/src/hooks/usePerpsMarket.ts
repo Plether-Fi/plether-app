@@ -212,7 +212,8 @@ export function usePerpsMarket() {
     const marketPhase = protocolPhaseToMarketPhase(phase, tradingActive, oracleFrozen, fadWindow)
     const lastMarkTimeNumber = lastMarkTime === undefined ? undefined : Number(lastMarkTime)
     const hasStoredMark = markPrice !== undefined && markPrice > 0n && lastMarkTimeNumber !== undefined && lastMarkTimeNumber > 0
-    const onchainOracleFresh = hasStoredMark && (markFresh ?? !oracleFrozen)
+    const nonOpenMarketMark = marketPhase !== 'open' && hasStoredMark
+    const onchainOracleFresh = hasStoredMark && !nonOpenMarketMark && (markFresh ?? !oracleFrozen)
     const latestBasketTimestamp = latestBasket?.data.timestamp
     const backendHasNewerBasketUpdate =
       latestBasketTimestamp !== undefined &&
@@ -224,20 +225,24 @@ export function usePerpsMarket() {
       backendHasNewerBasketUpdate &&
       backendBasketAgeSeconds !== undefined &&
       backendBasketAgeSeconds <= ORACLE_FRESH_SECONDS
-    const oracleFreshness: PerpsOracleFreshness | undefined = onchainOracleFresh
-      ? 'fresh'
-      : backendBasketFresh
-        ? 'backend-fresh'
-        : isLatestBasketLoading && latestBasket === undefined && !isLatestBasketError
-          ? 'checking'
-          : hasStoredMark || latestBasketTimestamp !== undefined
-            ? 'stale'
-            : undefined
-    const oracleFreshnessTime = onchainOracleFresh
+    const oracleFreshness: PerpsOracleFreshness | undefined = nonOpenMarketMark
+      ? 'market-closed'
+      : onchainOracleFresh
+        ? 'fresh'
+        : backendBasketFresh
+          ? 'backend-fresh'
+          : isLatestBasketLoading && latestBasket === undefined && !isLatestBasketError
+            ? 'checking'
+            : hasStoredMark || latestBasketTimestamp !== undefined
+              ? 'stale'
+              : undefined
+    const oracleFreshnessTime = nonOpenMarketMark
       ? lastMarkTimeNumber
-      : backendBasketFresh
-        ? latestBasketTimestamp
-        : lastMarkTimeNumber ?? latestBasketTimestamp
+      : onchainOracleFresh
+        ? lastMarkTimeNumber
+        : backendBasketFresh
+          ? latestBasketTimestamp
+          : lastMarkTimeNumber ?? latestBasketTimestamp
 
     return {
       chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,

@@ -509,9 +509,11 @@ function DxyPricePreviewValue({
   const freshness = freshnessOverride ?? inferredFreshness
   const dotClass = freshness === 'fresh'
     ? 'bg-cyber-neon-green'
-    : freshness === 'stale'
-      ? 'bg-cyber-electric-fuchsia'
-      : 'bg-[#FFAB96]'
+    : freshness === 'market-closed'
+      ? 'bg-cyber-warning-text'
+      : freshness === 'stale'
+        ? 'bg-cyber-electric-fuchsia'
+        : 'bg-[#FFAB96]'
   const freshnessTooltip = freshnessTooltipOverride ?? (ageSeconds === undefined ? undefined : `updated ${formatOracleAge(ageSeconds)}`)
 
   return (

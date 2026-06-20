@@ -43,6 +43,7 @@ function statToneClass(tone: PerpsInstrumentStat['tone']): string {
 
 function freshnessToneClass(freshness: NonNullable<PerpsInstrumentStat['freshness']>): string {
   if (freshness === 'fresh') return 'text-cyber-neon-green'
+  if (freshness === 'market-closed') return 'text-cyber-warning-text'
   if (freshness === 'stale') return 'text-cyber-electric-fuchsia'
   return 'text-[#FFAB96]'
 }

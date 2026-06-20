@@ -40,6 +40,21 @@ function formatMarkAge(ageSeconds: number): string {
   return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
 }
 
+function marketFreshnessLabel(phase: string | undefined): string {
+  switch (phase) {
+    case 'close-only':
+      return 'close-only'
+    case 'degraded':
+      return 'market degraded'
+    case 'paused':
+      return 'market paused'
+    case 'closed':
+      return 'market closed'
+    default:
+      return 'market not open'
+  }
+}
+
 export function Perps() {
   const perpsMarket = usePerpsMarket()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
@@ -59,6 +74,11 @@ export function Perps() {
   const dxyFreshnessTooltip = useMemo(() => {
     if (perpsMarket.oracleFreshness === 'checking') return 'checking backend for a newer update'
 
+    if (perpsMarket.oracleFreshness === 'market-closed' && perpsMarket.oracleFreshnessTime) {
+      const ageSeconds = Math.max(0, nowSeconds - perpsMarket.oracleFreshnessTime)
+      return `${marketFreshnessLabel(perpsMarket.marketPhase)}; updated ${formatMarkAge(ageSeconds)}`
+    }
+
     if (perpsMarket.oracleFreshness === 'backend-fresh' && perpsMarket.backendLatestBasketTime) {
       const backendAgeSeconds = Math.max(0, nowSeconds - perpsMarket.backendLatestBasketTime)
       const onchainAge = perpsMarket.lastMarkTime === undefined
@@ -77,6 +97,7 @@ export function Perps() {
     nowSeconds,
     perpsMarket.backendLatestBasketTime,
     perpsMarket.lastMarkTime,
+    perpsMarket.marketPhase,
     perpsMarket.oracleFreshness,
     perpsMarket.oracleFreshnessTime,
   ])
