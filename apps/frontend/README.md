@@ -20,6 +20,8 @@ npm test           # Unit tests
 npm run anvil      # Start Anvil fork (port 8546, requires SEPOLIA_RPC_URL)
 npm run test:integration  # Integration tests (requires Anvil)
 npm run storybook  # Component explorer at http://localhost:6006
+npm run perps:oracle-worker -- --once  # Update the perps mark from backend-cached Pyth data
+npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backend cache
 ```
 
 ## Networks

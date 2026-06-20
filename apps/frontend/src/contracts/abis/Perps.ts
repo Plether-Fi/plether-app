@@ -278,6 +278,24 @@ export const PERPS_MARGIN_CLEARINGHOUSE_ABI = [
     inputs: [{ name: 'account', type: 'address' }],
     outputs: [{ type: 'uint256' }],
   },
+  {
+    type: 'event',
+    name: 'Deposit',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'asset', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'Withdraw',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'asset', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+  },
 ] as const
 
 export const PERPS_ORDER_ROUTER_ABI = [
@@ -407,6 +425,25 @@ export const PERPS_CFD_ENGINE_ABI = [
     ],
   },
   {
+    type: 'event',
+    name: 'PositionLiquidated',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+      { name: 'size', type: 'uint256', indexed: false },
+      { name: 'price', type: 'uint256', indexed: false },
+      { name: 'keeperBounty', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'MarginAdded',
+    inputs: [
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'amount', type: 'uint256', indexed: false },
+    ],
+  },
+  {
     type: 'function',
     name: 'sides',
     stateMutability: 'view',
@@ -475,6 +512,16 @@ export const PERPS_CFD_ENGINE_ABI = [
     name: 'settleTraderClaim',
     stateMutability: 'nonpayable',
     inputs: [{ name: 'account', type: 'address' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'addMargin',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'amount', type: 'uint256' },
+    ],
     outputs: [],
   },
 ] as const

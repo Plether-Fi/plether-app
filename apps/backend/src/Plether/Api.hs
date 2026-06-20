@@ -20,7 +20,18 @@ import Plether.Cache (AppCache)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
-import Plether.Handlers.Perps (getBasketHistory, getBasketLatest, getPythUpdate, getRevealPayload)
+import Plether.Handlers.Perps
+  ( getBasketHistory
+  , getBasketLatest
+  , getCachedLatestPythUpdate
+  , getPythUpdate
+  , getRevealPayload
+  )
+import Plether.Handlers.PerpsHistory
+  ( getPerpsAccountActivity
+  , getPerpsAccountOrders
+  , getPerpsIndexerStatusResponse
+  )
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -185,6 +196,38 @@ app cache client cfg mPool manager = do
             result <- liftIO $ getLendingHistory pool client cfg addr params
             handleResult result
           else handleError $ E.invalidAddress addr
+
+      get "/api/perps/accounts/:address/orders" $ do
+        addr <- pathParam "address"
+        if isValidAddress addr
+          then do
+            limit <- perpsHistoryLimit
+            mCursor <- queryParamMaybe "cursor"
+            case traverse parseHistoryCursor mCursor of
+              Just cursor -> do
+                result <- liftIO $ getPerpsAccountOrders pool cfg addr limit cursor
+                handleResult result
+              Nothing ->
+                handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+          else handleError $ E.invalidAddress addr
+
+      get "/api/perps/accounts/:address/activity" $ do
+        addr <- pathParam "address"
+        if isValidAddress addr
+          then do
+            limit <- perpsHistoryLimit
+            mCursor <- queryParamMaybe "cursor"
+            case traverse parseHistoryCursor mCursor of
+              Just cursor -> do
+                result <- liftIO $ getPerpsAccountActivity pool cfg addr limit cursor
+                handleResult result
+              Nothing ->
+                handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+          else handleError $ E.invalidAddress addr
+
+      get "/api/perps/indexer/status" $ do
+        result <- liftIO $ getPerpsIndexerStatusResponse pool cfg
+        handleResult result
     Nothing -> pure ()
 
   get "/api/perps/basket/history" $ do
@@ -236,6 +279,15 @@ app cache client cfg mPool manager = do
       Nothing ->
         handleError $ E.invalidAmount "publishTime must be a positive integer"
 
+  get "/api/perps/pyth/cached-latest" $ do
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getCachedLatestPythUpdate pool cfg
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; cached Pyth updates are unavailable"
+
 historyParams :: ActionM HistoryParams
 historyParams = do
   mPage <- queryParamMaybe "page"
@@ -249,6 +301,21 @@ historyParams = do
     , hpSide = mSide
     , hpTxTypes = []
     }
+  where
+    parseIntOr :: Int -> Text -> Int
+    parseIntOr def txt = maybe def id (readMaybeInt txt)
+
+    readMaybeInt :: Text -> Maybe Int
+    readMaybeInt txt =
+      let stripped = T.strip txt
+      in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
+           then Just $ read $ T.unpack stripped
+           else Nothing
+
+perpsHistoryLimit :: ActionM Int
+perpsHistoryLimit = do
+  mLimit <- queryParamMaybe "limit"
+  pure $ maybe 30 (min 100 . max 1 . parseIntOr 30) mLimit
   where
     parseIntOr :: Int -> Text -> Int
     parseIntOr def txt = maybe def id (readMaybeInt txt)
@@ -321,6 +388,15 @@ parsePositiveInteger :: Text -> Maybe Integer
 parsePositiveInteger txt = do
   value <- parseAmount txt
   if value > 0 then Just value else Nothing
+
+parseHistoryCursor :: Text -> Maybe (Integer, Integer)
+parseHistoryCursor txt =
+  case T.splitOn ":" (T.strip txt) of
+    [rawBlock, rawTieBreaker] -> do
+      blockNumber <- parseAmount rawBlock
+      tieBreaker <- parseAmount rawTieBreaker
+      Just (blockNumber, tieBreaker)
+    _ -> Nothing
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ const $ Just policy

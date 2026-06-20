@@ -1,0 +1,335 @@
+# Page snapshot
+
+```yaml
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e5]:
+      - generic [ref=e6]:
+        - generic [ref=e7]:
+          - link "Plether" [ref=e8] [cursor=pointer]:
+            - /url: /
+            - img "Plether" [ref=e9]
+            - img [ref=e10]
+          - navigation [ref=e11]:
+            - link "Perps" [ref=e12] [cursor=pointer]:
+              - /url: /
+            - link "Spot" [ref=e13] [cursor=pointer]:
+              - /url: /spot
+            - link "Stake" [ref=e14] [cursor=pointer]:
+              - /url: /stake
+            - link "Mint & Redeem" [ref=e15] [cursor=pointer]:
+              - /url: /mint
+        - generic [ref=e16]:
+          - generic [ref=e18]:
+            - generic [ref=e19]:
+              - generic [ref=e20]: plDXY-BULL
+              - generic [ref=e21]: "--"
+            - generic [ref=e22]: Active
+          - button "account_balance_wallet Connect Wallet" [ref=e23] [cursor=pointer]:
+            - generic [ref=e24]: account_balance_wallet
+            - text: Connect Wallet
+    - main [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - generic [ref=e29]:
+            - generic [ref=e34]:
+              - heading "plDXY Perp" [level=2] [ref=e35]
+              - paragraph [ref=e36]: Dollar Index Perpetual
+            - generic [ref=e38]:
+              - generic [ref=e39]:
+                - term [ref=e40]:
+                  - generic [ref=e41]: plDXY Perp price
+                - definition [ref=e42]:
+                  - generic "Oracle stale" [ref=e44]
+                  - generic [ref=e45]: "1.0128"
+              - generic [ref=e46]:
+                - term [ref=e47]:
+                  - generic [ref=e48]: 24h change
+                - definition [ref=e49]:
+                  - generic [ref=e50]: "--"
+              - generic [ref=e51]:
+                - term [ref=e52]:
+                  - generic [ref=e53]: 24h volume
+                - definition [ref=e54]:
+                  - generic [ref=e55]: "--"
+              - generic [ref=e56]:
+                - term [ref=e57]:
+                  - generic [ref=e58]: Long open interest
+                - definition [ref=e59]:
+                  - generic [ref=e61]:
+                    - generic [ref=e62]: 1.1K
+                    - generic [ref=e63]: USDC
+              - generic [ref=e64]:
+                - term [ref=e65]:
+                  - generic [ref=e66]: Short open interest
+                - definition [ref=e67]:
+                  - generic [ref=e69]:
+                    - generic [ref=e70]: "0"
+                    - generic [ref=e71]: USDC
+              - generic [ref=e72]:
+                - term [ref=e73]:
+                  - generic [ref=e74]: Pool liquidity
+                  - generic "Pool liquidity details" [ref=e76]: i
+                - definition [ref=e77]:
+                  - generic [ref=e79]:
+                    - generic [ref=e80]: 11K
+                    - generic [ref=e81]: USDC
+              - generic [ref=e82]:
+                - term [ref=e83]:
+                  - generic [ref=e84]: Cost of carry
+                  - generic "Cost of carry details" [ref=e86]: i
+                - definition [ref=e87]:
+                  - generic [ref=e88]: 5%
+          - generic [ref=e89]:
+            - generic [ref=e90]:
+              - generic [ref=e91]:
+                - generic [ref=e92]:
+                  - generic [ref=e93]: show_chart
+                  - generic [ref=e94]: plDXY Perp Price
+                - generic [ref=e95]:
+                  - generic [ref=e96]: "1.0242"
+                  - generic [ref=e97]: +0.55%
+              - generic [ref=e98]:
+                - button "1 minute interval" [pressed] [ref=e99] [cursor=pointer]: 1m
+                - button "5 minute interval" [ref=e100] [cursor=pointer]: 5m
+                - button "1 hour interval" [ref=e101] [cursor=pointer]: 1H
+                - button "1 day interval" [ref=e102] [cursor=pointer]: D
+            - generic [ref=e103]:
+              - img "plDXY Perp price performance chart" [ref=e104]:
+                - table [ref=e107]:
+                  - row [ref=e108]:
+                    - cell
+                    - cell [ref=e109]:
+                      - link "Charting by TradingView" [ref=e113] [cursor=pointer]:
+                        - /url: https://www.tradingview.com/?utm_medium=lwc-link&utm_campaign=lwc-chart&utm_source=localhost/
+                        - img [ref=e114]
+                    - cell [ref=e118]
+                  - row [ref=e122]:
+                    - cell
+                    - cell [ref=e123]
+                    - cell [ref=e127]
+              - generic [ref=e130]:
+                - generic [ref=e131]:
+                  - generic [ref=e132]:
+                    - generic [ref=e133]:
+                      - generic "Price fresh" [ref=e135]
+                      - generic [ref=e136]: EUR/USD
+                    - generic [ref=e137]: 57.6%
+                  - generic [ref=e138]: "1.146"
+                  - generic [ref=e139]: EUR/USD
+                - generic [ref=e140]:
+                  - generic [ref=e141]:
+                    - generic [ref=e142]:
+                      - generic "Price fresh" [ref=e144]
+                      - generic [ref=e145]: JPY/USD
+                    - generic [ref=e146]: 13.6%
+                  - generic [ref=e147]: "0.006"
+                  - generic [ref=e148]: USD/JPY inv
+                - generic [ref=e149]:
+                  - generic [ref=e150]:
+                    - generic [ref=e151]:
+                      - generic "Price fresh" [ref=e153]
+                      - generic [ref=e154]: GBP/USD
+                    - generic [ref=e155]: 11.9%
+                  - generic [ref=e156]: "1.323"
+                  - generic [ref=e157]: GBP/USD
+                - generic [ref=e158]:
+                  - generic [ref=e159]:
+                    - generic [ref=e160]:
+                      - generic "Price fresh" [ref=e162]
+                      - generic [ref=e163]: CAD/USD
+                    - generic [ref=e164]: 9.1%
+                  - generic [ref=e165]: "0.708"
+                  - generic [ref=e166]: USD/CAD inv
+                - generic [ref=e167]:
+                  - generic [ref=e168]:
+                    - generic [ref=e169]:
+                      - generic "Price fresh" [ref=e171]
+                      - generic [ref=e172]: SEK/USD
+                    - generic [ref=e173]: 4.2%
+                  - generic [ref=e174]: "0.104"
+                  - generic [ref=e175]: USD/SEK inv
+                - generic [ref=e176]:
+                  - generic [ref=e177]:
+                    - generic [ref=e178]:
+                      - generic "Price fresh" [ref=e180]
+                      - generic [ref=e181]: CHF/USD
+                    - generic [ref=e182]: 3.6%
+                  - generic [ref=e183]: "1.243"
+                  - generic [ref=e184]: USD/CHF inv
+          - generic [ref=e185]:
+            - generic [ref=e187]:
+              - button "Position" [pressed] [ref=e188] [cursor=pointer]
+              - button "Open Orders" [ref=e189] [cursor=pointer]
+              - button "Order History" [ref=e190] [cursor=pointer]
+              - button "Trade History" [ref=e191] [cursor=pointer]
+            - generic [ref=e194]: No connected wallet
+        - generic [ref=e195]:
+          - paragraph [ref=e199]: Market is open for another 1d 5h 36m. Then close-only for 2d 3h.
+          - generic [ref=e201]:
+            - generic [ref=e202]:
+              - generic [ref=e203]: Direction
+              - generic [ref=e204]:
+                - button "Long plDXY Perp" [ref=e205] [cursor=pointer]
+                - button "Short plDXY Perp" [ref=e206] [cursor=pointer]
+            - generic [ref=e207]:
+              - button "Available to Trade -- USDC" [disabled] [ref=e208]:
+                - generic [ref=e209]: Available to Trade
+                - generic [ref=e211]:
+                  - generic [ref=e212]: "--"
+                  - generic [ref=e213]: USDC
+              - button "Current Position -- USDC" [disabled] [ref=e214]:
+                - generic [ref=e215]: Current Position
+                - generic [ref=e217]:
+                  - generic [ref=e218]: "--"
+                  - generic [ref=e219]: USDC
+            - generic [ref=e220]:
+              - generic [ref=e221]:
+                - generic [ref=e222]: plDXY Perp exposure
+                - generic [ref=e223]:
+                  - textbox [ref=e224]: "0"
+                  - generic [ref=e225]: USDC
+              - 'button "Max: 0 USDC" [disabled] [ref=e227]':
+                - text: "Max:"
+                - generic [ref=e229]:
+                  - generic [ref=e230]: "0"
+                  - generic [ref=e231]: USDC
+            - generic [ref=e232] [cursor=pointer]:
+              - checkbox "Reduce only" [ref=e233]
+              - generic [ref=e234]: Reduce only
+            - generic [ref=e235] [cursor=pointer]:
+              - checkbox "Margin Call Simulator" [ref=e236]
+              - generic [ref=e237]: Margin Call Simulator
+            - generic [ref=e238]:
+              - generic [ref=e239]:
+                - generic [ref=e240]: Leverage
+                - generic [ref=e241]: 5x
+              - slider "Leverage" [ref=e242] [cursor=pointer]: "5"
+              - generic [ref=e243]:
+                - generic [ref=e244]: 1x
+                - generic [ref=e245]: 33x
+            - generic [ref=e246]:
+              - generic [ref=e247]: Preview
+              - generic [ref=e248]:
+                - generic [ref=e249]:
+                  - term [ref=e250]: plDXY Perp price
+                  - definition [ref=e251]:
+                    - generic [ref=e252]:
+                      - generic "plDXY Perp price stale" [ref=e254]
+                      - generic [ref=e255]: "1.0128"
+                - generic [ref=e256]:
+                  - term [ref=e257]: plDXY Perp exposure
+                  - definition [ref=e258]:
+                    - generic [ref=e259]:
+                      - generic [ref=e260]: "0"
+                      - generic [ref=e261]: USDC
+                - generic [ref=e262]:
+                  - term [ref=e263]: Contract notional
+                  - definition [ref=e264]:
+                    - generic [ref=e265]:
+                      - generic [ref=e266]: "0"
+                      - generic [ref=e267]: USDC
+                - generic [ref=e268]:
+                  - term [ref=e269]: Initial margin
+                  - definition [ref=e270]:
+                    - generic [ref=e271]:
+                      - generic [ref=e272]: "0"
+                      - generic [ref=e273]: USDC
+                - generic [ref=e274]:
+                  - term [ref=e275]: Maintenance margin
+                  - definition [ref=e276]: Unavailable
+                - button "Max slippage 0.1%" [ref=e278] [cursor=pointer]:
+                  - generic [ref=e279]: Max slippage
+                  - generic [ref=e280]: 0.1%
+                - generic [ref=e281]:
+                  - term [ref=e282]: Execution limit
+                  - definition [ref=e283]: "1.0137"
+                - generic [ref=e284]:
+                  - term [ref=e285]: Liquidation price
+                  - definition [ref=e286]: Unavailable
+                - generic [ref=e287]:
+                  - term [ref=e288]: Estimated protocol execution fee
+                  - definition [ref=e289]:
+                    - generic [ref=e290]:
+                      - generic [ref=e291]: "0"
+                      - generic [ref=e292]: USDC
+                - generic [ref=e293]:
+                  - term [ref=e294]: VPI / Price impact
+                  - definition [ref=e295]: Unavailable
+                - generic [ref=e296]:
+                  - term [ref=e297]: Estimated keeper bounty
+                  - definition [ref=e298]:
+                    - generic [ref=e299]:
+                      - generic [ref=e300]: "0"
+                      - generic [ref=e301]: USDC
+            - button "account_balance_wallet Connect Wallet" [ref=e302] [cursor=pointer]:
+              - generic [ref=e303]: account_balance_wallet
+              - text: Connect Wallet
+            - generic [ref=e304]:
+              - generic [ref=e305]: Margin Account
+              - generic [ref=e306]:
+                - generic [ref=e307]:
+                  - generic [ref=e308]: Portfolio value
+                  - generic [ref=e310]:
+                    - generic [ref=e311]: "--"
+                    - generic [ref=e312]: USDC
+                - generic [ref=e313]:
+                  - generic [ref=e314]: Unrealized PnL
+                  - generic [ref=e316]:
+                    - generic [ref=e317]: "--"
+                    - generic [ref=e318]: USDC
+                - generic [ref=e319]:
+                  - generic [ref=e320]: Maintenance margin
+                  - generic [ref=e322]:
+                    - generic [ref=e323]: "--"
+                    - generic [ref=e324]: USDC
+                - generic [ref=e325]:
+                  - generic [ref=e326]:
+                    - text: Withdrawable
+                    - generic "Withdrawable info" [ref=e328]: info
+                  - generic [ref=e330]:
+                    - generic [ref=e331]: "--"
+                    - generic [ref=e332]: USDC
+            - generic [ref=e333]:
+              - button "Deposit" [disabled] [ref=e334]
+              - button "Withdraw" [disabled] [ref=e335]
+    - contentinfo [ref=e336]:
+      - generic [ref=e337]:
+        - generic [ref=e338]: © 2026 Plether Labs Limited. All rights reserved.
+        - navigation [ref=e339]:
+          - link "Docs" [ref=e340] [cursor=pointer]:
+            - /url: https://docs.plether.com
+          - link "Terms of Service" [ref=e341] [cursor=pointer]:
+            - /url: /terms
+          - link "Privacy Policy" [ref=e342] [cursor=pointer]:
+            - /url: /privacy
+          - link "Risk Disclosure" [ref=e343] [cursor=pointer]:
+            - /url: /risk
+  - generic [ref=e346]:
+    - heading "Risk Disclaimer" [level=2] [ref=e348]
+    - generic [ref=e349]:
+      - paragraph [ref=e350]: "Plether is a decentralized finance protocol. By using this application, you acknowledge and accept the following risks:"
+      - generic [ref=e351]:
+        - generic [ref=e352]:
+          - heading "Smart Contract Risk" [level=3] [ref=e353]
+          - paragraph [ref=e354]: Smart contracts may contain bugs or vulnerabilities. Funds deposited into smart contracts could be lost permanently.
+        - generic [ref=e355]:
+          - heading "Financial Loss Risk" [level=3] [ref=e356]
+          - paragraph [ref=e357]: You may lose some or all of the funds you interact with through this protocol. Past performance does not guarantee future results.
+        - generic [ref=e358]:
+          - heading "No Financial Advice" [level=3] [ref=e359]
+          - paragraph [ref=e360]: Nothing on this site constitutes financial, investment, legal, or tax advice. You are solely responsible for your own financial decisions.
+        - generic [ref=e361]:
+          - heading "Jurisdictional Compliance" [level=3] [ref=e362]
+          - paragraph [ref=e363]: Decentralized finance protocols may be restricted or prohibited in certain jurisdictions. You are solely responsible for determining whether your use of this protocol complies with applicable laws and regulations in your jurisdiction.
+      - paragraph [ref=e364]:
+        - text: For a complete overview of risks, please read our
+        - link "Risk Disclosure" [ref=e365] [cursor=pointer]:
+          - /url: /risk
+        - text: .
+    - generic [ref=e366]:
+      - generic [ref=e367] [cursor=pointer]:
+        - checkbox "I understand and accept the risks described above" [ref=e368]
+        - text: I understand and accept the risks described above
+      - button "Proceed" [disabled] [ref=e369]
+```

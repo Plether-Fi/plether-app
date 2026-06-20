@@ -1,0 +1,57 @@
+export interface ChartPoint {
+  timestamp: number
+  price: number
+}
+
+export interface ChartCandle {
+  timestamp: number
+  open: number
+  high: number
+  low: number
+  close: number
+}
+
+export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
+  if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
+  return Math.max(0, 2 - rawOraclePrice)
+}
+
+export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {
+  const candles: ChartCandle[] = []
+  let currentCandle: ChartCandle | undefined
+  let previousClose: number | null = null
+
+  const sortedPoints = [...points].sort((left, right) => left.timestamp - right.timestamp)
+
+  for (const point of sortedPoints) {
+    const timestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
+
+    if (currentCandle?.timestamp === timestamp) {
+      currentCandle.high = Math.max(currentCandle.high, point.price)
+      currentCandle.low = Math.min(currentCandle.low, point.price)
+      currentCandle.close = point.price
+      previousClose = point.price
+      continue
+    }
+
+    if (currentCandle) {
+      candles.push(currentCandle)
+    }
+
+    const open = previousClose ?? point.price
+    currentCandle = {
+      timestamp,
+      open,
+      high: Math.max(open, point.price),
+      low: Math.min(open, point.price),
+      close: point.price,
+    }
+    previousClose = point.price
+  }
+
+  if (currentCandle) {
+    candles.push(currentCandle)
+  }
+
+  return candles
+}

@@ -2,6 +2,7 @@ import { formatUnits, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
+export type PerpsOracleFreshness = 'fresh' | 'backend-fresh' | 'checking' | 'market-closed' | 'stale'
 export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
 export function cleanNumericInput(value: string): string {
@@ -169,6 +170,10 @@ let hermesRateLimitUntil = 0
 const historicalPythCache = new Map<number, PerpsPythUpdatePayload>()
 const historicalPythInFlight = new Map<number, Promise<PerpsPythUpdatePayload>>()
 
+function normalizeHex(value: string): Hex {
+  return (value.startsWith('0x') ? value : `0x${value}`) as Hex
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     window.setTimeout(resolve, ms)
@@ -185,13 +190,13 @@ function describeRetryAfter(value: string | null): string {
 
   const seconds = Number(value)
   if (Number.isFinite(seconds) && seconds > 0) {
-    return `Retry after ${Math.ceil(seconds)}s.`
+    return `Retry after ${Math.ceil(seconds).toString()}s.`
   }
 
   const retryAt = Date.parse(value)
   if (Number.isFinite(retryAt)) {
     const waitSeconds = Math.max(1, Math.ceil((retryAt - Date.now()) / 1000))
-    return `Retry after ${waitSeconds}s.`
+    return `Retry after ${waitSeconds.toString()}s.`
   }
 
   return 'Wait about 60 seconds before retrying.'
@@ -244,7 +249,7 @@ async function parseBackendPythError(response: Response): Promise<Error> {
     return pythRateLimitError(retryAfter)
   }
 
-  return new Error(message ?? `Pyth update request failed: ${response.status}`)
+  return new Error(message ?? `Pyth update request failed: ${response.status.toString()}`)
 }
 
 async function parseRevealPayloadError(response: Response, orderId: bigint): Promise<Error> {
@@ -261,7 +266,7 @@ async function fetchPerpsPythUpdatePayloadUncached(publishTime?: number): Promis
   const now = Date.now()
   if (now < hermesRateLimitUntil) {
     throw new Error(
-      `Hermes rate limit reached. Retry after ${Math.ceil((hermesRateLimitUntil - now) / 1000)}s. Public Hermes is shared and can temporarily block requests; a reveal order may expire before the public endpoint unblocks.`
+      `Hermes rate limit reached. Retry after ${Math.ceil((hermesRateLimitUntil - now) / 1000).toString()}s. Public Hermes is shared and can temporarily block requests; a reveal order may expire before the public endpoint unblocks.`
     )
   }
 
@@ -292,7 +297,7 @@ async function fetchPerpsPythUpdatePayloadUncached(publishTime?: number): Promis
   }
 
   return {
-    updateData: updates.map((item) => item.startsWith('0x') ? item as Hex : `0x${item}` as Hex),
+    updateData: updates.map(normalizeHex),
     fetchedAt: payload.data?.fetchedAt ?? Math.floor(Date.now() / 1000),
     publishTimes: payload.data?.publishTimes ?? [],
   }
@@ -364,7 +369,7 @@ export async function fetchPerpsPythUpdatePayloadForWindow(
   }
 
   throw new Error(
-    `Hermes did not return Pyth update data for the valid reveal window ${minPublishTime} to ${maxPublishTime}. ${
+    `Hermes did not return Pyth update data for the valid reveal window ${minPublishTime.toString()} to ${maxPublishTime.toString()}. ${
       lastNotFound?.message ?? ''
     }`.trim()
   )
@@ -401,7 +406,7 @@ export async function fetchPerpsRevealPayload(
   }
 
   return {
-    updateData: updates.map((item) => item.startsWith('0x') ? item as Hex : `0x${item}` as Hex),
+    updateData: updates.map(normalizeHex),
     fetchedAt: payload.data?.fetchedAt ?? Math.floor(Date.now() / 1000),
     publishTimes: payload.data?.publishTimes ?? [],
   }

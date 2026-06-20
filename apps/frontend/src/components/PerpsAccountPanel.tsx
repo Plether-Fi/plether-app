@@ -3,8 +3,8 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTrade
 import { usePerpsTrading } from '../hooks'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideLabel } from '../utils/perps'
-import { Button, TokenAmount, Tooltip } from './ui'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -55,6 +55,8 @@ interface PerpsAccountPanelProps {
   pendingOrders?: PerpsPendingOrder[]
   orderHistory?: PerpsOrderHistoryRow[]
   tradeHistory?: PerpsTradeHistoryRow[]
+  equityUsdc?: bigint
+  freeBuyingPowerUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
@@ -66,8 +68,11 @@ const ACCOUNT_TABS: AccountTab[] = [
   { id: 'position', label: 'Position' },
   { id: 'openOrders', label: 'Open Orders' },
   { id: 'orderHistory', label: 'Order History' },
-  { id: 'tradeHistory', label: 'Trade History' },
+  { id: 'tradeHistory', label: 'Transaction History' },
 ]
+
+const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
+const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 
 const OPEN_ORDERS: OrderRow[] = [
   { market: 'plDXY Perp', side: 'Buy', type: 'Limit', price: '0.9880', size: <TokenAmount amount="1 500" /> },
@@ -133,12 +138,25 @@ function formatLiquidationDistance(currentPrice?: bigint, liquidationPrice?: big
 }
 
 function formatPositionLeverage(position: PerpsPosition): string {
-  if (position.marginUsdc <= 0n) return '--'
+  return formatPositionLeverageForMargin(position, position.marginUsdc)
+}
+
+function formatPositionLeverageForMargin(position: PerpsPosition, marginUsdc: bigint): string {
+  if (marginUsdc <= 0n) return '--'
 
   const notionalUsdc = position.estimatedNotionalUsdc ?? position.entryNotionalUsdc
   if (notionalUsdc === undefined) return '--'
 
-  return `${formatPerpsNumber(Number(notionalUsdc) / Number(position.marginUsdc), 2)}x`
+  return `${formatPerpsNumber(Number(notionalUsdc) / Number(marginUsdc), 2)}x`
+}
+
+function formatEffectiveAccountLeverage(position: PerpsPosition, equityUsdc?: bigint): string {
+  if (equityUsdc === undefined || equityUsdc <= 0n) return '--'
+
+  const notionalUsdc = position.estimatedNotionalUsdc ?? position.entryNotionalUsdc
+  if (notionalUsdc === undefined) return '--'
+
+  return `${formatPerpsNumber(Number(notionalUsdc) / Number(equityUsdc), 2)}x`
 }
 
 function LiquidationPriceValue({
@@ -192,16 +210,31 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
+function isPositionMarginInput(value: string): boolean {
+  return /^\d*(?:[.,]\d{0,6})?$/.test(value.replaceAll(' ', ''))
+}
+
+function AccountSummaryRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 text-sm">
+      <dt className="text-cyber-text-secondary">{label}</dt>
+      <dd className="text-right font-semibold text-cyber-text-primary">{value}</dd>
+    </div>
+  )
+}
+
 function AccountMetric({
   label,
   value,
   tone,
   tooltip,
+  action,
 }: {
   label: string
   value: ReactNode
   tone?: PositionRow['tone']
   tooltip?: ReactNode
+  action?: ReactNode
 }) {
   return (
     <div className="min-w-0">
@@ -223,7 +256,10 @@ function AccountMetric({
           </Tooltip>
         ) : null}
       </div>
-      <div className={`mt-2 text-xl font-semibold ${pnlToneClass(tone)}`}>{value}</div>
+      <div className="mt-2 flex items-center gap-2">
+        <div className={`text-xl font-semibold ${pnlToneClass(tone)}`}>{value}</div>
+        {action}
+      </div>
     </div>
   )
 }
@@ -233,13 +269,13 @@ function formatDuration(seconds: number): string {
 
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
-  if (minutes <= 0) return `${remainingSeconds}s`
+  if (minutes <= 0) return `${remainingSeconds.toString()}s`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours <= 0) return `${minutes}m ${remainingSeconds}s`
+  if (hours <= 0) return `${minutes.toString()}m ${remainingSeconds.toString()}s`
 
-  return `${hours}h ${remainingMinutes}m`
+  return `${hours.toString()}h ${remainingMinutes.toString()}m`
 }
 
 function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
@@ -290,16 +326,62 @@ function TxLink({ hash }: { hash?: string }) {
 
 function PositionView({
   position,
+  equityUsdc,
+  freeBuyingPowerUsdc,
   isConnected,
   isLoading,
+  onAccountRefresh,
 }: {
   position?: PerpsPosition
+  equityUsdc?: bigint
+  freeBuyingPowerUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
+  onAccountRefresh?: () => void
 }) {
+  const { addPositionMargin } = usePerpsTrading()
+  const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(false)
+  const [positionMarginAmount, setPositionMarginAmount] = useState('')
+  const [positionMarginStatus, setPositionMarginStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
+  const [positionMarginError, setPositionMarginError] = useState<string | undefined>()
+
   if (isConnected === false) return <EmptyState label="connected wallet" />
   if (isLoading) return <EmptyState label="position data" />
   if (!position?.exists) return <EmptyState label="current position" />
+
+  const positionMarginAmountRaw = parsePerpsUsdc(positionMarginAmount)
+  const positionMarginLimitRaw = freeBuyingPowerUsdc ?? 0n
+  const isPositionMarginTooHigh = positionMarginAmountRaw > positionMarginLimitRaw
+  const resultingPositionMargin = position.marginUsdc + positionMarginAmountRaw
+  const canSubmitPositionMargin =
+    positionMarginAmountRaw > 0n &&
+    !isPositionMarginTooHigh &&
+    positionMarginStatus !== 'pending'
+
+  function handleClosePositionMarginModal() {
+    if (positionMarginStatus === 'pending') return
+    setIsPositionMarginModalOpen(false)
+    setPositionMarginAmount('')
+    setPositionMarginError(undefined)
+    setPositionMarginStatus('idle')
+  }
+
+  async function handleAddPositionMargin() {
+    if (!canSubmitPositionMargin) return
+
+    setPositionMarginStatus('pending')
+    setPositionMarginError(undefined)
+    try {
+      await addPositionMargin(positionMarginAmountRaw)
+      onAccountRefresh?.()
+      setIsPositionMarginModalOpen(false)
+      setPositionMarginAmount('')
+      setPositionMarginStatus('idle')
+    } catch (error) {
+      setPositionMarginStatus('failed')
+      setPositionMarginError(error instanceof Error ? error.message : 'Add position margin failed')
+    }
+  }
 
   const currentPnl = position.unrealizedPnlUsdc
   const pendingCarryTooltip = (
@@ -316,6 +398,26 @@ function PositionView({
       <br />
       <strong>Not in range</strong> means this account is not liquidatable anywhere inside the protocol&apos;s
       bounded oracle price range, so there is no single liquidation threshold to show right now.
+    </span>
+  )
+  const effectiveAccountLeverage = formatEffectiveAccountLeverage(position, equityUsdc)
+  const leverageTooltip = (
+    <span>
+      Position leverage is current contract notional divided by the margin assigned to this position.
+      <br />
+      <br />
+      Effective account leverage includes free USDC through account equity: <strong>{effectiveAccountLeverage}</strong>.
+    </span>
+  )
+  const entryNotionalTooltip = (
+    <span>
+      Entry notional is the executed order size recorded at entry. It does not move with price; current plDXY Perp
+      exposure does.
+    </span>
+  )
+  const unrealizedPnlTooltip = (
+    <span>
+      Price PnL from entry to current mark. It is before execution fees, VPI / price impact, and pending carry.
     </span>
   )
   const currentPosition: PositionRow = {
@@ -335,6 +437,21 @@ function PositionView({
     costOfCarryUsdc: <TokenAmount amount={formatPerpsUsdc(position.pendingCarryUsdc)} />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
+  const editPositionMarginAction = (
+    <button
+      type="button"
+      aria-label="Edit position margin"
+      title="Edit position margin"
+      className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center border border-cyber-border-glow/30 bg-cyber-bg text-cyber-text-secondary transition-colors hover:border-[#FFAB96] hover:text-[#FFAB96]"
+      onClick={() => {
+        setPositionMarginError(undefined)
+        setPositionMarginStatus('idle')
+        setIsPositionMarginModalOpen(true)
+      }}
+    >
+      <span className="material-symbols-outlined !text-[16px] !leading-none">edit</span>
+    </button>
+  )
 
   return (
     <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
@@ -349,15 +466,25 @@ function PositionView({
       </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
-        <AccountMetric label="Entry notional" value={currentPosition.entryNotional} />
+        <AccountMetric label="Entry notional" value={currentPosition.entryNotional} tooltip={entryNotionalTooltip} />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
-        <AccountMetric label="Leverage" value={currentPosition.leverage} />
+        <AccountMetric
+          label="Leverage"
+          value={currentPosition.leverage}
+          tooltip={leverageTooltip}
+          action={editPositionMarginAction}
+        />
         <AccountMetric
           label="Liquidation price"
           value={currentPosition.liquidationPrice}
           tooltip={liquidationTooltip}
         />
-        <AccountMetric label="Unrealized PnL" value={currentPosition.pnl} tone={currentPosition.tone} />
+        <AccountMetric
+          label="Unrealized PnL"
+          value={currentPosition.pnl}
+          tone={currentPosition.tone}
+          tooltip={unrealizedPnlTooltip}
+        />
         <AccountMetric
           label="Cost of carry"
           value={currentPosition.costOfCarryUsdc}
@@ -365,9 +492,95 @@ function PositionView({
         />
       </div>
       <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-        Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure. This is a
-        shared-collateral account, so free margin outside the position can still protect it from liquidation.
+        <span>Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure.</span>
+        {' '}
+        <span>This is a shared-collateral account, so free margin outside the position can still protect it from liquidation.</span>
       </p>
+      <Modal
+        isOpen={isPositionMarginModalOpen}
+        onClose={handleClosePositionMarginModal}
+        title="Edit Position Margin"
+        size="md"
+      >
+        <div className="space-y-5">
+          <p className="text-sm leading-5 text-cyber-text-secondary">
+            This locks free USDC into the current position margin bucket. It does not change position size.
+          </p>
+
+          <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4 text-sm leading-5 text-cyber-text-secondary">
+            Direct margin removal is not supported. Reducing or closing the position
+            releases position margin proportionally.
+          </div>
+
+          <Input
+            label="Add margin"
+            inputMode="decimal"
+            value={positionMarginAmount}
+            placeholder="0"
+            rightElement={<TokenLabel token="USDC" />}
+            error={isPositionMarginTooHigh ? 'Amount exceeds available free margin.' : undefined}
+            onChange={(event) => {
+              const nextValue = event.target.value
+              if (!isPositionMarginInput(nextValue)) return
+              setPositionMarginAmount(nextValue)
+              setPositionMarginError(undefined)
+              if (positionMarginStatus === 'failed') setPositionMarginStatus('idle')
+            }}
+          />
+
+          <div className="-mt-3 flex justify-end">
+            <button
+              type="button"
+              className="cursor-pointer text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+              disabled={positionMarginLimitRaw <= 0n || positionMarginStatus === 'pending'}
+              onClick={() => {
+                setPositionMarginAmount(formatPerpsUsdc(positionMarginLimitRaw, 6))
+                setPositionMarginError(undefined)
+              }}
+            >
+              Max: {formatPerpsUsdc(positionMarginLimitRaw, 2)} USDC
+            </button>
+          </div>
+
+          <dl className="space-y-2 border border-cyber-border-glow/20 bg-cyber-bg p-4">
+            <AccountSummaryRow label="Free margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginLimitRaw)} />} />
+            <AccountSummaryRow label="Current position margin" value={<TokenAmount amount={formatPerpsUsdc(position.marginUsdc)} />} />
+            <AccountSummaryRow label="Added margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginAmountRaw)} />} />
+            <AccountSummaryRow label="Resulting position margin" value={<TokenAmount amount={formatPerpsUsdc(resultingPositionMargin)} />} />
+            <AccountSummaryRow label="Current leverage" value={formatPositionLeverageForMargin(position, position.marginUsdc)} />
+            <AccountSummaryRow label="Resulting leverage" value={formatPositionLeverageForMargin(position, resultingPositionMargin)} />
+          </dl>
+
+          {positionMarginError ? (
+            <div className="border border-[#FF572D]/40 bg-[#FF572D]/10 p-3 text-sm text-[#FFAB96]">
+              {positionMarginError}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className={DARK_CANCEL_BUTTON_CLASS}
+              disabled={positionMarginStatus === 'pending'}
+              onClick={handleClosePositionMarginModal}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+              isLoading={positionMarginStatus === 'pending'}
+              disabled={!canSubmitPositionMargin}
+              onClick={() => {
+                void handleAddPositionMargin()
+              }}
+            >
+              Add Margin
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
@@ -470,7 +683,7 @@ function OrdersView({
 }
 
 function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
-  if (rows.length === 0) return <EmptyState label="trade history" />
+  if (rows.length === 0) return <EmptyState label="transaction history" />
 
   return (
     <div className="overflow-x-auto">
@@ -479,16 +692,16 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
           <tr className="border-b border-cyber-border-glow/20">
             <th className="py-3 font-medium">Time</th>
             <th className="py-3 font-medium">Market</th>
-            <th className="py-3 font-medium">Side</th>
+            <th className="py-3 font-medium">Action</th>
             <th className="py-3 font-medium">Price</th>
             <th className="py-3 font-medium">Size</th>
-            <th className="py-3 font-medium">PnL</th>
+            <th className="py-3 font-medium">Result</th>
             <th className="py-3 text-right font-medium">Tx</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-cyber-border-glow/10 text-sm text-cyber-text-primary">
           {rows.map((row) => (
-            <tr key={`${row.time}-${row.side}-${row.price}`}>
+            <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
               <td className="py-4">{row.time}</td>
               <td className="py-4 font-semibold">{row.market}</td>
               <td className="py-4">{row.side}</td>
@@ -507,6 +720,8 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
 function AccountTabContent({
   activeTab,
   position,
+  equityUsdc,
+  freeBuyingPowerUsdc,
   pendingOrders,
   orderHistory,
   tradeHistory,
@@ -514,6 +729,7 @@ function AccountTabContent({
   isLoading,
   isHistoryLoading,
   historyError,
+  onAccountRefresh,
   nowSeconds,
   cleanupOrderId,
   cleanupError,
@@ -546,7 +762,7 @@ function AccountTabContent({
     type: order.isReduceOnly ? 'Reduce' : 'Open',
     price: order.acceptablePrice === 0n ? 'Market' : formatDisplayDxyPrice(order.acceptablePrice),
     size: <TokenAmount amount={formatPerpsUsdc(order.estimatedNotionalUsdc)} />,
-    status: `Status ${order.status}`,
+    status: `Status ${order.status.toString()}`,
     expiryTime: order.expiryTime,
   }))
   const liveOrderHistory = orderHistory?.map((order) => ({
@@ -575,8 +791,11 @@ function AccountTabContent({
     return (
       <PositionView
         position={position ?? (isConnected === undefined ? mockPosition : undefined)}
+        equityUsdc={equityUsdc}
+        freeBuyingPowerUsdc={freeBuyingPowerUsdc}
         isConnected={isConnected}
         isLoading={isLoading}
+        onAccountRefresh={onAccountRefresh}
       />
     )
   }
@@ -592,12 +811,12 @@ function AccountTabContent({
     )
   }
   if (activeTab === 'orderHistory') {
-    if (historyError) return <ErrorState message="Could not load order history. Check RPC access and retry." />
+    if (historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
     if (isHistoryLoading) return <LoadingState label="order history" />
     return <OrdersView rows={liveOrderHistory ?? ORDER_HISTORY} includeStatus />
   }
-  if (historyError) return <ErrorState message="Could not load trade history. Check RPC access and retry." />
-  if (isHistoryLoading) return <LoadingState label="trade history" />
+  if (historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
+  if (isHistoryLoading) return <LoadingState label="transaction history" />
   return <TradeHistoryView rows={liveTradeHistory ?? TRADE_HISTORY} />
 }
 

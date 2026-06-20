@@ -7,6 +7,9 @@ vi.mock('@reown/appkit/react', () => ({
   useAppKit: () => ({
     open: vi.fn(),
   }),
+  useAppKitNetwork: () => ({
+    switchNetwork: vi.fn(),
+  }),
 }))
 
 let mockIsConnected = false
@@ -30,19 +33,22 @@ vi.mock('wagmi', () => ({
   }),
 }))
 
-vi.mock('../../hooks', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../hooks')>()
-  return {
-    ...actual,
-    usePerpsTrading: () => ({
-      depositMargin: vi.fn(),
-      withdrawMargin: vi.fn(),
-      commitOrder: vi.fn(),
-      executeOrder: vi.fn(),
-      cleanupExpiredOrder: vi.fn(),
-    }),
-  }
-})
+vi.mock('../../hooks', () => ({
+  usePerpsTrading: () => ({
+    depositMargin: vi.fn(),
+    withdrawMargin: vi.fn(),
+    addPositionMargin: vi.fn(),
+    commitOrder: vi.fn(),
+    executeOrder: vi.fn(),
+    cleanupExpiredOrder: vi.fn(),
+  }),
+  useSwitchToArbitrumSepolia: () => ({
+    switchToArbitrumSepolia: vi.fn(),
+    isSwitching: false,
+    switchError: null,
+    clearSwitchError: vi.fn(),
+  }),
+}))
 
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
@@ -123,7 +129,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
   })
 
-  it('renders order and trade history tabs from live rows', () => {
+  it('renders order and transaction history tabs from live rows', () => {
     render(
       <PerpsAccountPanel
         isConnected
@@ -150,6 +156,31 @@ describe('perps lifecycle labels', () => {
             size: '1 999.67',
             txHash: '0x6c0d00000000000000000000000000000000b7d3',
           },
+          {
+            time: '10 Jun, 13:55',
+            market: 'Margin Account',
+            side: 'Deposit',
+            price: '--',
+            size: '500',
+            txHash: '0x5e7100000000000000000000000000000000d005',
+          },
+          {
+            time: '10 Jun, 13:58',
+            market: 'plDXY Perp',
+            side: 'Add margin',
+            price: '--',
+            size: '25',
+            txHash: '0xadad000000000000000000000000000000000add',
+          },
+          {
+            time: '10 Jun, 13:40',
+            market: 'plDXY Perp',
+            side: 'Liquidated Long',
+            price: '1.0300',
+            size: '1 000',
+            pnl: 'Keeper bounty 0.2',
+            txHash: '0x1d1000000000000000000000000000000000001d0',
+          },
         ]}
       />
     )
@@ -161,11 +192,18 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Commit')).toBeInTheDocument()
     expect(screen.getByText('Reveal')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Trade History' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Transaction History' }))
     expect(screen.getByText('Open Long')).toBeInTheDocument()
     expect(screen.getByText('1.0170')).toBeInTheDocument()
     expect(screen.queryByText('0.9830')).not.toBeInTheDocument()
     expect(screen.getByText('1 999.67')).toBeInTheDocument()
+    expect(screen.getByText('Action')).toBeInTheDocument()
+    expect(screen.getByText('Result')).toBeInTheDocument()
+    expect(screen.getByText('Deposit')).toBeInTheDocument()
+    expect(screen.getByText('Margin Account')).toBeInTheDocument()
+    expect(screen.getByText('Add margin')).toBeInTheDocument()
+    expect(screen.getByText('Liquidated Long')).toBeInTheDocument()
+    expect(screen.getByText('Keeper bounty 0.2')).toBeInTheDocument()
   })
 
   it('fills current position and max with exact plDXY Perp exposure instead of rounded display value', () => {
@@ -308,5 +346,78 @@ describe('perps lifecycle labels', () => {
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
     expect(screen.getByRole('textbox')).toHaveValue('0')
+  })
+
+  it('requires confirmation before enabling the margin call simulator', () => {
+    render(
+      <PerpsTradeTicket
+        initialSize="1 000"
+        maintenanceMarginBps={100n}
+      />
+    )
+
+    const simulatorCheckbox = screen.getByLabelText('Margin Call Simulator')
+
+    expect(simulatorCheckbox).not.toBeChecked()
+    expect(screen.getByText('33x')).toBeInTheDocument()
+
+    fireEvent.click(simulatorCheckbox)
+
+    expect(simulatorCheckbox).not.toBeChecked()
+    expect(screen.getByText('Enable Margin Call Simulator?')).toBeInTheDocument()
+    expect(screen.getByText('Simulator max leverage')).toBeInTheDocument()
+    expect(screen.getByText(/When the market closes, this setting may expire or become stricter/i)).toBeInTheDocument()
+    expect(screen.getAllByText('100x').length).toBeGreaterThan(0)
+    expect(screen.getByText('floor(10 000 / 100)')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Enable Simulator' }))
+
+    expect(simulatorCheckbox).toBeChecked()
+    expect(screen.queryByText('Enable Margin Call Simulator?')).not.toBeInTheDocument()
+    expect(screen.getByText('100x')).toBeInTheDocument()
+  })
+
+  it('opens the edit position margin modal from the leverage pencil', () => {
+    render(
+      <PerpsAccountPanel
+        isConnected
+        freeBuyingPowerUsdc={250000000n}
+        position={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 0n,
+          entryPrice: 101240000n,
+          marginUsdc: 400000000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 0n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 2000000000n,
+          entryNotionalUsdc: 2000000000n,
+          dxyExposureUsdc: 2096930000n,
+          pendingCarryUsdc: 0n,
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit position margin' }))
+
+    expect(screen.getByText('Edit Position Margin')).toBeInTheDocument()
+    expect(screen.getByText('This locks free USDC into the current position margin bucket. It does not change position size.')).toBeInTheDocument()
+    expect(screen.getByText(/Direct margin removal is not supported/i)).toBeInTheDocument()
+    expect(screen.queryByText(/by the current contracts/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Current position margin')).toBeInTheDocument()
+    expect(screen.getByText('Resulting leverage')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox')).toHaveValue('250')
+    expect(screen.getByText('3.08x')).toBeInTheDocument()
+  })
+
+  it('does not show position margin edit when there is no connected live position', () => {
+    render(<PerpsAccountPanel isConnected={false} />)
+
+    expect(screen.queryByRole('button', { name: 'Edit position margin' })).not.toBeInTheDocument()
   })
 })

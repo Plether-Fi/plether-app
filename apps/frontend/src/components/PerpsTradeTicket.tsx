@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
-import { useAccount, useChainId, useReadContracts, useSimulateContract, useSwitchChain } from 'wagmi'
+import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
-import { PERPS_CFD_ENGINE_LENS_ABI, PERPS_ORDER_ROUTER_ABI } from '../contracts/abis'
+import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsPendingOrder, PerpsPosition } from '../hooks'
-import { usePerpsTrading } from '../hooks'
+import { usePerpsTrading, useSwitchToArbitrumSepolia } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
   directionToPerpsSide,
@@ -20,10 +21,10 @@ import {
   parsePerpsUsdc,
   sizeDeltaToNotionalUsdc,
   type PerpsDirection,
+  type PerpsOracleFreshness,
 } from '../utils/perps'
 import {
   getPerpsCloseInvalidReasonMessage,
-  getPerpsErrorMessage,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
@@ -32,6 +33,7 @@ import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
 type Direction = PerpsDirection
 export type TradeLifecycleState =
   | 'preview'
+  | 'commitPreparing'
   | 'commitPending'
   | 'commitConfirmed'
   | 'revealPending'
@@ -114,6 +116,8 @@ interface PerpsTradeTicketProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
   oraclePriceDisplay?: string
+  oracleFreshness?: PerpsOracleFreshness
+  oracleFreshnessTooltip?: string
   availableToTradeRaw?: bigint
   availableToTradeAmount?: string
   portfolioValueRaw?: bigint
@@ -131,7 +135,10 @@ interface PerpsTradeTicketProps {
   shortOpenCapacityUsdc?: bigint
   minOpenNotionalUsdc?: bigint
   minNewPositionNotionalUsdc?: bigint
+  maintenanceMarginBps?: bigint
   executionFeeBps?: bigint
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
   onAccountRefresh?: () => void
 }
 
@@ -153,8 +160,29 @@ const MAX_OPEN_BOUNTY_USDC_RAW = 200_000n
 const CLOSE_BOUNTY_USDC_RAW = 200_000n
 const SUMMARY_CLOSE_DUST_USDC_RAW = 10_000n
 const ORACLE_PRICE_FRESH_SECONDS = 60
+const DEFAULT_MAX_LEVERAGE = 33
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
+
+function isPerpsCommitDebugEnabled(): boolean {
+  if (import.meta.env.MODE === 'test') return false
+  if (import.meta.env.DEV) return true
+
+  try {
+    return globalThis.localStorage.getItem('PLETHER_PERPS_DEBUG') === '1'
+  } catch {
+    return false
+  }
+}
+
+function debugPerpsCommit(stage: string, details?: Record<string, unknown>): void {
+  if (!isPerpsCommitDebugEnabled()) return
+  if (details === undefined) {
+    console.info(`[perps:commit] ${stage}`)
+    return
+  }
+  console.info(`[perps:commit] ${stage}`, details)
+}
 
 function isPythExpiryMessage(message: string): boolean {
   const lowerMessage = message.toLowerCase()
@@ -352,6 +380,11 @@ function formatLeverageRaw(notionalUsdc: bigint | undefined, marginUsdc: bigint 
   return `${formatPerpsNumber(Number(notionalUsdc) / Number(marginUsdc), 2)}x`
 }
 
+function formatBpsPercent(value: bigint | undefined): string {
+  if (value === undefined) return 'Unavailable'
+  return formatPercent(Number(value) / 100)
+}
+
 function formatDuration(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds <= 0) return 'now'
 
@@ -360,10 +393,10 @@ function formatDuration(seconds: number): string {
   const minutes = Math.floor((seconds % 3_600) / 60)
   const remainingSeconds = seconds % 60
   const parts = [
-    days > 0 ? `${days}d` : '',
-    hours > 0 ? `${hours}h` : '',
-    minutes > 0 ? `${minutes}m` : '',
-    days === 0 && hours === 0 ? `${remainingSeconds}s` : '',
+    days > 0 ? `${days.toString()}d` : '',
+    hours > 0 ? `${hours.toString()}h` : '',
+    minutes > 0 ? `${minutes.toString()}m` : '',
+    days === 0 && hours === 0 ? `${remainingSeconds.toString()}s` : '',
   ].filter(Boolean)
 
   return parts.join(' ')
@@ -414,6 +447,15 @@ function maxOpenNotionalForMargin(availableUsdc: bigint, leverage: number): bigi
   return (low / USDC_UNIT) * USDC_UNIT
 }
 
+function maxLeverageFromMaintenanceMargin(maintenanceMarginBps: bigint | undefined): number {
+  if (maintenanceMarginBps === undefined || maintenanceMarginBps <= 0n) return DEFAULT_MAX_LEVERAGE
+
+  const cap = Number(10_000n / maintenanceMarginBps)
+  if (!Number.isFinite(cap) || cap <= 0) return DEFAULT_MAX_LEVERAGE
+
+  return Math.max(DEFAULT_MAX_LEVERAGE, cap)
+}
+
 function directionLabel(direction: Direction): string {
   return direction === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
 }
@@ -434,34 +476,45 @@ function formatOptionalPrice(value: number | null | undefined): string {
 
 function formatOracleAge(ageSeconds: number): string {
   if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
-  if (ageSeconds < 60) return `${ageSeconds}s ago`
+  if (ageSeconds < 60) return `${ageSeconds.toString()}s ago`
 
   const minutes = Math.floor(ageSeconds / 60)
   const seconds = ageSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s ago` : `${minutes}m ago`
+  if (minutes < 60) return seconds > 0 ? `${minutes.toString()}m ${seconds.toString()}s ago` : `${minutes.toString()}m ago`
 
   const hours = Math.floor(minutes / 60)
   const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m ago` : `${hours}h ago`
+  if (hours < 24) return remainingMinutes > 0 ? `${hours.toString()}h ${remainingMinutes.toString()}m ago` : `${hours.toString()}h ago`
 
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days}d ${remainingHours}h ago` : `${days}d ago`
+  return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
 }
 
 function DxyPricePreviewValue({
   value,
   publishTime,
   nowSeconds,
+  freshness: freshnessOverride,
+  freshnessTooltip: freshnessTooltipOverride,
 }: {
   value: ReactNode
   publishTime?: number
   nowSeconds: number
+  freshness?: PerpsOracleFreshness
+  freshnessTooltip?: string
 }) {
   const ageSeconds = publishTime === undefined ? undefined : Math.max(0, nowSeconds - publishTime)
-  const freshness = ageSeconds === undefined ? undefined : ageSeconds <= ORACLE_PRICE_FRESH_SECONDS ? 'fresh' : 'stale'
-  const dotClass = freshness === 'fresh' ? 'bg-cyber-neon-green' : 'bg-cyber-electric-fuchsia'
-  const freshnessTooltip = ageSeconds === undefined ? undefined : `updated ${formatOracleAge(ageSeconds)}`
+  const inferredFreshness = ageSeconds === undefined ? undefined : ageSeconds <= ORACLE_PRICE_FRESH_SECONDS ? 'fresh' : 'stale'
+  const freshness = freshnessOverride ?? inferredFreshness
+  const dotClass = freshness === 'fresh'
+    ? 'bg-cyber-neon-green'
+    : freshness === 'market-closed'
+      ? 'bg-cyber-warning-text'
+      : freshness === 'stale'
+        ? 'bg-cyber-electric-fuchsia'
+        : 'bg-[#FFAB96]'
+  const freshnessTooltip = freshnessTooltipOverride ?? (ageSeconds === undefined ? undefined : `updated ${formatOracleAge(ageSeconds)}`)
 
   return (
     <span className="inline-flex min-h-6 items-center justify-end gap-2 whitespace-nowrap">
@@ -596,7 +649,7 @@ function PreviewRows({
 
 function lifecycleStep(state: TradeLifecycleState): OrderLifecycleStep {
   if (state === 'preview') return 'preview'
-  if (state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
+  if (state === 'commitPreparing' || state === 'commitPending' || state === 'commitConfirmed' || state === 'failed') return 'commit'
   return 'reveal'
 }
 
@@ -801,9 +854,10 @@ function AccountSummaryRow({
           >
             <span
               aria-label={`${label} info`}
-              className="material-symbols-outlined cursor-help text-base leading-none text-cyber-text-secondary"
+              className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+              tabIndex={0}
             >
-              info
+              i
             </span>
           </Tooltip>
         ) : null}
@@ -829,6 +883,8 @@ export function PerpsTradeTicket({
   oraclePriceRaw,
   oraclePublishTime,
   oraclePriceDisplay,
+  oracleFreshness,
+  oracleFreshnessTooltip,
   availableToTradeRaw,
   availableToTradeAmount,
   portfolioValueRaw,
@@ -846,16 +902,21 @@ export function PerpsTradeTicket({
   shortOpenCapacityUsdc,
   minOpenNotionalUsdc,
   minNewPositionNotionalUsdc,
+  maintenanceMarginBps,
   executionFeeBps,
+  marketPhase = 'open',
+  marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
   const { address, isConnected } = useAccount()
   const chainId = useChainId()
   const { open } = useAppKit()
-  const { switchChain } = useSwitchChain()
+  const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
+  const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
+  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
   const [size, setSize] = useState(initialSize)
   const [leverage, setLeverage] = useState(5)
   const [slippage, setSlippage] = useState(0.1)
@@ -876,6 +937,11 @@ export function PerpsTradeTicket({
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>()
+  const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
+  const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
+  const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
+  const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
+  const activeLeverage = Math.min(leverage, maxLeverage)
 
   useEffect(() => {
     if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
@@ -887,6 +953,37 @@ export function PerpsTradeTicket({
       window.clearInterval(interval)
     }
   }, [firstPendingOrderExpiryTime, oraclePublishTime])
+
+  useEffect(() => {
+    setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
+  }, [maxLeverage])
+
+  useEffect(() => {
+    if (!canEnableMarginCallSimulator) {
+      setIsMarginCallSimulatorEnabled(false)
+    }
+  }, [canEnableMarginCallSimulator])
+
+  useEffect(() => {
+    if (lifecycleState !== 'commitPending' || commitTxHash || flowError) {
+      setWalletRequestWarning(undefined)
+      return undefined
+    }
+
+    const timeout = globalThis.setTimeout(() => {
+      const warning = 'No wallet response yet. Open MetaMask manually and check for a pending confirmation. If MetaMask has no pending request, reject any stuck request, reconnect the wallet, and retry.'
+      debugPerpsCommit('ticket:wallet-request:still-pending', {
+        seconds: 15,
+        address,
+        chainId,
+      })
+      setWalletRequestWarning(warning)
+    }, 15_000)
+
+    return () => {
+      globalThis.clearTimeout(timeout)
+    }
+  }, [address, chainId, commitTxHash, flowError, lifecycleState])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -935,8 +1032,8 @@ export function PerpsTradeTicket({
   const hasCurrentPositionDisplayAmount = parseAmount(currentPositionInputAmount) > 0
   const dxyExposureUsdc = parsePerpsUsdc(size)
   const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionDxyExposureRaw > 0n)
-  const isOppositePositionDirection = Boolean(hasCurrentPosition && currentPosition && direction !== currentPosition.direction)
-  const isReducingCurrentPosition = Boolean(hasCurrentPosition && (isReduceOnly || isOppositePositionDirection))
+  const isOppositePositionDirection = hasCurrentPosition && currentPosition !== undefined && direction !== currentPosition.direction
+  const isReducingCurrentPosition = hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
   const effectiveOrderDirection = isReducingCurrentPosition && currentPosition?.direction
     ? currentPosition.direction
     : direction
@@ -970,7 +1067,8 @@ export function PerpsTradeTicket({
       const aExpiry = a.expiryTime ?? 0n
       const bExpiry = b.expiryTime ?? 0n
       return aExpiry < bExpiry ? -1 : aExpiry > bExpiry ? 1 : 0
-    })[0] ?? pendingCloseOrders[0]
+    })
+    .at(0) ?? pendingCloseOrders.at(0)
   const firstPendingCloseSecondsToExpiry = firstPendingCloseOrder?.expiryTime === undefined
     ? undefined
     : Number(firstPendingCloseOrder.expiryTime) - nowSeconds
@@ -985,7 +1083,7 @@ export function PerpsTradeTicket({
   const availableToTradeForMaxRaw = availableToTradeRaw ?? (enableLiveTrading ? 0n : parsePerpsUsdc(availableToTradeDisplayAmount))
   const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
   const maxNotionalFromFundingRaw = canUseAvailableToTrade
-    ? maxOpenNotionalForMargin(availableToTradeForMaxRaw, leverage)
+    ? maxOpenNotionalForMargin(availableToTradeForMaxRaw, activeLeverage)
     : 0n
   const maxOpenNotionalRaw = selectedOpenCapacityUsdc === undefined
     ? maxNotionalFromFundingRaw
@@ -1019,8 +1117,17 @@ export function PerpsTradeTicket({
     ? sizeDeltaToNotionalUsdc(orderSizeDelta, oraclePriceRaw) ?? dxyExposureUsdc
     : dxyExposureUsdc
   const contractNotionalNumber = usdcRawToNumber(contractNotionalUsdc)
-  const marginNumber = isReducingCurrentPosition ? 0 : leverage > 0 ? contractNotionalNumber / leverage : 0
-  const marginUsdc = isReducingCurrentPosition ? 0n : leverage > 0 ? contractNotionalUsdc / BigInt(leverage) : 0n
+  const marginNumber = isReducingCurrentPosition ? 0 : activeLeverage > 0 ? contractNotionalNumber / activeLeverage : 0
+  const marginUsdc = isReducingCurrentPosition ? 0n : activeLeverage > 0 ? contractNotionalUsdc / BigInt(activeLeverage) : 0n
+  const defaultMaxLeverageMarginUsdc = contractNotionalUsdc > 0n
+    ? contractNotionalUsdc / BigInt(DEFAULT_MAX_LEVERAGE)
+    : 0n
+  const simulatorMaxLeverageMarginUsdc = contractNotionalUsdc > 0n && simulatorMaxLeverage > 0
+    ? contractNotionalUsdc / BigInt(simulatorMaxLeverage)
+    : 0n
+  const estimatedMaintenanceMarginUsdc = maintenanceMarginBps !== undefined && contractNotionalUsdc > 0n
+    ? (contractNotionalUsdc * maintenanceMarginBps) / 10_000n
+    : undefined
   const estimatedKeeperBountyUsdc = isReducingCurrentPosition ? CLOSE_BOUNTY_USDC_RAW : estimateOpenBountyUsdcRaw(contractNotionalUsdc)
   const keeperBounty = usdcRawToNumber(estimatedKeeperBountyUsdc)
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
@@ -1044,9 +1151,12 @@ export function PerpsTradeTicket({
     : direction === 'long'
       ? previewPrice * 0.945
       : previewPrice * 1.055
-  const sideCapacityValue = selectedOpenCapacityUsdc === undefined
-    ? 'Unavailable'
-    : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />
+  const sideCapacityValue = useMemo(
+    () => selectedOpenCapacityUsdc === undefined
+      ? 'Unavailable'
+      : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />,
+    [selectedOpenCapacityUsdc]
+  )
   const sideCapacityTone = selectedOpenCapacityUsdc === undefined ? undefined : 'positive'
   const summaryDxyExposureUsdc = isReducingCurrentPosition &&
     maxDxyExposureRaw > 0n &&
@@ -1058,7 +1168,7 @@ export function PerpsTradeTicket({
     currentPositionDxyExposureUsdc: currentPositionDxyExposureRaw,
     direction,
     isReduceOnly,
-    leverage,
+    leverage: activeLeverage,
     dxyExposureUsdc: summaryDxyExposureUsdc,
   })
   const orderFundingRequirementUsdc = !isReducingCurrentPosition ? marginUsdc + estimatedKeeperBountyUsdc : estimatedKeeperBountyUsdc
@@ -1094,7 +1204,7 @@ export function PerpsTradeTicket({
                 address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
                 abi: PERPS_CFD_ENGINE_LENS_ABI,
                 functionName: 'previewClose',
-                args: [address ?? zeroAddress, orderSizeDelta, oraclePriceRaw ?? 0n],
+                args: [address ?? zeroAddress, orderSizeDelta, oraclePriceRaw],
               } as const
             : {
                 chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -1106,7 +1216,7 @@ export function PerpsTradeTicket({
                   directionToPerpsSide(effectiveOrderDirection),
                   orderSizeDelta,
                   marginUsdc,
-                  oraclePriceRaw ?? 0n,
+                  oraclePriceRaw,
                   previewPublishTime,
                 ],
               } as const,
@@ -1124,39 +1234,10 @@ export function PerpsTradeTicket({
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
     : undefined
   const tradePreviewFailure = readFailure(tradePreviewData as readonly ContractResult[] | undefined, 0)
-  const routerCommitArgs = shouldReadTradePreview
-    ? [
-        directionToPerpsSide(effectiveOrderDirection),
-        orderSizeDelta,
-        isReducingCurrentPosition ? 0n : marginUsdc,
-        rawExecutionLimit ?? 0n,
-        isReducingCurrentPosition,
-      ] as const
-    : undefined
-  const {
-    error: routerCommitSimulationError,
-    isLoading: isRouterCommitSimulationLoading,
-    isFetching: isRouterCommitSimulationFetching,
-  } = useSimulateContract({
-    account: address,
-    chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-    address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-    abi: PERPS_ORDER_ROUTER_ABI,
-    functionName: 'commitOrder',
-    args: routerCommitArgs,
-    query: {
-      enabled: shouldReadTradePreview && routerCommitArgs !== undefined,
-      refetchInterval: 15_000,
-    },
-  })
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
   const isTradePreviewPending = shouldReadTradePreview && (
     isTradePreviewLoading ||
     (isTradePreviewFetching && currentTradePreview === undefined)
-  )
-  const isRouterCommitPreflightPending = shouldReadTradePreview && (
-    isRouterCommitSimulationLoading ||
-    (isRouterCommitSimulationFetching && routerCommitSimulationError === null)
   )
   const minOpenDxyExposureUsdc = minOpenNotionalUsdc === undefined
     ? undefined
@@ -1262,10 +1343,6 @@ export function PerpsTradeTicket({
         if (openPreview === undefined) return 'Trade preview is unavailable. Refresh market data and retry.'
         if (!openPreview.valid) return getPerpsOpenRevertMessage(openPreview.invalidReason)
       }
-      if (isRouterCommitPreflightPending) return undefined
-      if (routerCommitSimulationError) {
-        return getPerpsErrorMessage(routerCommitSimulationError, 'commit')
-      }
     }
     return undefined
   })()
@@ -1291,11 +1368,11 @@ export function PerpsTradeTicket({
     return formatDisplayDxyPrice(openPreview.liquidationPrice)
   })()
   const previewResultingLeverage = (() => {
-    if (!enableLiveTrading) return formatLeverage(leverage)
+    if (!enableLiveTrading) return formatLeverage(activeLeverage)
     if (isTradePreviewPending) return PREVIEW_LOADING_VALUE
 
     if (isReducingCurrentPosition) {
-      if (closePreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(leverage)
+      if (closePreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(activeLeverage)
       if (closePreview.remainingSize <= 0n) return 'Closed'
 
       return formatLeverageRaw(
@@ -1304,7 +1381,7 @@ export function PerpsTradeTicket({
       )
     }
 
-    if (openPreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(leverage)
+    if (openPreview === undefined) return shouldReadTradePreview ? PREVIEW_UNAVAILABLE_VALUE : formatLeverage(activeLeverage)
 
     return formatLeverageRaw(
       sizeDeltaToNotionalUsdc(openPreview.postSize, openPreview.executionPrice),
@@ -1321,6 +1398,8 @@ export function PerpsTradeTicket({
             value={oraclePriceDisplay ?? formatOptionalPrice(previewPrice)}
             publishTime={oraclePublishTime}
             nowSeconds={nowSeconds}
+            freshness={oracleFreshness}
+            freshnessTooltip={oracleFreshnessTooltip}
           />
         ),
       },
@@ -1338,11 +1417,11 @@ export function PerpsTradeTicket({
       { label: 'Contract side capacity', value: sideCapacityValue, tone: sideCapacityTone },
     ],
     [
-      enableLiveTrading,
       executionLimit,
       keeperBounty,
-      leverage,
       oraclePriceDisplay,
+      oracleFreshness,
+      oracleFreshnessTooltip,
       oraclePublishTime,
       nowSeconds,
       previewPrice,
@@ -1403,7 +1482,7 @@ export function PerpsTradeTicket({
   const isReviewButtonDisabled = enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
-    (Boolean(liveValidationError) || isTradePreviewPending || isRouterCommitPreflightPending)
+    (Boolean(liveValidationError) || isTradePreviewPending)
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const isMarginActionPending = marginActionStatus === 'pending'
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
@@ -1440,7 +1519,7 @@ export function PerpsTradeTicket({
       return
     }
     if (enableLiveTrading && !isCorrectChain) {
-      switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+      void switchToArbitrumSepolia()
       return
     }
     if (isMarginActionInvalid) return
@@ -1465,17 +1544,40 @@ export function PerpsTradeTicket({
 
   async function handleConfirmCommit() {
     setFlowError(undefined)
+    setWalletRequestWarning(undefined)
+    debugPerpsCommit('ticket:confirm-click', {
+      enableLiveTrading,
+      isConnected,
+      isCorrectChain,
+      chainId,
+      address,
+      lifecycleState,
+      liveValidationError,
+      direction,
+      effectiveOrderDirection,
+      isReducingCurrentPosition,
+      dxyExposureUsdc,
+      contractNotionalUsdc,
+      marginUsdc,
+      oraclePriceRaw,
+      slippageNumber,
+    })
     if (!enableLiveTrading) {
+      debugPerpsCommit('ticket:mock-flow')
       setLifecycleState('commitPending')
       return
     }
     if (liveValidationError) {
+      debugPerpsCommit('ticket:blocked-by-validation', {
+        liveValidationError,
+      })
       setFlowError(liveValidationError)
       return
     }
 
     try {
-      setLifecycleState('commitPending')
+      debugPerpsCommit('ticket:lifecycle:commitPreparing')
+      setLifecycleState('commitPreparing')
       setPositionSnapshotAtCommit({
         exists: Boolean(currentPosition?.exists),
         side: currentPosition?.direction,
@@ -1491,12 +1593,23 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
+        onWalletRequestStart: () => {
+          debugPerpsCommit('ticket:lifecycle:commitPending')
+          setLifecycleState('commitPending')
+        },
+      })
+      debugPerpsCommit('ticket:commit-result', {
+        hash: result.hash,
+        orderId: result.orderId,
       })
       setCommitTxHash(result.hash)
       setOrderId(result.orderId)
       setLifecycleState('revealPending')
       onAccountRefresh?.()
     } catch (error) {
+      debugPerpsCommit('ticket:commit-error', {
+        message: error instanceof Error ? error.message : String(error),
+      })
       setFlowError(error instanceof Error ? error.message : 'Commit transaction failed')
       setLifecycleState('failed')
     }
@@ -1660,28 +1773,45 @@ export function PerpsTradeTicket({
           <span className="text-sm font-semibold">Reduce only</span>
         </label>
 
+        <label className="flex cursor-pointer items-start gap-3 py-1 text-cyber-text-primary transition-colors hover:text-[#FFAB96]">
+          <input
+            type="checkbox"
+            checked={isMarginCallSimulatorEnabled}
+            onChange={(event) => {
+              if (event.target.checked) {
+                setIsMarginCallSimulatorConfirmationOpen(true)
+              } else {
+                setIsMarginCallSimulatorEnabled(false)
+                setIsMarginCallSimulatorConfirmationOpen(false)
+              }
+            }}
+            className="mt-0.5 h-4 w-4 accent-[#FFAB96]"
+          />
+          <span className="text-sm font-semibold">Margin Call Simulator</span>
+        </label>
+
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
             <label className="text-sm font-medium text-cyber-text-secondary" htmlFor="perps-leverage">
               Leverage
             </label>
-            <span className="text-lg font-semibold text-[#FFAB96]">{formatLeverage(leverage)}</span>
+            <span className="text-lg font-semibold text-[#FFAB96]">{formatLeverage(activeLeverage)}</span>
           </div>
           <input
             id="perps-leverage"
             type="range"
             min="1"
-            max="100"
+            max={maxLeverage}
             step="1"
-            value={leverage}
+            value={activeLeverage}
             onChange={(event) => {
-              setLeverage(Number(event.target.value))
+              setLeverage(Math.min(Number(event.target.value), maxLeverage))
             }}
             className="perps-leverage-slider h-2 w-full cursor-pointer appearance-none accent-[#FFAB96]"
           />
           <div className="mt-2 flex items-center justify-between text-xs font-semibold text-cyber-text-secondary">
             <span>1x</span>
-            <span>100x</span>
+            <span>{formatLeverage(maxLeverage)}</span>
           </div>
         </div>
 
@@ -1743,7 +1873,7 @@ export function PerpsTradeTicket({
               return
             }
             if (enableLiveTrading && !isCorrectChain) {
-              switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
+              void switchToArbitrumSepolia()
               return
             }
             if (liveValidationError) {
@@ -1756,6 +1886,11 @@ export function PerpsTradeTicket({
           {isConnectWalletCta ? <span className="material-symbols-outlined text-xl">account_balance_wallet</span> : null}
           {reviewCtaLabel}
         </Button>
+        {isSwitchNetworkCta && networkSwitchError ? (
+          <div className="text-xs leading-4 text-[#FFAB96]">
+            {networkSwitchError}
+          </div>
+        ) : null}
 
         <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
           <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Margin Account</div>
@@ -1846,16 +1981,23 @@ export function PerpsTradeTicket({
                 <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4 text-sm text-cyber-electric-fuchsia">
                   {liveValidationError}
                   {!isCorrectChain ? (
-                    <Button
-                      className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        switchChain({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
-                      }}
-                    >
-                      Switch Network
-                    </Button>
+                    <>
+                      <Button
+                        className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => {
+                          void switchToArbitrumSepolia()
+                        }}
+                      >
+                        Switch Network
+                      </Button>
+                      {networkSwitchError ? (
+                        <div className="mt-3 text-xs leading-4 text-cyber-text-primary">
+                          {networkSwitchError}
+                        </div>
+                      ) : null}
+                    </>
                   ) : null}
                   {canCleanupOldestPendingOrder ? (
                     <Button
@@ -1877,7 +2019,7 @@ export function PerpsTradeTicket({
                   ) : null}
                 </div>
               ) : null}
-              {flowError && lifecycleState === 'preview' ? (
+              {flowError ? (
                 <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4 text-sm text-cyber-electric-fuchsia">
                   {flowError}
                 </div>
@@ -1905,12 +2047,42 @@ export function PerpsTradeTicket({
             </>
           ) : null}
 
+          {lifecycleState === 'commitPreparing' ? (
+            <>
+              <PendingStateCard
+                title="Preparing wallet request"
+                description="Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again."
+              />
+
+              <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
+                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Commit Transaction</div>
+                <PreviewRows
+                  rows={[
+                    { label: 'Direction', value: directionLabel(direction) },
+                    { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
+                    { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
+                    { label: 'Max slippage', value: formatPercent(slippageNumber) },
+                    { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
+                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+                  ]}
+                />
+              </div>
+            </>
+          ) : null}
+
           {lifecycleState === 'commitPending' ? (
             <>
               <PendingStateCard
                 title="Waiting for wallet confirmation"
                 description="Confirm the commit transaction in your wallet, then wait for it to be included onchain."
               />
+
+              {walletRequestWarning ? (
+                <div className="border border-[#FFAB96]/40 bg-[#FF572D]/10 p-4 text-sm leading-5 text-[#FFAB96]">
+                  {walletRequestWarning}
+                </div>
+              ) : null}
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Commit Transaction</div>
@@ -2237,6 +2409,95 @@ export function PerpsTradeTicket({
       </Modal>
 
       <Modal
+        isOpen={isMarginCallSimulatorConfirmationOpen}
+        onClose={() => {
+          setIsMarginCallSimulatorConfirmationOpen(false)
+        }}
+        title="Enable Margin Call Simulator?"
+        size="lg"
+      >
+        <div className="space-y-5">
+          <div className="border border-[#FFAB96]/40 bg-[#250917] p-4">
+            <p className="text-sm leading-6 text-cyber-text-secondary">
+              This mode removes the normal {formatLeverage(DEFAULT_MAX_LEVERAGE)} UI cap and lets the leverage control
+              reach the protocol maintenance-margin boundary. It is useful for testing margin-call behavior, but a position
+              opened near this cap can become invalid or liquidatable from a tiny adverse move, VPI, execution fees, keeper
+              bounty, or carry.
+            </p>
+            <p className="mt-3 text-sm leading-6 text-[#FFAB96]">
+              The current maintenance margin can be temporary.
+              {marketPhase === 'open' && marketCurrentDuration ? (
+                <> Market is open for another <span className="font-semibold text-cyber-text-primary">{marketCurrentDuration}</span>.</>
+              ) : null}
+              {' '}
+              When the market closes, this setting may expire or become stricter, so add margin or reduce the position
+              before that time if you keep a simulator-level position open.
+            </p>
+          </div>
+
+          <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
+            <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Leverage rule</div>
+            <div className="space-y-2">
+              <AccountSummaryRow label="Normal max leverage" value={formatLeverage(DEFAULT_MAX_LEVERAGE)} />
+              <AccountSummaryRow label="Simulator max leverage" value={formatLeverage(simulatorMaxLeverage)} />
+              <AccountSummaryRow label="Maintenance margin" value={formatBpsPercent(maintenanceMarginBps)} />
+              <AccountSummaryRow
+                label="Simulator max formula"
+                value={maintenanceMarginBps === undefined ? 'Unavailable' : `floor(10 000 / ${maintenanceMarginBps.toString()})`}
+              />
+            </div>
+          </div>
+
+          <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
+            <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Current order math</div>
+            <div className="space-y-2">
+              <AccountSummaryRow label="Selected leverage" value={formatLeverage(activeLeverage)} />
+              <AccountSummaryRow label="plDXY Perp exposure" value={formatUsdcRaw(dxyExposureUsdc)} />
+              <AccountSummaryRow label="Contract notional" value={formatUsdcRaw(contractNotionalUsdc)} />
+              <AccountSummaryRow label="Position margin at selected leverage" value={formatUsdcRaw(marginUsdc)} />
+              <AccountSummaryRow label={`Position margin at ${formatLeverage(DEFAULT_MAX_LEVERAGE)}`} value={formatUsdcRaw(defaultMaxLeverageMarginUsdc)} />
+              <AccountSummaryRow label={`Position margin at ${formatLeverage(simulatorMaxLeverage)}`} value={formatUsdcRaw(simulatorMaxLeverageMarginUsdc)} />
+              <AccountSummaryRow
+                label="Estimated maintenance margin"
+                value={estimatedMaintenanceMarginUsdc === undefined ? PREVIEW_UNAVAILABLE_VALUE : formatUsdcRaw(estimatedMaintenanceMarginUsdc)}
+              />
+            </div>
+          </div>
+
+          {!canEnableMarginCallSimulator ? (
+            <div className="border border-[#FFAB96]/40 bg-[#FF572D]/10 p-3 text-sm leading-5 text-[#FFAB96]">
+              The simulator cannot unlock additional leverage because the maintenance-margin setting is unavailable or already
+              implies a cap at or below {formatLeverage(DEFAULT_MAX_LEVERAGE)}.
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className={DARK_CANCEL_BUTTON_CLASS}
+              onClick={() => {
+                setIsMarginCallSimulatorConfirmationOpen(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+              disabled={!canEnableMarginCallSimulator}
+              onClick={() => {
+                setIsMarginCallSimulatorEnabled(true)
+                setIsMarginCallSimulatorConfirmationOpen(false)
+              }}
+            >
+              Enable Simulator
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         isOpen={marginAction !== null}
         onClose={() => {
           if (!isMarginActionPending) {
@@ -2336,6 +2597,11 @@ export function PerpsTradeTicket({
               {marginActionCtaLabel}
             </Button>
           </div>
+          {enableLiveTrading && isConnected && !isCorrectChain && networkSwitchError ? (
+            <div className="text-xs leading-4 text-[#FFAB96]">
+              {networkSwitchError}
+            </div>
+          ) : null}
         </div>
       </Modal>
     </section>
