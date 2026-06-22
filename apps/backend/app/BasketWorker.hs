@@ -4,7 +4,7 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forM_, when)
 import Data.Aeson (toJSON)
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -18,6 +18,7 @@ import Plether.Database.Schema
   , getPythUpdatePayloadForWindow
   , insertBasketSnapshotWithSource
   , insertPythUpdatePayload
+  , isHistoricalRevealPayload
   )
 import Plether.Pyth.Hermes (HermesBasketUpdate (..), fetchBasketUpdateAt, fetchLatestBasketUpdate)
 import Plether.Pyth.History (BasketIngestorConfig (..), runBasketBackfill)
@@ -124,7 +125,7 @@ backfillPendingOrderRevealPayloads manager pool cfg = do
         maxRevealTick = pkorCommitTime order + defaultOrderSettlementWindow
     mExisting <- withDb pool $ \conn ->
       getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
-    when (isNothing mExisting) $ do
+    when (maybe True (not . isHistoricalRevealPayload) mExisting) $ do
       result <- fetchBasketUpdateAt manager cfg firstRevealTick
       case result of
         Left err ->

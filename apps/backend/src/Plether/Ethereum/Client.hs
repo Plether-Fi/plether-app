@@ -40,7 +40,7 @@ data EthClient = EthClient
 data RpcError
   = RpcHttpError Text
   | RpcJsonError Text
-  | RpcNodeError Int Text
+  | RpcNodeError Int Text (Maybe Text)
   deriving stock (Show)
 
 data RpcRequest = RpcRequest
@@ -68,6 +68,7 @@ data RpcResponse = RpcResponse
 data RpcResponseError = RpcResponseError
   { rpcErrCode :: Int
   , rpcErrMessage :: Text
+  , rpcErrData :: Maybe Value
   }
   deriving stock (Generic)
 
@@ -82,6 +83,7 @@ instance FromJSON RpcResponseError where
     RpcResponseError
       <$> v .: "code"
       <*> v .: "message"
+      <*> v .:? "data"
 
 newClient :: Text -> IO EthClient
 newClient rpcUrl = do
@@ -128,9 +130,14 @@ rpcCall client method params = do
         Right RpcResponse {rpcResult = Just result, rpcError = Nothing} ->
           pure $ Right result
         Right RpcResponse {rpcError = Just RpcResponseError {..}} ->
-          pure $ Left $ RpcNodeError rpcErrCode rpcErrMessage
+          pure $ Left $ RpcNodeError rpcErrCode rpcErrMessage (renderErrorData <$> rpcErrData)
         Right _ ->
           pure $ Left $ RpcJsonError "No result or error in response"
+
+renderErrorData :: Value -> Text
+renderErrorData = \case
+  String txt -> txt
+  value -> TE.decodeUtf8 $ LBS.toStrict $ Aeson.encode value
 
 data CallParams = CallParams
   { callTo :: Text

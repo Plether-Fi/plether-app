@@ -28,6 +28,7 @@ import {
 import { Alert, Skeleton, Tooltip } from './ui'
 import {
   buildCandles,
+  mergeLatestBasketPoint,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
 } from '../utils/dxyBasketChart'
@@ -289,7 +290,10 @@ export function DxyBasketPanelView({
   isError = false,
   onChartIntervalChange,
 }: DxyBasketPanelViewProps) {
-  const points = useMemo(() => history?.points ?? [], [history?.points])
+  const points = useMemo(
+    () => mergeLatestBasketPoint(history?.points ?? [], latest),
+    [history?.points, latest]
+  )
   const chartPoints = useMemo<ChartPoint[]>(
     () =>
       points.map((point) => ({

@@ -21,6 +21,8 @@ module Plether.Database.Schema
   , getPythUpdatePayloadForWindow
   , getLatestPythUpdatePayload
   , PythUpdatePayloadRow (..)
+  , isHistoricalRevealPayload
+  , isHistoricalRevealPayloadSource
   , ensurePerpsKeeperSchema
   , tryPerpsKeeperLock
   , unlockPerpsKeeperLock
@@ -461,6 +463,17 @@ instance FromRow PythUpdatePayloadRow where
     <*> field
     <*> field
 
+isHistoricalRevealPayload :: PythUpdatePayloadRow -> Bool
+isHistoricalRevealPayload =
+  isHistoricalRevealPayloadSource . puprSource
+
+isHistoricalRevealPayloadSource :: Text -> Bool
+isHistoricalRevealPayloadSource source =
+  source
+    `elem` [ "backend_hermes_historical"
+           , "backend_hermes_reveal_backfill"
+           ]
+
 insertPythUpdatePayload
   :: Connection
   -> Integer -- min publish time
@@ -479,7 +492,9 @@ insertPythUpdatePayload conn minPublishTime maxPublishTime publishTimes updateDa
     \publish_times = EXCLUDED.publish_times, \
     \update_data = EXCLUDED.update_data, \
     \source = EXCLUDED.source, \
-    \fetched_at = EXCLUDED.fetched_at"
+    \fetched_at = EXCLUDED.fetched_at \
+    \WHERE perps_pyth_update_payloads.source NOT IN ('backend_hermes_historical', 'backend_hermes_reveal_backfill') \
+    \OR EXCLUDED.source IN ('backend_hermes_historical', 'backend_hermes_reveal_backfill')"
     (minPublishTime, maxPublishTime, encode publishTimes, encode updateData, source, fetchedAt)
   pure ()
 

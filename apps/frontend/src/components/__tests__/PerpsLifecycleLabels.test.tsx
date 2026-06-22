@@ -429,6 +429,32 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('3.08x')).toBeInTheDocument()
   })
 
+  it('uses the short accent color for a short current-position badge', () => {
+    render(
+      <PerpsAccountPanel
+        isConnected
+        position={{
+          exists: true,
+          side: 1,
+          direction: 'short',
+          size: 0n,
+          entryPrice: 101240000n,
+          marginUsdc: 400000000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 0n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 2000000000n,
+          entryNotionalUsdc: 2000000000n,
+          dxyExposureUsdc: 2096930000n,
+          pendingCarryUsdc: 0n,
+        }}
+      />
+    )
+
+    expect(screen.getByText('Short')).toHaveClass('text-cyber-electric-fuchsia')
+    expect(screen.getByText('Short')).not.toHaveClass('text-cyber-neon-green')
+  })
+
   it('does not show position margin edit when there is no connected live position', () => {
     render(<PerpsAccountPanel isConnected={false} />)
 

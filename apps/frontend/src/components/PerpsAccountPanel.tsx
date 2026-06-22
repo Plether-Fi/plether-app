@@ -116,6 +116,12 @@ function pnlToneClass(tone: PositionRow['tone']): string {
   return 'text-cyber-text-primary'
 }
 
+function positionSideBadgeClass(direction: PerpsPosition['direction']): string {
+  return direction === 'long'
+    ? 'border-cyber-neon-green/40 text-cyber-neon-green'
+    : 'border-cyber-electric-fuchsia/40 text-cyber-electric-fuchsia'
+}
+
 function formatLiquidationDistance(currentPrice?: bigint, liquidationPrice?: bigint): string | undefined {
   const displayLiquidationPrice = oraclePriceToDisplayDxyPrice(liquidationPrice)
   if (
@@ -458,7 +464,7 @@ function PositionView({
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-cyber-text-secondary">Current Position</div>
         <div className="mt-2 flex items-center gap-3">
-          <span className="border border-cyber-neon-green/40 px-3 py-1 text-sm font-semibold text-cyber-neon-green">
+          <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
             {currentPosition.side}
           </span>
           <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{currentPosition.market}</div>

@@ -27,6 +27,7 @@ import Plether.Database.Schema
   , getPerpsKeeperLastIndexedBlock
   , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
+  , isHistoricalRevealPayload
   , markPerpsKeeperOrderExecuted
   , markPerpsKeeperOrderFailed
   , recordPerpsKeeperOrderAttempt
@@ -261,6 +262,13 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
             "queue head order "
               <> show (pkorOrderId freshHead)
               <> " is waiting for first post-commit cached Pyth payload"
+        Just payload
+          | not (isHistoricalRevealPayload payload) ->
+              putStrLn $
+                "queue head order "
+                  <> show (pkorOrderId freshHead)
+                  <> " is waiting for exact historical Pyth payload; cached source was "
+                  <> T.unpack (puprSource payload)
         Just payload ->
           case decodePayload payload of
             Left err -> do
@@ -600,11 +608,12 @@ rpcErrorText :: RpcError -> Text
 rpcErrorText = \case
   RpcHttpError err -> "RPC HTTP error: " <> err
   RpcJsonError err -> "RPC JSON error: " <> err
-  RpcNodeError code message ->
+  RpcNodeError code message mData ->
     "RPC node error "
       <> T.pack (show code)
       <> ": "
       <> message
+      <> maybe "" ("; data: " <>) mData
 
 strip0x :: Text -> Text
 strip0x value =

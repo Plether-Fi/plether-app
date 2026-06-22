@@ -1,6 +1,6 @@
 module Plether.KeeperSpec (spec) where
 
-import Plether.Database.Schema (PerpsKeeperOrderRow (..))
+import Plether.Database.Schema (PerpsKeeperOrderRow (..), isHistoricalRevealPayloadSource)
 import Plether.Keeper (isFrozenClosePayloadReady, isOrderExpired, isOrderRevealReady, selectBatchCandidates)
 import Test.Hspec
 
@@ -46,6 +46,15 @@ spec = do
     it "rejects a future payload" $ do
       isFrozenClosePayloadReady 1_000 200 60 [1_001]
         `shouldBe` False
+
+  describe "isHistoricalRevealPayloadSource" $ do
+    it "accepts exact historical reveal payload sources" $ do
+      isHistoricalRevealPayloadSource "backend_hermes_historical" `shouldBe` True
+      isHistoricalRevealPayloadSource "backend_hermes_reveal_backfill" `shouldBe` True
+
+    it "rejects latest-loop payload sources for normal historical reveal" $ do
+      isHistoricalRevealPayloadSource "backend_hermes_latest" `shouldBe` False
+      isHistoricalRevealPayloadSource "backend_hermes" `shouldBe` False
 
   describe "selectBatchCandidates" $ do
     it "takes contiguous ready orders sharing the same payload" $ do
