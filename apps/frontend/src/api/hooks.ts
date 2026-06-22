@@ -39,6 +39,7 @@ export const apiQueryKeys = {
     basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
     basketHistory: (range: BasketHistoryRange, intervalSeconds: number) =>
       [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds] as const,
+    marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
   },
   user: {
     all: (address: string) => ['user', currentChainId, address] as const,
@@ -115,6 +116,16 @@ export function usePerpsBasketLatest() {
     queryFn: async () => unwrapResult(await plethApi.getPerpsBasketLatest()),
     staleTime: 5 * 1000,
     refetchInterval: 5 * 1000,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
+  });
+}
+
+export function usePerpsMarketStats() {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.marketStats(),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsMarketStats()),
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }

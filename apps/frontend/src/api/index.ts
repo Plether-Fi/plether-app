@@ -29,6 +29,7 @@ export type {
   BasketComponentPrice,
   BasketHistoryRange,
   PerpsRevealPayload,
+  PerpsMarketStats,
   // User types
   UserDashboard,
   UserBalances,
@@ -71,6 +72,7 @@ export {
   useProtocolConfig,
   usePerpsBasketHistory,
   usePerpsBasketLatest,
+  usePerpsMarketStats,
   // User hooks
   useUserDashboard,
   useUserBalances,

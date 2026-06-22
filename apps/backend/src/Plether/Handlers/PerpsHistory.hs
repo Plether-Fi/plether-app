@@ -1,6 +1,7 @@
 module Plether.Handlers.PerpsHistory
   ( getPerpsAccountOrders
   , getPerpsAccountActivity
+  , getPerpsMarketStatsResponse
   , getPerpsIndexerStatusResponse
   , waitForPerpsOrderTerminal
   ) where
@@ -10,6 +11,7 @@ import Data.Aeson (Value, object, (.=))
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
@@ -18,6 +20,7 @@ import Plether.Database.Schema
   , PerpsOrderRow (..)
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
+  , getPerpsMarketVolumeSince
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
@@ -63,6 +66,25 @@ getPerpsAccountActivity pool cfg account limit cursor = do
             [ Just $ "activity" .= map activityRowToJson rows
             , ("nextCursor" .=) <$> nextActivityCursor pageLimit rows
             ]
+
+getPerpsMarketStatsResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getPerpsMarketStatsResponse pool cfg = do
+  now <- round <$> getPOSIXTime
+  let rangeSeconds = 24 * 60 * 60
+      fromTimestamp = now - rangeSeconds
+  volume24hUsdc <- withDb pool $ \conn ->
+    getPerpsMarketVolumeSince conn (cfgChainId cfg) fromTimestamp
+  pure $
+    Right $
+      mkResponse 0 (cfgChainId cfg) $
+        object
+          [ "rangeSeconds" .= rangeSeconds
+          , "generatedAt" .= now
+          , "volume24hUsdc" .= show volume24hUsdc
+          ]
 
 getPerpsIndexerStatusResponse
   :: DbPool
