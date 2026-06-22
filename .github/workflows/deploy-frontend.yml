@@ -115,6 +115,7 @@ jobs:
 
       - name: Configure testnet DNS record
         if: env.TARGET_ENV == 'sepolia'
+        continue-on-error: true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -126,7 +127,10 @@ jobs:
           ZONE_ID=$(curl --fail --silent --show-error \
             --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "$API_BASE/zones?name=$ZONE" | jq -r '.result[0].id // empty')
-          test -n "$ZONE_ID"
+          if [ -z "$ZONE_ID" ]; then
+            echo "::warning::Could not find Cloudflare zone $ZONE. Ensure CLOUDFLARE_API_TOKEN can read/edit DNS, or create a proxied CNAME from $DOMAIN to $TARGET manually."
+            exit 1
+          fi
 
           RECORDS=$(curl --fail --silent --show-error \
             --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
