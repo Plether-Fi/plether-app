@@ -1204,7 +1204,7 @@ export function PerpsTradeTicket({
     }
 
     const timeout = globalThis.setTimeout(() => {
-      const warning = 'No wallet response yet. Open MetaMask manually and check for a pending confirmation. If MetaMask has no pending request, reject any stuck request, reconnect the wallet, and retry.'
+      const warning = 'No wallet response yet. Open your wallet app or extension and check for a pending confirmation. If there is no pending request, reject any stuck request, reconnect the wallet, and retry.'
       debugPerpsCommit('ticket:wallet-request:still-pending', {
         seconds: 15,
         address,

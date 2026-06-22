@@ -52,7 +52,7 @@ export function Modal({
   if (!isOpen) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       {/* Backdrop */}
       <div
         className="absolute inset-0 cursor-pointer bg-cyber-bg"
@@ -62,12 +62,12 @@ export function Modal({
       {/* Modal Content */}
       <div
         className={`
-          relative w-full ${sizeStyles[size]} mx-4
+          relative flex max-h-[calc(100dvh-2rem)] w-full ${sizeStyles[size]} flex-col
           bg-cyber-surface-dark  border border-cyber-border-glow/50
         `}
       >
         {hasHeader ? (
-          <div className="relative border-b border-cyber-border-glow/30 px-6 py-4">
+          <div className="relative shrink-0 border-b border-cyber-border-glow/30 px-6 py-4">
             {title ? (
               <div className="flex items-center justify-between">
                 <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
@@ -93,7 +93,7 @@ export function Modal({
         ) : null}
 
         {/* Body */}
-        <div className="p-6">{children}</div>
+        <div className="min-h-0 overflow-y-auto overscroll-contain p-6">{children}</div>
       </div>
     </div>,
     document.body

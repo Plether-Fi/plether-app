@@ -1,7 +1,13 @@
 module Plether.KeeperSpec (spec) where
 
 import Plether.Database.Schema (PerpsKeeperOrderRow (..), isHistoricalRevealPayloadSource)
-import Plether.Keeper (isFrozenClosePayloadReady, isOrderExpired, isOrderRevealReady, selectBatchCandidates)
+import Plether.Keeper
+  ( isFrozenClosePayloadReady
+  , isOrderExpired
+  , isOrderRevealReady
+  , isSameBlockMevGuardError
+  , selectBatchCandidates
+  )
 import Test.Hspec
 
 spec :: Spec
@@ -55,6 +61,15 @@ spec = do
     it "rejects latest-loop payload sources for normal historical reveal" $ do
       isHistoricalRevealPayloadSource "backend_hermes_latest" `shouldBe` False
       isHistoricalRevealPayloadSource "backend_hermes" `shouldBe` False
+
+  describe "isSameBlockMevGuardError" $ do
+    it "detects router same-block MEV guard reverts by selector" $ do
+      isSameBlockMevGuardError "RPC node error 3: execution reverted; data: 0x7abb32d5"
+        `shouldBe` True
+
+    it "does not classify unrelated execution reverts as next-block retryable" $ do
+      isSameBlockMevGuardError "RPC node error 3: execution reverted; data: 0x1dc4770a"
+        `shouldBe` False
 
   describe "selectBatchCandidates" $ do
     it "takes contiguous ready orders sharing the same payload" $ do

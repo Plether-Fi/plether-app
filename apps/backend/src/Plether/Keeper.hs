@@ -4,6 +4,7 @@ module Plether.Keeper
   , isOrderExpired
   , isOrderRevealReady
   , isFrozenClosePayloadReady
+  , isSameBlockMevGuardError
   , selectBatchCandidates
   ) where
 
@@ -32,6 +33,7 @@ import Plether.Database.Schema
   , markPerpsKeeperOrderFailed
   , recordPerpsKeeperOrderAttempt
   , recordPerpsKeeperOrderError
+  , recordPerpsKeeperOrderImmediateRetryError
   , setPerpsKeeperLastIndexedBlock
   , tryPerpsKeeperLock
   , unlockPerpsKeeperLock
@@ -517,7 +519,10 @@ applyReceipt conn targetIds receipt = do
 
 recordAllErrors :: Connection -> [Integer] -> Text -> IO ()
 recordAllErrors conn orderIds err = do
-  forM_ orderIds $ \orderId -> recordPerpsKeeperOrderError conn orderId err
+  forM_ orderIds $ \orderId ->
+    if isSameBlockMevGuardError err
+      then recordPerpsKeeperOrderImmediateRetryError conn orderId err
+      else recordPerpsKeeperOrderError conn orderId err
   putStrLn $ "keeper transaction skipped/failed: " <> T.unpack err
 
 decodePayload :: PythUpdatePayloadRow -> Either Text ([Integer], [ByteString])
@@ -555,6 +560,10 @@ isFrozenClosePayloadReady chainNow maxStaleness maxDivergence publishTimes =
     _ ->
       all (\publishTime -> publishTime <= chainNow && chainNow - publishTime <= maxStaleness) publishTimes
         && maximum publishTimes <= minimum publishTimes + maxDivergence
+
+isSameBlockMevGuardError :: Text -> Bool
+isSameBlockMevGuardError err =
+  "0x7abb32d5" `T.isInfixOf` T.toLower err
 
 selectBatchCandidates
   :: Integer -- chain now

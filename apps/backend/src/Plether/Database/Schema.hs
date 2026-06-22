@@ -33,6 +33,7 @@ module Plether.Database.Schema
   , markPerpsKeeperOrderFailed
   , recordPerpsKeeperOrderAttempt
   , recordPerpsKeeperOrderError
+  , recordPerpsKeeperOrderImmediateRetryError
   , getPendingPerpsKeeperOrders
   , PerpsKeeperOrderRow (..)
   , ensurePerpsHistorySchema
@@ -701,6 +702,17 @@ recordPerpsKeeperOrderError conn orderId err = do
   _ <- execute conn
     "UPDATE perps_keeper_orders SET \
     \last_error = ?, \
+    \updated_at = NOW() \
+    \WHERE order_id = ?"
+    (err, orderId)
+  pure ()
+
+recordPerpsKeeperOrderImmediateRetryError :: Connection -> Integer -> Text -> IO ()
+recordPerpsKeeperOrderImmediateRetryError conn orderId err = do
+  _ <- execute conn
+    "UPDATE perps_keeper_orders SET \
+    \last_error = ?, \
+    \last_attempt_at = NULL, \
     \updated_at = NOW() \
     \WHERE order_id = ?"
     (err, orderId)
