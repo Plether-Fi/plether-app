@@ -75,4 +75,6 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master --cwd=apps/frontend
+          wranglerVersion: 4.103.0
+          workingDirectory: apps/frontend
+          command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master
