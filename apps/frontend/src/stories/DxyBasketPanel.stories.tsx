@@ -107,7 +107,7 @@ const INTERVAL_CONFIG: Record<
   '1m': { points: 24 * 60 + 1, intervalSeconds: 60, totalMove: 0.0065 },
   '5m': { points: 24 * 12 + 1, intervalSeconds: 5 * 60, totalMove: 0.0065 },
   '1h': { points: 7 * 24 + 1, intervalSeconds: 60 * 60, totalMove: 0.019 },
-  '1d': { points: 180 + 1, intervalSeconds: 24 * 60 * 60, totalMove: 0.072 },
+  '1d': { points: 30 + 1, intervalSeconds: 24 * 60 * 60, totalMove: 0.034 },
 }
 
 function toOracleString(value: number): string {

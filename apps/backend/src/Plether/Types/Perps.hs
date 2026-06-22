@@ -6,16 +6,13 @@ module Plether.Types.Perps
   , PythUpdateResponse (..)
   , RevealPayloadResponse (..)
   , basketRangeSeconds
-  , basketRangeStart
   , defaultBasketHistoryParams
   ) where
 
 import Data.Aeson (ToJSON (..), Value, object, (.=))
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time.Calendar (fromGregorian, toGregorian)
-import Data.Time.Clock (UTCTime (..))
-import Data.Time.Clock.POSIX (POSIXTime, posixSecondsToUTCTime, utcTimeToPOSIXSeconds)
+import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
 
 data BasketHistoryParams = BasketHistoryParams
@@ -37,18 +34,6 @@ basketRangeSeconds range =
     "24h" -> 24 * 60 * 60
     "30d" -> 30 * 24 * 60 * 60
     _ -> 7 * 24 * 60 * 60
-
-basketRangeStart :: Text -> Integer -> Integer
-basketRangeStart range nowUnix =
-  case T.toLower range of
-    "ytd" -> jan1Unix nowUnix
-    _ -> nowUnix - basketRangeSeconds range
-  where
-    jan1Unix :: Integer -> Integer
-    jan1Unix timestamp =
-      let UTCTime day _ = posixSecondsToUTCTime (fromIntegral timestamp)
-          (year, _, _) = toGregorian day
-      in floor $ utcTimeToPOSIXSeconds $ UTCTime (fromGregorian year 1 1) 0
 
 data BasketHistoryPoint = BasketHistoryPoint
   { bhpTimestamp :: Integer

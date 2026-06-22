@@ -26,14 +26,6 @@ locals {
     RPC_URL="$ETH_RPC_URL" CHAIN_ID="$ETH_CHAIN_ID" plether-basket-worker --latest-loop --poll-seconds "$BASKET_WORKER_POLL_SECONDS" &
     pids="$pids $!"
 
-    (
-      while :; do
-        RPC_URL="$ETH_RPC_URL" CHAIN_ID="$ETH_CHAIN_ID" PYTH_SAMPLE_INTERVAL_SECONDS="$BASKET_HISTORY_INTERVAL_SECONDS" plether-basket-worker --backfill-once --backfill-days "$BASKET_HISTORY_BACKFILL_DAYS" || echo "daily basket history backfill failed"
-        sleep "$BASKET_HISTORY_BACKFILL_POLL_SECONDS"
-      done
-    ) &
-    pids="$pids $!"
-
     RPC_URL="$PERPS_RPC_URL" CHAIN_ID="$PERPS_CHAIN_ID" plether-perps-indexer --loop &
     pids="$pids $!"
 
@@ -354,9 +346,6 @@ resource "aws_ecs_task_definition" "workers" {
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
       { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
       { name = "BASKET_WORKER_POLL_SECONDS", value = var.basket_worker_poll_seconds },
-      { name = "BASKET_HISTORY_BACKFILL_DAYS", value = var.basket_history_backfill_days },
-      { name = "BASKET_HISTORY_INTERVAL_SECONDS", value = var.basket_history_interval_seconds },
-      { name = "BASKET_HISTORY_BACKFILL_POLL_SECONDS", value = var.basket_history_backfill_poll_seconds },
       { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
       { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
       { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },

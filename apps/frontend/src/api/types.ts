@@ -130,7 +130,7 @@ export interface ProtocolConfig {
 // Perps Basket Types
 // =============================================================================
 
-export type BasketHistoryRange = '24h' | '7d' | '30d' | 'ytd';
+export type BasketHistoryRange = '24h' | '7d' | '30d';
 
 export interface BasketComponentPrice {
   symbol: string;

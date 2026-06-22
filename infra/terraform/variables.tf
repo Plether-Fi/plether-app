@@ -129,24 +129,6 @@ variable "basket_worker_poll_seconds" {
   default = "5"
 }
 
-variable "basket_history_backfill_days" {
-  type        = string
-  default     = "180"
-  description = "Historical basket backfill window for long-range daily charts."
-}
-
-variable "basket_history_interval_seconds" {
-  type        = string
-  default     = "86400"
-  description = "Historical basket sample interval used for long-range chart backfills."
-}
-
-variable "basket_history_backfill_poll_seconds" {
-  type        = string
-  default     = "21600"
-  description = "How often the consolidated worker refreshes long-range historical basket snapshots."
-}
-
 variable "keeper_poll_seconds" {
   type    = string
   default = "1"

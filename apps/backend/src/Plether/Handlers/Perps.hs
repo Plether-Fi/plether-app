@@ -57,10 +57,9 @@ getBasketHistory
 getBasketHistory pool cfg params = do
   now <- getPOSIXTime
   let nowUnix = round now
-      fromUnix = basketRangeStart (bhpRange params) nowUnix
-      rangeSeconds = max 0 (nowUnix - fromUnix)
+      fromUnix = nowUnix - basketRangeSeconds (bhpRange params)
       interval = max 60 (bhpIntervalSeconds params)
-      maxPoints = fromIntegral ((rangeSeconds `div` interval) + 4)
+      maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
 
   rows <- withDb pool $ \conn ->
     getBasketSnapshots conn fromUnix nowUnix interval maxPoints
