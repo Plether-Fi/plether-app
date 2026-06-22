@@ -14,6 +14,10 @@ export interface PerpsOrderHistoryRow {
   status: string
   commitTxHash: Hex
   revealTxHash?: Hex
+  failureReason?: string
+  executionPriceRaw?: bigint
+  activitySizeDeltaRaw?: bigint
+  activityPriceRaw?: bigint
 }
 
 export interface PerpsTradeHistoryRow {
@@ -40,6 +44,13 @@ interface BackendOrdersResponse {
 interface BackendActivityResponse {
   data?: {
     activity?: BackendActivityRow[]
+  }
+}
+
+interface BackendOrderWaitResponse {
+  data?: {
+    timedOut?: boolean
+    order?: BackendOrderRow | null
   }
 }
 
@@ -145,6 +156,9 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const orderId = parseBigInt(row.orderId)
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
+  const executionPriceRaw = parseBigInt(row.executionPrice)
+  const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
+  const activityPriceRaw = parseBigInt(row.activityPrice)
 
   return {
     orderId,
@@ -157,6 +171,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     status: orderStatus(row),
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
+    failureReason: row.failureReason,
+    executionPriceRaw,
+    activitySizeDeltaRaw,
+    activityPriceRaw,
   }
 }
 
@@ -208,7 +226,7 @@ function activityResult(row: BackendActivityRow): string | undefined {
   if (row.activityType === 'Cleaned up expired order' && row.orderId) return `Order ${row.orderId}`
   if (row.activityType === 'Liquidated') {
     const keeperBounty = parseBigInt(row.amountUsdc)
-    return keeperBounty === undefined ? undefined : `Keeper bounty ${formatPerpsUsdc(keeperBounty)}`
+    return keeperBounty === undefined ? undefined : `Liquidation reward ${formatPerpsUsdc(keeperBounty)}`
   }
 
   const pnl = parseBigInt(row.pnlUsdc)
@@ -230,11 +248,14 @@ function mapActivityRow(row: BackendActivityRow): PerpsTradeHistoryRow | undefin
   }
 }
 
-async function fetchJson<T>(url: URL): Promise<T> {
+async function fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url)
+    response = await fetch(url, { signal })
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error
+    }
     throw new Error(
       `Could not reach backend history API. Check that the backend and plether-perps-indexer are running. ${
         error instanceof Error ? error.message : ''
@@ -248,6 +269,31 @@ async function fetchJson<T>(url: URL): Promise<T> {
   }
 
   return await response.json() as T
+}
+
+export async function waitForPerpsOrderTerminal({
+  accountAddress,
+  orderId,
+  timeoutSeconds = 60,
+  signal,
+}: {
+  accountAddress?: string
+  orderId: bigint
+  timeoutSeconds?: number
+  signal?: AbortSignal
+}): Promise<{ timedOut: boolean; order?: PerpsOrderHistoryRow }> {
+  const waitUrl = perpsApiUrl(`/perps/orders/${orderId.toString()}/wait`)
+  waitUrl.searchParams.set('timeoutSeconds', String(timeoutSeconds))
+  if (accountAddress) {
+    waitUrl.searchParams.set('account', accountAddress)
+  }
+
+  const response = await fetchJson<BackendOrderWaitResponse>(waitUrl, signal)
+  const order = response.data?.order ? mapOrderRow(response.data.order) : undefined
+  return {
+    timedOut: Boolean(response.data?.timedOut),
+    order,
+  }
 }
 
 async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryData> {

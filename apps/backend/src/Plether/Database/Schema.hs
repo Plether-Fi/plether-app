@@ -42,6 +42,7 @@ module Plether.Database.Schema
   , upsertPerpsOrderTerminal
   , insertPerpsActivity
   , getPerpsOrdersByAccount
+  , getPerpsOrderById
   , getPerpsActivityByAccount
   , getPerpsOrderAccountSide
   , insertPerpsExpiredCleanupActivityIfReady
@@ -1077,6 +1078,41 @@ getPerpsOrdersByAccount conn chainId account limit cursor = do
       \  OR (COALESCE(o.terminal_block_number, o.commit_block_number, 0) = ? AND o.order_id < ?)) \
       \ORDER BY COALESCE(o.terminal_block_number, o.commit_block_number) DESC, o.order_id DESC \
       \LIMIT ?"
+
+getPerpsOrderById :: Connection -> Integer -> Integer -> Maybe Text -> IO (Maybe PerpsOrderRow)
+getPerpsOrderById conn chainId orderId mAccount = do
+  rows <- case mAccount of
+    Nothing ->
+      query conn baseQuery (chainId, orderId)
+    Just account ->
+      query conn accountQuery (chainId, orderId, T.toLower account)
+  pure $ case rows of
+    row : _ -> Just row
+    [] -> Nothing
+  where
+    baseSelect :: Query
+    baseSelect =
+      "SELECT o.order_id, o.account, o.side, o.commit_tx_hash, o.commit_block_number, o.commit_timestamp, \
+      \o.terminal_tx_hash, o.terminal_block_number, o.terminal_timestamp, o.terminal_status, o.failure_reason, \
+      \o.execution_price, o.cleanup_actor, a.activity_type, a.size_delta, a.price, a.pnl_usdc, \
+      \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
+      \FROM perps_orders o \
+      \LEFT JOIN LATERAL (\
+      \  SELECT activity_type, size_delta, price, pnl_usdc \
+      \  FROM perps_account_activity a \
+      \  WHERE a.chain_id = o.chain_id AND a.account = o.account AND a.tx_hash = o.terminal_tx_hash \
+      \    AND a.activity_type IN ('Open', 'Close', 'Liquidated') \
+      \  ORDER BY a.log_index ASC LIMIT 1\
+      \) a ON TRUE \
+      \WHERE o.chain_id = ? AND o.order_id = ?"
+
+    baseQuery :: Query
+    baseQuery =
+      baseSelect <> " LIMIT 1"
+
+    accountQuery :: Query
+    accountQuery =
+      baseSelect <> " AND o.account = ? LIMIT 1"
 
 getPerpsActivityByAccount :: Connection -> Integer -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsActivityRow]
 getPerpsActivityByAccount conn chainId account limit cursor = do

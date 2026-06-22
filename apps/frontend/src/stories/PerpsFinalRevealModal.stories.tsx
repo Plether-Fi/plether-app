@@ -23,7 +23,7 @@ const FINAL_PRICE_RAW = 102_590_000n
 const TARGET_EXPOSURE_USDC = 2_116n * USDC
 const EXECUTED_SIZE_DELTA = ((TARGET_EXPOSURE_USDC * POSITION_SIZE_TO_USDC_SCALE) + FINAL_PRICE_RAW - 1n) / FINAL_PRICE_RAW
 const COMMIT_TX = '0x46cb00000000000000000000000000000000000000000000000000000000001cbb'
-const KEEPER_REVEAL_TX = '0x6c0d00000000000000000000000000000000000000000000000000000000b7d3'
+const AUTO_FINALIZE_TX = '0x6c0d00000000000000000000000000000000000000000000000000000000b7d3'
 const SELF_REVEAL_TX = '0x9e1f00000000000000000000000000000000000000000000000000000000cafe'
 
 const executedPosition = {
@@ -41,7 +41,7 @@ const executedPosition = {
   dxyExposureUsdc: 2_116_700_000n,
 } satisfies PerpsPosition
 
-const keeperExecutedOrderHistory = [
+const automaticallyFinalizedOrderHistory = [
   {
     orderId: ORDER_ID,
     time: '12:02',
@@ -52,7 +52,7 @@ const keeperExecutedOrderHistory = [
     size: '2 116',
     status: 'Executed',
     commitTxHash: COMMIT_TX,
-    revealTxHash: KEEPER_REVEAL_TX,
+    revealTxHash: AUTO_FINALIZE_TX,
   },
 ] satisfies PerpsOrderHistoryRow[]
 
@@ -61,7 +61,6 @@ const baseModalArgs = {
   initialDirection: 'long',
   initialSize: '2116',
   initialOrderId: ORDER_ID,
-  initialPositionSnapshotAtCommit: { exists: false, size: 0n },
   initialCommitTxHash: COMMIT_TX,
   initialFinalExecutionPrice: FINAL_PRICE_RAW,
   initialCommittedSizeDelta: EXECUTED_SIZE_DELTA,
@@ -106,15 +105,17 @@ function renderModal(overrides: Partial<TicketProps> = {}) {
   return () => <TicketFrame {...modalProps(overrides)} />
 }
 
-export const KeeperExecutedSuccess: Story = {
+export const AutomaticallyFinalizedSuccess: Story = {
+  name: 'Automatically Finalized Success',
   render: renderModal({
     initialLifecycleState: 'executed',
     currentPosition: executedPosition,
-    orderHistory: keeperExecutedOrderHistory,
+    orderHistory: automaticallyFinalizedOrderHistory,
   }),
 }
 
 export const SelfExecutedSuccess: Story = {
+  name: 'Manually Finalized Success',
   render: renderModal({
     initialLifecycleState: 'executed',
     initialExecuteTxHash: SELF_REVEAL_TX,
@@ -122,43 +123,50 @@ export const SelfExecutedSuccess: Story = {
   }),
 }
 
-export const KeeperWaiting: Story = {
+export const FinalizingPrice: Story = {
+  name: 'Finalizing Price',
   render: renderModal({
     initialLifecycleState: 'revealPending',
+    showFinalizationProgress: true,
   }),
 }
 
-export const KeeperOverdue: Story = {
+export const ManualFinalizationReady: Story = {
+  name: 'Manual Finalization Ready',
   render: renderModal({
     initialLifecycleState: 'selfExecuteAvailable',
   }),
 }
 
-export const RevealNotReady: Story = {
+export const FinalPriceNotReady: Story = {
+  name: 'Final Price Not Ready',
   render: renderModal({
     initialLifecycleState: 'selfExecuteAvailable',
-    initialFlowError: 'Reveal is not ready yet. Execution must happen after the commit block.',
+    initialFlowError: 'Final price is not ready yet. Execution must happen after the commit block.',
   }),
 }
 
-export const HermesRateLimited: Story = {
+export const PriceDataRateLimited: Story = {
+  name: 'Price Data Rate Limited',
   render: renderModal({
     initialLifecycleState: 'selfExecuteAvailable',
-    initialFlowError: 'Hermes rate limit reached while fetching historical Pyth data. Retry shortly.',
+    initialFlowError: 'Price data service rate limit reached while fetching historical market data. Retry shortly.',
   }),
 }
 
-export const HistoricalPythDataRequired: Story = {
+export const HistoricalPriceDataRequired: Story = {
+  name: 'Historical Price Data Required',
   render: renderModal({
     initialLifecycleState: 'selfExecuteAvailable',
-    initialFlowError: 'Historical Pyth update was unavailable for the first post-commit tick. Wait for the cache to backfill, then retry self execute.',
+    initialFlowError: 'Historical price data was unavailable for the first post-commit tick. Wait for the cache to backfill, then retry finalizing.',
   }),
 }
 
-export const HistoricalPythRejected: Story = {
+export const HistoricalPriceDataRejected: Story = {
+  name: 'Historical Price Data Rejected',
   render: renderModal({
     initialLifecycleState: 'selfExecuteFailed',
-    initialFlowError: 'Historical Pyth update was rejected by the router with stale-price error. The payload did not contain the exact first post-commit tick.',
+    initialFlowError: 'Historical price data was rejected with a stale-price error. The payload did not contain the exact first post-commit tick.',
   }),
 }
 
@@ -169,10 +177,11 @@ export const OrderNoLongerPending: Story = {
   }),
 }
 
-export const SelfExecuteWalletRejected: Story = {
+export const ManualFinalizationWalletRejected: Story = {
+  name: 'Manual Finalization Wallet Rejected',
   render: renderModal({
     initialLifecycleState: 'selfExecuteFailed',
-    initialFlowError: 'User rejected the reveal transaction request in the wallet.',
+    initialFlowError: 'User rejected the finalization transaction request in the wallet.',
   }),
 }
 

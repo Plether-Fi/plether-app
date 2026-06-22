@@ -20,6 +20,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   commitOrder: vi.fn(),
   executeOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
+  waitForPerpsOrderTerminal: vi.fn(),
 }))
 
 vi.mock('wagmi', () => ({
@@ -56,6 +57,7 @@ vi.mock('../../hooks', () => ({
     switchError: null,
     clearSwitchError: vi.fn(),
   }),
+  waitForPerpsOrderTerminal: perpsTradingMocks.waitForPerpsOrderTerminal,
 }))
 
 describe('perps lifecycle labels', () => {
@@ -107,10 +109,10 @@ describe('perps lifecycle labels', () => {
     expect(finalResultQueries.getByText('Execution plDXY Perp exposure')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Keeper bounty')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at reveal.')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Execution reward')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.')).toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
-    expect(finalResultQueries.queryByText('Estimated keeper bounty')).not.toBeInTheDocument()
+    expect(finalResultQueries.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
     expect(screen.getByText('Entry notional')).toBeInTheDocument()
     expect(screen.getByText('Entry price')).toBeInTheDocument()
@@ -190,7 +192,7 @@ describe('perps lifecycle labels', () => {
             side: 'Liquidated Long',
             price: '1.0300',
             size: '1 000',
-            pnl: 'Keeper bounty 0.2',
+            pnl: 'Liquidation reward 0.2',
             txHash: '0x1d1000000000000000000000000000000000001d0',
           },
         ]}
@@ -215,7 +217,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Margin Account')).toBeInTheDocument()
     expect(screen.getByText('Add margin')).toBeInTheDocument()
     expect(screen.getByText('Liquidated Long')).toBeInTheDocument()
-    expect(screen.getByText('Keeper bounty 0.2')).toBeInTheDocument()
+    expect(screen.getByText('Liquidation reward 0.2')).toBeInTheDocument()
   })
 
   it('fills current position and max with exact plDXY Perp exposure instead of rounded display value', () => {
@@ -433,7 +435,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Edit position margin' })).not.toBeInTheDocument()
   })
 
-  it('hides manual execution during the keeper grace period', async () => {
+  it('hides manual finalization during the automatic finalization grace period', async () => {
     vi.useFakeTimers()
     const onAccountRefresh = vi.fn()
 
@@ -446,28 +448,83 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
-    expect(screen.getByRole('progressbar', { name: 'Keeper reveal progress' })).toBeInTheDocument()
+    expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'Price finalization progress' })).toBeInTheDocument()
     expect(screen.queryByText(/This panel will show the confirmation automatically/i)).not.toBeInTheDocument()
 
     await act(async () => {
       vi.advanceTimersByTime(19_000)
     })
 
-    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
-    expect(screen.getByRole('progressbar', { name: 'Keeper reveal progress' })).toHaveAttribute('aria-valuenow', '95')
-    expect(onAccountRefresh).toHaveBeenCalled()
+    expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'Price finalization progress' })).toHaveAttribute('aria-valuenow', '95')
+    expect(onAccountRefresh).not.toHaveBeenCalled()
 
     await act(async () => {
       vi.advanceTimersByTime(1_000)
     })
 
-    expect(screen.getByRole('button', { name: 'Self Execute' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Finalize Trade' })).toBeInTheDocument()
   })
 
-  it('shows the execution confirmation if the keeper settles before manual execution is available', async () => {
+  it('shows the 20-second finalization progress circle in story mode without backend waiting', async () => {
+    vi.useFakeTimers()
+    const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.7)
+
+    try {
+      render(
+        <PerpsTradeTicket
+          initialLifecycleState="revealPending"
+          initialReviewOpen
+          initialOrderId={62n}
+          showFinalizationProgress
+        />
+      )
+
+      expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+      expect(screen.queryByText('Finalizing execution price')).not.toBeInTheDocument()
+      expect(screen.getByText('Using signed oracle data for the order window before settling the trade.')).toBeInTheDocument()
+      expect(screen.getByRole('progressbar', { name: 'Price finalization progress' })).toHaveAttribute('aria-valuenow', '0')
+      expect(screen.getByText('Available in 20s')).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Show Manual Option' })).not.toBeInTheDocument()
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).not.toHaveBeenCalled()
+
+      await act(async () => {
+        vi.advanceTimersByTime(4_000)
+      })
+
+      expect(screen.getByText('Verifying solvency after execution')).toBeInTheDocument()
+      expect(screen.getByText('Checking the account remains properly collateralized after settlement.')).toBeInTheDocument()
+
+      await act(async () => {
+        vi.advanceTimersByTime(6_000)
+      })
+
+      expect(screen.getByRole('progressbar', { name: 'Price finalization progress' })).toHaveAttribute('aria-valuenow', '50')
+    } finally {
+      randomSpy.mockRestore()
+    }
+  })
+
+  it('shows the execution confirmation if automatic finalization settles before the manual option is available', async () => {
     mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: {
+        orderId: 58n,
+        time: '22 Jun, 12:02',
+        market: 'plDXY Perp',
+        side: 'Long',
+        type: 'Open',
+        price: '0.9733',
+        size: '1 000',
+        status: 'Executed',
+        commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+        revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
+        executionPriceRaw: 97_330_315n,
+      },
+    })
 
     const baseProps = {
       enableLiveTrading: true,
@@ -476,10 +533,6 @@ describe('perps lifecycle labels', () => {
       initialDirection: 'long' as const,
       initialSize: '1 000',
       initialOrderId: 58n,
-      initialPositionSnapshotAtCommit: {
-        exists: false,
-        size: 0n,
-      },
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
       availableToTradeRaw: 2_000_000_000n,
@@ -490,46 +543,10 @@ describe('perps lifecycle labels', () => {
       minNewPositionNotionalUsdc: 100_000_000n,
     }
 
-    const { rerender } = render(<PerpsTradeTicket {...baseProps} />)
+    render(<PerpsTradeTicket {...baseProps} />)
 
-    expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
-
-    await act(async () => {
-      rerender(
-        <PerpsTradeTicket
-          {...baseProps}
-          currentPosition={{
-            exists: true,
-            side: 0,
-            direction: 'long',
-            size: 1_027_429_363_241_152_525_586n,
-            entryPrice: 97_330_315n,
-            marginUsdc: 200_000_000n,
-            unrealizedPnlUsdc: 0n,
-            maintenanceMarginUsdc: 0n,
-            liquidatable: false,
-            estimatedNotionalUsdc: 1_000_000_000n,
-            dxyExposureUsdc: 1_000_000_000n,
-          }}
-          pendingOrderIds={[]}
-          orderHistory={[
-            {
-              orderId: 58n,
-              time: '22 Jun, 12:02',
-              market: 'plDXY Perp',
-              side: 'Long',
-              type: 'Open',
-              price: '0.9733',
-              size: '1 000',
-              status: 'Executed',
-              commitTxHash: '0x46cb000000000000000000000000000000001cbb',
-              revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
-            },
-          ]}
-        />
-      )
-    })
+    expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
 
     await waitFor(() => {
       expect(screen.getByText('Final Result')).toBeInTheDocument()
@@ -537,51 +554,136 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     expect(within(finalResult!).getByText('0x6c0d...b7d3')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
   })
 
   it('stops waiting if the order leaves pending state without executing', async () => {
-    vi.useFakeTimers()
     mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: {
+        orderId: 60n,
+        time: '22 Jun, 12:03',
+        market: 'plDXY Perp',
+        side: 'Long',
+        type: 'Cleanup',
+        price: '--',
+        size: '--',
+        status: 'Expired / Cleaned up',
+        commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+        revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
+        failureReason: 'Expired',
+      },
+    })
 
-    try {
-      render(
-        <PerpsTradeTicket
-          enableLiveTrading
-          initialLifecycleState="revealPending"
-          initialReviewOpen
-          initialDirection="long"
-          initialSize="1 000"
-          initialOrderId={60n}
-          initialPositionSnapshotAtCommit={{
-            exists: false,
-            size: 0n,
-          }}
-          pendingOrderIds={[]}
-          oraclePriceRaw={97_330_315n}
-          oraclePublishTime={Math.floor(Date.now() / 1000)}
-          availableToTradeRaw={2_000_000_000n}
-          walletUsdcRaw={2_000_000_000n}
-          portfolioValueRaw={2_000_000_000n}
-          withdrawableUsdcRaw={2_000_000_000n}
-          minOpenNotionalUsdc={100_000_000n}
-          minNewPositionNotionalUsdc={100_000_000n}
-        />
-      )
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="1 000"
+        initialOrderId={60n}
+        oraclePriceRaw={97_330_315n}
+        oraclePublishTime={Math.floor(Date.now() / 1000)}
+        availableToTradeRaw={2_000_000_000n}
+        walletUsdcRaw={2_000_000_000n}
+        portfolioValueRaw={2_000_000_000n}
+        withdrawableUsdcRaw={2_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={100_000_000n}
+      />
+    )
 
-      expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
+    expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(20_000)
+    await waitFor(() => {
+      expect(screen.getByText('Order failed')).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/The order expired before it could be revealed/i)).toBeInTheDocument()
+    expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
+  })
+
+  it('waits for indexed terminal order confirmation after manual finalization submits', async () => {
+    mockIsConnected = true
+    let resolveWait: (value: {
+      timedOut: boolean
+      order?: {
+        orderId: bigint
+        time: string
+        market: string
+        side: string
+        type: string
+        price: string
+        size: string
+        status: string
+        commitTxHash: `0x${string}`
+        revealTxHash?: `0x${string}`
+        executionPriceRaw?: bigint
+      }
+    }) => void = () => {}
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise((resolve) => {
+        resolveWait = resolve
       })
+    )
+    perpsTradingMocks.executeOrder.mockResolvedValue({
+      hash: '0x9e1f00000000000000000000000000000000cafe',
+      executionPrice: 97_330_315n,
+    })
 
-      expect(screen.getByText('Order no longer pending')).toBeInTheDocument()
-      expect(screen.getByText(/Order 60 is no longer pending, but your position did not change/i)).toBeInTheDocument()
-      expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
-      expect(screen.queryByRole('button', { name: 'Retry Self Execute' })).not.toBeInTheDocument()
-      expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
-    } finally {
-      vi.useRealTimers()
-    }
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="selfExecuteAvailable"
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="1 000"
+        initialOrderId={63n}
+        initialCommitTxHash="0x46cb000000000000000000000000000000001cbb"
+        oraclePriceRaw={97_330_315n}
+        oraclePublishTime={Math.floor(Date.now() / 1000)}
+        availableToTradeRaw={2_000_000_000n}
+        walletUsdcRaw={2_000_000_000n}
+        portfolioValueRaw={2_000_000_000n}
+        withdrawableUsdcRaw={2_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={100_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Finalize Trade' }))
+
+    await waitFor(() => {
+      expect(perpsTradingMocks.executeOrder).toHaveBeenCalledWith(63n)
+    })
+    expect(screen.getByText('Finalizing trade')).toBeInTheDocument()
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveWait({
+        timedOut: false,
+        order: {
+          orderId: 63n,
+          time: '22 Jun, 12:05',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Open',
+          price: '0.9733',
+          size: '1 000',
+          status: 'Executed',
+          commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+          revealTxHash: '0x9e1f00000000000000000000000000000000cafe',
+          executionPriceRaw: 97_330_315n,
+        },
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
   })
 })

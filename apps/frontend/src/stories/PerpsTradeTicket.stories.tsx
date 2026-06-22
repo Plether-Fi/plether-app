@@ -130,14 +130,17 @@ export const CommitPending: Story = {
 }
 
 export const RevealPending: Story = {
+  name: 'Finalizing Price',
   args: {
     initialLifecycleState: 'revealPending',
     initialReviewOpen: true,
+    showFinalizationProgress: true,
   },
   render: (args) => <TicketFrame {...args} />,
 }
 
 export const SelfExecuteAvailable: Story = {
+  name: 'Manual Finalization Ready',
   args: {
     initialLifecycleState: 'selfExecuteAvailable',
     initialReviewOpen: true,
@@ -146,6 +149,7 @@ export const SelfExecuteAvailable: Story = {
 }
 
 export const SelfExecutePending: Story = {
+  name: 'Finalizing Trade',
   args: {
     initialLifecycleState: 'selfExecutePending',
     initialReviewOpen: true,
@@ -154,6 +158,7 @@ export const SelfExecutePending: Story = {
 }
 
 export const SelfExecuteFailed: Story = {
+  name: 'Finalization Failed',
   args: {
     initialLifecycleState: 'selfExecuteFailed',
     initialReviewOpen: true,

@@ -214,7 +214,6 @@ export function Perps() {
           pendingOrders={perpsAccount.pendingOrders}
           orderHistory={perpsHistory.orderHistory}
           pendingOrderCount={perpsAccount.pendingOrders.length}
-          pendingOrderIds={perpsAccount.pendingOrders.map((order) => order.orderId)}
           maxPendingOrders={perpsAccount.maxPendingOrders}
           firstPendingOrderId={perpsAccount.firstPendingOrderId}
           firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
