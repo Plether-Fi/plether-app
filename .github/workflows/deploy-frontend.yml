@@ -68,6 +68,7 @@ jobs:
 
           [vars]
           SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          MAINNET_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
           EOF
 
       - name: Ensure testnet Pages project
