@@ -31,6 +31,7 @@ import Plether.Handlers.PerpsHistory
   ( getPerpsAccountActivity
   , getPerpsAccountOrders
   , getPerpsIndexerStatusResponse
+  , getPerpsMarketStatsResponse
   , waitForPerpsOrderTerminal
   )
 import Plether.Handlers.Quote
@@ -247,6 +248,15 @@ app cache client cfg mPool manager = do
           (_, Nothing) ->
             handleError $ E.invalidAmount "timeoutSeconds must be a positive integer"
     Nothing -> pure ()
+
+  get "/api/perps/market/stats" $ do
+    case mPool of
+      Just pool -> do
+        result <- liftIO $ getPerpsMarketStatsResponse pool cfg
+        handleResult result
+      Nothing ->
+        handleServiceUnavailable $
+          E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
 
   get "/api/perps/basket/history" $ do
     params <- basketHistoryParams

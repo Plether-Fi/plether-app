@@ -47,6 +47,7 @@ module Plether.Database.Schema
   , getPerpsOrdersByAccount
   , getPerpsOrderById
   , getPerpsActivityByAccount
+  , getPerpsMarketVolumeSince
   , getPerpsOrderAccountSide
   , insertPerpsExpiredCleanupActivityIfReady
   , getPerpsIndexerStatus
@@ -909,6 +910,9 @@ ensurePerpsHistorySchema conn = do
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_account_block \
     \ON perps_account_activity(account, block_number DESC, log_index DESC)"
   _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_chain_timestamp \
+    \ON perps_account_activity(chain_id, timestamp DESC)"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_indexer_state (\
     \indexer_name TEXT NOT NULL,\
     \chain_id BIGINT NOT NULL,\
@@ -1165,6 +1169,21 @@ getPerpsActivityByAccount conn chainId account limit cursor = do
       \WHERE chain_id = ? AND account = ? \
       \AND (block_number < ? OR (block_number = ? AND log_index < ?)) \
       \ORDER BY block_number DESC, log_index DESC LIMIT ?"
+
+getPerpsMarketVolumeSince :: Connection -> Integer -> Integer -> IO Integer
+getPerpsMarketVolumeSince conn chainId fromTimestamp = do
+  rows <- query conn
+    "SELECT FLOOR(COALESCE(SUM(ABS(size_delta) * price / 100000000000000000000), 0)) \
+    \FROM perps_account_activity \
+    \WHERE chain_id = ? \
+    \AND timestamp >= ? \
+    \AND activity_type IN ('Open', 'Close', 'Liquidated') \
+    \AND size_delta IS NOT NULL \
+    \AND price IS NOT NULL"
+    (chainId, fromTimestamp)
+  case rows of
+    [Only (Just value)] -> pure $ scientificToInteger value
+    _ -> pure 0
 
 getPerpsOrderAccountSide :: Connection -> Integer -> Integer -> IO (Maybe (Text, Maybe Int))
 getPerpsOrderAccountSide conn chainId orderId = do

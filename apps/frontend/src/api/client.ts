@@ -34,6 +34,7 @@ import type {
   BasketLatest,
   BasketHistoryRange,
   PerpsRevealPayload,
+  PerpsMarketStats,
 } from './types';
 
 // =============================================================================
@@ -289,6 +290,10 @@ export class PlethApiClient {
 
   async getPerpsBasketLatest(): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
     return fetchApi<BasketLatest>(this.config, '/perps/basket/latest');
+  }
+
+  async getPerpsMarketStats(): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {
+    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats');
   }
 
   async getPerpsRevealPayload(
