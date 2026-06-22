@@ -199,7 +199,7 @@ export function Perps() {
           historyError={perpsHistory.error}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
-            void perpsMarket.refetch()
+            perpsMarket.refetch()
             void perpsHistory.refetch()
           }}
         />
@@ -238,7 +238,7 @@ export function Perps() {
           marketCurrentDuration={marketSchedule.currentDuration}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
-            void perpsMarket.refetch()
+            perpsMarket.refetch()
             void perpsHistory.refetch()
           }}
         />
