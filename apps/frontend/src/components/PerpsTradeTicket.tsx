@@ -5,7 +5,7 @@ import { zeroAddress } from 'viem'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
-import type { PerpsPendingOrder, PerpsPosition } from '../hooks'
+import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
@@ -112,6 +112,11 @@ interface PerpsTradeTicketProps {
   initialReduceOnly?: boolean
   initialOrderId?: bigint
   initialPositionSnapshotAtCommit?: PositionSnapshot
+  initialCommitTxHash?: string
+  initialExecuteTxHash?: string
+  initialFinalExecutionPrice?: bigint
+  initialCommittedSizeDelta?: bigint
+  initialFlowError?: string
   currentPositionSide?: Direction
   currentPositionAmount?: string
   enableLiveTrading?: boolean
@@ -128,6 +133,7 @@ interface PerpsTradeTicketProps {
   marginAllowanceUsdc?: bigint
   currentPosition?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
+  orderHistory?: PerpsOrderHistoryRow[]
   pendingOrderCount?: number
   pendingOrderIds?: bigint[]
   maxPendingOrders?: bigint
@@ -933,6 +939,11 @@ export function PerpsTradeTicket({
   initialReduceOnly = false,
   initialOrderId,
   initialPositionSnapshotAtCommit,
+  initialCommitTxHash,
+  initialExecuteTxHash,
+  initialFinalExecutionPrice,
+  initialCommittedSizeDelta,
+  initialFlowError,
   currentPositionSide = 'long',
   currentPositionAmount,
   enableLiveTrading = false,
@@ -949,6 +960,7 @@ export function PerpsTradeTicket({
   marginAllowanceUsdc,
   currentPosition,
   pendingOrders = [],
+  orderHistory = [],
   pendingOrderCount,
   pendingOrderIds = [],
   maxPendingOrders,
@@ -980,11 +992,11 @@ export function PerpsTradeTicket({
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
-  const [commitTxHash, setCommitTxHash] = useState<string | undefined>()
-  const [executeTxHash, setExecuteTxHash] = useState<string | undefined>()
-  const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>()
-  const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>()
-  const [flowError, setFlowError] = useState<string | undefined>()
+  const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
+  const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
+  const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
+  const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
+  const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
   const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
   const [marginActionAmount, setMarginActionAmount] = useState('')
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
@@ -1104,6 +1116,7 @@ export function PerpsTradeTicket({
     })) {
       setFlowError(undefined)
       setFinalExecutionPrice(currentPosition?.entryPrice)
+      onAccountRefreshRef.current?.()
       setLifecycleState('executed')
       return
     }
@@ -1563,8 +1576,11 @@ export function PerpsTradeTicket({
 
   const currentLifecycleStep = lifecycleStep(lifecycleState)
   const displayOrderId = orderId === undefined ? (enableLiveTrading ? '--' : ORDER_ID) : orderId.toString()
-  const displayCommitTx = commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
-  const displayExecuteTx = executeTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
+  const executedOrderHistoryRow = orderId === undefined
+    ? undefined
+    : orderHistory.find((row) => row.orderId === orderId && row.status === 'Executed')
+  const displayCommitTx = commitTxHash ?? executedOrderHistoryRow?.commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
+  const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
   const isTerminalRevealError = flowError !== undefined && isOrderNoLongerPendingMessage(flowError)

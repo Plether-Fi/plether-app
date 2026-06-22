@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Hex } from 'viem'
 import { useAccount } from 'wagmi'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
@@ -24,6 +24,11 @@ export interface PerpsTradeHistoryRow {
   size: string
   pnl?: string
   txHash: Hex
+}
+
+interface PerpsHistoryData {
+  orderHistory: PerpsOrderHistoryRow[]
+  tradeHistory: PerpsTradeHistoryRow[]
 }
 
 interface BackendOrdersResponse {
@@ -245,12 +250,60 @@ async function fetchJson<T>(url: URL): Promise<T> {
   return await response.json() as T
 }
 
+async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryData> {
+  const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
+  ordersUrl.searchParams.set('limit', '30')
+  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
+  activityUrl.searchParams.set('limit', '30')
+
+  const [ordersResponse, activityResponse] = await Promise.all([
+    fetchJson<BackendOrdersResponse>(ordersUrl),
+    fetchJson<BackendActivityResponse>(activityUrl),
+  ])
+
+  return {
+    orderHistory: (ordersResponse.data?.orders ?? []).flatMap((row) => {
+      const mapped = mapOrderRow(row)
+      return mapped ? [mapped] : []
+    }),
+    tradeHistory: (activityResponse.data?.activity ?? []).flatMap((row) => {
+      const mapped = mapActivityRow(row)
+      return mapped ? [mapped] : []
+    }),
+  }
+}
+
 export function usePerpsHistory() {
   const { address, isConnected } = useAccount()
   const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
   const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
+
+  const refetch = useCallback(async () => {
+    if (!isConnected || !address) {
+      setOrderHistory([])
+      setTradeHistory([])
+      setError(undefined)
+      setIsLoading(false)
+      return
+    }
+
+    setIsLoading(true)
+    setError(undefined)
+
+    try {
+      const nextHistory = await fetchPerpsHistory(address)
+      setOrderHistory(nextHistory.orderHistory)
+      setTradeHistory(nextHistory.tradeHistory)
+      setIsLoading(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error(String(cause)))
+      setOrderHistory([])
+      setTradeHistory([])
+      setIsLoading(false)
+    }
+  }, [address, isConnected])
 
   useEffect(() => {
     if (!isConnected || !address) {
@@ -271,25 +324,11 @@ export function usePerpsHistory() {
       setError(undefined)
 
       try {
-        const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
-        ordersUrl.searchParams.set('limit', '30')
-        const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
-        activityUrl.searchParams.set('limit', '30')
-
-        const [ordersResponse, activityResponse] = await Promise.all([
-          fetchJson<BackendOrdersResponse>(ordersUrl),
-          fetchJson<BackendActivityResponse>(activityUrl),
-        ])
+        const nextHistory = await fetchPerpsHistory(accountAddress)
 
         if (!cancelled) {
-          setOrderHistory((ordersResponse.data?.orders ?? []).flatMap((row) => {
-            const mapped = mapOrderRow(row)
-            return mapped ? [mapped] : []
-          }))
-          setTradeHistory((activityResponse.data?.activity ?? []).flatMap((row) => {
-            const mapped = mapActivityRow(row)
-            return mapped ? [mapped] : []
-          }))
+          setOrderHistory(nextHistory.orderHistory)
+          setTradeHistory(nextHistory.tradeHistory)
           setIsLoading(false)
         }
       } catch (cause) {
@@ -318,5 +357,6 @@ export function usePerpsHistory() {
     tradeHistory,
     isLoading,
     error,
-  }), [error, isLoading, orderHistory, tradeHistory])
+    refetch,
+  }), [error, isLoading, orderHistory, refetch, tradeHistory])
 }

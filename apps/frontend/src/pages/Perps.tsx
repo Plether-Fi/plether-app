@@ -189,6 +189,7 @@ export function Perps() {
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()
+            void perpsHistory.refetch()
           }}
         />
       </div>
@@ -211,6 +212,7 @@ export function Perps() {
           currentPositionSide={perpsAccount.position?.direction}
           currentPositionAmount={perpsAccount.display.positionNotional}
           pendingOrders={perpsAccount.pendingOrders}
+          orderHistory={perpsHistory.orderHistory}
           pendingOrderCount={perpsAccount.pendingOrders.length}
           pendingOrderIds={perpsAccount.pendingOrders.map((order) => order.orderId)}
           maxPendingOrders={perpsAccount.maxPendingOrders}
@@ -227,6 +229,7 @@ export function Perps() {
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()
+            void perpsHistory.refetch()
           }}
         />
       </div>

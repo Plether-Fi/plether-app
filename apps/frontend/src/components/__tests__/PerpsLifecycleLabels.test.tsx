@@ -513,6 +513,20 @@ describe('perps lifecycle labels', () => {
             dxyExposureUsdc: 1_000_000_000n,
           }}
           pendingOrderIds={[]}
+          orderHistory={[
+            {
+              orderId: 58n,
+              time: '22 Jun, 12:02',
+              market: 'plDXY Perp',
+              side: 'Long',
+              type: 'Open',
+              price: '0.9733',
+              size: '1 000',
+              status: 'Executed',
+              commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+              revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
+            },
+          ]}
         />
       )
     })
@@ -520,6 +534,9 @@ describe('perps lifecycle labels', () => {
     await waitFor(() => {
       expect(screen.getByText('Final Result')).toBeInTheDocument()
     })
+    const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
+    expect(finalResult).toBeInTheDocument()
+    expect(within(finalResult!).getByText('0x6c0d...b7d3')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
   })
 
