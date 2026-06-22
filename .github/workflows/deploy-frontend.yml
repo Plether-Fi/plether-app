@@ -54,9 +54,25 @@ jobs:
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
         run: npm run build
 
+      - name: Configure testnet Pages bindings
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          test -n "$SEPOLIA_BACKEND_URL"
+          cat > wrangler.toml <<EOF
+          name = "plether-testnet"
+          pages_build_output_dir = "dist"
+          compatibility_date = "2026-06-22"
+
+          [vars]
+          SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          EOF
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/frontend/dist --project-name=${{ steps.target.outputs.project }} --branch=master
+          command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master --cwd=apps/frontend
