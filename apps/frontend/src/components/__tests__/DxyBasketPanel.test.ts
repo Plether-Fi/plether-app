@@ -1,5 +1,38 @@
 import { describe, expect, it } from 'vitest'
-import { buildCandles, oracleNumberToDisplayDxyPrice } from '../../utils/dxyBasketChart'
+import { buildCandles, mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../../utils/dxyBasketChart'
+import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
+
+const component: BasketComponentPrice = {
+  symbol: 'EUR/USD',
+  feedSymbol: 'EUR/USD',
+  feedId: '0xfeed',
+  price: '100000000',
+  rawPrice: '100000',
+  confidence: '1',
+  exponent: -5,
+  publishTime: 100,
+  inverted: false,
+  weightBps: 10000,
+  basePrice: '100000000',
+}
+
+function historyPoint(timestamp: number, basketPrice: string): BasketHistoryPoint {
+  return {
+    timestamp,
+    basketPrice,
+    components: [component],
+  }
+}
+
+function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
+  return {
+    timestamp,
+    basketPrice,
+    components: [{ ...component, publishTime: timestamp + 1 }],
+    generatedAt: timestamp + 2,
+    source: 'database',
+  }
+}
 
 describe('DXY basket chart display transform', () => {
   it('plots raw basket prices as reversed DXY display prices', () => {
@@ -31,5 +64,25 @@ describe('DXY basket chart display transform', () => {
     const latest = oracleNumberToDisplayDxyPrice(0.97)
 
     expect((latest - first) / first).toBeGreaterThan(0)
+  })
+
+  it('replaces the current history bucket with the live latest point', () => {
+    const merged = mergeLatestBasketPoint(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(120, '96000000')
+    )
+
+    expect(merged).toHaveLength(2)
+    expect(merged.at(-1)?.basketPrice).toBe('96000000')
+    expect(merged.at(-1)?.components[0]?.publishTime).toBe(121)
+  })
+
+  it('appends the live latest point when it has moved into a new bucket', () => {
+    const merged = mergeLatestBasketPoint(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000')
+    )
+
+    expect(merged.map((point) => point.timestamp)).toEqual([60, 120, 180])
   })
 })

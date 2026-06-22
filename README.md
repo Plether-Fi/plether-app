@@ -37,6 +37,7 @@ cabal run plether-api   # http://localhost:3001
 
 - [Frontend README](apps/frontend/README.md) - React app setup, testing, Storybook
 - [Backend README](apps/backend/README.md) - API endpoints, caching, configuration
+- [Plether Core ABI/API Reference](https://plether-fi.github.io/plether-core/) - Smart contract interfaces and generated API docs
 
 ## Networks
 

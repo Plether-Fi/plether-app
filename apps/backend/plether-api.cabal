@@ -34,6 +34,9 @@ library
         Plether.Ethereum.Client
         Plether.Ethereum.Multicall
         Plether.Ethereum.Abi
+        Plether.Ethereum.Rlp
+        Plether.Ethereum.Rpc
+        Plether.Ethereum.Transaction
         Plether.Ethereum.Contracts.ERC20
         Plether.Ethereum.Contracts.SyntheticSplitter
         Plether.Ethereum.Contracts.BasketOracle
@@ -44,6 +47,7 @@ library
         Plether.Ethereum.Contracts.CurvePool
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter
+        Plether.Ethereum.Contracts.Perps
         Plether.Utils.Address
         Plether.Utils.Hex
         Plether.Utils.Numeric
@@ -59,6 +63,7 @@ library
         Plether.Indexer.Contracts
         Plether.Indexer.Events
         Plether.Handlers.History
+        Plether.Keeper
         Plether.Handlers.PerpsHistory
     build-depends:
         base >= 4.17 && < 5,
@@ -85,6 +90,8 @@ library
         vector >= 0.13,
         postgresql-simple >= 0.7,
         resource-pool >= 0.4
+    pkgconfig-depends:
+        libsecp256k1
     hs-source-dirs:   src
     default-language: GHC2021
     default-extensions:
@@ -130,6 +137,19 @@ executable plether-basket-worker
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-keeper
+    import:           warnings
+    main-is:          Keeper.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 executable plether-perps-indexer
     import:           warnings
     main-is:          PerpsIndexer.hs
@@ -153,8 +173,11 @@ test-suite plether-api-test
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
+        Plether.Ethereum.Contracts.PerpsSpec
+        Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.KeeperSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
     build-depends:

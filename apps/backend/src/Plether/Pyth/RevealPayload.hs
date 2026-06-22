@@ -40,7 +40,8 @@ validateRevealWindow commitTime settlementWindow publishTimes = do
   (minimumTs, maximumTs) <- validatePublishTimes publishTimes
   if minimumTs < minAllowed
     then Left "payload publish time is before the reveal window"
-    else
-      if maximumTs > maxAllowed
+    else if minimumTs > minAllowed
+      then Left "payload publish time is after the first reveal tick"
+      else if maximumTs > maxAllowed
         then Left "payload publish time is after the reveal window"
         else Right (minimumTs, maximumTs)

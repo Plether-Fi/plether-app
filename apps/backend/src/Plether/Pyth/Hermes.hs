@@ -1,5 +1,6 @@
 module Plether.Pyth.Hermes
   ( HermesBasketUpdate (..)
+  , fetchBasketUpdateAt
   , fetchLatestBasketUpdate
   ) where
 
@@ -90,7 +91,15 @@ parsePythPrice feedId = withObject "HermesPrice" $ \v -> do
       }
 
 fetchLatestBasketUpdate :: Manager -> Config -> IO (Either Text HermesBasketUpdate)
-fetchLatestBasketUpdate manager cfg = do
+fetchLatestBasketUpdate manager cfg =
+  fetchBasketUpdate manager cfg "latest" "backend_hermes_latest"
+
+fetchBasketUpdateAt :: Manager -> Config -> Integer -> IO (Either Text HermesBasketUpdate)
+fetchBasketUpdateAt manager cfg publishTime =
+  fetchBasketUpdate manager cfg (T.pack $ show publishTime) "backend_hermes_historical"
+
+fetchBasketUpdate :: Manager -> Config -> Text -> Text -> IO (Either Text HermesBasketUpdate)
+fetchBasketUpdate manager cfg pathSegment source = do
   nowUnix <- round <$> getPOSIXTime
   requestBase <- parseRequest $ T.unpack requestUrl
   let request =
@@ -109,7 +118,8 @@ fetchLatestBasketUpdate manager cfg = do
   where
     requestUrl =
       stripTrailingSlash (cfgPythHermesUrl cfg)
-        <> "/v2/updates/price/latest"
+        <> "/v2/updates/price/"
+        <> pathSegment
 
     queryParams =
       ("parsed", Just "true")
@@ -127,16 +137,16 @@ fetchLatestBasketUpdate manager cfg = do
     decodeBasket now body = do
       HermesResponse {..} <-
         case eitherDecode body of
-          Left err -> Left $ "could not decode Hermes latest response: " <> T.pack err
+          Left err -> Left $ "could not decode Hermes response: " <> T.pack err
           Right value -> Right value
       if null (hbData hrBinary)
-        then Left "Hermes latest response did not include binary update data"
+        then Left "Hermes response did not include binary update data"
         else case computeBasketSnapshot hrParsed of
           Left err -> Left err
           Right (basketPrice, components) ->
             let publishTimes = pppPublishTime <$> hrParsed
              in if length publishTimes /= length basketComponents
-                  then Left "Hermes latest response did not include all six parsed feed publish times"
+                  then Left "Hermes response did not include all six parsed feed publish times"
                   else
                     Right
                       HermesBasketUpdate
@@ -145,7 +155,7 @@ fetchLatestBasketUpdate manager cfg = do
                         , hbuUpdateData = prefixHex <$> hbData hrBinary
                         , hbuPublishTimes = publishTimes
                         , hbuFetchedAt = now
-                        , hbuSource = "backend_hermes"
+                        , hbuSource = source
                         }
 
 parseIntegerish :: Value -> Parser Integer

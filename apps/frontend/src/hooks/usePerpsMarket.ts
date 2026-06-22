@@ -179,8 +179,6 @@ export function usePerpsMarket() {
     const tradingActive = tupleValue(protocolStatus, 5, 'tradingActive') as boolean | undefined
     const oracleFrozen = tupleValue(protocolStatus, 3, 'oracleFrozen') as boolean | undefined
     const fadWindow = tupleValue(protocolStatus, 4, 'fadWindow') as boolean | undefined
-    const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
-    const markFresh = tupleValue(poolLiquidity, 8, 'markFresh') as boolean | undefined
     const poolAssetsUsdc = tupleValue(poolLiquidity, 0, 'totalAssetsUsdc') as bigint | undefined
     const freeUsdc = tupleValue(poolLiquidity, 1, 'freeUsdc') as bigint | undefined
     const bullOpenInterest = tupleValue(bullSide, 1, 'openInterest') as bigint | undefined
@@ -209,39 +207,21 @@ export function usePerpsMarket() {
 
     const phase = phaseValue === undefined ? undefined : Number(phaseValue)
     const marketPhase = protocolPhaseToMarketPhase(phase, tradingActive, oracleFrozen, fadWindow)
-    const lastMarkTimeNumber = lastMarkTime === undefined ? undefined : Number(lastMarkTime)
-    const hasStoredMark = markPrice !== undefined && markPrice > 0n && lastMarkTimeNumber !== undefined && lastMarkTimeNumber > 0
-    const nonOpenMarketMark = marketPhase !== 'open' && hasStoredMark
-    const onchainOracleFresh = hasStoredMark && !nonOpenMarketMark && (markFresh ?? !oracleFrozen)
     const latestBasketTimestamp = latestBasket?.data.timestamp
-    const backendHasNewerBasketUpdate =
-      latestBasketTimestamp !== undefined &&
-      (lastMarkTimeNumber === undefined || latestBasketTimestamp > lastMarkTimeNumber)
     const backendBasketAgeSeconds = latestBasketTimestamp === undefined
       ? undefined
       : Math.max(0, Math.floor(Date.now() / 1000) - latestBasketTimestamp)
     const backendBasketFresh =
-      backendHasNewerBasketUpdate &&
       backendBasketAgeSeconds !== undefined &&
       backendBasketAgeSeconds <= ORACLE_FRESH_SECONDS
-    const oracleFreshness: PerpsOracleFreshness | undefined = nonOpenMarketMark
-      ? 'market-closed'
-      : onchainOracleFresh
-        ? 'fresh'
-        : backendBasketFresh
-          ? 'backend-fresh'
-          : isLatestBasketLoading
-            ? 'checking'
-            : hasStoredMark || latestBasketTimestamp !== undefined
-              ? 'stale'
-              : undefined
-    const oracleFreshnessTime = nonOpenMarketMark
-      ? lastMarkTimeNumber
-      : onchainOracleFresh
-        ? lastMarkTimeNumber
-        : backendBasketFresh
-          ? latestBasketTimestamp
-          : lastMarkTimeNumber ?? latestBasketTimestamp
+    const oracleFreshness: PerpsOracleFreshness | undefined = backendBasketFresh
+      ? 'fresh'
+      : isLatestBasketLoading
+        ? 'checking'
+        : latestBasketTimestamp !== undefined
+          ? 'stale'
+          : undefined
+    const oracleFreshnessTime = latestBasketTimestamp
 
     return {
       chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -266,8 +246,6 @@ export function usePerpsMarket() {
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       oracleFreshness,
       oracleFreshnessTime,
-      backendLatestBasketTime: latestBasketTimestamp,
-      lastMarkTime: lastMarkTimeNumber,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
       shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
       availableLiquidity: formatCompactUsdc(freeUsdc),

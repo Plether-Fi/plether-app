@@ -2,6 +2,8 @@ import { decodeErrorResult, parseAbi } from 'viem'
 
 type PerpsAction = 'approve' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'commit' | 'execute'
 
+export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
+
 const PERPS_ERROR_ABI = parseAbi([
   'error EnforcedPause()',
 
@@ -138,7 +140,8 @@ function getNestedString(error: unknown, keys: string[], depth = 0): string | un
 function getNestedArgs(error: unknown, depth = 0): readonly unknown[] | undefined {
   if (!error || typeof error !== 'object' || depth > 6) return undefined
   const record = error as Record<string, unknown>
-  if (Array.isArray(record.args)) return record.args as readonly unknown[]
+  const args = record.args
+  if (Array.isArray(args)) return args as readonly unknown[]
   for (const value of Object.values(record)) {
     const nested = getNestedArgs(value, depth + 1)
     if (nested) return nested
@@ -232,21 +235,25 @@ function formatStalePriceMessage(args: readonly unknown[] | undefined): string {
   ) {
     return 'Pyth price data expired before the transaction landed. Retry self-execute and confirm promptly.'
   }
+  const publishTimeText = publishTime.toString()
+  const currentTimestampText = currentTimestamp.toString()
+  const ageSecondsText = ageSeconds.toString()
+  const maxStalenessText = maxStaleness.toString()
 
   const zeroFeedId = feedId === '0x0000000000000000000000000000000000000000000000000000000000000000'
-  const publishTimestamp = publishTime.toString()
-  const currentTimestampLabel = currentTimestamp.toString()
-  const ageLabel = ageSeconds.toString()
-  const maxStalenessLabel = maxStaleness.toString()
   if (zeroFeedId && ageSeconds <= maxStaleness) {
-    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestampLabel}); oracle max publish bound: ${publishLabel} (${publishTimestamp}); decoded bound age: ${ageLabel}s; staleness limit: ${maxStalenessLabel}s. The app will retry with exact historical Hermes data when possible; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
+    return `Historical Pyth update was rejected for this order's reveal window. The oracle could not parse a unique historical tick after commit, even though the data was not expired. Router check time: ${currentLabel} (${currentTimestampText}); oracle max publish bound: ${publishLabel} (${publishTimeText}); decoded bound age: ${ageSecondsText}s; staleness limit: ${maxStalenessText}s. The app will retry with exact historical Hermes data when possible; if this repeats, wait for the order to expire, clean it up, and create a fresh order.`
   }
 
   if (ageSeconds <= maxStaleness) {
-    return `Oracle returned a stale-price error, but the decoded timestamps are inconsistent. Decoded publish time: ${publishLabel} (${publishTimestamp}); decoded chain check time: ${currentLabel} (${currentTimestampLabel}); decoded age: ${ageLabel}s; limit: ${maxStalenessLabel}s. Retry self-execute; if this repeats, send this line to the team.`
+    return `Oracle returned a stale-price error, but the decoded timestamps are inconsistent. Decoded publish time: ${publishLabel} (${publishTimeText}); decoded chain check time: ${currentLabel} (${currentTimestampText}); decoded age: ${ageSecondsText}s; limit: ${maxStalenessText}s. Retry self-execute; if this repeats, send this line to the team.`
   }
 
-  return `Pyth price data expired before the transaction landed. Price publish time: ${publishLabel}; chain check time: ${currentLabel}; age: ${ageLabel}s; limit: ${maxStalenessLabel}s. Retry self-execute and confirm promptly.`
+  return `Pyth price data expired before the transaction landed. Price publish time: ${publishLabel}; chain check time: ${currentLabel}; age: ${ageSecondsText}s; limit: ${maxStalenessText}s. Retry self-execute and confirm promptly.`
+}
+
+function codeSuffix(code: number | undefined): string {
+  return code === undefined ? '' : ` (${code.toString()})`
 }
 
 function messageForDecodedError(name: string | undefined, args: readonly unknown[] | undefined): string | undefined {
@@ -266,17 +273,17 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Order size must be greater than zero.'
     case 'OrderRouter__CommitValidation': {
       const code = argNumber(args)
-      return COMMIT_VALIDATION_MESSAGES[code ?? -1] ?? `Order commit failed validation${code === undefined ? '' : ` (${code.toString()})`}.`
+      return COMMIT_VALIDATION_MESSAGES[code ?? -1] ?? `Order commit failed validation${codeSuffix(code)}.`
     }
     case 'OrderRouter__PredictableOpenInvalid': {
       const code = argNumber(args)
-      return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code.toString()})`}.`
+      return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
     }
     case 'CfdEngine__TypedOrderFailure': {
       const code = argNumber(args, 1)
       const isClose = args?.[2] === true
       const message = isClose ? CLOSE_REVERT_MESSAGES[code ?? -1] : OPEN_REVERT_MESSAGES[code ?? -1]
-      return message ?? `The engine rejected this ${isClose ? 'close' : 'open'} order${code === undefined ? '' : ` (${code.toString()})`}.`
+      return message ?? `The engine rejected this ${isClose ? 'close' : 'open'} order${codeSuffix(code)}.`
     }
     case 'CfdEngine__NotAccountOwner':
       return 'This wallet can only add margin to its own position.'
@@ -388,7 +395,7 @@ function fallbackMessage(action: PerpsAction): string {
     case 'addPositionMargin':
       return 'Add position margin failed. Check free margin, open position state, and wallet gas.'
     case 'commit':
-      return 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
+      return COMMIT_UNDECODED_FALLBACK_MESSAGE
     case 'execute':
       return 'Self-execute failed. Retry with fresh Pyth data; the previous update may have expired.'
   }
@@ -434,11 +441,11 @@ export function getPerpsOrderFailureMessage(reason: number | undefined): string 
 }
 
 export function getPerpsOpenRevertMessage(code: number | undefined): string {
-  return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${code === undefined ? '' : ` (${code.toString()})`}.`
+  return OPEN_REVERT_MESSAGES[code ?? -1] ?? `This open order is invalid right now${codeSuffix(code)}.`
 }
 
 export function getPerpsCloseInvalidReasonMessage(reason: number | undefined): string {
-  return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${reason === undefined ? '' : ` (${reason.toString()})`}.`
+  return CLOSE_INVALID_REASON_MESSAGES[reason ?? -1] ?? `This reduce/close order is invalid right now${codeSuffix(reason)}.`
 }
 
 export function getPerpsErrorMessage(error: unknown, action: PerpsAction): string {

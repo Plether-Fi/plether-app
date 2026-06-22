@@ -99,7 +99,7 @@ rpcErrorToApiError :: RpcError -> ApiError
 rpcErrorToApiError = \case
   RpcHttpError _ -> networkError "Blockchain node unreachable"
   RpcJsonError _ -> internalError "Unexpected response from blockchain node"
-  RpcNodeError _ msg -> rpcError $ sanitizeNodeError msg
+  RpcNodeError _ msg _ -> rpcError $ sanitizeNodeError msg
 
 sanitizeNodeError :: Text -> Text
 sanitizeNodeError msg

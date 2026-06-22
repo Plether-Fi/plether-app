@@ -14,7 +14,7 @@ import {
   type PerpsDirection,
   type PerpsPythUpdatePayload,
 } from '../utils/perps'
-import { getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
+import { COMMIT_UNDECODED_FALLBACK_MESSAGE, getPerpsCloseInvalidReasonMessage, getPerpsErrorMessage, getPerpsOpenRevertMessage } from '../utils/perpsErrors'
 
 interface CommitOrderInput {
   direction: PerpsDirection
@@ -58,6 +58,7 @@ interface InjectedEthereumProvider {
 
 const FEE_ESTIMATE_TIMEOUT_MS = 2_500
 const WALLET_PROBE_TIMEOUT_MS = 1_500
+const TX_HASH_PATTERN = /0x[a-fA-F0-9]{64}/
 
 function isPerpsCommitDebugEnabled(): boolean {
   if (import.meta.env.MODE === 'test') return false
@@ -303,10 +304,41 @@ async function getBufferedFeeParams(client: PerpsPublicClient, context = 'transa
   }
 }
 
+function findTransactionHash(value: unknown, depth = 0): Hex | undefined {
+  if (depth > 6 || value === undefined || value === null) return undefined
+  if (typeof value === 'string') {
+    return TX_HASH_PATTERN.exec(value)?.[0] as Hex | undefined
+  }
+  if (typeof value !== 'object') return undefined
+
+  if (value instanceof Error) {
+    return findTransactionHash(value.message, depth + 1) ??
+      findTransactionHash((value as Error & { cause?: unknown }).cause, depth + 1)
+  }
+
+  for (const nestedValue of Object.values(value as Record<string, unknown>)) {
+    const hash = findTransactionHash(nestedValue, depth + 1)
+    if (hash) return hash
+  }
+  return undefined
+}
+
+function shouldEnrichCommitFailure(message: string): boolean {
+  if (message === COMMIT_UNDECODED_FALLBACK_MESSAGE) return true
+
+  const lowerMessage = message.toLowerCase()
+  return lowerMessage === 'transaction failed' ||
+    lowerMessage === 'execution reverted' ||
+    lowerMessage.includes('missing revert data') ||
+    lowerMessage.includes('could not decode') ||
+    lowerMessage.includes('did not return a contract error')
+}
+
 async function describeCommitFailure({
   client,
   address,
   hash,
+  intro,
   args,
   isClose,
   side,
@@ -316,7 +348,8 @@ async function describeCommitFailure({
 }: {
   client: PerpsPublicClient
   address: Address
-  hash: Hex
+  hash?: Hex
+  intro: string
   args: CommitOrderArgs
   isClose: boolean
   side: number
@@ -324,7 +357,10 @@ async function describeCommitFailure({
   marginDelta: bigint
   oraclePrice: bigint
 }): Promise<string> {
-  const context: string[] = [`Failed tx: ${hash}.`]
+  const context: string[] = [
+    intro,
+    hash === undefined ? 'No transaction hash was returned by the wallet/RPC.' : `Failed tx: ${hash}`,
+  ]
 
   try {
     const [pendingOrders, maxPendingOrders, accountView] = await Promise.all([
@@ -402,7 +438,7 @@ async function describeCommitFailure({
     context.push(`A fresh commit simulation now fails: ${getPerpsErrorMessage(simulationError, 'commit')}`)
   }
 
-  return `Commit reverted after wallet confirmation, but the receipt did not include decodable revert data. ${context.join(' ')}`
+  return context.join('\n')
 }
 
 export function usePerpsTrading() {
@@ -567,6 +603,13 @@ export function usePerpsTrading() {
     isClose,
     onWalletRequestStart,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
+    let diagnosticClient: PerpsPublicClient | undefined
+    let diagnosticArgs: CommitOrderArgs | undefined
+    let diagnosticSide: number | undefined
+    let diagnosticSizeDelta: bigint | undefined
+    let diagnosticMarginDelta: bigint | undefined
+    let diagnosticHash: Hex | undefined
+
     try {
       debugPerpsCommit('start', {
         address,
@@ -602,6 +645,10 @@ export function usePerpsTrading() {
         slippagePercent,
       })
       const args = [side, sizeDelta, marginDelta, targetPrice, isClose] as const
+      diagnosticArgs = args
+      diagnosticSide = side
+      diagnosticSizeDelta = sizeDelta
+      diagnosticMarginDelta = marginDelta
       debugPerpsCommit('args-ready', {
         side,
         sizeDelta,
@@ -610,7 +657,57 @@ export function usePerpsTrading() {
         isClose,
       })
       const client = requireClient(publicClient)
+      diagnosticClient = client
       debugPerpsCommit('client-ready')
+      const [pendingOrders, maxPendingOrders] = await Promise.all([
+        client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+          abi: PERPS_PUBLIC_LENS_ABI,
+          functionName: 'getPendingOrders',
+          args: [address],
+        }),
+        client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+          abi: PERPS_ORDER_ROUTER_ABI,
+          functionName: 'maxPendingOrders',
+        }),
+      ])
+      const pendingOrderCount = readArrayLength(pendingOrders)
+      if (BigInt(pendingOrderCount) >= maxPendingOrders) {
+        throw new Error(
+          `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. Execute or let existing orders expire/clean up before committing a new order.`
+        )
+      }
+      if (!isClose) {
+        const latestBlock = await client.getBlock({ blockTag: 'latest' })
+        const openRevertCode = await client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+          abi: PERPS_CFD_ENGINE_LENS_ABI,
+          functionName: 'previewOpenRevertCode',
+          args: [address, side, sizeDelta, marginDelta, oraclePrice, latestBlock.timestamp],
+        })
+        if (openRevertCode !== 0) {
+          throw new Error(getPerpsOpenRevertMessage(openRevertCode))
+        }
+      } else {
+        const closePreview = await client.readContract({
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
+          abi: PERPS_CFD_ENGINE_LENS_ABI,
+          functionName: 'previewClose',
+          args: [address, sizeDelta, oraclePrice],
+        })
+        const isValidClose = readBoolean(closePreview, 'valid', 0)
+        if (isValidClose === false) {
+          throw new Error(getPerpsCloseInvalidReasonMessage(readNumber(closePreview, 'invalidReason', 1)))
+        }
+      }
+      await client.simulateContract({
+        account: address,
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'commitOrder',
+        args,
+      })
       const fees = await getBufferedFeeParams(client, 'commit')
       await probeInjectedWalletProvider()
       debugPerpsCommit('wallet-request:start', {
@@ -627,6 +724,7 @@ export function usePerpsTrading() {
         args,
         ...fees,
       })
+      diagnosticHash = hash
       debugPerpsCommit('wallet-request:accepted', { hash })
       debugPerpsCommit('receipt-wait:start', { hash })
       const receipt = await client.waitForTransactionReceipt({ hash })
@@ -639,6 +737,7 @@ export function usePerpsTrading() {
           client,
           address,
           hash,
+          intro: 'Commit reverted after wallet confirmation, but the receipt did not include decodable revert data.',
           args,
           isClose,
           side,
@@ -652,7 +751,7 @@ export function usePerpsTrading() {
         eventName: 'OrderCommitted',
         logs: receipt.logs,
       }).at(0)
-      if (committed === undefined) {
+      if (committed?.args.orderId === undefined) {
         throw new Error('Commit transaction succeeded, but no OrderCommitted event was found in the receipt. Refresh account state before retrying.')
       }
       debugPerpsCommit('order-committed', {
@@ -666,10 +765,35 @@ export function usePerpsTrading() {
         orderId: committed.args.orderId,
       }
     } catch (error) {
+      const message = getPerpsErrorMessage(error, 'commit')
       debugPerpsCommit('failed', {
         message: error instanceof Error ? error.message : String(error),
+        normalizedMessage: message,
       })
-      throw new Error(getPerpsErrorMessage(error, 'commit'))
+      if (
+        shouldEnrichCommitFailure(message) &&
+        diagnosticClient !== undefined &&
+        address !== undefined &&
+        diagnosticArgs !== undefined &&
+        diagnosticSide !== undefined &&
+        diagnosticSizeDelta !== undefined &&
+        diagnosticMarginDelta !== undefined
+      ) {
+        throw new Error(await describeCommitFailure({
+          client: diagnosticClient,
+          address,
+          hash: diagnosticHash ?? findTransactionHash(error),
+          intro: 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
+          args: diagnosticArgs,
+          isClose,
+          side: diagnosticSide,
+          sizeDelta: diagnosticSizeDelta,
+          marginDelta: diagnosticMarginDelta,
+          oraclePrice,
+        }))
+      }
+
+      throw new Error(message)
     }
   }, [address, invalidatePerpsReads, publicClient, writeContractAsync])
 
@@ -819,7 +943,7 @@ export function usePerpsTrading() {
       return {
         hash,
         executionPrice: executed?.args.executionPrice,
-        failedReason: failed ? failed.args.reason : undefined,
+        failedReason: failed?.args.reason,
       }
     } catch (error) {
       const message = withPythFetchTiming(getPerpsErrorMessage(error, 'execute'), pythPayload)

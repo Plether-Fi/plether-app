@@ -9,12 +9,12 @@ module Plether.Config
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
 import Data.List (sortBy)
+import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import System.Environment (lookupEnv)
-import Data.Maybe (fromMaybe)
 import Text.Read (readMaybe)
 
 data Config = Config
@@ -31,6 +31,17 @@ data Config = Config
   , cfgPythBackfillDays :: Int
   , cfgPythSampleIntervalSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
+  , cfgPerpsRpcUrl :: Text
+  , cfgPerpsChainId :: Integer
+  , cfgPerpsOrderRouter :: Text
+  , cfgPerpsPletherOracle :: Text
+  , cfgPerpsIndexerStartBlock :: Integer
+  , cfgKeeperPrivateKey :: Maybe Text
+  , cfgKeeperPollSeconds :: Int
+  , cfgKeeperMaxBatchSize :: Int
+  , cfgKeeperConfirmations :: Int
+  , cfgKeeperGasBufferBps :: Integer
+  , cfgKeeperFeeBufferBps :: Integer
   }
   deriving stock (Show)
 
@@ -104,9 +115,9 @@ loadDeployments = eitherDecodeFileStrict
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
-  mRpcUrl <- lookupEnv "RPC_URL"
+  mRpcUrl <- firstEnv ["RPC_URL", "PERPS_RPC_URL"]
   case mRpcUrl of
-    Nothing -> pure $ Left "RPC_URL environment variable not set"
+    Nothing -> pure $ Left "RPC_URL or PERPS_RPC_URL environment variable not set"
     Just rpcUrl -> do
       chainIdStr <- fromMaybe "11155111" <$> lookupEnv "CHAIN_ID"
       portStr <- fromMaybe "3001" <$> lookupEnv "PORT"
@@ -119,6 +130,17 @@ loadConfig = do
       pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
+      perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
+      perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
+      perpsOrderRouter <- fromMaybe "0x485703D16fE36369c134dEe2A61c057733E7830f" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsPletherOracle <- fromMaybe "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
+      keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
+      keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
+      keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
+      keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
+      keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -127,6 +149,13 @@ loadConfig = do
           pythBackfillDays = fromMaybe 7 (readMaybe pythBackfillDaysStr)
           pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
+          perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
+          perpsIndexerStartBlock = fromMaybe 0 (readMaybe perpsIndexerStartBlockStr)
+          keeperPollSeconds = fromMaybe 1 (readMaybe keeperPollSecondsStr)
+          keeperMaxBatchSize = fromMaybe 20 (readMaybe keeperMaxBatchSizeStr)
+          keeperConfirmations = fromMaybe 1 (readMaybe keeperConfirmationsStr)
+          keeperGasBufferBps = fromMaybe 2000 (readMaybe keeperGasBufferBpsStr)
+          keeperFeeBufferBps = fromMaybe 2500 (readMaybe keeperFeeBufferBpsStr)
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"
             11155111 -> "config/addresses.sepolia.json"
@@ -153,7 +182,26 @@ loadConfig = do
                 , cfgPythBackfillDays = max 1 pythBackfillDays
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
+                , cfgPerpsRpcUrl = T.pack perpsRpcUrl
+                , cfgPerpsChainId = perpsChainId
+                , cfgPerpsOrderRouter = T.pack perpsOrderRouter
+                , cfgPerpsPletherOracle = T.pack perpsPletherOracle
+                , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
+                , cfgKeeperPollSeconds = max 1 keeperPollSeconds
+                , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
+                , cfgKeeperConfirmations = max 0 keeperConfirmations
+                , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
+                , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
                 }
+
+firstEnv :: [String] -> IO (Maybe String)
+firstEnv [] = pure Nothing
+firstEnv (name : rest) = do
+  value <- lookupEnv name
+  case value of
+    Just found | not (null found) -> pure $ Just found
+    _ -> firstEnv rest
 
 parseBool :: String -> Bool
 parseBool value =

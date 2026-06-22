@@ -95,6 +95,7 @@ main = do
           putStrLn "  GET /api/perps/accounts/:address/orders"
           putStrLn "  GET /api/perps/accounts/:address/activity"
           putStrLn "  GET /api/perps/indexer/status"
+          putStrLn "  GET /api/perps/orders/:orderId/wait"
           putStrLn "  GET /api/perps/orders/:orderId/reveal-payload"
           putStrLn "  GET /api/perps/pyth/cached-latest"
         Nothing -> pure ()

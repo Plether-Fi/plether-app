@@ -2,8 +2,10 @@ module Plether.Handlers.PerpsHistory
   ( getPerpsAccountOrders
   , getPerpsAccountActivity
   , getPerpsIndexerStatusResponse
+  , waitForPerpsOrderTerminal
   ) where
 
+import Control.Concurrent (threadDelay)
 import Data.Aeson (Value, object, (.=))
 import Data.Maybe (catMaybes)
 import Data.Text (Text)
@@ -16,6 +18,7 @@ import Plether.Database.Schema
   , PerpsOrderRow (..)
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
+  , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
 import Plether.Types (ApiError, ApiResponse, mkResponse)
@@ -75,6 +78,41 @@ getPerpsIndexerStatusResponse pool cfg = do
       Right $
         mkResponse (pisLastIndexedBlock row) (cfgChainId cfg) $
           indexerStatusToJson row
+
+waitForPerpsOrderTerminal
+  :: DbPool
+  -> Config
+  -> Integer
+  -> Maybe Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
+  let waitSeconds = min 60 $ max 1 timeoutSeconds
+      account = T.toLower <$> mAccount
+  (timedOut, mOrder) <- go account waitSeconds
+  pure $
+    Right $
+      mkResponse (maybe 0 porSortBlock mOrder) (cfgChainId cfg) $
+        object
+          [ "timedOut" .= timedOut
+          , "order" .= fmap orderRowToJson mOrder
+          ]
+  where
+    go :: Maybe Text -> Int -> IO (Bool, Maybe PerpsOrderRow)
+    go account remainingSeconds = do
+      mOrder <- withDb pool $ \conn ->
+        getPerpsOrderById conn (cfgChainId cfg) orderId account
+      case mOrder of
+        Just row | isTerminalOrder row ->
+          pure (False, Just row)
+        _ | remainingSeconds <= 0 ->
+          pure (True, mOrder)
+        _ -> do
+          threadDelay 1_000_000
+          go account (remainingSeconds - 1)
+
+    isTerminalOrder :: PerpsOrderRow -> Bool
+    isTerminalOrder row = porTerminalStatus row /= "Committed"
 
 orderRowToJson :: PerpsOrderRow -> Value
 orderRowToJson PerpsOrderRow {..} =

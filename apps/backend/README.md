@@ -146,7 +146,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=0 \
+PERPS_INDEXER_START_BLOCK=273137426 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -255,7 +255,17 @@ Local URLs:
 | `CORS_ORIGINS` | No | `http://localhost:5173` | Space-separated allowed origins |
 | `DATABASE_URL` | No | - | PostgreSQL connection string (enables history) |
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
-| `PERPS_INDEXER_START_BLOCK` | No | `INDEXER_START_BLOCK` | Perps history indexer start block |
+| `PERPS_RPC_URL` | Keeper | - | Arbitrum Sepolia RPC endpoint for `plether-keeper` |
+| `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
+| `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
+| `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
+| `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
+| `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
+| `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
+| `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
@@ -345,6 +355,9 @@ cabal build
 
 # Run tests
 cabal test
+
+# Run the perps keeper once without submitting transactions
+cabal run plether-keeper -- --once --dry-run
 
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"

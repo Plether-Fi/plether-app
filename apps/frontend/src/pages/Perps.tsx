@@ -41,21 +41,6 @@ function formatMarkAge(ageSeconds: number): string {
   return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
 }
 
-function marketFreshnessLabel(phase: string | undefined): string {
-  switch (phase) {
-    case 'close-only':
-      return 'close-only'
-    case 'degraded':
-      return 'market degraded'
-    case 'paused':
-      return 'market paused'
-    case 'closed':
-      return 'market closed'
-    default:
-      return 'market not open'
-  }
-}
-
 export function Perps() {
   const perpsMarket = usePerpsMarket()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
@@ -73,22 +58,7 @@ export function Perps() {
   }, [])
 
   const dxyFreshnessTooltip = useMemo(() => {
-    if (perpsMarket.oracleFreshness === 'checking') return 'checking backend for a newer update'
-
-    if (perpsMarket.oracleFreshness === 'market-closed' && perpsMarket.oracleFreshnessTime) {
-      const ageSeconds = Math.max(0, nowSeconds - perpsMarket.oracleFreshnessTime)
-      return `${marketFreshnessLabel(perpsMarket.marketPhase)}; updated ${formatMarkAge(ageSeconds)}`
-    }
-
-    if (perpsMarket.oracleFreshness === 'backend-fresh' && perpsMarket.backendLatestBasketTime) {
-      const backendAgeSeconds = Math.max(0, nowSeconds - perpsMarket.backendLatestBasketTime)
-      const onchainAge = perpsMarket.lastMarkTime === undefined
-        ? undefined
-        : formatMarkAge(Math.max(0, nowSeconds - perpsMarket.lastMarkTime))
-      return onchainAge
-        ? `backend updated ${formatMarkAge(backendAgeSeconds)}; on-chain mark updated ${onchainAge}`
-        : `backend updated ${formatMarkAge(backendAgeSeconds)}`
-    }
+    if (perpsMarket.oracleFreshness === 'checking') return 'checking backend for a fresh update'
 
     if (!perpsMarket.oracleFreshnessTime) return undefined
 
@@ -96,9 +66,6 @@ export function Perps() {
     return `updated ${formatMarkAge(ageSeconds)}`
   }, [
     nowSeconds,
-    perpsMarket.backendLatestBasketTime,
-    perpsMarket.lastMarkTime,
-    perpsMarket.marketPhase,
     perpsMarket.oracleFreshness,
     perpsMarket.oracleFreshnessTime,
   ])
@@ -222,6 +189,7 @@ export function Perps() {
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()
+            void perpsHistory.refetch()
           }}
         />
       </div>
@@ -230,7 +198,7 @@ export function Perps() {
         <PerpsTradeTicket
           enableLiveTrading
           oraclePriceRaw={perpsMarket.raw.markPrice}
-          oraclePublishTime={perpsMarket.lastMarkTime}
+          oraclePublishTime={perpsMarket.oracleFreshnessTime}
           oraclePriceDisplay={perpsMarket.oraclePrice}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
@@ -244,8 +212,8 @@ export function Perps() {
           currentPositionSide={perpsAccount.position?.direction}
           currentPositionAmount={perpsAccount.display.positionNotional}
           pendingOrders={perpsAccount.pendingOrders}
+          orderHistory={perpsHistory.orderHistory}
           pendingOrderCount={perpsAccount.pendingOrders.length}
-          pendingOrderIds={perpsAccount.pendingOrders.map((order) => order.orderId)}
           maxPendingOrders={perpsAccount.maxPendingOrders}
           firstPendingOrderId={perpsAccount.firstPendingOrderId}
           firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
@@ -260,6 +228,7 @@ export function Perps() {
           onAccountRefresh={() => {
             void perpsAccount.refetch()
             void perpsMarket.refetch()
+            void perpsHistory.refetch()
           }}
         />
       </div>

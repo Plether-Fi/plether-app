@@ -43,6 +43,7 @@ import Plether.Database.Schema
   , getLatestBasketSnapshot
   , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
+  , isHistoricalRevealPayload
   )
 import Plether.Types
 import qualified Plether.Types.Error as E
@@ -134,11 +135,19 @@ getRevealPayload pool cfg orderId minPublishTime maxPublishTime = do
         E.networkError $
           "Reveal payload unavailable for order "
             <> T.pack (show orderId)
-            <> ". The basket worker has not cached a six-feed Pyth update inside publish window "
+            <> ". The basket worker has not cached the first post-commit six-feed Pyth update starting at "
             <> T.pack (show minPublishTime)
-            <> " to "
+            <> " within reveal window ending at "
             <> T.pack (show maxPublishTime)
             <> ". Keep plether-basket-worker --latest-loop running and retry before the order expires."
+    Just row | not (isHistoricalRevealPayload row) ->
+      Left $
+        E.networkError $
+          "Exact reveal payload unavailable for order "
+            <> T.pack (show orderId)
+            <> ". The cached row for the first post-commit tick came from "
+            <> puprSource row
+            <> ", so the app should retry with exact historical Pyth data."
     Just row ->
       case rowToRevealPayload orderId row of
         Left err -> Left $ E.internalError err

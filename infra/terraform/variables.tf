@@ -13,6 +13,16 @@ variable "rpc_url" {
   sensitive = true
 }
 
+variable "perps_rpc_url" {
+  type      = string
+  sensitive = true
+}
+
+variable "keeper_private_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "db_password" {
   type      = string
   sensitive = true
@@ -36,6 +46,51 @@ variable "cors_origins" {
 variable "indexer_start_block" {
   type    = string
   default = "7726000"
+}
+
+variable "perps_chain_id" {
+  type    = string
+  default = "421614"
+}
+
+variable "perps_order_router" {
+  type    = string
+  default = "0x485703D16fE36369c134dEe2A61c057733E7830f"
+}
+
+variable "perps_plether_oracle" {
+  type    = string
+  default = "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb"
+}
+
+variable "perps_indexer_start_block" {
+  type    = string
+  default = "273137426"
+}
+
+variable "keeper_poll_seconds" {
+  type    = string
+  default = "1"
+}
+
+variable "keeper_max_batch_size" {
+  type    = string
+  default = "20"
+}
+
+variable "keeper_confirmations" {
+  type    = string
+  default = "1"
+}
+
+variable "keeper_gas_buffer_bps" {
+  type    = string
+  default = "2000"
+}
+
+variable "keeper_fee_buffer_bps" {
+  type    = string
+  default = "2500"
 }
 
 variable "container_cpu" {

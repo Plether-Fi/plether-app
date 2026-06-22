@@ -1,8 +1,8 @@
-import { formatUnits, parseUnits, type Hex } from 'viem'
+import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
-export type PerpsOracleFreshness = 'fresh' | 'backend-fresh' | 'checking' | 'market-closed' | 'stale'
+export type PerpsOracleFreshness = 'fresh' | 'checking' | 'market-closed' | 'stale'
 export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
 export function cleanNumericInput(value: string): string {
@@ -171,7 +171,7 @@ const historicalPythCache = new Map<number, PerpsPythUpdatePayload>()
 const historicalPythInFlight = new Map<number, Promise<PerpsPythUpdatePayload>>()
 
 function normalizeHex(value: string): Hex {
-  return (value.startsWith('0x') ? value : `0x${value}`) as Hex
+  return isHex(value) ? value : `0x${value}`
 }
 
 function sleep(ms: number): Promise<void> {

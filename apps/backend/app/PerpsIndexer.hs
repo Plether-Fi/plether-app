@@ -57,7 +57,7 @@ main = do
           pool <- newDbPool dbUrl
           withDb pool ensurePerpsHistorySchema
           let rpcUrls = fromMaybe [cfgRpcUrl cfg] (waRpcUrls args)
-              startBlock = fromMaybe (cfgIndexerStartBlock cfg) (waStartBlock args)
+              startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
               indexerCfg =
                 PerpsIndexerConfig
                   { picRpcUrls = rpcUrls

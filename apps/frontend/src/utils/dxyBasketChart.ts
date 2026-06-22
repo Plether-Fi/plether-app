@@ -1,3 +1,5 @@
+import type { BasketHistoryPoint, BasketLatest } from '../api'
+
 export interface ChartPoint {
   timestamp: number
   price: number
@@ -14,6 +16,27 @@ export interface ChartCandle {
 export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
   return Math.max(0, 2 - rawOraclePrice)
+}
+
+export function mergeLatestBasketPoint(
+  historyPoints: BasketHistoryPoint[],
+  latest: BasketLatest | undefined
+): BasketHistoryPoint[] {
+  if (!latest) return historyPoints
+
+  const livePoint: BasketHistoryPoint = {
+    timestamp: latest.timestamp,
+    basketPrice: latest.basketPrice,
+    components: latest.components,
+  }
+  const lastPoint = historyPoints.at(-1)
+  if (!lastPoint) return [livePoint]
+  if (latest.timestamp < lastPoint.timestamp) return historyPoints
+  if (latest.timestamp === lastPoint.timestamp) {
+    return [...historyPoints.slice(0, -1), livePoint]
+  }
+
+  return [...historyPoints, livePoint]
 }
 
 export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {

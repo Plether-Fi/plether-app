@@ -1,12 +1,12 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
-import type { PerpsPendingOrder, PerpsPosition } from '../hooks'
-import { usePerpsTrading, useSwitchToArbitrumSepolia } from '../hooks'
+import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
+import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
   directionToPerpsSide,
@@ -46,11 +46,6 @@ type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
-interface PositionSnapshot {
-  exists: boolean
-  side?: Direction
-  size: bigint
-}
 
 interface PreviewRow {
   label: string
@@ -110,9 +105,16 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialOrderId?: bigint
+  initialCommitTxHash?: string
+  initialExecuteTxHash?: string
+  initialFinalExecutionPrice?: bigint
+  initialCommittedSizeDelta?: bigint
+  initialFlowError?: string
   currentPositionSide?: Direction
   currentPositionAmount?: string
   enableLiveTrading?: boolean
+  showFinalizationProgress?: boolean
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
   oraclePriceDisplay?: string
@@ -126,8 +128,8 @@ interface PerpsTradeTicketProps {
   marginAllowanceUsdc?: bigint
   currentPosition?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
+  orderHistory?: PerpsOrderHistoryRow[]
   pendingOrderCount?: number
-  pendingOrderIds?: bigint[]
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
   firstPendingOrderExpiryTime?: bigint
@@ -163,6 +165,65 @@ const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
+const KEEPER_REVEAL_GRACE_MS = 20_000
+const KEEPER_REVEAL_PROGRESS_MS = 250
+const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
+const ORDER_TERMINAL_WAIT_SECONDS = 60
+const FINALIZATION_LOADING_MESSAGES = [
+  {
+    title: 'Waiting for verified market data',
+    subtitle: 'Using signed oracle data for the order window before settling the trade.',
+  },
+  {
+    title: 'Reducing MEV exposure',
+    subtitle: 'Your order was committed before the final settlement price is used.',
+  },
+  {
+    title: 'Limiting value extraction',
+    subtitle: 'Settling from committed order parameters instead of a last-second click race.',
+  },
+  {
+    title: 'Checking price limits',
+    subtitle: 'Comparing the final market price with your acceptable price.',
+  },
+  {
+    title: 'Confirming settlement conditions',
+    subtitle: 'Checking the order is ready, unexpired, and eligible to finalize.',
+  },
+  {
+    title: 'Preparing onchain finalization',
+    subtitle: 'Submitting the transaction that settles the committed order.',
+  },
+  {
+    title: 'Verifying the final price',
+    subtitle: 'Reading the price that will be recorded for this order.',
+  },
+  {
+    title: 'Checking margin accounting',
+    subtitle: 'Calculating margin, fees, and resulting position size together.',
+  },
+  {
+    title: 'Keeping collateral accounting consistent',
+    subtitle: 'Matching collateral changes to the new position state.',
+  },
+  {
+    title: 'Verifying solvency after execution',
+    subtitle: 'Checking the account remains properly collateralized after settlement.',
+  },
+  {
+    title: 'Checking protocol solvency',
+    subtitle: 'Verifying system accounting remains collateral-backed.',
+  },
+  {
+    title: 'Reconciling exposure against collateral',
+    subtitle: 'Comparing position exposure against the margin backing it.',
+  },
+  {
+    title: 'Making the button race irrelevant',
+    subtitle: 'Automatic finalization gets the first chance before manual action appears.',
+  },
+] as const
+type FinalizationLoadingMessage = (typeof FINALIZATION_LOADING_MESSAGES)[number]
 
 function isPerpsCommitDebugEnabled(): boolean {
   if (import.meta.env.MODE === 'test') return false
@@ -184,24 +245,35 @@ function debugPerpsCommit(stage: string, details?: Record<string, unknown>): voi
   console.info(`[perps:commit] ${stage}`, details)
 }
 
+function randomFinalizationMessage(): FinalizationLoadingMessage {
+  return FINALIZATION_LOADING_MESSAGES[Math.floor(Math.random() * FINALIZATION_LOADING_MESSAGES.length)]
+}
+
 function isPythExpiryMessage(message: string): boolean {
   const lowerMessage = message.toLowerCase()
   return (
     lowerMessage.includes('pyth price data expired') ||
     lowerMessage.includes('stale-price error') ||
     lowerMessage.includes('historical pyth update was unavailable') ||
+    lowerMessage.includes('historical price data was unavailable') ||
     lowerMessage.includes('router could not use the historical pyth update') ||
     lowerMessage.includes('historical pyth update was rejected') ||
-    lowerMessage.includes('hermes rate limit reached')
+    lowerMessage.includes('historical price data was rejected') ||
+    lowerMessage.includes('hermes rate limit reached') ||
+    lowerMessage.includes('price data service rate limit reached')
   )
 }
 
 function isHermesRateLimitMessage(message: string): boolean {
-  return message.toLowerCase().includes('hermes rate limit reached')
+  const lowerMessage = message.toLowerCase()
+  return lowerMessage.includes('hermes rate limit reached') ||
+    lowerMessage.includes('price data service rate limit reached')
 }
 
 function isHistoricalPythRejectedMessage(message: string): boolean {
-  return message.toLowerCase().includes('historical pyth update was rejected')
+  const lowerMessage = message.toLowerCase()
+  return lowerMessage.includes('historical pyth update was rejected') ||
+    lowerMessage.includes('historical price data was rejected')
 }
 
 function isRevealNotReadyMessage(message: string): boolean {
@@ -219,38 +291,34 @@ function isOrderNoLongerPendingMessage(message: string): boolean {
   return message.toLowerCase().includes('no longer pending')
 }
 
-function didPositionMoveAsExpected({
-  before,
-  after,
-  direction,
-  isReduceOnly,
-}: {
-  before: PositionSnapshot | undefined
-  after: PerpsPosition | undefined
-  direction: Direction
-  isReduceOnly: boolean
-}): boolean {
-  if (!before) return false
-  const afterExists = Boolean(after?.exists)
-  const afterSize = after?.size ?? 0n
-  const afterSide = after?.direction
+function isTerminalOrderFailureMessage(message: string): boolean {
+  return message.toLowerCase().startsWith('order failed:')
+}
 
-  if (!before.exists) {
-    return afterExists && afterSide === direction && afterSize > 0n
-  }
+function failureReasonMessage(reason: string | undefined): string | undefined {
+  if (!reason) return undefined
+  const code = {
+    Expired: 0,
+    CloseOnly: 1,
+    SlippageExceeded: 2,
+    EnginePanic: 3,
+    AccountLiquidated: 4,
+    EngineRevert: 5,
+  }[reason]
 
-  if (isReduceOnly || direction !== before.side) {
-    if (!afterExists) return true
-    return afterSide === before.side && afterSize < before.size
-  }
+  return code === undefined ? undefined : getPerpsOrderFailureMessage(code)
+}
 
-  return afterExists && afterSide === direction && afterSize > before.size
+function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
+  const detail = failureReasonMessage(order.failureReason)
+    ?? `Terminal status: ${order.status}. Refresh order history for details.`
+  return `Order failed: ${detail}`
 }
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
   { id: 'preview', label: 'Preview' },
   { id: 'commit', label: 'Commit' },
-  { id: 'reveal', label: 'Reveal' },
+  { id: 'reveal', label: 'Finalize' },
 ]
 
 function parseAmount(value: string): number {
@@ -758,17 +826,91 @@ function OrderLifecycleSteps({
 function PendingStateCard({
   title,
   description,
+  progressPercent,
+  showAnimatedDots = false,
 }: {
   title: string
-  description: string
+  description: ReactNode
+  progressPercent?: number
+  showAnimatedDots?: boolean
 }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg px-6 py-8 text-center">
-      <div className="relative h-14 w-14 shrink-0">
-        <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
+      {progressPercent === undefined ? <PendingSpinner /> : <PendingProgressCircle progressPercent={progressPercent} />}
+      <div className="mt-5 flex items-center justify-center text-xl font-semibold text-cyber-text-primary">
+        <span>{title}</span>
+        {showAnimatedDots ? <AnimatedTitleDots key={title} /> : null}
       </div>
-      <div className="mt-5 text-xl font-semibold text-cyber-text-primary">{title}</div>
       <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
+    </div>
+  )
+}
+
+function AnimatedTitleDots() {
+  const [dotCount, setDotCount] = useState(0)
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setDotCount((current) => current === 3 ? 0 : current + 1)
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  return (
+    <span className="ml-0.5 inline-block w-4 text-left" aria-hidden="true">
+      {'.'.repeat(dotCount)}
+    </span>
+  )
+}
+
+function PendingSpinner() {
+  return (
+    <div className="relative h-14 w-14 shrink-0">
+      <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
+    </div>
+  )
+}
+
+function PendingProgressCircle({ progressPercent }: { progressPercent: number }) {
+  const radius = 22
+  const circumference = 2 * Math.PI * radius
+  const normalizedProgress = Math.max(0, Math.min(100, progressPercent))
+  const strokeDashoffset = circumference * (1 - normalizedProgress / 100)
+
+  return (
+    <div
+      className="relative h-14 w-14 shrink-0"
+      role="progressbar"
+      aria-label="Price finalization progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(normalizedProgress)}
+    >
+      <svg className="h-14 w-14 -rotate-90" viewBox="0 0 56 56" aria-hidden="true">
+        <circle
+          className="fill-none stroke-cyber-bright-blue/20"
+          cx="28"
+          cy="28"
+          r={radius}
+          strokeWidth="4"
+        />
+        <circle
+          className="fill-none stroke-cyber-bright-blue"
+          cx="28"
+          cy="28"
+          r={radius}
+          strokeWidth="4"
+          strokeLinecap="round"
+          style={{
+            strokeDasharray: circumference,
+            strokeDashoffset,
+            transition: 'stroke-dashoffset 200ms linear',
+          }}
+        />
+      </svg>
     </div>
   )
 }
@@ -792,7 +934,7 @@ function FailedStateCard({ title, description }: { title: string; description: s
         <span className="material-symbols-outlined text-4xl">close</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-electric-fuchsia">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 max-w-xl whitespace-pre-line text-left text-sm leading-6 text-cyber-text-secondary">{description}</div>
     </div>
   )
 }
@@ -877,9 +1019,16 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialOrderId,
+  initialCommitTxHash,
+  initialExecuteTxHash,
+  initialFinalExecutionPrice,
+  initialCommittedSizeDelta,
+  initialFlowError,
   currentPositionSide = 'long',
   currentPositionAmount,
   enableLiveTrading = false,
+  showFinalizationProgress = false,
   oraclePriceRaw,
   oraclePublishTime,
   oraclePriceDisplay,
@@ -893,8 +1042,8 @@ export function PerpsTradeTicket({
   marginAllowanceUsdc,
   currentPosition,
   pendingOrders = [],
+  orderHistory = [],
   pendingOrderCount,
-  pendingOrderIds = [],
   maxPendingOrders,
   firstPendingOrderId,
   firstPendingOrderExpiryTime,
@@ -923,12 +1072,12 @@ export function PerpsTradeTicket({
   const [lifecycleState, setLifecycleState] = useState<TradeLifecycleState>(initialLifecycleState)
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
-  const [orderId, setOrderId] = useState<bigint | undefined>()
-  const [commitTxHash, setCommitTxHash] = useState<string | undefined>()
-  const [executeTxHash, setExecuteTxHash] = useState<string | undefined>()
-  const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>()
-  const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>()
-  const [flowError, setFlowError] = useState<string | undefined>()
+  const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
+  const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
+  const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
+  const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
+  const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
+  const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
   const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
   const [marginActionAmount, setMarginActionAmount] = useState('')
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
@@ -936,12 +1085,20 @@ export function PerpsTradeTicket({
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>()
+  const [keeperRevealDeadlineMs, setKeeperRevealDeadlineMs] = useState<number | undefined>()
+  const [keeperRevealNowMs, setKeeperRevealNowMs] = useState(() => Date.now())
+  const [finalizationLoadingMessage, setFinalizationLoadingMessage] = useState<FinalizationLoadingMessage>(FINALIZATION_LOADING_MESSAGES[0])
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
+  const onAccountRefreshRef = useRef(onAccountRefresh)
+  const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = Math.min(leverage, maxLeverage)
+
+  useEffect(() => {
+    onAccountRefreshRef.current = onAccountRefresh
+  }, [onAccountRefresh])
 
   useEffect(() => {
     if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
@@ -953,6 +1110,82 @@ export function PerpsTradeTicket({
       window.clearInterval(interval)
     }
   }, [firstPendingOrderExpiryTime, oraclePublishTime])
+
+  useEffect(() => {
+    if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending') return
+
+    setKeeperRevealDeadlineMs((currentDeadline) => currentDeadline ?? Date.now() + KEEPER_REVEAL_GRACE_MS)
+    setKeeperRevealNowMs(Date.now())
+    setFinalizationLoadingMessage(FINALIZATION_LOADING_MESSAGES[0])
+  }, [enableLiveTrading, lifecycleState, orderId, showFinalizationProgress])
+
+  useEffect(() => {
+    if ((!enableLiveTrading && !showFinalizationProgress) || lifecycleState !== 'revealPending' || keeperRevealDeadlineMs === undefined) return undefined
+
+    const progressInterval = window.setInterval(() => {
+      setKeeperRevealNowMs(Date.now())
+    }, KEEPER_REVEAL_PROGRESS_MS)
+    const messageInterval = window.setInterval(() => {
+      setFinalizationLoadingMessage(randomFinalizationMessage())
+    }, FINALIZATION_MESSAGE_ROTATE_MS)
+
+    const timeout = window.setTimeout(() => {
+      setKeeperRevealNowMs(Date.now())
+      setLifecycleState((currentState) => (
+        currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
+      ))
+    }, Math.max(0, keeperRevealDeadlineMs - Date.now()))
+
+    return () => {
+      window.clearInterval(progressInterval)
+      window.clearInterval(messageInterval)
+      window.clearTimeout(timeout)
+    }
+  }, [enableLiveTrading, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
+
+  useEffect(() => {
+    if (!enableLiveTrading || orderId === undefined) return undefined
+    if (orderWaitStartedForRef.current === orderId) return undefined
+
+    orderWaitStartedForRef.current = orderId
+    const controller = new AbortController()
+    let cancelled = false
+
+    void waitForPerpsOrderTerminal({
+      accountAddress: address,
+      orderId,
+      timeoutSeconds: ORDER_TERMINAL_WAIT_SECONDS,
+      signal: controller.signal,
+    })
+      .then((result) => {
+        if (cancelled || result.timedOut || result.order === undefined || result.order.status === 'Committed') return
+
+        setCommitTxHash((current) => current ?? result.order?.commitTxHash)
+        setExecuteTxHash(result.order.revealTxHash)
+
+        if (result.order.status === 'Executed') {
+          setFlowError(undefined)
+          setFinalExecutionPrice(result.order.executionPriceRaw ?? result.order.activityPriceRaw)
+          setLifecycleState('executed')
+        } else {
+          setFlowError(terminalOrderFailureMessage(result.order))
+          setLifecycleState('selfExecuteFailed')
+        }
+
+        onAccountRefreshRef.current?.()
+      })
+      .catch((error: unknown) => {
+        if (cancelled || (error instanceof DOMException && error.name === 'AbortError')) return
+      })
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      if (orderWaitStartedForRef.current === orderId) {
+        orderWaitStartedForRef.current = undefined
+      }
+    }
+  }, [address, enableLiveTrading, orderId])
 
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
@@ -971,7 +1204,7 @@ export function PerpsTradeTicket({
     }
 
     const timeout = globalThis.setTimeout(() => {
-      const warning = 'No wallet response yet. Open MetaMask manually and check for a pending confirmation. If MetaMask has no pending request, reject any stuck request, reconnect the wallet, and retry.'
+      const warning = 'No wallet response yet. Open your wallet app or extension and check for a pending confirmation. If there is no pending request, reject any stuck request, reconnect the wallet, and retry.'
       debugPerpsCommit('ticket:wallet-request:still-pending', {
         seconds: 15,
         address,
@@ -984,33 +1217,6 @@ export function PerpsTradeTicket({
       globalThis.clearTimeout(timeout)
     }
   }, [address, chainId, commitTxHash, flowError, lifecycleState])
-
-  useEffect(() => {
-    if (!enableLiveTrading || orderId === undefined) return
-    if (!['revealPending', 'selfExecuteAvailable', 'selfExecutePending', 'selfExecuteFailed'].includes(lifecycleState)) return
-    if (pendingOrderIds.some((pendingOrderId) => pendingOrderId === orderId)) return
-    if (!didPositionMoveAsExpected({
-      before: positionSnapshotAtCommit,
-      after: currentPosition,
-      direction,
-      isReduceOnly,
-    })) {
-      return
-    }
-
-    setFlowError(undefined)
-    setFinalExecutionPrice(currentPosition?.entryPrice)
-    setLifecycleState('executed')
-  }, [
-    currentPosition,
-    direction,
-    enableLiveTrading,
-    isReduceOnly,
-    lifecycleState,
-    orderId,
-    pendingOrderIds,
-    positionSnapshotAtCommit,
-  ])
 
   const dxyExposureNumber = parseAmount(size)
   const currentPositionSideValue = currentPosition?.exists ? currentPosition.direction : currentPositionSide
@@ -1151,13 +1357,6 @@ export function PerpsTradeTicket({
     : direction === 'long'
       ? previewPrice * 0.945
       : previewPrice * 1.055
-  const sideCapacityValue = useMemo(
-    () => selectedOpenCapacityUsdc === undefined
-      ? 'Unavailable'
-      : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />,
-    [selectedOpenCapacityUsdc]
-  )
-  const sideCapacityTone = selectedOpenCapacityUsdc === undefined ? undefined : 'positive'
   const summaryDxyExposureUsdc = isReducingCurrentPosition &&
     maxDxyExposureRaw > 0n &&
     dxyExposureUsdc >= maxDxyExposureRaw
@@ -1413,8 +1612,14 @@ export function PerpsTradeTicket({
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined },
-      { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
-      { label: 'Contract side capacity', value: sideCapacityValue, tone: sideCapacityTone },
+      { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+      {
+        label: 'Contract side capacity',
+        value: selectedOpenCapacityUsdc === undefined
+          ? 'Unavailable'
+          : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />,
+        tone: selectedOpenCapacityUsdc === undefined ? undefined : 'positive',
+      },
     ],
     [
       executionLimit,
@@ -1435,8 +1640,7 @@ export function PerpsTradeTicket({
       previewLensFallbackTone,
       previewMaintenanceMarginUsdc,
       previewVpiUsdc,
-      sideCapacityTone,
-      sideCapacityValue,
+      selectedOpenCapacityUsdc,
       dxyExposureNumber,
       slippageNumber,
     ]
@@ -1448,10 +1652,32 @@ export function PerpsTradeTicket({
 
   const currentLifecycleStep = lifecycleStep(lifecycleState)
   const displayOrderId = orderId === undefined ? (enableLiveTrading ? '--' : ORDER_ID) : orderId.toString()
-  const displayCommitTx = commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
-  const displayExecuteTx = executeTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
+  const executedOrderHistoryRow = orderId === undefined
+    ? undefined
+    : orderHistory.find((row) => row.orderId === orderId && row.status === 'Executed')
+  const displayCommitTx = commitTxHash ?? executedOrderHistoryRow?.commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
+  const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
+  const isTerminalRevealError = flowError !== undefined &&
+    (isOrderNoLongerPendingMessage(flowError) || isTerminalOrderFailureMessage(flowError))
+  const shouldShowFinalizationProgress = enableLiveTrading || showFinalizationProgress
+  const isKeeperRevealGraceActive = shouldShowFinalizationProgress &&
+    lifecycleState === 'revealPending' &&
+    (keeperRevealDeadlineMs === undefined || keeperRevealNowMs < keeperRevealDeadlineMs)
+  const keeperRevealRemainingSeconds = keeperRevealDeadlineMs === undefined
+    ? Math.ceil(KEEPER_REVEAL_GRACE_MS / 1_000)
+    : Math.max(0, Math.ceil((keeperRevealDeadlineMs - keeperRevealNowMs) / 1_000))
+  const keeperRevealProgressPercent = keeperRevealDeadlineMs === undefined
+    ? 0
+    : Math.max(
+      0,
+      Math.min(
+        100,
+        ((KEEPER_REVEAL_GRACE_MS - Math.max(0, keeperRevealDeadlineMs - keeperRevealNowMs)) / KEEPER_REVEAL_GRACE_MS) * 100
+      )
+    )
+  const finalizationLoadingDescription = finalizationLoadingMessage.subtitle
   const finalExecutedNotionalUsdc = finalExecutionPrice
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, finalExecutionPrice)
     : undefined
@@ -1578,11 +1804,6 @@ export function PerpsTradeTicket({
     try {
       debugPerpsCommit('ticket:lifecycle:commitPreparing')
       setLifecycleState('commitPreparing')
-      setPositionSnapshotAtCommit({
-        exists: Boolean(currentPosition?.exists),
-        side: currentPosition?.direction,
-        size: currentPosition?.size ?? 0n,
-      })
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
       const result = await commitOrder({
@@ -1604,6 +1825,8 @@ export function PerpsTradeTicket({
       })
       setCommitTxHash(result.hash)
       setOrderId(result.orderId)
+      setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
+      setKeeperRevealNowMs(Date.now())
       setLifecycleState('revealPending')
       onAccountRefresh?.()
     } catch (error) {
@@ -1651,14 +1874,6 @@ export function PerpsTradeTicket({
       setLifecycleState('selfExecutePending')
       const result = await executeOrder(orderId)
       setExecuteTxHash(result.hash)
-      if (result.failedReason !== undefined) {
-        setFlowError(getPerpsOrderFailureMessage(result.failedReason))
-        setLifecycleState('selfExecuteFailed')
-        return
-      }
-      setFinalExecutionPrice(result.executionPrice)
-      setLifecycleState('executed')
-      onAccountRefresh?.()
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Self-execute transaction failed'
       setFlowError(message)
@@ -1675,7 +1890,8 @@ export function PerpsTradeTicket({
     setFinalExecutionPrice(undefined)
     setCommittedSizeDelta(undefined)
     setFlowError(undefined)
-    setPositionSnapshotAtCommit(undefined)
+    setKeeperRevealDeadlineMs(undefined)
+    setKeeperRevealNowMs(Date.now())
   }
 
   function closeReviewModal() {
@@ -1973,7 +2189,7 @@ export function PerpsTradeTicket({
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
                 <div className="text-sm font-semibold text-cyber-text-primary">Delayed execution</div>
                 <div className="mt-2 text-sm text-cyber-text-secondary">
-                  This submits a committed order. Execution settles after the reveal window using the accepted price constraints.
+                  This submits your order. Final execution settles shortly after with your accepted price constraints.
                 </div>
               </div>
 
@@ -2064,7 +2280,7 @@ export function PerpsTradeTicket({
                     { label: 'Max slippage', value: formatPercent(slippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
-                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                   ]}
                 />
               </div>
@@ -2094,7 +2310,7 @@ export function PerpsTradeTicket({
                     { label: 'Max slippage', value: formatPercent(slippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
-                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                   ]}
                 />
               </div>
@@ -2125,7 +2341,7 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'commitConfirmed' ? (
             <>
-              <SuccessStateCard title="Commit confirmed" description="The order has entered the reveal queue." />
+              <SuccessStateCard title="Commit confirmed" description="The order is waiting for final price confirmation." />
               <PreviewRows
                 rows={[
                   { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
@@ -2138,7 +2354,7 @@ export function PerpsTradeTicket({
                   setLifecycleState('revealPending')
                 }}
               >
-                Continue to Reveal
+                Continue to Finalize
               </Button>
             </>
           ) : null}
@@ -2146,25 +2362,37 @@ export function PerpsTradeTicket({
           {lifecycleState === 'revealPending' ? (
             <>
               <PendingStateCard
-                title="Waiting for keeper reveal"
-                description="The keeper can now execute the committed order and settle the final contract price. Self-execute fetches historical Pyth data for the order window."
+                title={shouldShowFinalizationProgress ? finalizationLoadingMessage.title : 'Finalizing execution price'}
+                progressPercent={shouldShowFinalizationProgress ? keeperRevealProgressPercent : undefined}
+                showAnimatedDots={shouldShowFinalizationProgress}
+                description={
+                  shouldShowFinalizationProgress
+                    ? finalizationLoadingDescription
+                    : 'Your order is committed. The next step settles it onchain with the market price for the order window.'
+                }
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
-                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
+                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Settlement Details</div>
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
-                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Self execute', value: enableLiveTrading ? 'Fetches historical Pyth data' : 'Available after 04:38' },
+                    { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+                    {
+                      label: 'Manual finalization',
+                      value: shouldShowFinalizationProgress
+                        ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
+                        : 'Available after 04:38',
+                      tone: shouldShowFinalizationProgress ? 'muted' : undefined,
+                    },
                   ]}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {!enableLiveTrading ? (
+              {isKeeperRevealGraceActive ? null : !enableLiveTrading ? (
+                <div className="grid grid-cols-2 gap-3">
                   <>
                     <Button
                       className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
@@ -2173,7 +2401,7 @@ export function PerpsTradeTicket({
                         setLifecycleState('selfExecuteAvailable')
                       }}
                     >
-                      Timeout Reached
+                      Show Manual Option
                     </Button>
                     <Button
                       className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
@@ -2181,20 +2409,20 @@ export function PerpsTradeTicket({
                         setLifecycleState('executed')
                       }}
                     >
-                      Keeper Executed
+                      Auto Finalized
                     </Button>
                   </>
-                ) : (
-                  <Button
-                    className={`col-span-2 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                    onClick={() => {
-                      void handleSelfExecute()
-                    }}
-                  >
-                    Self Execute
-                  </Button>
-                )}
-              </div>
+                </div>
+              ) : (
+                <Button
+                  className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  onClick={() => {
+                    void handleSelfExecute()
+                  }}
+                >
+                  Finalize Trade
+                </Button>
+              )}
             </>
           ) : null}
 
@@ -2203,36 +2431,36 @@ export function PerpsTradeTicket({
               <PendingStateCard
                 title={
                   flowError && isHermesRateLimitMessage(flowError)
-                    ? 'Hermes rate limit reached'
+                    ? 'Price data rate limited'
                     : flowError && isHistoricalPythRejectedMessage(flowError)
-                      ? 'Historical Pyth data rejected'
+                      ? 'Historical price data rejected'
                     : flowError && isRevealNotReadyMessage(flowError)
-                      ? 'Reveal not ready yet'
+                      ? 'Final price not ready yet'
                     : flowError && isPythExpiryMessage(flowError)
-                      ? 'Historical Pyth data required'
-                      : 'Keeper reveal overdue'
+                      ? 'Historical price data required'
+                      : 'Ready to finalize manually'
                 }
                 description={
                   flowError && isPythExpiryMessage(flowError)
                     ? flowError
-                    : 'The keeper has not executed within the timeout. You can self execute the reveal transaction now.'
+                    : 'Automatic finalization has not completed yet. You can submit the finalization transaction now; the order status check will confirm the result.'
                 }
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
-                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
+                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Settlement Details</div>
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
-                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     {
-                      label: 'Self execute',
+                      label: 'Manual finalization',
                       value: flowError && isRevealNotReadyMessage(flowError)
                         ? 'Retry shortly'
                         : flowError && isPythExpiryMessage(flowError)
-                          ? 'Retry with historical Pyth data'
+                          ? 'Retry with price data'
                           : 'Available now',
                       tone: flowError && isRetryableSelfExecuteMessage(flowError) ? 'warning' : 'positive',
                     },
@@ -2247,7 +2475,7 @@ export function PerpsTradeTicket({
                   void handleSelfExecute()
                 }}
               >
-                {flowError && isRetryableSelfExecuteMessage(flowError) ? 'Retry Self Execute' : 'Self Execute'}
+                {flowError && isRetryableSelfExecuteMessage(flowError) ? 'Retry Finalizing' : 'Finalize Trade'}
               </Button>
             </>
           ) : null}
@@ -2255,18 +2483,18 @@ export function PerpsTradeTicket({
           {lifecycleState === 'selfExecutePending' ? (
             <>
               <PendingStateCard
-                title="Waiting for self-execute confirmation"
-                description="Confirm promptly in your wallet. The order can expire if the reveal transaction takes too long to submit."
+                title="Finalizing trade"
+                description="Confirm the transaction in your wallet. We will show the result after the final price is confirmed onchain."
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
-                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Self Execute Transaction</div>
+                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Finalization Transaction</div>
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
-                    { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Transaction', value: 'Awaiting confirmation' },
                   ]}
                 />
@@ -2302,44 +2530,62 @@ export function PerpsTradeTicket({
                 title={
                   flowError && isOrderNoLongerPendingMessage(flowError)
                     ? 'Order no longer pending'
+                    : flowError && isTerminalOrderFailureMessage(flowError)
+                      ? 'Order failed'
                     : flowError && isHistoricalPythRejectedMessage(flowError)
-                      ? 'Historical Pyth data rejected'
-                      : 'Self-execute transaction failed'
+                      ? 'Historical price data rejected'
+                      : 'Finalization transaction failed'
                 }
-                description={flowError ?? 'The wallet rejected the transaction or the reveal transaction failed before settling the order.'}
+                description={flowError ?? 'The wallet rejected the transaction or the finalization transaction did not settle the order.'}
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
-                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Reveal Queue</div>
+                <div className="mb-3 text-xs font-medium uppercase text-cyber-text-secondary">Settlement Details</div>
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
-                    { label: 'Self execute', value: 'Retry available', tone: 'warning' },
+                    {
+                      label: 'Manual finalization',
+                      value: isTerminalRevealError ? 'Unavailable' : 'Retry available',
+                      tone: 'warning',
+                    },
                   ]}
                 />
               </div>
 
-              <div className="flex gap-3">
+              {isTerminalRevealError ? (
                 <Button
-                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                  className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
                   onClick={() => {
-                    setLifecycleState('selfExecuteAvailable')
+                    setLifecycleState('preview')
                   }}
                 >
-                  Back
+                  Back to Preview
                 </Button>
-                <Button
-                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+              ) : (
+                <div className="flex gap-3">
+                  <Button
+                    className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                    variant="secondary"
+                    onClick={() => {
+                      setLifecycleState('selfExecuteAvailable')
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                   onClick={() => {
                     void handleSelfExecute()
                   }}
                 >
-                  Retry Self Execute
-                </Button>
-              </div>
+                    Retry Finalizing
+                  </Button>
+                </div>
+              )}
             </>
           ) : null}
 
@@ -2359,13 +2605,13 @@ export function PerpsTradeTicket({
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
                     { label: 'VPI / Price impact', value: 'Unavailable' },
-                    { label: 'Keeper bounty', value: formatUsdc(keeperBounty) },
+                    { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },
                   ]}
                 />
                 <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
-                  Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at reveal.
+                  Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.
                 </p>
               </div>
               <Button
@@ -2382,7 +2628,7 @@ export function PerpsTradeTicket({
             <>
               <FailedStateCard
                 title="Commit transaction failed"
-                description={flowError ?? 'The wallet rejected the transaction or the commit failed before reaching the reveal queue.'}
+                description={flowError ?? 'The wallet rejected the transaction or the commit failed before the order could wait for finalization.'}
               />
               <div className="flex gap-3">
                 <Button
@@ -2421,8 +2667,8 @@ export function PerpsTradeTicket({
             <p className="text-sm leading-6 text-cyber-text-secondary">
               This mode removes the normal {formatLeverage(DEFAULT_MAX_LEVERAGE)} UI cap and lets the leverage control
               reach the protocol maintenance-margin boundary. It is useful for testing margin-call behavior, but a position
-              opened near this cap can become invalid or liquidatable from a tiny adverse move, VPI, execution fees, keeper
-              bounty, or carry.
+              opened near this cap can become invalid or liquidatable from a tiny adverse move, VPI, execution fees,
+              execution rewards, or carry.
             </p>
             <p className="mt-3 text-sm leading-6 text-[#FFAB96]">
               The current maintenance margin can be temporary.

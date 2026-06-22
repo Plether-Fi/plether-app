@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Hex } from 'viem'
 import { useAccount } from 'wagmi'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
@@ -14,6 +14,10 @@ export interface PerpsOrderHistoryRow {
   status: string
   commitTxHash: Hex
   revealTxHash?: Hex
+  failureReason?: string
+  executionPriceRaw?: bigint
+  activitySizeDeltaRaw?: bigint
+  activityPriceRaw?: bigint
 }
 
 export interface PerpsTradeHistoryRow {
@@ -26,6 +30,11 @@ export interface PerpsTradeHistoryRow {
   txHash: Hex
 }
 
+interface PerpsHistoryData {
+  orderHistory: PerpsOrderHistoryRow[]
+  tradeHistory: PerpsTradeHistoryRow[]
+}
+
 interface BackendOrdersResponse {
   data?: {
     orders?: BackendOrderRow[]
@@ -35,6 +44,13 @@ interface BackendOrdersResponse {
 interface BackendActivityResponse {
   data?: {
     activity?: BackendActivityRow[]
+  }
+}
+
+interface BackendOrderWaitResponse {
+  data?: {
+    timedOut?: boolean
+    order?: BackendOrderRow | null
   }
 }
 
@@ -140,6 +156,9 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const orderId = parseBigInt(row.orderId)
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
+  const executionPriceRaw = parseBigInt(row.executionPrice)
+  const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
+  const activityPriceRaw = parseBigInt(row.activityPrice)
 
   return {
     orderId,
@@ -152,6 +171,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     status: orderStatus(row),
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
+    failureReason: row.failureReason,
+    executionPriceRaw,
+    activitySizeDeltaRaw,
+    activityPriceRaw,
   }
 }
 
@@ -203,7 +226,7 @@ function activityResult(row: BackendActivityRow): string | undefined {
   if (row.activityType === 'Cleaned up expired order' && row.orderId) return `Order ${row.orderId}`
   if (row.activityType === 'Liquidated') {
     const keeperBounty = parseBigInt(row.amountUsdc)
-    return keeperBounty === undefined ? undefined : `Keeper bounty ${formatPerpsUsdc(keeperBounty)}`
+    return keeperBounty === undefined ? undefined : `Liquidation reward ${formatPerpsUsdc(keeperBounty)}`
   }
 
   const pnl = parseBigInt(row.pnlUsdc)
@@ -225,11 +248,14 @@ function mapActivityRow(row: BackendActivityRow): PerpsTradeHistoryRow | undefin
   }
 }
 
-async function fetchJson<T>(url: URL): Promise<T> {
+async function fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   let response: Response
   try {
-    response = await fetch(url)
+    response = await fetch(url, { signal })
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw error
+    }
     throw new Error(
       `Could not reach backend history API. Check that the backend and plether-perps-indexer are running. ${
         error instanceof Error ? error.message : ''
@@ -245,12 +271,85 @@ async function fetchJson<T>(url: URL): Promise<T> {
   return await response.json() as T
 }
 
+export async function waitForPerpsOrderTerminal({
+  accountAddress,
+  orderId,
+  timeoutSeconds = 60,
+  signal,
+}: {
+  accountAddress?: string
+  orderId: bigint
+  timeoutSeconds?: number
+  signal?: AbortSignal
+}): Promise<{ timedOut: boolean; order?: PerpsOrderHistoryRow }> {
+  const waitUrl = perpsApiUrl(`/perps/orders/${orderId.toString()}/wait`)
+  waitUrl.searchParams.set('timeoutSeconds', String(timeoutSeconds))
+  if (accountAddress) {
+    waitUrl.searchParams.set('account', accountAddress)
+  }
+
+  const response = await fetchJson<BackendOrderWaitResponse>(waitUrl, signal)
+  const order = response.data?.order ? mapOrderRow(response.data.order) : undefined
+  return {
+    timedOut: Boolean(response.data?.timedOut),
+    order,
+  }
+}
+
+async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryData> {
+  const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
+  ordersUrl.searchParams.set('limit', '30')
+  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
+  activityUrl.searchParams.set('limit', '30')
+
+  const [ordersResponse, activityResponse] = await Promise.all([
+    fetchJson<BackendOrdersResponse>(ordersUrl),
+    fetchJson<BackendActivityResponse>(activityUrl),
+  ])
+
+  return {
+    orderHistory: (ordersResponse.data?.orders ?? []).flatMap((row) => {
+      const mapped = mapOrderRow(row)
+      return mapped ? [mapped] : []
+    }),
+    tradeHistory: (activityResponse.data?.activity ?? []).flatMap((row) => {
+      const mapped = mapActivityRow(row)
+      return mapped ? [mapped] : []
+    }),
+  }
+}
+
 export function usePerpsHistory() {
   const { address, isConnected } = useAccount()
   const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
   const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
+
+  const refetch = useCallback(async () => {
+    if (!isConnected || !address) {
+      setOrderHistory([])
+      setTradeHistory([])
+      setError(undefined)
+      setIsLoading(false)
+      return
+    }
+
+    setIsLoading(true)
+    setError(undefined)
+
+    try {
+      const nextHistory = await fetchPerpsHistory(address)
+      setOrderHistory(nextHistory.orderHistory)
+      setTradeHistory(nextHistory.tradeHistory)
+      setIsLoading(false)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause : new Error(String(cause)))
+      setOrderHistory([])
+      setTradeHistory([])
+      setIsLoading(false)
+    }
+  }, [address, isConnected])
 
   useEffect(() => {
     if (!isConnected || !address) {
@@ -271,25 +370,11 @@ export function usePerpsHistory() {
       setError(undefined)
 
       try {
-        const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
-        ordersUrl.searchParams.set('limit', '30')
-        const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
-        activityUrl.searchParams.set('limit', '30')
-
-        const [ordersResponse, activityResponse] = await Promise.all([
-          fetchJson<BackendOrdersResponse>(ordersUrl),
-          fetchJson<BackendActivityResponse>(activityUrl),
-        ])
+        const nextHistory = await fetchPerpsHistory(accountAddress)
 
         if (!cancelled) {
-          setOrderHistory((ordersResponse.data?.orders ?? []).flatMap((row) => {
-            const mapped = mapOrderRow(row)
-            return mapped ? [mapped] : []
-          }))
-          setTradeHistory((activityResponse.data?.activity ?? []).flatMap((row) => {
-            const mapped = mapActivityRow(row)
-            return mapped ? [mapped] : []
-          }))
+          setOrderHistory(nextHistory.orderHistory)
+          setTradeHistory(nextHistory.tradeHistory)
           setIsLoading(false)
         }
       } catch (cause) {
@@ -318,5 +403,6 @@ export function usePerpsHistory() {
     tradeHistory,
     isLoading,
     error,
-  }), [error, isLoading, orderHistory, tradeHistory])
+    refetch,
+  }), [error, isLoading, orderHistory, refetch, tradeHistory])
 }

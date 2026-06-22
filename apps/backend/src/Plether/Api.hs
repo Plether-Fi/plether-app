@@ -31,6 +31,7 @@ import Plether.Handlers.PerpsHistory
   ( getPerpsAccountActivity
   , getPerpsAccountOrders
   , getPerpsIndexerStatusResponse
+  , waitForPerpsOrderTerminal
   )
 import Plether.Handlers.Quote
   ( getBurnQuote
@@ -228,6 +229,23 @@ app cache client cfg mPool manager = do
       get "/api/perps/indexer/status" $ do
         result <- liftIO $ getPerpsIndexerStatusResponse pool cfg
         handleResult result
+
+      get "/api/perps/orders/:orderId/wait" $ do
+        rawOrderId <- pathParam "orderId"
+        mAccount <- queryParamMaybe "account"
+        mTimeoutSeconds <- queryParamMaybe "timeoutSeconds"
+        case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds) of
+          (Just orderId, Just timeoutSeconds)
+            | maybe True isValidAddress mAccount -> do
+                result <- liftIO $
+                  waitForPerpsOrderTerminal pool cfg orderId mAccount (maybe 60 id timeoutSeconds)
+                handleResult result
+            | otherwise ->
+                handleError $ E.invalidAddress $ maybe "" id mAccount
+          (Nothing, _) ->
+            handleError $ E.invalidAmount "orderId must be a positive integer"
+          (_, Nothing) ->
+            handleError $ E.invalidAmount "timeoutSeconds must be a positive integer"
     Nothing -> pure ()
 
   get "/api/perps/basket/history" $ do
@@ -388,6 +406,13 @@ parsePositiveInteger :: Text -> Maybe Integer
 parsePositiveInteger txt = do
   value <- parseAmount txt
   if value > 0 then Just value else Nothing
+
+parsePositiveInt :: Text -> Maybe Int
+parsePositiveInt txt = do
+  value <- parsePositiveInteger txt
+  if value <= fromIntegral (maxBound :: Int)
+    then Just $ fromInteger value
+    else Nothing
 
 parseHistoryCursor :: Text -> Maybe (Integer, Integer)
 parseHistoryCursor txt =
