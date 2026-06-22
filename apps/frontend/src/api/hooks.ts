@@ -7,9 +7,9 @@
 
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
-import { useChainId } from 'wagmi';
+import { useAccount, useChainId } from 'wagmi';
 import { Result } from 'better-result';
-import { plethApi, PlethApiError } from './client';
+import { defaultApiChainId, plethApi, PlethApiError } from './client';
 import type {
   Side,
   ZapDirection,
@@ -320,7 +320,9 @@ export function useLendingHistory(address: string | undefined, params?: { side?:
 // =============================================================================
 
 export function useApiChainSync(): void {
-  const chainId = useChainId();
+  const walletChainId = useChainId();
+  const { isConnected } = useAccount();
+  const chainId = isConnected ? walletChainId : defaultApiChainId();
   const queryClient = useQueryClient();
   const prevChainId = useRef(chainId);
 

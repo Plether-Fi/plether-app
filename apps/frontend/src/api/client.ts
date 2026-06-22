@@ -89,6 +89,10 @@ export function defaultApiBaseUrl(): string {
   return chainIdToApiPath(DEFAULT_API_CHAIN_ID);
 }
 
+export function defaultApiChainId(): number {
+  return DEFAULT_API_CHAIN_ID;
+}
+
 function getInitialBaseUrl(): string {
   return defaultApiBaseUrl();
 }
