@@ -174,6 +174,90 @@ describe('usePerpsTrading', () => {
     }))
   })
 
+  it('shows tx hash and commit diagnostics when a submitted commit receipt reverts', async () => {
+    const failedHash = '0x1111111111111111111111111111111111111111111111111111111111111111'
+    mocks.writeContractAsync.mockResolvedValue(failedHash)
+    mocks.waitForTransactionReceipt.mockResolvedValue({ status: 'reverted', logs: [] })
+    mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
+      switch (functionName) {
+        case 'getPendingOrders':
+          return []
+        case 'maxPendingOrders':
+          return 10n
+        case 'getTraderAccount':
+          return {
+            equityUsdc: 1_000_000_000n,
+            withdrawableUsdc: 750_000_000n,
+            pendingOrderMarginUsdc: 0n,
+            pendingExecutionBountyUsdc: 0n,
+          }
+        case 'previewOpenRevertCode':
+          return 0
+        default:
+          throw new Error(`Unexpected readContract call: ${functionName}`)
+      }
+    })
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      direction: 'long',
+      notionalUsdc: 1_000_000_000n,
+      sizeDelta: 1_000_000_000_000_000_000n,
+      marginUsdc: 200_000_000n,
+      oraclePrice: 98_300_000n,
+      slippagePercent: 0.1,
+      isClose: false,
+    })).rejects.toThrow([
+      'Commit reverted after wallet confirmation, but the receipt did not include decodable revert data.',
+      `Failed tx: ${failedHash}`,
+      'Current account state: 0/10 pending orders, equity 1 000 USDC, free/withdrawable 750 USDC, pending margin 0 USDC, pending bounty 0 USDC.',
+      'Latest open preview still passes.',
+      'A fresh commit simulation still passes',
+    ].join('\n'))
+  })
+
+  it('shows commit diagnostics when an undecoded pre-wallet commit simulation fails', async () => {
+    mocks.simulateContract.mockRejectedValueOnce(new Error('Transaction failed'))
+    mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
+      switch (functionName) {
+        case 'getPendingOrders':
+          return []
+        case 'maxPendingOrders':
+          return 10n
+        case 'getTraderAccount':
+          return {
+            equityUsdc: 900_000_000n,
+            withdrawableUsdc: 500_000_000n,
+            pendingOrderMarginUsdc: 250_000_000n,
+            pendingExecutionBountyUsdc: 10_000n,
+          }
+        case 'previewOpenRevertCode':
+          return 0
+        default:
+          throw new Error(`Unexpected readContract call: ${functionName}`)
+      }
+    })
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      direction: 'long',
+      notionalUsdc: 1_000_000_000n,
+      sizeDelta: 1_000_000_000_000_000_000n,
+      marginUsdc: 200_000_000n,
+      oraclePrice: 98_300_000n,
+      slippagePercent: 0.1,
+      isClose: false,
+    })).rejects.toThrow([
+      'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
+      'No transaction hash was returned by the wallet/RPC.',
+      'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
+      'Latest open preview still passes.',
+      'A fresh commit simulation still passes',
+    ].join('\n'))
+  })
+
   it('adds isolated margin to the active CFD position', async () => {
     mocks.estimateFeesPerGas.mockResolvedValue({
       maxFeePerGas: 100n,

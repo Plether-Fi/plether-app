@@ -146,7 +146,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=0 \
+PERPS_INDEXER_START_BLOCK=273137426 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -260,7 +260,7 @@ Local URLs:
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
-| `PERPS_INDEXER_START_BLOCK` | No | `INDEXER_START_BLOCK` | Perps order-router block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |

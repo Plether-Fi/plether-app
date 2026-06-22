@@ -2,7 +2,7 @@ import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
-export type PerpsOracleFreshness = 'fresh' | 'backend-fresh' | 'checking' | 'market-closed' | 'stale'
+export type PerpsOracleFreshness = 'fresh' | 'checking' | 'market-closed' | 'stale'
 export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
 export function cleanNumericInput(value: string): string {

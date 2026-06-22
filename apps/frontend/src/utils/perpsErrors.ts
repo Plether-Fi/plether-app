@@ -2,6 +2,8 @@ import { decodeErrorResult, parseAbi } from 'viem'
 
 type PerpsAction = 'approve' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'commit' | 'execute'
 
+export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
+
 const PERPS_ERROR_ABI = parseAbi([
   'error EnforcedPause()',
 
@@ -393,7 +395,7 @@ function fallbackMessage(action: PerpsAction): string {
     case 'addPositionMargin':
       return 'Add position margin failed. Check free margin, open position state, and wallet gas.'
     case 'commit':
-      return 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
+      return COMMIT_UNDECODED_FALLBACK_MESSAGE
     case 'execute':
       return 'Self-execute failed. Retry with fresh Pyth data; the previous update may have expired.'
   }

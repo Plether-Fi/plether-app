@@ -65,7 +65,7 @@ variable "perps_plether_oracle" {
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "0"
+  default = "273137426"
 }
 
 variable "keeper_poll_seconds" {

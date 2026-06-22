@@ -134,9 +134,9 @@ getRevealPayload pool cfg orderId minPublishTime maxPublishTime = do
         E.networkError $
           "Reveal payload unavailable for order "
             <> T.pack (show orderId)
-            <> ". The basket worker has not cached a six-feed Pyth update inside publish window "
+            <> ". The basket worker has not cached the first post-commit six-feed Pyth update starting at "
             <> T.pack (show minPublishTime)
-            <> " to "
+            <> " within reveal window ending at "
             <> T.pack (show maxPublishTime)
             <> ". Keep plether-basket-worker --latest-loop running and retry before the order expires."
     Just row ->

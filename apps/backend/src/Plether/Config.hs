@@ -134,7 +134,7 @@ loadConfig = do
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsOrderRouter <- fromMaybe "0x485703D16fE36369c134dEe2A61c057733E7830f" <$> lookupEnv "PERPS_ORDER_ROUTER"
       perpsPletherOracle <- fromMaybe "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb" <$> lookupEnv "PERPS_PLETHER_ORACLE"
-      perpsIndexerStartBlockStr <- fromMaybe "0" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"

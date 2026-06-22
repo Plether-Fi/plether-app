@@ -91,7 +91,7 @@ INSERT INTO perps_keeper_state (id, last_indexed_block) VALUES (1, 0) ON CONFLIC
 
 -- Perps keeper pending/executed/failed order queue
 CREATE TABLE IF NOT EXISTS perps_keeper_orders (
-    order_id NUMERIC(20,0) PRIMARY KEY,
+    order_id BIGINT PRIMARY KEY,
     account VARCHAR(42) NOT NULL,
     side INTEGER NOT NULL,
     commit_block BIGINT NOT NULL,

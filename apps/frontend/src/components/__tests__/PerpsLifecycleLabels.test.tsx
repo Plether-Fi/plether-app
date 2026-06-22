@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PerpsAccountPanel } from '../PerpsAccountPanel'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
@@ -13,6 +13,14 @@ vi.mock('@reown/appkit/react', () => ({
 }))
 
 let mockIsConnected = false
+const perpsTradingMocks = vi.hoisted(() => ({
+  depositMargin: vi.fn(),
+  withdrawMargin: vi.fn(),
+  addPositionMargin: vi.fn(),
+  commitOrder: vi.fn(),
+  executeOrder: vi.fn(),
+  cleanupExpiredOrder: vi.fn(),
+}))
 
 vi.mock('wagmi', () => ({
   useAccount: () => ({
@@ -35,12 +43,12 @@ vi.mock('wagmi', () => ({
 
 vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
-    depositMargin: vi.fn(),
-    withdrawMargin: vi.fn(),
-    addPositionMargin: vi.fn(),
-    commitOrder: vi.fn(),
-    executeOrder: vi.fn(),
-    cleanupExpiredOrder: vi.fn(),
+    depositMargin: perpsTradingMocks.depositMargin,
+    withdrawMargin: perpsTradingMocks.withdrawMargin,
+    addPositionMargin: perpsTradingMocks.addPositionMargin,
+    commitOrder: perpsTradingMocks.commitOrder,
+    executeOrder: perpsTradingMocks.executeOrder,
+    cleanupExpiredOrder: perpsTradingMocks.cleanupExpiredOrder,
   }),
   useSwitchToArbitrumSepolia: () => ({
     switchToArbitrumSepolia: vi.fn(),
@@ -53,6 +61,10 @@ vi.mock('../../hooks', () => ({
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
     mockIsConnected = false
+    vi.useRealTimers()
+    Object.values(perpsTradingMocks).forEach((mock) => {
+      mock.mockReset()
+    })
   })
 
   it('distinguishes plDXY Perp exposure from contract and entry notionals', () => {
@@ -419,5 +431,140 @@ describe('perps lifecycle labels', () => {
     render(<PerpsAccountPanel isConnected={false} />)
 
     expect(screen.queryByRole('button', { name: 'Edit position margin' })).not.toBeInTheDocument()
+  })
+
+  it('hides manual execution during the keeper grace period', async () => {
+    vi.useFakeTimers()
+    const onAccountRefresh = vi.fn()
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        onAccountRefresh={onAccountRefresh}
+      />
+    )
+
+    expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'Keeper reveal progress' })).toBeInTheDocument()
+    expect(screen.queryByText(/This panel will show the confirmation automatically/i)).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(19_000)
+    })
+
+    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar', { name: 'Keeper reveal progress' })).toHaveAttribute('aria-valuenow', '95')
+    expect(onAccountRefresh).toHaveBeenCalled()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1_000)
+    })
+
+    expect(screen.getByRole('button', { name: 'Self Execute' })).toBeInTheDocument()
+  })
+
+  it('shows the execution confirmation if the keeper settles before manual execution is available', async () => {
+    mockIsConnected = true
+
+    const baseProps = {
+      enableLiveTrading: true,
+      initialLifecycleState: 'revealPending' as const,
+      initialReviewOpen: true,
+      initialDirection: 'long' as const,
+      initialSize: '1 000',
+      initialOrderId: 58n,
+      initialPositionSnapshotAtCommit: {
+        exists: false,
+        size: 0n,
+      },
+      oraclePriceRaw: 97_330_315n,
+      oraclePublishTime: Math.floor(Date.now() / 1000),
+      availableToTradeRaw: 2_000_000_000n,
+      walletUsdcRaw: 2_000_000_000n,
+      portfolioValueRaw: 2_000_000_000n,
+      withdrawableUsdcRaw: 2_000_000_000n,
+      minOpenNotionalUsdc: 100_000_000n,
+      minNewPositionNotionalUsdc: 100_000_000n,
+    }
+
+    const { rerender } = render(<PerpsTradeTicket {...baseProps} />)
+
+    expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
+
+    await act(async () => {
+      rerender(
+        <PerpsTradeTicket
+          {...baseProps}
+          currentPosition={{
+            exists: true,
+            side: 0,
+            direction: 'long',
+            size: 1_027_429_363_241_152_525_586n,
+            entryPrice: 97_330_315n,
+            marginUsdc: 200_000_000n,
+            unrealizedPnlUsdc: 0n,
+            maintenanceMarginUsdc: 0n,
+            liquidatable: false,
+            estimatedNotionalUsdc: 1_000_000_000n,
+            dxyExposureUsdc: 1_000_000_000n,
+          }}
+          pendingOrderIds={[]}
+        />
+      )
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: 'Self Execute' })).not.toBeInTheDocument()
+  })
+
+  it('stops waiting if the order leaves pending state without executing', async () => {
+    vi.useFakeTimers()
+    mockIsConnected = true
+
+    try {
+      render(
+        <PerpsTradeTicket
+          enableLiveTrading
+          initialLifecycleState="revealPending"
+          initialReviewOpen
+          initialDirection="long"
+          initialSize="1 000"
+          initialOrderId={60n}
+          initialPositionSnapshotAtCommit={{
+            exists: false,
+            size: 0n,
+          }}
+          pendingOrderIds={[]}
+          oraclePriceRaw={97_330_315n}
+          oraclePublishTime={Math.floor(Date.now() / 1000)}
+          availableToTradeRaw={2_000_000_000n}
+          walletUsdcRaw={2_000_000_000n}
+          portfolioValueRaw={2_000_000_000n}
+          withdrawableUsdcRaw={2_000_000_000n}
+          minOpenNotionalUsdc={100_000_000n}
+          minNewPositionNotionalUsdc={100_000_000n}
+        />
+      )
+
+      expect(screen.getByText('Waiting for keeper reveal')).toBeInTheDocument()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(20_000)
+      })
+
+      expect(screen.getByText('Order no longer pending')).toBeInTheDocument()
+      expect(screen.getByText(/Order 60 is no longer pending, but your position did not change/i)).toBeInTheDocument()
+      expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
+      expect(screen.queryByRole('button', { name: 'Retry Self Execute' })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

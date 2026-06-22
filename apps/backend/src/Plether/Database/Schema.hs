@@ -491,7 +491,7 @@ getPythUpdatePayloadForWindow conn minPublishTime maxPublishTime = do
   rows <- query conn
     "SELECT min_publish_time, max_publish_time, publish_times, update_data, fetched_at, source \
     \FROM perps_pyth_update_payloads \
-    \WHERE min_publish_time >= ? AND max_publish_time <= ? \
+    \WHERE min_publish_time = ? AND max_publish_time <= ? \
     \ORDER BY min_publish_time ASC LIMIT 1"
     (minPublishTime, maxPublishTime)
   case rows of
@@ -548,7 +548,7 @@ ensurePerpsKeeperSchema conn = do
     \VALUES (1, 0) ON CONFLICT (id) DO NOTHING"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_keeper_orders (\
-    \order_id NUMERIC(20,0) PRIMARY KEY,\
+    \order_id BIGINT PRIMARY KEY,\
     \account VARCHAR(42) NOT NULL,\
     \side INTEGER NOT NULL,\
     \commit_block BIGINT NOT NULL,\
@@ -567,6 +567,9 @@ ensurePerpsKeeperSchema conn = do
     \created_at TIMESTAMP DEFAULT NOW(),\
     \updated_at TIMESTAMP DEFAULT NOW()\
     \)"
+  _ <- execute_ conn
+    "ALTER TABLE perps_keeper_orders \
+    \ALTER COLUMN order_id TYPE BIGINT USING order_id::bigint"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending \
     \ON perps_keeper_orders(order_id ASC) WHERE status = 'pending'"

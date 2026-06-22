@@ -2,21 +2,26 @@ module Main (main) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
+import Control.Monad (forM_, when)
 import Data.Aeson (toJSON)
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Text as T
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Schema
-  ( ensureBasketSnapshotSchema
+  ( PerpsKeeperOrderRow (..)
+  , ensureBasketSnapshotSchema
+  , ensurePerpsKeeperSchema
+  , getPendingPerpsKeeperOrders
+  , getPythUpdatePayloadForWindow
   , insertBasketSnapshotWithSource
   , insertPythUpdatePayload
   )
-import Plether.Pyth.Hermes (HermesBasketUpdate (..), fetchLatestBasketUpdate)
+import Plether.Pyth.Hermes (HermesBasketUpdate (..), fetchBasketUpdateAt, fetchLatestBasketUpdate)
 import Plether.Pyth.History (BasketIngestorConfig (..), runBasketBackfill)
-import Plether.Pyth.RevealPayload (validatePublishTimes)
+import Plether.Pyth.RevealPayload (validatePublishTimes, validateRevealWindow)
 import System.Environment (getArgs)
 import Text.Read (readMaybe)
 
@@ -36,6 +41,9 @@ data WorkerArgs = WorkerArgs
 defaultPollSeconds :: Int
 defaultPollSeconds = 5
 
+defaultOrderSettlementWindow :: Integer
+defaultOrderSettlementWindow = 15
+
 main :: IO ()
 main = do
   args <- parseWorkerArgs <$> getArgs
@@ -51,7 +59,9 @@ main = do
         Just dbUrl -> do
           manager <- newManager tlsManagerSettings
           pool <- newDbPool dbUrl
-          withDb pool ensureBasketSnapshotSchema
+          withDb pool $ \conn -> do
+            ensureBasketSnapshotSchema conn
+            ensurePerpsKeeperSchema conn
           case waMode args of
             RunOnce -> do
               putStrLn "Fetching one latest six-feed Pyth basket update..."
@@ -77,7 +87,7 @@ main = do
 
 latestLoop :: Manager -> DbPool -> Config -> Int -> IO ()
 latestLoop manager pool cfg pollSeconds = do
-  result <- try (runLatestOnce manager pool cfg) :: IO (Either SomeException (Either T.Text ()))
+  result <- try (runLatestCycle manager pool cfg) :: IO (Either SomeException (Either T.Text ()))
   delaySeconds <- case result of
     Left err -> do
       putStrLn $ "Latest basket worker exception: " <> displayException err
@@ -90,40 +100,94 @@ latestLoop manager pool cfg pollSeconds = do
   threadDelay (max 1 delaySeconds * 1_000_000)
   latestLoop manager pool cfg pollSeconds
 
+runLatestCycle :: Manager -> DbPool -> Config -> IO (Either T.Text ())
+runLatestCycle manager pool cfg = do
+  latestResult <- runLatestOnce manager pool cfg
+  backfillResult <- backfillPendingOrderRevealPayloads manager pool cfg
+  pure $ case (latestResult, backfillResult) of
+    (Left err, _) -> Left err
+    (_, Left err) -> Left err
+    (Right (), Right ()) -> Right ()
+
 runLatestOnce :: Manager -> DbPool -> Config -> IO (Either T.Text ())
 runLatestOnce manager pool cfg = do
   result <- fetchLatestBasketUpdate manager cfg
   case result of
     Left err -> pure $ Left err
-    Right update ->
-      case validatePublishTimes (hbuPublishTimes update) of
-        Left err -> pure $ Left err
-        Right (minPublishTime, maxPublishTime) -> do
-          let minuteBucket = (minPublishTime `div` 60) * 60
-          withDb pool $ \conn -> do
-            insertBasketSnapshotWithSource
-              conn
-              minuteBucket
-              60
-              (hbuBasketPrice update)
-              (hbuComponents update)
-              "pyth_hermes_latest"
-            insertPythUpdatePayload
-              conn
-              minPublishTime
-              maxPublishTime
-              (toJSON $ hbuPublishTimes update)
-              (toJSON $ hbuUpdateData update)
-              (hbuFetchedAt update)
-              (hbuSource update)
+    Right update -> cacheBasketUpdate pool update
+
+backfillPendingOrderRevealPayloads :: Manager -> DbPool -> Config -> IO (Either T.Text ())
+backfillPendingOrderRevealPayloads manager pool cfg = do
+  pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn 20
+  forM_ pending $ \order -> do
+    let firstRevealTick = pkorCommitTime order + 1
+        maxRevealTick = pkorCommitTime order + defaultOrderSettlementWindow
+    mExisting <- withDb pool $ \conn ->
+      getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
+    when (isNothing mExisting) $ do
+      result <- fetchBasketUpdateAt manager cfg firstRevealTick
+      case result of
+        Left err ->
           putStrLn $
-            "Cached basket update publish window "
-              <> show minPublishTime
-              <> ".."
-              <> show maxPublishTime
-              <> " into minute bucket "
-              <> show minuteBucket
-          pure $ Right ()
+            "Reveal payload backfill skipped for order "
+              <> show (pkorOrderId order)
+              <> ": "
+              <> T.unpack err
+        Right update ->
+          case validateRevealWindow (pkorCommitTime order) defaultOrderSettlementWindow (hbuPublishTimes update) of
+            Left err ->
+              putStrLn $
+                "Reveal payload backfill returned unusable payload for order "
+                  <> show (pkorOrderId order)
+                  <> ": "
+                  <> T.unpack err
+            Right _ -> do
+              cacheResult <- cacheBasketUpdate pool update
+              case cacheResult of
+                Left err ->
+                  putStrLn $
+                    "Reveal payload backfill cache failed for order "
+                      <> show (pkorOrderId order)
+                      <> ": "
+                      <> T.unpack err
+                Right () ->
+                  putStrLn $
+                    "Backfilled first reveal payload for order "
+                      <> show (pkorOrderId order)
+                      <> " at publish time "
+                      <> show firstRevealTick
+  pure $ Right ()
+
+cacheBasketUpdate :: DbPool -> HermesBasketUpdate -> IO (Either T.Text ())
+cacheBasketUpdate pool update =
+  case validatePublishTimes (hbuPublishTimes update) of
+    Left err -> pure $ Left err
+    Right (minPublishTime, maxPublishTime) -> do
+      let minuteBucket = (minPublishTime `div` 60) * 60
+      withDb pool $ \conn -> do
+        insertBasketSnapshotWithSource
+          conn
+          minuteBucket
+          60
+          (hbuBasketPrice update)
+          (hbuComponents update)
+          "pyth_hermes_latest"
+        insertPythUpdatePayload
+          conn
+          minPublishTime
+          maxPublishTime
+          (toJSON $ hbuPublishTimes update)
+          (toJSON $ hbuUpdateData update)
+          (hbuFetchedAt update)
+          (hbuSource update)
+      putStrLn $
+        "Cached basket update publish window "
+          <> show minPublishTime
+          <> ".."
+          <> show maxPublishTime
+          <> " into minute bucket "
+          <> show minuteBucket
+      pure $ Right ()
 
 parseWorkerArgs :: [String] -> WorkerArgs
 parseWorkerArgs args =

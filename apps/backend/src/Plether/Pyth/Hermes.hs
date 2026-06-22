@@ -1,5 +1,6 @@
 module Plether.Pyth.Hermes
   ( HermesBasketUpdate (..)
+  , fetchBasketUpdateAt
   , fetchLatestBasketUpdate
   ) where
 
@@ -90,7 +91,15 @@ parsePythPrice feedId = withObject "HermesPrice" $ \v -> do
       }
 
 fetchLatestBasketUpdate :: Manager -> Config -> IO (Either Text HermesBasketUpdate)
-fetchLatestBasketUpdate manager cfg = do
+fetchLatestBasketUpdate manager cfg =
+  fetchBasketUpdate manager cfg "latest"
+
+fetchBasketUpdateAt :: Manager -> Config -> Integer -> IO (Either Text HermesBasketUpdate)
+fetchBasketUpdateAt manager cfg publishTime =
+  fetchBasketUpdate manager cfg (T.pack $ show publishTime)
+
+fetchBasketUpdate :: Manager -> Config -> Text -> IO (Either Text HermesBasketUpdate)
+fetchBasketUpdate manager cfg pathSegment = do
   nowUnix <- round <$> getPOSIXTime
   requestBase <- parseRequest $ T.unpack requestUrl
   let request =
@@ -109,7 +118,8 @@ fetchLatestBasketUpdate manager cfg = do
   where
     requestUrl =
       stripTrailingSlash (cfgPythHermesUrl cfg)
-        <> "/v2/updates/price/latest"
+        <> "/v2/updates/price/"
+        <> pathSegment
 
     queryParams =
       ("parsed", Just "true")

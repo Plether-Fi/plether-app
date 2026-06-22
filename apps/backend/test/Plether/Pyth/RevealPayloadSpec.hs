@@ -14,12 +14,20 @@ spec = do
         `shouldSatisfy` isLeft
 
   describe "validateRevealWindow" $ do
-    it "accepts payloads inside T+1 to T+15" $ do
+    it "accepts payloads starting at T+1 and ending inside T+15" $ do
       validateRevealWindow 100 15 [101, 102, 103, 104, 105, 106]
         `shouldBe` Right (101, 106)
 
     it "rejects payloads before T+1" $ do
       validateRevealWindow 100 15 [100, 101, 102, 103, 104, 105]
+        `shouldSatisfy` isLeft
+
+    it "rejects later in-window payloads that are not the first post-commit tick" $ do
+      validateRevealWindow 100 15 [102, 103, 104, 105, 106]
+        `shouldSatisfy` isLeft
+
+    it "rejects the order 61 failure shape: a later tick inside the settlement window" $ do
+      validateRevealWindow 1_782_120_343 15 (replicate 6 1_782_120_346)
         `shouldSatisfy` isLeft
 
     it "rejects payloads after T+15" $ do

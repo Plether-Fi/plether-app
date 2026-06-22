@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
@@ -110,6 +110,8 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialOrderId?: bigint
+  initialPositionSnapshotAtCommit?: PositionSnapshot
   currentPositionSide?: Direction
   currentPositionAmount?: string
   enableLiveTrading?: boolean
@@ -163,6 +165,9 @@ const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
+const KEEPER_REVEAL_GRACE_MS = 20_000
+const KEEPER_REVEAL_POLL_MS = 1_000
+const KEEPER_REVEAL_PROGRESS_MS = 250
 
 function isPerpsCommitDebugEnabled(): boolean {
   if (import.meta.env.MODE === 'test') return false
@@ -758,17 +763,66 @@ function OrderLifecycleSteps({
 function PendingStateCard({
   title,
   description,
+  progressPercent,
 }: {
   title: string
   description: string
+  progressPercent?: number
 }) {
   return (
     <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg px-6 py-8 text-center">
-      <div className="relative h-14 w-14 shrink-0">
-        <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
-      </div>
+      {progressPercent === undefined ? <PendingSpinner /> : <PendingProgressCircle progressPercent={progressPercent} />}
       <div className="mt-5 text-xl font-semibold text-cyber-text-primary">{title}</div>
       <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
+    </div>
+  )
+}
+
+function PendingSpinner() {
+  return (
+    <div className="relative h-14 w-14 shrink-0">
+      <div className="absolute inset-0 rounded-full border-4 border-cyber-bright-blue/20 border-t-cyber-bright-blue animate-spin" />
+    </div>
+  )
+}
+
+function PendingProgressCircle({ progressPercent }: { progressPercent: number }) {
+  const radius = 22
+  const circumference = 2 * Math.PI * radius
+  const normalizedProgress = Math.max(0, Math.min(100, progressPercent))
+  const strokeDashoffset = circumference * (1 - normalizedProgress / 100)
+
+  return (
+    <div
+      className="relative h-14 w-14 shrink-0"
+      role="progressbar"
+      aria-label="Keeper reveal progress"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(normalizedProgress)}
+    >
+      <svg className="h-14 w-14 -rotate-90" viewBox="0 0 56 56" aria-hidden="true">
+        <circle
+          className="fill-none stroke-cyber-bright-blue/20"
+          cx="28"
+          cy="28"
+          r={radius}
+          strokeWidth="4"
+        />
+        <circle
+          className="fill-none stroke-cyber-bright-blue"
+          cx="28"
+          cy="28"
+          r={radius}
+          strokeWidth="4"
+          strokeLinecap="round"
+          style={{
+            strokeDasharray: circumference,
+            strokeDashoffset,
+            transition: 'stroke-dashoffset 200ms linear',
+          }}
+        />
+      </svg>
     </div>
   )
 }
@@ -792,7 +846,7 @@ function FailedStateCard({ title, description }: { title: string; description: s
         <span className="material-symbols-outlined text-4xl">close</span>
       </div>
       <div className="mt-5 text-xl font-semibold text-cyber-electric-fuchsia">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 max-w-xl whitespace-pre-line text-left text-sm leading-6 text-cyber-text-secondary">{description}</div>
     </div>
   )
 }
@@ -877,6 +931,8 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialOrderId,
+  initialPositionSnapshotAtCommit,
   currentPositionSide = 'long',
   currentPositionAmount,
   enableLiveTrading = false,
@@ -923,7 +979,7 @@ export function PerpsTradeTicket({
   const [lifecycleState, setLifecycleState] = useState<TradeLifecycleState>(initialLifecycleState)
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
-  const [orderId, setOrderId] = useState<bigint | undefined>()
+  const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>()
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>()
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>()
@@ -936,12 +992,24 @@ export function PerpsTradeTicket({
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>()
+  const [keeperRevealDeadlineMs, setKeeperRevealDeadlineMs] = useState<number | undefined>()
+  const [keeperRevealNowMs, setKeeperRevealNowMs] = useState(() => Date.now())
+  const [positionSnapshotAtCommit, setPositionSnapshotAtCommit] = useState<PositionSnapshot | undefined>(initialPositionSnapshotAtCommit)
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
+  const [observedPendingOrderId, setObservedPendingOrderId] = useState<bigint | undefined>(
+    initialOrderId !== undefined && pendingOrderIds.some((pendingOrderId) => pendingOrderId === initialOrderId)
+      ? initialOrderId
+      : undefined
+  )
+  const onAccountRefreshRef = useRef(onAccountRefresh)
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = Math.min(leverage, maxLeverage)
+
+  useEffect(() => {
+    onAccountRefreshRef.current = onAccountRefresh
+  }, [onAccountRefresh])
 
   useEffect(() => {
     if (firstPendingOrderExpiryTime === undefined && oraclePublishTime === undefined) return undefined
@@ -955,8 +1023,47 @@ export function PerpsTradeTicket({
   }, [firstPendingOrderExpiryTime, oraclePublishTime])
 
   useEffect(() => {
+    if (!enableLiveTrading || lifecycleState !== 'revealPending') return
+
+    setKeeperRevealDeadlineMs((currentDeadline) => currentDeadline ?? Date.now() + KEEPER_REVEAL_GRACE_MS)
+    setKeeperRevealNowMs(Date.now())
+  }, [enableLiveTrading, lifecycleState, orderId])
+
+  useEffect(() => {
+    if (!enableLiveTrading || lifecycleState !== 'revealPending' || keeperRevealDeadlineMs === undefined) return undefined
+
+    onAccountRefreshRef.current?.()
+
+    const refreshInterval = window.setInterval(() => {
+      onAccountRefreshRef.current?.()
+    }, KEEPER_REVEAL_POLL_MS)
+    const progressInterval = window.setInterval(() => {
+      setKeeperRevealNowMs(Date.now())
+    }, KEEPER_REVEAL_PROGRESS_MS)
+
+    const timeout = window.setTimeout(() => {
+      setKeeperRevealNowMs(Date.now())
+      setLifecycleState((currentState) => (
+        currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
+      ))
+    }, Math.max(0, keeperRevealDeadlineMs - Date.now()))
+
+    return () => {
+      window.clearInterval(refreshInterval)
+      window.clearInterval(progressInterval)
+      window.clearTimeout(timeout)
+    }
+  }, [enableLiveTrading, keeperRevealDeadlineMs, lifecycleState])
+
+  useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
   }, [maxLeverage])
+
+  useEffect(() => {
+    if (orderId !== undefined && pendingOrderIds.some((pendingOrderId) => pendingOrderId === orderId)) {
+      setObservedPendingOrderId(orderId)
+    }
+  }, [orderId, pendingOrderIds])
 
   useEffect(() => {
     if (!canEnableMarginCallSimulator) {
@@ -989,24 +1096,34 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading || orderId === undefined) return
     if (!['revealPending', 'selfExecuteAvailable', 'selfExecutePending', 'selfExecuteFailed'].includes(lifecycleState)) return
     if (pendingOrderIds.some((pendingOrderId) => pendingOrderId === orderId)) return
-    if (!didPositionMoveAsExpected({
+    if (didPositionMoveAsExpected({
       before: positionSnapshotAtCommit,
       after: currentPosition,
       direction,
       isReduceOnly,
     })) {
+      setFlowError(undefined)
+      setFinalExecutionPrice(currentPosition?.entryPrice)
+      setLifecycleState('executed')
       return
     }
 
-    setFlowError(undefined)
-    setFinalExecutionPrice(currentPosition?.entryPrice)
-    setLifecycleState('executed')
+    const keeperRevealGraceElapsed = keeperRevealDeadlineMs !== undefined && keeperRevealNowMs >= keeperRevealDeadlineMs
+    if (observedPendingOrderId !== orderId && !keeperRevealGraceElapsed) return
+
+    setFlowError(
+      `Order ${orderId.toString()} is no longer pending, but your position did not change. It likely failed or expired before execution. Refresh order history for the terminal event.`
+    )
+    setLifecycleState('selfExecuteFailed')
   }, [
     currentPosition,
     direction,
     enableLiveTrading,
     isReduceOnly,
+    keeperRevealDeadlineMs,
+    keeperRevealNowMs,
     lifecycleState,
+    observedPendingOrderId,
     orderId,
     pendingOrderIds,
     positionSnapshotAtCommit,
@@ -1450,6 +1567,22 @@ export function PerpsTradeTicket({
   const displayExecuteTx = executeTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
+  const isTerminalRevealError = flowError !== undefined && isOrderNoLongerPendingMessage(flowError)
+  const isKeeperRevealGraceActive = enableLiveTrading &&
+    lifecycleState === 'revealPending' &&
+    (keeperRevealDeadlineMs === undefined || keeperRevealNowMs < keeperRevealDeadlineMs)
+  const keeperRevealRemainingSeconds = keeperRevealDeadlineMs === undefined
+    ? Math.ceil(KEEPER_REVEAL_GRACE_MS / 1_000)
+    : Math.max(0, Math.ceil((keeperRevealDeadlineMs - keeperRevealNowMs) / 1_000))
+  const keeperRevealProgressPercent = keeperRevealDeadlineMs === undefined
+    ? 0
+    : Math.max(
+      0,
+      Math.min(
+        100,
+        ((KEEPER_REVEAL_GRACE_MS - Math.max(0, keeperRevealDeadlineMs - keeperRevealNowMs)) / KEEPER_REVEAL_GRACE_MS) * 100
+      )
+    )
   const finalExecutedNotionalUsdc = finalExecutionPrice
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, finalExecutionPrice)
     : undefined
@@ -1602,6 +1735,9 @@ export function PerpsTradeTicket({
       })
       setCommitTxHash(result.hash)
       setOrderId(result.orderId)
+      setObservedPendingOrderId(undefined)
+      setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
+      setKeeperRevealNowMs(Date.now())
       setLifecycleState('revealPending')
       onAccountRefresh?.()
     } catch (error) {
@@ -1673,7 +1809,10 @@ export function PerpsTradeTicket({
     setFinalExecutionPrice(undefined)
     setCommittedSizeDelta(undefined)
     setFlowError(undefined)
+    setKeeperRevealDeadlineMs(undefined)
+    setKeeperRevealNowMs(Date.now())
     setPositionSnapshotAtCommit(undefined)
+    setObservedPendingOrderId(undefined)
   }
 
   function closeReviewModal() {
@@ -2145,7 +2284,12 @@ export function PerpsTradeTicket({
             <>
               <PendingStateCard
                 title="Waiting for keeper reveal"
-                description="The keeper can now execute the committed order and settle the final contract price. Self-execute fetches historical Pyth data for the order window."
+                progressPercent={enableLiveTrading ? keeperRevealProgressPercent : undefined}
+                description={
+                  enableLiveTrading
+                    ? 'The keeper can now execute the committed order and settle the final contract price. Manual execution becomes available if the keeper does not settle within 20 seconds.'
+                    : 'The keeper can now execute the committed order and settle the final contract price. Self-execute fetches historical Pyth data for the order window.'
+                }
               />
 
               <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
@@ -2156,13 +2300,19 @@ export function PerpsTradeTicket({
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated keeper bounty', value: formatUsdc(keeperBounty) },
-                    { label: 'Self execute', value: enableLiveTrading ? 'Fetches historical Pyth data' : 'Available after 04:38' },
+                    {
+                      label: 'Manual execute',
+                      value: enableLiveTrading
+                        ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
+                        : 'Available after 04:38',
+                      tone: enableLiveTrading ? 'muted' : undefined,
+                    },
                   ]}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                {!enableLiveTrading ? (
+              {!enableLiveTrading ? (
+                <div className="grid grid-cols-2 gap-3">
                   <>
                     <Button
                       className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
@@ -2182,17 +2332,17 @@ export function PerpsTradeTicket({
                       Keeper Executed
                     </Button>
                   </>
-                ) : (
-                  <Button
-                    className={`col-span-2 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                    onClick={() => {
-                      void handleSelfExecute()
-                    }}
-                  >
-                    Self Execute
-                  </Button>
-                )}
-              </div>
+                </div>
+              ) : isKeeperRevealGraceActive ? null : (
+                <Button
+                  className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  onClick={() => {
+                    void handleSelfExecute()
+                  }}
+                >
+                  Self Execute
+                </Button>
+              )}
             </>
           ) : null}
 
@@ -2314,30 +2464,46 @@ export function PerpsTradeTicket({
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
-                    { label: 'Self execute', value: 'Retry available', tone: 'warning' },
+                    {
+                      label: 'Self execute',
+                      value: isTerminalRevealError ? 'Unavailable' : 'Retry available',
+                      tone: 'warning',
+                    },
                   ]}
                 />
               </div>
 
-              <div className="flex gap-3">
+              {isTerminalRevealError ? (
                 <Button
-                  className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                  className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
                   onClick={() => {
-                    setLifecycleState('selfExecuteAvailable')
+                    setLifecycleState('preview')
                   }}
                 >
-                  Back
+                  Back to Preview
                 </Button>
-                <Button
-                  className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                  onClick={() => {
-                    void handleSelfExecute()
-                  }}
-                >
-                  Retry Self Execute
-                </Button>
-              </div>
+              ) : (
+                <div className="flex gap-3">
+                  <Button
+                    className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
+                    variant="secondary"
+                    onClick={() => {
+                      setLifecycleState('selfExecuteAvailable')
+                    }}
+                  >
+                    Back
+                  </Button>
+                  <Button
+                    className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                    onClick={() => {
+                      void handleSelfExecute()
+                    }}
+                  >
+                    Retry Self Execute
+                  </Button>
+                </div>
+              )}
             </>
           ) : null}
 

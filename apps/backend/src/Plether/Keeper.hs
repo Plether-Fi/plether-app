@@ -3,6 +3,7 @@ module Plether.Keeper
   , runKeeper
   , isOrderExpired
   , isOrderRevealReady
+  , isFrozenClosePayloadReady
   , selectBatchCandidates
   ) where
 
@@ -24,6 +25,7 @@ import Plether.Database.Schema
   , PythUpdatePayloadRow (..)
   , getPendingPerpsKeeperOrders
   , getPerpsKeeperLastIndexedBlock
+  , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
   , markPerpsKeeperOrderExecuted
   , markPerpsKeeperOrderFailed
@@ -64,6 +66,12 @@ data KeeperMode
 data ExecutionIntent
   = CleanupExpired PerpsKeeperOrderRow
   | ExecuteReady [PerpsKeeperOrderRow] PythUpdatePayloadRow [Integer] [ByteString]
+
+data FreshPendingOrder = FreshPendingOrder
+  { fpoOrder :: PerpsKeeperOrderRow
+  , fpoIsClose :: Bool
+  }
+  deriving stock (Show)
 
 runKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
 runKeeper cfg pool client mode dryRun =
@@ -209,7 +217,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
     Left err -> do
       recordPerpsKeeperOrderError conn (pkorOrderId headOrder) err
       putStrLn $ "queue head re-read skipped execution: " <> T.unpack err
-    Right freshHead
+    Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose}
       | not (isPastCommitBlock latestBlock freshHead) ->
           putStrLn $
             "queue head order "
@@ -223,9 +231,25 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
               <> show (pkorOrderId freshHead)
               <> " is waiting for reveal window"
       | otherwise ->
-          executeReadyHead (freshHead : drop 1 pending) freshHead
+          executeReadyHead (freshHead : drop 1 pending) freshHead freshHeadIsClose
   where
-    executeReadyHead pendingWithFreshHead freshHead = do
+    executeReadyHead pendingWithFreshHead freshHead freshHeadIsClose = do
+      frozenCloseResult <- tryFrozenClosePayload freshHead freshHeadIsClose
+      case frozenCloseResult of
+        Left err -> do
+          recordPerpsKeeperOrderError conn (pkorOrderId freshHead) err
+          putStrLn $
+            "frozen close payload selection failed for order "
+              <> show (pkorOrderId freshHead)
+              <> ": "
+              <> T.unpack err
+        Right (Just (payload, publishTimes, updateData)) ->
+          submitIntent cfg conn client dryRun $
+            ExecuteReady [freshHead] payload publishTimes updateData
+        Right Nothing ->
+          executeHistoricalReadyHead pendingWithFreshHead freshHead
+
+    executeHistoricalReadyHead pendingWithFreshHead freshHead = do
       mPayload <-
         getPythUpdatePayloadForWindow
           conn
@@ -236,7 +260,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
           putStrLn $
             "queue head order "
               <> show (pkorOrderId freshHead)
-              <> " is waiting for cached Pyth payload"
+              <> " is waiting for first post-commit cached Pyth payload"
         Just payload ->
           case decodePayload payload of
             Left err -> do
@@ -273,22 +297,65 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                   case selected of
                     [] ->
                       putStrLn $
-                        "cached Pyth payload is not valid for queue head order "
+                        "cached Pyth payload is not the first post-commit payload for queue head order "
                           <> show (pkorOrderId freshHead)
                     orders ->
                       submitIntent cfg conn client dryRun $
                         ExecuteReady orders payload publishTimes updateData
 
-refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text PerpsKeeperOrderRow)
+    tryFrozenClosePayload freshHead freshHeadIsClose
+      | not freshHeadIsClose = pure $ Right Nothing
+      | otherwise = do
+          policyResult <- Perps.getOrderExecutionPolicy client (cfgPerpsPletherOracle cfg) True
+          divergenceResult <- Perps.orderExecutionStalenessLimit client (cfgPerpsPletherOracle cfg)
+          case (policyResult, divergenceResult) of
+            (Right policy, Right maxDivergence)
+              | not (Perps.oepOracleFrozen policy) -> pure $ Right Nothing
+              | otherwise -> do
+                  mPayload <- getLatestPythUpdatePayload conn
+                  case mPayload of
+                    Nothing -> do
+                      putStrLn $
+                        "queue head close order "
+                          <> show (pkorOrderId freshHead)
+                          <> " is waiting for latest cached Pyth payload"
+                      pure $ Right Nothing
+                    Just payload ->
+                      case decodePayload payload of
+                        Left err -> pure $ Left err
+                        Right (publishTimes, updateData)
+                          | isFrozenClosePayloadReady chainNow (Perps.oepMaxStaleness policy) maxDivergence publishTimes ->
+                              pure $ Right $ Just (payload, publishTimes, updateData)
+                          | otherwise -> do
+                              putStrLn $
+                                "queue head close order "
+                                  <> show (pkorOrderId freshHead)
+                                  <> " is waiting for frozen-policy Pyth payload"
+                              pure $ Right Nothing
+            _ ->
+              pure $
+                Left $
+                  T.intercalate
+                    "; "
+                    $ catMaybes
+                      [ either (Just . rpcErrorText) (const Nothing) policyResult
+                      , either (Just . rpcErrorText) (const Nothing) divergenceResult
+                      ]
+
+refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text FreshPendingOrder)
 refreshPendingOrder cfg client order = do
   viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) (pkorOrderId order)
   pure $ case viewResult of
     Right view | Perps.povOrderId view == pkorOrderId order ->
       Right
-        order
-          { pkorSide = Perps.povSide view
-          , pkorCommitBlock = Perps.povCommitBlock view
-          , pkorCommitTime = Perps.povCommitTime view
+        FreshPendingOrder
+          { fpoOrder =
+              order
+                { pkorSide = Perps.povSide view
+                , pkorCommitBlock = Perps.povCommitBlock view
+                , pkorCommitTime = Perps.povCommitTime view
+                }
+          , fpoIsClose = Perps.povIsClose view
           }
     Right view ->
       Left $
@@ -311,7 +378,7 @@ refreshContiguousOrders cfg client (order : orders) = do
     Left err -> do
       putStrLn $ "batch re-read stopped: " <> T.unpack err
       pure []
-    Right freshOrder -> (freshOrder :) <$> refreshContiguousOrders cfg client orders
+    Right freshOrder -> (fpoOrder freshOrder :) <$> refreshContiguousOrders cfg client orders
 
 submitIntent :: Config -> Connection -> EthClient -> Bool -> ExecutionIntent -> IO ()
 submitIntent cfg conn client dryRun intent = do
@@ -472,6 +539,14 @@ isOrderRevealReady :: Integer -> [Integer] -> PerpsKeeperOrderRow -> Bool
 isOrderRevealReady settlementWindow publishTimes order =
   either (const False) (const True) $
     validateRevealWindow (pkorCommitTime order) settlementWindow publishTimes
+
+isFrozenClosePayloadReady :: Integer -> Integer -> Integer -> [Integer] -> Bool
+isFrozenClosePayloadReady chainNow maxStaleness maxDivergence publishTimes =
+  case publishTimes of
+    [] -> False
+    _ ->
+      all (\publishTime -> publishTime <= chainNow && chainNow - publishTime <= maxStaleness) publishTimes
+        && maximum publishTimes <= minimum publishTimes + maxDivergence
 
 selectBatchCandidates
   :: Integer -- chain now

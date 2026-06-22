@@ -1,6 +1,7 @@
 module Plether.Ethereum.Contracts.Perps
   ( PerpsOrderEvent (..)
   , PendingOrderView (..)
+  , OrderExecutionPolicy (..)
   , orderCommittedTopic
   , orderExecutedTopic
   , orderFailedTopic
@@ -9,6 +10,9 @@ module Plether.Ethereum.Contracts.Perps
   , getPendingOrderView
   , maxOrderAge
   , orderSettlementWindow
+  , orderExecutionStalenessLimit
+  , isOracleFrozen
+  , getOrderExecutionPolicy
   , getUpdateFee
   , executeOrderCall
   , executeOrderBatchCall
@@ -25,6 +29,7 @@ import Plether.Ethereum.Abi
   ( decodeAddress
   , decodeBool
   , decodeUint256
+  , encodeBool
   , encodeCall
   , encodeUint256
   , keccak256
@@ -66,6 +71,16 @@ data PendingOrderView = PendingOrderView
   , povCommittedMarginUsdc :: Integer
   , povExecutionBountyUsdc :: Integer
   , povNextAccountOrderId :: Integer
+  }
+  deriving stock (Show, Eq)
+
+data OrderExecutionPolicy = OrderExecutionPolicy
+  { oepCloseOnly :: Bool
+  , oepRequireStoredMark :: Bool
+  , oepAllowAnyStoredMark :: Bool
+  , oepMaxStaleness :: Integer
+  , oepOracleFrozen :: Bool
+  , oepIsFadWindow :: Bool
   }
   deriving stock (Show, Eq)
 
@@ -132,6 +147,21 @@ orderSettlementWindow client oracle = do
   result <- ethCall client (CallParams oracle (encodeCall "orderSettlementWindow()" []))
   pure $ fmap decodeUint256 result
 
+orderExecutionStalenessLimit :: EthClient -> Text -> IO (Either RpcError Integer)
+orderExecutionStalenessLimit client oracle = do
+  result <- ethCall client (CallParams oracle (encodeCall "orderExecutionStalenessLimit()" []))
+  pure $ fmap decodeUint256 result
+
+isOracleFrozen :: EthClient -> Text -> IO (Either RpcError Bool)
+isOracleFrozen client oracle = do
+  result <- ethCall client (CallParams oracle (encodeCall "isOracleFrozen()" []))
+  pure $ fmap decodeBool result
+
+getOrderExecutionPolicy :: EthClient -> Text -> Bool -> IO (Either RpcError OrderExecutionPolicy)
+getOrderExecutionPolicy client oracle isClose = do
+  result <- ethCall client (CallParams oracle (getOrderExecutionPolicyCall isClose))
+  pure $ fmap decodeOrderExecutionPolicy result
+
 getUpdateFee :: EthClient -> Text -> [ByteString] -> IO (Either RpcError Integer)
 getUpdateFee client oracle updateData = do
   result <- ethCall client (CallParams oracle (getUpdateFeeCall updateData))
@@ -154,6 +184,10 @@ getPendingOrderViewCall orderId =
 getUpdateFeeCall :: [ByteString] -> ByteString
 getUpdateFeeCall updateData =
   encodeCall "getUpdateFee(bytes[])" [encodeUint256 32, encodeBytesArray updateData]
+
+getOrderExecutionPolicyCall :: Bool -> ByteString
+getOrderExecutionPolicyCall isClose =
+  encodeCall "getOrderExecutionPolicy(bool)" [encodeBool isClose]
 
 executeOrderCall :: Integer -> [ByteString] -> ByteString
 executeOrderCall orderId updateData =
@@ -189,9 +223,20 @@ decodePendingOrderView bytes =
     , povNextAccountOrderId = wordAt 10 bytes
     }
 
+decodeOrderExecutionPolicy :: ByteString -> OrderExecutionPolicy
+decodeOrderExecutionPolicy bytes =
+  OrderExecutionPolicy
+    { oepCloseOnly = decodeBool $ wordBytesAt 0 bytes
+    , oepRequireStoredMark = decodeBool $ wordBytesAt 1 bytes
+    , oepAllowAnyStoredMark = decodeBool $ wordBytesAt 2 bytes
+    , oepMaxStaleness = wordAt 3 bytes
+    , oepOracleFrozen = decodeBool $ wordBytesAt 4 bytes
+    , oepIsFadWindow = decodeBool $ wordBytesAt 5 bytes
+    }
+
 encodeBytesArray :: [ByteString] -> ByteString
 encodeBytesArray values =
-  let headsLen = 32 * (1 + length values)
+  let headsLen = 32 * length values
       encodedValues = map encodeDynamicBytes values
       offsets =
         scanl
