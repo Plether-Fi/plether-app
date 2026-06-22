@@ -70,6 +70,16 @@ jobs:
           SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
           EOF
 
+      - name: Ensure testnet Pages project
+        if: env.TARGET_ENV == 'sepolia'
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: 4.103.0
+          command: pages project create plether-testnet --production-branch=master --compatibility-date=2026-06-22
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -78,3 +88,27 @@ jobs:
           wranglerVersion: 4.103.0
           workingDirectory: apps/frontend
           command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master
+
+      - name: Attach testnet custom domain
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          DOMAIN="sepolia.plether.com"
+          PROJECT="plether-testnet"
+          API_BASE="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
+
+          if curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/$DOMAIN" >/dev/null; then
+            echo "$DOMAIN is already attached to $PROJECT"
+            exit 0
+          fi
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{\"name\":\"$DOMAIN\"}" \
+            "$API_BASE"
