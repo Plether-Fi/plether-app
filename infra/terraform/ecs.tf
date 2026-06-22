@@ -77,6 +77,10 @@ resource "aws_ecs_service" "api" {
   }
 
   depends_on = [aws_lb_listener.http]
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 resource "aws_ecs_task_definition" "keeper" {
@@ -124,16 +128,22 @@ resource "aws_ecs_task_definition" "keeper" {
 }
 
 resource "aws_ecs_service" "keeper" {
-  name            = "plether-keeper"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.keeper.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                               = "plether-keeper"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.keeper.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
 
@@ -170,16 +180,22 @@ resource "aws_ecs_task_definition" "basket_worker" {
 }
 
 resource "aws_ecs_service" "basket_worker" {
-  name            = "plether-basket-worker"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.basket_worker.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                               = "plether-basket-worker"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.basket_worker.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
 
@@ -224,15 +240,21 @@ resource "aws_ecs_task_definition" "perps_indexer" {
 }
 
 resource "aws_ecs_service" "perps_indexer" {
-  name            = "plether-perps-indexer"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.perps_indexer.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                               = "plether-perps-indexer"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.perps_indexer.arn
+  desired_count                      = 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
   }
 }
