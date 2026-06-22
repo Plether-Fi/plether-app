@@ -12,6 +12,7 @@ cors_origins        = "*"
 indexer_start_block = "24427188"
 perps_chain_id      = "421614"
 perps_indexer_start_block = "273137426"
+consolidate_workers = false
 container_cpu       = 256
 container_memory    = 512
 db_instance_class   = "db.t4g.micro"

@@ -29,3 +29,7 @@ output "ecs_basket_worker_service_name" {
 output "ecs_perps_indexer_service_name" {
   value = aws_ecs_service.perps_indexer.name
 }
+
+output "ecs_workers_service_name" {
+  value = var.consolidate_workers ? aws_ecs_service.workers[0].name : null
+}

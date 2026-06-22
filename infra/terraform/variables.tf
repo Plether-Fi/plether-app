@@ -154,12 +154,28 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "consolidate_workers" {
+  type        = bool
+  default     = false
+  description = "Run keeper, basket worker, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
+}
+
 variable "container_cpu" {
   type    = number
   default = 256
 }
 
 variable "container_memory" {
+  type    = number
+  default = 512
+}
+
+variable "workers_container_cpu" {
+  type    = number
+  default = 256
+}
+
+variable "workers_container_memory" {
   type    = number
   default = 512
 }
