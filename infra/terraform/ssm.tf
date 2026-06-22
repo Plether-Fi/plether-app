@@ -4,6 +4,14 @@ resource "aws_ssm_parameter" "rpc_url" {
   value = var.rpc_url
 }
 
+resource "aws_ssm_parameter" "pyth_api_key" {
+  count = var.enable_pyth_api_key ? 1 : 0
+
+  name  = "/plether/${var.environment}/pyth-api-key"
+  type  = "SecureString"
+  value = var.pyth_api_key
+}
+
 resource "aws_ssm_parameter" "perps_rpc_url" {
   name  = "/plether/${var.environment}/perps-rpc-url"
   type  = "SecureString"

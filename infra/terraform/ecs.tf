@@ -2,6 +2,22 @@ resource "aws_ecs_cluster" "main" {
   name = "plether-${var.environment}"
 }
 
+locals {
+  pyth_environment = [
+    { name = "PYTH_HERMES_URL", value = var.pyth_hermes_url },
+    { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
+    { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
+    { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
+  ]
+
+  pyth_api_key_secret = var.enable_pyth_api_key ? [
+    {
+      name      = "PYTH_API_KEY"
+      valueFrom = aws_ssm_parameter.pyth_api_key[0].arn
+    }
+  ] : []
+}
+
 resource "aws_ecs_task_definition" "api" {
   family                   = "plether-${var.environment}"
   requires_compatibilities = ["FARGATE"]
@@ -21,7 +37,7 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    secrets = [
+    secrets = concat([
       {
         name      = "RPC_URL"
         valueFrom = aws_ssm_parameter.rpc_url.arn
@@ -30,14 +46,14 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ]
+    ], local.pyth_api_key_secret)
 
-    environment = [
+    environment = concat([
       { name = "PORT", value = "3001" },
       { name = "CHAIN_ID", value = var.chain_id },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ]
+    ], local.pyth_environment)
   }])
 }
 
@@ -111,6 +127,106 @@ resource "aws_ecs_service" "keeper" {
   name            = "plether-keeper"
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.keeper.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+}
+
+resource "aws_ecs_task_definition" "basket_worker" {
+  family                   = "plether-${var.environment}-basket-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name      = "plether-basket-worker"
+    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    essential = true
+    command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
+
+    secrets = concat([
+      {
+        name      = "RPC_URL"
+        valueFrom = aws_ssm_parameter.rpc_url.arn
+      },
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_ssm_parameter.database_url.arn
+      }
+    ], local.pyth_api_key_secret)
+
+    environment = concat([
+      { name = "CHAIN_ID", value = var.chain_id },
+    ], local.pyth_environment)
+  }])
+}
+
+resource "aws_ecs_service" "basket_worker" {
+  name            = "plether-basket-worker"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.basket_worker.arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+}
+
+resource "aws_ecs_task_definition" "perps_indexer" {
+  family                   = "plether-${var.environment}-perps-indexer"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name      = "plether-perps-indexer"
+    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    essential = true
+    command   = ["plether-perps-indexer", "--loop"]
+
+    secrets = [
+      {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_ssm_parameter.database_url.arn
+      }
+    ]
+
+    environment = [
+      { name = "CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+      { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
+      { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
+      { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
+    ]
+  }])
+}
+
+resource "aws_ecs_service" "perps_indexer" {
+  name            = "plether-perps-indexer"
+  cluster         = aws_ecs_cluster.main.id
+  task_definition = aws_ecs_task_definition.perps_indexer.arn
   desired_count   = 1
   launch_type     = "FARGATE"
 

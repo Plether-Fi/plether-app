@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Hex } from 'viem'
 import { useAccount } from 'wagmi'
+import { defaultApiBaseUrl } from '../api/client'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 export interface PerpsOrderHistoryRow {
@@ -107,7 +108,7 @@ function shortTime(timestamp: number | undefined): string {
 }
 
 function perpsApiUrl(path: string): URL {
-  const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api/v1'
+  const apiBase = defaultApiBaseUrl()
   const normalizedBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase
   return new URL(`${normalizedBase}${path}`, window.location.origin)
 }

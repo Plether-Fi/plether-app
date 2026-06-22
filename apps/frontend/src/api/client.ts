@@ -72,15 +72,25 @@ function deriveWsUrl(baseUrl: string): string {
 }
 
 const DEV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+const DEFAULT_API_CHAIN_ID = parseDefaultChainId(import.meta.env.VITE_DEFAULT_CHAIN_ID as string | undefined);
 
 export function chainIdToApiPath(chainId: number): string {
   if (chainId === 11155111) return '/api/sepolia_v1';
   return '/api/v1';
 }
 
-function getInitialBaseUrl(): string {
+function parseDefaultChainId(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : 1;
+}
+
+export function defaultApiBaseUrl(): string {
   if (DEV_API_URL) return DEV_API_URL;
-  return chainIdToApiPath(1);
+  return chainIdToApiPath(DEFAULT_API_CHAIN_ID);
+}
+
+function getInitialBaseUrl(): string {
+  return defaultApiBaseUrl();
 }
 
 const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {

@@ -5,6 +5,17 @@ on:
     branches: [master]
     paths: [apps/frontend/**]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+          - mainnet
+
+env:
+  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
 
 jobs:
   deploy:
@@ -26,8 +37,21 @@ jobs:
         working-directory: apps/frontend
         run: npm install
 
+      - name: Resolve deploy target
+        id: target
+        run: |
+          if [ "$TARGET_ENV" = "sepolia" ]; then
+            echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=11155111" >> "$GITHUB_OUTPUT"
+          else
+            echo "project=plether" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=1" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         working-directory: apps/frontend
+        env:
+          VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
         run: npm run build
 
       - name: Deploy to Cloudflare Pages
@@ -35,4 +59,4 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/frontend/dist --project-name=plether --branch=master
+          command: pages deploy apps/frontend/dist --project-name=${{ steps.target.outputs.project }} --branch=master

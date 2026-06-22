@@ -22,10 +22,11 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper && \
+RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-perps-indexer && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
     cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
-    cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin
+    cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin && \
+    cp "$(cabal list-bin plether-perps-indexer)" /build/plether-perps-indexer-bin
 
 FROM debian:bookworm-slim
 
@@ -36,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
 COPY --from=builder /build/plether-basket-worker-bin /usr/local/bin/plether-basket-worker
 COPY --from=builder /build/plether-keeper-bin /usr/local/bin/plether-keeper
+COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perps-indexer
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 

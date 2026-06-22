@@ -16,7 +16,7 @@ on:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  ECR_REPOSITORY: plether-api
+  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
 
 jobs:
   build:
@@ -47,6 +47,12 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
+          if [ "$TARGET_ENV" = "mainnet" ]; then
+            ECR_REPOSITORY=plether-api
+          else
+            ECR_REPOSITORY=plether-api-$TARGET_ENV
+          fi
+
           IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           docker build -f apps/backend/Dockerfile -t $IMAGE -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
           docker push $IMAGE
@@ -62,6 +68,19 @@ jobs:
     strategy:
       matrix:
         environment: ${{ fromJson(github.event_name == 'push' && '["mainnet"]' || format('["{0}"]', inputs.environment)) }}
+        service:
+          - task_suffix: ""
+            service_name: plether-api
+            container_name: plether-api
+          - task_suffix: "-keeper"
+            service_name: plether-keeper
+            container_name: plether-keeper
+          - task_suffix: "-basket-worker"
+            service_name: plether-basket-worker
+            container_name: plether-basket-worker
+          - task_suffix: "-perps-indexer"
+            service_name: plether-perps-indexer
+            container_name: plether-perps-indexer
 
     steps:
       - name: Configure AWS credentials
@@ -74,7 +93,7 @@ jobs:
       - name: Get current task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition plether-${{ matrix.environment }} \
+            --task-definition plether-${{ matrix.environment }}${{ matrix.service.task_suffix }} \
             --query taskDefinition > task-def.json
 
       - name: Update task definition image
@@ -82,13 +101,13 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-def.json
-          container-name: plether-api
+          container-name: ${{ matrix.service.container_name }}
           image: ${{ needs.build.outputs.image }}
 
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
-          service: plether-api
+          service: ${{ matrix.service.service_name }}
           cluster: plether-${{ matrix.environment }}
           wait-for-service-stability: true
