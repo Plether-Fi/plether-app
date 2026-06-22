@@ -519,12 +519,15 @@ describe('perps lifecycle labels', () => {
       await act(async () => {
         vi.advanceTimersByTime(4_000)
       })
+      await act(async () => {
+        vi.advanceTimersByTime(1_380)
+      })
 
       expect(screen.getByText('Verifying solvency after execution')).toBeInTheDocument()
       expect(screen.getByText('Checking the account remains properly collateralized after settlement.')).toBeInTheDocument()
 
       await act(async () => {
-        vi.advanceTimersByTime(6_000)
+        vi.advanceTimersByTime(4_620)
       })
 
       expect(screen.getByRole('progressbar', { name: 'Price finalization progress' })).toHaveAttribute('aria-valuenow', '50')
