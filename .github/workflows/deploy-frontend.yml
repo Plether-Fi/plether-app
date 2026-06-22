@@ -112,3 +112,41 @@ jobs:
             --header "Content-Type: application/json" \
             --data "{\"name\":\"$DOMAIN\"}" \
             "$API_BASE"
+
+      - name: Configure testnet DNS record
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ZONE="plether.com"
+          DOMAIN="sepolia.plether.com"
+          TARGET="plether-testnet.pages.dev"
+          API_BASE="https://api.cloudflare.com/client/v4"
+
+          ZONE_ID=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones?name=$ZONE" | jq -r '.result[0].id // empty')
+          test -n "$ZONE_ID"
+
+          RECORDS=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones/$ZONE_ID/dns_records?name=$DOMAIN")
+          RECORD_ID=$(echo "$RECORDS" | jq -r '.result[0].id // empty')
+          BODY=$(jq -nc --arg name "$DOMAIN" --arg content "$TARGET" \
+            '{type:"CNAME", name:$name, content:$content, ttl:1, proxied:true}')
+
+          if [ -n "$RECORD_ID" ]; then
+            curl --fail --silent --show-error \
+              --request PUT \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records/$RECORD_ID"
+          else
+            curl --fail --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records"
+          fi
