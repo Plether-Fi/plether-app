@@ -2,6 +2,11 @@ resource "aws_ecs_cluster" "main" {
   name = "plether-${var.environment}"
 }
 
+resource "aws_cloudwatch_log_group" "ecs" {
+  name              = "/ecs/plether-${var.environment}"
+  retention_in_days = 14
+}
+
 locals {
   workers_command = <<-EOT
     set -eu
@@ -79,6 +84,15 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
+
     secrets = concat([
       {
         name      = "RPC_URL"
@@ -139,6 +153,15 @@ resource "aws_ecs_task_definition" "keeper" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-keeper"]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
 
     secrets = [
       {
@@ -204,6 +227,15 @@ resource "aws_ecs_task_definition" "basket_worker" {
     essential = true
     command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
 
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
+
     secrets = concat([
       {
         name      = "RPC_URL"
@@ -255,6 +287,15 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-perps-indexer", "--loop"]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
 
     secrets = [
       {
@@ -317,6 +358,15 @@ resource "aws_ecs_task_definition" "workers" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["sh", "-c", local.workers_command]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "ecs"
+      }
+    }
 
     secrets = concat([
       {
