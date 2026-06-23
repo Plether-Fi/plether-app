@@ -79,9 +79,21 @@ export function chainIdToApiPath(chainId: number): string {
   return '/api/v1';
 }
 
-function getInitialBaseUrl(): string {
+export function getConfiguredApiBaseUrl(chainId: number): string {
   if (DEV_API_URL) return DEV_API_URL;
-  return chainIdToApiPath(1);
+  return chainIdToApiPath(chainId);
+}
+
+export function getConfiguredApiWsUrl(chainId: number): string {
+  return deriveWsUrl(getConfiguredApiBaseUrl(chainId));
+}
+
+export function getConfiguredApiSource(): string {
+  return DEV_API_URL ? 'VITE_API_URL' : 'active chain route';
+}
+
+function getInitialBaseUrl(): string {
+  return getConfiguredApiBaseUrl(1);
 }
 
 const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
@@ -246,7 +258,7 @@ export class PlethApiClient {
   setChainId(chainId: number): void {
     if (DEV_API_URL || chainId === this.chainId) return;
     this.chainId = chainId;
-    const baseUrl = chainIdToApiPath(chainId);
+    const baseUrl = getConfiguredApiBaseUrl(chainId);
     this.config.baseUrl = baseUrl;
     this.config.wsUrl = deriveWsUrl(baseUrl);
     this.reconnectWebSocket();
