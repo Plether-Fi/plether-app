@@ -33,11 +33,12 @@ getPerpsAccountOrders
   -> IO (Either ApiError (ApiResponse Value))
 getPerpsAccountOrders pool cfg account limit cursor = do
   let pageLimit = clampLimit limit
+      chainId = cfgPerpsChainId cfg
   rows <- withDb pool $ \conn ->
-    getPerpsOrdersByAccount conn (cfgChainId cfg) account pageLimit cursor
+    getPerpsOrdersByAccount conn chainId account pageLimit cursor
   pure $
     Right $
-      mkResponse (latestOrderBlock rows) (cfgChainId cfg) $
+      mkResponse (latestOrderBlock rows) chainId $
         object $
           catMaybes
             [ Just $ "orders" .= map orderRowToJson rows
@@ -53,11 +54,12 @@ getPerpsAccountActivity
   -> IO (Either ApiError (ApiResponse Value))
 getPerpsAccountActivity pool cfg account limit cursor = do
   let pageLimit = clampLimit limit
+      chainId = cfgPerpsChainId cfg
   rows <- withDb pool $ \conn ->
-    getPerpsActivityByAccount conn (cfgChainId cfg) account pageLimit cursor
+    getPerpsActivityByAccount conn chainId account pageLimit cursor
   pure $
     Right $
-      mkResponse (latestActivityBlock rows) (cfgChainId cfg) $
+      mkResponse (latestActivityBlock rows) chainId $
         object $
           catMaybes
             [ Just $ "activity" .= map activityRowToJson rows
@@ -69,14 +71,15 @@ getPerpsIndexerStatusResponse
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
 getPerpsIndexerStatusResponse pool cfg = do
+  let chainId = cfgPerpsChainId cfg
   mStatus <- withDb pool $ \conn ->
-    getPerpsIndexerStatus conn (cfgChainId cfg) "perps-history"
+    getPerpsIndexerStatus conn chainId "perps-history"
   pure $ case mStatus of
     Nothing ->
       Left $ E.internalError "Perps history indexer has not written state yet. Start plether-perps-indexer --once or --loop."
     Just row ->
       Right $
-        mkResponse (pisLastIndexedBlock row) (cfgChainId cfg) $
+        mkResponse (pisLastIndexedBlock row) chainId $
           indexerStatusToJson row
 
 waitForPerpsOrderTerminal
@@ -89,10 +92,11 @@ waitForPerpsOrderTerminal
 waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
   let waitSeconds = min 60 $ max 1 timeoutSeconds
       account = T.toLower <$> mAccount
+      chainId = cfgPerpsChainId cfg
   (timedOut, mOrder) <- go account waitSeconds
   pure $
     Right $
-      mkResponse (maybe 0 porSortBlock mOrder) (cfgChainId cfg) $
+      mkResponse (maybe 0 porSortBlock mOrder) chainId $
         object
           [ "timedOut" .= timedOut
           , "order" .= fmap orderRowToJson mOrder
@@ -101,7 +105,7 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
     go :: Maybe Text -> Int -> IO (Bool, Maybe PerpsOrderRow)
     go account remainingSeconds = do
       mOrder <- withDb pool $ \conn ->
-        getPerpsOrderById conn (cfgChainId cfg) orderId account
+        getPerpsOrderById conn (cfgPerpsChainId cfg) orderId account
       case mOrder of
         Just row | isTerminalOrder row ->
           pure (False, Just row)
