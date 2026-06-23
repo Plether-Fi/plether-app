@@ -160,6 +160,19 @@ describe('perps lifecycle labels', () => {
             commitTxHash: '0x9d4b00000000000000000000000000000000f953',
             revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
           },
+          {
+            orderId: 31n,
+            time: '10 Jun, 14:07',
+            market: 'plDXY Perp',
+            side: 'Long',
+            type: 'Commit',
+            price: 'Not executed',
+            size: 'Not executed',
+            status: 'Failed: Slippage exceeded',
+            commitTxHash: '0x9d4b00000000000000000000000000000000f954',
+            revealTxHash: '0x6c0d00000000000000000000000000000000b7d4',
+            failureReason: 'SlippageExceeded',
+          },
         ]}
         tradeHistory={[
           {
@@ -203,7 +216,9 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('30')).toBeInTheDocument()
     expect(screen.getByText('Executed')).toBeInTheDocument()
     expect(screen.getByText('1 999.67')).toBeInTheDocument()
-    expect(screen.getByText('Commit')).toBeInTheDocument()
+    expect(screen.getByText('Failed: Slippage exceeded')).toBeInTheDocument()
+    expect(screen.getAllByText('Not executed')).toHaveLength(2)
+    expect(screen.getAllByText('Commit').length).toBeGreaterThan(0)
     expect(screen.getByText('Reveal')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Transaction History' }))

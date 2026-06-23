@@ -778,7 +778,7 @@ function AccountTabContent({
     side: order.side,
     type: order.type,
     price: order.price,
-    size: order.size === '--' ? '--' : <TokenAmount amount={order.size} />,
+    size: order.size === '--' || order.size === 'Not executed' ? order.size : <TokenAmount amount={order.size} />,
     status: order.status,
     commitTxHash: order.commitTxHash,
     revealTxHash: order.revealTxHash,

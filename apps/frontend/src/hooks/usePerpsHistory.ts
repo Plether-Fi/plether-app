@@ -137,20 +137,40 @@ function orderKind(row: BackendOrderRow): string {
 }
 
 function orderStatus(row: BackendOrderRow): string {
+  if (row.terminalStatus === 'Failed' && row.failureReason) {
+    return `Failed: ${orderFailureReasonLabel(row.failureReason)}`
+  }
   if (row.terminalStatus) return row.terminalStatus
   return 'Committed'
+}
+
+function orderFailureReasonLabel(reason: string): string {
+  return {
+    Expired: 'Expired',
+    CloseOnly: 'Close-only',
+    SlippageExceeded: 'Slippage exceeded',
+    EnginePanic: 'Engine panic',
+    AccountLiquidated: 'Account liquidated',
+    EngineRevert: 'Engine rejected',
+  }[reason] ?? reason
+}
+
+function isUnexecutedTerminalOrder(row: BackendOrderRow): boolean {
+  return row.terminalStatus === 'Failed' || row.terminalStatus === 'Expired / Cleaned up'
 }
 
 function orderSize(row: BackendOrderRow): string {
   const sizeDelta = parseBigInt(row.activitySizeDelta)
   const price = parseBigInt(row.activityPrice ?? row.executionPrice)
   const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
-  return notional === undefined ? '--' : formatPerpsUsdc(notional)
+  if (notional !== undefined) return formatPerpsUsdc(notional)
+  return isUnexecutedTerminalOrder(row) ? 'Not executed' : '--'
 }
 
 function orderPrice(row: BackendOrderRow): string {
   const price = parseBigInt(row.executionPrice ?? row.activityPrice)
-  return price === undefined ? '--' : formatDisplayDxyPrice(price)
+  if (price !== undefined) return formatDisplayDxyPrice(price)
+  return isUnexecutedTerminalOrder(row) ? 'Not executed' : '--'
 }
 
 function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
