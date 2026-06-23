@@ -26,6 +26,9 @@ locals {
     RPC_URL="$ETH_RPC_URL" CHAIN_ID="$ETH_CHAIN_ID" plether-basket-worker --latest-loop --poll-seconds "$BASKET_WORKER_POLL_SECONDS" &
     pids="$pids $!"
 
+    ARBITRUM_SEPOLIA_RPC_URL="$PERPS_RPC_URL" PERPS_ORACLE_UPDATER_PRIVATE_KEY="$KEEPER_PRIVATE_KEY" node /app/oracle/scripts/perps-oracle-worker.mjs --loop &
+    pids="$pids $!"
+
     RPC_URL="$PERPS_RPC_URL" CHAIN_ID="$PERPS_CHAIN_ID" plether-perps-indexer --loop &
     pids="$pids $!"
 
@@ -345,6 +348,9 @@ resource "aws_ecs_task_definition" "workers" {
       { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
       { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
+      { name = "PERPS_ORACLE_UPDATER_BACKEND_URL", value = "http://${aws_lb.api.dns_name}" },
+      { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
+      { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
       { name = "BASKET_WORKER_POLL_SECONDS", value = var.basket_worker_poll_seconds },
       { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
       { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },

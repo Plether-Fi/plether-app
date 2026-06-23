@@ -124,6 +124,16 @@ variable "perps_indexer_poll_seconds" {
   default = "12"
 }
 
+variable "perps_oracle_updater_poll_seconds" {
+  type    = string
+  default = "30"
+}
+
+variable "perps_oracle_updater_max_payload_age_seconds" {
+  type    = string
+  default = "50"
+}
+
 variable "basket_worker_poll_seconds" {
   type    = string
   default = "5"
@@ -157,7 +167,7 @@ variable "keeper_fee_buffer_bps" {
 variable "consolidate_workers" {
   type        = bool
   default     = false
-  description = "Run keeper, basket worker, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
+  description = "Run keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
 }
 
 variable "container_cpu" {
