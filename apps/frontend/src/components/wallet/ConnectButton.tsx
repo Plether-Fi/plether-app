@@ -100,8 +100,8 @@ export function ConnectButton() {
 
         {/* Account button */}
         <button
-          onClick={() => { if (address) void navigator.clipboard.writeText(address) }}
-          title="Copy address"
+          onClick={() => { void open({ view: 'Account' }) }}
+          title="Open wallet account"
           className={`group ${WALLET_BUTTON_CLASS}`}
         >
           <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
