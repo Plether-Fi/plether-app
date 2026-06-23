@@ -144,7 +144,7 @@ export function usePerpsMarket() {
     data: basketHistory24h,
     isLoading: isBasketHistory24hLoading,
     refetch: refetchBasketHistory24h,
-  } = usePerpsBasketHistory('24h', 60 * 60)
+  } = usePerpsBasketHistory('24h', 60)
   const {
     data: marketStats,
     isLoading: isMarketStatsLoading,
