@@ -23,6 +23,28 @@ export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   return Math.max(0, 2 - rawOraclePrice)
 }
 
+function basketDisplayPrice(point: BasketHistoryPoint): number {
+  return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
+}
+
+export function computeBasketDisplayPriceChange(
+  historyPoints: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined
+): number | undefined {
+  if (!latest || !historyPoints?.length) return undefined
+
+  const mergedPoints = mergeLatestBasketPoint(historyPoints, latest)
+  const firstPoint = mergedPoints.at(0)
+  const latestPoint = mergedPoints.at(-1)
+  if (!firstPoint || !latestPoint || firstPoint.timestamp === latestPoint.timestamp) return undefined
+
+  const firstPrice = basketDisplayPrice(firstPoint)
+  const latestPrice = basketDisplayPrice(latestPoint)
+  if (firstPrice <= 0) return undefined
+
+  return (latestPrice - firstPrice) / firstPrice
+}
+
 export function mergeLatestBasketPoint(
   historyPoints: BasketHistoryPoint[],
   latest: BasketLatest | undefined

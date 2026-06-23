@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   alignBasketPointsToOracleMark,
   buildCandles,
+  computeBasketDisplayPriceChange,
   mergeLatestBasketPoint,
   oracleNumberToDisplayDxyPrice,
 } from '../../utils/dxyBasketChart'
@@ -69,6 +70,20 @@ describe('DXY basket chart display transform', () => {
     const latest = oracleNumberToDisplayDxyPrice(0.97)
 
     expect((latest - first) / first).toBeGreaterThan(0)
+  })
+
+  it('does not report a 0% change when only the live latest point is available', () => {
+    expect(computeBasketDisplayPriceChange([], latestPoint(180, '97000000'))).toBeUndefined()
+    expect(computeBasketDisplayPriceChange(undefined, latestPoint(180, '97000000'))).toBeUndefined()
+  })
+
+  it('computes display percent change from history and the live latest point', () => {
+    const change = computeBasketDisplayPriceChange(
+      [historyPoint(60, '98000000')],
+      latestPoint(180, '97000000')
+    )
+
+    expect(change).toBeCloseTo((1.03 - 1.02) / 1.02, 8)
   })
 
   it('replaces the current history bucket with the live latest point', () => {

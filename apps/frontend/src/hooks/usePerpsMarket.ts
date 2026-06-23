@@ -5,15 +5,13 @@ import {
   usePerpsBasketHistory,
   usePerpsBasketLatest,
   usePerpsMarketStats,
-  type BasketHistoryPoint,
-  type BasketLatest,
 } from '../api'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
-import { mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../utils/dxyBasketChart'
+import { computeBasketDisplayPriceChange } from '../utils/dxyBasketChart'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -84,26 +82,6 @@ function percentChangeTone(value: number | undefined): 'positive' | 'negative' |
   if (value > 0) return 'positive'
   if (value < 0) return 'negative'
   return 'default'
-}
-
-function basketDisplayPrice(point: BasketHistoryPoint): number {
-  return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
-}
-
-function computeDisplayPriceChange24h(
-  points: BasketHistoryPoint[] | undefined,
-  latest: BasketLatest | undefined
-): number | undefined {
-  const mergedPoints = mergeLatestBasketPoint(points ?? [], latest)
-  const firstPoint = mergedPoints.at(0)
-  const latestPoint = mergedPoints.at(-1)
-  if (!firstPoint || !latestPoint) return undefined
-
-  const firstPrice = basketDisplayPrice(firstPoint)
-  const latestPrice = basketDisplayPrice(latestPoint)
-  if (firstPrice <= 0) return undefined
-
-  return (latestPrice - firstPrice) / firstPrice
 }
 
 function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
@@ -252,7 +230,7 @@ export function usePerpsMarket() {
     const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
     const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
     const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
-    const priceChange24hValue = computeDisplayPriceChange24h(basketHistory24h?.data.points, latestBasket?.data)
+    const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
     const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
     const longOpenCapacityUsdc = openCapacityUsdc({
       selectedOpenInterestUsdc: bullOpenInterestUsdc,

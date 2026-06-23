@@ -2,6 +2,7 @@ module Plether.Handlers.PerpsHistory
   ( getPerpsAccountOrders
   , getPerpsAccountActivity
   , getPerpsMarketStatsResponse
+  , perpsMarketStatsChainId
   , getPerpsIndexerStatusResponse
   , waitForPerpsOrderTerminal
   ) where
@@ -80,16 +81,20 @@ getPerpsMarketStatsResponse pool cfg = do
   now <- round <$> getPOSIXTime
   let rangeSeconds = 24 * 60 * 60
       fromTimestamp = now - rangeSeconds
+      chainId = perpsMarketStatsChainId cfg
   volume24hUsdc <- withDb pool $ \conn ->
-    getPerpsMarketVolumeSince conn (cfgChainId cfg) fromTimestamp
+    getPerpsMarketVolumeSince conn chainId fromTimestamp
   pure $
     Right $
-      mkResponse 0 (cfgChainId cfg) $
+      mkResponse 0 chainId $
         object
           [ "rangeSeconds" .= rangeSeconds
           , "generatedAt" .= now
           , "volume24hUsdc" .= show volume24hUsdc
           ]
+
+perpsMarketStatsChainId :: Config -> Integer
+perpsMarketStatsChainId = cfgPerpsChainId
 
 getPerpsIndexerStatusResponse
   :: DbPool

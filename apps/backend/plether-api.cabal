@@ -177,6 +177,7 @@ test-suite plether-api-test
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.PerpsHistorySpec
         Plether.KeeperSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
