@@ -174,7 +174,10 @@ export function Perps() {
     <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
         <PerpsInstrumentPanel stats={instrumentStats} />
-        <DxyBasketPanel />
+        <DxyBasketPanel
+          oraclePriceRaw={perpsMarket.raw.markPrice}
+          oraclePublishTime={perpsMarket.oracleFreshnessTime}
+        />
         <PerpsAccountPanel
           position={perpsAccount.position}
           equityUsdc={perpsAccount.equityUsdc}

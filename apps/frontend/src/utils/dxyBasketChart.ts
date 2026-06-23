@@ -13,6 +13,11 @@ export interface ChartCandle {
   close: number
 }
 
+export interface OracleMarkPoint {
+  timestamp: number
+  basketPrice: string
+}
+
 export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
   return Math.max(0, 2 - rawOraclePrice)
@@ -37,6 +42,27 @@ export function mergeLatestBasketPoint(
   }
 
   return [...historyPoints, livePoint]
+}
+
+export function alignBasketPointsToOracleMark(
+  historyPoints: BasketHistoryPoint[],
+  latest: BasketLatest | undefined,
+  oracleMark: OracleMarkPoint | undefined
+): BasketHistoryPoint[] {
+  const points = mergeLatestBasketPoint(historyPoints, latest)
+  if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
+
+  const components = latest?.components ?? points.at(-1)?.components ?? []
+  const markPoint: BasketHistoryPoint = {
+    timestamp: oracleMark.timestamp,
+    basketPrice: oracleMark.basketPrice,
+    components,
+  }
+
+  return [
+    ...points.filter((point) => point.timestamp < oracleMark.timestamp),
+    markPoint,
+  ]
 }
 
 export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { buildCandles, mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../../utils/dxyBasketChart'
+import {
+  alignBasketPointsToOracleMark,
+  buildCandles,
+  mergeLatestBasketPoint,
+  oracleNumberToDisplayDxyPrice,
+} from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
 
 const component: BasketComponentPrice = {
@@ -84,5 +89,28 @@ describe('DXY basket chart display transform', () => {
     )
 
     expect(merged.map((point) => point.timestamp)).toEqual([60, 120, 180])
+  })
+
+  it('uses the on-chain mark as the current chart point', () => {
+    const aligned = alignBasketPointsToOracleMark(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000'),
+      { timestamp: 150, basketPrice: '96500000' }
+    )
+
+    expect(aligned.map((point) => point.timestamp)).toEqual([60, 120, 150])
+    expect(aligned.at(-1)?.basketPrice).toBe('96500000')
+  })
+
+  it('replaces a backend sample from the same timestamp with the on-chain mark', () => {
+    const aligned = alignBasketPointsToOracleMark(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000'),
+      { timestamp: 120, basketPrice: '96500000' }
+    )
+
+    expect(aligned).toHaveLength(2)
+    expect(aligned.at(-1)?.timestamp).toBe(120)
+    expect(aligned.at(-1)?.basketPrice).toBe('96500000')
   })
 })

@@ -27,10 +27,11 @@ import {
 } from './dxyBasketChartConfig'
 import { Alert, Skeleton, Tooltip } from './ui'
 import {
+  alignBasketPointsToOracleMark,
   buildCandles,
-  mergeLatestBasketPoint,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
+  type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
 
 const CHART_HEIGHT = 320
@@ -99,6 +100,7 @@ function componentWeight(component: BasketComponentPrice): string {
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
   latest?: BasketLatest
+  oracleMark?: OracleMarkPoint
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
   isLoading?: boolean
@@ -284,6 +286,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 export function DxyBasketPanelView({
   history,
   latest,
+  oracleMark,
   chartInterval = '1m',
   chartStyle = 'candlestick',
   isLoading = false,
@@ -291,8 +294,8 @@ export function DxyBasketPanelView({
   onChartIntervalChange,
 }: DxyBasketPanelViewProps) {
   const points = useMemo(
-    () => mergeLatestBasketPoint(history?.points ?? [], latest),
-    [history?.points, latest]
+    () => alignBasketPointsToOracleMark(history?.points ?? [], latest, oracleMark),
+    [history?.points, latest, oracleMark]
   )
   const chartPoints = useMemo<ChartPoint[]>(
     () =>
@@ -427,17 +430,31 @@ export function DxyBasketPanelView({
   )
 }
 
-export function DxyBasketPanel() {
+export interface DxyBasketPanelProps {
+  oraclePriceRaw?: bigint
+  oraclePublishTime?: number
+}
+
+export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketPanelProps) {
   const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1m')
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
   const { data: latestData } = usePerpsBasketLatest()
+  const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
+    if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined
+
+    return {
+      timestamp: oraclePublishTime,
+      basketPrice: oraclePriceRaw.toString(),
+    }
+  }, [oraclePriceRaw, oraclePublishTime])
 
   return (
     <DxyBasketPanelView
       history={data?.data}
       latest={latestData?.data}
+      oracleMark={oracleMark}
       chartInterval={chartInterval}
       isLoading={isLoading}
       isError={isError}
