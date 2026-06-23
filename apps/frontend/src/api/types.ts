@@ -180,6 +180,12 @@ export interface PerpsRevealPayload {
   source: string;
 }
 
+export interface PerpsMarketStats {
+  rangeSeconds: number;
+  generatedAt: number;
+  volume24hUsdc: string;
+}
+
 // =============================================================================
 // User Types
 // =============================================================================

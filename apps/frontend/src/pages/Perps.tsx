@@ -125,8 +125,15 @@ export function Perps() {
           freshness: perpsMarket.oracleFreshness,
           freshnessTooltip: dxyFreshnessTooltip,
         },
-        { label: '24h change', value: '--' },
-        { label: '24h volume', value: '--' },
+        {
+          label: '24h change',
+          value: displayValue(perpsMarket.priceChange24h, perpsMarket.isStatsLoading),
+          tone: perpsMarket.priceChange24hTone,
+        },
+        {
+          label: '24h volume',
+          value: usdcValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
+        },
         {
           label: 'Long open interest',
           value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
@@ -158,15 +165,19 @@ export function Perps() {
       perpsMarket.costOfCarry,
       dxyFreshnessTooltip,
       perpsMarket.isLoading,
+      perpsMarket.isStatsLoading,
       perpsMarket.longOpenInterest,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
+      perpsMarket.priceChange24h,
+      perpsMarket.priceChange24hTone,
       perpsMarket.raw.longOpenCapacityUsdc,
       perpsMarket.raw.markPrice,
       perpsMarket.raw.minOpenNotionalUsdc,
       perpsMarket.raw.minNewPositionNotionalUsdc,
       perpsMarket.raw.shortOpenCapacityUsdc,
       perpsMarket.shortOpenInterest,
+      perpsMarket.volume24h,
     ]
   )
 
@@ -191,7 +202,7 @@ export function Perps() {
           historyError={perpsHistory.error}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
-            void perpsMarket.refetch()
+            perpsMarket.refetch()
             void perpsHistory.refetch()
           }}
         />
@@ -230,7 +241,7 @@ export function Perps() {
           marketCurrentDuration={marketSchedule.currentDuration}
           onAccountRefresh={() => {
             void perpsAccount.refetch()
-            void perpsMarket.refetch()
+            perpsMarket.refetch()
             void perpsHistory.refetch()
           }}
         />

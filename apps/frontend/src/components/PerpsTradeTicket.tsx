@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
@@ -245,8 +245,18 @@ function debugPerpsCommit(stage: string, details?: Record<string, unknown>): voi
   console.info(`[perps:commit] ${stage}`, details)
 }
 
-function randomFinalizationMessage(): FinalizationLoadingMessage {
-  return FINALIZATION_LOADING_MESSAGES[Math.floor(Math.random() * FINALIZATION_LOADING_MESSAGES.length)]
+function randomFinalizationMessage(currentTitle?: string, shownTitles?: ReadonlySet<string>): FinalizationLoadingMessage {
+  const unseenMessages = FINALIZATION_LOADING_MESSAGES.filter((message) => (
+    message.title !== currentTitle && !shownTitles?.has(message.title)
+  ))
+  const fallbackMessages = FINALIZATION_LOADING_MESSAGES.filter((message) => message.title !== currentTitle)
+  const messages = unseenMessages.length > 0
+    ? unseenMessages
+    : fallbackMessages.length > 0
+      ? fallbackMessages
+      : FINALIZATION_LOADING_MESSAGES
+
+  return messages[Math.floor(Math.random() * messages.length)]
 }
 
 function isPythExpiryMessage(message: string): boolean {
@@ -834,15 +844,146 @@ function PendingStateCard({
   progressPercent?: number
   showAnimatedDots?: boolean
 }) {
+  const descriptionKey = typeof description === 'string' || typeof description === 'number'
+    ? String(description)
+    : title
+
   return (
     <div className="flex min-h-52 flex-col items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg px-6 py-8 text-center">
       {progressPercent === undefined ? <PendingSpinner /> : <PendingProgressCircle progressPercent={progressPercent} />}
-      <div className="mt-5 flex items-center justify-center text-xl font-semibold text-cyber-text-primary">
-        <span>{title}</span>
-        {showAnimatedDots ? <AnimatedTitleDots key={title} /> : null}
+      <div className="mt-5 flex min-h-[5.25rem] max-w-full items-center justify-center text-xl font-semibold leading-7 text-cyber-text-primary sm:min-h-14">
+        <AnimatedLineSwap
+          contentKey={title}
+          suffix={showAnimatedDots ? <AnimatedTitleDots /> : null}
+          className="min-w-0 max-w-full text-center"
+        >
+          {title}
+        </AnimatedLineSwap>
       </div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-cyber-text-secondary">{description}</div>
+      <div className="mt-2 flex min-h-[4.5rem] max-w-md items-start justify-center text-sm leading-6 text-cyber-text-secondary sm:min-h-12">
+        <AnimatedLineSwap contentKey={descriptionKey} delayMs={180} className="max-w-full text-center">
+          {description}
+        </AnimatedLineSwap>
+      </div>
     </div>
+  )
+}
+
+type LineSwapPhase = 'idle' | 'running'
+
+const LINE_SWAP_TRANSITION_MS = 1_200
+
+function AnimatedLineSwap({
+  contentKey,
+  children,
+  delayMs = 0,
+  suffix,
+  className = '',
+}: {
+  contentKey: string
+  children: ReactNode
+  delayMs?: number
+  suffix?: ReactNode
+  className?: string
+}) {
+  const [displayedContent, setDisplayedContent] = useState<{
+    key: string
+    targetKey?: string
+    current: ReactNode
+    outgoing?: ReactNode
+    phase: LineSwapPhase
+  }>(() => ({
+    key: contentKey,
+    current: children,
+    phase: 'idle',
+  }))
+
+  useEffect(() => {
+    if (displayedContent.key === contentKey) return undefined
+
+    const prefersReducedMotion = typeof window.matchMedia === 'function' &&
+      window.matchMedia('(prefers-reduced-motion: reduce)').matches
+
+    let startTimeout: number | undefined
+    let endTimeout: number | undefined
+
+    if (prefersReducedMotion) {
+      startTimeout = window.setTimeout(() => {
+        setDisplayedContent({
+          key: contentKey,
+          current: children,
+          phase: 'idle',
+        })
+      }, 0)
+    } else {
+      startTimeout = window.setTimeout(() => {
+        setDisplayedContent((current) => ({
+          key: current.key,
+          targetKey: contentKey,
+          current: children,
+          outgoing: current.current,
+          phase: 'running',
+        }))
+
+        endTimeout = window.setTimeout(() => {
+          setDisplayedContent((current) => (
+            current.targetKey === contentKey
+              ? { key: contentKey, current: current.current, phase: 'idle' }
+              : current
+          ))
+        }, delayMs + LINE_SWAP_TRANSITION_MS)
+      }, 0)
+    }
+
+    return () => {
+      window.clearTimeout(startTimeout)
+      if (endTimeout !== undefined) {
+        window.clearTimeout(endTimeout)
+      }
+    }
+  }, [children, contentKey, delayMs, displayedContent.key])
+
+  const animationDelayStyle: CSSProperties = { animationDelay: `${delayMs.toString()}ms` }
+
+  return (
+    <span className={`relative block overflow-hidden ${className}`}>
+      {displayedContent.outgoing === undefined ? null : (
+        <span
+          className="perps-line-swap-out absolute inset-x-0 top-0 block transform-gpu motion-reduce:hidden"
+          style={animationDelayStyle}
+          aria-hidden="true"
+        >
+          {displayedContent.outgoing}
+        </span>
+      )}
+      <span
+        className={displayedContent.phase === 'running' ? 'perps-line-swap-in relative block transform-gpu' : 'relative block transform-gpu'}
+        style={displayedContent.phase === 'running' ? animationDelayStyle : undefined}
+      >
+        <LineSwapContentWithSuffix content={displayedContent.current} suffix={suffix} />
+      </span>
+    </span>
+  )
+}
+
+function LineSwapContentWithSuffix({ content, suffix }: { content: ReactNode; suffix?: ReactNode }) {
+  if (suffix === undefined || suffix === null) return <>{content}</>
+  if (typeof content !== 'string') {
+    return (
+      <>
+        {content}
+        {'\u2060'}
+        {suffix}
+      </>
+    )
+  }
+
+  return (
+    <>
+      <span>{content}</span>
+      {'\u2060'}
+      {suffix}
+    </>
   )
 }
 
@@ -1091,6 +1232,7 @@ export function PerpsTradeTicket({
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
+  const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
@@ -1116,6 +1258,7 @@ export function PerpsTradeTicket({
 
     setKeeperRevealDeadlineMs((currentDeadline) => currentDeadline ?? Date.now() + KEEPER_REVEAL_GRACE_MS)
     setKeeperRevealNowMs(Date.now())
+    finalizationShownTitlesRef.current = new Set([FINALIZATION_LOADING_MESSAGES[0].title])
     setFinalizationLoadingMessage(FINALIZATION_LOADING_MESSAGES[0])
   }, [enableLiveTrading, lifecycleState, orderId, showFinalizationProgress])
 
@@ -1126,7 +1269,11 @@ export function PerpsTradeTicket({
       setKeeperRevealNowMs(Date.now())
     }, KEEPER_REVEAL_PROGRESS_MS)
     const messageInterval = window.setInterval(() => {
-      setFinalizationLoadingMessage(randomFinalizationMessage())
+      setFinalizationLoadingMessage((currentMessage) => {
+        const nextMessage = randomFinalizationMessage(currentMessage.title, finalizationShownTitlesRef.current)
+        finalizationShownTitlesRef.current.add(nextMessage.title)
+        return nextMessage
+      })
     }, FINALIZATION_MESSAGE_ROTATE_MS)
 
     const timeout = window.setTimeout(() => {

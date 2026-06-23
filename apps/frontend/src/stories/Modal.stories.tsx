@@ -10,7 +10,7 @@ const meta: Meta<typeof Modal> = {
   argTypes: {
     size: {
       control: 'select',
-      options: ['sm', 'md', 'lg'],
+      options: ['sm', 'md', 'lg', 'xl'],
     },
     isOpen: { control: 'boolean' },
   },
@@ -26,7 +26,7 @@ const meta: Meta<typeof Modal> = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-function ModalWithTrigger({ size, title }: { size?: 'sm' | 'md' | 'lg'; title?: string }) {
+function ModalWithTrigger({ size, title }: { size?: 'sm' | 'md' | 'lg' | 'xl'; title?: string }) {
   const [isOpen, setIsOpen] = useState(false)
   return (
     <>
@@ -63,6 +63,10 @@ export const Small: Story = {
 
 export const Large: Story = {
   render: () => <ModalWithTrigger size="lg" title="Large Modal" />,
+}
+
+export const ExtraLarge: Story = {
+  render: () => <ModalWithTrigger size="xl" title="Extra Large Modal" />,
 }
 
 function NoTitleModal() {

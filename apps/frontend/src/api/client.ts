@@ -34,6 +34,7 @@ import type {
   BasketLatest,
   BasketHistoryRange,
   PerpsRevealPayload,
+  PerpsMarketStats,
 } from './types';
 
 // =============================================================================
@@ -92,6 +93,19 @@ export function defaultApiBaseUrl(): string {
 
 export function defaultApiChainId(): number {
   return DEFAULT_API_CHAIN_ID;
+}
+
+export function getConfiguredApiBaseUrl(chainId: number): string {
+  if (DEV_API_URL) return DEV_API_URL;
+  return chainIdToApiPath(chainId);
+}
+
+export function getConfiguredApiWsUrl(chainId: number): string {
+  return deriveWsUrl(getConfiguredApiBaseUrl(chainId));
+}
+
+export function getConfiguredApiSource(): string {
+  return DEV_API_URL ? 'VITE_API_URL' : 'active chain route';
 }
 
 function getInitialBaseUrl(): string {
@@ -260,7 +274,7 @@ export class PlethApiClient {
   setChainId(chainId: number): void {
     if (DEV_API_URL || chainId === this.chainId) return;
     this.chainId = chainId;
-    const baseUrl = chainIdToApiPath(chainId);
+    const baseUrl = getConfiguredApiBaseUrl(chainId);
     this.config.baseUrl = baseUrl;
     this.config.wsUrl = deriveWsUrl(baseUrl);
     this.reconnectWebSocket();
@@ -304,6 +318,10 @@ export class PlethApiClient {
 
   async getPerpsBasketLatest(): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
     return fetchApi<BasketLatest>(this.config, '/perps/basket/latest');
+  }
+
+  async getPerpsMarketStats(): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {
+    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats');
   }
 
   async getPerpsRevealPayload(

@@ -1,11 +1,19 @@
 import { useMemo } from 'react'
 import { formatUnits } from 'viem'
 import { useReadContracts } from 'wagmi'
+import {
+  usePerpsBasketHistory,
+  usePerpsBasketLatest,
+  usePerpsMarketStats,
+  type BasketHistoryPoint,
+  type BasketLatest,
+} from '../api'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
+import { mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../utils/dxyBasketChart'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -48,12 +56,54 @@ function formatCompactUsdc(amount: bigint | undefined): string | undefined {
   return compactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
 }
 
+function parseBigIntString(value: string | undefined): bigint | undefined {
+  if (!value) return undefined
+  try {
+    return BigInt(value)
+  } catch {
+    return undefined
+  }
+}
+
 function formatBpsAsPercent(bps: bigint | undefined): string | undefined {
   if (bps === undefined) return undefined
   return `${(Number(bps) / 100).toLocaleString('en-US', {
     maximumFractionDigits: 2,
     minimumFractionDigits: 0,
   })}%`
+}
+
+function formatPercentChange(value: number | undefined): string | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  const sign = value > 0 ? '+' : ''
+  return `${sign}${(value * 100).toFixed(2)}%`
+}
+
+function percentChangeTone(value: number | undefined): 'positive' | 'negative' | 'default' | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  if (value > 0) return 'positive'
+  if (value < 0) return 'negative'
+  return 'default'
+}
+
+function basketDisplayPrice(point: BasketHistoryPoint): number {
+  return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
+}
+
+function computeDisplayPriceChange24h(
+  points: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined
+): number | undefined {
+  const mergedPoints = mergeLatestBasketPoint(points ?? [], latest)
+  const firstPoint = mergedPoints.at(0)
+  const latestPoint = mergedPoints.at(-1)
+  if (!firstPoint || !latestPoint) return undefined
+
+  const firstPrice = basketDisplayPrice(firstPoint)
+  const latestPrice = basketDisplayPrice(latestPoint)
+  if (firstPrice <= 0) return undefined
+
+  return (latestPrice - firstPrice) / firstPrice
 }
 
 function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {
@@ -108,7 +158,21 @@ function protocolPhaseToMarketPhase(
 }
 
 export function usePerpsMarket() {
-  const { data, isLoading, error, refetch } = useReadContracts({
+  const {
+    data: latestBasket,
+    refetch: refetchLatestBasket,
+  } = usePerpsBasketLatest()
+  const {
+    data: basketHistory24h,
+    isLoading: isBasketHistory24hLoading,
+    refetch: refetchBasketHistory24h,
+  } = usePerpsBasketHistory('24h', 60 * 60)
+  const {
+    data: marketStats,
+    isLoading: isMarketStatsLoading,
+    refetch: refetchMarketStats,
+  } = usePerpsMarketStats()
+  const { data, isLoading, error, refetch: refetchContracts } = useReadContracts({
     contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -188,6 +252,8 @@ export function usePerpsMarket() {
     const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
     const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
     const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const priceChange24hValue = computeDisplayPriceChange24h(basketHistory24h?.data.points, latestBasket?.data)
+    const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
     const longOpenCapacityUsdc = openCapacityUsdc({
       selectedOpenInterestUsdc: bullOpenInterestUsdc,
       oppositeOpenInterestUsdc: bearOpenInterestUsdc,
@@ -237,6 +303,9 @@ export function usePerpsMarket() {
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
       shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
+      priceChange24h: formatPercentChange(priceChange24hValue),
+      priceChange24hTone: percentChangeTone(priceChange24hValue),
+      volume24h: formatCompactUsdc(volume24hUsdc),
       availableLiquidity: formatCompactUsdc(freeUsdc),
       costOfCarry: formatBpsAsPercent(baseCarryBps),
       executionFeeBps,
@@ -245,8 +314,27 @@ export function usePerpsMarket() {
       oracleFrozen: oracleFrozen ?? false,
       fadWindow: fadWindow ?? false,
       isLoading,
+      isStatsLoading: isBasketHistory24hLoading || isMarketStatsLoading,
       error,
-      refetch,
+      refetch: () => {
+        void refetchContracts()
+        void refetchLatestBasket()
+        void refetchBasketHistory24h()
+        void refetchMarketStats()
+      },
     }
-  }, [data, error, isLoading, refetch])
+  }, [
+    basketHistory24h,
+    data,
+    error,
+    isBasketHistory24hLoading,
+    isLoading,
+    isMarketStatsLoading,
+    latestBasket,
+    marketStats,
+    refetchBasketHistory24h,
+    refetchContracts,
+    refetchLatestBasket,
+    refetchMarketStats,
+  ])
 }
