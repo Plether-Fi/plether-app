@@ -1,12 +1,11 @@
 import { useMemo } from 'react'
 import { formatUnits } from 'viem'
 import { useReadContracts } from 'wagmi'
-import { usePerpsBasketLatest } from '../api'
 import { PERPS_CFD_ENGINE_ABI, PERPS_HOUSE_POOL_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
-import { formatDisplayDxyPrice, type PerpsOracleFreshness } from '../utils/perps'
+import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -109,10 +108,6 @@ function protocolPhaseToMarketPhase(
 }
 
 export function usePerpsMarket() {
-  const {
-    data: latestBasket,
-    isLoading: isLatestBasketLoading,
-  } = usePerpsBasketLatest()
   const { data, isLoading, error, refetch } = useReadContracts({
     contracts: [
       {
@@ -175,6 +170,7 @@ export function usePerpsMarket() {
     const minOpenNotionalUsdc = readResult(data, 6) as bigint | undefined
 
     const markPrice = tupleValue(protocolStatus, 1, 'lastMarkPrice') as bigint | undefined
+    const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
     const phaseValue = tupleValue(protocolStatus, 0, 'phase') as number | bigint | undefined
     const tradingActive = tupleValue(protocolStatus, 5, 'tradingActive') as boolean | undefined
     const oracleFrozen = tupleValue(protocolStatus, 3, 'oracleFrozen') as boolean | undefined
@@ -207,21 +203,14 @@ export function usePerpsMarket() {
 
     const phase = phaseValue === undefined ? undefined : Number(phaseValue)
     const marketPhase = protocolPhaseToMarketPhase(phase, tradingActive, oracleFrozen, fadWindow)
-    const latestBasketTimestamp = latestBasket?.data.timestamp
-    const backendBasketAgeSeconds = latestBasketTimestamp === undefined
-      ? undefined
-      : Math.max(0, Math.floor(Date.now() / 1000) - latestBasketTimestamp)
-    const backendBasketFresh =
-      backendBasketAgeSeconds !== undefined &&
-      backendBasketAgeSeconds <= ORACLE_FRESH_SECONDS
-    const oracleFreshness: PerpsOracleFreshness | undefined = backendBasketFresh
-      ? 'fresh'
-      : isLatestBasketLoading
-        ? 'checking'
-        : latestBasketTimestamp !== undefined
-          ? 'stale'
-          : undefined
-    const oracleFreshnessTime = latestBasketTimestamp
+    const {
+      freshness: oracleFreshness,
+      publishTime: oracleFreshnessTime,
+    } = perpsOracleFreshnessFromTimestamp({
+      publishTime: lastMarkTime,
+      isChecking: isLoading,
+      freshSeconds: ORACLE_FRESH_SECONDS,
+    })
 
     return {
       chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -259,5 +248,5 @@ export function usePerpsMarket() {
       error,
       refetch,
     }
-  }, [data, error, isLatestBasketLoading, isLoading, latestBasket, refetch])
+  }, [data, error, isLoading, refetch])
 }

@@ -3,6 +3,7 @@ import {
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
   oraclePriceToDisplayDxyPrice,
+  perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
 } from '../perps'
 
@@ -27,5 +28,49 @@ describe('DXY display price helpers', () => {
   it('can convert a display DXY price back to raw oracle price for future inputs', () => {
     expect(displayDxyPriceToOraclePrice(101_690_000n)).toBe(98_310_000n)
     expect(displayDxyPriceToOraclePrice(PERPS_DXY_PRICE_CAP)).toBe(0n)
+  })
+})
+
+describe('perps oracle freshness helper', () => {
+  it('marks recent on-chain oracle updates as fresh', () => {
+    expect(perpsOracleFreshnessFromTimestamp({
+      publishTime: 1_000n,
+      isChecking: false,
+      nowSeconds: 1_030,
+      freshSeconds: 60,
+    })).toEqual({
+      freshness: 'fresh',
+      publishTime: 1_000,
+    })
+  })
+
+  it('marks old on-chain oracle updates as stale', () => {
+    expect(perpsOracleFreshnessFromTimestamp({
+      publishTime: 1_000,
+      isChecking: false,
+      nowSeconds: 1_061,
+      freshSeconds: 60,
+    })).toEqual({
+      freshness: 'stale',
+      publishTime: 1_000,
+    })
+  })
+
+  it('reports checking while the on-chain read has not resolved', () => {
+    expect(perpsOracleFreshnessFromTimestamp({
+      publishTime: undefined,
+      isChecking: true,
+      nowSeconds: 1_000,
+    })).toEqual({
+      freshness: 'checking',
+    })
+  })
+
+  it('does not treat zero as a real unix publish time', () => {
+    expect(perpsOracleFreshnessFromTimestamp({
+      publishTime: 0n,
+      isChecking: false,
+      nowSeconds: 1_000,
+    })).toEqual({})
   })
 })

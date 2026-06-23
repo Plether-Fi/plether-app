@@ -64,6 +64,33 @@ export function formatDisplayDxyPrice(rawOraclePrice: bigint | undefined, decima
   return formatPerpsPrice(oraclePriceToDisplayDxyPrice(rawOraclePrice), decimals)
 }
 
+export function perpsOracleFreshnessFromTimestamp({
+  publishTime,
+  isChecking,
+  nowSeconds = Math.floor(Date.now() / 1000),
+  freshSeconds = 60,
+}: {
+  publishTime: bigint | number | undefined
+  isChecking: boolean
+  nowSeconds?: number
+  freshSeconds?: number
+}): { freshness?: PerpsOracleFreshness; publishTime?: number } {
+  if (publishTime === undefined) {
+    return { freshness: isChecking ? 'checking' : undefined }
+  }
+
+  const timestamp = Math.floor(Number(publishTime))
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return { freshness: isChecking ? 'checking' : undefined }
+  }
+
+  const ageSeconds = Math.max(0, nowSeconds - timestamp)
+  return {
+    freshness: ageSeconds <= freshSeconds ? 'fresh' : 'stale',
+    publishTime: timestamp,
+  }
+}
+
 export function displayDxyPriceToOraclePrice(displayDxyPrice: bigint | undefined): bigint | undefined {
   if (displayDxyPrice === undefined || displayDxyPrice === 0n) return undefined
   return PERPS_DXY_PRICE_CAP > displayDxyPrice ? PERPS_DXY_PRICE_CAP - displayDxyPrice : 0n
