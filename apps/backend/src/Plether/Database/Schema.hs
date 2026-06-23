@@ -36,6 +36,8 @@ module Plether.Database.Schema
   , recordPerpsKeeperOrderImmediateRetryError
   , getPendingPerpsKeeperOrders
   , PerpsKeeperOrderRow (..)
+  , PerpsKeeperTerminalOrderRow (..)
+  , getPerpsKeeperOrderById
   , ensurePerpsHistorySchema
   , PerpsOrderRow (..)
   , PerpsActivityRow (..)
@@ -552,6 +554,40 @@ instance FromRow PerpsKeeperOrderRow where
       <*> field
       <*> field
 
+data PerpsKeeperTerminalOrderRow = PerpsKeeperTerminalOrderRow
+  { pktoOrderId :: Integer
+  , pktoAccount :: Text
+  , pktoSide :: Integer
+  , pktoCommitBlock :: Integer
+  , pktoCommitTime :: Integer
+  , pktoCommitTxHash :: Text
+  , pktoStatus :: Text
+  , pktoExecutionTxHash :: Maybe Text
+  , pktoExecutionBlock :: Maybe Integer
+  , pktoExecutionPrice :: Maybe Integer
+  , pktoFailureTxHash :: Maybe Text
+  , pktoFailureBlock :: Maybe Integer
+  , pktoFailureReason :: Maybe Int
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsKeeperTerminalOrderRow where
+  fromRow =
+    PerpsKeeperTerminalOrderRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> numericIntegerField
+      <*> field
+      <*> field
+      <*> field
+
 ensurePerpsKeeperSchema :: Connection -> IO ()
 ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
@@ -729,6 +765,32 @@ getPendingPerpsKeeperOrders conn limitRows =
     \AND (last_attempt_at IS NULL OR last_attempt_at < NOW() - INTERVAL '5 seconds') \
     \ORDER BY order_id ASC LIMIT ?"
     (Only limitRows)
+
+getPerpsKeeperOrderById :: Connection -> Integer -> Maybe Text -> IO (Maybe PerpsKeeperTerminalOrderRow)
+getPerpsKeeperOrderById conn orderId mAccount = do
+  rows <- case mAccount of
+    Nothing ->
+      query conn baseQuery (Only orderId)
+    Just account ->
+      query conn accountQuery (orderId, T.toLower account)
+  pure $ case rows of
+    row : _ -> Just row
+    [] -> Nothing
+  where
+    baseSelect :: Query
+    baseSelect =
+      "SELECT order_id, account, side, commit_block, commit_time, commit_tx_hash, status, \
+      \execution_tx_hash, execution_block, execution_price, failure_tx_hash, failure_block, failure_reason \
+      \FROM perps_keeper_orders \
+      \WHERE order_id = ?"
+
+    baseQuery :: Query
+    baseQuery =
+      baseSelect <> " LIMIT 1"
+
+    accountQuery :: Query
+    accountQuery =
+      baseSelect <> " AND account = ? LIMIT 1"
 
 data PerpsOrderRow = PerpsOrderRow
   { porOrderId :: Integer

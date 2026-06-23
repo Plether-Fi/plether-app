@@ -17,13 +17,16 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( PerpsActivityRow (..)
   , PerpsIndexerStatusRow (..)
+  , PerpsKeeperTerminalOrderRow (..)
   , PerpsOrderRow (..)
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
+  , getPerpsKeeperOrderById
   , getPerpsMarketVolumeSince
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
+import Plether.Perps.HistoryIndexer (orderFailReasonName, terminalStatus)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 
@@ -118,16 +121,26 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
   (timedOut, mOrder) <- go account waitSeconds
   pure $
     Right $
-      mkResponse (maybe 0 porSortBlock mOrder) chainId $
+      mkResponse (maybe 0 wosBlock mOrder) chainId $
         object
           [ "timedOut" .= timedOut
-          , "order" .= fmap orderRowToJson mOrder
+          , "order" .= fmap wosJson mOrder
           ]
   where
-    go :: Maybe Text -> Int -> IO (Bool, Maybe PerpsOrderRow)
+    go :: Maybe Text -> Int -> IO (Bool, Maybe WaitOrderSnapshot)
     go account remainingSeconds = do
-      mOrder <- withDb pool $ \conn ->
-        getPerpsOrderById conn (cfgPerpsChainId cfg) orderId account
+      mOrder <- withDb pool $ \conn -> do
+        mKeeperOrder <- getPerpsKeeperOrderById conn orderId account
+        case mKeeperOrder >>= keeperTerminalOrderSnapshot of
+          Just terminalOrder ->
+            pure $ Just terminalOrder
+          Nothing -> do
+            mHistoryOrder <- getPerpsOrderById conn (cfgPerpsChainId cfg) orderId account
+            pure $ case mHistoryOrder of
+              Just historyOrder ->
+                Just $ historyOrderSnapshot historyOrder
+              Nothing ->
+                keeperOrderSnapshot <$> mKeeperOrder
       case mOrder of
         Just row | isTerminalOrder row ->
           pure (False, Just row)
@@ -137,8 +150,66 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
           threadDelay 1_000_000
           go account (remainingSeconds - 1)
 
-    isTerminalOrder :: PerpsOrderRow -> Bool
-    isTerminalOrder row = porTerminalStatus row /= "Committed"
+    isTerminalOrder :: WaitOrderSnapshot -> Bool
+    isTerminalOrder row = wosTerminalStatus row /= "Committed"
+
+data WaitOrderSnapshot = WaitOrderSnapshot
+  { wosBlock :: Integer
+  , wosTerminalStatus :: Text
+  , wosJson :: Value
+  }
+
+historyOrderSnapshot :: PerpsOrderRow -> WaitOrderSnapshot
+historyOrderSnapshot row =
+  WaitOrderSnapshot
+    { wosBlock = porSortBlock row
+    , wosTerminalStatus = porTerminalStatus row
+    , wosJson = orderRowToJson row
+    }
+
+keeperTerminalOrderSnapshot :: PerpsKeeperTerminalOrderRow -> Maybe WaitOrderSnapshot
+keeperTerminalOrderSnapshot row =
+  case T.toLower $ pktoStatus row of
+    "executed" -> Just $ keeperOrderSnapshot row
+    "failed" -> Just $ keeperOrderSnapshot row
+    _ -> Nothing
+
+keeperOrderSnapshot :: PerpsKeeperTerminalOrderRow -> WaitOrderSnapshot
+keeperOrderSnapshot row =
+  WaitOrderSnapshot
+    { wosBlock = maybe (pktoCommitBlock row) id terminalBlock
+    , wosTerminalStatus = status
+    , wosJson =
+        object $
+          catMaybes
+            [ Just $ "orderId" .= show (pktoOrderId row)
+            , Just $ "account" .= pktoAccount row
+            , Just $ "side" .= pktoSide row
+            , Just $ "commitTxHash" .= pktoCommitTxHash row
+            , Just $ "commitBlockNumber" .= show (pktoCommitBlock row)
+            , Just $ "commitTimestamp" .= pktoCommitTime row
+            , ("terminalTxHash" .=) <$> terminalTxHash
+            , ("terminalBlockNumber" .=) . show <$> terminalBlock
+            , Just $ "terminalStatus" .= status
+            , ("failureReason" .=) <$> failureReason
+            , ("executionPrice" .=) . show <$> pktoExecutionPrice row
+            ]
+    }
+  where
+    keeperStatus = T.toLower $ pktoStatus row
+    failureReason = orderFailReasonName <$> pktoFailureReason row
+    status
+      | keeperStatus == "executed" = "Executed"
+      | keeperStatus == "failed" = terminalStatus $ maybe "Unknown" id failureReason
+      | otherwise = "Committed"
+    terminalTxHash
+      | keeperStatus == "executed" = pktoExecutionTxHash row
+      | keeperStatus == "failed" = pktoFailureTxHash row
+      | otherwise = Nothing
+    terminalBlock
+      | keeperStatus == "executed" = pktoExecutionBlock row
+      | keeperStatus == "failed" = pktoFailureBlock row
+      | otherwise = Nothing
 
 orderRowToJson :: PerpsOrderRow -> Value
 orderRowToJson PerpsOrderRow {..} =
