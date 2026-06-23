@@ -3,12 +3,14 @@ import { defineConfig, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 
 function parseHeadersFile(): Record<string, string> {
   const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
@@ -22,7 +24,7 @@ function parseHeadersFile(): Record<string, string> {
 
 function apiProxyConfig(): ProxyOptions {
   return {
-    target: process.env.VITE_API_PROXY_TARGET ?? 'http://127.0.0.1:3001',
+    target: process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
     changeOrigin: true,
     rewrite: (proxyPath) => proxyPath.replace(/^\/api\/(?:v1|sepolia_v1)/, '/api'),
   };
@@ -36,8 +38,26 @@ function pythHermesProxyConfig(): ProxyOptions {
   };
 }
 
+function buildCommit(): string {
+  const envCommit = process.env.VITE_BUILD_COMMIT ?? process.env.CF_PAGES_COMMIT_SHA;
+  if (envCommit) return envCommit.slice(0, 12);
+
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', 'HEAD'], {
+      cwd: dirname,
+      encoding: 'utf-8',
+    }).trim();
+  } catch {
+    return 'dev';
+  }
+}
+
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
 export default defineConfig({
+  define: {
+    'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit()),
+    'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),
+  },
   plugins: [
     react(),
     visualizer({

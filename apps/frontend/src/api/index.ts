@@ -6,7 +6,15 @@
  */
 
 // Client
-export { plethApi, PlethApiClient, PlethApiError, chainIdToApiPath } from './client';
+export {
+  plethApi,
+  PlethApiClient,
+  PlethApiError,
+  chainIdToApiPath,
+  getConfiguredApiBaseUrl,
+  getConfiguredApiSource,
+  getConfiguredApiWsUrl,
+} from './client';
 export type { PlethApiConfig } from './client';
 
 // Types
