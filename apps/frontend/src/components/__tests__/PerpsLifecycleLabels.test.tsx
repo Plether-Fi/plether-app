@@ -601,6 +601,108 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
   })
 
+  it('shows the execution confirmation when refreshed order history sees keeper execution', async () => {
+    mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
+    const baseProps = {
+      enableLiveTrading: true,
+      initialLifecycleState: 'revealPending' as const,
+      initialReviewOpen: true,
+      initialDirection: 'long' as const,
+      initialSize: '1 000',
+      initialOrderId: 72n,
+      oraclePriceRaw: 97_330_315n,
+      oraclePublishTime: Math.floor(Date.now() / 1000),
+      availableToTradeRaw: 2_000_000_000n,
+      walletUsdcRaw: 2_000_000_000n,
+      portfolioValueRaw: 2_000_000_000n,
+      withdrawableUsdcRaw: 2_000_000_000n,
+      minOpenNotionalUsdc: 100_000_000n,
+      minNewPositionNotionalUsdc: 100_000_000n,
+    }
+
+    const { rerender } = render(<PerpsTradeTicket {...baseProps} orderHistory={[]} />)
+
+    expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[
+          {
+            orderId: 72n,
+            time: '23 Jun, 11:14',
+            market: 'plDXY Perp',
+            side: 'Long',
+            type: 'Open',
+            price: '1.0286',
+            size: '1 000',
+            status: 'Executed',
+            commitTxHash: '0x971c00000000000000000000000000000000eeab',
+            revealTxHash: '0xec0c00000000000000000000000000000000d745',
+            executionPriceRaw: 97_138_163n,
+          },
+        ]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+    const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
+    expect(finalResult).toBeInTheDocument()
+    expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
+  })
+
+  it('keeps waiting for keeper execution after the first terminal wait times out', async () => {
+    mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal
+      .mockResolvedValueOnce({ timedOut: true, order: undefined })
+      .mockResolvedValueOnce({
+        timedOut: false,
+        order: {
+          orderId: 72n,
+          time: '23 Jun, 11:14',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Open',
+          price: '1.0286',
+          size: '1 000',
+          status: 'Executed',
+          commitTxHash: '0x971c00000000000000000000000000000000eeab',
+          revealTxHash: '0xec0c00000000000000000000000000000000d745',
+          executionPriceRaw: 97_138_163n,
+        },
+      })
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="1 000"
+        initialOrderId={72n}
+        oraclePriceRaw={97_330_315n}
+        oraclePublishTime={Math.floor(Date.now() / 1000)}
+        availableToTradeRaw={2_000_000_000n}
+        walletUsdcRaw={2_000_000_000n}
+        portfolioValueRaw={2_000_000_000n}
+        withdrawableUsdcRaw={2_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={100_000_000n}
+      />
+    )
+
+    await waitFor(() => {
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
+    }, { timeout: 4_000 })
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+  })
+
   it('stops waiting if the order leaves pending state without executing', async () => {
     mockIsConnected = true
     perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({

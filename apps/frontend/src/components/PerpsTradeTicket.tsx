@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
@@ -169,6 +169,7 @@ const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
 const ORDER_TERMINAL_WAIT_SECONDS = 60
+const ORDER_TERMINAL_RETRY_DELAY_MS = 2_000
 const FINALIZATION_LOADING_MESSAGES = [
   {
     title: 'Waiting for verified market data',
@@ -1290,40 +1291,68 @@ export function PerpsTradeTicket({
     }
   }, [enableLiveTrading, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
 
+  const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
+    if (order.status === 'Committed') return false
+
+    setCommitTxHash((current) => current ?? order.commitTxHash)
+    setExecuteTxHash(order.revealTxHash)
+
+    if (order.status === 'Executed') {
+      setFlowError(undefined)
+      setFinalExecutionPrice(order.executionPriceRaw ?? order.activityPriceRaw)
+      setLifecycleState('executed')
+    } else {
+      setFlowError(terminalOrderFailureMessage(order))
+      setLifecycleState('selfExecuteFailed')
+    }
+
+    onAccountRefreshRef.current?.()
+    return true
+  }, [])
+
+  useEffect(() => {
+    if (!enableLiveTrading || orderId === undefined) return
+
+    const terminalOrder = orderHistory.find((row) => row.orderId === orderId && row.status !== 'Committed')
+    if (terminalOrder) {
+      applyTerminalOrder(terminalOrder)
+    }
+  }, [applyTerminalOrder, enableLiveTrading, orderHistory, orderId])
+
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return undefined
     if (orderWaitStartedForRef.current === orderId) return undefined
 
+    const activeOrderId = orderId
     orderWaitStartedForRef.current = orderId
     const controller = new AbortController()
     let cancelled = false
 
-    void waitForPerpsOrderTerminal({
-      accountAddress: address,
-      orderId,
-      timeoutSeconds: ORDER_TERMINAL_WAIT_SECONDS,
-      signal: controller.signal,
-    })
-      .then((result) => {
-        if (cancelled || result.timedOut || result.order === undefined || result.order.status === 'Committed') return
+    async function waitForTerminalOrderLoop() {
+      while (!cancelled) {
+        try {
+          const result = await waitForPerpsOrderTerminal({
+            accountAddress: address,
+            orderId: activeOrderId,
+            timeoutSeconds: ORDER_TERMINAL_WAIT_SECONDS,
+            signal: controller.signal,
+          })
 
-        setCommitTxHash((current) => current ?? result.order?.commitTxHash)
-        setExecuteTxHash(result.order.revealTxHash)
+          if (cancelled) return
+          if (result.order !== undefined && applyTerminalOrder(result.order)) return
 
-        if (result.order.status === 'Executed') {
-          setFlowError(undefined)
-          setFinalExecutionPrice(result.order.executionPriceRaw ?? result.order.activityPriceRaw)
-          setLifecycleState('executed')
-        } else {
-          setFlowError(terminalOrderFailureMessage(result.order))
-          setLifecycleState('selfExecuteFailed')
+          onAccountRefreshRef.current?.()
+        } catch (error: unknown) {
+          if (cancelled || (error instanceof DOMException && error.name === 'AbortError')) return
         }
 
-        onAccountRefreshRef.current?.()
-      })
-      .catch((error: unknown) => {
-        if (cancelled || (error instanceof DOMException && error.name === 'AbortError')) return
-      })
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, ORDER_TERMINAL_RETRY_DELAY_MS)
+        })
+      }
+    }
+
+    void waitForTerminalOrderLoop()
 
     return () => {
       cancelled = true
@@ -1332,7 +1361,7 @@ export function PerpsTradeTicket({
         orderWaitStartedForRef.current = undefined
       }
     }
-  }, [address, enableLiveTrading, orderId])
+  }, [address, applyTerminalOrder, enableLiveTrading, orderId])
 
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
