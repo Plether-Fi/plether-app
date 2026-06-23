@@ -1326,10 +1326,10 @@ export function PerpsTradeTicket({
     const activeOrderId = orderId
     orderWaitStartedForRef.current = orderId
     const controller = new AbortController()
-    let cancelled = false
+    const isCancelled = () => controller.signal.aborted
 
     async function waitForTerminalOrderLoop() {
-      while (!cancelled) {
+      while (!isCancelled()) {
         try {
           const result = await waitForPerpsOrderTerminal({
             accountAddress: address,
@@ -1338,12 +1338,12 @@ export function PerpsTradeTicket({
             signal: controller.signal,
           })
 
-          if (cancelled) return
+          if (isCancelled()) return
           if (result.order !== undefined && applyTerminalOrder(result.order)) return
 
           onAccountRefreshRef.current?.()
         } catch (error: unknown) {
-          if (cancelled || (error instanceof DOMException && error.name === 'AbortError')) return
+          if (isCancelled() || (error instanceof DOMException && error.name === 'AbortError')) return
         }
 
         await new Promise<void>((resolve) => {
@@ -1355,7 +1355,6 @@ export function PerpsTradeTicket({
     void waitForTerminalOrderLoop()
 
     return () => {
-      cancelled = true
       controller.abort()
       if (orderWaitStartedForRef.current === orderId) {
         orderWaitStartedForRef.current = undefined
