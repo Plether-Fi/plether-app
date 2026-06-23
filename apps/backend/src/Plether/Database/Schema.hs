@@ -559,6 +559,7 @@ data PerpsKeeperTerminalOrderRow = PerpsKeeperTerminalOrderRow
   , pktoAccount :: Text
   , pktoSide :: Integer
   , pktoCommitBlock :: Integer
+  , pktoCommitEventBlock :: Maybe Integer
   , pktoCommitTime :: Integer
   , pktoCommitTxHash :: Text
   , pktoStatus :: Text
@@ -575,6 +576,7 @@ instance FromRow PerpsKeeperTerminalOrderRow where
   fromRow =
     PerpsKeeperTerminalOrderRow
       <$> field
+      <*> field
       <*> field
       <*> field
       <*> field
@@ -606,6 +608,7 @@ ensurePerpsKeeperSchema conn = do
     \account VARCHAR(42) NOT NULL,\
     \side INTEGER NOT NULL,\
     \commit_block BIGINT NOT NULL,\
+    \commit_event_block BIGINT,\
     \commit_time BIGINT NOT NULL,\
     \commit_tx_hash VARCHAR(66) NOT NULL,\
     \status VARCHAR(16) NOT NULL DEFAULT 'pending',\
@@ -624,6 +627,9 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_keeper_orders \
     \ALTER COLUMN order_id TYPE BIGINT USING order_id::bigint"
+  _ <- execute_ conn
+    "ALTER TABLE perps_keeper_orders \
+    \ADD COLUMN IF NOT EXISTS commit_event_block BIGINT"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending \
     \ON perps_keeper_orders(order_id ASC) WHERE status = 'pending'"
@@ -671,16 +677,18 @@ upsertPerpsKeeperOrderCommitted
   -> Text    -- account
   -> Integer -- side
   -> Integer -- commit_block
+  -> Integer -- commit_event_block
   -> Integer -- commit_time
   -> Text    -- commit_tx_hash
   -> IO ()
-upsertPerpsKeeperOrderCommitted conn orderId account side commitBlock commitTime commitTxHash = do
+upsertPerpsKeeperOrderCommitted conn orderId account side commitBlock commitEventBlock commitTime commitTxHash = do
   _ <- execute conn
     "INSERT INTO perps_keeper_orders \
-    \(order_id, account, side, commit_block, commit_time, commit_tx_hash, status) \
-    \VALUES (?, ?, ?, ?, ?, ?, 'pending') \
-    \ON CONFLICT (order_id) DO NOTHING"
-    (orderId, T.toLower account, side, commitBlock, commitTime, T.toLower commitTxHash)
+    \(order_id, account, side, commit_block, commit_event_block, commit_time, commit_tx_hash, status) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, 'pending') \
+    \ON CONFLICT (order_id) DO UPDATE SET \
+    \commit_event_block = COALESCE(perps_keeper_orders.commit_event_block, EXCLUDED.commit_event_block)"
+    (orderId, T.toLower account, side, commitBlock, commitEventBlock, commitTime, T.toLower commitTxHash)
   pure ()
 
 markPerpsKeeperOrderExecuted
@@ -779,7 +787,7 @@ getPerpsKeeperOrderById conn orderId mAccount = do
   where
     baseSelect :: Query
     baseSelect =
-      "SELECT order_id, account, side, commit_block, commit_time, commit_tx_hash, status, \
+      "SELECT order_id, account, side, commit_block, commit_event_block, commit_time, commit_tx_hash, status, \
       \execution_tx_hash, execution_block, execution_price, failure_tx_hash, failure_block, failure_reason \
       \FROM perps_keeper_orders \
       \WHERE order_id = ?"

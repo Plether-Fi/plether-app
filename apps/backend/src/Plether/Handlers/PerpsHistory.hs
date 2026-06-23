@@ -131,16 +131,20 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
     go account remainingSeconds = do
       mOrder <- withDb pool $ \conn -> do
         mKeeperOrder <- getPerpsKeeperOrderById conn orderId account
-        case mKeeperOrder >>= keeperTerminalOrderSnapshot of
-          Just terminalOrder ->
-            pure $ Just terminalOrder
-          Nothing -> do
-            mHistoryOrder <- getPerpsOrderById conn (cfgPerpsChainId cfg) orderId account
-            pure $ case mHistoryOrder of
-              Just historyOrder ->
-                Just $ historyOrderSnapshot historyOrder
+        mHistoryOrder <- getPerpsOrderById conn (cfgPerpsChainId cfg) orderId account
+        pure $ case mHistoryOrder of
+          Just historyOrder | isTerminalHistoryOrder historyOrder ->
+            Just $ historyOrderSnapshot historyOrder
+          _ ->
+            case mKeeperOrder >>= keeperTerminalOrderSnapshot mHistoryOrder of
+              Just terminalOrder ->
+                Just terminalOrder
               Nothing ->
-                keeperOrderSnapshot <$> mKeeperOrder
+                case mHistoryOrder of
+                  Just historyOrder ->
+                    Just $ historyOrderSnapshot historyOrder
+                  Nothing ->
+                    keeperOrderSnapshot Nothing <$> mKeeperOrder
       case mOrder of
         Just row | isTerminalOrder row ->
           pure (False, Just row)
@@ -152,6 +156,9 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
 
     isTerminalOrder :: WaitOrderSnapshot -> Bool
     isTerminalOrder row = wosTerminalStatus row /= "Committed"
+
+    isTerminalHistoryOrder :: PerpsOrderRow -> Bool
+    isTerminalHistoryOrder row = porTerminalStatus row /= "Committed"
 
 data WaitOrderSnapshot = WaitOrderSnapshot
   { wosBlock :: Integer
@@ -167,17 +174,17 @@ historyOrderSnapshot row =
     , wosJson = orderRowToJson row
     }
 
-keeperTerminalOrderSnapshot :: PerpsKeeperTerminalOrderRow -> Maybe WaitOrderSnapshot
-keeperTerminalOrderSnapshot row =
+keeperTerminalOrderSnapshot :: Maybe PerpsOrderRow -> PerpsKeeperTerminalOrderRow -> Maybe WaitOrderSnapshot
+keeperTerminalOrderSnapshot mHistoryOrder row =
   case T.toLower $ pktoStatus row of
-    "executed" -> Just $ keeperOrderSnapshot row
-    "failed" -> Just $ keeperOrderSnapshot row
+    "executed" -> Just $ keeperOrderSnapshot mHistoryOrder row
+    "failed" -> Just $ keeperOrderSnapshot mHistoryOrder row
     _ -> Nothing
 
-keeperOrderSnapshot :: PerpsKeeperTerminalOrderRow -> WaitOrderSnapshot
-keeperOrderSnapshot row =
+keeperOrderSnapshot :: Maybe PerpsOrderRow -> PerpsKeeperTerminalOrderRow -> WaitOrderSnapshot
+keeperOrderSnapshot mHistoryOrder row =
   WaitOrderSnapshot
-    { wosBlock = maybe (pktoCommitBlock row) id terminalBlock
+    { wosBlock = maybe commitBlockNumber id terminalBlock
     , wosTerminalStatus = status
     , wosJson =
         object $
@@ -186,10 +193,11 @@ keeperOrderSnapshot row =
             , Just $ "account" .= pktoAccount row
             , Just $ "side" .= pktoSide row
             , Just $ "commitTxHash" .= pktoCommitTxHash row
-            , Just $ "commitBlockNumber" .= show (pktoCommitBlock row)
-            , Just $ "commitTimestamp" .= pktoCommitTime row
+            , Just $ "commitBlockNumber" .= show commitBlockNumber
+            , Just $ "commitTimestamp" .= commitTimestamp
             , ("terminalTxHash" .=) <$> terminalTxHash
             , ("terminalBlockNumber" .=) . show <$> terminalBlock
+            , ("terminalTimestamp" .=) <$> historyField porTerminalTimestamp
             , Just $ "terminalStatus" .= status
             , ("failureReason" .=) <$> failureReason
             , ("executionPrice" .=) . show <$> pktoExecutionPrice row
@@ -198,6 +206,9 @@ keeperOrderSnapshot row =
   where
     keeperStatus = T.toLower $ pktoStatus row
     failureReason = orderFailReasonName <$> pktoFailureReason row
+    historyField selector = mHistoryOrder >>= selector
+    commitBlockNumber = maybe (maybe (pktoCommitBlock row) id (pktoCommitEventBlock row)) id (historyField porCommitBlockNumber)
+    commitTimestamp = maybe (pktoCommitTime row) id (historyField porCommitTimestamp)
     status
       | keeperStatus == "executed" = "Executed"
       | keeperStatus == "failed" = terminalStatus $ maybe "Unknown" id failureReason

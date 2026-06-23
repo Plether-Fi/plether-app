@@ -153,6 +153,7 @@ applyOrderEvent cfg conn client = \case
           poeAccount
           poeSide
           commitBlock
+          poeBlockNumber
           commitTime
           poeTxHash
   Perps.OrderExecuted {..} ->
