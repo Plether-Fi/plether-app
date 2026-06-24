@@ -1,4 +1,6 @@
-import { type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { type ButtonHTMLAttributes, type MouseEvent, type ReactNode } from 'react'
+import { trackPerpsButtonClicked } from '../../analytics/perps'
+import type { AnalyticsProperties } from '../../analytics/client'
 
 type ButtonVariant = 'primary' | 'secondary' | 'danger' | 'ghost'
 type ButtonSize = 'sm' | 'md' | 'lg'
@@ -7,6 +9,9 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant
   size?: ButtonSize
   isLoading?: boolean
+  analyticsId?: string
+  analyticsSurface?: string
+  analyticsProperties?: AnalyticsProperties
   children: ReactNode
 }
 
@@ -34,11 +39,26 @@ export function Button({
   disabled,
   children,
   className = '',
+  onClick,
+  analyticsId,
+  analyticsSurface = 'perps',
+  analyticsProperties,
   ...props
 }: ButtonProps) {
+  function handleClick(event: MouseEvent<HTMLButtonElement>) {
+    if (analyticsId) {
+      trackPerpsButtonClicked(analyticsId, {
+        surface: analyticsSurface,
+        ...analyticsProperties,
+      })
+    }
+    onClick?.(event)
+  }
+
   return (
     <button
       disabled={disabled === true || isLoading}
+      onClick={handleClick}
       className={`
         inline-flex items-center justify-center gap-2 font-medium cursor-pointer
         transition-all duration-200

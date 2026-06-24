@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
@@ -8,6 +8,7 @@ import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
+import { trackPerpsPageViewed } from '../analytics/perps'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -46,6 +47,13 @@ export function Perps() {
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  const trackedPageViewRef = useRef(false)
+
+  useEffect(() => {
+    if (trackedPageViewRef.current) return
+    trackedPageViewRef.current = true
+    trackPerpsPageViewed()
+  }, [])
 
   useEffect(() => {
     const interval = window.setInterval(() => {
