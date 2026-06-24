@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, us
 import { useAppKit } from '@reown/appkit/react'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
+import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
@@ -1916,7 +1917,9 @@ export function PerpsTradeTicket({
   async function handleMarginActionSubmit() {
     if (!marginAction) return
     if (enableLiveTrading && !isConnected) {
+      syncAppKitModalStyleOverrides()
       void open()
+      syncAppKitModalStyleOverrides()
       return
     }
     if (enableLiveTrading && !isCorrectChain) {
@@ -2260,7 +2263,9 @@ export function PerpsTradeTicket({
           title={isReviewButtonDisabled ? liveValidationError : undefined}
           onClick={() => {
             if (enableLiveTrading && !isConnected) {
+              syncAppKitModalStyleOverrides()
               void open()
+              syncAppKitModalStyleOverrides()
               return
             }
             if (enableLiveTrading && !isCorrectChain) {

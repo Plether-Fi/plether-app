@@ -1,6 +1,6 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
-import { anvil } from '../../config/wagmi'
+import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
@@ -46,7 +46,9 @@ export function ConnectButton() {
       <button
         onClick={() => {
           clearSwitchError()
+          syncAppKitModalStyleOverrides()
           void open()
+          syncAppKitModalStyleOverrides()
         }}
         className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
@@ -100,7 +102,11 @@ export function ConnectButton() {
 
         {/* Account button */}
         <button
-          onClick={() => { void open({ view: 'Account' }) }}
+          onClick={() => {
+            syncAppKitModalStyleOverrides()
+            void open({ view: 'Account' })
+            syncAppKitModalStyleOverrides()
+          }}
           title="Open wallet account"
           className={`group ${WALLET_BUTTON_CLASS}`}
         >

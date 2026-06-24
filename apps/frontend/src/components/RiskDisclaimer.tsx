@@ -1,105 +1,94 @@
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { useState } from 'react'
 import { useSettingsStore } from '../stores/settingsStore'
+import { Button, Modal } from './ui'
 
 export function RiskDisclaimer() {
   const riskAccepted = useSettingsStore((s) => s.riskAccepted)
   const acceptRisk = useSettingsStore((s) => s.acceptRisk)
   const [checked, setChecked] = useState(false)
 
-  useEffect(() => {
-    if (!riskAccepted) {
-      document.body.style.overflow = 'hidden'
-    }
-    return () => {
-      document.body.style.overflow = ''
-    }
-  }, [riskAccepted])
+  return (
+    <Modal
+      isOpen={!riskAccepted}
+      onClose={acceptRisk}
+      title="Risk Disclaimer"
+      size="lg"
+      showCloseButton={false}
+      closeOnBackdrop={false}
+      closeOnEscape={false}
+      bodyClassName="p-0"
+    >
+      <div className="space-y-4 p-6 text-sm text-cyber-text-secondary">
+        <p>
+          Plether is a decentralized finance protocol. By using this application,
+          you acknowledge and accept the following risks:
+        </p>
 
-  if (riskAccepted) return null
-
-  return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-cyber-bg" />
-
-      <div className="relative w-full max-w-lg mx-4 bg-cyber-surface-dark border border-cyber-border-glow/50">
-        <div className="px-6 py-4 border-b border-cyber-border-glow/30">
-          <h2 className="text-lg font-semibold text-cyber-text-primary">
-            Risk Disclaimer
-          </h2>
-        </div>
-
-        <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto text-sm text-cyber-text-secondary">
-          <p>
-            Plether is a decentralized finance protocol. By using this application,
-            you acknowledge and accept the following risks:
-          </p>
-
-          <div className="space-y-3">
-            <div>
-              <h3 className="font-medium text-cyber-text-primary">Smart Contract Risk</h3>
-              <p>
-                Smart contracts may contain bugs or vulnerabilities. Funds deposited into
-                smart contracts could be lost permanently.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-cyber-text-primary">Financial Loss Risk</h3>
-              <p>
-                You may lose some or all of the funds you interact with through this protocol.
-                Past performance does not guarantee future results.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-cyber-text-primary">No Financial Advice</h3>
-              <p>
-                Nothing on this site constitutes financial, investment, legal, or tax advice.
-                You are solely responsible for your own financial decisions.
-              </p>
-            </div>
-
-            <div>
-              <h3 className="font-medium text-cyber-text-primary">Jurisdictional Compliance</h3>
-              <p>
-                Decentralized finance protocols may be restricted or prohibited in certain
-                jurisdictions. You are solely responsible for determining whether your use of
-                this protocol complies with applicable laws and regulations in your jurisdiction.
-              </p>
-            </div>
+        <div className="space-y-3">
+          <div>
+            <h3 className="font-medium text-cyber-text-primary">Smart Contract Risk</h3>
+            <p>
+              Smart contracts may contain bugs or vulnerabilities. Funds deposited into
+              smart contracts could be lost permanently.
+            </p>
           </div>
 
-          <p className="text-xs text-cyber-text-secondary/70">
-            For a complete overview of risks, please read our{' '}
-            <a href="/risk" className="text-cyber-electric-fuchsia hover:underline">
-              Risk Disclosure
-            </a>.
-          </p>
+          <div>
+            <h3 className="font-medium text-cyber-text-primary">Financial Loss Risk</h3>
+            <p>
+              You may lose some or all of the funds you interact with through this protocol.
+              Past performance does not guarantee future results.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="font-medium text-cyber-text-primary">No Financial Advice</h3>
+            <p>
+              Nothing on this site constitutes financial, investment, legal, or tax advice.
+              You are solely responsible for your own financial decisions.
+            </p>
+          </div>
+
+          <div>
+            <h3 className="font-medium text-cyber-text-primary">Jurisdictional Compliance</h3>
+            <p>
+              Decentralized finance protocols may be restricted or prohibited in certain
+              jurisdictions. You are solely responsible for determining whether your use of
+              this protocol complies with applicable laws and regulations in your jurisdiction.
+            </p>
+          </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-cyber-border-glow/30 space-y-3">
-          <label className="flex items-center gap-2 cursor-pointer text-sm text-cyber-text-secondary">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={(e) => {
-                setChecked(e.target.checked)
-              }}
-              className="accent-cyber-electric-fuchsia w-4 h-4"
-            />
-            I understand and accept the risks described above
-          </label>
-          <button
-            onClick={acceptRisk}
-            disabled={!checked}
-            className="w-full bg-cyber-electric-fuchsia py-3 font-semibold text-white transition-colors enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            Proceed
-          </button>
-        </div>
+        <p className="text-xs text-cyber-text-secondary/70">
+          For a complete overview of risks, please read our{' '}
+          <a href="/risk" className="text-cyber-electric-fuchsia hover:underline">
+            Risk Disclosure
+          </a>.
+        </p>
       </div>
-    </div>,
-    document.body
+
+      <div className="space-y-3 border-t border-cyber-border-glow/30 px-6 py-4">
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-cyber-text-secondary">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(e) => {
+              setChecked(e.target.checked)
+            }}
+            className="h-4 w-4 accent-cyber-electric-fuchsia"
+          />
+          I understand and accept the risks described above
+        </label>
+        <Button
+          type="button"
+          variant="danger"
+          onClick={acceptRisk}
+          disabled={!checked}
+          className="w-full"
+        >
+          Proceed
+        </Button>
+      </div>
+    </Modal>
   )
 }

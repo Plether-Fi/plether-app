@@ -64,6 +64,19 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
 
+-- Sepolia testnet mock USDC faucet claims
+CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
+    address VARCHAR(42) PRIMARY KEY,
+    amount BIGINT NOT NULL,
+    token_address VARCHAR(42) NOT NULL,
+    tx_hash VARCHAR(66),
+    status VARCHAR(16) NOT NULL,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
+
 -- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution
 CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
     id SERIAL PRIMARY KEY,

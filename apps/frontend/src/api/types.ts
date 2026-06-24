@@ -186,6 +186,14 @@ export interface PerpsMarketStats {
   volume24hUsdc: string;
 }
 
+export interface TestnetFaucetClaim {
+  address: string;
+  amount: string;
+  token: string;
+  txHash: string;
+  status: 'minted' | 'already_claimed';
+}
+
 // =============================================================================
 // User Types
 // =============================================================================

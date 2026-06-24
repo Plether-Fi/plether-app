@@ -3,7 +3,7 @@ module Plether.Api
   ) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:))
 import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -53,6 +53,7 @@ import Plether.Handlers.History
   , getLendingHistory
   )
 import Plether.Database (DbPool)
+import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
 import Plether.Types.History (HistoryParams (..))
 import Plether.Types.Perps (BasketHistoryParams (..), defaultBasketHistoryParams)
 import Plether.Types (ApiError)
@@ -62,13 +63,21 @@ import Web.Scotty
   ( ActionM
   , ScottyM
   , get
+  , jsonData
   , json
   , middleware
   , pathParam
+  , post
   , queryParamMaybe
   , setHeader
   , status
   )
+
+newtype TestnetFaucetRequest = TestnetFaucetRequest Text
+
+instance FromJSON TestnetFaucetRequest where
+  parseJSON = withObject "TestnetFaucetRequest" $ \v ->
+    TestnetFaucetRequest <$> v .: "address"
 
 app :: AppCache -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
 app cache client cfg mPool manager = do
@@ -77,6 +86,18 @@ app cache client cfg mPool manager = do
   get "/api/health" $ do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
+
+  post "/api/testnet/faucet" $ do
+    TestnetFaucetRequest addr <- jsonData
+    if isValidAddress addr
+      then case mPool of
+        Just pool -> do
+          result <- liftIO $ claimTestnetFaucet pool client cfg addr
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
+      else handleError $ E.invalidAddress addr
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool
@@ -441,7 +462,7 @@ corsMiddleware cfg = cors $ const $ Just policy
     policy =
       simpleCorsResourcePolicy
         { corsOrigins = Just (map encodeUtf8 origins, True)
-        , corsMethods = ["GET", "OPTIONS"]
+        , corsMethods = ["GET", "POST", "OPTIONS"]
         , corsRequestHeaders = ["Content-Type", "Authorization"]
         }
 

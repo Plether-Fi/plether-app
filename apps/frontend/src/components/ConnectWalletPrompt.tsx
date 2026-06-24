@@ -1,4 +1,5 @@
 import { useAppKit } from '@reown/appkit/react'
+import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 
 export interface ConnectWalletPromptProps {
   description?: string
@@ -13,7 +14,11 @@ export function ConnectWalletPrompt({ description }: ConnectWalletPromptProps) {
         <span className="material-symbols-outlined text-3xl text-cyber-text-secondary">lock</span>
       </div>
       <button
-        onClick={() => void open()}
+        onClick={() => {
+          syncAppKitModalStyleOverrides()
+          void open()
+          syncAppKitModalStyleOverrides()
+        }}
         className="mb-2 border border-[#FF572D] bg-[#FF572D] px-5 py-2 text-xl font-semibold text-[#FFF5F9] transition-colors hover:border-[#FFF5F9] hover:bg-[#FFF5F9] hover:text-[#250917] hover:underline hover:underline-offset-4"
       >
         Connect Your Wallet

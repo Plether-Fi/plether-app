@@ -31,6 +31,7 @@ testConfig =
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1
     , cfgKeeperMaxBatchSize = 20

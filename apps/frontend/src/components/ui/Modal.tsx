@@ -7,8 +7,13 @@ interface ModalProps {
   title?: string
   headerContent?: ReactNode
   showCloseButton?: boolean
+  closeOnBackdrop?: boolean
+  closeOnEscape?: boolean
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  placement?: 'center' | 'right'
+  contentClassName?: string
+  bodyClassName?: string
 }
 
 const sizeStyles = {
@@ -18,16 +23,27 @@ const sizeStyles = {
   xl: 'max-w-3xl',
 }
 
+const placementStyles = {
+  center: 'items-center justify-center p-4',
+  right: 'items-start justify-end p-4',
+}
+
 export function Modal({
   isOpen,
   onClose,
   title,
   headerContent,
   showCloseButton = true,
+  closeOnBackdrop = true,
+  closeOnEscape = true,
   children,
   size = 'md',
+  placement = 'center',
+  contentClassName = '',
+  bodyClassName = 'p-6',
 }: ModalProps) {
   const hasHeader = title !== undefined || headerContent !== undefined
+  const placementClass = placementStyles[placement]
 
   useEffect(() => {
     if (isOpen) {
@@ -42,22 +58,22 @@ export function Modal({
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key === 'Escape' && closeOnEscape) onClose()
     }
     if (isOpen) {
       document.addEventListener('keydown', handleEscape)
     }
     return () => { document.removeEventListener('keydown', handleEscape); }
-  }, [isOpen, onClose])
+  }, [closeOnEscape, isOpen, onClose])
 
   if (!isOpen) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={`fixed inset-0 z-50 flex ${placementClass}`}>
       {/* Backdrop */}
       <div
-        className="absolute inset-0 cursor-pointer bg-cyber-bg"
-        onClick={onClose}
+        className={`absolute inset-0 bg-cyber-bg ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
+        onClick={closeOnBackdrop ? onClose : undefined}
       />
 
       {/* Modal Content */}
@@ -65,7 +81,10 @@ export function Modal({
         className={`
           relative flex max-h-[calc(100dvh-2rem)] w-full ${sizeStyles[size]} flex-col
           bg-cyber-surface-dark  border border-cyber-border-glow/50
+          ${contentClassName}
         `}
+        role="dialog"
+        aria-modal="true"
       >
         {hasHeader ? (
           <div className="relative shrink-0 border-b border-cyber-border-glow/30 px-6 py-4">
@@ -94,7 +113,7 @@ export function Modal({
         ) : null}
 
         {/* Body */}
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-6">{children}</div>
+        <div className={`min-h-0 overflow-y-auto overscroll-contain ${bodyClassName}`}>{children}</div>
       </div>
     </div>,
     document.body

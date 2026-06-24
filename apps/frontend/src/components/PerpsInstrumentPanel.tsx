@@ -111,8 +111,8 @@ export function PerpsInstrumentPanel({
         <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-7">
           {stats.map((stat) => (
             <div key={stat.label} className="min-w-0">
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-cyber-text-secondary">
-                <span>{stat.label}</span>
+              <dt className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-cyber-text-secondary">
+                <span className="min-w-0 truncate" title={stat.label}>{stat.label}</span>
                 {stat.tooltip ? (
                   <Tooltip
                     content={stat.tooltip}

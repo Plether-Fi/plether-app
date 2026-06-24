@@ -6,6 +6,7 @@
  */
 
 import { Result } from 'better-result';
+import { isSepoliaDeployment } from '../utils/deployment';
 import type {
   ApiResponse,
   ApiError,
@@ -35,6 +36,7 @@ import type {
   BasketHistoryRange,
   PerpsRevealPayload,
   PerpsMarketStats,
+  TestnetFaucetClaim,
 } from './types';
 
 // =============================================================================
@@ -88,15 +90,18 @@ function parseDefaultChainId(value: string | undefined): number {
 
 export function defaultApiBaseUrl(): string {
   if (DEV_API_URL) return DEV_API_URL;
+  if (isSepoliaDeployment()) return '/api/sepolia_v1';
   return chainIdToApiPath(DEFAULT_API_CHAIN_ID);
 }
 
 export function defaultApiChainId(): number {
+  if (isSepoliaDeployment()) return 11155111;
   return DEFAULT_API_CHAIN_ID;
 }
 
 export function getConfiguredApiBaseUrl(chainId: number): string {
   if (DEV_API_URL) return DEV_API_URL;
+  if (isSepoliaDeployment()) return '/api/sepolia_v1';
   return chainIdToApiPath(chainId);
 }
 
@@ -300,6 +305,15 @@ export class PlethApiClient {
 
   async getProtocolConfig(): Promise<Result<ApiResponse<ProtocolConfig>, PlethApiError>> {
     return fetchApi<ProtocolConfig>(this.config, '/protocol/config');
+  }
+
+  async claimTestnetFaucet(
+    address: string
+  ): Promise<Result<ApiResponse<TestnetFaucetClaim>, PlethApiError>> {
+    return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', {
+      method: 'POST',
+      body: JSON.stringify({ address }),
+    });
   }
 
   // ===========================================================================

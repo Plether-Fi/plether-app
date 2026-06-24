@@ -8,7 +8,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
-import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema)
+import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
@@ -44,6 +44,7 @@ main = do
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
+          withDb pool ensureTestnetFaucetSchema
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
                 , icDeployments = cfgDeployments cfg
@@ -74,6 +75,7 @@ main = do
 
       putStrLn ""
       putStrLn "Endpoints:"
+      putStrLn "  POST /api/testnet/faucet"
       putStrLn "  GET /api/protocol/status"
       putStrLn "  GET /api/protocol/config"
       putStrLn "  GET /api/user/:address/dashboard"

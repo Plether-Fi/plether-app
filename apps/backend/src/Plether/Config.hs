@@ -36,6 +36,7 @@ data Config = Config
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
   , cfgKeeperMaxBatchSize :: Int
@@ -135,6 +136,7 @@ loadConfig = do
       perpsOrderRouter <- fromMaybe "0x485703D16fE36369c134dEe2A61c057733E7830f" <$> lookupEnv "PERPS_ORDER_ROUTER"
       perpsPletherOracle <- fromMaybe "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb" <$> lookupEnv "PERPS_PLETHER_ORACLE"
       perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
@@ -187,6 +189,7 @@ loadConfig = do
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = max 1 keeperPollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize
