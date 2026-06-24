@@ -87,7 +87,7 @@ function installAppKitThemeOverrides() {
   const existingStyle = document.getElementById(APPKIT_THEME_OVERRIDE_ID)
   const styleText = `
     :root {
-      --apkt-tokens-theme-overlay: #250917;
+      --apkt-tokens-theme-overlay: rgba(37, 9, 23, 0.85);
       --apkt-tokens-theme-backgroundPrimary: #3B212D;
       --apkt-tokens-theme-backgroundInvert: #FFF5F9;
       --apkt-tokens-theme-foregroundPrimary: #250917;
@@ -127,8 +127,9 @@ function installAppKitThemeOverrides() {
     }
 
     w3m-modal {
-      background-color: #250917 !important;
-      backdrop-filter: none !important;
+      background-color: rgba(37, 9, 23, 0.85) !important;
+      backdrop-filter: blur(4px) !important;
+      -webkit-backdrop-filter: blur(4px) !important;
       transition: none !important;
     }
   `

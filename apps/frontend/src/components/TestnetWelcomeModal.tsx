@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
@@ -16,6 +16,21 @@ export function TestnetWelcomeModal() {
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [claim, setClaim] = useState<TestnetFaucetClaim | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const previousConnectedAddressRef = useRef<string | undefined>(connectedAddress)
+
+  useEffect(() => {
+    if (!connectedAddress) return
+
+    setWalletAddress((currentAddress) => {
+      const previousConnectedAddress = previousConnectedAddressRef.current
+      const shouldUseConnectedAddress =
+        currentAddress.trim().length === 0 ||
+        (previousConnectedAddress !== undefined && currentAddress === previousConnectedAddress)
+
+      return shouldUseConnectedAddress ? connectedAddress : currentAddress
+    })
+    previousConnectedAddressRef.current = connectedAddress
+  }, [connectedAddress])
 
   async function requestFunds() {
     const trimmedAddress = walletAddress.trim()
@@ -43,18 +58,22 @@ export function TestnetWelcomeModal() {
     <Modal
       isOpen={!dismissed}
       onClose={dismiss}
-      title="Welcome to Sepolia (testnet)"
+      title="Welcome to Plether on Sepolia"
       size="lg"
       bodyClassName="p-0"
     >
       <div className="space-y-5 p-6 text-sm text-cyber-text-secondary">
         <p>
-          This deployment uses testnet contracts and mock assets. Balances and positions here
-          have no real-world value.
+          This is a testnet version of Plether Perps, built for trying deposits, trades, and order
+          execution without real funds.
         </p>
         <p>
-          Enter a wallet address to receive 100,000 mock USDC for testing Plether flows on
-          Sepolia.
+          Enter your wallet address and we will send you 100,000 mock USDC to start testing.
+          Testnet balances and positions have no real-world value and could be reset at any time.
+        </p>
+        <p>
+          Use a wallet that supports Arbitrum Sepolia. You will need that network for trading
+          after receiving mock USDC on Sepolia.
         </p>
 
         <Input
@@ -82,8 +101,8 @@ export function TestnetWelcomeModal() {
           <div className="space-y-2 border border-cyber-neon-green/40 bg-cyber-neon-green/10 px-4 py-3 text-sm text-cyber-text-primary">
             <p className="font-medium">
               {claim.status === 'already_claimed'
-                ? 'This wallet has already claimed mock USDC.'
-                : 'Mock USDC request submitted.'}
+                ? 'Mock USDC already claimed for this wallet.'
+                : 'Mock USDC sent. You are ready to start testing.'}
             </p>
             <a
               href={`https://sepolia.etherscan.io/tx/${claim.txHash}`}
@@ -105,7 +124,7 @@ export function TestnetWelcomeModal() {
           disabled={!!claim}
           className="w-full"
         >
-          Send mock USDC
+          Get 100,000 mock USDC
         </Button>
         <Button
           type="button"
@@ -113,7 +132,7 @@ export function TestnetWelcomeModal() {
           onClick={dismiss}
           className="w-full"
         >
-          {claim ? 'Continue' : 'Cancel'}
+          {claim ? 'Continue' : 'Maybe later'}
         </Button>
       </div>
     </Modal>

@@ -3,6 +3,7 @@ import {
   alignBasketPointsToOracleMark,
   buildCandles,
   computeBasketDisplayPriceChange,
+  computeBasketComponentPriceChanges,
   mergeLatestBasketPoint,
   oracleNumberToDisplayDxyPrice,
 } from '../../utils/dxyBasketChart'
@@ -84,6 +85,41 @@ describe('DXY basket chart display transform', () => {
     )
 
     expect(change).toBeCloseTo((1.03 - 1.02) / 1.02, 8)
+  })
+
+  it('computes component price changes from the 24h comparison point', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '101000000' }]
+    const changes = computeBasketComponentPriceChanges(
+      [
+        {
+          timestamp: latest.timestamp - 25 * 60 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '99000000' }],
+        },
+        {
+          timestamp: latest.timestamp - 24 * 60 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100000000' }],
+        },
+        {
+          timestamp: latest.timestamp - 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100500000' }],
+        },
+      ],
+      latest
+    )
+
+    expect(changes[component.feedId]).toBeCloseTo(0.01, 8)
+  })
+
+  it('does not compute component price changes without historical component data', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '101000000' }]
+
+    expect(computeBasketComponentPriceChanges([], latest)).toEqual({})
+    expect(computeBasketComponentPriceChanges([historyPoint(latest.timestamp, '97000000')], latest)).toEqual({})
   })
 
   it('replaces the current history bucket with the live latest point', () => {

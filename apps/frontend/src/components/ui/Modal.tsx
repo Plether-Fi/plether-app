@@ -72,7 +72,7 @@ export function Modal({
     <div className={`fixed inset-0 z-50 flex ${placementClass}`}>
       {/* Backdrop */}
       <div
-        className={`absolute inset-0 bg-cyber-bg ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
+        className={`absolute inset-0 bg-cyber-bg/85 backdrop-blur-sm ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
         onClick={closeOnBackdrop ? onClose : undefined}
       />
 

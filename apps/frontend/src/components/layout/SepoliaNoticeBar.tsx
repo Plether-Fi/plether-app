@@ -5,13 +5,13 @@ export function SepoliaNoticeBar() {
 
   return (
     <div className="flex min-h-8 items-center justify-center gap-3 bg-white px-4 py-1.5 text-center text-xs font-medium text-[#250917] sm:text-sm">
-      <span>This is Sepolia testnet.</span>
+      <span>You are on Sepolia testnet. Try Plether Perps with mock funds and an Arbitrum Sepolia-ready wallet.</span>
       <button
         type="button"
         onClick={openSepoliaWelcome}
         className="border border-[#250917] px-2 py-0.5 text-xs font-semibold text-[#250917] transition-colors hover:bg-[#250917] hover:text-white hover:underline hover:underline-offset-4"
       >
-        Open faucet
+        Get mock USDC
       </button>
     </div>
   )

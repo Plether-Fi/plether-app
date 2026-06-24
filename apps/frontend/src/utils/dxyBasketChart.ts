@@ -1,4 +1,4 @@
-import type { BasketHistoryPoint, BasketLatest } from '../api'
+import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../api'
 
 export interface ChartPoint {
   timestamp: number
@@ -27,6 +27,38 @@ function basketDisplayPrice(point: BasketHistoryPoint): number {
   return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
 }
 
+function componentKey(component: BasketComponentPrice): string {
+  return component.feedId || component.symbol
+}
+
+function componentOraclePrice(component: BasketComponentPrice): number {
+  return Number(component.price) / 1e8
+}
+
+function findHistoricalComponent(
+  points: BasketHistoryPoint[],
+  key: string,
+  targetTimestamp: number,
+  latestTimestamp: number
+): BasketComponentPrice | undefined {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index]
+    if (point.timestamp >= latestTimestamp || point.timestamp > targetTimestamp) continue
+
+    const component = point.components.find((item) => componentKey(item) === key)
+    if (component) return component
+  }
+
+  for (const point of points) {
+    if (point.timestamp >= latestTimestamp) continue
+
+    const component = point.components.find((item) => componentKey(item) === key)
+    if (component) return component
+  }
+
+  return undefined
+}
+
 export function computeBasketDisplayPriceChange(
   historyPoints: BasketHistoryPoint[] | undefined,
   latest: BasketLatest | undefined
@@ -43,6 +75,37 @@ export function computeBasketDisplayPriceChange(
   if (firstPrice <= 0) return undefined
 
   return (latestPrice - firstPrice) / firstPrice
+}
+
+export function computeBasketComponentPriceChanges(
+  historyPoints: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined,
+  windowSeconds = 24 * 60 * 60
+): Partial<Record<string, number>> {
+  if (!latest || !historyPoints?.length) return {}
+
+  const points = [...mergeLatestBasketPoint(historyPoints, latest)].sort((left, right) => left.timestamp - right.timestamp)
+  const latestPoint = points.at(-1)
+  if (latestPoint?.timestamp !== latest.timestamp) return {}
+
+  const targetTimestamp = latest.timestamp - windowSeconds
+  const changes: Partial<Record<string, number>> = {}
+
+  for (const latestComponent of latest.components) {
+    const key = componentKey(latestComponent)
+    const latestPrice = componentOraclePrice(latestComponent)
+    if (!key || latestPrice <= 0) continue
+
+    const historicalComponent = findHistoricalComponent(points, key, targetTimestamp, latest.timestamp)
+    if (!historicalComponent) continue
+
+    const historicalPrice = componentOraclePrice(historicalComponent)
+    if (historicalPrice <= 0) continue
+
+    changes[key] = (latestPrice - historicalPrice) / historicalPrice
+  }
+
+  return changes
 }
 
 export function mergeLatestBasketPoint(
