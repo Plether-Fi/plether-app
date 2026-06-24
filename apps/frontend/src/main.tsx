@@ -6,6 +6,9 @@ import { config } from './config/wagmi'
 import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
+import { initAnalytics } from './analytics/client'
+
+initAnalytics()
 
 const queryClient = new QueryClient({
   defaultOptions: {

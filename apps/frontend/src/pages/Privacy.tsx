@@ -42,6 +42,10 @@ export function Privacy() {
             <span className="text-cyber-text-primary">RPC Providers (Alchemy)</span> — to read
             from and submit transactions to the Ethereum network.
           </li>
+          <li>
+            <span className="text-cyber-text-primary">PostHog EU Cloud</span> — for anonymous
+            product analytics and sampled, masked session replay.
+          </li>
         </ul>
         <p>
           These services may independently collect data according to their own privacy policies.
@@ -63,8 +67,13 @@ export function Privacy() {
         <h2 className="text-lg font-semibold text-cyber-text-primary">5. Cookies and Local Storage</h2>
         <p>
           The Interface uses browser localStorage to persist your preferences (slippage settings,
-          risk acknowledgment). We do not use tracking cookies. Third-party services integrated
-          into the Interface may set their own cookies.
+          risk acknowledgment). We do not use tracking cookies. PostHog analytics is configured
+          with browser persistence disabled. Third-party services integrated into the Interface may
+          set their own cookies.
+        </p>
+        <p>
+          Sampled session replay is masked and is not intended to capture wallet addresses,
+          transaction hashes, order IDs, input values, balances, signatures, or permit data.
         </p>
       </section>
 

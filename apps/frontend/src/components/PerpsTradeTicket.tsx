@@ -24,6 +24,17 @@ import {
   type PerpsOracleFreshness,
 } from '../utils/perps'
 import {
+  perpsChainState,
+  perpsConnectedState,
+  perpsErrorCategory,
+  perpsSizeBucket,
+  trackPerpsButtonClicked,
+  trackPerpsMarginLifecycle,
+  trackPerpsOrderLifecycle,
+  trackPerpsValidationBlocked,
+  type PerpsAnalyticsProperties,
+} from '../analytics/perps'
+import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
@@ -1154,6 +1165,20 @@ function isNumericInput(value: string): boolean {
   return /^[0-9., ]*$/.test(value)
 }
 
+function validationReasonCategory(message: string): string {
+  const normalized = message.toLowerCase()
+  if (normalized.includes('connect wallet')) return 'connect_wallet'
+  if (normalized.includes('switch to')) return 'wrong_chain'
+  if (normalized.includes('price') || normalized.includes('oracle')) return 'oracle_unavailable'
+  if (normalized.includes('order size') || normalized.includes('minimum') || normalized.includes('max')) return 'size_or_capacity'
+  if (normalized.includes('pending order') || normalized.includes('expired')) return 'pending_order_limit'
+  if (normalized.includes('deposit')) return 'margin_shortfall'
+  if (normalized.includes('no current position')) return 'no_position'
+  if (normalized.includes('one-step flips')) return 'one_step_flip'
+  if (normalized.includes('preview')) return 'preview_unavailable'
+  return 'unknown'
+}
+
 export function PerpsTradeTicket({
   initialLifecycleState = 'preview',
   initialReviewOpen = false,
@@ -1232,6 +1257,7 @@ export function PerpsTradeTicket({
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
+  const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
@@ -1877,8 +1903,47 @@ export function PerpsTradeTicket({
   const areMarginActionsDisabled = enableLiveTrading && !isConnected
   const isMarginActionSubmitDisabled = isMarginActionPending
     || (enableLiveTrading && isConnected && isCorrectChain && isMarginActionInvalid)
+  const commonAnalyticsProperties = useMemo<PerpsAnalyticsProperties>(() => ({
+    market_phase: marketPhase,
+    lifecycle_state: lifecycleState,
+    direction,
+    reduce_only: isReduceOnly,
+    connected_state: perpsConnectedState(isConnected),
+    chain_state: perpsChainState(isConnected, isCorrectChain),
+    size_bucket: perpsSizeBucket(dxyExposureNumber),
+  }), [
+    direction,
+    dxyExposureNumber,
+    isConnected,
+    isCorrectChain,
+    isReduceOnly,
+    lifecycleState,
+    marketPhase,
+  ])
+
+  useEffect(() => {
+    if (!liveValidationError || isZeroSize) return
+
+    trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
+  }, [
+    commonAnalyticsProperties,
+    isZeroSize,
+    liveValidationError,
+  ])
+
+  useEffect(() => {
+    if (lifecycleState === 'preview') {
+      terminalLifecycleTrackedRef.current = undefined
+      return
+    }
+    if (lifecycleState !== 'executed' || terminalLifecycleTrackedRef.current === 'executed') return
+
+    terminalLifecycleTrackedRef.current = 'executed'
+    trackPerpsOrderLifecycle('executed', commonAnalyticsProperties)
+  }, [commonAnalyticsProperties, lifecycleState])
 
   function openMarginAction(action: MarginAction) {
+    trackPerpsMarginLifecycle(`${action}_opened`, commonAnalyticsProperties)
     setMarginAction(action)
     setMarginActionAmount('')
     setMarginActionStatus('idle')
@@ -1895,9 +1960,13 @@ export function PerpsTradeTicket({
       void switchToArbitrumSepolia()
       return
     }
-    if (isMarginActionInvalid) return
+    if (isMarginActionInvalid) {
+      trackPerpsValidationBlocked('margin_amount_invalid', commonAnalyticsProperties)
+      return
+    }
 
     try {
+      trackPerpsMarginLifecycle(`${marginAction}_submitted`, commonAnalyticsProperties)
       setMarginActionStatus('pending')
       setMarginActionError(undefined)
       if (marginAction === 'deposit') {
@@ -1908,10 +1977,15 @@ export function PerpsTradeTicket({
       setMarginActionStatus('idle')
       setMarginAction(null)
       setMarginActionAmount('')
+      trackPerpsMarginLifecycle(`${marginAction}_succeeded`, commonAnalyticsProperties)
       onAccountRefresh?.()
     } catch (error) {
       setMarginActionStatus('failed')
       setMarginActionError(error instanceof Error ? error.message : `${marginActionLabel} failed. Check wallet and retry.`)
+      trackPerpsMarginLifecycle(`${marginAction}_failed`, {
+        ...commonAnalyticsProperties,
+        error_category: perpsErrorCategory(error),
+      })
     }
   }
 
@@ -1937,6 +2011,7 @@ export function PerpsTradeTicket({
     })
     if (!enableLiveTrading) {
       debugPerpsCommit('ticket:mock-flow')
+      trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setLifecycleState('commitPending')
       return
     }
@@ -1944,12 +2019,14 @@ export function PerpsTradeTicket({
       debugPerpsCommit('ticket:blocked-by-validation', {
         liveValidationError,
       })
+      trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
       setFlowError(liveValidationError)
       return
     }
 
     try {
       debugPerpsCommit('ticket:lifecycle:commitPreparing')
+      trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
       setLifecycleState('commitPreparing')
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
@@ -1963,6 +2040,7 @@ export function PerpsTradeTicket({
         isClose: isReducingCurrentPosition,
         onWalletRequestStart: () => {
           debugPerpsCommit('ticket:lifecycle:commitPending')
+          trackPerpsOrderLifecycle('commit_pending', commonAnalyticsProperties)
           setLifecycleState('commitPending')
         },
       })
@@ -1975,6 +2053,7 @@ export function PerpsTradeTicket({
       setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
       setKeeperRevealNowMs(Date.now())
       setLifecycleState('revealPending')
+      trackPerpsOrderLifecycle('commit_succeeded', commonAnalyticsProperties)
       onAccountRefresh?.()
     } catch (error) {
       debugPerpsCommit('ticket:commit-error', {
@@ -1982,6 +2061,10 @@ export function PerpsTradeTicket({
       })
       setFlowError(error instanceof Error ? error.message : 'Commit transaction failed')
       setLifecycleState('failed')
+      trackPerpsOrderLifecycle('commit_failed', {
+        ...commonAnalyticsProperties,
+        error_category: perpsErrorCategory(error),
+      })
     }
   }
 
@@ -2007,24 +2090,35 @@ export function PerpsTradeTicket({
 
   async function handleSelfExecute() {
     if (!enableLiveTrading) {
+      trackPerpsOrderLifecycle('reveal_started', commonAnalyticsProperties)
       setLifecycleState('selfExecutePending')
       return
     }
     if (orderId === undefined) {
       setFlowError('Missing order ID from commit transaction.')
       setLifecycleState('selfExecuteFailed')
+      trackPerpsOrderLifecycle('reveal_failed', {
+        ...commonAnalyticsProperties,
+        error_category: 'missing_order',
+      })
       return
     }
 
     try {
       setFlowError(undefined)
+      trackPerpsOrderLifecycle('reveal_started', commonAnalyticsProperties)
       setLifecycleState('selfExecutePending')
       const result = await executeOrder(orderId)
       setExecuteTxHash(result.hash)
+      trackPerpsOrderLifecycle('reveal_succeeded', commonAnalyticsProperties)
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Self-execute transaction failed'
       setFlowError(message)
       setLifecycleState(isRetryableSelfExecuteMessage(message) ? 'selfExecuteAvailable' : 'selfExecuteFailed')
+      trackPerpsOrderLifecycle('reveal_failed', {
+        ...commonAnalyticsProperties,
+        error_category: perpsErrorCategory(error),
+      })
       onAccountRefresh?.()
     }
   }
@@ -2068,6 +2162,7 @@ export function PerpsTradeTicket({
                     : 'border-transparent text-cyber-text-primary hover:bg-[#3B212D]'
                 }`}
                 onClick={() => {
+                  trackPerpsButtonClicked(`direction_${item}`, commonAnalyticsProperties)
                   setDirection(item)
                 }}
               >
@@ -2083,7 +2178,10 @@ export function PerpsTradeTicket({
             value={<TokenAmount amount={availableToTradeDisplayAmount} />}
             disabled={!canUseAvailableToTrade}
             onClick={() => {
-              if (canUseAvailableToTrade) setSize(availableToTradeDisplayAmount)
+              if (canUseAvailableToTrade) {
+                trackPerpsButtonClicked('fill_available_to_trade', commonAnalyticsProperties)
+                setSize(availableToTradeDisplayAmount)
+              }
             }}
           />
           <AccountContextRow
@@ -2091,7 +2189,10 @@ export function PerpsTradeTicket({
             value={<TokenAmount amount={currentPositionDisplayAmount} />}
             disabled={!canUseCurrentPosition}
             onClick={() => {
-              if (canUseCurrentPosition) setSize(currentPositionFillAmount)
+              if (canUseCurrentPosition) {
+                trackPerpsButtonClicked('fill_current_position', commonAnalyticsProperties)
+                setSize(currentPositionFillAmount)
+              }
             }}
           />
         </div>
@@ -2113,7 +2214,10 @@ export function PerpsTradeTicket({
               className="group cursor-pointer text-right text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-cyber-text-primary disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-cyber-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
               disabled={!canUseMaxNotional}
               onClick={() => {
-                if (canUseMaxNotional) setSize(maxDxyExposureInputAmount)
+                if (canUseMaxNotional) {
+                  trackPerpsButtonClicked('fill_max_exposure', commonAnalyticsProperties)
+                  setSize(maxDxyExposureInputAmount)
+                }
               }}
             >
               <span>Max: </span>
@@ -2129,6 +2233,10 @@ export function PerpsTradeTicket({
             type="checkbox"
             checked={isReduceOnly}
             onChange={(event) => {
+              trackPerpsButtonClicked('toggle_reduce_only', {
+                ...commonAnalyticsProperties,
+                reduce_only: event.target.checked,
+              })
               setIsReduceOnly(event.target.checked)
             }}
             className="h-4 w-4 accent-[#FFAB96]"
@@ -2141,6 +2249,7 @@ export function PerpsTradeTicket({
             type="checkbox"
             checked={isMarginCallSimulatorEnabled}
             onChange={(event) => {
+              trackPerpsButtonClicked('toggle_margin_call_simulator', commonAnalyticsProperties)
               if (event.target.checked) {
                 setIsMarginCallSimulatorConfirmationOpen(true)
               } else {
@@ -2170,6 +2279,12 @@ export function PerpsTradeTicket({
             onChange={(event) => {
               setLeverage(Math.min(Number(event.target.value), maxLeverage))
             }}
+            onPointerUp={() => {
+              trackPerpsButtonClicked('leverage_slider_changed', commonAnalyticsProperties)
+            }}
+            onKeyUp={() => {
+              trackPerpsButtonClicked('leverage_slider_changed', commonAnalyticsProperties)
+            }}
             className="perps-leverage-slider h-2 w-full cursor-pointer appearance-none accent-[#FFAB96]"
           />
           <div className="mt-2 flex items-center justify-between text-xs font-semibold text-cyber-text-secondary">
@@ -2183,6 +2298,7 @@ export function PerpsTradeTicket({
           <PreviewRows
             rows={sidePanelPreviewRows.slice(0, 11)}
             onSlippageClick={() => {
+              trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
               setIsSlippageConfigOpen((isOpen) => !isOpen)
             }}
             slippageConfig={
@@ -2199,6 +2315,7 @@ export function PerpsTradeTicket({
                             : 'border-cyber-border-glow/30 text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
                         }`}
                         onClick={() => {
+                          trackPerpsButtonClicked('select_slippage_preset', commonAnalyticsProperties)
                           setSlippage(option)
                         }}
                       >
@@ -2230,6 +2347,8 @@ export function PerpsTradeTicket({
           variant={isConnectWalletCta || isSwitchNetworkCta ? 'secondary' : direction === 'short' ? 'danger' : 'primary'}
           disabled={isReviewButtonDisabled}
           title={isReviewButtonDisabled ? liveValidationError : undefined}
+          analyticsId={isConnectWalletCta ? 'connect_wallet_cta' : isSwitchNetworkCta ? 'switch_network_cta' : 'review_trade'}
+          analyticsProperties={commonAnalyticsProperties}
           onClick={() => {
             if (enableLiveTrading && !isConnected) {
               void open()
@@ -2240,6 +2359,7 @@ export function PerpsTradeTicket({
               return
             }
             if (liveValidationError) {
+              trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
               setFlowError(liveValidationError)
               return
             }
@@ -2288,6 +2408,8 @@ export function PerpsTradeTicket({
             className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
             disabled={areMarginActionsDisabled}
             title={areMarginActionsDisabled ? 'Connect wallet to deposit margin' : undefined}
+            analyticsId="open_deposit_margin"
+            analyticsProperties={commonAnalyticsProperties}
             onClick={() => {
               if (areMarginActionsDisabled) return
               openMarginAction('deposit')
@@ -2301,6 +2423,8 @@ export function PerpsTradeTicket({
             className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
             disabled={areMarginActionsDisabled}
             title={areMarginActionsDisabled ? 'Connect wallet to withdraw margin' : undefined}
+            analyticsId="open_withdraw_margin"
+            analyticsProperties={commonAnalyticsProperties}
             onClick={() => {
               if (areMarginActionsDisabled) return
               openMarginAction('withdraw')
@@ -2317,6 +2441,8 @@ export function PerpsTradeTicket({
         headerContent={<OrderLifecycleSteps currentStep={currentLifecycleStep} />}
         showCloseButton={false}
         size="lg"
+        analyticsId="trade_review"
+        analyticsProperties={commonAnalyticsProperties}
       >
         <div className="space-y-5">
           {lifecycleState === 'preview' ? (
@@ -2349,6 +2475,8 @@ export function PerpsTradeTicket({
                         className={`mt-3 w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                         size="sm"
                         variant="secondary"
+                        analyticsId="review_switch_network"
+                        analyticsProperties={commonAnalyticsProperties}
                         onClick={() => {
                           void switchToArbitrumSepolia()
                         }}
@@ -2368,6 +2496,8 @@ export function PerpsTradeTicket({
                       size="sm"
                       variant="secondary"
                       disabled={cleanupStatus === 'pending'}
+                      analyticsId="cleanup_oldest_order"
+                      analyticsProperties={commonAnalyticsProperties}
                       onClick={() => {
                         void handleCleanupOldestOrder()
                       }}
@@ -2392,6 +2522,8 @@ export function PerpsTradeTicket({
                 <Button
                   className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
+                  analyticsId="cancel_review"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={closeReviewModal}
                 >
                   Cancel
@@ -2400,6 +2532,8 @@ export function PerpsTradeTicket({
                   className="flex-1"
                   variant={direction === 'short' ? 'danger' : 'primary'}
                   disabled={enableLiveTrading && Boolean(liveValidationError)}
+                  analyticsId="confirm_commit"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
                     void handleConfirmCommit()
                   }}
@@ -2467,6 +2601,8 @@ export function PerpsTradeTicket({
                   <Button
                     className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
+                    analyticsId="mock_commit_failed"
+                    analyticsProperties={commonAnalyticsProperties}
                     onClick={() => {
                       setLifecycleState('failed')
                     }}
@@ -2475,6 +2611,8 @@ export function PerpsTradeTicket({
                   </Button>
                   <Button
                     className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                    analyticsId="mock_commit_confirmed"
+                    analyticsProperties={commonAnalyticsProperties}
                     onClick={() => {
                       setLifecycleState('revealPending')
                     }}
@@ -2497,6 +2635,8 @@ export function PerpsTradeTicket({
               />
               <Button
                 className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                analyticsId="continue_to_finalize"
+                analyticsProperties={commonAnalyticsProperties}
                 onClick={() => {
                   setLifecycleState('revealPending')
                 }}
@@ -2544,6 +2684,8 @@ export function PerpsTradeTicket({
                     <Button
                       className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                       variant="secondary"
+                      analyticsId="show_manual_finalize_option"
+                      analyticsProperties={commonAnalyticsProperties}
                       onClick={() => {
                         setLifecycleState('selfExecuteAvailable')
                       }}
@@ -2552,6 +2694,8 @@ export function PerpsTradeTicket({
                     </Button>
                     <Button
                       className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                      analyticsId="mock_auto_finalized"
+                      analyticsProperties={commonAnalyticsProperties}
                       onClick={() => {
                         setLifecycleState('executed')
                       }}
@@ -2563,6 +2707,8 @@ export function PerpsTradeTicket({
               ) : (
                 <Button
                   className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  analyticsId="finalize_trade"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
                     void handleSelfExecute()
                   }}
@@ -2618,6 +2764,8 @@ export function PerpsTradeTicket({
               <Button
                 className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                 size="lg"
+                analyticsId={flowError && isRetryableSelfExecuteMessage(flowError) ? 'retry_finalize_trade' : 'finalize_trade'}
+                analyticsProperties={commonAnalyticsProperties}
                 onClick={() => {
                   void handleSelfExecute()
                 }}
@@ -2652,6 +2800,8 @@ export function PerpsTradeTicket({
                   <Button
                     className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
+                    analyticsId="mock_finalize_failed"
+                    analyticsProperties={commonAnalyticsProperties}
                     onClick={() => {
                       setLifecycleState('selfExecuteFailed')
                     }}
@@ -2660,6 +2810,8 @@ export function PerpsTradeTicket({
                   </Button>
                   <Button
                     className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                    analyticsId="mock_finalize_confirmed"
+                    analyticsProperties={commonAnalyticsProperties}
                     onClick={() => {
                       setLifecycleState('executed')
                     }}
@@ -2706,6 +2858,8 @@ export function PerpsTradeTicket({
                 <Button
                   className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
+                  analyticsId="back_to_preview"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
                     setLifecycleState('preview')
                   }}
@@ -2717,6 +2871,8 @@ export function PerpsTradeTicket({
                   <Button
                     className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
+                    analyticsId="back_to_finalize"
+                    analyticsProperties={commonAnalyticsProperties}
                     onClick={() => {
                       setLifecycleState('selfExecuteAvailable')
                     }}
@@ -2725,10 +2881,12 @@ export function PerpsTradeTicket({
                   </Button>
                   <Button
                     className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
-                  onClick={() => {
-                    void handleSelfExecute()
-                  }}
-                >
+                    analyticsId="retry_finalize_trade"
+                    analyticsProperties={commonAnalyticsProperties}
+                    onClick={() => {
+                      void handleSelfExecute()
+                    }}
+                  >
                     Retry Finalizing
                   </Button>
                 </div>
@@ -2764,6 +2922,8 @@ export function PerpsTradeTicket({
               <Button
                 className={`w-full ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
                 variant="secondary"
+                analyticsId="done_trade"
+                analyticsProperties={commonAnalyticsProperties}
                 onClick={closeReviewModal}
               >
                 Done
@@ -2781,6 +2941,8 @@ export function PerpsTradeTicket({
                 <Button
                   className={`flex-1 ${DARK_CANCEL_BUTTON_CLASS}`}
                   variant="secondary"
+                  analyticsId="back_to_preview"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
                     setLifecycleState('preview')
                   }}
@@ -2789,6 +2951,8 @@ export function PerpsTradeTicket({
                 </Button>
                 <Button
                   className={`flex-1 ${LIGHT_ORANGE_ACTION_BUTTON_CLASS}`}
+                  analyticsId="retry_commit"
+                  analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
                     void handleConfirmCommit()
                   }}
@@ -2808,6 +2972,8 @@ export function PerpsTradeTicket({
         }}
         title="Enable Margin Call Simulator?"
         size="lg"
+        analyticsId="margin_call_simulator"
+        analyticsProperties={commonAnalyticsProperties}
       >
         <div className="space-y-5">
           <div className="border border-[#FFAB96]/40 bg-[#250917] p-4">
@@ -2869,6 +3035,8 @@ export function PerpsTradeTicket({
               type="button"
               variant="secondary"
               className={DARK_CANCEL_BUTTON_CLASS}
+              analyticsId="cancel_margin_call_simulator"
+              analyticsProperties={commonAnalyticsProperties}
               onClick={() => {
                 setIsMarginCallSimulatorConfirmationOpen(false)
               }}
@@ -2879,6 +3047,8 @@ export function PerpsTradeTicket({
               type="button"
               className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
               disabled={!canEnableMarginCallSimulator}
+              analyticsId="enable_margin_call_simulator"
+              analyticsProperties={commonAnalyticsProperties}
               onClick={() => {
                 setIsMarginCallSimulatorEnabled(true)
                 setIsMarginCallSimulatorConfirmationOpen(false)
@@ -2899,6 +3069,8 @@ export function PerpsTradeTicket({
         }}
         title={`${marginActionLabel} Margin`}
         size="md"
+        analyticsId={marginAction === 'withdraw' ? 'withdraw_margin' : 'deposit_margin'}
+        analyticsProperties={commonAnalyticsProperties}
       >
         <div className="space-y-5">
           <p className="text-sm leading-6 text-cyber-text-secondary">
@@ -2927,6 +3099,7 @@ export function PerpsTradeTicket({
               className="group inline-flex items-center gap-1 text-xs font-semibold text-cyber-text-secondary transition-colors enabled:hover:text-cyber-text-primary disabled:cursor-not-allowed disabled:opacity-50"
               onClick={() => {
                 if (!canUseMarginActionMax) return
+                trackPerpsButtonClicked(`${marginAction ?? 'margin'}_max`, commonAnalyticsProperties)
                 setMarginActionAmount(marginActionLimitDisplay)
                 setMarginActionStatus('idle')
                 setMarginActionError(undefined)
@@ -2972,6 +3145,8 @@ export function PerpsTradeTicket({
               variant="secondary"
               className={DARK_CANCEL_BUTTON_CLASS}
               disabled={isMarginActionPending}
+              analyticsId="cancel_margin_action"
+              analyticsProperties={commonAnalyticsProperties}
               onClick={() => {
                 setMarginAction(null)
               }}
@@ -2983,6 +3158,8 @@ export function PerpsTradeTicket({
               className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
               isLoading={isMarginActionPending}
               disabled={isMarginActionSubmitDisabled}
+              analyticsId={marginAction === 'withdraw' ? 'submit_withdraw_margin' : 'submit_deposit_margin'}
+              analyticsProperties={commonAnalyticsProperties}
               onClick={() => {
                 void handleMarginActionSubmit()
               }}
