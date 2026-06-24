@@ -76,7 +76,7 @@ export function PriceDisplay({
           ) : priceUnknown ? (
             <span className="text-cyber-text-secondary font-semibold">--</span>
           ) : (
-            <TokenAmount amount={price.toFixed(4)} className="font-semibold text-cyber-text-primary" />
+            <span className="font-semibold text-cyber-text-primary">{price.toFixed(4)}</span>
           )}
           {bullChange !== null && bullChange !== 0 && (
             <span className={`text-xs font-medium ${bullChange > 0 ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'}`}>
