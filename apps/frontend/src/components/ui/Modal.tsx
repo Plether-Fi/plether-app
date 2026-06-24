@@ -1,9 +1,11 @@
-import { type ReactNode, useEffect } from 'react'
+import { type ReactNode, useCallback, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
+import { trackPerpsModalClosed, trackPerpsModalOpened, type PerpsCloseReason } from '../../analytics/perps'
+import type { AnalyticsProperties } from '../../analytics/client'
 
 interface ModalProps {
   isOpen: boolean
-  onClose: () => void
+  onClose: (reason?: PerpsCloseReason) => void
   title?: string
   headerContent?: ReactNode
   showCloseButton?: boolean
@@ -14,6 +16,9 @@ interface ModalProps {
   placement?: 'center' | 'right'
   contentClassName?: string
   bodyClassName?: string
+  analyticsId?: string
+  analyticsSurface?: string
+  analyticsProperties?: AnalyticsProperties
 }
 
 const sizeStyles = {
@@ -41,9 +46,48 @@ export function Modal({
   placement = 'center',
   contentClassName = '',
   bodyClassName = 'p-6',
+  analyticsId,
+  analyticsSurface = 'perps',
+  analyticsProperties,
 }: ModalProps) {
   const hasHeader = title !== undefined || headerContent !== undefined
   const placementClass = placementStyles[placement]
+  const openedAtRef = useRef<number | undefined>(undefined)
+  const closeReasonRef = useRef<PerpsCloseReason>('state_change')
+  const analyticsPropertiesRef = useRef<AnalyticsProperties | undefined>(analyticsProperties)
+
+  useEffect(() => {
+    analyticsPropertiesRef.current = analyticsProperties
+  }, [analyticsProperties])
+
+  useEffect(() => {
+    if (!isOpen || !analyticsId) return undefined
+
+    openedAtRef.current = performance.now()
+    closeReasonRef.current = 'state_change'
+    trackPerpsModalOpened(analyticsId, {
+      surface: analyticsSurface,
+      ...analyticsPropertiesRef.current,
+    })
+
+    return () => {
+      const openedAt = openedAtRef.current
+      openedAtRef.current = undefined
+      if (openedAt === undefined) return
+
+      trackPerpsModalClosed(analyticsId, {
+        surface: analyticsSurface,
+        close_reason: closeReasonRef.current,
+        duration_ms: Math.max(0, Math.round(performance.now() - openedAt)),
+        ...analyticsPropertiesRef.current,
+      })
+    }
+  }, [analyticsId, analyticsSurface, isOpen])
+
+  const handleClose = useCallback((reason: PerpsCloseReason) => {
+    closeReasonRef.current = reason
+    onClose(reason)
+  }, [onClose])
 
   useEffect(() => {
     if (isOpen) {
@@ -58,13 +102,13 @@ export function Modal({
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && closeOnEscape) onClose()
+      if (e.key === 'Escape' && closeOnEscape) handleClose('escape')
     }
     if (isOpen) {
       document.addEventListener('keydown', handleEscape)
     }
     return () => { document.removeEventListener('keydown', handleEscape); }
-  }, [closeOnEscape, isOpen, onClose])
+  }, [closeOnEscape, handleClose, isOpen])
 
   if (!isOpen) return null
 
@@ -73,7 +117,7 @@ export function Modal({
       {/* Backdrop */}
       <div
         className={`absolute inset-0 bg-cyber-bg/85 backdrop-blur-sm ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
-        onClick={closeOnBackdrop ? onClose : undefined}
+        onClick={closeOnBackdrop ? () => { handleClose('backdrop') } : undefined}
       />
 
       {/* Modal Content */}
@@ -93,7 +137,7 @@ export function Modal({
                 <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
                 {showCloseButton ? (
                   <button
-                    onClick={onClose}
+                    onClick={() => { handleClose('close_button') }}
                     className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
                   >
                     <span className="material-symbols-outlined">close</span>
@@ -102,7 +146,7 @@ export function Modal({
               </div>
             ) : showCloseButton ? (
               <button
-                onClick={onClose}
+                onClick={() => { handleClose('close_button') }}
                 className="absolute right-4 top-3 text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
               >
                 <span className="material-symbols-outlined">close</span>

@@ -1,0 +1,147 @@
+import posthog from 'posthog-js/dist/module.full.no-external'
+import type { Properties } from 'posthog-js/dist/module.full.no-external'
+
+export type AnalyticsPropertyValue = string | number | boolean | null | undefined
+export type AnalyticsProperties = Record<string, AnalyticsPropertyValue>
+
+const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
+const DEFAULT_REPLAY_SAMPLE_RATE = 0.05
+
+const ALLOWED_PROPERTY_KEYS = new Set([
+  'button_id',
+  'chain_state',
+  'close_reason',
+  'connected_state',
+  'direction',
+  'duration_ms',
+  'error_category',
+  'lifecycle_state',
+  'market_phase',
+  'modal_id',
+  'reduce_only',
+  'size_bucket',
+  'surface',
+  'validation_reason',
+])
+
+const FORBIDDEN_PROPERTY_PATTERNS = [
+  /address/i,
+  /amount/i,
+  /balance/i,
+  /email/i,
+  /hash/i,
+  /order_?id/i,
+  /permit/i,
+  /raw/i,
+  /rpc/i,
+  /signature/i,
+  /tx/i,
+  /wallet/i,
+]
+
+const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
+const TX_HASH_PATTERN = /^0x[a-fA-F0-9]{64}$/
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+let initialized = false
+
+function envString(name: string): string | undefined {
+  const env = import.meta.env as Record<string, unknown>
+  const value = env[name]
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+function parseReplaySampleRate(value: string | undefined): number {
+  if (value === undefined) return DEFAULT_REPLAY_SAMPLE_RATE
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return DEFAULT_REPLAY_SAMPLE_RATE
+  return Math.min(1, Math.max(0, parsed))
+}
+
+function shouldDropProperty(key: string): boolean {
+  if (!ALLOWED_PROPERTY_KEYS.has(key)) return true
+  return FORBIDDEN_PROPERTY_PATTERNS.some((pattern) => pattern.test(key))
+}
+
+function sanitizeStringValue(value: string): string {
+  if (
+    ADDRESS_PATTERN.test(value) ||
+    TX_HASH_PATTERN.test(value) ||
+    EMAIL_PATTERN.test(value)
+  ) {
+    return '[redacted]'
+  }
+  return value
+}
+
+export function sanitizeAnalyticsProperties(properties?: AnalyticsProperties): Properties {
+  if (!properties) return {}
+
+  const sanitized: Properties = {}
+  for (const [key, value] of Object.entries(properties)) {
+    if (shouldDropProperty(key) || value === undefined || value === null) continue
+
+    if (typeof value === 'string') {
+      sanitized[key] = sanitizeStringValue(value)
+    } else if (typeof value === 'number') {
+      if (Number.isFinite(value)) sanitized[key] = value
+    } else if (typeof value === 'boolean') {
+      sanitized[key] = value
+    }
+  }
+
+  return sanitized
+}
+
+export function initAnalytics(): void {
+  if (initialized || import.meta.env.MODE === 'test') return
+
+  const token = envString('VITE_POSTHOG_KEY')
+  if (!token) return
+
+  const apiHost = envString('VITE_POSTHOG_HOST') ?? DEFAULT_POSTHOG_HOST
+  const replaySampleRate = parseReplaySampleRate(envString('VITE_POSTHOG_REPLAY_SAMPLE_RATE'))
+
+  posthog.init(token, {
+    api_host: apiHost,
+    defaults: '2026-05-30',
+    disable_persistence: true,
+    person_profiles: 'never',
+    capture_pageview: false,
+    capture_pageleave: false,
+    autocapture: false,
+    capture_dead_clicks: false,
+    disable_session_recording: true,
+    enable_recording_console_log: false,
+    mask_all_text: true,
+    mask_all_element_attributes: true,
+    session_recording: {
+      maskAllInputs: true,
+      maskTextSelector: '*',
+      sampleRate: replaySampleRate,
+      maskCapturedNetworkRequestFn: (request) => {
+        if (request.name) request.name = request.name.split('?')[0]
+        return request
+      },
+    },
+  })
+
+  initialized = true
+
+  if (replaySampleRate > 0 && Math.random() < replaySampleRate) {
+    posthog.startSessionRecording({ sampling: true, linked_flag: true })
+  }
+}
+
+export function isAnalyticsEnabled(): boolean {
+  return initialized
+}
+
+export function captureAnalyticsEvent(eventName: string, properties?: AnalyticsProperties): void {
+  if (!initialized) return
+  posthog.capture(eventName, sanitizeAnalyticsProperties(properties))
+}
+
+export function resetAnalyticsForTests(): void {
+  initialized = false
+}

@@ -52,6 +52,9 @@ jobs:
         working-directory: apps/frontend
         env:
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
+          VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
+          VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
+          VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
         run: npm run build
 
       - name: Configure testnet Pages bindings
