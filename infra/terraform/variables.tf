@@ -86,22 +86,22 @@ variable "perps_chain_id" {
 
 variable "perps_order_router" {
   type    = string
-  default = "0x485703D16fE36369c134dEe2A61c057733E7830f"
+  default = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb"
+  default = "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0x128f195B92b50db1eEBCbBd249d5C5e946DCd786"
+  default = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x00B89B6e696A43129DA7Ec8a814bb61C9A6189b8"
+  default = "0x731bb0939CE531728459394A277B28Cbff8df049"
 }
 
 variable "perps_indexer_start_block" {
