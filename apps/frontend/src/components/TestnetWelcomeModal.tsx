@@ -75,6 +75,10 @@ export function TestnetWelcomeModal() {
           Use a wallet that supports Arbitrum Sepolia. You will need that network for trading
           after receiving mock USDC on Sepolia.
         </p>
+        <p>
+          Thanks for being here early. This is a safe testnet environment, so try things freely.
+          Nothing here has real-world value, and every bit of feedback helps.
+        </p>
 
         <Input
           label="Wallet address"

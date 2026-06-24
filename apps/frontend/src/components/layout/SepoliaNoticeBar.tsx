@@ -5,7 +5,10 @@ export function SepoliaNoticeBar() {
 
   return (
     <div className="flex min-h-8 items-center justify-center gap-3 bg-white px-4 py-1.5 text-center text-xs font-medium text-[#250917] sm:text-sm">
-      <span>You are on Sepolia testnet. Try Plether Perps with mock funds and an Arbitrum Sepolia-ready wallet.</span>
+      <span>
+        You are on Sepolia testnet. Try Plether Perps with mock funds and an Arbitrum
+        Sepolia-ready wallet. Feedback: <a href="mailto:support@plether.com" className="underline underline-offset-4">support@plether.com</a>.
+      </span>
       <button
         type="button"
         onClick={openSepoliaWelcome}
