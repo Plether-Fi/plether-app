@@ -14,6 +14,14 @@ const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
 type HeaderTheme = 'orange' | 'dark' | 'light'
+const MOBILE_MENU_ITEMS = [
+  { href: APP_URL, label: 'Launch App' },
+  { href: DOCS_URL, label: 'Read Docs' },
+  { href: X_URL, label: 'X' },
+  { href: CORE_REPO_URL, label: 'Github' },
+  { href: MANIFESTO_URL, label: 'Manifesto' },
+  { href: AUDITS_URL, label: 'Audit Reports' },
+]
 const TRUST_ITEMS = [
   {
     title: 'Open Source',
@@ -211,19 +219,79 @@ function SiteHeader({
   theme: HeaderTheme
   headerRef: RefObject<HTMLElement | null>
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return
+    }
+
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [isMenuOpen])
+
   return (
-    <header ref={headerRef} className={`site-header site-header--${theme}`}>
-      <Brand />
-      <nav className="site-nav" aria-label="Primary navigation">
-        <a href={X_URL} aria-label="Plether on X">X</a>
-        <DividerDot />
-        <a href={DOCS_URL}>Docs</a>
-        <DividerDot />
-        <a className="launch-button launch-button--nav" href={APP_URL}>
-          <span className="button-label">Launch App</span>
-        </a>
-      </nav>
-    </header>
+    <>
+      <header ref={headerRef} className={`site-header site-header--${theme}`}>
+        <Brand />
+        <nav className="site-nav" aria-label="Primary navigation">
+          <a href={X_URL} aria-label="Plether on X">X</a>
+          <DividerDot />
+          <a href={DOCS_URL}>Docs</a>
+          <DividerDot />
+          <a className="launch-button launch-button--nav" href={APP_URL}>
+            <span className="button-label">Launch App</span>
+          </a>
+        </nav>
+        <button
+          className="mobile-menu-toggle"
+          type="button"
+          aria-label="Open menu"
+          aria-expanded={isMenuOpen}
+          aria-controls="mobile-menu"
+          onClick={() => setIsMenuOpen(true)}
+        >
+          <span />
+          <span />
+          <span />
+        </button>
+      </header>
+
+      {isMenuOpen ? (
+        <div className="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile navigation">
+          <div className="mobile-menu__header">
+            <Brand />
+            <button className="mobile-menu__close" type="button" aria-label="Close menu" onClick={() => setIsMenuOpen(false)}>
+              <span />
+              <span />
+            </button>
+          </div>
+          <nav className="mobile-menu__nav" aria-label="Mobile navigation">
+            {MOBILE_MENU_ITEMS.map((item) => (
+              <a href={item.href} key={item.label} onClick={() => setIsMenuOpen(false)}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div className="mobile-menu__bottom">
+            <img className="mobile-menu__mark" src="/logomark.svg" alt="" />
+            <p>© Plether 2026</p>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
 }
 
@@ -450,12 +518,12 @@ export function App() {
       <section className="landing-section landing-section--hero">
         <div className="hero" aria-labelledby="hero-title">
           <div className="hero__copy">
-            <h1 id="hero-title">Trade &amp; hedge<br />dollar index perpetuals.</h1>
+            <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" />perpetuals.</h1>
           </div>
 
           <div className="hero__bottom">
             <div className="hero__actions">
-              <p>Immutable contracts. No ADL.<br />MEV-resistant. Settled in USDC.</p>
+              <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDC.</p>
               <div className="button-row">
                 <a className="launch-button" href={APP_URL}>
                   <span className="button-label">Launch App</span>
