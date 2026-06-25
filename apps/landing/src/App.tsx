@@ -253,8 +253,9 @@ function SplitIllustration() {
 function SolvencyIllustration() {
   return (
     <div className="solvency-illustration" aria-hidden="true">
-      <span className="solvency-illustration__floating-dot" />
-      <span className="solvency-illustration__falling-dot" />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <span className={`solvency-illustration__drop-dot solvency-illustration__drop-dot--${index + 1}`} key={`drop-dot-${index}`} />
+      ))}
       {Array.from({ length: 9 }).map((_, index) => (
         <span className={`solvency-illustration__cell solvency-illustration__cell--${index + 1}`} key={index} />
       ))}

@@ -459,7 +459,7 @@ a {
   height: 100%;
   display: block;
   object-fit: cover;
-  transform: scale(2.78);
+  transform: scale(2.85);
   transform-origin: 50% 50%;
   transition: transform 720ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -511,10 +511,11 @@ a {
 .split-illustration__circle--left {
   left: 25%;
   background: var(--plether-soft-orange);
+  z-index: 2;
 }
 
 .split-illustration__circle--right {
-  left: 116%;
+  left: 25%;
   background: var(--plether-orange);
 }
 
@@ -589,7 +590,7 @@ a {
 .split-illustration:hover .split-illustration__circle--left,
 .feature-card:hover .split-illustration__circle--left,
 .feature-card:focus-within .split-illustration__circle--left {
-  left: -16%;
+  left: 116%;
 }
 
 .split-illustration:hover .split-illustration__circle--right,
@@ -607,42 +608,68 @@ a {
 .solvency-illustration {
   position: relative;
   --solvency-gap: 14px;
+  --solvency-cell-size: calc((100% - var(--solvency-gap) - var(--solvency-gap)) / 3);
+  --solvency-dot-inset: calc(var(--solvency-cell-size) * 0.07);
+  --solvency-dot-size: calc(var(--solvency-cell-size) * 0.86);
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--solvency-gap);
   overflow: hidden;
 }
 
-.solvency-illustration__floating-dot,
-.solvency-illustration__falling-dot {
+.solvency-illustration__drop-dot {
   position: absolute;
-  z-index: 0;
-  right: 2%;
-  width: 27%;
+  z-index: 1;
+  top: calc(0px - var(--solvency-dot-size));
+  width: var(--solvency-dot-size);
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--plether-orange);
   transition: top 720ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.solvency-illustration__floating-dot {
-  top: 19.5%;
+.solvency-illustration__drop-dot--1 {
+  left: var(--solvency-dot-inset);
+  transition-delay: 0ms;
 }
 
-.solvency-illustration__falling-dot {
-  top: -30%;
+.solvency-illustration__drop-dot--2 {
+  left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 160ms;
 }
 
-.solvency-illustration:hover .solvency-illustration__floating-dot,
-.feature-card:hover .solvency-illustration__floating-dot,
-.feature-card:focus-within .solvency-illustration__floating-dot {
-  top: 70.8%;
+.solvency-illustration__drop-dot--3 {
+  left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 320ms;
 }
 
-.solvency-illustration:hover .solvency-illustration__falling-dot,
-.feature-card:hover .solvency-illustration__falling-dot,
-.feature-card:focus-within .solvency-illustration__falling-dot {
-  top: 36.5%;
+.solvency-illustration__drop-dot--4 {
+  left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 480ms;
+}
+
+.solvency-illustration:hover .solvency-illustration__drop-dot--1,
+.feature-card:hover .solvency-illustration__drop-dot--1,
+.feature-card:focus-within .solvency-illustration__drop-dot--1 {
+  top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+}
+
+.solvency-illustration:hover .solvency-illustration__drop-dot--2,
+.feature-card:hover .solvency-illustration__drop-dot--2,
+.feature-card:focus-within .solvency-illustration__drop-dot--2 {
+  top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+}
+
+.solvency-illustration:hover .solvency-illustration__drop-dot--3,
+.feature-card:hover .solvency-illustration__drop-dot--3,
+.feature-card:focus-within .solvency-illustration__drop-dot--3 {
+  top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+}
+
+.solvency-illustration:hover .solvency-illustration__drop-dot--4,
+.feature-card:hover .solvency-illustration__drop-dot--4,
+.feature-card:focus-within .solvency-illustration__drop-dot--4 {
+  top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
 }
 
 .solvency-illustration__cell {
@@ -658,20 +685,6 @@ a {
 
 .solvency-illustration__cell::before {
   content: none;
-}
-
-.solvency-illustration__cell--7::before,
-.solvency-illustration__cell--8::before {
-  position: absolute;
-  inset: 7%;
-  border-radius: 50%;
-  background: var(--plether-orange);
-  content: "";
-}
-
-.solvency-illustration__cell--7,
-.solvency-illustration__cell--8 {
-  background: var(--plether-soft-orange);
 }
 
 .built {
