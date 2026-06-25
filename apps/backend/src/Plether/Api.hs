@@ -226,12 +226,15 @@ app cache client perpsClient cfg mPool manager = do
           then do
             limit <- perpsHistoryLimit
             mCursor <- queryParamMaybe "cursor"
-            case traverse parseHistoryCursor mCursor of
-              Just cursor -> do
-                result <- liftIO $ getPerpsAccountOrders pool cfg addr limit cursor
+            mRouter <- queryParamMaybe "router"
+            case (traverse parseHistoryCursor mCursor, validateRouterParam mRouter) of
+              (Just cursor, Just router) -> do
+                result <- liftIO $ getPerpsAccountOrders pool cfg router addr limit cursor
                 handleResult result
-              Nothing ->
+              (Nothing, _) ->
                 handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+              (_, Nothing) ->
+                handleError $ E.invalidAddress $ maybe "" id mRouter
           else handleError $ E.invalidAddress addr
 
       get "/api/perps/accounts/:address/activity" $ do
@@ -240,12 +243,15 @@ app cache client perpsClient cfg mPool manager = do
           then do
             limit <- perpsHistoryLimit
             mCursor <- queryParamMaybe "cursor"
-            case traverse parseHistoryCursor mCursor of
-              Just cursor -> do
-                result <- liftIO $ getPerpsAccountActivity pool cfg addr limit cursor
+            mRouter <- queryParamMaybe "router"
+            case (traverse parseHistoryCursor mCursor, validateRouterParam mRouter) of
+              (Just cursor, Just router) -> do
+                result <- liftIO $ getPerpsAccountActivity pool cfg router addr limit cursor
                 handleResult result
-              Nothing ->
+              (Nothing, _) ->
                 handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+              (_, Nothing) ->
+                handleError $ E.invalidAddress $ maybe "" id mRouter
           else handleError $ E.invalidAddress addr
 
       get "/api/perps/indexer/status" $ do
@@ -255,19 +261,22 @@ app cache client perpsClient cfg mPool manager = do
       get "/api/perps/orders/:orderId/wait" $ do
         rawOrderId <- pathParam "orderId"
         mAccount <- queryParamMaybe "account"
+        mRouter <- queryParamMaybe "router"
         mTimeoutSeconds <- queryParamMaybe "timeoutSeconds"
-        case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds) of
-          (Just orderId, Just timeoutSeconds)
+        case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds, validateRouterParam mRouter) of
+          (Just orderId, Just timeoutSeconds, Just router)
             | maybe True isValidAddress mAccount -> do
                 result <- liftIO $
-                  waitForPerpsOrderTerminal pool cfg orderId mAccount (maybe 60 id timeoutSeconds)
+                  waitForPerpsOrderTerminal pool cfg router orderId mAccount (maybe 60 id timeoutSeconds)
                 handleResult result
             | otherwise ->
                 handleError $ E.invalidAddress $ maybe "" id mAccount
-          (Nothing, _) ->
+          (Nothing, _, _) ->
             handleError $ E.invalidAmount "orderId must be a positive integer"
-          (_, Nothing) ->
+          (_, Nothing, _) ->
             handleError $ E.invalidAmount "timeoutSeconds must be a positive integer"
+          (_, _, Nothing) ->
+            handleError $ E.invalidAddress $ maybe "" id mRouter
     Nothing -> pure ()
 
   get "/api/perps/market/stats" $ do
@@ -453,6 +462,12 @@ parseHistoryCursor txt =
       tieBreaker <- parseAmount rawTieBreaker
       Just (blockNumber, tieBreaker)
     _ -> Nothing
+
+validateRouterParam :: Maybe Text -> Maybe (Maybe Text)
+validateRouterParam Nothing = Just Nothing
+validateRouterParam (Just router)
+  | isValidAddress router = Just $ Just router
+  | otherwise = Nothing
 
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ const $ Just policy

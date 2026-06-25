@@ -114,7 +114,7 @@ indexNewLogs cfg conn client = do
   case latestResult of
     Left err -> putStrLn $ "perps log indexing skipped: " <> T.unpack (rpcErrorText err)
     Right latestBlock -> do
-      lastIndexed <- getPerpsKeeperLastIndexedBlock conn
+      lastIndexed <- getPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg)
       let confirmedLatest = max 0 $ latestBlock - fromIntegral (cfgKeeperConfirmations cfg)
           startBlock = max (cfgPerpsIndexerStartBlock cfg) (lastIndexed + 1)
           endBlock = min confirmedLatest (startBlock + 1_999)
@@ -132,7 +132,7 @@ indexNewLogs cfg conn client = do
             Left err -> putStrLn $ "perps log indexing failed: " <> T.unpack (rpcErrorText err)
             Right logs -> do
               forM_ (mapMaybe Perps.decodePerpsOrderEvent logs) (applyOrderEvent cfg conn client)
-              setPerpsKeeperLastIndexedBlock conn endBlock
+              setPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg) endBlock
               unless (null logs) $
                 putStrLn $
                   "indexed "
@@ -149,6 +149,7 @@ applyOrderEvent cfg conn client = \case
       Just (commitBlock, commitTime) ->
         upsertPerpsKeeperOrderCommitted
           conn
+          (cfgPerpsOrderRouter cfg)
           poeOrderId
           poeAccount
           poeSide
@@ -157,9 +158,9 @@ applyOrderEvent cfg conn client = \case
           commitTime
           poeTxHash
   Perps.OrderExecuted {..} ->
-    markPerpsKeeperOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
+    markPerpsKeeperOrderExecuted conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
   Perps.OrderFailed {..} ->
-    markPerpsKeeperOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
+    markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
 
 readCommitMetadata :: Config -> EthClient -> Integer -> Integer -> IO (Maybe (Integer, Integer))
 readCommitMetadata cfg client orderId fallbackBlock = do
@@ -181,7 +182,7 @@ readCommitMetadata cfg client orderId fallbackBlock = do
 
 processQueueHead :: Config -> Connection -> EthClient -> Bool -> IO ()
 processQueueHead cfg conn client dryRun = do
-  pending <- getPendingPerpsKeeperOrders conn (cfgKeeperMaxBatchSize cfg)
+  pending <- getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) (cfgKeeperMaxBatchSize cfg)
   case pending of
     [] -> pure ()
     headOrder : _ -> do
@@ -219,7 +220,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
   freshHeadResult <- refreshPendingOrder cfg client headOrder
   case freshHeadResult of
     Left err -> do
-      recordPerpsKeeperOrderError conn (pkorOrderId headOrder) err
+      recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId headOrder) err
       putStrLn $ "queue head re-read skipped execution: " <> T.unpack err
     Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose}
       | not (isPastCommitBlock latestBlock freshHead) ->
@@ -241,7 +242,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
       frozenCloseResult <- tryFrozenClosePayload freshHead freshHeadIsClose
       case frozenCloseResult of
         Left err -> do
-          recordPerpsKeeperOrderError conn (pkorOrderId freshHead) err
+          recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead) err
           putStrLn $
             "frozen close payload selection failed for order "
               <> show (pkorOrderId freshHead)
@@ -275,7 +276,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
         Just payload ->
           case decodePayload payload of
             Left err -> do
-              recordPerpsKeeperOrderError conn (pkorOrderId freshHead) err
+              recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead) err
               putStrLn $ "cached Pyth payload could not be decoded: " <> T.unpack err
             Right (publishTimes, updateData) ->
               case validateRevealWindow (pkorCommitTime freshHead) settlementWindow publishTimes of
@@ -403,7 +404,7 @@ submitIntent cfg conn client dryRun intent = do
             Perps.executeOrderBatchCall (maximum $ map pkorOrderId orders) updateData
   valueResult <- intentValue cfg client intent
   case valueResult of
-    Left err -> recordAllErrors conn targetIds err
+    Left err -> recordAllErrors cfg conn targetIds err
     Right value ->
       if dryRun
         then
@@ -413,11 +414,11 @@ submitIntent cfg conn client dryRun intent = do
               <> " with value "
               <> show value
         else do
-          forM_ targetIds (recordPerpsKeeperOrderAttempt conn)
+          forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
           sent <- submitKeeperTransaction cfg client value callData
           case sent of
-            Left err -> recordAllErrors conn targetIds err
-            Right receipt -> applyReceipt conn targetIds receipt
+            Left err -> recordAllErrors cfg conn targetIds err
+            Right receipt -> applyReceipt cfg conn targetIds receipt
 
 intentValue :: Config -> EthClient -> ExecutionIntent -> IO (Either Text Integer)
 intentValue _ _ (CleanupExpired _) = pure $ Right 0
@@ -488,8 +489,8 @@ waitForReceipt client txHash attempts = do
       threadDelay 2_000_000
       waitForReceipt client txHash (attempts - 1)
 
-applyReceipt :: Connection -> [Integer] -> TxReceipt -> IO ()
-applyReceipt conn targetIds receipt = do
+applyReceipt :: Config -> Connection -> [Integer] -> TxReceipt -> IO ()
+applyReceipt cfg conn targetIds receipt = do
   let orderEvents = mapMaybe Perps.decodePerpsOrderEvent (receiptLogs receipt)
   seenIds <- foldM applyEvent [] orderEvents
   let missingIds = filter (`notElem` seenIds) targetIds
@@ -498,18 +499,19 @@ applyReceipt conn targetIds receipt = do
       forM_ missingIds $ \orderId ->
         recordPerpsKeeperOrderError
           conn
+          (cfgPerpsOrderRouter cfg)
           orderId
           ("confirmed in " <> receiptTxHash receipt <> " without target order event")
     else
       forM_ targetIds $ \orderId ->
-        recordPerpsKeeperOrderError conn orderId ("transaction reverted: " <> receiptTxHash receipt)
+        recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId ("transaction reverted: " <> receiptTxHash receipt)
   where
     applyEvent seen = \case
       Perps.OrderExecuted {..} -> do
-        markPerpsKeeperOrderExecuted conn poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
+        markPerpsKeeperOrderExecuted conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
         pure $ poeOrderId : seen
       Perps.OrderFailed {..} -> do
-        markPerpsKeeperOrderFailed conn poeOrderId poeTxHash poeBlockNumber poeFailureReason
+        markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
         putStrLn $
           "order "
             <> show poeOrderId
@@ -518,12 +520,12 @@ applyReceipt conn targetIds receipt = do
         pure $ poeOrderId : seen
       Perps.OrderCommitted {} -> pure seen
 
-recordAllErrors :: Connection -> [Integer] -> Text -> IO ()
-recordAllErrors conn orderIds err = do
+recordAllErrors :: Config -> Connection -> [Integer] -> Text -> IO ()
+recordAllErrors cfg conn orderIds err = do
   forM_ orderIds $ \orderId ->
     if isSameBlockMevGuardError err
-      then recordPerpsKeeperOrderImmediateRetryError conn orderId err
-      else recordPerpsKeeperOrderError conn orderId err
+      then recordPerpsKeeperOrderImmediateRetryError conn (cfgPerpsOrderRouter cfg) orderId err
+      else recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId err
   putStrLn $ "keeper transaction skipped/failed: " <> T.unpack err
 
 decodePayload :: PythUpdatePayloadRow -> Either Text ([Integer], [ByteString])
