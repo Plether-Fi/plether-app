@@ -1220,8 +1220,6 @@ ensurePerpsHistorySchema conn = do
     \)"
   _ <- execute_ conn
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS release_router TEXT"
-  _ <- execute_ conn
-    "UPDATE perps_indexer_state SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
   pure ()
 
 insertPerpsEvent
