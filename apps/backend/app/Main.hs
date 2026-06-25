@@ -105,5 +105,6 @@ main = do
       putStrLn ""
 
       client <- newClient (cfgRpcUrl cfg)
+      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
-      scotty (cfgPort cfg) (app cache client cfg mPool manager)
+      scotty (cfgPort cfg) (app cache client perpsClient cfg mPool manager)

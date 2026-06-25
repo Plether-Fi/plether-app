@@ -79,8 +79,8 @@ instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v ->
     TestnetFaucetRequest <$> v .: "address"
 
-app :: AppCache -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
-app cache client cfg mPool manager = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
+app cache client perpsClient cfg mPool manager = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -92,7 +92,7 @@ app cache client cfg mPool manager = do
     if isValidAddress addr
       then case mPool of
         Just pool -> do
-          result <- liftIO $ claimTestnetFaucet pool client cfg addr
+          result <- liftIO $ claimTestnetFaucet pool perpsClient cfg addr
           handleResult result
         Nothing ->
           handleServiceUnavailable $

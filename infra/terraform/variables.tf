@@ -90,6 +90,11 @@ variable "perps_chain_id" {
   default = "421614"
 }
 
+variable "perps_usdc" {
+  type    = string
+  default = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
+}
+
 variable "perps_order_router" {
   type    = string
   default = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"

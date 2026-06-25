@@ -28,6 +28,7 @@ testConfig =
     , cfgPythIngestionEnabled = False
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
+    , cfgPerpsUsdc = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 0

@@ -106,6 +106,10 @@ resource "aws_ecs_task_definition" "api" {
         valueFrom = aws_ssm_parameter.rpc_url.arn
       },
       {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
@@ -114,6 +118,8 @@ resource "aws_ecs_task_definition" "api" {
     environment = concat([
       { name = "PORT", value = "3001" },
       { name = "CHAIN_ID", value = var.chain_id },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment)

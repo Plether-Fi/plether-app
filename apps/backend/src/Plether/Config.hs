@@ -33,6 +33,7 @@ data Config = Config
   , cfgPythIngestionEnabled :: Bool
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
+  , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsIndexerStartBlock :: Integer
@@ -133,6 +134,7 @@ loadConfig = do
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
+      perpsUsdc <- fromMaybe "0xf1e1B188b87525C51ECe4bae8627ae621D769651" <$> lookupEnv "PERPS_USDC"
       perpsOrderRouter <- fromMaybe "0x4A0a6c028164A1254e10C3e39cc89Af45090069e" <$> lookupEnv "PERPS_ORDER_ROUTER"
       perpsPletherOracle <- fromMaybe "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA" <$> lookupEnv "PERPS_PLETHER_ORACLE"
       perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
@@ -186,6 +188,7 @@ loadConfig = do
                 , cfgPythIngestionEnabled = pythIngestionEnabled
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
+                , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock

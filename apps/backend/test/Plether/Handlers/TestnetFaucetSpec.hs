@@ -14,10 +14,10 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "testnetFaucetEnabled" $ do
-    it "is enabled only for Sepolia" $ do
-      testnetFaucetEnabled (testConfig 11155111) `shouldBe` True
-      testnetFaucetEnabled (testConfig 1) `shouldBe` False
-      testnetFaucetEnabled (testConfig 421614) `shouldBe` False
+    it "is enabled only for Arbitrum Sepolia perps" $ do
+      testnetFaucetEnabled (testConfig 11155111 421614) `shouldBe` True
+      testnetFaucetEnabled (testConfig 11155111 11155111) `shouldBe` False
+      testnetFaucetEnabled (testConfig 1 421614) `shouldBe` True
 
   describe "testnetFaucetAmount" $
     it "is 100,000 USDC with 6 decimals" $
@@ -33,8 +33,8 @@ spec = do
       T.unpack calldata `shouldContain` "0000000000000000000000001111111111111111111111111111111111111111"
       T.unpack calldata `shouldContain` "000000000000000000000000000000000000000000000000000000174876e800"
 
-testConfig :: Integer -> Config
-testConfig chainId =
+testConfig :: Integer -> Integer -> Config
+testConfig chainId perpsChainId =
   Config
     { cfgRpcUrl = "https://eth-sepolia.example"
     , cfgChainId = chainId
@@ -50,7 +50,8 @@ testConfig chainId =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythIngestionEnabled = False
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
-    , cfgPerpsChainId = 421614
+    , cfgPerpsChainId = perpsChainId
+    , cfgPerpsUsdc = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 0

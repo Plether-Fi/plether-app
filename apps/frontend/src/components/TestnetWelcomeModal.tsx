@@ -68,12 +68,12 @@ export function TestnetWelcomeModal() {
           execution without real funds.
         </p>
         <p>
-          Enter your wallet address and we will send you 100,000 mock USDC to start testing.
-          Testnet balances and positions have no real-world value and could be reset at any time.
+          Enter your wallet address and we will send you 100,000 mock USDC on Arbitrum Sepolia to
+          start testing. Testnet balances and positions have no real-world value and could be reset
+          at any time.
         </p>
         <p>
-          Use a wallet that supports Arbitrum Sepolia. You will need that network for trading
-          after receiving mock USDC on Sepolia.
+          Use a wallet that supports Arbitrum Sepolia. You will need that network for trading.
         </p>
         <p>
           Thanks for being here early. This is a safe testnet environment, so try things freely.
@@ -109,7 +109,7 @@ export function TestnetWelcomeModal() {
                 : 'Mock USDC sent. You are ready to start testing.'}
             </p>
             <a
-              href={`https://sepolia.etherscan.io/tx/${claim.txHash}`}
+              href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}
               target="_blank"
               rel="noreferrer"
               className="break-all text-cyber-neon-green hover:underline"

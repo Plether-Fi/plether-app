@@ -12,7 +12,7 @@ import Data.ByteString (ByteString)
 import qualified Data.Text as T
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import Plether.Config (Config (..), currentAddresses, Addresses (..))
+import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( TestnetFaucetClaimRow (..)
@@ -64,7 +64,7 @@ instance ToJSON TestnetFaucetResponse where
       ]
 
 testnetFaucetEnabled :: Config -> Bool
-testnetFaucetEnabled cfg = cfgChainId cfg == 11155111
+testnetFaucetEnabled cfg = cfgPerpsChainId cfg == 421614
 
 faucetMintCall :: Text -> ByteString
 faucetMintCall recipient =
@@ -81,18 +81,18 @@ claimTestnetFaucet
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
 claimTestnetFaucet pool client cfg rawAddress
   | not (testnetFaucetEnabled cfg) =
-      pure $ Left $ E.internalError "Testnet faucet is only available on Sepolia"
+      pure $ Left $ E.internalError "Testnet faucet is only available for Arbitrum Sepolia perps"
   | otherwise =
       case cfgFaucetPrivateKey cfg of
         Nothing ->
           pure $ Left $ E.internalError "FAUCET_PRIVATE_KEY is not configured"
         Just privateKey -> do
           let address = T.toLower rawAddress
-              token = T.toLower $ addrUsdc $ currentAddresses $ cfgDeployments cfg
+              token = T.toLower $ cfgPerpsUsdc cfg
           existing <- withDb pool $ \conn -> getTestnetFaucetClaimByAddress conn address
           case existing of
             Just claim | tfcStatus claim == "success" ->
-              alreadyClaimedResponse client address token claim
+              alreadyClaimedResponse client (cfgPerpsChainId cfg) address token claim
             Just claim | tfcStatus claim == "pending" ->
               pure $ Left $ E.mkError E.RateLimited "Faucet claim is already in progress for this address"
             _ -> do
@@ -102,7 +102,7 @@ claimTestnetFaucet pool client cfg rawAddress
                   claim <- withDb pool $ \conn -> getTestnetFaucetClaimByAddress conn address
                   case claim of
                     Just row | tfcStatus row == "success" ->
-                      alreadyClaimedResponse client address token row
+                      alreadyClaimedResponse client (cfgPerpsChainId cfg) address token row
                     _ ->
                       pure $ Left $ E.mkError E.RateLimited "Faucet claim is already in progress for this address"
                 else do
@@ -119,7 +119,7 @@ claimTestnetFaucet pool client cfg rawAddress
                             Right $
                               mkResponse
                                 (receiptBlockNumber receipt)
-                                (cfgChainId cfg)
+                                (cfgPerpsChainId cfg)
                                 (faucetResponse address token (receiptTxHash receipt) "minted")
                         else do
                           let err = "faucet mint transaction reverted: " <> receiptTxHash receipt
@@ -128,18 +128,19 @@ claimTestnetFaucet pool client cfg rawAddress
 
 alreadyClaimedResponse
   :: EthClient
+  -> Integer
   -> Text
   -> Text
   -> TestnetFaucetClaimRow
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
-alreadyClaimedResponse client address token claim =
+alreadyClaimedResponse client chainId address token claim =
   case tfcTxHash claim of
     Just txHash -> do
       blockResult <- ethBlockNumber client
       let blockNum = either (const 0) id blockResult
       pure $
         Right $
-          mkResponse blockNum 11155111 (faucetResponse address token txHash "already_claimed")
+          mkResponse blockNum chainId (faucetResponse address token txHash "already_claimed")
     Nothing ->
       pure $ Left $ E.internalError "Faucet claim is marked successful without a transaction hash"
 
@@ -172,7 +173,7 @@ submitFaucetMint cfg client privateKey token recipient =
               maxFee = max maxPriorityFee $ applyBuffer maxFeeBase (cfgKeeperFeeBufferBps cfg)
               tx =
                 Tx1559
-                  { txChainId = cfgChainId cfg
+                  { txChainId = cfgPerpsChainId cfg
                   , txNonce = nonce
                   , txMaxPriorityFeePerGas = maxPriorityFee
                   , txMaxFeePerGas = maxFee
