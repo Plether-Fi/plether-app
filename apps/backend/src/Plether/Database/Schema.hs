@@ -706,9 +706,21 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_keeper_state DROP CONSTRAINT IF EXISTS perps_keeper_state_single_row"
   _ <- execute_ conn
-    "ALTER TABLE perps_keeper_state DROP CONSTRAINT IF EXISTS perps_keeper_state_pkey"
-  _ <- execute_ conn
-    "ALTER TABLE perps_keeper_state ADD CONSTRAINT perps_keeper_state_pkey PRIMARY KEY (order_router)"
+    "DO $$ \
+    \DECLARE pk_cols text[]; \
+    \BEGIN \
+    \  SELECT COALESCE(array_agg(a.attname ORDER BY cols.ordinality), ARRAY[]::text[]) INTO pk_cols \
+    \  FROM pg_constraint c \
+    \  JOIN pg_class t ON t.oid = c.conrelid \
+    \  JOIN pg_namespace n ON n.oid = t.relnamespace \
+    \  JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ordinality) ON TRUE \
+    \  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = cols.attnum \
+    \  WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = 'perps_keeper_state'; \
+    \  IF pk_cols <> ARRAY['order_router']::text[] THEN \
+    \    ALTER TABLE perps_keeper_state DROP CONSTRAINT IF EXISTS perps_keeper_state_pkey; \
+    \    ALTER TABLE perps_keeper_state ADD CONSTRAINT perps_keeper_state_pkey PRIMARY KEY (order_router); \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "INSERT INTO perps_keeper_state (id, order_router, last_indexed_block) \
     \VALUES (1, '0x0000000000000000000000000000000000000000', 0) ON CONFLICT (order_router) DO NOTHING"
@@ -746,9 +758,21 @@ ensurePerpsKeeperSchema conn = do
     "ALTER TABLE perps_keeper_orders \
     \ALTER COLUMN order_id TYPE BIGINT USING order_id::bigint"
   _ <- execute_ conn
-    "ALTER TABLE perps_keeper_orders DROP CONSTRAINT IF EXISTS perps_keeper_orders_pkey"
-  _ <- execute_ conn
-    "ALTER TABLE perps_keeper_orders ADD CONSTRAINT perps_keeper_orders_pkey PRIMARY KEY (order_router, order_id)"
+    "DO $$ \
+    \DECLARE pk_cols text[]; \
+    \BEGIN \
+    \  SELECT COALESCE(array_agg(a.attname ORDER BY cols.ordinality), ARRAY[]::text[]) INTO pk_cols \
+    \  FROM pg_constraint c \
+    \  JOIN pg_class t ON t.oid = c.conrelid \
+    \  JOIN pg_namespace n ON n.oid = t.relnamespace \
+    \  JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ordinality) ON TRUE \
+    \  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = cols.attnum \
+    \  WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = 'perps_keeper_orders'; \
+    \  IF pk_cols <> ARRAY['order_router', 'order_id']::text[] THEN \
+    \    ALTER TABLE perps_keeper_orders DROP CONSTRAINT IF EXISTS perps_keeper_orders_pkey; \
+    \    ALTER TABLE perps_keeper_orders ADD CONSTRAINT perps_keeper_orders_pkey PRIMARY KEY (order_router, order_id); \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "ALTER TABLE perps_keeper_orders \
     \ADD COLUMN IF NOT EXISTS commit_event_block BIGINT"
@@ -1101,9 +1125,21 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_orders ALTER COLUMN order_router SET NOT NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_orders DROP CONSTRAINT IF EXISTS perps_orders_pkey"
-  _ <- execute_ conn
-    "ALTER TABLE perps_orders ADD CONSTRAINT perps_orders_pkey PRIMARY KEY (chain_id, order_router, order_id)"
+    "DO $$ \
+    \DECLARE pk_cols text[]; \
+    \BEGIN \
+    \  SELECT COALESCE(array_agg(a.attname ORDER BY cols.ordinality), ARRAY[]::text[]) INTO pk_cols \
+    \  FROM pg_constraint c \
+    \  JOIN pg_class t ON t.oid = c.conrelid \
+    \  JOIN pg_namespace n ON n.oid = t.relnamespace \
+    \  JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ordinality) ON TRUE \
+    \  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = cols.attnum \
+    \  WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = 'perps_orders'; \
+    \  IF pk_cols <> ARRAY['chain_id', 'order_router', 'order_id']::text[] THEN \
+    \    ALTER TABLE perps_orders DROP CONSTRAINT IF EXISTS perps_orders_pkey; \
+    \    ALTER TABLE perps_orders ADD CONSTRAINT perps_orders_pkey PRIMARY KEY (chain_id, order_router, order_id); \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_orders_account_block \
     \ON perps_orders(chain_id, order_router, account, COALESCE(terminal_block_number, commit_block_number) DESC)"
@@ -1160,9 +1196,21 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_indexer_state ALTER COLUMN release_router SET NOT NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_indexer_state DROP CONSTRAINT IF EXISTS perps_indexer_state_pkey"
-  _ <- execute_ conn
-    "ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_pkey PRIMARY KEY (indexer_name, chain_id, release_router)"
+    "DO $$ \
+    \DECLARE pk_cols text[]; \
+    \BEGIN \
+    \  SELECT COALESCE(array_agg(a.attname ORDER BY cols.ordinality), ARRAY[]::text[]) INTO pk_cols \
+    \  FROM pg_constraint c \
+    \  JOIN pg_class t ON t.oid = c.conrelid \
+    \  JOIN pg_namespace n ON n.oid = t.relnamespace \
+    \  JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ordinality) ON TRUE \
+    \  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = cols.attnum \
+    \  WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = 'perps_indexer_state'; \
+    \  IF pk_cols <> ARRAY['indexer_name', 'chain_id', 'release_router']::text[] THEN \
+    \    ALTER TABLE perps_indexer_state DROP CONSTRAINT IF EXISTS perps_indexer_state_pkey; \
+    \    ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_pkey PRIMARY KEY (indexer_name, chain_id, release_router); \
+    \  END IF; \
+    \END $$"
   pure ()
 
 insertPerpsEvent
