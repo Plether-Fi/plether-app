@@ -702,7 +702,12 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "UPDATE perps_keeper_state SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_keeper_state ALTER COLUMN order_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_keeper_state' AND column_name = 'order_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_keeper_state ALTER COLUMN order_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "ALTER TABLE perps_keeper_state DROP CONSTRAINT IF EXISTS perps_keeper_state_single_row"
   _ <- execute_ conn
@@ -753,10 +758,19 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "UPDATE perps_keeper_orders SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_keeper_orders ALTER COLUMN order_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_keeper_orders' AND column_name = 'order_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_keeper_orders ALTER COLUMN order_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
-    "ALTER TABLE perps_keeper_orders \
-    \ALTER COLUMN order_id TYPE BIGINT USING order_id::bigint"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_keeper_orders' AND column_name = 'order_id' AND data_type <> 'bigint') THEN \
+    \    ALTER TABLE perps_keeper_orders ALTER COLUMN order_id TYPE BIGINT USING order_id::bigint; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "DO $$ \
     \DECLARE pk_cols text[]; \
@@ -1091,7 +1105,12 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "UPDATE perps_events SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_events ALTER COLUMN release_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_events' AND column_name = 'release_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_events ALTER COLUMN release_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_events_account_block \
     \ON perps_events(account, block_number DESC, log_index DESC)"
@@ -1123,7 +1142,12 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "UPDATE perps_orders SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_orders ALTER COLUMN order_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_orders' AND column_name = 'order_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_orders ALTER COLUMN order_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "DO $$ \
     \DECLARE pk_cols text[]; \
@@ -1172,7 +1196,12 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "UPDATE perps_account_activity SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_account_activity ALTER COLUMN release_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_account_activity' AND column_name = 'release_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_account_activity ALTER COLUMN release_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_account_block \
     \ON perps_account_activity(chain_id, release_router, account, block_number DESC, log_index DESC)"
@@ -1194,7 +1223,12 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "UPDATE perps_indexer_state SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
   _ <- execute_ conn
-    "ALTER TABLE perps_indexer_state ALTER COLUMN release_router SET NOT NULL"
+    "DO $$ \
+    \BEGIN \
+    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_indexer_state' AND column_name = 'release_router' AND is_nullable = 'YES') THEN \
+    \    ALTER TABLE perps_indexer_state ALTER COLUMN release_router SET NOT NULL; \
+    \  END IF; \
+    \END $$"
   _ <- execute_ conn
     "DO $$ \
     \DECLARE pk_cols text[]; \
