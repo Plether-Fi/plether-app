@@ -11,6 +11,8 @@ module Plether.Ethereum.Client
 import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), object, withObject, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
+import qualified Data.Aeson.KeyMap as KM
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
@@ -73,10 +75,12 @@ data RpcResponseError = RpcResponseError
   deriving stock (Generic)
 
 instance FromJSON RpcResponse where
-  parseJSON = withObject "RpcResponse" $ \v ->
-    RpcResponse
-      <$> v .:? "result"
-      <*> v .:? "error"
+  parseJSON = withObject "RpcResponse" $ \v -> do
+    let result = KM.lookup (Key.fromText "result") v
+    err <- case KM.lookup (Key.fromText "error") v of
+      Just value -> Just <$> parseJSON value
+      Nothing -> pure Nothing
+    pure $ RpcResponse result err
 
 instance FromJSON RpcResponseError where
   parseJSON = withObject "RpcResponseError" $ \v ->
