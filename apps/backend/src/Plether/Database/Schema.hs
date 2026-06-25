@@ -1222,24 +1222,6 @@ ensurePerpsHistorySchema conn = do
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS release_router TEXT"
   _ <- execute_ conn
     "UPDATE perps_indexer_state SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
-  _ <- execute_ conn
-    "UPDATE perps_indexer_state \
-    \SET indexer_name = indexer_name || ':' || release_router \
-    \WHERE position(':0x' in indexer_name) = 0"
-  _ <- execute_ conn
-    "DO $$ \
-    \BEGIN \
-    \  IF NOT EXISTS (\
-    \    SELECT 1 FROM pg_class c \
-    \    JOIN pg_namespace n ON n.oid = c.relnamespace \
-    \    WHERE c.relkind = 'i' \
-    \      AND n.nspname = current_schema() \
-    \      AND c.relname = 'idx_perps_indexer_state_name_chain'\
-    \  ) THEN \
-    \    CREATE UNIQUE INDEX idx_perps_indexer_state_name_chain \
-    \    ON perps_indexer_state(indexer_name, chain_id); \
-    \  END IF; \
-    \END $$"
   pure ()
 
 insertPerpsEvent
@@ -1571,13 +1553,11 @@ setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Mayb
 setPerpsIndexerState conn chainId indexerName releaseRouter blockNumber blockHash = do
   let scopedName = scopedIndexerName indexerName releaseRouter
   _ <- execute conn
+    "DELETE FROM perps_indexer_state WHERE indexer_name = ? AND chain_id = ?"
+    (scopedName, chainId)
+  _ <- execute conn
     "INSERT INTO perps_indexer_state (indexer_name, chain_id, release_router, last_indexed_block, last_indexed_block_hash) \
-    \VALUES (?, ?, ?, ?, ?) \
-    \ON CONFLICT (indexer_name, chain_id) DO UPDATE SET \
-    \release_router = EXCLUDED.release_router,\
-    \last_indexed_block = EXCLUDED.last_indexed_block,\
-    \last_indexed_block_hash = EXCLUDED.last_indexed_block_hash,\
-    \updated_at = NOW()"
+    \VALUES (?, ?, ?, ?, ?)"
     (scopedName, chainId, normalizeRouter releaseRouter, blockNumber, fmap T.toLower blockHash)
   pure ()
 
