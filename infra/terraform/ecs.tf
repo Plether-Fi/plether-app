@@ -63,6 +63,13 @@ locals {
       valueFrom = aws_ssm_parameter.pyth_api_key[0].arn
     }
   ] : []
+
+  faucet_private_key_secret = var.faucet_private_key != "" ? [
+    {
+      name      = "FAUCET_PRIVATE_KEY"
+      valueFrom = aws_ssm_parameter.faucet_private_key[0].arn
+    }
+  ] : []
 }
 
 resource "aws_ecs_task_definition" "api" {
@@ -102,7 +109,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret)
 
     environment = concat([
       { name = "PORT", value = "3001" },

@@ -3,6 +3,7 @@ environment                      = "sepolia"
 rpc_url                          = "https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
 perps_rpc_url                    = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
 keeper_private_key          = "0xYOUR_KEEPER_PRIVATE_KEY"
+faucet_private_key          = "0xYOUR_FAUCET_PRIVATE_KEY"
 pyth_api_key                = ""
 enable_pyth_api_key         = false
 db_password                 = "CHANGE_ME_STRONG_PASSWORD"

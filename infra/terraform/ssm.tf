@@ -24,6 +24,14 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   value = var.keeper_private_key
 }
 
+resource "aws_ssm_parameter" "faucet_private_key" {
+  count = var.faucet_private_key != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/faucet-private-key"
+  type  = "SecureString"
+  value = var.faucet_private_key
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = "/plether/${var.environment}/database-url"
   type  = "SecureString"

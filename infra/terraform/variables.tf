@@ -54,6 +54,12 @@ variable "keeper_private_key" {
   sensitive = true
 }
 
+variable "faucet_private_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
 variable "db_password" {
   type      = string
   sensitive = true
