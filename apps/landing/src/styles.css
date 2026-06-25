@@ -68,6 +68,8 @@ a {
 }
 
 .landing-section--primitive {
+  min-height: calc(100svh - var(--site-header-height, 0px) + var(--primitive-scroll-space, 640px));
+  padding-bottom: 0;
   background: var(--plether-ink);
 }
 
@@ -347,8 +349,10 @@ a {
 }
 
 .primitive {
+  position: sticky;
+  top: var(--site-header-height, 0px);
   display: flex;
-  flex: 1;
+  min-height: calc(100svh - var(--site-header-height, 0px));
   flex-direction: column;
   align-items: center;
   justify-content: center;

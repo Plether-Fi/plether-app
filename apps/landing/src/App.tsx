@@ -9,6 +9,10 @@ const MANIFESTO_URL = 'https://plether.com/manifesto'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
 const FOOTER_LOGO_SCRUB_END_PROGRESS = 0.517
 const FOOTER_LOGO_DURATION_MS = 10400
+const PRIMITIVE_SCRUB_DISTANCE = 640
+const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
+const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
+const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const TRUST_ITEMS = [
   {
@@ -332,6 +336,7 @@ export function App() {
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
+  const primitiveMarkProgressRef = useRef(0)
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
@@ -342,6 +347,46 @@ export function App() {
   }
 
   useEffect(() => {
+    let reducedMotionQuery: MediaQueryList | null = null
+    let mobileQuery: MediaQueryList | null = null
+
+    const clampProgress = (value: number) => Math.min(1, Math.max(0, value))
+    const getHeaderHeight = () => headerRef.current?.offsetHeight ?? 0
+    const getPrimitiveTriggerY = () => {
+      const primitiveSection = primitiveSectionRef.current
+
+      if (!primitiveSection) {
+        return 0
+      }
+
+      return primitiveSection.offsetTop - getHeaderHeight()
+    }
+    const getScrubDistance = () => mobileQuery?.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
+    const shouldReduceMotion = () => reducedMotionQuery?.matches ?? false
+    const setPrimitiveProgress = (nextProgress: number) => {
+      const clampedProgress = clampProgress(nextProgress)
+
+      if (Math.abs(primitiveMarkProgressRef.current - clampedProgress) < 0.001) {
+        return
+      }
+
+      primitiveMarkProgressRef.current = clampedProgress
+      setPrimitiveMarkProgress(clampedProgress)
+    }
+    const updatePrimitiveLayoutVars = () => {
+      document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
+      document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
+    }
+    const updatePrimitiveProgress = () => {
+      const triggerY = getPrimitiveTriggerY()
+
+      if (shouldReduceMotion()) {
+        setPrimitiveProgress(window.scrollY >= triggerY ? 1 : 0)
+        return
+      }
+
+      setPrimitiveProgress((window.scrollY - triggerY) / getScrubDistance())
+    }
     const updateHeaderTheme = () => {
       const header = headerRef.current
       const sections = [
@@ -358,19 +403,8 @@ export function App() {
         return
       }
 
-      const primitiveSection = primitiveSectionRef.current
-      const primitiveMark = primitiveSection?.querySelector<HTMLElement>('.primitive__mark')
-
-      if (primitiveSection && primitiveMark) {
-        const headerHeight = header.offsetHeight
-        const markTop = primitiveMark.getBoundingClientRect().top
-        const sectionTop = primitiveSection.getBoundingClientRect().top
-        const start = window.innerHeight
-        const end = markTop - (sectionTop - headerHeight)
-        const nextProgress = Math.min(1, Math.max(0, (start - markTop) / (start - end || 1)))
-
-        setPrimitiveMarkProgress(nextProgress)
-      }
+      updatePrimitiveLayoutVars()
+      updatePrimitiveProgress()
 
       let activeSection: (typeof sections)[number] | undefined
 
@@ -385,14 +419,26 @@ export function App() {
 
       setHeaderTheme(activeSection?.theme ?? 'orange')
     }
+    const handleReducedMotionChange = () => {
+      updateHeaderTheme()
+    }
+
+    reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
+    mobileQuery = window.matchMedia(PRIMITIVE_MOBILE_MEDIA)
 
     updateHeaderTheme()
     window.addEventListener('scroll', updateHeaderTheme, { passive: true })
     window.addEventListener('resize', updateHeaderTheme)
+    reducedMotionQuery.addEventListener('change', handleReducedMotionChange)
+    mobileQuery.addEventListener('change', updateHeaderTheme)
 
     return () => {
       window.removeEventListener('scroll', updateHeaderTheme)
       window.removeEventListener('resize', updateHeaderTheme)
+      reducedMotionQuery?.removeEventListener('change', handleReducedMotionChange)
+      mobileQuery?.removeEventListener('change', updateHeaderTheme)
+      document.documentElement.style.removeProperty('--site-header-height')
+      document.documentElement.style.removeProperty('--primitive-scroll-space')
     }
   }, [])
 
