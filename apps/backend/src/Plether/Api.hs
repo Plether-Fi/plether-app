@@ -389,10 +389,12 @@ basketHistoryParams :: ActionM BasketHistoryParams
 basketHistoryParams = do
   mRange <- queryParamMaybe "range"
   mInterval <- queryParamMaybe "interval"
+  mIncludeComponents <- queryParamMaybe "includeComponents"
   pure
     defaultBasketHistoryParams
       { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
       , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 60) mInterval
+      , bhpIncludeComponents = maybe (bhpIncludeComponents defaultBasketHistoryParams) parseBool mIncludeComponents
       }
   where
     normalizeRange :: Text -> Text
@@ -404,6 +406,14 @@ basketHistoryParams = do
 
     parseIntegerOr :: Integer -> Text -> Integer
     parseIntegerOr def txt = maybe def id (readMaybeInteger txt)
+
+    parseBool :: Text -> Bool
+    parseBool value =
+      case T.toLower (T.strip value) of
+        "1" -> True
+        "true" -> True
+        "yes" -> True
+        _ -> False
 
     readMaybeInteger :: Text -> Maybe Integer
     readMaybeInteger txt =

@@ -16,6 +16,7 @@ module Plether.Database.Schema
   , getBasketSnapshotTimes
   , getLatestBasketSnapshot
   , getLatestBasketSnapshotTime
+  , BasketHistorySnapshotRow (..)
   , BasketSnapshotRow (..)
   , insertPythUpdatePayload
   , getPythUpdatePayloadForWindow
@@ -425,6 +426,21 @@ instance FromRow BasketSnapshotRow where
     <*> field
     <*> field
 
+data BasketHistorySnapshotRow = BasketHistorySnapshotRow
+  { bhsrTimestamp :: Integer
+  , bhsrIntervalSeconds :: Integer
+  , bhsrBasketPrice :: Integer
+  , bhsrComponents :: Maybe Value
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow BasketHistorySnapshotRow where
+  fromRow = BasketHistorySnapshotRow
+    <$> field
+    <*> field
+    <*> field
+    <*> field
+
 ensureBasketSnapshotSchema :: Connection -> IO ()
 ensureBasketSnapshotSchema conn = do
   _ <- execute_ conn
@@ -441,6 +457,9 @@ ensureBasketSnapshotSchema conn = do
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp \
     \ON perps_basket_snapshots(timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_interval_timestamp \
+    \ON perps_basket_snapshots(interval_seconds, timestamp ASC)"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (\
     \id SERIAL PRIMARY KEY,\
@@ -494,14 +513,22 @@ getBasketSnapshots
   -> Integer -- to timestamp
   -> Integer -- interval seconds
   -> Int     -- limit
-  -> IO [BasketSnapshotRow]
-getBasketSnapshots conn fromTimestamp toTimestamp intervalSeconds limit = do
-  query conn
-    "SELECT timestamp, interval_seconds, basket_price, component_prices \
-    \FROM perps_basket_snapshots \
-    \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
-    \ORDER BY timestamp ASC LIMIT ?"
-    (fromTimestamp, toTimestamp, intervalSeconds, limit)
+  -> Bool    -- include component prices
+  -> IO [BasketHistorySnapshotRow]
+getBasketSnapshots conn fromTimestamp toTimestamp intervalSeconds limit includeComponents = do
+  if includeComponents
+    then query conn
+      "SELECT timestamp, interval_seconds, basket_price, component_prices \
+      \FROM perps_basket_snapshots \
+      \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
+      \ORDER BY timestamp ASC LIMIT ?"
+      (fromTimestamp, toTimestamp, intervalSeconds, limit)
+    else query conn
+      "SELECT timestamp, interval_seconds, basket_price, NULL::jsonb AS component_prices \
+      \FROM perps_basket_snapshots \
+      \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
+      \ORDER BY timestamp ASC LIMIT ?"
+      (fromTimestamp, toTimestamp, intervalSeconds, limit)
 
 getBasketSnapshotTimes
   :: Connection

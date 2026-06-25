@@ -322,11 +322,18 @@ export class PlethApiClient {
 
   async getPerpsBasketHistory(
     range: BasketHistoryRange = '7d',
-    intervalSeconds = 60 * 60
+    intervalSeconds = 60 * 60,
+    includeComponents = false
   ): Promise<Result<ApiResponse<BasketHistory>, PlethApiError>> {
+    const params = new URLSearchParams({
+      range,
+      interval: String(intervalSeconds),
+    });
+    if (includeComponents) params.set('includeComponents', 'true');
+
     return fetchApi<BasketHistory>(
       this.config,
-      `/perps/basket/history?range=${range}&interval=${String(intervalSeconds)}`
+      `/perps/basket/history?${params.toString()}`
     );
   }
 

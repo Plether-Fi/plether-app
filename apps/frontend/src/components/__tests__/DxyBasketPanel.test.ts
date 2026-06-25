@@ -130,7 +130,7 @@ describe('DXY basket chart display transform', () => {
 
     expect(merged).toHaveLength(2)
     expect(merged.at(-1)?.basketPrice).toBe('96000000')
-    expect(merged.at(-1)?.components[0]?.publishTime).toBe(121)
+    expect(merged.at(-1)?.components?.[0]?.publishTime).toBe(121)
   })
 
   it('appends the live latest point when it has moved into a new bucket', () => {

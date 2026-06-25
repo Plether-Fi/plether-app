@@ -45,14 +45,14 @@ function findHistoricalComponent(
     const point = points[index]
     if (point.timestamp >= latestTimestamp || point.timestamp > targetTimestamp) continue
 
-    const component = point.components.find((item) => componentKey(item) === key)
+    const component = point.components?.find((item) => componentKey(item) === key)
     if (component) return component
   }
 
   for (const point of points) {
     if (point.timestamp >= latestTimestamp) continue
 
-    const component = point.components.find((item) => componentKey(item) === key)
+    const component = point.components?.find((item) => componentKey(item) === key)
     if (component) return component
   }
 
@@ -137,11 +137,11 @@ export function alignBasketPointsToOracleMark(
   const points = mergeLatestBasketPoint(historyPoints, latest)
   if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
 
-  const components = latest?.components ?? points.at(-1)?.components ?? []
+  const components = latest?.components ?? points.at(-1)?.components
   const markPoint: BasketHistoryPoint = {
     timestamp: oracleMark.timestamp,
     basketPrice: oracleMark.basketPrice,
-    components,
+    ...(components ? { components } : {}),
   }
 
   return [

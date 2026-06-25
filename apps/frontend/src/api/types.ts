@@ -149,7 +149,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
-  components: BasketComponentPrice[];
+  components?: BasketComponentPrice[];
 }
 
 export interface BasketHistory {
