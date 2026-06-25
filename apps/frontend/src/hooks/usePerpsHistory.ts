@@ -17,8 +17,10 @@ export interface PerpsOrderHistoryRow {
   revealTxHash?: Hex
   failureReason?: string
   executionPriceRaw?: bigint
+  vpiUsdcRaw?: bigint
   activitySizeDeltaRaw?: bigint
   activityPriceRaw?: bigint
+  activityVpiUsdcRaw?: bigint
 }
 
 export interface PerpsTradeHistoryRow {
@@ -74,10 +76,12 @@ interface BackendOrderRow {
   terminalStatus?: string
   failureReason?: string
   executionPrice?: string
+  vpiUsdc?: string
   cleanupActor?: string
   activityType?: string
   activitySizeDelta?: string
   activityPrice?: string
+  activityVpiUsdc?: string
   activityPnlUsdc?: string
 }
 
@@ -178,8 +182,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
+  const vpiUsdcRaw = parseBigInt(row.vpiUsdc)
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
+  const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
 
   return {
     orderId,
@@ -194,8 +200,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     revealTxHash: asHex(row.terminalTxHash),
     failureReason: row.failureReason,
     executionPriceRaw,
+    vpiUsdcRaw,
     activitySizeDeltaRaw,
     activityPriceRaw,
+    activityVpiUsdcRaw,
   }
 }
 

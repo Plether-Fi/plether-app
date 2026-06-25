@@ -168,6 +168,7 @@ const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF
 const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
 const EXECUTION_FEE_BPS = 4
 const USDC_UNIT = 1_000_000n
+const PREVIEW_USDC_DECIMALS = 1
 const OPEN_BOUNTY_BPS_RAW = 1n
 const MIN_OPEN_BOUNTY_USDC_RAW = 10_000n
 const MAX_OPEN_BOUNTY_USDC_RAW = 200_000n
@@ -351,7 +352,8 @@ function parseAmount(value: string): number {
 
 function formatUsdcAmount(value: number): string {
   return value.toLocaleString('en-US', {
-    maximumFractionDigits: 2,
+    minimumFractionDigits: PREVIEW_USDC_DECIMALS,
+    maximumFractionDigits: PREVIEW_USDC_DECIMALS,
   }).replaceAll(',', ' ')
 }
 
@@ -359,15 +361,20 @@ function formatUsdc(value: number): ReactNode {
   return <TokenAmount amount={formatUsdcAmount(value)} />
 }
 
+function formatPreviewUsdcRaw(value: bigint | undefined): string {
+  if (value === undefined) return '--'
+  return formatPerpsNumber(Number(value) / Number(USDC_UNIT), PREVIEW_USDC_DECIMALS, PREVIEW_USDC_DECIMALS)
+}
+
 function formatUsdcRaw(value: bigint | undefined): ReactNode {
-  return <TokenAmount amount={formatPerpsUsdc(value)} />
+  return <TokenAmount amount={formatPreviewUsdcRaw(value)} />
 }
 
 function formatSignedUsdcNoPlus(value: bigint | undefined): ReactNode {
   if (value === undefined) return 'Unavailable'
   const sign = value < 0n ? '-' : ''
   const absolute = value < 0n ? -value : value
-  return <TokenAmount amount={`${sign}${formatPerpsUsdc(absolute)}`} />
+  return <TokenAmount amount={`${sign}${formatPreviewUsdcRaw(absolute)}`} />
 }
 
 function usdcRawToNumber(value: bigint | undefined): number {
@@ -1244,6 +1251,8 @@ export function PerpsTradeTicket({
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
+  const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>()
+  const [isFinalVpiEstimated, setIsFinalVpiEstimated] = useState(false)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
   const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
@@ -1327,6 +1336,13 @@ export function PerpsTradeTicket({
     if (order.status === 'Executed') {
       setFlowError(undefined)
       setFinalExecutionPrice(order.executionPriceRaw ?? order.activityPriceRaw)
+      const indexedVpiUsdc = order.vpiUsdcRaw ?? order.activityVpiUsdcRaw
+      if (indexedVpiUsdc !== undefined) {
+        setFinalVpiUsdc(indexedVpiUsdc)
+        setIsFinalVpiEstimated(false)
+      } else {
+        setIsFinalVpiEstimated(finalVpiUsdc !== undefined)
+      }
       setLifecycleState('executed')
     } else {
       setFlowError(terminalOrderFailureMessage(order))
@@ -1335,7 +1351,7 @@ export function PerpsTradeTicket({
 
     onAccountRefreshRef.current?.()
     return true
-  }, [])
+  }, [finalVpiUsdc])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -1819,7 +1835,7 @@ export function PerpsTradeTicket({
         label: 'Contract side capacity',
         value: selectedOpenCapacityUsdc === undefined
           ? 'Unavailable'
-          : <TokenAmount amount={formatPerpsUsdc(selectedOpenCapacityUsdc)} />,
+          : formatUsdcRaw(selectedOpenCapacityUsdc),
         tone: selectedOpenCapacityUsdc === undefined ? undefined : 'positive',
       },
     ],
@@ -1887,6 +1903,8 @@ export function PerpsTradeTicket({
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, oraclePriceToDisplayDxyPrice(finalExecutionPrice))
     : undefined
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
+  const finalVpiLabel = isFinalVpiEstimated ? 'Estimated VPI / Price impact' : 'VPI / Price impact'
+  const finalVpiValue = finalVpiUsdc === undefined ? 'Unavailable' : formatSignedUsdcNoPlus(finalVpiUsdc)
   const finalPriceDisplay = finalExecutionPrice
     ? formatDisplayDxyPrice(finalExecutionPrice)
     : enableLiveTrading
@@ -2061,6 +2079,8 @@ export function PerpsTradeTicket({
       setLifecycleState('commitPreparing')
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
+      setFinalVpiUsdc(previewVpiUsdc)
+      setIsFinalVpiEstimated(previewVpiUsdc !== undefined)
       const result = await commitOrder({
         direction: effectiveOrderDirection,
         notionalUsdc: contractNotionalUsdc,
@@ -2160,6 +2180,8 @@ export function PerpsTradeTicket({
     setCommitTxHash(undefined)
     setExecuteTxHash(undefined)
     setFinalExecutionPrice(undefined)
+    setFinalVpiUsdc(undefined)
+    setIsFinalVpiEstimated(false)
     setCommittedSizeDelta(undefined)
     setFlowError(undefined)
     setKeeperRevealDeadlineMs(undefined)
@@ -2942,7 +2964,7 @@ export function PerpsTradeTicket({
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    { label: 'VPI / Price impact', value: 'Unavailable' },
+                    { label: finalVpiLabel, value: finalVpiValue, tone: finalVpiUsdc === undefined ? undefined : 'muted' },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },

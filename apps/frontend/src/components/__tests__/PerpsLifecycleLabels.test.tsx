@@ -643,6 +643,7 @@ describe('perps lifecycle labels', () => {
             commitTxHash: '0x971c00000000000000000000000000000000eeab',
             revealTxHash: '0xec0c00000000000000000000000000000000d745',
             executionPriceRaw: 97_138_163n,
+            vpiUsdcRaw: 12_345_678n,
           },
         ]}
       />
@@ -654,6 +655,8 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('VPI / Price impact')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
   })
 
   it('keeps waiting for keeper execution after the first terminal wait times out', async () => {
