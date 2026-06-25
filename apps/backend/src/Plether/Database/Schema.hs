@@ -1216,35 +1216,12 @@ ensurePerpsHistorySchema conn = do
     \last_indexed_block BIGINT NOT NULL,\
     \last_indexed_block_hash TEXT,\
     \updated_at TIMESTAMP DEFAULT NOW(),\
-    \PRIMARY KEY (indexer_name, chain_id, release_router)\
+    \PRIMARY KEY (indexer_name, chain_id)\
     \)"
   _ <- execute_ conn
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS release_router TEXT"
   _ <- execute_ conn
     "UPDATE perps_indexer_state SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
-  _ <- execute_ conn
-    "DO $$ \
-    \BEGIN \
-    \  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'perps_indexer_state' AND column_name = 'release_router' AND is_nullable = 'YES') THEN \
-    \    ALTER TABLE perps_indexer_state ALTER COLUMN release_router SET NOT NULL; \
-    \  END IF; \
-    \END $$"
-  _ <- execute_ conn
-    "DO $$ \
-    \DECLARE pk_cols text[]; \
-    \BEGIN \
-    \  SELECT COALESCE(array_agg(a.attname ORDER BY cols.ordinality), ARRAY[]::text[]) INTO pk_cols \
-    \  FROM pg_constraint c \
-    \  JOIN pg_class t ON t.oid = c.conrelid \
-    \  JOIN pg_namespace n ON n.oid = t.relnamespace \
-    \  JOIN unnest(c.conkey) WITH ORDINALITY AS cols(attnum, ordinality) ON TRUE \
-    \  JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = cols.attnum \
-    \  WHERE c.contype = 'p' AND n.nspname = current_schema() AND t.relname = 'perps_indexer_state'; \
-    \  IF pk_cols <> ARRAY['indexer_name', 'chain_id', 'release_router']::text[] THEN \
-    \    ALTER TABLE perps_indexer_state DROP CONSTRAINT IF EXISTS perps_indexer_state_pkey; \
-    \    ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_pkey PRIMARY KEY (indexer_name, chain_id, release_router); \
-    \  END IF; \
-    \END $$"
   pure ()
 
 insertPerpsEvent
@@ -1556,10 +1533,11 @@ insertPerpsExpiredCleanupActivityIfReady conn chainId orderRouter orderId = do
 
 getPerpsIndexerStatus :: Connection -> Integer -> Text -> Text -> IO (Maybe PerpsIndexerStatusRow)
 getPerpsIndexerStatus conn chainId indexerName releaseRouter = do
+  let scopedName = scopedIndexerName indexerName releaseRouter
   rows <- query conn
-    "SELECT indexer_name, chain_id, release_router, last_indexed_block, last_indexed_block_hash \
-    \FROM perps_indexer_state WHERE chain_id = ? AND indexer_name = ? AND release_router = ?"
-    (chainId, indexerName, normalizeRouter releaseRouter)
+    "SELECT ?::text AS indexer_name, chain_id, release_router, last_indexed_block, last_indexed_block_hash \
+    \FROM perps_indexer_state WHERE chain_id = ? AND indexer_name = ?"
+    (indexerName, chainId, scopedName)
   case rows of
     [row] -> pure $ Just row
     _ -> pure Nothing
@@ -1573,15 +1551,21 @@ getPerpsIndexerLastBlock conn chainId indexerName releaseRouter = do
 
 setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Maybe Text -> IO ()
 setPerpsIndexerState conn chainId indexerName releaseRouter blockNumber blockHash = do
+  let scopedName = scopedIndexerName indexerName releaseRouter
   _ <- execute conn
     "INSERT INTO perps_indexer_state (indexer_name, chain_id, release_router, last_indexed_block, last_indexed_block_hash) \
     \VALUES (?, ?, ?, ?, ?) \
-    \ON CONFLICT (indexer_name, chain_id, release_router) DO UPDATE SET \
+    \ON CONFLICT (indexer_name, chain_id) DO UPDATE SET \
+    \release_router = EXCLUDED.release_router,\
     \last_indexed_block = EXCLUDED.last_indexed_block,\
     \last_indexed_block_hash = EXCLUDED.last_indexed_block_hash,\
     \updated_at = NOW()"
-    (indexerName, chainId, normalizeRouter releaseRouter, blockNumber, fmap T.toLower blockHash)
+    (scopedName, chainId, normalizeRouter releaseRouter, blockNumber, fmap T.toLower blockHash)
   pure ()
+
+scopedIndexerName :: Text -> Text -> Text
+scopedIndexerName indexerName releaseRouter =
+  indexerName <> ":" <> normalizeRouter releaseRouter
 
 deletePerpsHistoryFromBlock :: Connection -> Integer -> Text -> Integer -> IO ()
 deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
