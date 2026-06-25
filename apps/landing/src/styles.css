@@ -226,26 +226,6 @@ a {
   align-items: center;
 }
 
-.button-label::after {
-  position: absolute;
-  right: 0;
-  bottom: -0.34em;
-  left: 0;
-  height: 2px;
-  background: currentColor;
-  content: "";
-  transform: scaleX(0);
-  transform-origin: left;
-  transition: transform 160ms ease;
-}
-
-.launch-button:hover .button-label::after,
-.launch-button:focus-visible .button-label::after,
-.docs-button:hover .button-label::after,
-.docs-button:focus-visible .button-label::after {
-  transform: scaleX(1);
-}
-
 .launch-button {
   background: var(--plether-yellow);
   color: var(--plether-ink);
