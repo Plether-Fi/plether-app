@@ -1222,6 +1222,13 @@ ensurePerpsHistorySchema conn = do
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS release_router TEXT"
   _ <- execute_ conn
     "UPDATE perps_indexer_state SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
+  _ <- execute_ conn
+    "UPDATE perps_indexer_state \
+    \SET indexer_name = indexer_name || ':' || release_router \
+    \WHERE position(':0x' in indexer_name) = 0"
+  _ <- execute_ conn
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_perps_indexer_state_name_chain \
+    \ON perps_indexer_state(indexer_name, chain_id)"
   pure ()
 
 insertPerpsEvent
