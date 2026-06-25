@@ -1227,8 +1227,19 @@ ensurePerpsHistorySchema conn = do
     \SET indexer_name = indexer_name || ':' || release_router \
     \WHERE position(':0x' in indexer_name) = 0"
   _ <- execute_ conn
-    "CREATE UNIQUE INDEX IF NOT EXISTS idx_perps_indexer_state_name_chain \
-    \ON perps_indexer_state(indexer_name, chain_id)"
+    "DO $$ \
+    \BEGIN \
+    \  IF NOT EXISTS (\
+    \    SELECT 1 FROM pg_class c \
+    \    JOIN pg_namespace n ON n.oid = c.relnamespace \
+    \    WHERE c.relkind = 'i' \
+    \      AND n.nspname = current_schema() \
+    \      AND c.relname = 'idx_perps_indexer_state_name_chain'\
+    \  ) THEN \
+    \    CREATE UNIQUE INDEX idx_perps_indexer_state_name_chain \
+    \    ON perps_indexer_state(indexer_name, chain_id); \
+    \  END IF; \
+    \END $$"
   pure ()
 
 insertPerpsEvent
