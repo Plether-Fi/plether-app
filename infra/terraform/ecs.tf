@@ -120,6 +120,11 @@ resource "aws_ecs_task_definition" "api" {
       { name = "CHAIN_ID", value = var.chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_USDC", value = var.perps_usdc },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
+      { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+      { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment)

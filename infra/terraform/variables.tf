@@ -117,7 +117,7 @@ variable "perps_margin_clearinghouse" {
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "273137426"
+  default = "280884700"
 }
 
 variable "perps_indexer_confirmations" {
