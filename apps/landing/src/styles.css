@@ -92,13 +92,14 @@ a {
   top: 0;
   left: 0;
   width: 100%;
+  height: 105px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 32px;
   background: var(--plether-orange);
   border-bottom: 2px solid var(--hairline);
-  padding: 72px clamp(28px, 5.2vw, 100px) 48px;
+  padding: 0 clamp(28px, 5.2vw, 100px);
 }
 
 .site-header--dark {
@@ -124,8 +125,8 @@ a {
 }
 
 .brand__type {
-  width: 176px;
-  height: auto;
+  width: auto;
+  height: 35px;
 }
 
 .brand__mark,
@@ -143,7 +144,7 @@ a {
   display: flex;
   align-items: center;
   gap: clamp(32px, 3.75vw, 72px);
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 400;
   text-transform: uppercase;
 }
@@ -208,12 +209,12 @@ a {
   position: relative;
   display: inline-flex;
   min-width: 221px;
-  min-height: 70px;
+  height: 52px;
   align-items: center;
   justify-content: center;
   border: 2px solid transparent;
   padding: 0 34px;
-  font-size: 24px;
+  font-size: 18px;
   font-weight: 500;
   text-transform: uppercase;
   transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
@@ -925,7 +926,8 @@ a {
 }
 
 .cta h2 {
-  font-size: clamp(58px, 5vw, 96px);
+  font-size: clamp(42px, 5vw, 96px);
+  white-space: nowrap;
 }
 
 .cta__title-link {
@@ -1382,9 +1384,7 @@ a {
   }
 
   .site-header {
-    align-items: flex-start;
-    padding-top: 34px;
-    padding-bottom: 34px;
+    align-items: center;
   }
 
   .landing-section--hero {
@@ -1400,7 +1400,7 @@ a {
 
   .site-nav {
     gap: 20px;
-    font-size: 15px;
+    font-size: 18px;
   }
 
   .nav-dot {
@@ -1410,9 +1410,9 @@ a {
 
   .launch-button--nav {
     min-width: 132px;
-    min-height: 48px;
+    height: 52px;
     padding: 0 18px;
-    font-size: 15px;
+    font-size: 18px;
   }
 
   .brand__mark {
@@ -1421,7 +1421,8 @@ a {
   }
 
   .brand__type {
-    width: 128px;
+    width: auto;
+    height: 35px;
   }
 
   .hero__bottom {
@@ -1471,8 +1472,8 @@ a {
 
   .site-header {
     flex-direction: column;
-    gap: 12px;
-    padding: 14px 20px 16px;
+    gap: 8px;
+    padding: 6px 20px 9px;
   }
 
   .brand__mark {
@@ -1481,7 +1482,8 @@ a {
   }
 
   .brand__type {
-    width: 120px;
+    width: auto;
+    height: 35px;
   }
 
   .site-nav {
@@ -1532,7 +1534,7 @@ a {
   .button-row .launch-button,
   .button-row .docs-button {
     min-width: 0;
-    min-height: 56px;
+    height: 52px;
     flex: 1 1 160px;
     padding: 0 18px;
     font-size: 16px;
@@ -1653,6 +1655,10 @@ a {
     font-size: clamp(42px, 12vw, 58px);
   }
 
+  .cta h2 {
+    font-size: clamp(20px, 6.4vw, 58px);
+  }
+
   .source p {
     margin-top: 24px;
     font-size: 22px;
@@ -1675,7 +1681,7 @@ a {
 
   .cta__button {
     min-width: 180px;
-    min-height: 56px;
+    height: 52px;
     flex: 0 0 auto;
     margin-top: 40px;
   }
