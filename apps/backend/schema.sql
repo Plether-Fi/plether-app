@@ -66,14 +66,15 @@ CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_
 
 -- Sepolia testnet mock USDC faucet claims
 CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
-    address VARCHAR(42) PRIMARY KEY,
+    address VARCHAR(42) NOT NULL,
     amount BIGINT NOT NULL,
     token_address VARCHAR(42) NOT NULL,
     tx_hash VARCHAR(66),
     status VARCHAR(16) NOT NULL,
     error TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (address, token_address)
 );
 CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
 

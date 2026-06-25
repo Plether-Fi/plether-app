@@ -17,7 +17,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( TestnetFaucetClaimRow (..)
   , beginTestnetFaucetClaim
-  , getTestnetFaucetClaimByAddress
+  , getTestnetFaucetClaim
   , markTestnetFaucetClaimFailed
   , markTestnetFaucetClaimSuccess
   )
@@ -89,7 +89,7 @@ claimTestnetFaucet pool client cfg rawAddress
         Just privateKey -> do
           let address = T.toLower rawAddress
               token = T.toLower $ cfgPerpsUsdc cfg
-          existing <- withDb pool $ \conn -> getTestnetFaucetClaimByAddress conn address
+          existing <- withDb pool $ \conn -> getTestnetFaucetClaim conn address token
           case existing of
             Just claim | tfcStatus claim == "success" ->
               alreadyClaimedResponse client (cfgPerpsChainId cfg) address token claim
@@ -99,7 +99,7 @@ claimTestnetFaucet pool client cfg rawAddress
               started <- withDb pool $ \conn -> beginTestnetFaucetClaim conn address testnetFaucetAmount token
               if not started
                 then do
-                  claim <- withDb pool $ \conn -> getTestnetFaucetClaimByAddress conn address
+                  claim <- withDb pool $ \conn -> getTestnetFaucetClaim conn address token
                   case claim of
                     Just row | tfcStatus row == "success" ->
                       alreadyClaimedResponse client (cfgPerpsChainId cfg) address token row
@@ -109,12 +109,12 @@ claimTestnetFaucet pool client cfg rawAddress
                   submitResult <- submitFaucetMint cfg client privateKey token address
                   case submitResult of
                     Left err -> do
-                      withDb pool $ \conn -> markTestnetFaucetClaimFailed conn address err
+                      withDb pool $ \conn -> markTestnetFaucetClaimFailed conn address token err
                       pure $ Left $ E.rpcError err
                     Right receipt -> do
                       if receiptSucceeded receipt
                         then do
-                          withDb pool $ \conn -> markTestnetFaucetClaimSuccess conn address (receiptTxHash receipt)
+                          withDb pool $ \conn -> markTestnetFaucetClaimSuccess conn address token (receiptTxHash receipt)
                           pure $
                             Right $
                               mkResponse
@@ -123,7 +123,7 @@ claimTestnetFaucet pool client cfg rawAddress
                                 (faucetResponse address token (receiptTxHash receipt) "minted")
                         else do
                           let err = "faucet mint transaction reverted: " <> receiptTxHash receipt
-                          withDb pool $ \conn -> markTestnetFaucetClaimFailed conn address err
+                          withDb pool $ \conn -> markTestnetFaucetClaimFailed conn address token err
                           pure $ Left $ E.rpcError err
 
 alreadyClaimedResponse
