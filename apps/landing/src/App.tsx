@@ -5,8 +5,11 @@ const APP_URL = 'https://app.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
-const MANIFESTO_URL = 'https://plether.com/manifesto'
+const MANIFESTO_URL = '/manifesto'
+const MEDIA_KIT_URL = 'https://plether.com/media-kit'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
+const STABLECOINS_URL = 'https://app.rwa.xyz/stablecoins'
+const ECB_STABLECOIN_URL = 'https://x.com/ecb/status/2052644951427805440?s=20'
 const FOOTER_LOGO_SCRUB_END_PROGRESS = 0.517
 const FOOTER_LOGO_DURATION_MS = 10400
 const PRIMITIVE_SCRUB_DISTANCE = 640
@@ -212,6 +215,32 @@ function DividerDot() {
   return <span className="nav-dot" aria-hidden="true" />
 }
 
+function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }) {
+  return (
+    <footer ref={footerRef} className="footer">
+      <div className="footer__inner">
+        <FooterBrand />
+        <div className="footer__bottom">
+          <p>© Plether 2026</p>
+          <nav className="footer__nav" aria-label="Footer navigation">
+            <a href={X_URL}>X</a>
+            <DividerDot />
+            <a href={CORE_REPO_URL}>GitHub</a>
+            <DividerDot />
+            <a href={DOCS_URL}>Docs</a>
+            <DividerDot />
+            <a href={MANIFESTO_URL}>Manifesto</a>
+            <DividerDot />
+            <a href={MEDIA_KIT_URL}>Media Kit</a>
+            <DividerDot />
+            <a href={AUDITS_URL}>Audit Reports</a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+  )
+}
+
 function SiteHeader({
   theme,
   headerRef,
@@ -245,28 +274,30 @@ function SiteHeader({
   return (
     <>
       <header ref={headerRef} className={`site-header site-header--${theme}`}>
-        <Brand />
-        <nav className="site-nav" aria-label="Primary navigation">
-          <a href={X_URL} aria-label="Plether on X">X</a>
-          <DividerDot />
-          <a href={DOCS_URL}>Docs</a>
-          <DividerDot />
-          <a className="launch-button launch-button--nav" href={APP_URL}>
-            <span className="button-label">Launch App</span>
-          </a>
-        </nav>
-        <button
-          className="mobile-menu-toggle"
-          type="button"
-          aria-label="Open menu"
-          aria-expanded={isMenuOpen}
-          aria-controls="mobile-menu"
-          onClick={() => setIsMenuOpen(true)}
-        >
-          <span />
-          <span />
-          <span />
-        </button>
+        <div className="site-header__inner">
+          <Brand />
+          <nav className="site-nav" aria-label="Primary navigation">
+            <a href={X_URL} aria-label="Plether on X">X</a>
+            <DividerDot />
+            <a href={DOCS_URL}>Docs</a>
+            <DividerDot />
+            <a className="launch-button launch-button--nav" href={APP_URL}>
+              <span className="button-label">Launch App</span>
+            </a>
+          </nav>
+          <button
+            className="mobile-menu-toggle"
+            type="button"
+            aria-label="Open menu"
+            aria-expanded={isMenuOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setIsMenuOpen(true)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+        </div>
       </header>
 
       {isMenuOpen ? (
@@ -286,7 +317,7 @@ function SiteHeader({
             ))}
           </nav>
           <div className="mobile-menu__bottom">
-            <img className="mobile-menu__mark" src="/logomark.svg" alt="" />
+            <span className="mobile-menu__mark" aria-hidden="true" />
             <p>© Plether 2026</p>
           </div>
         </div>
@@ -396,7 +427,7 @@ function SolidityCodeBlock({ code }: { code: string }) {
   )
 }
 
-export function App() {
+function LandingPage() {
   const headerRef = useRef<HTMLElement | null>(null)
   const primitiveSectionRef = useRef<HTMLElement | null>(null)
   const exposureSectionRef = useRef<HTMLElement | null>(null)
@@ -408,12 +439,10 @@ export function App() {
   const primitiveMarkProgressRef = useRef(0)
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
+  const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
+  const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
+  const [isTrustAnimationActive, setIsTrustAnimationActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
-  const [trustSpinKey, setTrustSpinKey] = useState(0)
-
-  const spinTrustMarkers = () => {
-    setTrustSpinKey((currentKey) => currentKey + 1)
-  }
 
   useEffect(() => {
     let reducedMotionQuery: MediaQueryList | null = null
@@ -487,6 +516,9 @@ export function App() {
       }
 
       setHeaderTheme(activeSection?.theme ?? 'orange')
+      setIsExposureAnimationActive((exposureSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsTrustAnimationActive((trustSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
     }
     const handleReducedMotionChange = () => {
       updateHeaderTheme()
@@ -564,7 +596,7 @@ export function App() {
 
       <section
         ref={exposureSectionRef}
-        className="landing-section landing-section--exposure"
+        className={`landing-section landing-section--exposure${isExposureAnimationActive ? ' landing-section--exposure-active' : ''}`}
         aria-labelledby="exposure-title"
       >
         <div className="exposure">
@@ -595,7 +627,7 @@ export function App() {
 
       <section
         ref={builtSectionRef}
-        className="landing-section landing-section--built"
+        className={`landing-section landing-section--built${isBuiltAnimationActive ? ' landing-section--built-active' : ''}`}
         aria-labelledby="built-title"
       >
         <div className="built">
@@ -630,12 +662,12 @@ export function App() {
 
       <section
         ref={trustSectionRef}
-        className="landing-section landing-section--trust"
+        className={`landing-section landing-section--trust${isTrustAnimationActive ? ' landing-section--trust-active' : ''}`}
         aria-labelledby="trust-title"
       >
         <div className="trust">
-          <span className={`trust__marker${trustSpinKey > 0 ? ' trust__marker--spin' : ''}`} aria-hidden="true">
-            <span key={`trust-top-${trustSpinKey}`} />
+          <span className="trust__marker" aria-hidden="true">
+            <span />
           </span>
           <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
           <div className="trust-list" role="list">
@@ -647,8 +679,6 @@ export function App() {
                   className={`trust-item${expandedTrustIndex === index ? ' trust-item--expanded' : ''}`}
                   role="listitem"
                   key={item.title}
-                  onFocus={spinTrustMarkers}
-                  onMouseEnter={spinTrustMarkers}
                 >
                   <button
                     className="trust-item__button"
@@ -657,7 +687,6 @@ export function App() {
                     aria-expanded={expandedTrustIndex === index}
                     onClick={() => {
                       setExpandedTrustIndex((currentIndex) => (currentIndex === index ? null : index))
-                      spinTrustMarkers()
                     }}
                   >
                     {item.title}
@@ -671,11 +700,8 @@ export function App() {
               )
             })}
           </div>
-          <span
-            className={`trust__marker trust__marker--bottom${trustSpinKey > 0 ? ' trust__marker--spin' : ''}`}
-            aria-hidden="true"
-          >
-            <span key={`trust-bottom-${trustSpinKey}`} />
+          <span className="trust__marker trust__marker--bottom" aria-hidden="true">
+            <span />
           </span>
         </div>
       </section>
@@ -717,24 +743,43 @@ export function App() {
           </a>
         </div>
 
-        <footer ref={footerRef} className="footer">
-          <FooterBrand />
-          <div className="footer__bottom">
-            <p>© Plether 2026</p>
-            <nav className="footer__nav" aria-label="Footer navigation">
-              <a href={DOCS_URL}>Docs</a>
-              <DividerDot />
-              <a href={X_URL}>X</a>
-              <DividerDot />
-              <a href={CORE_REPO_URL}>GitHub</a>
-              <DividerDot />
-              <a href={MANIFESTO_URL}>Manifesto</a>
-              <DividerDot />
-              <a href={AUDITS_URL}>Audit Reports</a>
-            </nav>
-          </div>
-        </footer>
+        <SiteFooter footerRef={footerRef} />
       </section>
     </main>
   )
+}
+
+function ManifestoPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  return (
+    <div className="manifesto-shell">
+      <SiteHeader theme="light" headerRef={headerRef} />
+      <main className="manifesto-page" aria-labelledby="manifesto-title">
+        <article className="manifesto">
+          <h1 id="manifesto-title">Manifesto</h1>
+          <div className="manifesto__copy">
+            <p>
+              We believe USD stablecoins already won.{' '}
+              While{' '}
+              <a href={STABLECOINS_URL}>99% of stablecoins are already denominated in dollars</a>
+              , Christine Lagarde from the European Central Bank has called them{' '}
+              <a href={ECB_STABLECOIN_URL}>&quot;not an efficient way to strengthen the international role of the euro.&quot;</a>{' '}
+              Stablecoins became the working balance sheet of onchain finance. That balance sheet is denominated in dollars.
+            </p>
+            <p>That doesn&apos;t make the dollar fair. It makes it dominant.</p>
+            <p>We&apos;ve watched what happens when you treat dominant money as safe money. Japanese dollar holders lost half their yen purchasing power after the 1985 Plaza Accord. European dollar holders lost 45% of their euro purchasing power during the 2002-2008 DXY collapse. We lived outside the US in 2025, when the dollar index fell 10% and our USDC stayed flat while our rent went up.</p>
+            <p>This isn&apos;t a case against the dollar. The point is that holding any currency you don&apos;t spend is a position, whether you opted in or not.</p>
+            <p>We want to give people the tools to hold the dollar without being silently long it. No investors. No roadmap to extract value from users we haven&apos;t earned.</p>
+            <p>The permissionless, self-custodial, and open-source layer above dollar stablecoins does not yet exist onchain. We are building it. The first instrument is a dollar index. One position to hedge or trade the dollar, powered by the largest stablecoin liquidity. Onchain macro starts here.</p>
+          </div>
+        </article>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+export function App() {
+  return window.location.pathname === '/manifesto' ? <ManifestoPage /> : <LandingPage />
 }
