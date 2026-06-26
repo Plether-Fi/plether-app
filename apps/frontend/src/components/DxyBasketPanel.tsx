@@ -459,7 +459,7 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
-  const { data: componentChangeData } = usePerpsBasketHistory('24h', 60)
+  const { data: componentChangeData } = usePerpsBasketHistory('24h', 60, true)
   const { data: latestData } = usePerpsBasketLatest()
   const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
     if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined

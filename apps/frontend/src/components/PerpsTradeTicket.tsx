@@ -63,6 +63,7 @@ interface PreviewRow {
   label: string
   value: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'muted'
+  tooltip?: ReactNode
 }
 
 interface ContractResult {
@@ -178,6 +179,8 @@ const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
+const VPI_PRICE_IMPACT_TOOLTIP =
+  'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
@@ -736,7 +739,24 @@ function PreviewRows({
 
         return (
           <div key={row.label} className="flex min-h-6 items-center justify-between gap-3 text-sm">
-            <dt className="text-cyber-text-secondary">{row.label}</dt>
+            <dt className="inline-flex items-center gap-1.5 text-cyber-text-secondary">
+              {row.label}
+              {row.tooltip ? (
+                <Tooltip
+                  content={row.tooltip}
+                  position="bottom-end"
+                  className="w-[340px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+                >
+                  <span
+                    aria-label={`${row.label} info`}
+                    className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+                    tabIndex={0}
+                  >
+                    i
+                  </span>
+                </Tooltip>
+              ) : null}
+            </dt>
             <dd className={`flex min-h-6 items-center justify-end text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
@@ -1829,7 +1849,7 @@ export function PerpsTradeTicket({
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
-      { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined },
+      { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
       { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
       {
         label: 'Contract side capacity',
@@ -2964,7 +2984,7 @@ export function PerpsTradeTicket({
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    { label: finalVpiLabel, value: finalVpiValue, tone: finalVpiUsdc === undefined ? undefined : 'muted' },
+                    { label: finalVpiLabel, value: finalVpiValue, tone: finalVpiUsdc === undefined ? undefined : 'muted', tooltip: VPI_PRICE_IMPACT_TOOLTIP },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },
