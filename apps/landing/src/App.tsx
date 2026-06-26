@@ -16,6 +16,7 @@ const PRIMITIVE_SCRUB_DISTANCE = 640
 const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
+const TRUST_BOTTOM_MARKER_TRIGGER_OFFSET = 250
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const MOBILE_MENU_ITEMS = [
   { href: APP_URL, label: 'Launch App' },
@@ -172,19 +173,22 @@ function FooterBrand() {
 
     brand.style.setProperty('--footer-logo-progress', progress.toFixed(3))
     brand.style.setProperty('--footer-logo-resume-delay', `${(-progress * FOOTER_LOGO_DURATION_MS).toFixed(0)}ms`)
-    brand.style.setProperty('--footer-logo-rotation', (180 * stage(progress, 0.418, 0.517)).toFixed(2))
+    const rotationProgress = stage(progress, 0.26, 0.517)
+    const rotationOvershoot = 16 * Math.sin(Math.PI * rotationProgress) * stage(progress, 0.26, 0.42) * (1 - stage(progress, 0.42, 0.517))
+
+    brand.style.setProperty('--footer-logo-rotation', (180 * rotationProgress + rotationOvershoot).toFixed(2))
     brand.style.setProperty('--footer-logo-center-scale', (0.78 + 0.22 * stage(progress, 0, 0.074)).toFixed(3))
     brand.style.setProperty('--footer-logo-falling-y', (-124 + 124 * fallingProgress).toFixed(2))
     brand.style.setProperty('--footer-logo-falling-opacity', stage(progress, 0.037, 0.062).toFixed(3))
 
-    setRevealVars(brand, 'top-center', progress, 0.16, 0.191)
-    setRevealVars(brand, 'top-right', progress, 0.191, 0.222)
-    setRevealVars(brand, 'middle-right', progress, 0.222, 0.252)
-    setRevealVars(brand, 'bottom-right', progress, 0.252, 0.283)
-    setRevealVars(brand, 'bottom-center', progress, 0.283, 0.314)
-    setRevealVars(brand, 'bottom-left', progress, 0.314, 0.345)
-    setRevealVars(brand, 'middle-left', progress, 0.345, 0.375)
-    setRevealVars(brand, 'dot', progress, 0.375, 0.406)
+    setRevealVars(brand, 'top-center', progress, 0.10, 0.126)
+    setRevealVars(brand, 'top-right', progress, 0.118, 0.144)
+    setRevealVars(brand, 'middle-right', progress, 0.136, 0.162)
+    setRevealVars(brand, 'bottom-right', progress, 0.154, 0.18)
+    setRevealVars(brand, 'bottom-center', progress, 0.172, 0.198)
+    setRevealVars(brand, 'bottom-left', progress, 0.19, 0.216)
+    setRevealVars(brand, 'middle-left', progress, 0.208, 0.234)
+    setRevealVars(brand, 'dot', progress, 0.226, 0.252)
   }
 
   const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
@@ -433,6 +437,7 @@ function LandingPage() {
   const exposureSectionRef = useRef<HTMLElement | null>(null)
   const builtSectionRef = useRef<HTMLElement | null>(null)
   const trustSectionRef = useRef<HTMLElement | null>(null)
+  const trustBottomMarkerRef = useRef<HTMLSpanElement | null>(null)
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
@@ -442,6 +447,7 @@ function LandingPage() {
   const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
   const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
   const [isTrustAnimationActive, setIsTrustAnimationActive] = useState(false)
+  const [isTrustBottomMarkerActive, setIsTrustBottomMarkerActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
 
   useEffect(() => {
@@ -519,6 +525,7 @@ function LandingPage() {
       setIsExposureAnimationActive((exposureSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
       setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
       setIsTrustAnimationActive((trustSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsTrustBottomMarkerActive((trustBottomMarkerRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + TRUST_BOTTOM_MARKER_TRIGGER_OFFSET + 1)
     }
     const handleReducedMotionChange = () => {
       updateHeaderTheme()
@@ -700,7 +707,11 @@ function LandingPage() {
               )
             })}
           </div>
-          <span className="trust__marker trust__marker--bottom" aria-hidden="true">
+          <span
+            ref={trustBottomMarkerRef}
+            className={`trust__marker trust__marker--bottom${isTrustBottomMarkerActive ? ' trust__marker--scroll-active' : ''}`}
+            aria-hidden="true"
+          >
             <span />
           </span>
         </div>

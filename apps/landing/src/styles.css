@@ -781,43 +781,47 @@ a {
   aspect-ratio: 1;
   border-radius: 50%;
   background: var(--plether-orange);
-  transition: top 1440ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: top 720ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .solvency-illustration__drop-dot--1 {
   left: var(--solvency-dot-inset);
-  transition-delay: 0ms;
+  transition-delay: 2160ms;
 }
 
 .solvency-illustration__drop-dot--2 {
   left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
-  transition-delay: 2880ms;
+  transition-delay: 1440ms;
 }
 
 .solvency-illustration__drop-dot--3 {
   left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
-  transition-delay: 5760ms;
+  transition-delay: 720ms;
 }
 
 .solvency-illustration__drop-dot--4 {
   left: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
-  transition-delay: 8640ms;
+  transition-delay: 0ms;
 }
 
 .landing-section--exposure-active .solvency-illustration__drop-dot--1 {
   top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 0ms;
 }
 
 .landing-section--exposure-active .solvency-illustration__drop-dot--2 {
   top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 720ms;
 }
 
 .landing-section--exposure-active .solvency-illustration__drop-dot--3 {
   top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 1440ms;
 }
 
 .landing-section--exposure-active .solvency-illustration__drop-dot--4 {
   top: calc(var(--solvency-cell-size) + var(--solvency-gap) + var(--solvency-dot-inset));
+  transition-delay: 2160ms;
 }
 
 .solvency-illustration__cell {
@@ -927,12 +931,9 @@ a {
   background: var(--plether-cream);
 }
 
-.landing-section--trust-active .trust__marker > span {
+.landing-section--trust-active .trust__marker:not(.trust__marker--bottom) > span,
+.trust__marker--scroll-active > span {
   animation: trust-marker-spin 500ms ease-out;
-}
-
-.landing-section--trust-active .trust__marker--bottom > span {
-  animation-delay: 1000ms;
 }
 
 .trust__marker--bottom {
@@ -1352,8 +1353,12 @@ a {
 
 @keyframes footer-logomark-morph {
   0%,
-  41.8% {
+  26% {
     transform: rotate(0deg) scale(1);
+  }
+
+  42% {
+    transform: rotate(196deg) scale(1);
   }
 
   51.7%,
@@ -1395,12 +1400,12 @@ a {
 
 @keyframes footer-logomark-square-top-center {
   0%,
-  16% {
+  10% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  19.1%,
+  12.6%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1409,12 +1414,12 @@ a {
 
 @keyframes footer-logomark-square-top-right {
   0%,
-  19.1% {
+  11.8% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  22.2%,
+  14.4%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1423,12 +1428,12 @@ a {
 
 @keyframes footer-logomark-square-middle-right {
   0%,
-  22.2% {
+  13.6% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  25.2%,
+  16.2%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1437,12 +1442,12 @@ a {
 
 @keyframes footer-logomark-square-bottom-right {
   0%,
-  25.2% {
+  15.4% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  28.3%,
+  18%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1451,12 +1456,12 @@ a {
 
 @keyframes footer-logomark-square-bottom-center {
   0%,
-  28.3% {
+  17.2% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  31.4%,
+  19.8%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1465,12 +1470,12 @@ a {
 
 @keyframes footer-logomark-square-bottom-left {
   0%,
-  31.4% {
+  19% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  34.5%,
+  21.6%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1479,12 +1484,12 @@ a {
 
 @keyframes footer-logomark-square-middle-left {
   0%,
-  34.5% {
+  20.8% {
     opacity: 0;
     transform: scale(0.34);
   }
 
-  37.5%,
+  23.4%,
   100% {
     opacity: 1;
     transform: scale(1);
@@ -1493,12 +1498,12 @@ a {
 
 @keyframes footer-logomark-bottom-right-dot {
   0%,
-  37.5% {
+  22.6% {
     opacity: 0;
     transform: translate(-145.71px, -145.65px) scale(0.34);
   }
 
-  40.6%,
+  25.2%,
   100% {
     opacity: 1;
     transform: translate(-145.71px, -145.65px) scale(1);
