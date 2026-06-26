@@ -5,11 +5,27 @@ const APP_URL = 'https://app.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
-const MANIFESTO_URL = 'https://plether.com/manifesto'
+const MANIFESTO_URL = '/manifesto'
+const MEDIA_KIT_URL = 'https://plether.com/media-kit'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
+const STABLECOINS_URL = 'https://app.rwa.xyz/stablecoins'
+const ECB_STABLECOIN_URL = 'https://x.com/ecb/status/2052644951427805440?s=20'
 const FOOTER_LOGO_SCRUB_END_PROGRESS = 0.517
 const FOOTER_LOGO_DURATION_MS = 10400
+const PRIMITIVE_SCRUB_DISTANCE = 640
+const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
+const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
+const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
+const TRUST_BOTTOM_MARKER_TRIGGER_OFFSET = 250
 type HeaderTheme = 'orange' | 'dark' | 'light'
+const MOBILE_MENU_ITEMS = [
+  { href: APP_URL, label: 'Launch App' },
+  { href: DOCS_URL, label: 'Read Docs' },
+  { href: X_URL, label: 'X' },
+  { href: CORE_REPO_URL, label: 'Github' },
+  { href: MANIFESTO_URL, label: 'Manifesto' },
+  { href: AUDITS_URL, label: 'Audit Reports' },
+]
 const TRUST_ITEMS = [
   {
     title: 'Open Source',
@@ -157,19 +173,22 @@ function FooterBrand() {
 
     brand.style.setProperty('--footer-logo-progress', progress.toFixed(3))
     brand.style.setProperty('--footer-logo-resume-delay', `${(-progress * FOOTER_LOGO_DURATION_MS).toFixed(0)}ms`)
-    brand.style.setProperty('--footer-logo-rotation', (180 * stage(progress, 0.418, 0.517)).toFixed(2))
+    const rotationProgress = stage(progress, 0.26, 0.517)
+    const rotationOvershoot = 16 * Math.sin(Math.PI * rotationProgress) * stage(progress, 0.26, 0.42) * (1 - stage(progress, 0.42, 0.517))
+
+    brand.style.setProperty('--footer-logo-rotation', (180 * rotationProgress + rotationOvershoot).toFixed(2))
     brand.style.setProperty('--footer-logo-center-scale', (0.78 + 0.22 * stage(progress, 0, 0.074)).toFixed(3))
     brand.style.setProperty('--footer-logo-falling-y', (-124 + 124 * fallingProgress).toFixed(2))
     brand.style.setProperty('--footer-logo-falling-opacity', stage(progress, 0.037, 0.062).toFixed(3))
 
-    setRevealVars(brand, 'top-center', progress, 0.16, 0.191)
-    setRevealVars(brand, 'top-right', progress, 0.191, 0.222)
-    setRevealVars(brand, 'middle-right', progress, 0.222, 0.252)
-    setRevealVars(brand, 'bottom-right', progress, 0.252, 0.283)
-    setRevealVars(brand, 'bottom-center', progress, 0.283, 0.314)
-    setRevealVars(brand, 'bottom-left', progress, 0.314, 0.345)
-    setRevealVars(brand, 'middle-left', progress, 0.345, 0.375)
-    setRevealVars(brand, 'dot', progress, 0.375, 0.406)
+    setRevealVars(brand, 'top-center', progress, 0.10, 0.126)
+    setRevealVars(brand, 'top-right', progress, 0.118, 0.144)
+    setRevealVars(brand, 'middle-right', progress, 0.136, 0.162)
+    setRevealVars(brand, 'bottom-right', progress, 0.154, 0.18)
+    setRevealVars(brand, 'bottom-center', progress, 0.172, 0.198)
+    setRevealVars(brand, 'bottom-left', progress, 0.19, 0.216)
+    setRevealVars(brand, 'middle-left', progress, 0.208, 0.234)
+    setRevealVars(brand, 'dot', progress, 0.226, 0.252)
   }
 
   const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
@@ -200,6 +219,32 @@ function DividerDot() {
   return <span className="nav-dot" aria-hidden="true" />
 }
 
+function SiteFooter({ footerRef }: { footerRef?: RefObject<HTMLElement | null> }) {
+  return (
+    <footer ref={footerRef} className="footer">
+      <div className="footer__inner">
+        <FooterBrand />
+        <div className="footer__bottom">
+          <p>© Plether 2026</p>
+          <nav className="footer__nav" aria-label="Footer navigation">
+            <a href={X_URL}>X</a>
+            <DividerDot />
+            <a href={CORE_REPO_URL}>GitHub</a>
+            <DividerDot />
+            <a href={DOCS_URL}>Docs</a>
+            <DividerDot />
+            <a href={MANIFESTO_URL}>Manifesto</a>
+            <DividerDot />
+            <a href={MEDIA_KIT_URL}>Media Kit</a>
+            <DividerDot />
+            <a href={AUDITS_URL}>Audit Reports</a>
+          </nav>
+        </div>
+      </div>
+    </footer>
+  )
+}
+
 function SiteHeader({
   theme,
   headerRef,
@@ -207,19 +252,81 @@ function SiteHeader({
   theme: HeaderTheme
   headerRef: RefObject<HTMLElement | null>
 }) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false)
+
+  useEffect(() => {
+    if (!isMenuOpen) {
+      return
+    }
+
+    const previousOverflow = document.body.style.overflow
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsMenuOpen(false)
+      }
+    }
+
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', closeOnEscape)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', closeOnEscape)
+    }
+  }, [isMenuOpen])
+
   return (
-    <header ref={headerRef} className={`site-header site-header--${theme}`}>
-      <Brand />
-      <nav className="site-nav" aria-label="Primary navigation">
-        <a href={X_URL} aria-label="Plether on X">X</a>
-        <DividerDot />
-        <a href={DOCS_URL}>Docs</a>
-        <DividerDot />
-        <a className="launch-button launch-button--nav" href={APP_URL}>
-          <span className="button-label">Launch App</span>
-        </a>
-      </nav>
-    </header>
+    <>
+      <header ref={headerRef} className={`site-header site-header--${theme}`}>
+        <div className="site-header__inner">
+          <Brand />
+          <nav className="site-nav" aria-label="Primary navigation">
+            <a href={X_URL} aria-label="Plether on X">X</a>
+            <DividerDot />
+            <a href={DOCS_URL}>Docs</a>
+            <DividerDot />
+            <a className="launch-button launch-button--nav" href={APP_URL}>
+              <span className="button-label">Launch App</span>
+            </a>
+          </nav>
+          <button
+            className="mobile-menu-toggle"
+            type="button"
+            aria-label="Open menu"
+            aria-expanded={isMenuOpen}
+            aria-controls="mobile-menu"
+            onClick={() => setIsMenuOpen(true)}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+        </div>
+      </header>
+
+      {isMenuOpen ? (
+        <div className="mobile-menu" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Mobile navigation">
+          <div className="mobile-menu__header">
+            <Brand />
+            <button className="mobile-menu__close" type="button" aria-label="Close menu" onClick={() => setIsMenuOpen(false)}>
+              <span />
+              <span />
+            </button>
+          </div>
+          <nav className="mobile-menu__nav" aria-label="Mobile navigation">
+            {MOBILE_MENU_ITEMS.map((item) => (
+              <a href={item.href} key={item.label} onClick={() => setIsMenuOpen(false)}>
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div className="mobile-menu__bottom">
+            <span className="mobile-menu__mark" aria-hidden="true" />
+            <p>© Plether 2026</p>
+          </div>
+        </div>
+      ) : null}
+    </>
   )
 }
 
@@ -249,8 +356,9 @@ function SplitIllustration() {
 function SolvencyIllustration() {
   return (
     <div className="solvency-illustration" aria-hidden="true">
-      <span className="solvency-illustration__floating-dot" />
-      <span className="solvency-illustration__falling-dot" />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <span className={`solvency-illustration__drop-dot solvency-illustration__drop-dot--${index + 1}`} key={`drop-dot-${index}`} />
+      ))}
       {Array.from({ length: 9 }).map((_, index) => (
         <span className={`solvency-illustration__cell solvency-illustration__cell--${index + 1}`} key={index} />
       ))}
@@ -323,25 +431,66 @@ function SolidityCodeBlock({ code }: { code: string }) {
   )
 }
 
-export function App() {
+function LandingPage() {
   const headerRef = useRef<HTMLElement | null>(null)
   const primitiveSectionRef = useRef<HTMLElement | null>(null)
   const exposureSectionRef = useRef<HTMLElement | null>(null)
   const builtSectionRef = useRef<HTMLElement | null>(null)
   const trustSectionRef = useRef<HTMLElement | null>(null)
+  const trustBottomMarkerRef = useRef<HTMLSpanElement | null>(null)
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
+  const primitiveMarkProgressRef = useRef(0)
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
+  const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
+  const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
+  const [isTrustAnimationActive, setIsTrustAnimationActive] = useState(false)
+  const [isTrustBottomMarkerActive, setIsTrustBottomMarkerActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
-  const [trustSpinKey, setTrustSpinKey] = useState(0)
-
-  const spinTrustMarkers = () => {
-    setTrustSpinKey((currentKey) => currentKey + 1)
-  }
 
   useEffect(() => {
+    let reducedMotionQuery: MediaQueryList | null = null
+    let mobileQuery: MediaQueryList | null = null
+
+    const clampProgress = (value: number) => Math.min(1, Math.max(0, value))
+    const getHeaderHeight = () => headerRef.current?.offsetHeight ?? 0
+    const getPrimitiveTriggerY = () => {
+      const primitiveSection = primitiveSectionRef.current
+
+      if (!primitiveSection) {
+        return 0
+      }
+
+      return primitiveSection.offsetTop - getHeaderHeight()
+    }
+    const getScrubDistance = () => mobileQuery?.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
+    const shouldReduceMotion = () => reducedMotionQuery?.matches ?? false
+    const setPrimitiveProgress = (nextProgress: number) => {
+      const clampedProgress = clampProgress(nextProgress)
+
+      if (Math.abs(primitiveMarkProgressRef.current - clampedProgress) < 0.001) {
+        return
+      }
+
+      primitiveMarkProgressRef.current = clampedProgress
+      setPrimitiveMarkProgress(clampedProgress)
+    }
+    const updatePrimitiveLayoutVars = () => {
+      document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
+      document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
+    }
+    const updatePrimitiveProgress = () => {
+      const triggerY = getPrimitiveTriggerY()
+
+      if (shouldReduceMotion()) {
+        setPrimitiveProgress(window.scrollY >= triggerY ? 1 : 0)
+        return
+      }
+
+      setPrimitiveProgress((window.scrollY - triggerY) / getScrubDistance())
+    }
     const updateHeaderTheme = () => {
       const header = headerRef.current
       const sections = [
@@ -358,19 +507,8 @@ export function App() {
         return
       }
 
-      const primitiveSection = primitiveSectionRef.current
-      const primitiveMark = primitiveSection?.querySelector<HTMLElement>('.primitive__mark')
-
-      if (primitiveSection && primitiveMark) {
-        const headerHeight = header.offsetHeight
-        const markTop = primitiveMark.getBoundingClientRect().top
-        const sectionTop = primitiveSection.getBoundingClientRect().top
-        const start = window.innerHeight
-        const end = markTop - (sectionTop - headerHeight)
-        const nextProgress = Math.min(1, Math.max(0, (start - markTop) / (start - end || 1)))
-
-        setPrimitiveMarkProgress(nextProgress)
-      }
+      updatePrimitiveLayoutVars()
+      updatePrimitiveProgress()
 
       let activeSection: (typeof sections)[number] | undefined
 
@@ -384,15 +522,31 @@ export function App() {
       }
 
       setHeaderTheme(activeSection?.theme ?? 'orange')
+      setIsExposureAnimationActive((exposureSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsTrustAnimationActive((trustSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
+      setIsTrustBottomMarkerActive((trustBottomMarkerRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + TRUST_BOTTOM_MARKER_TRIGGER_OFFSET + 1)
     }
+    const handleReducedMotionChange = () => {
+      updateHeaderTheme()
+    }
+
+    reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
+    mobileQuery = window.matchMedia(PRIMITIVE_MOBILE_MEDIA)
 
     updateHeaderTheme()
     window.addEventListener('scroll', updateHeaderTheme, { passive: true })
     window.addEventListener('resize', updateHeaderTheme)
+    reducedMotionQuery.addEventListener('change', handleReducedMotionChange)
+    mobileQuery.addEventListener('change', updateHeaderTheme)
 
     return () => {
       window.removeEventListener('scroll', updateHeaderTheme)
       window.removeEventListener('resize', updateHeaderTheme)
+      reducedMotionQuery?.removeEventListener('change', handleReducedMotionChange)
+      mobileQuery?.removeEventListener('change', updateHeaderTheme)
+      document.documentElement.style.removeProperty('--site-header-height')
+      document.documentElement.style.removeProperty('--primitive-scroll-space')
     }
   }, [])
 
@@ -403,12 +557,12 @@ export function App() {
       <section className="landing-section landing-section--hero">
         <div className="hero" aria-labelledby="hero-title">
           <div className="hero__copy">
-            <h1 id="hero-title">Trade &amp; hedge<br />dollar index perpetuals.</h1>
+            <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" />perpetuals.</h1>
           </div>
 
           <div className="hero__bottom">
             <div className="hero__actions">
-              <p>Immutable contracts. No ADL.<br />MEV-resistant. Settled in USDC.</p>
+              <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDC.</p>
               <div className="button-row">
                 <a className="launch-button" href={APP_URL}>
                   <span className="button-label">Launch App</span>
@@ -449,7 +603,7 @@ export function App() {
 
       <section
         ref={exposureSectionRef}
-        className="landing-section landing-section--exposure"
+        className={`landing-section landing-section--exposure${isExposureAnimationActive ? ' landing-section--exposure-active' : ''}`}
         aria-labelledby="exposure-title"
       >
         <div className="exposure">
@@ -480,7 +634,7 @@ export function App() {
 
       <section
         ref={builtSectionRef}
-        className="landing-section landing-section--built"
+        className={`landing-section landing-section--built${isBuiltAnimationActive ? ' landing-section--built-active' : ''}`}
         aria-labelledby="built-title"
       >
         <div className="built">
@@ -515,12 +669,12 @@ export function App() {
 
       <section
         ref={trustSectionRef}
-        className="landing-section landing-section--trust"
+        className={`landing-section landing-section--trust${isTrustAnimationActive ? ' landing-section--trust-active' : ''}`}
         aria-labelledby="trust-title"
       >
         <div className="trust">
-          <span className={`trust__marker${trustSpinKey > 0 ? ' trust__marker--spin' : ''}`} aria-hidden="true">
-            <span key={`trust-top-${trustSpinKey}`} />
+          <span className="trust__marker" aria-hidden="true">
+            <span />
           </span>
           <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
           <div className="trust-list" role="list">
@@ -532,8 +686,6 @@ export function App() {
                   className={`trust-item${expandedTrustIndex === index ? ' trust-item--expanded' : ''}`}
                   role="listitem"
                   key={item.title}
-                  onFocus={spinTrustMarkers}
-                  onMouseEnter={spinTrustMarkers}
                 >
                   <button
                     className="trust-item__button"
@@ -542,7 +694,6 @@ export function App() {
                     aria-expanded={expandedTrustIndex === index}
                     onClick={() => {
                       setExpandedTrustIndex((currentIndex) => (currentIndex === index ? null : index))
-                      spinTrustMarkers()
                     }}
                   >
                     {item.title}
@@ -557,10 +708,11 @@ export function App() {
             })}
           </div>
           <span
-            className={`trust__marker trust__marker--bottom${trustSpinKey > 0 ? ' trust__marker--spin' : ''}`}
+            ref={trustBottomMarkerRef}
+            className={`trust__marker trust__marker--bottom${isTrustBottomMarkerActive ? ' trust__marker--scroll-active' : ''}`}
             aria-hidden="true"
           >
-            <span key={`trust-bottom-${trustSpinKey}`} />
+            <span />
           </span>
         </div>
       </section>
@@ -602,24 +754,43 @@ export function App() {
           </a>
         </div>
 
-        <footer ref={footerRef} className="footer">
-          <FooterBrand />
-          <div className="footer__bottom">
-            <p>© Plether 2026</p>
-            <nav className="footer__nav" aria-label="Footer navigation">
-              <a href={DOCS_URL}>Docs</a>
-              <DividerDot />
-              <a href={X_URL}>X</a>
-              <DividerDot />
-              <a href={CORE_REPO_URL}>GitHub</a>
-              <DividerDot />
-              <a href={MANIFESTO_URL}>Manifesto</a>
-              <DividerDot />
-              <a href={AUDITS_URL}>Audit Reports</a>
-            </nav>
-          </div>
-        </footer>
+        <SiteFooter footerRef={footerRef} />
       </section>
     </main>
   )
+}
+
+function ManifestoPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  return (
+    <div className="manifesto-shell">
+      <SiteHeader theme="light" headerRef={headerRef} />
+      <main className="manifesto-page" aria-labelledby="manifesto-title">
+        <article className="manifesto">
+          <h1 id="manifesto-title">Manifesto</h1>
+          <div className="manifesto__copy">
+            <p>
+              We believe USD stablecoins already won.{' '}
+              While{' '}
+              <a href={STABLECOINS_URL}>99% of stablecoins are already denominated in dollars</a>
+              , Christine Lagarde from the European Central Bank has called them{' '}
+              <a href={ECB_STABLECOIN_URL}>&quot;not an efficient way to strengthen the international role of the euro.&quot;</a>{' '}
+              Stablecoins became the working balance sheet of onchain finance. That balance sheet is denominated in dollars.
+            </p>
+            <p>That doesn&apos;t make the dollar fair. It makes it dominant.</p>
+            <p>We&apos;ve watched what happens when you treat dominant money as safe money. Japanese dollar holders lost half their yen purchasing power after the 1985 Plaza Accord. European dollar holders lost 45% of their euro purchasing power during the 2002-2008 DXY collapse. We lived outside the US in 2025, when the dollar index fell 10% and our USDC stayed flat while our rent went up.</p>
+            <p>This isn&apos;t a case against the dollar. The point is that holding any currency you don&apos;t spend is a position, whether you opted in or not.</p>
+            <p>We want to give people the tools to hold the dollar without being silently long it. No investors. No roadmap to extract value from users we haven&apos;t earned.</p>
+            <p>The permissionless, self-custodial, and open-source layer above dollar stablecoins does not yet exist onchain. We are building it. The first instrument is a dollar index. One position to hedge or trade the dollar, powered by the largest stablecoin liquidity. Onchain macro starts here.</p>
+          </div>
+        </article>
+      </main>
+      <SiteFooter />
+    </div>
+  )
+}
+
+export function App() {
+  return window.location.pathname === '/manifesto' ? <ManifestoPage /> : <LandingPage />
 }
