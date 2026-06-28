@@ -65,12 +65,12 @@ export function ConnectButton() {
         <span className={`
           px-2 py-0.5 text-xs font-medium border
           ${isWrongNetwork
-            ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border-cyber-electric-fuchsia/30'
+            ? 'bg-brand-orange/20 text-brand-orange border-brand-orange/30'
             : chainId === sepolia.id || chainId === arbitrumSepolia.id
-              ? 'bg-cyber-warning-bg text-cyber-warning-text border-cyber-warning-text/30'
+              ? 'bg-warning-bg text-warning border-warning/30'
               : chainId === mainnet.id
-                ? 'bg-cyber-neon-green/20 text-cyber-neon-green border-cyber-neon-green/30'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border-cyber-border-glow/30'
+                ? 'bg-positive/20 text-positive border-positive/30'
+                : 'bg-surface-muted text-content-secondary border-brand-border/30'
           }
         `}>
           {isWrongNetwork ? 'Wrong Network' : getNetworkName()}
@@ -110,7 +110,7 @@ export function ConnectButton() {
           title="Open wallet account"
           className={`group ${WALLET_BUTTON_CLASS}`}
         >
-          <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
+          <div className="w-2 h-2 rounded-full bg-positive" />
           <span className="font-medium text-xs sm:text-sm">
             {formatAddress(address ?? '')}
           </span>
@@ -119,7 +119,7 @@ export function ConnectButton() {
         {/* Disconnect button */}
         <button
           onClick={() => { disconnect(); }}
-          className="p-2 text-cyber-text-secondary transition-colors hover:text-cyber-text-primary"
+          className="p-2 text-content-secondary transition-colors hover:text-content-primary"
           title="Disconnect"
         >
           <span className="material-symbols-outlined text-xl">logout</span>

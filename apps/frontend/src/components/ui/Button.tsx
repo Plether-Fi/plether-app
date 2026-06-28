@@ -17,13 +17,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    'border border-cyber-neon-green bg-cyber-neon-green text-cyber-bg enabled:hover:border-[#00CC77] enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4',
+    'border border-positive bg-positive text-app-bg enabled:hover:border-[#00CC77] enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4',
   secondary:
-    'border border-cyber-border-glow/30 bg-cyber-surface-light text-cyber-text-primary enabled:hover:border-[#FFAB96] enabled:hover:bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4',
+    'border border-brand-border/30 bg-surface-muted text-content-primary enabled:hover:border-[#FFAB96] enabled:hover:bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4',
   danger:
-    'border border-cyber-electric-fuchsia bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:border-[#CC00AA] enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4',
+    'border border-brand-orange bg-brand-orange text-content-primary enabled:hover:border-[#FF572D] enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4',
   ghost:
-    'border border-transparent bg-transparent text-cyber-text-secondary enabled:hover:bg-[#3B212D] enabled:hover:text-cyber-text-primary enabled:hover:underline enabled:hover:underline-offset-4',
+    'border border-transparent bg-transparent text-content-secondary enabled:hover:bg-[#3B212D] enabled:hover:text-content-primary enabled:hover:underline enabled:hover:underline-offset-4',
 }
 
 const sizeStyles: Record<ButtonSize, string> = {

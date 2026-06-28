@@ -69,8 +69,8 @@ export function SlippageSelector() {
       >
         <div className="space-y-6">
           <div className="space-y-3">
-            <h3 className="text-sm font-medium text-cyber-text-primary">Slippage Tolerance</h3>
-            <p className="text-xs text-cyber-text-secondary">
+            <h3 className="text-sm font-medium text-content-primary">Slippage Tolerance</h3>
+            <p className="text-xs text-content-secondary">
               Transaction reverts if price moves unfavorably by more than this.
             </p>
             <div className="flex gap-2">
@@ -94,16 +94,16 @@ export function SlippageSelector() {
                 onChange={(e) => { handleSlippageCustomChange(e.target.value); }}
                 placeholder={`Custom (max ${String(MAX_SLIPPAGE)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
-                className={isSlippageCustom ? 'border-cyber-bright-blue' : ''}
+                className={isSlippageCustom ? 'border-brand-peach' : ''}
               />
             </div>
           </div>
 
-          <div className="border-t border-cyber-border-glow/30" />
+          <div className="border-t border-brand-border/30" />
 
           <div className="space-y-3">
-            <h3 className="text-sm font-medium text-cyber-text-primary">Max Price Impact</h3>
-            <p className="text-xs text-cyber-text-secondary">
+            <h3 className="text-sm font-medium text-content-primary">Max Price Impact</h3>
+            <p className="text-xs text-content-secondary">
               Warns before trades with price impact exceeding this threshold.
             </p>
             <div className="flex gap-2">
@@ -127,7 +127,7 @@ export function SlippageSelector() {
                 onChange={(e) => { handlePriceImpactCustomChange(e.target.value); }}
                 placeholder={`Custom (max ${String(MAX_PRICE_IMPACT)}%)`}
                 rightElement={<span className="text-gray-400">%</span>}
-                className={isPriceImpactCustom ? 'border-cyber-bright-blue' : ''}
+                className={isPriceImpactCustom ? 'border-brand-peach' : ''}
               />
             </div>
           </div>

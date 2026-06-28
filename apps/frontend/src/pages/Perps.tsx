@@ -88,26 +88,26 @@ export function Perps() {
       const poolLiquidityTooltip = (
         <div className="w-full space-y-2 text-left">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Long capacity</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Long capacity</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Short capacity</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Short capacity</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Minimum order size</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Minimum order size</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Minimum new position</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Minimum new position</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>

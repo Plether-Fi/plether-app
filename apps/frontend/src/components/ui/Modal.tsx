@@ -116,7 +116,7 @@ export function Modal({
     <div className={`fixed inset-0 z-50 flex ${placementClass}`}>
       {/* Backdrop */}
       <div
-        className={`absolute inset-0 bg-cyber-bg/85 backdrop-blur-sm ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
+        className={`absolute inset-0 bg-app-bg/85 backdrop-blur-sm ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
         onClick={closeOnBackdrop ? () => { handleClose('backdrop') } : undefined}
       />
 
@@ -124,21 +124,21 @@ export function Modal({
       <div
         className={`
           relative flex max-h-[calc(100dvh-2rem)] w-full ${sizeStyles[size]} flex-col
-          bg-cyber-surface-dark  border border-cyber-border-glow/50
+          bg-surface-panel  border border-brand-border/50
           ${contentClassName}
         `}
         role="dialog"
         aria-modal="true"
       >
         {hasHeader ? (
-          <div className="relative shrink-0 border-b border-cyber-border-glow/30 px-6 py-4">
+          <div className="relative shrink-0 border-b border-brand-border/30 px-6 py-4">
             {title ? (
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
+                <h2 className="text-lg font-semibold text-content-primary">{title}</h2>
                 {showCloseButton ? (
                   <button
                     onClick={() => { handleClose('close_button') }}
-                    className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
+                    className="text-content-secondary hover:text-[#FFAB96] transition-colors"
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
@@ -147,7 +147,7 @@ export function Modal({
             ) : showCloseButton ? (
               <button
                 onClick={() => { handleClose('close_button') }}
-                className="absolute right-4 top-3 text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
+                className="absolute right-4 top-3 text-content-secondary hover:text-[#FFAB96] transition-colors"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>

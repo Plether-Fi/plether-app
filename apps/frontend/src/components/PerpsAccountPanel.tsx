@@ -111,15 +111,15 @@ const TRADE_HISTORY: TradeRow[] = [
 ]
 
 function pnlToneClass(tone: PositionRow['tone']): string {
-  if (tone === 'positive') return 'text-cyber-neon-green'
-  if (tone === 'negative') return 'text-cyber-electric-fuchsia'
-  return 'text-cyber-text-primary'
+  if (tone === 'positive') return 'text-positive'
+  if (tone === 'negative') return 'text-brand-orange'
+  return 'text-content-primary'
 }
 
 function positionSideBadgeClass(direction: PerpsPosition['direction']): string {
   return direction === 'long'
-    ? 'border-cyber-neon-green/40 text-cyber-neon-green'
-    : 'border-cyber-electric-fuchsia/40 text-cyber-electric-fuchsia'
+    ? 'border-positive/40 text-positive'
+    : 'border-brand-orange/40 text-brand-orange'
 }
 
 function formatLiquidationDistance(currentPrice?: bigint, liquidationPrice?: bigint): string | undefined {
@@ -174,7 +174,7 @@ function LiquidationPriceValue({
 }) {
   if (liquidationPrice === undefined) {
     return (
-      <span className="text-base font-medium text-cyber-text-secondary">
+      <span className="text-base font-medium text-content-secondary">
         Not in range
       </span>
     )
@@ -186,7 +186,7 @@ function LiquidationPriceValue({
     <span className="inline-flex flex-col items-start gap-1">
       <span>{formatDisplayDxyPrice(liquidationPrice)}</span>
       {distance ? (
-        <span className="text-xs font-medium text-cyber-text-secondary">{distance}</span>
+        <span className="text-xs font-medium text-content-secondary">{distance}</span>
       ) : null}
     </span>
   )
@@ -194,24 +194,24 @@ function LiquidationPriceValue({
 
 function EmptyState({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg">
-      <span className="text-sm text-cyber-text-secondary">No {label.toLowerCase()}</span>
+    <div className="flex min-h-[150px] items-center justify-center border border-brand-border/20 bg-app-bg">
+      <span className="text-sm text-content-secondary">No {label.toLowerCase()}</span>
     </div>
   )
 }
 
 function LoadingState({ label }: { label: string }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center border border-cyber-border-glow/20 bg-cyber-bg">
-      <span className="text-sm text-cyber-text-secondary">Loading {label.toLowerCase()}...</span>
+    <div className="flex min-h-[150px] items-center justify-center border border-brand-border/20 bg-app-bg">
+      <span className="text-sm text-content-secondary">Loading {label.toLowerCase()}...</span>
     </div>
   )
 }
 
 function ErrorState({ message }: { message: string }) {
   return (
-    <div className="flex min-h-[150px] items-center justify-center border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-4">
-      <span className="text-sm text-cyber-electric-fuchsia">{message}</span>
+    <div className="flex min-h-[150px] items-center justify-center border border-brand-orange/30 bg-brand-orange/10 p-4">
+      <span className="text-sm text-brand-orange">{message}</span>
     </div>
   )
 }
@@ -223,8 +223,8 @@ function isPositionMarginInput(value: string): boolean {
 function AccountSummaryRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-4 text-sm">
-      <dt className="text-cyber-text-secondary">{label}</dt>
-      <dd className="text-right font-semibold text-cyber-text-primary">{value}</dd>
+      <dt className="text-content-secondary">{label}</dt>
+      <dd className="text-right font-semibold text-content-primary">{value}</dd>
     </div>
   )
 }
@@ -244,7 +244,7 @@ function AccountMetric({
 }) {
   return (
     <div className="min-w-0">
-      <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-cyber-text-secondary">
+      <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
         <span>{label}</span>
         {tooltip ? (
           <Tooltip
@@ -253,7 +253,7 @@ function AccountMetric({
             className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
           >
             <span
-              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+              className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
               aria-label={`${label} details`}
               tabIndex={0}
             >
@@ -288,8 +288,8 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
   if (secondsToExpiry === undefined) {
     return (
       <div>
-        <div className="font-semibold text-cyber-text-primary">Pending</div>
-        <div className="mt-1 text-xs text-cyber-text-secondary">Waiting for reveal</div>
+        <div className="font-semibold text-content-primary">Pending</div>
+        <div className="mt-1 text-xs text-content-secondary">Waiting for reveal</div>
       </div>
     )
   }
@@ -297,16 +297,16 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
   if (secondsToExpiry <= 0) {
     return (
       <div>
-        <div className="font-semibold text-cyber-electric-fuchsia">Expired</div>
-        <div className="mt-1 text-xs text-cyber-text-secondary">Clean up to release reserved margin</div>
+        <div className="font-semibold text-brand-orange">Expired</div>
+        <div className="mt-1 text-xs text-content-secondary">Clean up to release reserved margin</div>
       </div>
     )
   }
 
   return (
     <div>
-      <div className="font-semibold text-cyber-text-primary">Pending reveal</div>
-      <div className="mt-1 text-xs text-cyber-text-secondary">
+      <div className="font-semibold text-content-primary">Pending reveal</div>
+      <div className="mt-1 text-xs text-content-secondary">
         Expires in {formatDuration(secondsToExpiry)}
       </div>
     </div>
@@ -314,7 +314,7 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
 }
 
 function TxLink({ hash }: { hash?: string }) {
-  if (!hash) return <span className="text-cyber-text-secondary">--</span>
+  if (!hash) return <span className="text-content-secondary">--</span>
 
   return (
     <a
@@ -323,7 +323,7 @@ function TxLink({ hash }: { hash?: string }) {
       href={getExplorerTxUrl(PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, hash)}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex h-5 w-5 items-center justify-center text-cyber-text-secondary transition-colors hover:text-[#FFAB96]"
+      className="inline-flex h-5 w-5 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
     >
       <span className="material-symbols-outlined !text-[16px] !leading-none">open_in_new</span>
     </a>
@@ -448,7 +448,7 @@ function PositionView({
       type="button"
       aria-label="Edit position margin"
       title="Edit position margin"
-      className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center border border-cyber-border-glow/30 bg-cyber-bg text-cyber-text-secondary transition-colors hover:border-[#FFAB96] hover:text-[#FFAB96]"
+      className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center border border-brand-border/30 bg-app-bg text-content-secondary transition-colors hover:border-[#FFAB96] hover:text-[#FFAB96]"
       onClick={() => {
         setPositionMarginError(undefined)
         setPositionMarginStatus('idle')
@@ -460,14 +460,14 @@ function PositionView({
   )
 
   return (
-    <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
+    <div className="border border-brand-border/20 bg-app-bg p-4">
       <div className="mb-4">
-        <div className="text-xs font-medium uppercase text-cyber-text-secondary">Current Position</div>
+        <div className="text-xs font-medium uppercase text-content-secondary">Current Position</div>
         <div className="mt-2 flex items-center gap-3">
           <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
             {currentPosition.side}
           </span>
-          <div className="mt-1 text-lg font-semibold text-cyber-text-primary">{currentPosition.market}</div>
+          <div className="mt-1 text-lg font-semibold text-content-primary">{currentPosition.market}</div>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
@@ -497,7 +497,7 @@ function PositionView({
           tooltip={pendingCarryTooltip}
         />
       </div>
-      <p className="mt-4 border-t border-cyber-border-glow/20 pt-3 text-sm leading-5 text-cyber-text-secondary">
+      <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
         <span>Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure.</span>
         {' '}
         <span>This is a shared-collateral account, so free margin outside the position can still protect it from liquidation.</span>
@@ -509,11 +509,11 @@ function PositionView({
         size="md"
       >
         <div className="space-y-5">
-          <p className="text-sm leading-5 text-cyber-text-secondary">
+          <p className="text-sm leading-5 text-content-secondary">
             This locks free USDC into the current position margin bucket. It does not change position size.
           </p>
 
-          <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4 text-sm leading-5 text-cyber-text-secondary">
+          <div className="border border-brand-border/20 bg-app-bg p-4 text-sm leading-5 text-content-secondary">
             Direct margin removal is not supported. Reducing or closing the position
             releases position margin proportionally.
           </div>
@@ -537,7 +537,7 @@ function PositionView({
           <div className="-mt-3 flex justify-end">
             <button
               type="button"
-              className="cursor-pointer text-xs font-semibold text-cyber-text-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+              className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
               disabled={positionMarginLimitRaw <= 0n || positionMarginStatus === 'pending'}
               onClick={() => {
                 setPositionMarginAmount(formatPerpsUsdc(positionMarginLimitRaw, 6))
@@ -548,7 +548,7 @@ function PositionView({
             </button>
           </div>
 
-          <dl className="space-y-2 border border-cyber-border-glow/20 bg-cyber-bg p-4">
+          <dl className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
             <AccountSummaryRow label="Free margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginLimitRaw)} />} />
             <AccountSummaryRow label="Current position margin" value={<TokenAmount amount={formatPerpsUsdc(position.marginUsdc)} />} />
             <AccountSummaryRow label="Added margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginAmountRaw)} />} />
@@ -612,8 +612,8 @@ function OrdersView({
     <div className="space-y-3">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[760px] text-left">
-          <thead className="text-xs uppercase text-cyber-text-secondary">
-            <tr className="border-b border-cyber-border-glow/20">
+          <thead className="text-xs uppercase text-content-secondary">
+            <tr className="border-b border-brand-border/20">
               {includeStatus ? <th className="py-3 font-medium">Order ID</th> : null}
               {includeStatus ? <th className="py-3 font-medium">Time</th> : null}
               <th className="py-3 font-medium">Market</th>
@@ -628,7 +628,7 @@ function OrdersView({
               {!includeStatus ? <th className="py-3 text-right font-medium">Action</th> : null}
             </tr>
           </thead>
-          <tbody className="divide-y divide-cyber-border-glow/10 text-sm text-cyber-text-primary">
+          <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
             {rows.map((row) => {
               const secondsToExpiry = row.expiryTime === undefined || nowSeconds === undefined
                 ? undefined
@@ -638,7 +638,7 @@ function OrdersView({
 
               return (
                 <tr key={`${row.market}-${row.side}-${row.type}-${row.price}-${row.orderId?.toString() ?? 'mock'}`}>
-                  {includeStatus ? <td className="py-4 font-mono text-xs text-cyber-text-secondary">{row.orderId?.toString() ?? '--'}</td> : null}
+                  {includeStatus ? <td className="py-4 font-mono text-xs text-content-secondary">{row.orderId?.toString() ?? '--'}</td> : null}
                   {includeStatus ? <td className="py-4">{row.time ?? '--'}</td> : null}
                   <td className="py-4 font-semibold">{row.market}</td>
                   <td className="py-4">{row.side}</td>
@@ -667,7 +667,7 @@ function OrdersView({
                           Clean Up
                         </Button>
                       ) : (
-                        <span className="text-xs text-cyber-text-secondary">
+                        <span className="text-xs text-content-secondary">
                           Cancel unavailable
                         </span>
                       )}
@@ -680,7 +680,7 @@ function OrdersView({
         </table>
       </div>
       {cleanupError ? (
-        <div className="border border-cyber-electric-fuchsia/30 bg-cyber-electric-fuchsia/10 p-3 text-sm text-cyber-electric-fuchsia">
+        <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
           {cleanupError}
         </div>
       ) : null}
@@ -694,8 +694,8 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[720px] text-left">
-        <thead className="text-xs uppercase text-cyber-text-secondary">
-          <tr className="border-b border-cyber-border-glow/20">
+        <thead className="text-xs uppercase text-content-secondary">
+          <tr className="border-b border-brand-border/20">
             <th className="py-3 font-medium">Time</th>
             <th className="py-3 font-medium">Market</th>
             <th className="py-3 font-medium">Action</th>
@@ -705,7 +705,7 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
             <th className="py-3 text-right font-medium">Tx</th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-cyber-border-glow/10 text-sm text-cyber-text-primary">
+        <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
           {rows.map((row) => (
             <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
               <td className="py-4">{row.time}</td>
@@ -858,8 +858,8 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   }
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-visible">
-      <div className="border-b border-cyber-border-glow/20 px-4 pt-4">
+    <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
+      <div className="border-b border-brand-border/20 px-4 pt-4">
         <div className="flex gap-1 overflow-x-auto">
           {ACCOUNT_TABS.map((tab) => (
             <button
@@ -869,7 +869,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
               className={`shrink-0 px-4 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                 activeTab === tab.id
                   ? 'border-b-2 border-[#FFAB96] text-[#FFAB96]'
-                  : 'text-cyber-text-secondary hover:text-cyber-text-primary'
+                  : 'text-content-secondary hover:text-content-primary'
               }`}
               onClick={() => {
                 setActiveTab(tab.id)

@@ -72,8 +72,9 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
   const handleAction = mode === 'stake' ? handleStake : handleUnstake
 
   const isBear = side === 'BEAR'
-  const textColor = isBear ? 'text-cyber-electric-fuchsia' : 'text-cyber-neon-green'
-  const bgColor = isBear ? 'bg-cyber-electric-fuchsia' : 'bg-cyber-neon-green'
+  const textColor = isBear ? 'text-brand-orange' : 'text-positive'
+  const bgColor = isBear ? 'bg-brand-orange' : 'bg-positive'
+  const activeBorderColor = isBear ? 'border-brand-orange/50' : 'border-positive/50'
 
   const balance = mode === 'stake' ? tokenBalance : stakedBalance
   const insufficientBalance = amountBigInt > balance
@@ -94,34 +95,34 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
     isStakePending || isUnstakePending || insufficientBalance
 
   return (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
-      <div className={`px-6 py-4 border-b border-cyber-border-glow/30 ${isBear ? 'bg-cyber-electric-fuchsia/10' : 'bg-cyber-neon-green/10'}`}>
+    <div className="bg-surface-panel border border-brand-border/30 overflow-hidden">
+      <div className={`px-6 py-4 border-b border-brand-border/30 ${isBear ? 'bg-brand-orange/10' : 'bg-positive/10'}`}>
         <div className="flex items-center gap-3">
           <TokenIcon side={side} />
           <div>
             <h3 className={`font-semibold ${textColor}`}>plDXY-{side} Staking</h3>
-            <p className="text-xs text-cyber-text-secondary">Stake to use as collateral</p>
+            <p className="text-xs text-content-secondary">Stake to use as collateral</p>
           </div>
         </div>
       </div>
 
       <div className="p-6 space-y-6">
-        <div className={`bg-cyber-surface-light p-4 border ${isBear ? 'border-cyber-electric-fuchsia/30' : 'border-cyber-neon-green/30'}`}>
+        <div className={`bg-surface-muted p-4 border ${isBear ? 'border-brand-orange/30' : 'border-positive/30'}`}>
           <div className="flex justify-between items-center">
-            <span className="text-cyber-text-secondary text-sm">Staked Balance</span>
+            <span className="text-content-secondary text-sm">Staked Balance</span>
             <span className={`${textColor} font-semibold`}>
               {formatAmount(stakedBalance, SHARE_DECIMALS)} splDXY-{side}
             </span>
           </div>
         </div>
 
-        <div className="bg-cyber-surface-light p-1 flex text-sm font-medium border border-cyber-border-glow/30">
+        <div className="bg-surface-muted p-1 flex text-sm font-medium border border-brand-border/30">
           <button
             onClick={() => { setMode('stake'); setAmount('') }}
             className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'stake'
-                ? `bg-cyber-surface-dark ${textColor} border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
-                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
+                ? `bg-surface-panel ${textColor} border ${activeBorderColor}`
+                : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >
             Stake
@@ -130,8 +131,8 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
             onClick={() => { setMode('unstake'); setAmount('') }}
             className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'unstake'
-                ? `bg-cyber-surface-dark ${textColor} border border-${isBear ? 'cyber-electric-fuchsia' : 'cyber-neon-green'}/50`
-                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
+                ? `bg-surface-panel ${textColor} border ${activeBorderColor}`
+                : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >
             Unstake
@@ -159,7 +160,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         <button
           onClick={() => { handleAction() }}
           disabled={isDisabled}
-          className={`w-full ${bgColor} ${isBear ? 'text-cyber-text-primary enabled:hover:bg-[#CC00AA]' : 'text-cyber-bg enabled:hover:bg-[#00CC77]'} px-6 py-4 text-lg font-semibold transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50`}
+          className={`w-full ${bgColor} ${isBear ? 'text-content-primary enabled:hover:bg-[#FF572D]' : 'text-app-bg enabled:hover:bg-[#00CC77]'} px-6 py-4 text-lg font-semibold transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50`}
         >
           {getButtonText()}
         </button>

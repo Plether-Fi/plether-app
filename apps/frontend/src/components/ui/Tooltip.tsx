@@ -126,8 +126,8 @@ export function Tooltip({ content, children, position = 'top', className = '' }:
             role="tooltip"
             style={tooltipStyle}
             className={`
-              pointer-events-none fixed z-[1000] box-border min-w-0 overflow-y-auto break-words border border-cyber-border-glow/50 ${whitespaceClass}
-              bg-cyber-bg px-3 py-2 text-sm normal-case text-cyber-text-primary
+              pointer-events-none fixed z-[1000] box-border min-w-0 overflow-y-auto break-words border border-brand-border/50 ${whitespaceClass}
+              bg-app-bg px-3 py-2 text-sm normal-case text-content-primary
               ${className}
             `}
           >

@@ -37,7 +37,7 @@ function MockSlippageSelector() {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="flex items-center gap-1 text-sm text-cyber-text-secondary hover:text-cyber-text-primary transition-colors"
+        className="flex items-center gap-1 text-sm text-content-secondary hover:text-content-primary transition-colors"
       >
         <span className="material-symbols-outlined text-lg">settings</span>
         <span>{slippage}% slippage</span>
@@ -50,7 +50,7 @@ function MockSlippageSelector() {
         size="sm"
       >
         <div className="space-y-4">
-          <p className="text-sm text-cyber-text-secondary">
+          <p className="text-sm text-content-secondary">
             Your transaction will revert if the price changes unfavorably by more
             than this percentage.
           </p>
@@ -70,7 +70,7 @@ function MockSlippageSelector() {
           </div>
 
           <div>
-            <label className="block text-sm text-cyber-text-secondary mb-1">
+            <label className="block text-sm text-content-secondary mb-1">
               Custom (max {MAX_SLIPPAGE}%)
             </label>
             <Input
@@ -79,8 +79,8 @@ function MockSlippageSelector() {
               value={customValue}
               onChange={(e) => handleCustomChange(e.target.value)}
               placeholder="0.5"
-              rightElement={<span className="text-cyber-text-secondary">%</span>}
-              className={isCustom ? 'border-cyber-neon-green' : ''}
+              rightElement={<span className="text-content-secondary">%</span>}
+              className={isCustom ? 'border-positive' : ''}
             />
           </div>
 
@@ -103,12 +103,12 @@ export const Default: Story = {
 
 export const InContext: Story = {
   render: () => (
-    <div className="bg-cyber-surface-dark p-4 border border-cyber-border-glow/30 max-w-md">
+    <div className="bg-surface-panel p-4 border border-brand-border/30 max-w-md">
       <div className="flex items-center justify-between mb-4">
-        <span className="text-cyber-text-primary font-medium">Swap Settings</span>
+        <span className="text-content-primary font-medium">Swap Settings</span>
         <MockSlippageSelector />
       </div>
-      <p className="text-sm text-cyber-text-secondary">
+      <p className="text-sm text-content-secondary">
         Click the settings button to adjust slippage tolerance.
       </p>
     </div>

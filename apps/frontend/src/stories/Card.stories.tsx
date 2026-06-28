@@ -58,7 +58,7 @@ export const WithHeader: Story = {
           subtitle="This is a subtitle"
           action={<Button size="sm" variant="secondary">Action</Button>}
         />
-        <p className="text-cyber-text-secondary">
+        <p className="text-content-secondary">
           This is the card content with a header component.
         </p>
       </>
@@ -75,7 +75,7 @@ export const WithHeaderNoAction: Story = {
           title="Simple Header"
           subtitle="No action button"
         />
-        <p className="text-cyber-text-secondary">
+        <p className="text-content-secondary">
           Card content goes here.
         </p>
       </>

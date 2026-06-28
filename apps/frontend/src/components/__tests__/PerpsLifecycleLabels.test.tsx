@@ -468,8 +468,8 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Short')).toHaveClass('text-cyber-electric-fuchsia')
-    expect(screen.getByText('Short')).not.toHaveClass('text-cyber-neon-green')
+    expect(screen.getByText('Short')).toHaveClass('text-brand-orange')
+    expect(screen.getByText('Short')).not.toHaveClass('text-positive')
   })
 
   it('does not show position margin edit when there is no connected live position', () => {

@@ -15,13 +15,13 @@ export interface PerpsMarketStatePanelProps {
 function phaseToneClass(phase: PerpsMarketPhase): string {
   switch (phase) {
     case 'open':
-      return 'text-cyber-neon-green'
+      return 'text-positive'
     case 'close-only':
     case 'degraded':
       return 'text-yellow-300'
     case 'closed':
     case 'paused':
-      return 'text-cyber-electric-fuchsia'
+      return 'text-brand-orange'
   }
 }
 
@@ -57,16 +57,16 @@ export function PerpsMarketStatePanel({
   const displayedNextDuration = nextDuration ?? schedule.nextDuration
 
   return (
-    <section className="border border-cyber-border-glow/20 bg-cyber-bg px-4 py-3">
+    <section className="border border-brand-border/20 bg-app-bg px-4 py-3">
       <div className="flex items-start gap-3">
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full bg-current ${phaseToneClass(currentPhase)}`} />
-        <p className="text-xs leading-5 text-cyber-text-secondary">
+        <p className="text-xs leading-5 text-content-secondary">
           <span>Market is </span>
           <PhaseText phase={currentPhase} />
           {displayedCurrentDuration ? (
             <>
               <span> for another </span>
-              <span className="font-medium text-cyber-text-primary">{displayedCurrentDuration}</span>
+              <span className="font-medium text-content-primary">{displayedCurrentDuration}</span>
             </>
           ) : null}
           {displayedNextDuration ? (
@@ -74,7 +74,7 @@ export function PerpsMarketStatePanel({
               <span>. Then </span>
               <PhaseText phase={displayedNextPhase} />
               <span> for </span>
-              <span className="font-medium text-cyber-text-primary">{displayedNextDuration}</span>
+              <span className="font-medium text-content-primary">{displayedNextDuration}</span>
             </>
           ) : null}
           <span>.</span>

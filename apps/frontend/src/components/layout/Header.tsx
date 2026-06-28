@@ -14,7 +14,7 @@ export function Header() {
   const location = useLocation()
 
   return (
-    <header className="border-b border-cyber-border-glow/30 bg-cyber-surface-dark py-4">
+    <header className="border-b border-brand-border/30 bg-surface-panel py-4">
       <div className="w-full px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-10">
           <Link to="/" className="flex items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
@@ -35,7 +35,7 @@ export function Header() {
                     ${
                       isActive
                         ? 'border-[#FF572D] bg-[#FF572D] text-[#FFF5F9]'
-                        : 'border-transparent text-cyber-text-secondary hover:border-[#FF572D]/50 hover:bg-[#FF572D]/15 hover:text-[#FFF5F9]'
+                        : 'border-transparent text-content-secondary hover:border-[#FF572D]/50 hover:bg-[#FF572D]/15 hover:text-[#FFF5F9]'
                     }
                   `}
                 >

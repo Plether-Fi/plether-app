@@ -53,7 +53,7 @@ export const TextLines: Story = {
 
 export const ProfileCard: Story = {
   render: () => (
-    <div className="flex items-center gap-4 p-4 bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="flex items-center gap-4 p-4 bg-surface-panel border border-brand-border/30">
       <Skeleton variant="circular" width={48} height={48} />
       <div className="space-y-2 flex-1">
         <Skeleton variant="text" width="60%" />
@@ -80,7 +80,7 @@ export const GridOfCards: Story = {
 
 export const TableRow: Story = {
   render: () => (
-    <div className="flex items-center gap-4 p-4 bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="flex items-center gap-4 p-4 bg-surface-panel border border-brand-border/30">
       <Skeleton variant="rectangular" width={40} height={40} />
       <Skeleton variant="text" className="flex-1" />
       <Skeleton variant="text" width={80} />

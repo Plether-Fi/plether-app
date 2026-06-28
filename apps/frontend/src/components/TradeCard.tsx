@@ -154,13 +154,13 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
   return (
     <div className="max-w-xl mx-auto space-y-6">
-      <div className="bg-cyber-surface-light p-1 flex text-sm font-medium mb-8 border border-cyber-border-glow/30">
+      <div className="bg-surface-muted p-1 flex text-sm font-medium mb-8 border border-brand-border/30">
         <button
           onClick={() => { setMode('buy'); setInputAmount('') }}
           className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'buy'
-              ? 'bg-cyber-surface-dark text-cyber-bright-blue border border-cyber-bright-blue/50'
-              : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
+              ? 'bg-surface-panel text-brand-peach border border-brand-peach/50'
+              : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >
           Buy
@@ -169,8 +169,8 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           onClick={() => { setMode('sell'); setInputAmount('') }}
           className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'sell'
-              ? 'bg-cyber-surface-dark text-cyber-bright-blue border border-cyber-bright-blue/50'
-              : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
+              ? 'bg-surface-panel text-brand-peach border border-brand-peach/50'
+              : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >
           Sell
@@ -178,29 +178,29 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       </div>
 
       <div className="space-y-2">
-        <label className="text-sm font-medium text-cyber-text-secondary">Select Token</label>
+        <label className="text-sm font-medium text-content-secondary">Select Token</label>
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => { setSelectedToken('BULL'); }}
             className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedToken === 'BULL'
-                ? 'border-2 border-cyber-neon-green bg-cyber-neon-green/10'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-neon-green/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-positive bg-positive/10'
+                : 'border border-brand-border/30 bg-surface-panel hover:border-positive/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedToken === 'BULL' ? 'text-cyber-neon-green' : 'text-cyber-text-primary'}`}>plDXY-BULL</div>
-            <div className={`text-xs mt-1 ${selectedToken === 'BULL' ? 'text-cyber-neon-green/70' : 'text-cyber-text-secondary'}`}>Bullish on USD</div>
+            <div className={`font-semibold ${selectedToken === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
+            <div className={`text-xs mt-1 ${selectedToken === 'BULL' ? 'text-positive/70' : 'text-content-secondary'}`}>Bullish on USD</div>
           </button>
           <button
             onClick={() => { setSelectedToken('BEAR'); }}
             className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
               selectedToken === 'BEAR'
-                ? 'border-2 border-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10'
-                : 'border border-cyber-border-glow/30 bg-cyber-surface-dark hover:border-cyber-electric-fuchsia/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-brand-orange bg-brand-orange/10'
+                : 'border border-brand-border/30 bg-surface-panel hover:border-brand-orange/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedToken === 'BEAR' ? 'text-cyber-electric-fuchsia' : 'text-cyber-text-primary'}`}>plDXY-BEAR</div>
-            <div className={`text-xs mt-1 ${selectedToken === 'BEAR' ? 'text-cyber-electric-fuchsia/70' : 'text-cyber-text-secondary'}`}>Bearish on USD</div>
+            <div className={`font-semibold ${selectedToken === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
+            <div className={`text-xs mt-1 ${selectedToken === 'BEAR' ? 'text-brand-orange/70' : 'text-content-secondary'}`}>Bearish on USD</div>
           </button>
         </div>
       </div>
@@ -215,8 +215,8 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         />
 
         <div className="flex justify-center z-10 relative">
-          <div className="bg-cyber-surface-light w-9 h-9 rounded-full border border-cyber-border-glow/30 flex items-center justify-center">
-            <span className="material-symbols-outlined text-cyber-bright-blue text-lg">arrow_downward</span>
+          <div className="bg-surface-muted w-9 h-9 rounded-full border border-brand-border/30 flex items-center justify-center">
+            <span className="material-symbols-outlined text-brand-peach text-lg">arrow_downward</span>
           </div>
         </div>
 
@@ -228,15 +228,15 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         />
       </div>
 
-      <div className="flex items-center justify-end gap-2 text-xs text-cyber-text-secondary">
+      <div className="flex items-center justify-end gap-2 text-xs text-content-secondary">
         <span className="material-symbols-outlined text-[14px]">settings</span>
         <span>{slippage}% slippage</span>
       </div>
 
-      <div className="border-t border-cyber-border-glow/30 pt-4">
+      <div className="border-t border-brand-border/30 pt-4">
         <button
           onClick={() => { setShowDetails(!showDetails); }}
-          className="flex w-full items-center justify-between text-sm text-cyber-text-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
+          className="flex w-full items-center justify-between text-sm text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
         >
           <span>Swap details</span>
           <span className="material-symbols-outlined text-lg">{showDetails ? 'expand_less' : 'expand_more'}</span>
@@ -244,32 +244,32 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       </div>
 
       {showDetails && (
-        <div className="bg-cyber-surface-light p-3 space-y-2 text-sm border border-cyber-border-glow/30">
+        <div className="bg-surface-muted p-3 space-y-2 text-sm border border-brand-border/30">
           <div className="flex justify-between">
-            <span className="text-cyber-text-secondary">Route</span>
-            <span className="text-cyber-text-primary">
+            <span className="text-content-secondary">Route</span>
+            <span className="text-content-primary">
               {selectedToken === 'BEAR'
                 ? (mode === 'buy' ? 'USDC → Curve → plDXY-BEAR' : 'plDXY-BEAR → Curve → USDC')
                 : (mode === 'buy' ? 'USDC → ZapRouter → plDXY-BULL' : 'plDXY-BULL → ZapRouter → USDC')}
             </span>
           </div>
           <div className="flex justify-between">
-            <span className="text-cyber-text-secondary">Price Impact</span>
+            <span className="text-content-secondary">Price Impact</span>
             <span className={
               priceImpact > 1 ? 'text-red-500' :
-              priceImpact > slippage ? 'text-cyber-warning-text' :
-              'text-cyber-text-primary'
+              priceImpact > slippage ? 'text-warning' :
+              'text-content-primary'
             }>
               {priceImpact > 0 ? `${priceImpact.toFixed(2)}%` : '-'}
             </span>
           </div>
           {selectedToken === 'BULL' && mode === 'buy' && (
             <div className="flex justify-between items-center">
-              <span className="text-cyber-text-secondary flex items-center gap-1">
+              <span className="text-content-secondary flex items-center gap-1">
                 Safety Buffer
                 <InfoTooltip content="Flash loan safety margin. You may receive up to 0.5% of output as BEAR instead of BULL, depending on slippage." />
               </span>
-              <span className="text-cyber-text-primary">0.5%</span>
+              <span className="text-content-primary">0.5%</span>
             </div>
           )}
         </div>
@@ -286,7 +286,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       ) : (
         <button
           disabled
-          className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6 cursor-not-allowed"
+          className="w-full bg-surface-muted text-content-secondary font-semibold py-4 px-6 cursor-not-allowed"
         >
           Connect Wallet to Trade
         </button>
@@ -301,15 +301,15 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <div className="space-y-4">
           <div className="bg-red-500/10 border border-red-500/30 p-4 text-center">
             <div className="text-3xl font-bold text-red-500">{priceImpact.toFixed(2)}%</div>
-            <div className="text-sm text-cyber-text-secondary mt-1">Price Impact</div>
+            <div className="text-sm text-content-secondary mt-1">Price Impact</div>
           </div>
 
-          <p className="text-sm text-cyber-text-secondary">
+          <p className="text-sm text-content-secondary">
             This trade has a price impact of <span className="text-red-500 font-medium">{priceImpact.toFixed(2)}%</span>,
-            which exceeds your maximum threshold of <span className="text-cyber-text-primary font-medium">{maxPriceImpact}%</span>.
+            which exceeds your maximum threshold of <span className="text-content-primary font-medium">{maxPriceImpact}%</span>.
           </p>
 
-          <p className="text-sm text-cyber-text-secondary">
+          <p className="text-sm text-content-secondary">
             You will receive significantly less value than your input. Are you sure you want to proceed?
           </p>
 

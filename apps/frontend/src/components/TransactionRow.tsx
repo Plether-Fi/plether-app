@@ -49,22 +49,22 @@ const typeIcons: Record<TransactionType, string> = {
 }
 
 function getIconColor(type: TransactionType): string {
-  if (type.includes('bear')) return 'text-cyber-electric-fuchsia'
-  if (type.includes('bull')) return 'text-cyber-neon-green'
-  if (type === 'mint') return 'text-cyber-neon-green'
-  if (type === 'burn') return 'text-cyber-warning-text'
-  if (type.includes('morpho')) return 'text-cyber-electric-fuchsia'
-  return 'text-cyber-text-primary'
+  if (type.includes('bear')) return 'text-brand-orange'
+  if (type.includes('bull')) return 'text-positive'
+  if (type === 'mint') return 'text-positive'
+  if (type === 'burn') return 'text-warning'
+  if (type.includes('morpho')) return 'text-brand-orange'
+  return 'text-content-primary'
 }
 
 function getIconBg(type: TransactionType): string {
-  if (type.includes('bear')) return 'bg-cyber-electric-fuchsia/20'
-  if (type.includes('bull')) return 'bg-cyber-neon-green/20'
-  if (type === 'mint') return 'bg-cyber-neon-green/20'
-  if (type === 'burn') return 'bg-cyber-warning-bg'
-  if (type.includes('leverage')) return 'bg-cyber-bright-blue/20'
-  if (type.includes('morpho')) return 'bg-cyber-electric-fuchsia/20'
-  return 'bg-cyber-surface-light'
+  if (type.includes('bear')) return 'bg-brand-orange/20'
+  if (type.includes('bull')) return 'bg-positive/20'
+  if (type === 'mint') return 'bg-positive/20'
+  if (type === 'burn') return 'bg-warning-bg'
+  if (type.includes('leverage')) return 'bg-brand-peach/20'
+  if (type.includes('morpho')) return 'bg-brand-orange/20'
+  return 'bg-surface-muted'
 }
 
 function formatTokenLabel(tokenSymbol: string, amount: bigint): string {
@@ -90,21 +90,21 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
           </span>
         </div>
         <div>
-          <p className="font-semibold text-cyber-text-primary">
+          <p className="font-semibold text-content-primary">
             {typeLabels[transaction.type]}
           </p>
-          <p className="text-sm text-cyber-text-secondary">
+          <p className="text-sm text-content-secondary">
             {formatDate(transaction.timestamp)}
           </p>
         </div>
       </div>
 
       <div className="text-right tabular-nums">
-        <p className="text-cyber-text-primary font-medium">
+        <p className="text-content-primary font-medium">
           {formatAmount(transaction.amount, decimals)}
         </p>
         {transaction.secondaryAmount != null && transaction.secondarySymbol && (
-          <p className="text-xs text-cyber-text-secondary">
+          <p className="text-xs text-content-secondary">
             {formatAmount(transaction.secondaryAmount, transaction.secondarySymbol === 'USDC' ? 6 : 18)}
           </p>
         )}
@@ -123,7 +123,7 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
         href={getExplorerTxUrl(chainId, transaction.hash)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-sm text-cyber-bright-blue hover:text-[#FFAB96]/80 inline-flex items-center gap-1"
+        className="text-sm text-brand-peach hover:text-[#FFAB96]/80 inline-flex items-center gap-1"
       >
         {truncatedHash}
         <span className="material-symbols-outlined text-sm">open_in_new</span>
@@ -132,8 +132,8 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
       <div className={`
         px-3 py-1 rounded-full text-xs font-semibold
         ${transaction.status === 'success'
-          ? 'bg-cyber-neon-green/20 text-cyber-neon-green border border-cyber-neon-green/30'
-          : 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border border-cyber-electric-fuchsia/30'
+          ? 'bg-positive/20 text-positive border border-positive/30'
+          : 'bg-brand-orange/20 text-brand-orange border border-brand-orange/30'
         }
       `}>
         {transaction.status === 'success' ? 'Success' : 'Failed'}

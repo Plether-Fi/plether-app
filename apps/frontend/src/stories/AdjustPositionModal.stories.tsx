@@ -36,7 +36,7 @@ function ModalWrapper({ position }: { position: LeveragePosition }) {
     <>
       <button
         onClick={() => setIsOpen(true)}
-        className="px-4 py-2 bg-cyber-surface-light text-cyber-text-primary border border-cyber-border-glow/30"
+        className="px-4 py-2 bg-surface-muted text-content-primary border border-brand-border/30"
       >
         Open Modal
       </button>

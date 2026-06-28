@@ -61,7 +61,7 @@ describe('Modal analytics', () => {
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenLastCalledWith('escape')
 
-    const backdrop = document.body.querySelector('.absolute.inset-0.cursor-pointer.bg-cyber-bg\\/85')
+    const backdrop = document.body.querySelector('.absolute.inset-0.cursor-pointer.bg-app-bg\\/85')
     expect(backdrop).not.toBeNull()
     fireEvent.click(backdrop!)
     expect(onClose).toHaveBeenLastCalledWith('backdrop')

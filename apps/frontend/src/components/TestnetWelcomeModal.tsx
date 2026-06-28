@@ -62,7 +62,7 @@ export function TestnetWelcomeModal() {
       size="lg"
       bodyClassName="p-0"
     >
-      <div className="space-y-5 p-6 text-sm text-cyber-text-secondary">
+      <div className="space-y-5 p-6 text-sm text-content-secondary">
         <p>
           This is a testnet version of Plether Perps, built for trying deposits, trades, and order
           execution without real funds.
@@ -96,13 +96,13 @@ export function TestnetWelcomeModal() {
         />
 
         {submitError ? (
-          <p className="border border-cyber-electric-fuchsia/40 bg-cyber-electric-fuchsia/10 px-4 py-3 text-sm text-cyber-electric-fuchsia">
+          <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-brand-orange">
             {submitError}
           </p>
         ) : null}
 
         {claim ? (
-          <div className="space-y-2 border border-cyber-neon-green/40 bg-cyber-neon-green/10 px-4 py-3 text-sm text-cyber-text-primary">
+          <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
             <p className="font-medium">
               {claim.status === 'already_claimed'
                 ? 'Mock USDC already claimed for this wallet.'
@@ -112,7 +112,7 @@ export function TestnetWelcomeModal() {
               href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}
               target="_blank"
               rel="noreferrer"
-              className="break-all text-cyber-neon-green hover:underline"
+              className="break-all text-positive hover:underline"
             >
               {claim.txHash}
             </a>
@@ -120,7 +120,7 @@ export function TestnetWelcomeModal() {
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-cyber-border-glow/30 px-6 py-4 sm:flex-row">
+      <div className="flex flex-col gap-3 border-t border-brand-border/30 px-6 py-4 sm:flex-row">
         <Button
           type="button"
           onClick={() => { void requestFunds() }}

@@ -121,8 +121,8 @@ export function Mint() {
   return (
     <div className="space-y-10 max-w-xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-cyber-text-primary mb-1">Mint & Redeem</h1>
-        <p className="text-cyber-text-secondary font-light">Create or redeem plDXY-BEAR + plDXY-BULL pairs</p>
+        <h1 className="text-3xl font-semibold text-content-primary mb-1">Mint & Redeem</h1>
+        <p className="text-content-secondary font-light">Create or redeem plDXY-BEAR + plDXY-BULL pairs</p>
       </div>
 
       {!isProtocolActive && protocolData && mode === 'mint' && (
@@ -131,14 +131,14 @@ export function Mint() {
         </Alert>
       )}
 
-      <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
-        <div className="flex border-b border-cyber-border-glow/30">
+      <div className="bg-surface-panel border border-brand-border/30 overflow-hidden">
+        <div className="flex border-b border-brand-border/30">
           <button
             onClick={() => { setMode('mint'); setInputAmount('') }}
             className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'mint'
-                ? 'bg-cyber-surface-light text-cyber-neon-green border-b-2 border-cyber-neon-green'
-                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
+                ? 'bg-surface-muted text-positive border-b-2 border-positive'
+                : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
             }`}
           >
             <span className="material-symbols-outlined text-xl">add_circle</span>
@@ -148,8 +148,8 @@ export function Mint() {
             onClick={() => { setMode('redeem'); setInputAmount('') }}
             className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'redeem'
-                ? 'bg-cyber-surface-light text-cyber-electric-fuchsia border-b-2 border-cyber-electric-fuchsia'
-                : 'text-cyber-text-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
+                ? 'bg-surface-muted text-brand-orange border-b-2 border-brand-orange'
+                : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
             }`}
           >
             <span className="material-symbols-outlined text-xl">swap_horiz</span>
@@ -174,35 +174,35 @@ export function Mint() {
               />
 
               <div className="flex justify-center z-10 relative">
-                <div className="bg-cyber-surface-light w-9 h-9 rounded-full border border-cyber-border-glow/30 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-cyber-bright-blue text-lg">arrow_downward</span>
+                <div className="bg-surface-muted w-9 h-9 rounded-full border border-brand-border/30 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-brand-peach text-lg">arrow_downward</span>
                 </div>
               </div>
 
-              <div className="bg-cyber-surface-light p-4 space-y-3 border border-cyber-border-glow/30">
-                <p className="text-sm text-cyber-text-secondary">You will receive:</p>
+              <div className="bg-surface-muted p-4 space-y-3 border border-brand-border/30">
+                <p className="text-sm text-content-secondary">You will receive:</p>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BULL" size="sm" />
-                    <span className="text-cyber-neon-green font-medium">plDXY-BULL</span>
+                    <span className="text-positive font-medium">plDXY-BULL</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{inputAmount || '0'}</span>
+                  <span className="text-content-primary font-semibold">{inputAmount || '0'}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BEAR" size="sm" />
-                    <span className="text-cyber-electric-fuchsia font-medium">plDXY-BEAR</span>
+                    <span className="text-brand-orange font-medium">plDXY-BEAR</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{inputAmount || '0'}</span>
+                  <span className="text-content-primary font-semibold">{inputAmount || '0'}</span>
                 </div>
-                <div className="border-t border-cyber-border-glow/30 pt-3 mt-3">
+                <div className="border-t border-brand-border/30 pt-3 mt-3">
                   <div className="flex justify-between items-center">
-                    <span className="text-cyber-text-secondary">USDC required</span>
-                    <span className="text-cyber-text-primary font-semibold text-lg">{outputDisplay} USDC</span>
+                    <span className="text-content-secondary">USDC required</span>
+                    <span className="text-content-primary font-semibold text-lg">{outputDisplay} USDC</span>
                   </div>
                   <div className="flex justify-between items-center text-sm mt-1">
-                    <span className="text-cyber-text-secondary">Your balance</span>
-                    <span className="text-cyber-text-secondary">{formatUsd(usdcBalance)} USDC</span>
+                    <span className="text-content-secondary">Your balance</span>
+                    <span className="text-content-secondary">{formatUsd(usdcBalance)} USDC</span>
                   </div>
                 </div>
               </div>
@@ -211,14 +211,14 @@ export function Mint() {
                 <button
                   onClick={handleMint}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-neon-green text-cyber-bg enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-positive text-app-bg enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {getMintButtonText()}
                 </button>
               ) : (
                 <button
                   disabled
-                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6 cursor-not-allowed"
+                  className="w-full bg-surface-muted text-content-secondary font-semibold py-4 px-6 cursor-not-allowed"
                 >
                   Connect Wallet to Mint
                 </button>
@@ -231,21 +231,21 @@ export function Mint() {
                 You need equal amounts of both tokens.
               </Alert>
 
-              <div className="bg-cyber-surface-light p-4 space-y-3 border border-cyber-border-glow/30">
-                <p className="text-sm text-cyber-text-secondary">Your balances:</p>
+              <div className="bg-surface-muted p-4 space-y-3 border border-brand-border/30">
+                <p className="text-sm text-content-secondary">Your balances:</p>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BULL" size="sm" />
-                    <span className="text-cyber-neon-green font-medium">plDXY-BULL</span>
+                    <span className="text-positive font-medium">plDXY-BULL</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{formatAmount(bullBalance, 18)}</span>
+                  <span className="text-content-primary font-semibold">{formatAmount(bullBalance, 18)}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <div className="flex items-center gap-2">
                     <TokenIcon side="BEAR" size="sm" />
-                    <span className="text-cyber-electric-fuchsia font-medium">plDXY-BEAR</span>
+                    <span className="text-brand-orange font-medium">plDXY-BEAR</span>
                   </div>
-                  <span className="text-cyber-text-primary font-semibold">{formatAmount(bearBalance, 18)}</span>
+                  <span className="text-content-primary font-semibold">{formatAmount(bearBalance, 18)}</span>
                 </div>
               </div>
 
@@ -259,15 +259,15 @@ export function Mint() {
               />
 
               <div className="flex justify-center z-10 relative">
-                <div className="bg-cyber-surface-light w-9 h-9 rounded-full border border-cyber-border-glow/30 flex items-center justify-center">
-                  <span className="material-symbols-outlined text-cyber-bright-blue text-lg">arrow_downward</span>
+                <div className="bg-surface-muted w-9 h-9 rounded-full border border-brand-border/30 flex items-center justify-center">
+                  <span className="material-symbols-outlined text-brand-peach text-lg">arrow_downward</span>
                 </div>
               </div>
 
-              <div className="bg-cyber-surface-light p-4 border border-cyber-border-glow/30">
+              <div className="bg-surface-muted p-4 border border-brand-border/30">
                 <div className="flex justify-between items-center">
-                  <span className="text-cyber-text-secondary">You will receive</span>
-                  <span className="text-cyber-text-primary font-semibold text-lg">{outputDisplay} USDC</span>
+                  <span className="text-content-secondary">You will receive</span>
+                  <span className="text-content-primary font-semibold text-lg">{outputDisplay} USDC</span>
                 </div>
               </div>
 
@@ -275,14 +275,14 @@ export function Mint() {
                 <button
                   onClick={handleRedeem}
                   disabled={isActionDisabled}
-                  className="w-full bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full bg-brand-orange text-content-primary enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {getRedeemButtonText()}
                 </button>
               ) : (
                 <button
                   disabled
-                  className="w-full bg-cyber-surface-light text-cyber-text-secondary font-semibold py-4 px-6 cursor-not-allowed"
+                  className="w-full bg-surface-muted text-content-secondary font-semibold py-4 px-6 cursor-not-allowed"
                 >
                   Connect Wallet to Redeem
                 </button>

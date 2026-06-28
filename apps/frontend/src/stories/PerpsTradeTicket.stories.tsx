@@ -15,7 +15,7 @@ type Story = StoryObj<typeof meta>
 
 function TicketFrame(args: React.ComponentProps<typeof PerpsTradeTicket>) {
   return (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="ml-auto max-w-md">
         <PerpsTradeTicket maintenanceMarginBps={100n} {...args} />
       </div>
