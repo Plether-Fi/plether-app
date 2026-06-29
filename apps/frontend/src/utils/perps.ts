@@ -6,6 +6,15 @@ export type PerpsDirection = 'long' | 'short'
 export type PerpsOracleFreshness = 'fresh' | 'checking' | 'market-closed' | 'stale'
 export const PERPS_DXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_DECIMALS.PRICE)
 
+export interface PerpsBasketComponentPrice {
+  rawPrice: string
+  confidence: string
+  exponent: number
+  inverted: boolean
+  weightBps: number
+  basePrice: string
+}
+
 export function cleanNumericInput(value: string): string {
   return value.replaceAll(' ', '').replaceAll(',', '.')
 }
@@ -137,6 +146,88 @@ function applyBps(price: bigint, bps: number, mode: 'up' | 'down'): bigint {
   const denominator = 10_000n
   if (mode === 'up') return (price * (denominator + bpsInt)) / denominator
   return (price * (denominator - bpsInt)) / denominator
+}
+
+function pow10(exp: number): bigint {
+  if (!Number.isInteger(exp) || exp < 0) return 0n
+  return 10n ** BigInt(exp)
+}
+
+function parseIntegerish(value: string): bigint | undefined {
+  try {
+    return BigInt(value)
+  } catch {
+    return undefined
+  }
+}
+
+function normalizePythPrice(price: bigint, exponent: number): bigint | undefined {
+  if (price <= 0n) return undefined
+  if (exponent === -PERPS_DECIMALS.PRICE) return price
+  if (exponent > -PERPS_DECIMALS.PRICE) return price * pow10(exponent + PERPS_DECIMALS.PRICE)
+  return price / pow10(-PERPS_DECIMALS.PRICE - exponent)
+}
+
+function invertPythPrice(price: bigint, exponent: number): bigint | undefined {
+  if (price <= 0n) return undefined
+  const scaleExponent = 26 - exponent
+  const scaledPrecision = pow10(scaleExponent)
+  if (scaledPrecision <= 0n) return undefined
+  const scaledInverse = (scaledPrecision + price / 2n) / price
+  return scaledInverse / 10n ** 18n
+}
+
+export function confidenceAdjustedBasketPrice(
+  components: readonly PerpsBasketComponentPrice[] | undefined,
+  mode: 'basketUp' | 'basketDown'
+): bigint | undefined {
+  if (!components?.length) return undefined
+
+  let basketPrice = 0n
+  for (const component of components) {
+    const rawPrice = parseIntegerish(component.rawPrice)
+    const confidence = parseIntegerish(component.confidence)
+    const basePrice = parseIntegerish(component.basePrice)
+    if (
+      rawPrice === undefined ||
+      confidence === undefined ||
+      basePrice === undefined ||
+      basePrice <= 0n ||
+      component.weightBps <= 0
+    ) {
+      return undefined
+    }
+
+    const feedPrice = mode === 'basketUp'
+      ? component.inverted ? rawPrice - confidence : rawPrice + confidence
+      : component.inverted ? rawPrice + confidence : rawPrice - confidence
+    if (feedPrice <= 0n) return undefined
+
+    const normalized = component.inverted
+      ? invertPythPrice(feedPrice, component.exponent)
+      : normalizePythPrice(feedPrice, component.exponent)
+    if (normalized === undefined) return undefined
+
+    const weight = BigInt(component.weightBps) * 10n ** 14n
+    basketPrice += (normalized * weight) / (basePrice * 10_000_000_000n)
+  }
+
+  return basketPrice
+}
+
+export function adverseConfidenceBasketPrice({
+  components,
+  direction,
+  isClose,
+}: {
+  components: readonly PerpsBasketComponentPrice[] | undefined
+  direction: PerpsDirection
+  isClose: boolean
+}): bigint | undefined {
+  const basketMode = isClose
+    ? direction === 'long' ? 'basketUp' : 'basketDown'
+    : direction === 'long' ? 'basketDown' : 'basketUp'
+  return confidenceAdjustedBasketPrice(components, basketMode)
 }
 
 export function getPerpsTargetPrice({

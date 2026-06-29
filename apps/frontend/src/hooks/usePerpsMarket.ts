@@ -275,6 +275,7 @@ export function usePerpsMarket() {
         minNewPositionNotionalUsdc: minNewPositionNotionalUsdc(minBountyUsdc, bountyBps),
         baseCarryBps,
         executionFeeBps,
+        basketComponents: latestBasket?.data.components,
       },
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       oracleFreshness,

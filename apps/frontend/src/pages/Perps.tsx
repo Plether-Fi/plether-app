@@ -224,6 +224,7 @@ export function Perps() {
           oraclePriceDisplay={perpsMarket.oraclePrice}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
+          oracleBasketComponents={perpsMarket.raw.basketComponents}
           availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
           availableToTradeAmount={perpsAccount.display.availableToTrade}
           portfolioValueRaw={perpsAccount.equityUsdc}

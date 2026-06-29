@@ -10,6 +10,7 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import {
+  adverseConfidenceBasketPrice,
   directionToPerpsSide,
   dxyExposureFromContractNotional,
   formatDisplayDxyPrice,
@@ -21,6 +22,7 @@ import {
   oraclePriceToDisplayDxyPrice,
   parsePerpsUsdc,
   sizeDeltaToNotionalUsdc,
+  type PerpsBasketComponentPrice,
   type PerpsDirection,
   type PerpsOracleFreshness,
 } from '../utils/perps'
@@ -133,6 +135,7 @@ interface PerpsTradeTicketProps {
   oraclePriceDisplay?: string
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
+  oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
   availableToTradeRaw?: bigint
   availableToTradeAmount?: string
   portfolioValueRaw?: bigint
@@ -181,6 +184,8 @@ const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
 const VPI_PRICE_IMPACT_TOOLTIP =
   'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
+const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
+  'Execution uses the adverse side of the Pyth confidence range, not only the midpoint basket price. This protects the pool from oracle uncertainty and behaves like a small execution spread, but it is not a separate USDC fee.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
@@ -638,6 +643,18 @@ function displayDxyPriceNumber(rawOraclePrice: bigint | undefined): number | und
   if (formatted === '--') return undefined
   const value = Number(formatted.replaceAll(' ', ''))
   return Number.isFinite(value) ? value : undefined
+}
+
+function absBigInt(value: bigint): bigint {
+  return value < 0n ? -value : value
+}
+
+function formatConfidenceSpread(value: bigint | undefined, midpointPrice: bigint | undefined): string {
+  if (value === undefined || midpointPrice === undefined || midpointPrice <= 0n) return 'Unavailable'
+  if (value === 0n) return '0.0000%'
+  const percent = (Number(value) / Number(midpointPrice)) * 100
+  if (!Number.isFinite(percent)) return 'Unavailable'
+  return `~${formatPerpsNumber(percent, 4, 4)}%`
 }
 
 function dxyExposureToSizeDelta(dxyExposureUsdc: bigint, rawOraclePrice: bigint | undefined): bigint | undefined {
@@ -1229,6 +1246,7 @@ export function PerpsTradeTicket({
   oraclePriceDisplay,
   oracleFreshness,
   oracleFreshnessTooltip,
+  oracleBasketComponents,
   availableToTradeRaw,
   availableToTradeAmount,
   portfolioValueRaw,
@@ -1798,6 +1816,15 @@ export function PerpsTradeTicket({
   const previewVpiValue = previewVpiUsdc === undefined
     ? previewLensFallbackValue
     : formatSignedUsdcNoPlus(previewVpiUsdc)
+  const adverseOraclePriceRaw = adverseConfidenceBasketPrice({
+    components: oracleBasketComponents,
+    direction: effectiveOrderDirection,
+    isClose: isReducingCurrentPosition,
+  })
+  const previewOracleConfidenceSpreadRaw = adverseOraclePriceRaw !== undefined && oraclePriceRaw !== undefined
+    ? absBigInt(adverseOraclePriceRaw - oraclePriceRaw)
+    : undefined
+  const previewOracleConfidenceSpreadValue = formatConfidenceSpread(previewOracleConfidenceSpreadRaw, oraclePriceRaw)
   const previewLiquidationPrice = (() => {
     if (!enableLiveTrading) return formatOptionalPrice(liquidationPrice)
     if (openPreview === undefined) return shouldReadTradePreview ? previewLensFallbackValue : PREVIEW_UNAVAILABLE_VALUE
@@ -1847,6 +1874,7 @@ export function PerpsTradeTicket({
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+      { label: 'Oracle confidence spread', value: previewOracleConfidenceSpreadValue, tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
@@ -1868,6 +1896,7 @@ export function PerpsTradeTicket({
       oraclePublishTime,
       nowSeconds,
       previewPrice,
+      previewOracleConfidenceSpreadValue,
       previewContractNotionalUsdc,
       previewExecutionFeeUsdc,
       previewInitialMarginUsdc,
@@ -1925,6 +1954,13 @@ export function PerpsTradeTicket({
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
   const finalVpiLabel = isFinalVpiEstimated ? 'Estimated VPI / Price impact' : 'VPI / Price impact'
   const finalVpiValue = finalVpiUsdc === undefined ? 'Unavailable' : formatSignedUsdcNoPlus(finalVpiUsdc)
+  const finalOracleConfidenceSpreadRaw = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
+    ? absBigInt(finalExecutionPrice - oraclePriceRaw)
+    : previewOracleConfidenceSpreadRaw
+  const finalOracleConfidenceSpreadLabel = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
+    ? 'Oracle confidence spread'
+    : 'Estimated oracle confidence spread'
+  const finalOracleConfidenceSpreadValue = formatConfidenceSpread(finalOracleConfidenceSpreadRaw, oraclePriceRaw)
   const finalPriceDisplay = finalExecutionPrice
     ? formatDisplayDxyPrice(finalExecutionPrice)
     : enableLiveTrading
@@ -2984,7 +3020,8 @@ export function PerpsTradeTicket({
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    { label: finalVpiLabel, value: finalVpiValue, tone: finalVpiUsdc === undefined ? undefined : 'muted', tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+                    { label: finalOracleConfidenceSpreadLabel, value: finalOracleConfidenceSpreadValue, tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP },
+                    { label: finalVpiLabel, value: finalVpiValue, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },

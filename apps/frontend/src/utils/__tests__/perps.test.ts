@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  adverseConfidenceBasketPrice,
+  confidenceAdjustedBasketPrice,
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
   oraclePriceToDisplayDxyPrice,
@@ -28,6 +30,71 @@ describe('DXY display price helpers', () => {
   it('can convert a display DXY price back to raw oracle price for future inputs', () => {
     expect(displayDxyPriceToOraclePrice(101_690_000n)).toBe(98_310_000n)
     expect(displayDxyPriceToOraclePrice(PERPS_DXY_PRICE_CAP)).toBe(0n)
+  })
+})
+
+describe('oracle confidence adjustment helpers', () => {
+  const revealedComponents = [
+    {
+      rawPrice: '114019',
+      confidence: '10',
+      exponent: -5,
+      inverted: false,
+      weightBps: 5760,
+      basePrice: '117500000',
+    },
+    {
+      rawPrice: '161820',
+      confidence: '40',
+      exponent: -3,
+      inverted: true,
+      weightBps: 1360,
+      basePrice: '638000',
+    },
+    {
+      rawPrice: '132134',
+      confidence: '16',
+      exponent: -5,
+      inverted: false,
+      weightBps: 1190,
+      basePrice: '134480000',
+    },
+    {
+      rawPrice: '141891',
+      confidence: '69',
+      exponent: -5,
+      inverted: true,
+      weightBps: 910,
+      basePrice: '72880000',
+    },
+    {
+      rawPrice: '971291',
+      confidence: '408',
+      exponent: -5,
+      inverted: true,
+      weightBps: 420,
+      basePrice: '10860000',
+    },
+    {
+      rawPrice: '80896',
+      confidence: '33',
+      exponent: -5,
+      inverted: true,
+      weightBps: 360,
+      basePrice: '126100000',
+    },
+  ]
+
+  it('computes the adverse upper basket bound from Pyth confidence values', () => {
+    expect(confidenceAdjustedBasketPrice(revealedComponents, 'basketUp')).toBe(97_086_667n)
+  })
+
+  it('chooses the upper basket bound for a short open', () => {
+    expect(adverseConfidenceBasketPrice({
+      components: revealedComponents,
+      direction: 'short',
+      isClose: false,
+    })).toBe(97_086_667n)
   })
 })
 
