@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from 'react'
 import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
 
 const APP_URL = 'https://app.plether.com'
@@ -10,16 +10,15 @@ const MEDIA_KIT_URL = 'https://plether.com/media-kit'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
 const STABLECOINS_URL = 'https://app.rwa.xyz/stablecoins'
 const ECB_STABLECOIN_URL = 'https://x.com/ecb/status/2052644951427805440?s=20'
-const FOOTER_LOGO_SCRUB_END_PROGRESS = 0.517
-const FOOTER_LOGO_DURATION_MS = 10400
 const PRIMITIVE_SCRUB_DISTANCE = 640
 const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
+const TRUST_SCROLL_DISTANCE = 1600
+const TRUST_MOBILE_SCROLL_DISTANCE = 1200
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
-const TRUST_BOTTOM_MARKER_TRIGGER_OFFSET = 250
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const MOBILE_MENU_ITEMS = [
-  { href: APP_URL, label: 'Launch App' },
+  { href: APP_URL, label: 'Launch App', opensInNewWindow: true },
   { href: DOCS_URL, label: 'Read Docs' },
   { href: X_URL, label: 'X' },
   { href: CORE_REPO_URL, label: 'Github' },
@@ -142,75 +141,43 @@ function AnimatedFooterLogomark() {
 
 function FooterBrand() {
   const brandRef = useRef<HTMLDivElement | null>(null)
-  const logotypeRef = useRef<HTMLImageElement | null>(null)
-  const [isScrubbing, setIsScrubbing] = useState(false)
+  const [hasEnteredViewport, setHasEnteredViewport] = useState(false)
 
-  const clamp = (value: number) => Math.min(1, Math.max(0, value))
-  const ease = (value: number) => {
-    const clamped = clamp(value)
-    return clamped * clamped * (3 - 2 * clamped)
-  }
-  const stage = (progress: number, start: number, end: number) => ease((progress - start) / (end - start))
-  const setRevealVars = (brand: HTMLDivElement, name: string, progress: number, start: number, end: number) => {
-    const reveal = stage(progress, start, end)
-
-    brand.style.setProperty(`--footer-logo-${name}-opacity`, reveal.toFixed(3))
-    brand.style.setProperty(`--footer-logo-${name}-scale`, (0.34 + 0.66 * reveal).toFixed(3))
-  }
-
-  const updateScrubProgress = (clientX: number) => {
-    const brand = brandRef.current
-    const logotype = logotypeRef.current
-
-    if (!brand || !logotype) {
+  useEffect(() => {
+    if (hasEnteredViewport) {
       return
     }
 
-    const { left, width } = logotype.getBoundingClientRect()
-    const rawProgress = width > 0 ? (clientX - left) / width : 0
-    const progress = clamp(rawProgress) * FOOTER_LOGO_SCRUB_END_PROGRESS
-    const fallingProgress = stage(progress, 0.037, 0.148)
+    const brand = brandRef.current
 
-    brand.style.setProperty('--footer-logo-progress', progress.toFixed(3))
-    brand.style.setProperty('--footer-logo-resume-delay', `${(-progress * FOOTER_LOGO_DURATION_MS).toFixed(0)}ms`)
-    const rotationProgress = stage(progress, 0.26, 0.517)
-    const rotationOvershoot = 16 * Math.sin(Math.PI * rotationProgress) * stage(progress, 0.26, 0.42) * (1 - stage(progress, 0.42, 0.517))
+    if (!brand) {
+      return
+    }
 
-    brand.style.setProperty('--footer-logo-rotation', (180 * rotationProgress + rotationOvershoot).toFixed(2))
-    brand.style.setProperty('--footer-logo-center-scale', (0.78 + 0.22 * stage(progress, 0, 0.074)).toFixed(3))
-    brand.style.setProperty('--footer-logo-falling-y', (-124 + 124 * fallingProgress).toFixed(2))
-    brand.style.setProperty('--footer-logo-falling-opacity', stage(progress, 0.037, 0.062).toFixed(3))
+    if (!('IntersectionObserver' in window)) {
+      setHasEnteredViewport(true)
+      return
+    }
 
-    setRevealVars(brand, 'top-center', progress, 0.10, 0.126)
-    setRevealVars(brand, 'top-right', progress, 0.118, 0.144)
-    setRevealVars(brand, 'middle-right', progress, 0.136, 0.162)
-    setRevealVars(brand, 'bottom-right', progress, 0.154, 0.18)
-    setRevealVars(brand, 'bottom-center', progress, 0.172, 0.198)
-    setRevealVars(brand, 'bottom-left', progress, 0.19, 0.216)
-    setRevealVars(brand, 'middle-left', progress, 0.208, 0.234)
-    setRevealVars(brand, 'dot', progress, 0.226, 0.252)
-  }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setHasEnteredViewport(true)
+          observer.disconnect()
+        }
+      },
+      { threshold: 0.2 },
+    )
 
-  const handleMouseMove = (event: MouseEvent<HTMLDivElement>) => {
-    setIsScrubbing(true)
-    updateScrubProgress(event.clientX)
-  }
+    observer.observe(brand)
 
-  const handleMouseLeave = () => {
-    setIsScrubbing(false)
-  }
+    return () => observer.disconnect()
+  }, [hasEnteredViewport])
 
   return (
-    <div
-      ref={brandRef}
-      aria-hidden="true"
-      className={`footer__brand${isScrubbing ? ' footer__brand--scrubbing' : ''}`}
-      onMouseEnter={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      onMouseMove={handleMouseMove}
-    >
+    <div aria-hidden="true" className={`footer__brand${hasEnteredViewport ? ' footer__brand--visible' : ''}`} ref={brandRef}>
       <AnimatedFooterLogomark />
-      <img ref={logotypeRef} className="footer__type" src="/logotype.svg" alt="" />
+      <img className="footer__type" src="/logotype.svg" alt="" />
     </div>
   )
 }
@@ -285,7 +252,7 @@ function SiteHeader({
             <DividerDot />
             <a href={DOCS_URL}>Docs</a>
             <DividerDot />
-            <a className="launch-button launch-button--nav" href={APP_URL}>
+            <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noreferrer">
               <span className="button-label">Launch App</span>
             </a>
           </nav>
@@ -315,7 +282,13 @@ function SiteHeader({
           </div>
           <nav className="mobile-menu__nav" aria-label="Mobile navigation">
             {MOBILE_MENU_ITEMS.map((item) => (
-              <a href={item.href} key={item.label} onClick={() => setIsMenuOpen(false)}>
+              <a
+                href={item.href}
+                key={item.label}
+                onClick={() => setIsMenuOpen(false)}
+                target={item.opensInNewWindow ? '_blank' : undefined}
+                rel={item.opensInNewWindow ? 'noreferrer' : undefined}
+              >
                 {item.label}
               </a>
             ))}
@@ -437,7 +410,6 @@ function LandingPage() {
   const exposureSectionRef = useRef<HTMLElement | null>(null)
   const builtSectionRef = useRef<HTMLElement | null>(null)
   const trustSectionRef = useRef<HTMLElement | null>(null)
-  const trustBottomMarkerRef = useRef<HTMLSpanElement | null>(null)
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
@@ -446,8 +418,6 @@ function LandingPage() {
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
   const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
   const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
-  const [isTrustAnimationActive, setIsTrustAnimationActive] = useState(false)
-  const [isTrustBottomMarkerActive, setIsTrustBottomMarkerActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
 
   useEffect(() => {
@@ -466,6 +436,7 @@ function LandingPage() {
       return primitiveSection.offsetTop - getHeaderHeight()
     }
     const getScrubDistance = () => mobileQuery?.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
+    const getTrustScrollDistance = () => mobileQuery?.matches ? TRUST_MOBILE_SCROLL_DISTANCE : TRUST_SCROLL_DISTANCE
     const shouldReduceMotion = () => reducedMotionQuery?.matches ?? false
     const setPrimitiveProgress = (nextProgress: number) => {
       const clampedProgress = clampProgress(nextProgress)
@@ -480,6 +451,7 @@ function LandingPage() {
     const updatePrimitiveLayoutVars = () => {
       document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
       document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
+      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() ? '0px' : `${getTrustScrollDistance()}px`)
     }
     const updatePrimitiveProgress = () => {
       const triggerY = getPrimitiveTriggerY()
@@ -524,8 +496,27 @@ function LandingPage() {
       setHeaderTheme(activeSection?.theme ?? 'orange')
       setIsExposureAnimationActive((exposureSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
       setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
-      setIsTrustAnimationActive((trustSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
-      setIsTrustBottomMarkerActive((trustBottomMarkerRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + TRUST_BOTTOM_MARKER_TRIGGER_OFFSET + 1)
+
+      const trustSection = trustSectionRef.current
+      const trustItems = trustSection ? Array.from(trustSection.querySelectorAll<HTMLElement>('.trust-item')) : []
+
+      if (!trustSection || trustItems.length === 0) {
+        setExpandedTrustIndex(null)
+        return
+      }
+
+      const trustStart = trustSection.offsetTop - header.offsetHeight
+      const trustDistance = shouldReduceMotion() ? 1 : getTrustScrollDistance()
+      const trustEnd = trustStart + trustDistance
+
+      if (window.scrollY < trustStart) {
+        setExpandedTrustIndex(null)
+        return
+      }
+
+      const trustProgress = clampProgress((window.scrollY - trustStart) / Math.max(1, trustEnd - trustStart))
+      const activeTrustIndex = Math.min(trustItems.length - 1, Math.floor(trustProgress * trustItems.length))
+      setExpandedTrustIndex(activeTrustIndex)
     }
     const handleReducedMotionChange = () => {
       updateHeaderTheme()
@@ -547,6 +538,7 @@ function LandingPage() {
       mobileQuery?.removeEventListener('change', updateHeaderTheme)
       document.documentElement.style.removeProperty('--site-header-height')
       document.documentElement.style.removeProperty('--primitive-scroll-space')
+      document.documentElement.style.removeProperty('--trust-scroll-space')
     }
   }, [])
 
@@ -557,14 +549,14 @@ function LandingPage() {
       <section className="landing-section landing-section--hero">
         <div className="hero" aria-labelledby="hero-title">
           <div className="hero__copy">
-            <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" />perpetuals.</h1>
+            <h1 id="hero-title">Trade &amp; hedge<br />dollar index<br className="mobile-only-break" /> perpetuals.</h1>
           </div>
 
           <div className="hero__bottom">
             <div className="hero__actions">
               <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDC.</p>
               <div className="button-row">
-                <a className="launch-button" href={APP_URL}>
+                <a className="launch-button" href={APP_URL} target="_blank" rel="noreferrer">
                   <span className="button-label">Launch App</span>
                 </a>
                 <a className="docs-button" href={DOCS_URL}>
@@ -593,10 +585,7 @@ function LandingPage() {
           </div>
           <h2 id="primitive-title">The dollar&apos;s missing primitive.</h2>
           <p>
-            The dollar is the most-used asset in DeFi<br />
-            and the most-traded asset in global macro,<br />
-            but it has no onchain primitive for taking a position on it.<br />
-            Traders can&apos;t trade it. Holders can&apos;t hedge it. Now you can.
+            The dollar is the most-used asset in DeFi and the most-traded asset in global macro, but it has no onchain primitive for taking a position on it. Traders can&apos;t trade it. Holders can&apos;t hedge it. Now you can.
           </p>
         </div>
       </section>
@@ -669,36 +658,33 @@ function LandingPage() {
 
       <section
         ref={trustSectionRef}
-        className={`landing-section landing-section--trust${isTrustAnimationActive ? ' landing-section--trust-active' : ''}`}
+        className="landing-section landing-section--trust"
         aria-labelledby="trust-title"
       >
         <div className="trust">
-          <span className="trust__marker" aria-hidden="true">
-            <span />
+          <span className={`trust__marker${expandedTrustIndex === null ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
+            <span key={`trust-marker-top-${expandedTrustIndex ?? 'idle'}`} />
           </span>
           <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
           <div className="trust-list" role="list">
             {TRUST_ITEMS.map((item, index) => {
               const panelId = `trust-panel-${index}`
+              const titleId = `trust-title-${index}`
+              const isExpanded = expandedTrustIndex === index
 
               return (
                 <div
-                  className={`trust-item${expandedTrustIndex === index ? ' trust-item--expanded' : ''}`}
+                  className={`trust-item${isExpanded ? ' trust-item--expanded' : ''}`}
                   role="listitem"
                   key={item.title}
                 >
-                  <button
+                  <h3
                     className="trust-item__button"
-                    type="button"
-                    aria-controls={panelId}
-                    aria-expanded={expandedTrustIndex === index}
-                    onClick={() => {
-                      setExpandedTrustIndex((currentIndex) => (currentIndex === index ? null : index))
-                    }}
+                    id={titleId}
                   >
                     {item.title}
-                  </button>
-                  <div className="trust-item__panel" id={panelId}>
+                  </h3>
+                  <div className="trust-item__panel" id={panelId} aria-hidden={!isExpanded} aria-labelledby={titleId}>
                     <div>
                       <p>{item.description}</p>
                     </div>
@@ -708,11 +694,10 @@ function LandingPage() {
             })}
           </div>
           <span
-            ref={trustBottomMarkerRef}
-            className={`trust__marker trust__marker--bottom${isTrustBottomMarkerActive ? ' trust__marker--scroll-active' : ''}`}
+            className={`trust__marker trust__marker--bottom${expandedTrustIndex === null ? '' : ' trust__marker--value-step'}`}
             aria-hidden="true"
           >
-            <span />
+            <span key={`trust-marker-bottom-${expandedTrustIndex ?? 'idle'}`} />
           </span>
         </div>
       </section>
@@ -749,7 +734,7 @@ function LandingPage() {
               here.
             </a>
           </h2>
-          <a className="launch-button cta__button" href={APP_URL}>
+          <a className="launch-button cta__button" href={APP_URL} target="_blank" rel="noreferrer">
             <span className="button-label">Launch App</span>
           </a>
         </div>
