@@ -6,7 +6,7 @@ const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
 const MANIFESTO_URL = '/manifesto'
-const MEDIA_KIT_URL = 'https://plether.com/media-kit'
+const MEDIA_KIT_URL = '/media-kit'
 const AUDITS_URL = 'https://github.com/Plether-Fi/plether-core/tree/master/audits'
 const STABLECOINS_URL = 'https://app.rwa.xyz/stablecoins'
 const ECB_STABLECOIN_URL = 'https://x.com/ecb/status/2052644951427805440?s=20'
@@ -14,6 +14,9 @@ const PRIMITIVE_SCRUB_DISTANCE = 640
 const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
 const TRUST_SCROLL_DISTANCE = 1600
 const TRUST_MOBILE_SCROLL_DISTANCE = 1200
+const EXPOSURE_REPLAY_IDLE_MS = 5000
+const EXPOSURE_REPLAY_TRANSITION_MS = 2880
+const EXPOSURE_REPLAY_REVERSE_PAUSE_MS = 1000
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
 type HeaderTheme = 'orange' | 'dark' | 'light'
@@ -47,6 +50,36 @@ const TRUST_ITEMS = [
     description: 'No identity checks, no approvals, no geofencing at the contract level. Anyone with a wallet can enter and nothing can block your exit.',
   },
 ]
+
+const MEDIA_ASSETS = [
+  { label: 'Logotype', variant: 'logotype' },
+  { label: 'Logo Lockup', variant: 'lockup' },
+  { label: 'Logomark', variant: 'logomark' },
+] as const
+
+const MEDIA_COLORS = [
+  {
+    label: 'Primary Color',
+    colors: [
+      { value: 'var(--plether-orange)', code: '#FF512F' },
+      { value: 'var(--plether-soft-orange)', code: '#FFAB96' },
+    ],
+  },
+  {
+    label: 'Accent Color',
+    colors: [
+      { value: 'var(--plether-yellow)', code: '#F7D977' },
+      { value: '#f7e4b2', code: '#F7E4B2' },
+    ],
+  },
+  {
+    label: 'Dark Color',
+    colors: [
+      { value: 'var(--plether-ink)', code: '#250917' },
+      { value: '#9a8890', code: '#9A8890' },
+    ],
+  },
+] as const
 const SOLIDITY_KEYWORDS = new Set([
   'address',
   'bool',
@@ -417,8 +450,70 @@ function LandingPage() {
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
   const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
+  const [isExposureAnimationReversed, setIsExposureAnimationReversed] = useState(false)
   const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
+
+  useEffect(() => {
+    if (!isExposureAnimationActive) {
+      setIsExposureAnimationReversed(false)
+      return
+    }
+
+    const reducedMotionQuery = window.matchMedia(REDUCED_MOTION_MEDIA)
+
+    if (reducedMotionQuery.matches) {
+      setIsExposureAnimationReversed(false)
+      return
+    }
+
+    let idleTimer: number | undefined
+    let reverseTimer: number | undefined
+    let reversePauseTimer: number | undefined
+    let forwardTimer: number | undefined
+    let isDisposed = false
+
+    const queueReplay = (delayMs = EXPOSURE_REPLAY_IDLE_MS) => {
+      idleTimer = window.setTimeout(() => {
+        if (isDisposed) {
+          return
+        }
+
+        setIsExposureAnimationReversed(true)
+
+        reverseTimer = window.setTimeout(() => {
+          if (isDisposed) {
+            return
+          }
+
+          reversePauseTimer = window.setTimeout(() => {
+            if (isDisposed) {
+              return
+            }
+
+            setIsExposureAnimationReversed(false)
+
+            forwardTimer = window.setTimeout(() => {
+              if (!isDisposed) {
+                queueReplay()
+              }
+            }, EXPOSURE_REPLAY_TRANSITION_MS)
+          }, EXPOSURE_REPLAY_REVERSE_PAUSE_MS)
+        }, EXPOSURE_REPLAY_TRANSITION_MS)
+      }, delayMs)
+    }
+
+    setIsExposureAnimationReversed(false)
+    queueReplay(EXPOSURE_REPLAY_TRANSITION_MS + EXPOSURE_REPLAY_IDLE_MS)
+
+    return () => {
+      isDisposed = true
+      window.clearTimeout(idleTimer)
+      window.clearTimeout(reverseTimer)
+      window.clearTimeout(reversePauseTimer)
+      window.clearTimeout(forwardTimer)
+    }
+  }, [isExposureAnimationActive])
 
   useEffect(() => {
     let reducedMotionQuery: MediaQueryList | null = null
@@ -559,7 +654,7 @@ function LandingPage() {
                 <a className="launch-button" href={APP_URL} target="_blank" rel="noreferrer">
                   <span className="button-label">Launch App</span>
                 </a>
-                <a className="docs-button" href={DOCS_URL}>
+                <a className="docs-button" href={DOCS_URL} target="_blank" rel="noreferrer">
                   <span className="button-label">Read Docs</span>
                 </a>
               </div>
@@ -592,7 +687,7 @@ function LandingPage() {
 
       <section
         ref={exposureSectionRef}
-        className={`landing-section landing-section--exposure${isExposureAnimationActive ? ' landing-section--exposure-active' : ''}`}
+        className={`landing-section landing-section--exposure${isExposureAnimationActive && !isExposureAnimationReversed ? ' landing-section--exposure-active' : ''}`}
         aria-labelledby="exposure-title"
       >
         <div className="exposure">
@@ -776,6 +871,78 @@ function ManifestoPage() {
   )
 }
 
+function MediaAssetPreview({ variant }: { variant: (typeof MEDIA_ASSETS)[number]['variant'] }) {
+  return (
+    <div className="media-kit-preview media-kit-preview--brand">
+      {variant === 'logotype' ? (
+        <img className="media-kit-preview__logotype" src="/logotype.svg" alt="" />
+      ) : null}
+      {variant === 'lockup' ? (
+        <span className="media-kit-preview__lockup">
+          <img className="media-kit-preview__logomark" src="/logomark.svg" alt="" />
+          <img className="media-kit-preview__lockup-type" src="/logotype.svg" alt="" />
+        </span>
+      ) : null}
+      {variant === 'logomark' ? (
+        <img className="media-kit-preview__mark-only" src="/logomark.svg" alt="" />
+      ) : null}
+    </div>
+  )
+}
+
+function MediaKitPage() {
+  const headerRef = useRef<HTMLElement | null>(null)
+
+  return (
+    <div className="media-kit-shell">
+      <SiteHeader theme="light" headerRef={headerRef} />
+      <main className="media-kit-page" aria-labelledby="media-kit-title">
+        <section className="media-kit">
+          <h1 id="media-kit-title">Media kit</h1>
+
+          <div className="media-kit__asset-grid">
+            {MEDIA_ASSETS.map((asset) => (
+              <article className={`media-kit-item media-kit-item--${asset.variant}`} key={asset.label}>
+                <MediaAssetPreview variant={asset.variant} />
+                <h2>{asset.label}</h2>
+              </article>
+            ))}
+          </div>
+
+          <div className="media-kit__divider" aria-hidden="true" />
+
+          <div className="media-kit__color-grid">
+            {MEDIA_COLORS.map((colorGroup) => (
+              <article className="media-kit-item media-kit-item--color" key={colorGroup.label}>
+                <div
+                  className="media-kit-preview media-kit-preview--color"
+                  style={{ background: colorGroup.colors[1].value } as CSSProperties}
+                  aria-hidden="true"
+                >
+                  {colorGroup.colors.map((color) => (
+                    <span className="media-kit-color-swatch" style={{ background: color.value }} key={color.code}>
+                      <span className="media-kit-color-code">{color.code}</span>
+                    </span>
+                  ))}
+                </div>
+                <h2>{colorGroup.label}</h2>
+              </article>
+            ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  )
+}
+
 export function App() {
-  return window.location.pathname === '/manifesto' ? <ManifestoPage /> : <LandingPage />
+  if (window.location.pathname === '/manifesto') {
+    return <ManifestoPage />
+  }
+
+  if (window.location.pathname === '/media-kit') {
+    return <MediaKitPage />
+  }
+
+  return <LandingPage />
 }
