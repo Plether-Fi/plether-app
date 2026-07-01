@@ -119,7 +119,7 @@ runLatestOnce manager pool cfg = do
 
 backfillPendingOrderRevealPayloads :: Manager -> DbPool -> Config -> IO (Either T.Text ())
 backfillPendingOrderRevealPayloads manager pool cfg = do
-  pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn 20
+  pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
   forM_ pending $ \order -> do
     let firstRevealTick = pkorCommitTime order + 1
         maxRevealTick = pkorCommitTime order + defaultOrderSettlementWindow

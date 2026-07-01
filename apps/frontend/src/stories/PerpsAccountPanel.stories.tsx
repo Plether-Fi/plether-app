@@ -15,7 +15,7 @@ type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   render: () => (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel />
       </div>
@@ -25,7 +25,7 @@ export const Default: Story = {
 
 export const ConnectedPosition: Story = {
   render: () => (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto max-w-5xl">
         <PerpsAccountPanel
           isConnected

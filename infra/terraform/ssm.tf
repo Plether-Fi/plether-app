@@ -4,6 +4,14 @@ resource "aws_ssm_parameter" "rpc_url" {
   value = var.rpc_url
 }
 
+resource "aws_ssm_parameter" "pyth_api_key" {
+  count = var.enable_pyth_api_key ? 1 : 0
+
+  name  = "/plether/${var.environment}/pyth-api-key"
+  type  = "SecureString"
+  value = var.pyth_api_key
+}
+
 resource "aws_ssm_parameter" "perps_rpc_url" {
   name  = "/plether/${var.environment}/perps-rpc-url"
   type  = "SecureString"
@@ -14,6 +22,14 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   name  = "/plether/${var.environment}/keeper-private-key"
   type  = "SecureString"
   value = var.keeper_private_key
+}
+
+resource "aws_ssm_parameter" "faucet_private_key" {
+  count = var.faucet_private_key != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/faucet-private-key"
+  type  = "SecureString"
+  value = var.faucet_private_key
 }
 
 resource "aws_ssm_parameter" "database_url" {

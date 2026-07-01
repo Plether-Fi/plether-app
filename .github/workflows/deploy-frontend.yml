@@ -5,6 +5,17 @@ on:
     branches: [master]
     paths: [apps/frontend/**]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options:
+          - sepolia
+          - mainnet
+
+env:
+  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
 
 jobs:
   deploy:
@@ -26,17 +37,124 @@ jobs:
         working-directory: apps/frontend
         run: npm install
 
+      - name: Resolve deploy target
+        id: target
+        run: |
+          if [ "$TARGET_ENV" = "sepolia" ]; then
+            echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=11155111" >> "$GITHUB_OUTPUT"
+          else
+            echo "project=plether" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=1" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build
         working-directory: apps/frontend
         env:
+          VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
         run: npm run build
+
+      - name: Configure testnet Pages bindings
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          test -n "$SEPOLIA_BACKEND_URL"
+          cat > wrangler.toml <<EOF
+          name = "plether-testnet"
+          pages_build_output_dir = "dist"
+          compatibility_date = "2026-06-22"
+
+          [vars]
+          SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          MAINNET_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          EOF
+
+      - name: Ensure testnet Pages project
+        if: env.TARGET_ENV == 'sepolia'
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: 4.103.0
+          command: pages project create plether-testnet --production-branch=master --compatibility-date=2026-06-22
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy apps/frontend/dist --project-name=plether --branch=master
+          wranglerVersion: 4.103.0
+          workingDirectory: apps/frontend
+          command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master
+
+      - name: Attach testnet custom domain
+        if: env.TARGET_ENV == 'sepolia'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          DOMAIN="sepolia.plether.com"
+          PROJECT="plether-testnet"
+          API_BASE="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
+
+          if curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/$DOMAIN" >/dev/null; then
+            echo "$DOMAIN is already attached to $PROJECT"
+            exit 0
+          fi
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{\"name\":\"$DOMAIN\"}" \
+            "$API_BASE"
+
+      - name: Configure testnet DNS record
+        if: env.TARGET_ENV == 'sepolia'
+        continue-on-error: true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ZONE="plether.com"
+          DOMAIN="sepolia.plether.com"
+          TARGET="plether-testnet.pages.dev"
+          API_BASE="https://api.cloudflare.com/client/v4"
+
+          ZONE_ID=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones?name=$ZONE" | jq -r '.result[0].id // empty')
+          if [ -z "$ZONE_ID" ]; then
+            echo "::warning::Could not find Cloudflare zone $ZONE. Ensure CLOUDFLARE_API_TOKEN can read/edit DNS, or create a proxied CNAME from $DOMAIN to $TARGET manually."
+            exit 1
+          fi
+
+          RECORDS=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones/$ZONE_ID/dns_records?name=$DOMAIN")
+          RECORD_ID=$(echo "$RECORDS" | jq -r '.result[0].id // empty')
+          BODY=$(jq -nc --arg name "$DOMAIN" --arg content "$TARGET" \
+            '{type:"CNAME", name:$name, content:$content, ttl:1, proxied:true}')
+
+          if [ -n "$RECORD_ID" ]; then
+            curl --fail --silent --show-error \
+              --request PUT \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records/$RECORD_ID"
+          else
+            curl --fail --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records"
+          fi

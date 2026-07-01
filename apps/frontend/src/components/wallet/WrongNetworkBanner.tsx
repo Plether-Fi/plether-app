@@ -14,12 +14,12 @@ export function WrongNetworkBanner() {
   if (!isWrongNetwork) return null
 
   return (
-    <div className="bg-cyber-electric-fuchsia/20 border-b border-cyber-electric-fuchsia/50 px-4 py-3">
+    <div className="bg-brand-orange/20 border-b border-brand-orange/50 px-4 py-3">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
         <div className="flex items-start gap-3">
-          <span className="material-symbols-outlined text-cyber-electric-fuchsia">warning</span>
+          <span className="material-symbols-outlined text-brand-orange">warning</span>
           <div className="space-y-1">
-            <p className="text-cyber-electric-fuchsia text-sm">
+            <p className="text-brand-orange text-sm">
               Please connect to Ethereum Mainnet, Sepolia, or Arbitrum Sepolia to use Plether.
             </p>
             {switchError ? (
@@ -32,12 +32,12 @@ export function WrongNetworkBanner() {
         <button
           onClick={() => { void switchToArbitrumSepolia() }}
           disabled={isSwitching}
-          className="flex items-center gap-2 px-4 py-2 bg-cyber-electric-fuchsia text-cyber-text-primary enabled:hover:bg-[#CC00AA] enabled:hover:underline enabled:hover:underline-offset-4  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex items-center gap-2 px-4 py-2 bg-brand-orange text-content-primary enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
           {isSwitching ? (
             <>
               <div className="w-4 h-4 relative">
-                <div className="absolute inset-0 rounded-full border-2 border-cyber-text-primary/30 border-t-cyber-text-primary animate-spin" />
+                <div className="absolute inset-0 rounded-full border-2 border-content-primary/30 border-t-content-primary animate-spin" />
               </div>
               Switching...
             </>

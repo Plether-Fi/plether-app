@@ -27,14 +27,14 @@ function MockConnectButton() {
 function MockConnectedButton() {
   return (
     <div className="flex items-center gap-2">
-      <span className="px-2 py-0.5 text-xs font-medium border bg-cyber-surface-light text-cyber-text-secondary border-cyber-border-glow/30">
+      <span className="px-2 py-0.5 text-xs font-medium border bg-surface-muted text-content-secondary border-brand-border/30">
         Mainnet
       </span>
       <button className="flex items-center gap-2 bg-[#FF572D] text-[#FFF5F9] hover:bg-[#FF572D]/90 px-4 py-2 transition-colors border border-[#FF572D]/25 group">
-        <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
+        <div className="w-2 h-2 rounded-full bg-positive" />
         <span className="font-medium text-xs sm:text-sm">0x1234...5678</span>
       </button>
-      <button className="p-2 text-cyber-text-secondary transition-colors hover:text-[#FFAB96]" title="Disconnect">
+      <button className="p-2 text-content-secondary transition-colors hover:text-[#FFAB96]" title="Disconnect">
         <span className="material-symbols-outlined text-xl">logout</span>
       </button>
     </div>
@@ -45,9 +45,9 @@ function MockPriceDisplay() {
   return (
     <div className="flex items-center gap-3">
       <div className="flex items-center gap-1.5">
-        <span className="text-cyber-text-secondary text-xs">plDXY</span>
-        <span className="text-cyber-text-primary font-medium">108.42</span>
-        <span className="text-cyber-neon-green text-xs">+0.12%</span>
+        <span className="text-content-secondary text-xs">plDXY</span>
+        <span className="text-content-primary font-medium">108.42</span>
+        <span className="text-positive text-xs">+0.12%</span>
       </div>
     </div>
   )
@@ -56,9 +56,9 @@ function MockPriceDisplay() {
 function MockPendingTxBadge({ count = 0 }: { count?: number }) {
   if (count === 0) return null
   return (
-    <button className="flex items-center gap-1.5 border border-cyber-border-glow/30 bg-cyber-surface-light px-3 py-1.5 transition-colors hover:border-[#FFAB96]/50 hover:bg-[#3B212D] hover:underline hover:underline-offset-4">
-      <span className="material-symbols-outlined text-lg text-cyber-bright-blue animate-spin">progress_activity</span>
-      <span className="text-sm text-cyber-text-primary">{count} pending</span>
+    <button className="flex items-center gap-1.5 border border-brand-border/30 bg-surface-muted px-3 py-1.5 transition-colors hover:border-[#FFAB96]/50 hover:bg-[#3B212D] hover:underline hover:underline-offset-4">
+      <span className="material-symbols-outlined text-lg text-brand-peach animate-spin">progress_activity</span>
+      <span className="text-sm text-content-primary">{count} pending</span>
     </button>
   )
 }
@@ -67,7 +67,7 @@ function MockHeader({ connected = false, pendingTx = 0 }: { connected?: boolean;
   const location = useLocation()
 
   return (
-    <header className="border-b border-cyber-border-glow/30 bg-cyber-surface-dark py-4 sticky top-0 z-50">
+    <header className="border-b border-brand-border/30 bg-surface-panel py-4 sticky top-0 z-50">
       <div className="w-full px-6 lg:px-8 flex items-center justify-between">
         <div className="flex items-center gap-10">
           <Link to="/" className="flex items-center gap-2.5">
@@ -88,7 +88,7 @@ function MockHeader({ connected = false, pendingTx = 0 }: { connected?: boolean;
                     ${
                       isActive
                         ? 'bg-[#FF572D] text-[#FFF5F9] border border-[#FF572D]/20'
-                        : 'text-cyber-text-secondary hover:text-[#FFAB96] hover:underline hover:underline-offset-4'
+                        : 'text-content-secondary hover:text-[#FFAB96] hover:underline hover:underline-offset-4'
                     }
                   `}
                 >

@@ -88,8 +88,8 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
             onClick={() => { setAction('add'); setAmount('') }}
             className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'add'
-                ? 'bg-cyber-neon-green/20 text-cyber-neon-green border border-cyber-neon-green/50'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-[#FFAB96]'
+                ? 'bg-positive/20 text-positive border border-positive/50'
+                : 'bg-surface-muted text-content-secondary border border-brand-border/30 hover:text-[#FFAB96]'
             }`}
           >
             Add Collateral
@@ -98,8 +98,8 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
             onClick={() => { setAction('remove'); setAmount('') }}
             className={`flex-1 py-2 px-3 text-sm font-medium transition-colors ${
               action === 'remove'
-                ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border border-cyber-electric-fuchsia/50'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border border-cyber-border-glow/30 hover:text-[#FFAB96]'
+                ? 'bg-brand-orange/20 text-brand-orange border border-brand-orange/50'
+                : 'bg-surface-muted text-content-secondary border border-brand-border/30 hover:text-[#FFAB96]'
             }`}
           >
             Remove
@@ -109,14 +109,14 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
         <div>
           {action === 'add' && (
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-cyber-text-secondary">Available USDC</span>
-              <span className="text-cyber-text-primary">{formatUsd(usdcBalance)} USDC</span>
+              <span className="text-content-secondary">Available USDC</span>
+              <span className="text-content-primary">{formatUsd(usdcBalance)} USDC</span>
             </div>
           )}
           {action === 'remove' && (
             <div className="flex justify-between text-sm mb-2">
-              <span className="text-cyber-text-secondary">Available Collateral</span>
-              <span className="text-cyber-text-primary">
+              <span className="text-content-secondary">Available Collateral</span>
+              <span className="text-content-primary">
                 {parseFloat(formattedCollateral).toFixed(2)} {tokenSymbol}
               </span>
             </div>
@@ -127,31 +127,31 @@ export function AdjustPositionModal({ isOpen, onClose, position, collateralShare
               value={amount}
               onChange={(e) => { setAmount(e.target.value); }}
               placeholder="0.00"
-              className="w-full bg-cyber-bg border border-cyber-border-glow/30 py-3 pl-4 pr-24 text-lg font-medium text-cyber-text-primary focus:border-[#FFAB96] outline-none"
+              className="w-full bg-app-bg border border-brand-border/30 py-3 pl-4 pr-24 text-lg font-medium text-content-primary focus:border-[#FFAB96] outline-none"
             />
             <div className="absolute right-4 top-1/2 -translate-y-1/2">
-              <span className="font-medium text-cyber-text-secondary">
+              <span className="font-medium text-content-secondary">
                 {action === 'add' ? 'USDC' : tokenSymbol.replace('plDXY-', '')}
               </span>
             </div>
           </div>
         </div>
 
-        <div className="bg-cyber-surface-light p-3 space-y-2 text-sm border border-cyber-border-glow/30">
+        <div className="bg-surface-muted p-3 space-y-2 text-sm border border-brand-border/30">
           <div className="flex justify-between">
-            <span className="text-cyber-text-secondary">Current Health Factor</span>
-            <span className="text-cyber-neon-green">{position.healthFactor.toFixed(2)}</span>
+            <span className="text-content-secondary">Current Health Factor</span>
+            <span className="text-positive">{position.healthFactor.toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
-            <span className="text-cyber-text-secondary">Current Liquidation Price</span>
-            <span className="text-cyber-warning-text">{(Number(position.liquidationPrice) / 1e6).toFixed(2)} USDC</span>
+            <span className="text-content-secondary">Current Liquidation Price</span>
+            <span className="text-warning">{(Number(position.liquidationPrice) / 1e6).toFixed(2)} USDC</span>
           </div>
         </div>
 
         <button
           onClick={handleConfirm}
           disabled={isDisabled}
-          className="w-full bg-cyber-neon-green px-6 py-3 font-semibold text-cyber-bg transition-colors enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
+          className="w-full bg-positive px-6 py-3 font-semibold text-app-bg transition-colors enabled:hover:bg-[#00CC77] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {getButtonText()}
         </button>

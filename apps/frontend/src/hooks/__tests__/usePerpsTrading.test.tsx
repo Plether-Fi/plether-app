@@ -213,7 +213,7 @@ describe('usePerpsTrading', () => {
       `Failed tx: ${failedHash}`,
       'Current account state: 0/10 pending orders, equity 1 000 USDC, free/withdrawable 750 USDC, pending margin 0 USDC, pending bounty 0 USDC.',
       'Latest open preview still passes.',
-      'A fresh commit simulation still passes',
+      'A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.',
     ].join('\n'))
   })
 
@@ -250,11 +250,11 @@ describe('usePerpsTrading', () => {
       slippagePercent: 0.1,
       isClose: false,
     })).rejects.toThrow([
-      'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
-      'No transaction hash was returned by the wallet/RPC.',
+      'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.',
+      'No transaction hash was returned by the wallet/RPC, so no mined transaction could be checked.',
       'Current account state: 0/10 pending orders, equity 900 USDC, free/withdrawable 500 USDC, pending margin 250 USDC, pending bounty 0.01 USDC.',
       'Latest open preview still passes.',
-      'A fresh commit simulation still passes',
+      'A fresh commit simulation still passes, so this looks like a wallet/RPC submission failure rather than a contract rejection. Retry the commit; if your wallet still shows a pending request, reject it first or reconnect the wallet.',
     ].join('\n'))
   })
 

@@ -88,26 +88,26 @@ export function Perps() {
       const poolLiquidityTooltip = (
         <div className="w-full space-y-2 text-left">
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Long capacity</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Long capacity</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Short capacity</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Short capacity</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Minimum order size</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Minimum order size</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
           <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-cyber-text-secondary">Minimum new position</span>
-            <span className="whitespace-nowrap font-semibold text-cyber-text-primary">
+            <span className="min-w-0 text-content-secondary">Minimum new position</span>
+            <span className="whitespace-nowrap font-semibold text-content-primary">
               {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
             </span>
           </div>
@@ -193,7 +193,10 @@ export function Perps() {
     <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
         <PerpsInstrumentPanel stats={instrumentStats} />
-        <DxyBasketPanel />
+        <DxyBasketPanel
+          oraclePriceRaw={perpsMarket.raw.markPrice}
+          oraclePublishTime={perpsMarket.oracleFreshnessTime}
+        />
         <PerpsAccountPanel
           position={perpsAccount.position}
           equityUsdc={perpsAccount.equityUsdc}
@@ -221,6 +224,7 @@ export function Perps() {
           oraclePriceDisplay={perpsMarket.oraclePrice}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
+          oracleBasketComponents={perpsMarket.raw.basketComponents}
           availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
           availableToTradeAmount={perpsAccount.display.availableToTrade}
           portfolioValueRaw={perpsAccount.equityUsdc}

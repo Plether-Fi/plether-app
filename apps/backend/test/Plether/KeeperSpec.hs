@@ -124,6 +124,7 @@ order :: Integer -> Integer -> PerpsKeeperOrderRow
 order orderId commitTime =
   PerpsKeeperOrderRow
     { pkorOrderId = orderId
+    , pkorOrderRouter = "0x2222222222222222222222222222222222222222"
     , pkorAccount = "0x1111111111111111111111111111111111111111"
     , pkorSide = 0
     , pkorCommitBlock = 10

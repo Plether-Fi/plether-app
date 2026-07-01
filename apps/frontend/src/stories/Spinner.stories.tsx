@@ -39,15 +39,15 @@ export const AllSizes: Story = {
     <div className="flex items-center gap-6">
       <div className="flex flex-col items-center gap-2">
         <Spinner size="sm" />
-        <span className="text-xs text-cyber-text-secondary">Small</span>
+        <span className="text-xs text-content-secondary">Small</span>
       </div>
       <div className="flex flex-col items-center gap-2">
         <Spinner size="md" />
-        <span className="text-xs text-cyber-text-secondary">Medium</span>
+        <span className="text-xs text-content-secondary">Medium</span>
       </div>
       <div className="flex flex-col items-center gap-2">
         <Spinner size="lg" />
-        <span className="text-xs text-cyber-text-secondary">Large</span>
+        <span className="text-xs text-content-secondary">Large</span>
       </div>
     </div>
   ),
@@ -55,7 +55,7 @@ export const AllSizes: Story = {
 
 export const InButton: Story = {
   render: () => (
-    <button className="inline-flex items-center gap-2 px-4 py-2 bg-cyber-neon-green text-cyber-bg font-medium">
+    <button className="inline-flex items-center gap-2 px-4 py-2 bg-positive text-app-bg font-medium">
       <Spinner size="sm" />
       Loading...
     </button>

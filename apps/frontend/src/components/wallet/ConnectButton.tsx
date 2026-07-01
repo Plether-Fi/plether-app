@@ -1,15 +1,15 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
-import { anvil } from '../../config/wagmi'
+import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
-  'flex items-center gap-2 border border-[#FF572D] bg-[#FF572D] px-4 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
+  'flex items-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-4 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
 const SWITCH_NETWORK_BUTTON_CLASS =
-  'flex cursor-pointer items-center gap-2 border border-[#FFAB96] bg-[#FFAB96] px-3 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50'
+  'flex cursor-pointer items-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-3 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50'
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
@@ -46,7 +46,9 @@ export function ConnectButton() {
       <button
         onClick={() => {
           clearSwitchError()
+          syncAppKitModalStyleOverrides()
           void open()
+          syncAppKitModalStyleOverrides()
         }}
         className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
@@ -57,18 +59,18 @@ export function ConnectButton() {
   }
 
   return (
-    <div className="flex flex-col items-end gap-1">
-      <div className="flex items-center gap-4">
+    <div className="flex min-w-0 flex-col items-end gap-1">
+      <div className="flex min-w-0 items-center gap-4">
         {/* Network badge */}
         <span className={`
-          px-2 py-0.5 text-xs font-medium border
+          max-w-36 truncate whitespace-nowrap border px-2 py-0.5 text-xs font-medium
           ${isWrongNetwork
-            ? 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia border-cyber-electric-fuchsia/30'
+            ? 'bg-brand-orange/20 text-brand-orange border-brand-orange/30'
             : chainId === sepolia.id || chainId === arbitrumSepolia.id
-              ? 'bg-cyber-warning-bg text-cyber-warning-text border-cyber-warning-text/30'
+              ? 'bg-warning-bg text-warning border-warning/30'
               : chainId === mainnet.id
-                ? 'bg-cyber-neon-green/20 text-cyber-neon-green border-cyber-neon-green/30'
-                : 'bg-cyber-surface-light text-cyber-text-secondary border-cyber-border-glow/30'
+                ? 'bg-positive/20 text-positive border-positive/30'
+                : 'bg-surface-muted text-content-secondary border-brand-border/30'
           }
         `}>
           {isWrongNetwork ? 'Wrong Network' : getNetworkName()}
@@ -100,12 +102,16 @@ export function ConnectButton() {
 
         {/* Account button */}
         <button
-          onClick={() => { if (address) void navigator.clipboard.writeText(address) }}
-          title="Copy address"
+          onClick={() => {
+            syncAppKitModalStyleOverrides()
+            void open({ view: 'Account' })
+            syncAppKitModalStyleOverrides()
+          }}
+          title="Open wallet account"
           className={`group ${WALLET_BUTTON_CLASS}`}
         >
-          <div className="w-2 h-2 rounded-full bg-cyber-neon-green" />
-          <span className="font-medium text-xs sm:text-sm">
+          <div className="w-2 h-2 rounded-full bg-positive" />
+          <span className="whitespace-nowrap text-xs font-medium sm:text-sm">
             {formatAddress(address ?? '')}
           </span>
         </button>
@@ -113,7 +119,7 @@ export function ConnectButton() {
         {/* Disconnect button */}
         <button
           onClick={() => { disconnect(); }}
-          className="p-2 text-cyber-text-secondary transition-colors hover:text-cyber-text-primary"
+          className="p-2 text-content-secondary transition-colors hover:text-content-primary"
           title="Disconnect"
         >
           <span className="material-symbols-outlined text-xl">logout</span>

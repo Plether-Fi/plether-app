@@ -15,7 +15,7 @@ type Story = StoryObj<typeof meta>
 
 function PanelFrame(args: React.ComponentProps<typeof PerpsMarketStatePanel>) {
   return (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="ml-auto max-w-md">
         <PerpsMarketStatePanel {...args} />
       </div>

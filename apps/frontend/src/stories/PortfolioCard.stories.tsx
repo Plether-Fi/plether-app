@@ -28,7 +28,7 @@ const meta: Meta<PortfolioCardArgs> = {
     },
     colorClass: {
       control: 'select',
-      options: ['text-cyber-bright-blue', 'text-cyber-electric-fuchsia', 'text-cyber-neon-green'],
+      options: ['text-brand-peach', 'text-brand-orange', 'text-positive'],
       description: 'Text color class for value',
     },
     isLoading: {
@@ -50,7 +50,7 @@ export const SpotHoldings: Story = {
     title: 'Spot Holdings',
     value: 12500,
     description: '5,000 plDXY-BEAR • 7,500 plDXY-BULL',
-    colorClass: 'text-cyber-bright-blue',
+    colorClass: 'text-brand-peach',
     isLoading: false,
   },
   render: (args) => (
@@ -74,7 +74,7 @@ export const StakedTokens: Story = {
     title: 'Staked',
     value: 8000,
     description: '3,000 splDXY-BEAR • 5,000 splDXY-BULL',
-    colorClass: 'text-cyber-bright-blue',
+    colorClass: 'text-brand-peach',
     isLoading: false,
   },
   render: (args) => (
@@ -98,7 +98,7 @@ export const LeveragePositions: Story = {
     title: 'Leverage',
     value: 25000,
     description: '2 active positions',
-    colorClass: 'text-cyber-electric-fuchsia',
+    colorClass: 'text-brand-orange',
     isLoading: false,
   },
   render: (args) => (
@@ -122,7 +122,7 @@ export const Loading: Story = {
     title: 'Spot Holdings',
     value: 0,
     description: '',
-    colorClass: 'text-cyber-bright-blue',
+    colorClass: 'text-brand-peach',
     isLoading: true,
   },
   render: (args) => (
@@ -151,7 +151,7 @@ export const AllCards: Story = {
           description="5,000 plDXY-BEAR • 7,500 plDXY-BULL"
           link="/"
           isLoading={false}
-          colorClass="text-cyber-bright-blue"
+          colorClass="text-brand-peach"
         />
         <PortfolioCard
           title="Staked"
@@ -159,7 +159,7 @@ export const AllCards: Story = {
           description="3,000 splDXY-BEAR • 5,000 splDXY-BULL"
           link="/stake"
           isLoading={false}
-          colorClass="text-cyber-bright-blue"
+          colorClass="text-brand-peach"
         />
         <PortfolioCard
           title="Leverage"
@@ -167,7 +167,7 @@ export const AllCards: Story = {
           description="2 active positions"
           link="/leverage"
           isLoading={false}
-          colorClass="text-cyber-electric-fuchsia"
+          colorClass="text-brand-orange"
         />
       </div>
     </MemoryRouter>

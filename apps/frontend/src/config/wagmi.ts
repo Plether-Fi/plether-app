@@ -85,12 +85,9 @@ const wagmiAdapter = new WagmiAdapter({
 
 function installAppKitThemeOverrides() {
   const existingStyle = document.getElementById(APPKIT_THEME_OVERRIDE_ID)
-  const style = document.createElement('style')
-
-  style.id = APPKIT_THEME_OVERRIDE_ID
-  style.textContent = `
+  const styleText = `
     :root {
-      --apkt-tokens-theme-overlay: rgba(37, 9, 23, 0.78);
+      --apkt-tokens-theme-overlay: rgba(37, 9, 23, 0.85);
       --apkt-tokens-theme-backgroundPrimary: #3B212D;
       --apkt-tokens-theme-backgroundInvert: #FFF5F9;
       --apkt-tokens-theme-foregroundPrimary: #250917;
@@ -128,12 +125,28 @@ function installAppKitThemeOverrides() {
       --apkt-tokens-core-iconError: #FF572D;
       --apkt-tokens-core-textError: #FF572D;
     }
+
+    w3m-modal {
+      background-color: rgba(37, 9, 23, 0.85) !important;
+      backdrop-filter: blur(4px) !important;
+      -webkit-backdrop-filter: blur(4px) !important;
+      transition: none !important;
+    }
   `
 
   if (existingStyle) {
-    existingStyle.remove()
+    if (existingStyle.textContent !== styleText) {
+      existingStyle.textContent = styleText
+    }
+    if (document.head.lastElementChild !== existingStyle) {
+      document.head.appendChild(existingStyle)
+    }
+    return
   }
 
+  const style = document.createElement('style')
+  style.id = APPKIT_THEME_OVERRIDE_ID
+  style.textContent = styleText
   document.head.appendChild(style)
 
   if (!appKitThemeObserver) {
@@ -147,6 +160,13 @@ function installAppKitThemeOverrides() {
 
     appKitThemeObserver.observe(document.head, { childList: true })
   }
+}
+
+export function syncAppKitModalStyleOverrides() {
+  installAppKitThemeOverrides()
+  window.setTimeout(installAppKitThemeOverrides, 0)
+  window.setTimeout(installAppKitThemeOverrides, 100)
+  window.setTimeout(installAppKitThemeOverrides, 400)
 }
 
 createAppKit({
@@ -165,6 +185,7 @@ createAppKit({
   },
 })
 installAppKitThemeOverrides()
+syncAppKitModalStyleOverrides()
 setTimeout(installAppKitThemeOverrides, 0)
 
 type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof anvil]

@@ -113,7 +113,7 @@ export const AllPositions: Story = {
   render: () => (
     <div className="space-y-4">
       <div>
-        <p className="text-cyber-text-secondary text-sm mb-2">Bear Position (Profitable):</p>
+        <p className="text-content-secondary text-sm mb-2">Bear Position (Profitable):</p>
         <PositionCard
           position={argsToPosition({ side: 'BEAR', leverage: 3, size: 15000, collateral: 5000, pnl: 1250, pnlPercentage: 25, healthFactor: 2.1 })}
           onAdjust={() => {}}
@@ -121,7 +121,7 @@ export const AllPositions: Story = {
         />
       </div>
       <div>
-        <p className="text-cyber-text-secondary text-sm mb-2">Bull Position (Loss):</p>
+        <p className="text-content-secondary text-sm mb-2">Bull Position (Loss):</p>
         <PositionCard
           position={argsToPosition({ side: 'BULL', leverage: 2, size: 10000, collateral: 5000, pnl: -750, pnlPercentage: -7.5, healthFactor: 1.8 })}
           onAdjust={() => {}}
@@ -129,7 +129,7 @@ export const AllPositions: Story = {
         />
       </div>
       <div>
-        <p className="text-cyber-text-secondary text-sm mb-2">Low Health (Danger):</p>
+        <p className="text-content-secondary text-sm mb-2">Low Health (Danger):</p>
         <PositionCard
           position={argsToPosition({ side: 'BEAR', leverage: 5, size: 25000, collateral: 5000, pnl: -2000, pnlPercentage: -40, healthFactor: 1.15 })}
           onAdjust={() => {}}

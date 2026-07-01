@@ -24,8 +24,8 @@ function TabsWithState({ tabs = defaultTabs }: { tabs?: { id: string; label: str
       <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
       {tabs.map((tab) => (
         <TabPanel key={tab.id} isActive={activeTab === tab.id}>
-          <div className="p-4 bg-cyber-surface-dark border border-cyber-border-glow/30">
-            <p className="text-cyber-text-primary">Content for {tab.label}</p>
+          <div className="p-4 bg-surface-panel border border-brand-border/30">
+            <p className="text-content-primary">Content for {tab.label}</p>
           </div>
         </TabPanel>
       ))}
@@ -71,27 +71,27 @@ function TradeExampleTabs() {
     <div className="max-w-md space-y-4">
       <Tabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
       <TabPanel isActive={activeTab === 'stake'}>
-        <div className="p-4 bg-cyber-surface-dark border border-cyber-border-glow/30 space-y-4">
-          <p className="text-cyber-text-secondary text-sm">Enter amount to stake</p>
+        <div className="p-4 bg-surface-panel border border-brand-border/30 space-y-4">
+          <p className="text-content-secondary text-sm">Enter amount to stake</p>
           <input
             type="text"
             placeholder="0.00"
-            className="w-full px-4 py-3 bg-cyber-surface-light border border-cyber-border-glow/30 text-cyber-text-primary"
+            className="w-full px-4 py-3 bg-surface-muted border border-brand-border/30 text-content-primary"
           />
-          <button className="w-full py-3 bg-cyber-neon-green text-cyber-bg font-medium">
+          <button className="w-full py-3 bg-positive text-app-bg font-medium">
             Stake
           </button>
         </div>
       </TabPanel>
       <TabPanel isActive={activeTab === 'unstake'}>
-        <div className="p-4 bg-cyber-surface-dark border border-cyber-border-glow/30 space-y-4">
-          <p className="text-cyber-text-secondary text-sm">Enter amount to unstake</p>
+        <div className="p-4 bg-surface-panel border border-brand-border/30 space-y-4">
+          <p className="text-content-secondary text-sm">Enter amount to unstake</p>
           <input
             type="text"
             placeholder="0.00"
-            className="w-full px-4 py-3 bg-cyber-surface-light border border-cyber-border-glow/30 text-cyber-text-primary"
+            className="w-full px-4 py-3 bg-surface-muted border border-brand-border/30 text-content-primary"
           />
-          <button className="w-full py-3 bg-cyber-electric-fuchsia text-cyber-text-primary font-medium">
+          <button className="w-full py-3 bg-brand-orange text-content-primary font-medium">
             Unstake
           </button>
         </div>

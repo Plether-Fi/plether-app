@@ -37,7 +37,7 @@ function ModalWithTrigger({ size, title }: { size?: 'sm' | 'md' | 'lg' | 'xl'; t
         title={title}
         size={size}
       >
-        <p className="text-cyber-text-secondary mb-4">
+        <p className="text-content-secondary mb-4">
           This is the modal content. Press Escape or click outside to close.
         </p>
         <div className="flex justify-end gap-2">
@@ -75,7 +75,7 @@ function NoTitleModal() {
     <>
       <Button onClick={() => setIsOpen(true)}>Open Modal (No Title)</Button>
       <Modal isOpen={isOpen} onClose={() => setIsOpen(false)}>
-        <p className="text-cyber-text-secondary mb-4">
+        <p className="text-content-secondary mb-4">
           This modal has no title bar.
         </p>
         <Button onClick={() => setIsOpen(false)}>Close</Button>
@@ -92,11 +92,11 @@ function FormModal() {
       <Modal isOpen={isOpen} onClose={() => setIsOpen(false)} title="Enter Details">
         <div className="space-y-4">
           <div>
-            <label className="block text-sm text-cyber-text-secondary mb-1">Amount</label>
+            <label className="block text-sm text-content-secondary mb-1">Amount</label>
             <input
               type="text"
               placeholder="0.00"
-              className="w-full px-4 py-2 bg-cyber-surface-light border border-cyber-border-glow/30 text-cyber-text-primary"
+              className="w-full px-4 py-2 bg-surface-muted border border-brand-border/30 text-content-primary"
             />
           </div>
           <div className="flex justify-end gap-2">

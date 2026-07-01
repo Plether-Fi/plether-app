@@ -2,35 +2,34 @@
 @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @theme {
-  /* Plether redesign base palette */
-  --color-cyber-bg: #250917;
-  --color-cyber-surface-dark: #3B212D;
-  --color-cyber-surface-light: #3B212D;
-  --color-cyber-text-primary: #E0E0FF;
-  --color-cyber-text-secondary: #A6B3D9;
-  --color-cyber-neon-green: #00FF99;
-  --color-cyber-electric-fuchsia: #FF00CC;
-  --color-cyber-bright-blue: #FFAB96;
-  --color-cyber-warning-bg: #3A2000;
-  --color-cyber-warning-text: #FFD700;
-  --color-cyber-border-glow: #FFAB96;
+  /* Plether base palette */
+  --color-app-bg: #250917;
+  --color-surface-panel: #3B212D;
+  --color-surface-muted: #3B212D;
+  --color-content-primary: #E0E0FF;
+  --color-content-secondary: #A6B3D9;
+  --color-positive: #00FF99;
+  --color-brand-orange: #FF572D;
+  --color-brand-peach: #FFAB96;
+  --color-warning-bg: #3A2000;
+  --color-warning: #FFD700;
+  --color-brand-border: #FFAB96;
 
-  /* Accent for BEAR (bearish/red) - use fuchsia for cyberpunk */
-  --color-bear: #FF00CC;
-  --color-bear-light: #FF66DD;
-  --color-bear-dark: #CC00AA;
+  /* Directional token accents */
+  --color-bear: #FF572D;
+  --color-bear-light: #FF572D;
+  --color-bear-dark: #FF572D;
 
-  /* Accent for BULL (bullish/green) - use neon green for cyberpunk */
   --color-bull: #00FF99;
   --color-bull-light: #66FFBB;
   --color-bull-dark: #00CC77;
 
-  /* Primary - neon green */
-  --color-primary-500: #00FF99;
-  --color-primary-600: #00DD88;
-  --color-primary-400: #33FFAA;
+  /* Brand CTA */
+  --color-primary-500: #FF572D;
+  --color-primary-600: #FF572D;
+  --color-primary-400: #FF572D;
 
-  /* Surface colors mapped to cyber */
+  /* Surface scale aliases */
   --color-surface: #250917;
   --color-surface-50: #3B212D;
   --color-surface-100: #3B212D;

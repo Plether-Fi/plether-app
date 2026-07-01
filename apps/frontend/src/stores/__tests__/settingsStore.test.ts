@@ -12,6 +12,8 @@ describe('settingsStore', () => {
     useSettingsStore.setState({
       slippage: DEFAULT_SLIPPAGE,
       maxPriceImpact: DEFAULT_MAX_PRICE_IMPACT,
+      riskAccepted: false,
+      sepoliaWelcomeDismissed: false,
     })
   })
 
@@ -24,6 +26,12 @@ describe('settingsStore', () => {
     it('has correct default maxPriceImpact', () => {
       const { maxPriceImpact } = useSettingsStore.getState()
       expect(maxPriceImpact).toBe(DEFAULT_MAX_PRICE_IMPACT)
+    })
+
+    it('tracks risk and Sepolia welcome acceptance separately', () => {
+      const state = useSettingsStore.getState()
+      expect(state.riskAccepted).toBe(false)
+      expect(state.sepoliaWelcomeDismissed).toBe(false)
     })
   })
 
@@ -134,6 +142,34 @@ describe('settingsStore', () => {
 
       expect(afterPriceImpact).toBe(DEFAULT_SLIPPAGE)
       expect(afterSlippage).toBe(3.5)
+    })
+  })
+
+  describe('disclaimers', () => {
+    it('accepts mainnet risk without dismissing Sepolia welcome', () => {
+      const { acceptRisk } = useSettingsStore.getState()
+      acceptRisk()
+
+      const state = useSettingsStore.getState()
+      expect(state.riskAccepted).toBe(true)
+      expect(state.sepoliaWelcomeDismissed).toBe(false)
+    })
+
+    it('dismisses Sepolia welcome without accepting mainnet risk', () => {
+      const { dismissSepoliaWelcome } = useSettingsStore.getState()
+      dismissSepoliaWelcome()
+
+      const state = useSettingsStore.getState()
+      expect(state.sepoliaWelcomeDismissed).toBe(true)
+      expect(state.riskAccepted).toBe(false)
+    })
+
+    it('reopens the Sepolia welcome modal', () => {
+      const { dismissSepoliaWelcome, openSepoliaWelcome } = useSettingsStore.getState()
+      dismissSepoliaWelcome()
+      openSepoliaWelcome()
+
+      expect(useSettingsStore.getState().sepoliaWelcomeDismissed).toBe(false)
     })
   })
 })

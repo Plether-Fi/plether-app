@@ -60,7 +60,7 @@ export const WithRichContent: Story = {
   args: {
     content: (
       <div>
-        <strong className="text-cyber-neon-green">Pro tip:</strong>
+        <strong className="text-positive">Pro tip:</strong>
         <br />
         Use leverage responsibly
       </div>
@@ -73,7 +73,7 @@ export const WithRichContent: Story = {
 export const InfoTooltipExample: Story = {
   render: () => (
     <div className="flex items-center gap-2">
-      <span className="text-cyber-text-primary">Health Factor</span>
+      <span className="text-content-primary">Health Factor</span>
       <InfoTooltip content="Ratio of collateral to debt. Below 1.0 risks liquidation." />
     </div>
   ),

@@ -61,9 +61,9 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paOrderRouter = "0x485703D16fE36369c134dEe2A61c057733E7830f"
-    , paCfdEngine = "0x128f195B92b50db1eEBCbBd249d5C5e946DCd786"
-    , paMarginClearinghouse = "0x00B89B6e696A43129DA7Ec8a814bb61C9A6189b8"
+    { paOrderRouter = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
+    , paCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
+    , paMarginClearinghouse = "0x731bb0939CE531728459394A277B28Cbff8df049"
     }
 
 data PerpsIndexerMode
@@ -182,10 +182,10 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
   currentBlock <- requireRpc "eth_blockNumber" $ getCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
   let safeBlock = max 0 (currentBlock - picConfirmations cfg)
   (storedLastBlock, storedLastHash) <- withDb pool $ \conn ->
-    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg)
+    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
   verifyCursor manager pool cfg reqIdRef storedLastBlock storedLastHash
   (lastBlock, _) <- withDb pool $ \conn ->
-    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg)
+    getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
   let startBlock = fromMaybe (max (picStartBlock cfg) (lastBlock + 1)) explicitFrom
       cappedToBlock = maybe safeBlock (min safeBlock) explicitTo
       endBlock = min cappedToBlock (startBlock + picBatchSize cfg - 1)
@@ -204,9 +204,9 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
       endInfo <- requireRpc "eth_getBlockByNumber" $
         getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
       withDb pool $ \conn -> do
-        (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg)
+        (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
         when (endBlock >= currentCursor) $
-          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) endBlock (Just $ biHash endInfo)
+          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) endBlock (Just $ biHash endInfo)
       putStrLn $ "Perps indexer: indexed " <> show (length orderedLogs) <> " logs through block " <> show endBlock
       pure True
 
@@ -225,8 +225,8 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
           newCursor = max 0 (rewindBlock - 1)
       putStrLn $ "Perps indexer: block hash mismatch at " <> show lastBlock <> ", rewinding to " <> show newCursor
       withDb pool $ \conn -> do
-        deletePerpsHistoryFromBlock conn (picChainId cfg) rewindBlock
-        setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) newCursor Nothing
+        deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
+        setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
 
 processLog :: DbPool -> PerpsIndexerConfig -> BlockInfo -> Maybe Text -> RpcLog -> IO ()
 processLog pool cfg blockInfo txFrom logEntry =
@@ -238,30 +238,31 @@ processLog pool cfg blockInfo txFrom logEntry =
           orderId = parsedOrderId parsed
           side = parsedSide parsed
           eventPayload = parsedPayload parsed
-      insertPerpsEvent conn (picChainId cfg) (rlAddress logEntry) eventName (rlTxHash logEntry)
+          releaseRouter = paOrderRouter $ picAddresses cfg
+      insertPerpsEvent conn (picChainId cfg) releaseRouter (rlAddress logEntry) eventName (rlTxHash logEntry)
         (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
         (biTimestamp blockInfo) account orderId side eventPayload
       case parsed of
         ParsedOrderCommitted oid account' side' _ ->
           do
-            upsertPerpsOrderCommitted conn (picChainId cfg) oid account' side' (rlTxHash logEntry)
+            upsertPerpsOrderCommitted conn (picChainId cfg) releaseRouter oid account' side' (rlTxHash logEntry)
               (rlBlockNumber logEntry) (biTimestamp blockInfo)
-            insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) oid
+            insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
         ParsedOrderExecuted oid executionPrice _ ->
-          upsertPerpsOrderTerminal conn (picChainId cfg) oid "Executed" Nothing (Just executionPrice) Nothing
+          upsertPerpsOrderTerminal conn (picChainId cfg) releaseRouter oid "Executed" Nothing (Just executionPrice) Nothing
             (rlTxHash logEntry) (rlBlockNumber logEntry) (biTimestamp blockInfo)
         ParsedOrderFailed oid reason reasonName _ -> do
-          upsertPerpsOrderTerminal conn (picChainId cfg) oid (terminalStatus reasonName) (Just reasonName) Nothing txFrom
+          upsertPerpsOrderTerminal conn (picChainId cfg) releaseRouter oid (terminalStatus reasonName) (Just reasonName) Nothing txFrom
             (rlTxHash logEntry) (rlBlockNumber logEntry) (biTimestamp blockInfo)
           when (reason == 0) $
-            insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) oid
+            insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
         ParsedPositionActivity kind account' side' price sizeDelta amountUsdc pnl payload ->
-          insertPerpsActivity conn (picChainId cfg) (activityKey logEntry kind Nothing) account'
+          insertPerpsActivity conn (picChainId cfg) releaseRouter (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing (Just side') price sizeDelta amountUsdc pnl (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
         ParsedMarginActivity kind account' amount payload ->
-          insertPerpsActivity conn (picChainId cfg) (activityKey logEntry kind Nothing) account'
+          insertPerpsActivity conn (picChainId cfg) releaseRouter (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
