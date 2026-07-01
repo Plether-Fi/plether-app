@@ -14,7 +14,7 @@ const PRIMITIVE_SCRUB_DISTANCE = 640
 const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
 const TRUST_SCROLL_DISTANCE = 1600
 const TRUST_MOBILE_SCROLL_DISTANCE = 1200
-const EXPOSURE_REPLAY_IDLE_MS = 5000
+const EXPOSURE_REPLAY_IDLE_MS = 3000
 const EXPOSURE_REPLAY_TRANSITION_MS = 2880
 const EXPOSURE_REPLAY_REVERSE_PAUSE_MS = 1000
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
@@ -437,12 +437,22 @@ function SolidityCodeBlock({ code }: { code: string }) {
   )
 }
 
+function CardBreak() {
+  return (
+    <>
+      <br className="feature-card__desktop-break" />
+      <span className="feature-card__mobile-space"> </span>
+    </>
+  )
+}
+
 function LandingPage() {
   const headerRef = useRef<HTMLElement | null>(null)
   const primitiveSectionRef = useRef<HTMLElement | null>(null)
   const exposureSectionRef = useRef<HTMLElement | null>(null)
   const builtSectionRef = useRef<HTMLElement | null>(null)
   const trustSectionRef = useRef<HTMLElement | null>(null)
+  const trustContentRef = useRef<HTMLDivElement | null>(null)
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
@@ -453,6 +463,8 @@ function LandingPage() {
   const [isExposureAnimationReversed, setIsExposureAnimationReversed] = useState(false)
   const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
   const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
+  const [isTrustContentOverflowing, setIsTrustContentOverflowing] = useState(false)
+  const isTrustStatic = isTrustContentOverflowing
 
   useEffect(() => {
     if (!isExposureAnimationActive) {
@@ -546,7 +558,7 @@ function LandingPage() {
     const updatePrimitiveLayoutVars = () => {
       document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
       document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
-      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() ? '0px' : `${getTrustScrollDistance()}px`)
+      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() || isTrustContentOverflowing ? '0px' : `${getTrustScrollDistance()}px`)
     }
     const updatePrimitiveProgress = () => {
       const triggerY = getPrimitiveTriggerY()
@@ -600,6 +612,11 @@ function LandingPage() {
         return
       }
 
+      if (isTrustContentOverflowing) {
+        setExpandedTrustIndex(null)
+        return
+      }
+
       const trustStart = trustSection.offsetTop - header.offsetHeight
       const trustDistance = shouldReduceMotion() ? 1 : getTrustScrollDistance()
       const trustEnd = trustStart + trustDistance
@@ -635,7 +652,83 @@ function LandingPage() {
       document.documentElement.style.removeProperty('--primitive-scroll-space')
       document.documentElement.style.removeProperty('--trust-scroll-space')
     }
-  }, [])
+  }, [isTrustContentOverflowing])
+
+  useEffect(() => {
+    const trust = trustContentRef.current
+
+    if (!trust) {
+      return
+    }
+
+    let animationFrame = 0
+    let settleTimer = 0
+
+    const getLength = (value: string) => Number(value.replace('px', '').trim()) || 0
+    const getBlockSize = (element: Element | null) => {
+      if (!element) {
+        return 0
+      }
+
+      const styles = window.getComputedStyle(element)
+      return element.getBoundingClientRect().height + getLength(styles.marginTop) + getLength(styles.marginBottom)
+    }
+
+    const updateOverflowState = () => {
+      const topMarker = trust.querySelector('.trust__marker:not(.trust__marker--bottom)')
+      const bottomMarker = trust.querySelector('.trust__marker--bottom')
+      const trustList = trust.querySelector('.trust-list')
+      const trustItems = Array.from(trust.querySelectorAll('.trust-item'))
+
+      if (!topMarker || !bottomMarker || !trustList || trustItems.length === 0) {
+        setIsTrustContentOverflowing(false)
+        return
+      }
+
+      const trustStyles = window.getComputedStyle(trust)
+      const trustListStyles = window.getComputedStyle(trustList)
+      const stickyFrameHeight = window.innerHeight - (headerRef.current?.offsetHeight ?? 0)
+      const availableHeight = stickyFrameHeight - getLength(trustStyles.paddingTop) - getLength(trustStyles.paddingBottom)
+      const itemGap = getLength(trustListStyles.rowGap || trustListStyles.gap)
+      const buttonHeight = trustItems.reduce((height, item) => height + getBlockSize(item.querySelector('.trust-item__button')), 0)
+      const maxPanelHeight = Math.max(
+        ...trustItems.map((item) => {
+          const panelCopy = item.querySelector('.trust-item__panel p')
+
+          if (!panelCopy) {
+            return 0
+          }
+
+          const styles = window.getComputedStyle(panelCopy)
+          return panelCopy.scrollHeight + getLength(styles.marginTop) + getLength(styles.marginBottom)
+        }),
+      )
+      const steppedContentHeight =
+        getBlockSize(topMarker) +
+        getBlockSize(bottomMarker) +
+        buttonHeight +
+        maxPanelHeight +
+        itemGap * Math.max(0, trustItems.length - 1)
+
+      setIsTrustContentOverflowing(steppedContentHeight > availableHeight + 1)
+    }
+
+    const scheduleUpdate = () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.clearTimeout(settleTimer)
+      animationFrame = window.requestAnimationFrame(updateOverflowState)
+      settleTimer = window.setTimeout(updateOverflowState, 320)
+    }
+
+    scheduleUpdate()
+    window.addEventListener('resize', scheduleUpdate)
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      window.clearTimeout(settleTimer)
+      window.removeEventListener('resize', scheduleUpdate)
+    }
+  }, [expandedTrustIndex])
 
   return (
     <main className="landing-page">
@@ -697,20 +790,20 @@ function LandingPage() {
               <div className="macro-illustration" aria-hidden="true">
                 <img src="/illustration-grid.svg" alt="" />
               </div>
-              <h3>Macro exposure<br />without leaving DeFi</h3>
-              <p>Settles in USDC. Self-custodial.<br />No KYC, no offchain backend.</p>
+              <h3>Macro exposure<CardBreak />without leaving DeFi</h3>
+              <p>Settles in USDC. Self-custodial.<CardBreak />No KYC, no offchain backend.</p>
             </article>
 
             <article className="feature-card">
               <SplitIllustration />
-              <h3>The dollar index,<br />tradeable onchain</h3>
-              <p>Perp DEX for the dollar index.<br />Trade or hedge the dollar,<br />onchain.</p>
+              <h3>The dollar index,<CardBreak />tradeable onchain</h3>
+              <p>Perp DEX for the dollar index.<CardBreak />Trade or hedge the dollar,<CardBreak />onchain.</p>
             </article>
 
             <article className="feature-card">
               <SolvencyIllustration />
-              <h3>Built around solvency,<br />not extraction.</h3>
-              <p>No ADL. No cascading<br />liquidations. MEV-resistant.<br />Predictable fees.</p>
+              <h3>Built around solvency,<CardBreak />not extraction.</h3>
+              <p>No ADL. No cascading<CardBreak />liquidations. MEV-resistant.<CardBreak />Predictable fees.</p>
             </article>
           </div>
         </div>
@@ -753,11 +846,11 @@ function LandingPage() {
 
       <section
         ref={trustSectionRef}
-        className="landing-section landing-section--trust"
+        className={`landing-section landing-section--trust${isTrustStatic ? ' landing-section--trust-static' : ''}`}
         aria-labelledby="trust-title"
       >
-        <div className="trust">
-          <span className={`trust__marker${expandedTrustIndex === null ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
+        <div className={`trust${isTrustStatic ? ' trust--all-open' : ''}`} ref={trustContentRef}>
+          <span className={`trust__marker${expandedTrustIndex === null || isTrustStatic ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
             <span key={`trust-marker-top-${expandedTrustIndex ?? 'idle'}`} />
           </span>
           <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
@@ -765,7 +858,7 @@ function LandingPage() {
             {TRUST_ITEMS.map((item, index) => {
               const panelId = `trust-panel-${index}`
               const titleId = `trust-title-${index}`
-              const isExpanded = expandedTrustIndex === index
+              const isExpanded = isTrustStatic || expandedTrustIndex === index
 
               return (
                 <div
@@ -789,7 +882,7 @@ function LandingPage() {
             })}
           </div>
           <span
-            className={`trust__marker trust__marker--bottom${expandedTrustIndex === null ? '' : ' trust__marker--value-step'}`}
+            className={`trust__marker trust__marker--bottom${expandedTrustIndex === null || isTrustStatic ? '' : ' trust__marker--value-step'}`}
             aria-hidden="true"
           >
             <span key={`trust-marker-bottom-${expandedTrustIndex ?? 'idle'}`} />
