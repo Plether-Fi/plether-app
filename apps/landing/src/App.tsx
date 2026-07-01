@@ -281,9 +281,9 @@ function SiteHeader({
         <div className="site-header__inner">
           <Brand />
           <nav className="site-nav" aria-label="Primary navigation">
-            <a href={X_URL} aria-label="Plether on X">X</a>
+            <a href={X_URL} aria-label="Plether on X" target="_blank" rel="noreferrer">X</a>
             <DividerDot />
-            <a href={DOCS_URL}>Docs</a>
+            <a href={DOCS_URL} target="_blank" rel="noreferrer">Docs</a>
             <DividerDot />
             <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noreferrer">
               <span className="button-label">Launch App</span>
