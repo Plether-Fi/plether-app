@@ -9,6 +9,7 @@ import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
+import { usePerpsUiStore } from '../stores/perpsUiStore'
 import {
   adverseConfidenceBasketPrice,
   directionToPerpsSide,
@@ -1275,6 +1276,8 @@ export function PerpsTradeTicket({
   const { open } = useAppKit()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
+  const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
+  const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
@@ -1306,6 +1309,7 @@ export function PerpsTradeTicket({
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
+  const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
@@ -2045,13 +2049,22 @@ export function PerpsTradeTicket({
     trackPerpsOrderLifecycle('executed', commonAnalyticsProperties)
   }, [commonAnalyticsProperties, lifecycleState])
 
-  function openMarginAction(action: MarginAction) {
+  const openMarginAction = useCallback((action: MarginAction) => {
     trackPerpsMarginLifecycle(`${action}_opened`, commonAnalyticsProperties)
     setMarginAction(action)
     setMarginActionAmount('')
     setMarginActionStatus('idle')
     setMarginActionError(undefined)
-  }
+  }, [commonAnalyticsProperties])
+
+  useEffect(() => {
+    if (!marginActionRequest) return
+    if (handledMarginActionRequestRef.current === marginActionRequest.id) return
+
+    handledMarginActionRequestRef.current = marginActionRequest.id
+    openMarginAction(marginActionRequest.action)
+    clearMarginActionRequest(marginActionRequest.id)
+  }, [clearMarginActionRequest, marginActionRequest, openMarginAction])
 
   async function handleMarginActionSubmit() {
     if (!marginAction) return
