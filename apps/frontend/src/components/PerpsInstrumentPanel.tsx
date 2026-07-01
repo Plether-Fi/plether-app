@@ -62,7 +62,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
   }
 
   return (
-    <dd className={`mt-2 flex items-center gap-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>
+    <dd className={`mt-2 flex min-w-0 items-center gap-2 text-xl font-semibold 2xl:text-2xl ${statToneClass(stat.tone)}`}>
       {stat.freshness ? (
         <Tooltip content={stat.freshnessTooltip ?? `Oracle ${stat.freshness}`} position="bottom">
           <span
@@ -72,7 +72,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
           />
         </Tooltip>
       ) : null}
-      <span>{stat.value}</span>
+      <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{stat.value}</span>
     </dd>
   )
 }
@@ -98,7 +98,7 @@ export function PerpsInstrumentPanel({
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">
-        <div className="flex min-w-[220px] shrink-0 items-center gap-4">
+        <div className="flex min-w-[200px] shrink-0 items-center gap-3">
           <DxyInstrumentMark />
           <div className="min-w-0">
             <h2 className="text-2xl font-semibold text-content-primary">{name}</h2>
@@ -108,7 +108,7 @@ export function PerpsInstrumentPanel({
 
         <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
-        <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-7">
+        <dl className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(7.75rem,1fr))] gap-x-3 gap-y-4 2xl:gap-x-4">
           {stats.map((stat) => (
             <div key={stat.label} className="min-w-0">
               <dt className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-content-secondary">

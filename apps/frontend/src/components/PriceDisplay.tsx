@@ -60,7 +60,7 @@ export function PriceDisplay({
       content={isStale ? `Oracle last updated ${formatTimeAgo(updatedAt)}` : ''}
       position="bottom"
     >
-      <span className={`px-2 py-0.5 text-xs font-medium border ${getStatusStyles(status)}`}>
+      <span className={`whitespace-nowrap border px-2 py-0.5 text-xs font-medium ${getStatusStyles(status)}`}>
         {status}
       </span>
     </Tooltip>
@@ -68,24 +68,24 @@ export function PriceDisplay({
 
   if (variant === 'compact') {
     return (
-      <div className="flex items-center gap-4">
-        <div className="flex items-center gap-2">
-          <TokenLabel token="plDXY-BULL" />
+      <div className="flex min-w-0 items-center gap-4">
+        <div className="flex min-w-0 items-center gap-2">
+          <TokenLabel token="plDXY-BULL" className="max-w-36" />
           {isLoading ? (
             <Skeleton width={60} height={20} />
           ) : priceUnknown ? (
-            <span className="text-content-secondary font-semibold">--</span>
+            <span className="shrink-0 font-semibold text-content-secondary">--</span>
           ) : (
-            <span className="font-semibold text-content-primary">{price.toFixed(4)}</span>
+            <span className="shrink-0 font-semibold text-content-primary">{price.toFixed(4)}</span>
           )}
           {bullChange !== null && bullChange !== 0 && (
-            <span className={`text-xs font-medium ${bullChange > 0 ? 'text-positive' : 'text-brand-orange'}`}>
+            <span className={`shrink-0 whitespace-nowrap text-xs font-medium ${bullChange > 0 ? 'text-positive' : 'text-brand-orange'}`}>
               {bullChange > 0 ? '+' : ''}{(bullChange * 100).toFixed(2)}%
             </span>
           )}
         </div>
         {isStale ? statusBadge : (
-          <span className={`px-2 py-0.5 text-xs font-medium border ${getStatusStyles(status)}`}>
+          <span className={`shrink-0 whitespace-nowrap border px-2 py-0.5 text-xs font-medium ${getStatusStyles(status)}`}>
             {status}
           </span>
         )}
