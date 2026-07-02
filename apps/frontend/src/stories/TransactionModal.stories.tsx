@@ -15,7 +15,7 @@ const meta: Meta<typeof LoadingScreen> = {
   component: LoadingScreen,
   decorators: [
     (Story) => (
-      <div className="bg-cyber-surface-dark border border-cyber-border-glow/50 max-w-md mx-auto">
+      <div className="bg-surface-panel border border-brand-border/50 max-w-md mx-auto">
         <Story />
       </div>
     ),

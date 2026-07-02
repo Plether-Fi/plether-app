@@ -11,8 +11,8 @@ const sizeStyles = {
 }
 
 const variantStyles = {
-  default: 'border-cyber-bright-blue/30 border-t-cyber-bright-blue',
-  confirming: 'border-cyber-neon-green/30 border-t-cyber-neon-green',
+  default: 'border-brand-peach/30 border-t-brand-peach',
+  confirming: 'border-positive/30 border-t-positive',
 }
 
 export function Spinner({ size = 'md', variant = 'default', className = '' }: SpinnerProps) {

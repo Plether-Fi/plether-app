@@ -17,6 +17,7 @@ export default {
 
         const headers = new Headers(request.headers);
         headers.set('Host', backendUrl.hostname);
+        headers.delete('Origin');
 
         return fetch(backendUrl, {
           method: request.method,

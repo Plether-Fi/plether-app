@@ -20,21 +20,21 @@ function TransactionNavigator({
   if (total <= 1) return null
 
   return (
-    <div className="flex items-center justify-center gap-3 py-3 border-b border-cyber-border-glow/30">
+    <div className="flex items-center justify-center gap-3 py-3 border-b border-brand-border/30">
       <button
         onClick={onPrev}
         disabled={currentIndex === 0}
-        className="p-1 text-cyber-text-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="p-1 text-content-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         <span className="material-symbols-outlined text-lg">chevron_left</span>
       </button>
-      <span className="text-cyber-text-secondary text-sm">
+      <span className="text-content-secondary text-sm">
         Transaction {currentIndex + 1}/{total}
       </span>
       <button
         onClick={onNext}
         disabled={currentIndex === total - 1}
-        className="p-1 text-cyber-text-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="p-1 text-content-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
       >
         <span className="material-symbols-outlined text-lg">chevron_right</span>
       </button>
@@ -85,14 +85,14 @@ export function TransactionModal() {
     <>
       {/* Backdrop - only covers content below header */}
       <div
-        className="fixed inset-0 top-[78px] z-40 cursor-pointer bg-cyber-bg"
+        className="fixed inset-0 top-[78px] z-40 cursor-pointer bg-app-bg"
         onClick={close}
       />
 
       {/* Modal - fixed to right side below header, aligned with header content */}
       <div className="fixed top-[78px] left-0 right-0 z-50 pointer-events-none">
         <div className="max-w-7xl mx-auto px-6 lg:px-8 flex justify-end">
-          <div className="pointer-events-auto w-full max-w-md bg-cyber-surface-dark border border-cyber-border-glow/50">
+          <div className="pointer-events-auto w-full max-w-md bg-surface-panel border border-brand-border/50">
             <TransactionNavigator
               currentIndex={currentIndex}
               total={transactions.length}

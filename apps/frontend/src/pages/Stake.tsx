@@ -26,8 +26,8 @@ export function Stake() {
   return (
     <div className="space-y-10">
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-cyber-text-primary mb-1">Stake</h1>
-        <p className="text-cyber-text-secondary font-light">Stake your tokens to use as collateral</p>
+        <h1 className="text-3xl font-semibold text-content-primary mb-1">Stake</h1>
+        <p className="text-content-secondary font-light">Stake your tokens to use as collateral</p>
       </div>
 
       {isConnected ? (

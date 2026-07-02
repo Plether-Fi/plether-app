@@ -45,7 +45,7 @@ export function TokenInput({
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-cyber-text-secondary mb-1.5">
+        <label className="block text-sm font-medium text-content-secondary mb-1.5">
           {label}
         </label>
       )}
@@ -58,13 +58,13 @@ export function TokenInput({
           disabled={disabled}
           placeholder="0.00"
           className={`
-            w-full bg-cyber-bg border text-cyber-text-primary
-            placeholder-cyber-text-secondary/50 focus:outline-none
+            w-full bg-app-bg border text-content-primary
+            placeholder-content-secondary/50 focus:outline-none
             focus:border-[#FFAB96]
             disabled:opacity-50 disabled:cursor-not-allowed
             transition-all
             ${compact ? 'px-3 py-2.5 pr-24 text-base' : 'px-4 py-4 pr-32 text-xl'}
-            ${error ? 'border-cyber-electric-fuchsia' : 'border-cyber-border-glow/30'}
+            ${error ? 'border-brand-orange' : 'border-brand-border/30'}
           `}
         />
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
@@ -72,7 +72,7 @@ export function TokenInput({
             <button
               onClick={handleMax}
               disabled={disabled}
-              className="bg-cyber-text-secondary/10 px-2 py-1 text-xs font-semibold text-cyber-text-secondary transition-colors hover:bg-[#3B212D] hover:text-cyber-text-primary hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+              className="bg-content-secondary/10 px-2 py-1 text-xs font-semibold text-content-secondary transition-colors hover:bg-[#3B212D] hover:text-content-primary hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
             >
               MAX
             </button>
@@ -83,15 +83,15 @@ export function TokenInput({
 
       {balance !== undefined && (
         <div className="flex justify-between mt-2 text-sm">
-          <span className="text-cyber-text-secondary">{balanceLabel}</span>
-          <span className="text-cyber-text-primary flex items-center gap-1.5">
+          <span className="text-content-secondary">{balanceLabel}</span>
+          <span className="text-content-primary flex items-center gap-1.5">
             {token.symbol === 'USDC' ? formatUsd(balance) : formatAmount(balance, token.decimals)}
             <TokenLabel token={token.symbol} />
           </span>
         </div>
       )}
 
-      {error && <p className="mt-1 text-sm text-cyber-electric-fuchsia">{error}</p>}
+      {error && <p className="mt-1 text-sm text-brand-orange">{error}</p>}
     </div>
   )
 }

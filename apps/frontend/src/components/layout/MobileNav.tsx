@@ -1,24 +1,24 @@
 import { Link, useLocation } from 'react-router-dom'
 
 const navLinks = [
-  { path: '/', label: 'Perps', icon: 'trending_up', color: 'cyber-neon-green' },
-  { path: '/spot', label: 'Spot', icon: 'swap_horiz', color: 'cyber-bright-blue' },
-  { path: '/stake', label: 'Stake', icon: 'paid', color: 'cyber-electric-fuchsia' },
-  { path: '/mint', label: 'Mint', icon: 'add', color: 'cyber-neon-green' },
+  { path: '/', label: 'Perps', icon: 'trending_up', color: 'positive' },
+  { path: '/spot', label: 'Spot', icon: 'swap_horiz', color: 'brand-peach' },
+  { path: '/stake', label: 'Stake', icon: 'paid', color: 'brand-orange' },
+  { path: '/mint', label: 'Mint', icon: 'add', color: 'positive' },
 ]
 
 const colorStyles: Record<string, { active: string; hover: string }> = {
-  'cyber-bright-blue': {
-    active: 'text-cyber-bright-blue bg-cyber-bright-blue/10',
+  'brand-peach': {
+    active: 'text-brand-peach bg-brand-peach/10',
     hover: 'hover:text-[#FFAB96]',
   },
-  'cyber-electric-fuchsia': {
-    active: 'text-cyber-electric-fuchsia bg-cyber-electric-fuchsia/10',
-    hover: 'hover:text-cyber-electric-fuchsia',
+  'brand-orange': {
+    active: 'text-brand-orange bg-brand-orange/10',
+    hover: 'hover:text-brand-orange',
   },
-  'cyber-neon-green': {
-    active: 'text-cyber-neon-green bg-cyber-neon-green/10',
-    hover: 'hover:text-cyber-neon-green',
+  'positive': {
+    active: 'text-positive bg-positive/10',
+    hover: 'hover:text-positive',
   },
 }
 
@@ -26,7 +26,7 @@ export function MobileNav() {
   const location = useLocation()
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-cyber-surface-dark border-t border-cyber-border-glow/30 safe-area-bottom">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface-panel border-t border-brand-border/30 safe-area-bottom">
       <div className="flex items-center justify-around h-16">
         {navLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path ||
@@ -40,7 +40,7 @@ export function MobileNav() {
                 flex flex-col items-center gap-1 px-4 py-2  transition-colors
                 ${isActive
                   ? styles.active
-                  : `text-cyber-text-secondary ${styles.hover}`
+                  : `text-content-secondary ${styles.hover}`
                 }
               `}
             >

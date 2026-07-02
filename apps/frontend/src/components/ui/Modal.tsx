@@ -9,8 +9,13 @@ interface ModalProps {
   title?: string
   headerContent?: ReactNode
   showCloseButton?: boolean
+  closeOnBackdrop?: boolean
+  closeOnEscape?: boolean
   children: ReactNode
   size?: 'sm' | 'md' | 'lg' | 'xl'
+  placement?: 'center' | 'right'
+  contentClassName?: string
+  bodyClassName?: string
   analyticsId?: string
   analyticsSurface?: string
   analyticsProperties?: AnalyticsProperties
@@ -23,19 +28,30 @@ const sizeStyles = {
   xl: 'max-w-3xl',
 }
 
+const placementStyles = {
+  center: 'items-center justify-center p-4',
+  right: 'items-start justify-end p-4',
+}
+
 export function Modal({
   isOpen,
   onClose,
   title,
   headerContent,
   showCloseButton = true,
+  closeOnBackdrop = true,
+  closeOnEscape = true,
   children,
   size = 'md',
+  placement = 'center',
+  contentClassName = '',
+  bodyClassName = 'p-6',
   analyticsId,
   analyticsSurface = 'perps',
   analyticsProperties,
 }: ModalProps) {
   const hasHeader = title !== undefined || headerContent !== undefined
+  const placementClass = placementStyles[placement]
   const openedAtRef = useRef<number | undefined>(undefined)
   const closeReasonRef = useRef<PerpsCloseReason>('state_change')
   const analyticsPropertiesRef = useRef<AnalyticsProperties | undefined>(analyticsProperties)
@@ -86,40 +102,43 @@ export function Modal({
 
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') handleClose('escape')
+      if (e.key === 'Escape' && closeOnEscape) handleClose('escape')
     }
     if (isOpen) {
       document.addEventListener('keydown', handleEscape)
     }
     return () => { document.removeEventListener('keydown', handleEscape); }
-  }, [handleClose, isOpen])
+  }, [closeOnEscape, handleClose, isOpen])
 
   if (!isOpen) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className={`fixed inset-0 z-50 flex ${placementClass}`}>
       {/* Backdrop */}
       <div
-        className="absolute inset-0 cursor-pointer bg-cyber-bg"
-        onClick={() => { handleClose('backdrop') }}
+        className={`absolute inset-0 bg-app-bg/85 backdrop-blur-sm ${closeOnBackdrop ? 'cursor-pointer' : ''}`}
+        onClick={closeOnBackdrop ? () => { handleClose('backdrop') } : undefined}
       />
 
       {/* Modal Content */}
       <div
         className={`
           relative flex max-h-[calc(100dvh-2rem)] w-full ${sizeStyles[size]} flex-col
-          bg-cyber-surface-dark  border border-cyber-border-glow/50
+          bg-surface-panel  border border-brand-border/50
+          ${contentClassName}
         `}
+        role="dialog"
+        aria-modal="true"
       >
         {hasHeader ? (
-          <div className="relative shrink-0 border-b border-cyber-border-glow/30 px-6 py-4">
+          <div className="relative shrink-0 border-b border-brand-border/30 px-6 py-4">
             {title ? (
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-cyber-text-primary">{title}</h2>
+                <h2 className="text-lg font-semibold text-content-primary">{title}</h2>
                 {showCloseButton ? (
                   <button
                     onClick={() => { handleClose('close_button') }}
-                    className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
+                    className="text-content-secondary hover:text-[#FFAB96] transition-colors"
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
@@ -128,7 +147,7 @@ export function Modal({
             ) : showCloseButton ? (
               <button
                 onClick={() => { handleClose('close_button') }}
-                className="absolute right-4 top-3 text-cyber-text-secondary hover:text-[#FFAB96] transition-colors"
+                className="absolute right-4 top-3 text-content-secondary hover:text-[#FFAB96] transition-colors"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>
@@ -138,7 +157,7 @@ export function Modal({
         ) : null}
 
         {/* Body */}
-        <div className="min-h-0 overflow-y-auto overscroll-contain p-6">{children}</div>
+        <div className={`min-h-0 overflow-y-auto overscroll-contain ${bodyClassName}`}>{children}</div>
       </div>
     </div>,
     document.body

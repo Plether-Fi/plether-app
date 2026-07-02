@@ -22,20 +22,31 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper && \
+RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-perps-indexer && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
     cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
-    cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin
+    cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin && \
+    cp "$(cabal list-bin plether-perps-indexer)" /build/plether-perps-indexer-bin
+
+FROM node:22-bookworm-slim AS oracle-worker
+
+WORKDIR /oracle
+COPY apps/frontend/package.json apps/frontend/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.mjs
 
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 libsecp256k1-1 ca-certificates && \
+    libpq5 libsecp256k1-1 libstdc++6 ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
 COPY --from=builder /build/plether-basket-worker-bin /usr/local/bin/plether-basket-worker
 COPY --from=builder /build/plether-keeper-bin /usr/local/bin/plether-keeper
+COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perps-indexer
+COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
+COPY --from=oracle-worker /oracle /app/oracle
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 

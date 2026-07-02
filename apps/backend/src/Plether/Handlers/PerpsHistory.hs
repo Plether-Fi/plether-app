@@ -2,6 +2,8 @@ module Plether.Handlers.PerpsHistory
   ( getPerpsAccountOrders
   , getPerpsAccountActivity
   , getPerpsMarketStatsResponse
+  , perpsMarketStatsChainId
+  , perpsHistoryRouter
   , getPerpsIndexerStatusResponse
   , waitForPerpsOrderTerminal
   ) where
@@ -17,30 +19,36 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( PerpsActivityRow (..)
   , PerpsIndexerStatusRow (..)
+  , PerpsKeeperTerminalOrderRow (..)
   , PerpsOrderRow (..)
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
+  , getPerpsKeeperOrderById
   , getPerpsMarketVolumeSince
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
+import Plether.Perps.HistoryIndexer (orderFailReasonName, terminalStatus)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 
 getPerpsAccountOrders
   :: DbPool
   -> Config
+  -> Maybe Text
   -> Text
   -> Int
   -> Maybe (Integer, Integer)
   -> IO (Either ApiError (ApiResponse Value))
-getPerpsAccountOrders pool cfg account limit cursor = do
+getPerpsAccountOrders pool cfg mRouter account limit cursor = do
   let pageLimit = clampLimit limit
+      chainId = cfgPerpsChainId cfg
+      orderRouter = perpsHistoryRouter cfg mRouter
   rows <- withDb pool $ \conn ->
-    getPerpsOrdersByAccount conn (cfgChainId cfg) account pageLimit cursor
+    getPerpsOrdersByAccount conn chainId orderRouter account pageLimit cursor
   pure $
     Right $
-      mkResponse (latestOrderBlock rows) (cfgChainId cfg) $
+      mkResponse (latestOrderBlock rows) chainId $
         object $
           catMaybes
             [ Just $ "orders" .= map orderRowToJson rows
@@ -50,17 +58,20 @@ getPerpsAccountOrders pool cfg account limit cursor = do
 getPerpsAccountActivity
   :: DbPool
   -> Config
+  -> Maybe Text
   -> Text
   -> Int
   -> Maybe (Integer, Integer)
   -> IO (Either ApiError (ApiResponse Value))
-getPerpsAccountActivity pool cfg account limit cursor = do
+getPerpsAccountActivity pool cfg mRouter account limit cursor = do
   let pageLimit = clampLimit limit
+      chainId = cfgPerpsChainId cfg
+      orderRouter = perpsHistoryRouter cfg mRouter
   rows <- withDb pool $ \conn ->
-    getPerpsActivityByAccount conn (cfgChainId cfg) account pageLimit cursor
+    getPerpsActivityByAccount conn chainId orderRouter account pageLimit cursor
   pure $
     Right $
-      mkResponse (latestActivityBlock rows) (cfgChainId cfg) $
+      mkResponse (latestActivityBlock rows) chainId $
         object $
           catMaybes
             [ Just $ "activity" .= map activityRowToJson rows
@@ -75,55 +86,78 @@ getPerpsMarketStatsResponse pool cfg = do
   now <- round <$> getPOSIXTime
   let rangeSeconds = 24 * 60 * 60
       fromTimestamp = now - rangeSeconds
+      chainId = perpsMarketStatsChainId cfg
+      orderRouter = cfgPerpsOrderRouter cfg
   volume24hUsdc <- withDb pool $ \conn ->
-    getPerpsMarketVolumeSince conn (cfgChainId cfg) fromTimestamp
+    getPerpsMarketVolumeSince conn chainId orderRouter fromTimestamp
   pure $
     Right $
-      mkResponse 0 (cfgChainId cfg) $
+      mkResponse 0 chainId $
         object
           [ "rangeSeconds" .= rangeSeconds
           , "generatedAt" .= now
           , "volume24hUsdc" .= show volume24hUsdc
           ]
 
+perpsMarketStatsChainId :: Config -> Integer
+perpsMarketStatsChainId = cfgPerpsChainId
+
 getPerpsIndexerStatusResponse
   :: DbPool
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
 getPerpsIndexerStatusResponse pool cfg = do
+  let chainId = cfgPerpsChainId cfg
   mStatus <- withDb pool $ \conn ->
-    getPerpsIndexerStatus conn (cfgChainId cfg) "perps-history"
+    getPerpsIndexerStatus conn chainId "perps-history" (cfgPerpsOrderRouter cfg)
   pure $ case mStatus of
     Nothing ->
       Left $ E.internalError "Perps history indexer has not written state yet. Start plether-perps-indexer --once or --loop."
     Just row ->
       Right $
-        mkResponse (pisLastIndexedBlock row) (cfgChainId cfg) $
+        mkResponse (pisLastIndexedBlock row) chainId $
           indexerStatusToJson row
 
 waitForPerpsOrderTerminal
   :: DbPool
   -> Config
+  -> Maybe Text
   -> Integer
   -> Maybe Text
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
-waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
+waitForPerpsOrderTerminal pool cfg mRouter orderId mAccount timeoutSeconds = do
   let waitSeconds = min 60 $ max 1 timeoutSeconds
       account = T.toLower <$> mAccount
-  (timedOut, mOrder) <- go account waitSeconds
+      chainId = cfgPerpsChainId cfg
+      orderRouter = perpsHistoryRouter cfg mRouter
+  (timedOut, mOrder) <- go orderRouter account waitSeconds
   pure $
     Right $
-      mkResponse (maybe 0 porSortBlock mOrder) (cfgChainId cfg) $
+      mkResponse (maybe 0 wosBlock mOrder) chainId $
         object
           [ "timedOut" .= timedOut
-          , "order" .= fmap orderRowToJson mOrder
+          , "order" .= fmap wosJson mOrder
           ]
   where
-    go :: Maybe Text -> Int -> IO (Bool, Maybe PerpsOrderRow)
-    go account remainingSeconds = do
-      mOrder <- withDb pool $ \conn ->
-        getPerpsOrderById conn (cfgChainId cfg) orderId account
+    go :: Text -> Maybe Text -> Int -> IO (Bool, Maybe WaitOrderSnapshot)
+    go orderRouter account remainingSeconds = do
+      mOrder <- withDb pool $ \conn -> do
+        mKeeperOrder <- getPerpsKeeperOrderById conn orderRouter orderId account
+        mHistoryOrder <- getPerpsOrderById conn (cfgPerpsChainId cfg) orderRouter orderId account
+        pure $ case mHistoryOrder of
+          Just historyOrder | isTerminalHistoryOrder historyOrder ->
+            Just $ historyOrderSnapshot historyOrder
+          _ ->
+            case mKeeperOrder >>= keeperTerminalOrderSnapshot mHistoryOrder of
+              Just terminalOrder ->
+                Just terminalOrder
+              Nothing ->
+                case mHistoryOrder of
+                  Just historyOrder ->
+                    Just $ historyOrderSnapshot historyOrder
+                  Nothing ->
+                    keeperOrderSnapshot Nothing <$> mKeeperOrder
       case mOrder of
         Just row | isTerminalOrder row ->
           pure (False, Just row)
@@ -131,16 +165,83 @@ waitForPerpsOrderTerminal pool cfg orderId mAccount timeoutSeconds = do
           pure (True, mOrder)
         _ -> do
           threadDelay 1_000_000
-          go account (remainingSeconds - 1)
+          go orderRouter account (remainingSeconds - 1)
 
-    isTerminalOrder :: PerpsOrderRow -> Bool
-    isTerminalOrder row = porTerminalStatus row /= "Committed"
+    isTerminalOrder :: WaitOrderSnapshot -> Bool
+    isTerminalOrder row = wosTerminalStatus row /= "Committed"
+
+    isTerminalHistoryOrder :: PerpsOrderRow -> Bool
+    isTerminalHistoryOrder row = porTerminalStatus row /= "Committed"
+
+data WaitOrderSnapshot = WaitOrderSnapshot
+  { wosBlock :: Integer
+  , wosTerminalStatus :: Text
+  , wosJson :: Value
+  }
+
+historyOrderSnapshot :: PerpsOrderRow -> WaitOrderSnapshot
+historyOrderSnapshot row =
+  WaitOrderSnapshot
+    { wosBlock = porSortBlock row
+    , wosTerminalStatus = porTerminalStatus row
+    , wosJson = orderRowToJson row
+    }
+
+keeperTerminalOrderSnapshot :: Maybe PerpsOrderRow -> PerpsKeeperTerminalOrderRow -> Maybe WaitOrderSnapshot
+keeperTerminalOrderSnapshot mHistoryOrder row =
+  case T.toLower $ pktoStatus row of
+    "executed" -> Just $ keeperOrderSnapshot mHistoryOrder row
+    "failed" -> Just $ keeperOrderSnapshot mHistoryOrder row
+    _ -> Nothing
+
+keeperOrderSnapshot :: Maybe PerpsOrderRow -> PerpsKeeperTerminalOrderRow -> WaitOrderSnapshot
+keeperOrderSnapshot mHistoryOrder row =
+  WaitOrderSnapshot
+    { wosBlock = maybe commitBlockNumber id terminalBlock
+    , wosTerminalStatus = status
+    , wosJson =
+        object $
+          catMaybes
+            [ Just $ "orderId" .= show (pktoOrderId row)
+            , Just $ "orderRouter" .= pktoOrderRouter row
+            , Just $ "account" .= pktoAccount row
+            , Just $ "side" .= pktoSide row
+            , Just $ "commitTxHash" .= pktoCommitTxHash row
+            , Just $ "commitBlockNumber" .= show commitBlockNumber
+            , Just $ "commitTimestamp" .= commitTimestamp
+            , ("terminalTxHash" .=) <$> terminalTxHash
+            , ("terminalBlockNumber" .=) . show <$> terminalBlock
+            , ("terminalTimestamp" .=) <$> historyField porTerminalTimestamp
+            , Just $ "terminalStatus" .= status
+            , ("failureReason" .=) <$> failureReason
+            , ("executionPrice" .=) . show <$> pktoExecutionPrice row
+            ]
+    }
+  where
+    keeperStatus = T.toLower $ pktoStatus row
+    failureReason = orderFailReasonName <$> pktoFailureReason row
+    historyField selector = mHistoryOrder >>= selector
+    commitBlockNumber = maybe (maybe (pktoCommitBlock row) id (pktoCommitEventBlock row)) id (historyField porCommitBlockNumber)
+    commitTimestamp = maybe (pktoCommitTime row) id (historyField porCommitTimestamp)
+    status
+      | keeperStatus == "executed" = "Executed"
+      | keeperStatus == "failed" = terminalStatus $ maybe "Unknown" id failureReason
+      | otherwise = "Committed"
+    terminalTxHash
+      | keeperStatus == "executed" = pktoExecutionTxHash row
+      | keeperStatus == "failed" = pktoFailureTxHash row
+      | otherwise = Nothing
+    terminalBlock
+      | keeperStatus == "executed" = pktoExecutionBlock row
+      | keeperStatus == "failed" = pktoFailureBlock row
+      | otherwise = Nothing
 
 orderRowToJson :: PerpsOrderRow -> Value
 orderRowToJson PerpsOrderRow {..} =
   object $
     catMaybes
       [ Just $ "orderId" .= show porOrderId
+      , Just $ "orderRouter" .= porOrderRouter
       , ("account" .=) <$> porAccount
       , ("side" .=) <$> porSide
       , ("commitTxHash" .=) <$> porCommitTxHash
@@ -164,6 +265,7 @@ activityRowToJson PerpsActivityRow {..} =
   object $
     catMaybes
       [ Just $ "activityType" .= parActivityType
+      , Just $ "orderRouter" .= parOrderRouter
       , Just $ "account" .= parAccount
       , ("actor" .=) <$> parActor
       , ("orderId" .=) . show <$> parOrderId
@@ -184,6 +286,7 @@ indexerStatusToJson PerpsIndexerStatusRow {..} =
     catMaybes
       [ Just $ "indexerName" .= pisIndexerName
       , Just $ "chainId" .= show pisChainId
+      , Just $ "releaseRouter" .= pisReleaseRouter
       , Just $ "lastIndexedBlock" .= show pisLastIndexedBlock
       , ("lastIndexedBlockHash" .=) <$> pisLastIndexedBlockHash
       ]
@@ -216,3 +319,9 @@ safeLast xs = Just $ last xs
 
 clampLimit :: Int -> Int
 clampLimit = min 100 . max 1
+
+perpsHistoryRouter :: Config -> Maybe Text -> Text
+perpsHistoryRouter cfg =
+  maybe (normalizeAddress $ cfgPerpsOrderRouter cfg) normalizeAddress
+  where
+    normalizeAddress = T.toLower . T.strip

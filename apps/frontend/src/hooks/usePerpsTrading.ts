@@ -359,8 +359,11 @@ async function describeCommitFailure({
 }): Promise<string> {
   const context: string[] = [
     intro,
-    hash === undefined ? 'No transaction hash was returned by the wallet/RPC.' : `Failed tx: ${hash}`,
+    hash === undefined
+      ? 'No transaction hash was returned by the wallet/RPC, so no mined transaction could be checked.'
+      : `Failed tx: ${hash}`,
   ]
+  const hasTransactionHash = hash !== undefined
 
   try {
     const [pendingOrders, maxPendingOrders, accountView] = await Promise.all([
@@ -433,7 +436,11 @@ async function describeCommitFailure({
       functionName: 'commitOrder',
       args,
     })
-    context.push('A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.')
+    if (hasTransactionHash) {
+      context.push('A fresh commit simulation still passes, so the mined revert likely came from state changing between simulation and confirmation or from RPC-hidden revert data.')
+    } else {
+      context.push('A fresh commit simulation still passes, so this looks like a wallet/RPC submission failure rather than a contract rejection. Retry the commit; if your wallet still shows a pending request, reject it first or reconnect the wallet.')
+    }
   } catch (simulationError) {
     context.push(`A fresh commit simulation now fails: ${getPerpsErrorMessage(simulationError, 'commit')}`)
   }
@@ -779,11 +786,14 @@ export function usePerpsTrading() {
         diagnosticSizeDelta !== undefined &&
         diagnosticMarginDelta !== undefined
       ) {
+        const failureHash = diagnosticHash ?? findTransactionHash(error)
         throw new Error(await describeCommitFailure({
           client: diagnosticClient,
           address,
-          hash: diagnosticHash ?? findTransactionHash(error),
-          intro: 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
+          hash: failureHash,
+          intro: failureHash === undefined
+            ? 'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.'
+            : 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
           args: diagnosticArgs,
           isClose,
           side: diagnosticSide,

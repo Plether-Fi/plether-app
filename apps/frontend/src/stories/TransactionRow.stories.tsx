@@ -62,7 +62,7 @@ export const BuyBear: Story = {
     tokenSymbol: 'plDXY-BEAR',
   },
   render: (args) => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30">
       <TransactionRow transaction={argsToTransaction(args)} />
     </div>
   ),
@@ -75,7 +75,7 @@ export const BuyBull: Story = {
     tokenSymbol: 'plDXY-BULL',
   },
   render: (args) => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30">
       <TransactionRow transaction={argsToTransaction(args)} />
     </div>
   ),
@@ -88,7 +88,7 @@ export const StakeBear: Story = {
     tokenSymbol: 'plDXY-BEAR',
   },
   render: (args) => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30">
       <TransactionRow transaction={argsToTransaction(args)} />
     </div>
   ),
@@ -101,7 +101,7 @@ export const LeverageOpen: Story = {
     tokenSymbol: 'USDC',
   },
   render: (args) => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30">
       <TransactionRow transaction={argsToTransaction(args)} />
     </div>
   ),
@@ -114,7 +114,7 @@ export const Mint: Story = {
     tokenSymbol: 'USDC',
   },
   render: (args) => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30">
       <TransactionRow transaction={argsToTransaction(args)} />
     </div>
   ),
@@ -122,7 +122,7 @@ export const Mint: Story = {
 
 export const TransactionList: Story = {
   render: () => (
-    <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 divide-y divide-cyber-border-glow/30">
+    <div className="bg-surface-panel border border-brand-border/30 divide-y divide-brand-border/30">
       <TransactionRow transaction={argsToTransaction({ type: 'swap_buy_bear', amount: 1000, tokenSymbol: 'plDXY-BEAR' }, '1')} />
       <TransactionRow transaction={argsToTransaction({ type: 'swap_buy_bull', amount: 500, tokenSymbol: 'plDXY-BULL' }, '2')} />
       <TransactionRow transaction={argsToTransaction({ type: 'stake_bear', amount: 250, tokenSymbol: 'plDXY-BEAR' }, '3')} />

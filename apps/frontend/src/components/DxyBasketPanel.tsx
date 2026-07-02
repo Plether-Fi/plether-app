@@ -27,10 +27,12 @@ import {
 } from './dxyBasketChartConfig'
 import { Alert, Skeleton, Tooltip } from './ui'
 import {
+  alignBasketPointsToOracleMark,
   buildCandles,
-  mergeLatestBasketPoint,
+  computeBasketComponentPriceChanges,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
+  type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
 
 const CHART_HEIGHT = 320
@@ -96,9 +98,16 @@ function componentWeight(component: BasketComponentPrice): string {
   return `${(component.weightBps / 100).toFixed(1)}%`
 }
 
+function componentChangeClass(value: number): string {
+  if (Math.abs(value) < 0.00005) return 'text-content-secondary/70'
+  return value > 0 ? 'text-positive/75' : 'text-brand-orange/75'
+}
+
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
+  componentChangeHistory?: BasketHistory
   latest?: BasketLatest
+  oracleMark?: OracleMarkPoint
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
   isLoading?: boolean
@@ -127,7 +136,7 @@ function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: numb
   return (
     <Tooltip content={tooltip} position="top">
       <span
-        className={`h-2 w-2 shrink-0 rounded-full ${isFresh ? 'bg-cyber-neon-green' : 'bg-cyber-electric-fuchsia'}`}
+        className={`h-2 w-2 shrink-0 rounded-full ${isFresh ? 'bg-positive' : 'bg-brand-orange'}`}
         aria-label={isFresh ? 'Price fresh' : 'Price stale'}
         tabIndex={0}
       />
@@ -191,11 +200,11 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
     if (chartStyle === 'candlestick') {
       candlestickSeriesRef.current = chart.addSeries(CandlestickSeries, {
         upColor: '#00FF99',
-        downColor: '#FF00CC',
+        downColor: '#FF572D',
         borderUpColor: '#00FF99',
-        borderDownColor: '#FF00CC',
+        borderDownColor: '#FF572D',
         wickUpColor: '#00FF99',
-        wickDownColor: '#FF00CC',
+        wickDownColor: '#FF572D',
         priceFormat: {
           type: 'price',
           precision: 4,
@@ -283,7 +292,9 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
 export function DxyBasketPanelView({
   history,
+  componentChangeHistory,
   latest,
+  oracleMark,
   chartInterval = '1m',
   chartStyle = 'candlestick',
   isLoading = false,
@@ -291,8 +302,8 @@ export function DxyBasketPanelView({
   onChartIntervalChange,
 }: DxyBasketPanelViewProps) {
   const points = useMemo(
-    () => mergeLatestBasketPoint(history?.points ?? [], latest),
-    [history?.points, latest]
+    () => alignBasketPointsToOracleMark(history?.points ?? [], latest, oracleMark),
+    [history?.points, latest, oracleMark]
   )
   const chartPoints = useMemo<ChartPoint[]>(
     () =>
@@ -325,13 +336,12 @@ export function DxyBasketPanelView({
 
   const latestPoint = chartPoints.at(-1) ?? null
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
+  const componentPriceChanges = useMemo(
+    () => computeBasketComponentPriceChanges(componentChangeHistory?.points, latest),
+    [componentChangeHistory?.points, latest]
+  )
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const firstPoint = chartPoints.at(0) ?? null
-  const changePct = firstPoint !== null && latestPoint !== null && firstPoint.price > 0
-    ? (latestPoint.price - firstPoint.price) / firstPoint.price
-    : null
-  const positiveChange = changePct == null || changePct >= 0
-  const lineColor = positiveChange ? '#00FF99' : '#FF00CC'
+  const lineColor = '#00FF99'
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -344,28 +354,25 @@ export function DxyBasketPanelView({
   }, [])
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
-      <div className="px-5 py-4 border-b border-cyber-border-glow/20 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
+      <div className="px-5 py-4 border-b border-brand-border/20 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
         <div>
-          <div className="flex items-center gap-2 text-cyber-text-secondary text-sm">
-            <span className="material-symbols-outlined text-base text-cyber-bright-blue">show_chart</span>
+          <div className="flex items-center gap-2 text-content-secondary text-sm">
+            <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
             <span>plDXY Perp Price</span>
           </div>
           <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
             {isLoading ? (
               <Skeleton width={126} height={34} />
             ) : (
-              <span className="text-3xl font-semibold text-cyber-text-primary">
+              <span className="text-3xl font-semibold text-content-primary">
                 {latestPoint ? formatPrice(latestPoint.price) : '--'}
               </span>
             )}
-            <span className={`text-sm font-semibold ${positiveChange ? 'text-cyber-neon-green' : 'text-cyber-electric-fuchsia'}`}>
-              {formatPercent(changePct)}
-            </span>
           </div>
         </div>
 
-        <div className="inline-grid grid-cols-4 border border-cyber-border-glow/30 bg-cyber-bg w-fit">
+        <div className="inline-grid grid-cols-4 border border-brand-border/30 bg-app-bg w-fit">
           {DXY_BASKET_CHART_INTERVALS.map((item) => (
             <button
               key={item.value}
@@ -374,8 +381,8 @@ export function DxyBasketPanelView({
               aria-pressed={chartInterval === item.value}
               className={`border px-4 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
                 chartInterval === item.value
-                  ? 'border-[#FFAB96] bg-[#FFAB96] text-cyber-bg'
-                  : 'border-transparent text-cyber-text-secondary hover:bg-[#3B212D] hover:text-cyber-text-primary'
+                  ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
+                  : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
               }`}
               onClick={() => {
                 onChartIntervalChange(item.value)
@@ -408,36 +415,67 @@ export function DxyBasketPanelView({
         )}
 
         <div className="mt-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-          {latestComponents.map((component) => (
-            <div key={component.feedId} className="border border-cyber-border-glow/20 bg-cyber-bg px-3 py-2 min-h-[74px]">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />
-                  <span className="truncate text-sm font-semibold text-cyber-text-primary">{component.symbol}</span>
+          {latestComponents.map((component) => {
+            const priceChange = componentPriceChanges[component.feedId || component.symbol]
+
+            return (
+              <div key={component.feedId} className="border border-brand-border/20 bg-app-bg px-3 py-2 min-h-[74px]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />
+                    <span className="truncate text-sm font-semibold text-content-primary">{component.symbol}</span>
+                  </div>
+                  <span className="shrink-0 text-xs text-content-secondary">{componentWeight(component)}</span>
                 </div>
-                <span className="shrink-0 text-xs text-cyber-text-secondary">{componentWeight(component)}</span>
+                <div className="mt-2 flex min-w-0 items-baseline gap-2">
+                  <span className="text-lg font-semibold text-brand-peach">{componentPrice(component)}</span>
+                  {priceChange !== undefined ? (
+                    <span
+                      className={`shrink-0 text-[11px] font-medium ${componentChangeClass(priceChange)}`}
+                      title="24h change"
+                      aria-label={`24 hour change ${formatPercent(priceChange)}`}
+                    >
+                      {formatPercent(priceChange)}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="text-xs text-content-secondary">{component.inverted ? `${component.feedSymbol} inv` : component.feedSymbol}</div>
               </div>
-              <div className="mt-2 text-lg font-semibold text-cyber-bright-blue">{componentPrice(component)}</div>
-              <div className="text-xs text-cyber-text-secondary">{component.inverted ? `${component.feedSymbol} inv` : component.feedSymbol}</div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </div>
     </section>
   )
 }
 
-export function DxyBasketPanel() {
+export interface DxyBasketPanelProps {
+  oraclePriceRaw?: bigint
+  oraclePublishTime?: number
+}
+
+export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketPanelProps) {
   const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1m')
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
+  const { data: componentChangeData } = usePerpsBasketHistory('24h', 60, true)
   const { data: latestData } = usePerpsBasketLatest()
+  const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
+    if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined
+
+    return {
+      timestamp: oraclePublishTime,
+      basketPrice: oraclePriceRaw.toString(),
+    }
+  }, [oraclePriceRaw, oraclePublishTime])
 
   return (
     <DxyBasketPanelView
       history={data?.data}
+      componentChangeHistory={componentChangeData?.data}
       latest={latestData?.data}
+      oracleMark={oracleMark}
       chartInterval={chartInterval}
       isLoading={isLoading}
       isError={isError}

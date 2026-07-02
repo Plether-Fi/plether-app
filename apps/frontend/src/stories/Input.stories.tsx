@@ -62,7 +62,7 @@ export const WithValue: Story = {
   args: {
     label: 'Amount',
     defaultValue: '1,000.00',
-    rightElement: <span className="text-cyber-text-secondary">USDC</span>,
+    rightElement: <span className="text-content-secondary">USDC</span>,
   },
 }
 

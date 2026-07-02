@@ -7,9 +7,9 @@
 
 import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
-import { useChainId } from 'wagmi';
+import { useAccount, useChainId } from 'wagmi';
 import { Result } from 'better-result';
-import { plethApi, PlethApiError } from './client';
+import { defaultApiChainId, plethApi, PlethApiError } from './client';
 import type {
   Side,
   ZapDirection,
@@ -37,8 +37,8 @@ export const apiQueryKeys = {
   perps: {
     all: () => ['perps', currentChainId] as const,
     basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
-    basketHistory: (range: BasketHistoryRange, intervalSeconds: number) =>
-      [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds] as const,
+    basketHistory: (range: BasketHistoryRange, intervalSeconds: number, includeComponents = false) =>
+      [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds, includeComponents] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
   },
   user: {
@@ -101,10 +101,14 @@ export function useProtocolConfig() {
   });
 }
 
-export function usePerpsBasketHistory(range: BasketHistoryRange = '7d', intervalSeconds = 60 * 60) {
+export function usePerpsBasketHistory(
+  range: BasketHistoryRange = '7d',
+  intervalSeconds = 60 * 60,
+  includeComponents = false
+) {
   return useQuery({
-    queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
-    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds)),
+    queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds, includeComponents),
+    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds, includeComponents)),
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
   });
@@ -331,7 +335,9 @@ export function useLendingHistory(address: string | undefined, params?: { side?:
 // =============================================================================
 
 export function useApiChainSync(): void {
-  const chainId = useChainId();
+  const walletChainId = useChainId();
+  const { isConnected } = useAccount();
+  const chainId = isConnected ? walletChainId : defaultApiChainId();
   const queryClient = useQueryClient();
   const prevChainId = useRef(chainId);
 

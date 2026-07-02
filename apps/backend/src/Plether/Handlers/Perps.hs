@@ -37,7 +37,8 @@ import Plether.Cache (AppCache (..))
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
-  ( BasketSnapshotRow (..)
+  ( BasketHistorySnapshotRow (..)
+  , BasketSnapshotRow (..)
   , PythUpdatePayloadRow (..)
   , getBasketSnapshots
   , getLatestBasketSnapshot
@@ -62,11 +63,11 @@ getBasketHistory pool cfg params = do
       maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
 
   rows <- withDb pool $ \conn ->
-    getBasketSnapshots conn fromUnix nowUnix interval maxPoints
+    getBasketSnapshots conn fromUnix nowUnix interval maxPoints (bhpIncludeComponents params)
 
   let points = map rowToPoint rows
       latest = case reverse rows of
-        row : _ -> Just (bsrBasketPrice row)
+        row : _ -> Just (bhsrBasketPrice row)
         [] -> Nothing
       changePct = computeChange rows
       history =
@@ -82,20 +83,20 @@ getBasketHistory pool cfg params = do
 
   pure $ Right $ mkResponse 0 (cfgChainId cfg) history
 
-rowToPoint :: BasketSnapshotRow -> BasketHistoryPoint
-rowToPoint BasketSnapshotRow {..} =
+rowToPoint :: BasketHistorySnapshotRow -> BasketHistoryPoint
+rowToPoint BasketHistorySnapshotRow {..} =
   BasketHistoryPoint
-    { bhpTimestamp = bsrTimestamp
-    , bhpBasketPrice = bsrBasketPrice
-    , bhpComponents = bsrComponents
+    { bhpTimestamp = bhsrTimestamp
+    , bhpBasketPrice = bhsrBasketPrice
+    , bhpComponents = bhsrComponents
     }
 
-computeChange :: [BasketSnapshotRow] -> Maybe Double
+computeChange :: [BasketHistorySnapshotRow] -> Maybe Double
 computeChange rows =
   case (rows, reverse rows) of
-    (first : _, lastRow : _) | bsrBasketPrice first > 0 ->
+    (first : _, lastRow : _) | bhsrBasketPrice first > 0 ->
       Just $
-        (fromIntegral (bsrBasketPrice lastRow - bsrBasketPrice first) / fromIntegral (bsrBasketPrice first) :: Double)
+        (fromIntegral (bhsrBasketPrice lastRow - bhsrBasketPrice first) / fromIntegral (bhsrBasketPrice first) :: Double)
     _ -> Nothing
 
 getBasketLatest

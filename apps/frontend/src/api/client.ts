@@ -6,6 +6,7 @@
  */
 
 import { Result } from 'better-result';
+import { isSepoliaDeployment } from '../utils/deployment';
 import type {
   ApiResponse,
   ApiError,
@@ -35,6 +36,7 @@ import type {
   BasketHistoryRange,
   PerpsRevealPayload,
   PerpsMarketStats,
+  TestnetFaucetClaim,
 } from './types';
 
 // =============================================================================
@@ -73,14 +75,33 @@ function deriveWsUrl(baseUrl: string): string {
 }
 
 const DEV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+const DEFAULT_API_CHAIN_ID = parseDefaultChainId(import.meta.env.VITE_DEFAULT_CHAIN_ID as string | undefined);
+const TESTNET_API_CHAIN_IDS = new Set([11155111, 421614]);
 
 export function chainIdToApiPath(chainId: number): string {
-  if (chainId === 11155111) return '/api/sepolia_v1';
+  if (TESTNET_API_CHAIN_IDS.has(chainId)) return '/api/sepolia_v1';
   return '/api/v1';
+}
+
+function parseDefaultChainId(value: string | undefined): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : 1;
+}
+
+export function defaultApiBaseUrl(): string {
+  if (DEV_API_URL) return DEV_API_URL;
+  if (isSepoliaDeployment()) return '/api/sepolia_v1';
+  return chainIdToApiPath(DEFAULT_API_CHAIN_ID);
+}
+
+export function defaultApiChainId(): number {
+  if (isSepoliaDeployment()) return 11155111;
+  return DEFAULT_API_CHAIN_ID;
 }
 
 export function getConfiguredApiBaseUrl(chainId: number): string {
   if (DEV_API_URL) return DEV_API_URL;
+  if (isSepoliaDeployment()) return '/api/sepolia_v1';
   return chainIdToApiPath(chainId);
 }
 
@@ -93,7 +114,7 @@ export function getConfiguredApiSource(): string {
 }
 
 function getInitialBaseUrl(): string {
-  return getConfiguredApiBaseUrl(1);
+  return defaultApiBaseUrl();
 }
 
 const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
@@ -286,17 +307,33 @@ export class PlethApiClient {
     return fetchApi<ProtocolConfig>(this.config, '/protocol/config');
   }
 
+  async claimTestnetFaucet(
+    address: string
+  ): Promise<Result<ApiResponse<TestnetFaucetClaim>, PlethApiError>> {
+    return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', {
+      method: 'POST',
+      body: JSON.stringify({ address }),
+    });
+  }
+
   // ===========================================================================
   // Perps Endpoints
   // ===========================================================================
 
   async getPerpsBasketHistory(
     range: BasketHistoryRange = '7d',
-    intervalSeconds = 60 * 60
+    intervalSeconds = 60 * 60,
+    includeComponents = false
   ): Promise<Result<ApiResponse<BasketHistory>, PlethApiError>> {
+    const params = new URLSearchParams({
+      range,
+      interval: String(intervalSeconds),
+    });
+    if (includeComponents) params.set('includeComponents', 'true');
+
     return fetchApi<BasketHistory>(
       this.config,
-      `/perps/basket/history?range=${range}&interval=${String(intervalSeconds)}`
+      `/perps/basket/history?${params.toString()}`
     );
   }
 

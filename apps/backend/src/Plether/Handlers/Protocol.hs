@@ -5,7 +5,7 @@ module Plether.Handlers.Protocol
 
 import Control.Concurrent.STM (atomically)
 import Control.Exception (SomeException, try)
-import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
 import Plether.Cache
   ( AppCache (..)
   , CacheEntry (..)
@@ -15,8 +15,15 @@ import Plether.Cache
 import Data.Text (Text, pack)
 import Plether.Config (Addresses (..), Config (..), currentAddresses)
 import Plether.Database (DbPool, withDb)
-import Plether.Database.Schema (insertPriceSnapshot, getPriceAt, insertStakingSnapshot, getStakingRatesAt)
-import Plether.Ethereum.Client (EthClient, ethBlockNumber)
+import Plether.Database.Schema
+  ( BasketSnapshotRow (..)
+  , getLatestBasketSnapshot
+  , getPriceAt
+  , getStakingRatesAt
+  , insertPriceSnapshot
+  , insertStakingSnapshot
+  )
+import Plether.Ethereum.Client (EthClient, RpcError, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
 import qualified Plether.Ethereum.Contracts.MorphoIrm as MorphoIrm
@@ -26,6 +33,10 @@ import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import Plether.Types
 import Plether.Utils.Hex (hexToByteString)
 import Plether.Utils.Numeric (wad)
+
+data ProtocolOracleSource
+  = LiveProtocolOracle Oracle.RoundData
+  | CachedBasketOracle Oracle.RoundData POSIXTime
 
 getProtocolStatus :: AppCache -> EthClient -> Config -> Maybe DbPool -> IO (Either ApiError (ApiResponse ProtocolStatus))
 getProtocolStatus cache client cfg mPool = do
@@ -46,7 +57,7 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
 
   eStatus <- Splitter.currentStatus client (addrSyntheticSplitter addrs)
   eCap <- Splitter.getCap client (addrSyntheticSplitter addrs)
-  eOracle <- Oracle.latestRoundData client (addrBasketOracle addrs)
+  eOracle <- resolveProtocolOracle mPool =<< Oracle.latestRoundData client (addrBasketOracle addrs)
 
   eBearAssets <- Staked.totalAssets client (addrStakingBear addrs)
   eBearShares <- Staked.totalSupply client (addrStakingBear addrs)
@@ -56,10 +67,12 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
   timestamp <- getPOSIXTime
 
   case (eStatus, eCap, eOracle, eBearAssets, eBearShares, eBullAssets, eBullShares) of
-    (Right status, Right cap, Right oracle, Right bearAssets, Right bearShares, Right bullAssets, Right bullShares) -> do
-      let oraclePrice = Oracle.rdAnswer oracle
+    (Right status, Right cap, Right oracleSource, Right bearAssets, Right bearShares, Right bullAssets, Right bullShares) -> do
+      let oracle = protocolOracleRoundData oracleSource
+          oraclePrice = Oracle.rdAnswer oracle
           bearPrice = oraclePrice
           bullPrice = cap - oraclePrice
+          oracleFromCache = protocolOracleIsCached oracleSource
 
           bearExchangeRate =
             if bearShares > 0
@@ -126,8 +139,11 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
               , statusTimestamp = timestamp
               }
 
-      atomically $ setCached (cacheProtocolStatus cache) protoStatus blockNum timestamp
-      pure $ Right $ mkResponse blockNum (cfgChainId cfg) protoStatus
+      if oracleFromCache
+        then pure $ Right $ mkCachedResponse blockNum (cfgChainId cfg) (protocolOracleCachedAt oracleSource) True protoStatus
+        else do
+          atomically $ setCached (cacheProtocolStatus cache) protoStatus blockNum timestamp
+          pure $ Right $ mkResponse blockNum (cfgChainId cfg) protoStatus
     (Left err, _, _, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
     (_, Left err, _, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, Left err, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
@@ -135,6 +151,46 @@ fetchAndCacheProtocolStatus cache client cfg mPool blockNum = do
     (_, _, _, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
     (_, _, _, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+
+resolveProtocolOracle
+  :: Maybe DbPool
+  -> Either RpcError Oracle.RoundData
+  -> IO (Either RpcError ProtocolOracleSource)
+resolveProtocolOracle _ (Right oracle) =
+  pure $ Right $ LiveProtocolOracle oracle
+resolveProtocolOracle Nothing (Left err) =
+  pure $ Left err
+resolveProtocolOracle (Just pool) (Left err) = do
+  mSnapshot <- withDb pool getLatestBasketSnapshot
+  pure $ case mSnapshot of
+    Nothing -> Left err
+    Just snapshot ->
+      let timestamp = bsrTimestamp snapshot
+       in Right $
+            CachedBasketOracle
+              Oracle.RoundData
+                { Oracle.rdRoundId = timestamp
+                , Oracle.rdAnswer = bsrBasketPrice snapshot
+                , Oracle.rdStartedAt = timestamp
+                , Oracle.rdUpdatedAt = timestamp
+                , Oracle.rdAnsweredInRound = timestamp
+                }
+              (fromIntegral timestamp)
+
+protocolOracleRoundData :: ProtocolOracleSource -> Oracle.RoundData
+protocolOracleRoundData = \case
+  LiveProtocolOracle oracle -> oracle
+  CachedBasketOracle oracle _ -> oracle
+
+protocolOracleIsCached :: ProtocolOracleSource -> Bool
+protocolOracleIsCached = \case
+  LiveProtocolOracle _ -> False
+  CachedBasketOracle _ _ -> True
+
+protocolOracleCachedAt :: ProtocolOracleSource -> POSIXTime
+protocolOracleCachedAt = \case
+  LiveProtocolOracle _ -> 0
+  CachedBasketOracle _ cachedAt -> cachedAt
 
 computePriceChange :: DbPool -> Integer -> Integer -> Integer -> Integer -> Integer -> IO (Maybe PriceChange)
 computePriceChange pool blockNum nowUnix bearPrice bullPrice oraclePrice' = do

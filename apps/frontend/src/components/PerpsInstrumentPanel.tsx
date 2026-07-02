@@ -36,15 +36,15 @@ const DEFAULT_STATS: PerpsInstrumentStat[] = [
 ]
 
 function statToneClass(tone: PerpsInstrumentStat['tone']): string {
-  if (tone === 'positive') return 'text-cyber-neon-green'
-  if (tone === 'negative') return 'text-cyber-electric-fuchsia'
-  return 'text-cyber-text-primary'
+  if (tone === 'positive') return 'text-positive'
+  if (tone === 'negative') return 'text-brand-orange'
+  return 'text-content-primary'
 }
 
 function freshnessToneClass(freshness: NonNullable<PerpsInstrumentStat['freshness']>): string {
-  if (freshness === 'fresh') return 'text-cyber-neon-green'
-  if (freshness === 'market-closed') return 'text-cyber-warning-text'
-  if (freshness === 'stale') return 'text-cyber-electric-fuchsia'
+  if (freshness === 'fresh') return 'text-positive'
+  if (freshness === 'market-closed') return 'text-warning'
+  if (freshness === 'stale') return 'text-brand-orange'
   return 'text-[#FFAB96]'
 }
 
@@ -62,7 +62,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
   }
 
   return (
-    <dd className={`mt-2 flex items-center gap-2 text-2xl font-semibold ${statToneClass(stat.tone)}`}>
+    <dd className={`mt-2 flex min-w-0 items-center gap-2 text-xl font-semibold 2xl:text-2xl ${statToneClass(stat.tone)}`}>
       {stat.freshness ? (
         <Tooltip content={stat.freshnessTooltip ?? `Oracle ${stat.freshness}`} position="bottom">
           <span
@@ -72,7 +72,7 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
           />
         </Tooltip>
       ) : null}
-      <span>{stat.value}</span>
+      <span className="min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap">{stat.value}</span>
     </dd>
   )
 }
@@ -80,11 +80,11 @@ function StatValue({ stat }: { stat: PerpsInstrumentStat }) {
 function DxyInstrumentMark() {
   return (
     <div
-      className="flex h-12 w-12 shrink-0 items-center justify-center border border-cyber-border-glow/50 bg-cyber-bg"
+      className="flex h-12 w-12 shrink-0 items-center justify-center border border-brand-border/50 bg-app-bg"
       aria-hidden="true"
     >
       <div className="relative flex h-4 w-4 items-center justify-center bg-[#FFAB96]">
-        <div className="h-3 w-3 rounded-full bg-cyber-bg" />
+        <div className="h-3 w-3 rounded-full bg-app-bg" />
       </div>
     </div>
   )
@@ -96,23 +96,23 @@ export function PerpsInstrumentPanel({
   stats = DEFAULT_STATS,
 }: PerpsInstrumentPanelProps) {
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-visible">
+    <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-center">
-        <div className="flex min-w-[220px] shrink-0 items-center gap-4">
+        <div className="flex min-w-[200px] shrink-0 items-center gap-3">
           <DxyInstrumentMark />
           <div className="min-w-0">
-            <h2 className="text-2xl font-semibold text-cyber-text-primary">{name}</h2>
-            <p className="mt-1 text-sm text-cyber-text-secondary">{description}</p>
+            <h2 className="text-2xl font-semibold text-content-primary">{name}</h2>
+            <p className="mt-1 text-sm text-content-secondary">{description}</p>
           </div>
         </div>
 
-        <div className="hidden h-14 w-px shrink-0 bg-cyber-border-glow/25 lg:block" />
+        <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
-        <dl className="grid flex-1 grid-cols-2 gap-x-5 gap-y-4 md:grid-cols-3 xl:grid-cols-7">
+        <dl className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(7.75rem,1fr))] gap-x-3 gap-y-4 2xl:gap-x-4">
           {stats.map((stat) => (
             <div key={stat.label} className="min-w-0">
-              <dt className="flex items-center gap-1.5 text-xs font-medium text-cyber-text-secondary">
-                <span>{stat.label}</span>
+              <dt className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-content-secondary">
+                <span className="min-w-0 truncate" title={stat.label}>{stat.label}</span>
                 {stat.tooltip ? (
                   <Tooltip
                     content={stat.tooltip}
@@ -120,7 +120,7 @@ export function PerpsInstrumentPanel({
                     className={stat.tooltipClassName ?? 'max-w-80 whitespace-normal'}
                   >
                     <span
-                      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+                      className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
                       aria-label={`${stat.label} details`}
                       tabIndex={0}
                     >

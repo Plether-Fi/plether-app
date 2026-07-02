@@ -3,7 +3,7 @@ module Plether.Api
   ) where
 
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (ToJSON)
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:))
 import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -53,6 +53,7 @@ import Plether.Handlers.History
   , getLendingHistory
   )
 import Plether.Database (DbPool)
+import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
 import Plether.Types.History (HistoryParams (..))
 import Plether.Types.Perps (BasketHistoryParams (..), defaultBasketHistoryParams)
 import Plether.Types (ApiError)
@@ -62,21 +63,41 @@ import Web.Scotty
   ( ActionM
   , ScottyM
   , get
+  , jsonData
   , json
   , middleware
   , pathParam
+  , post
   , queryParamMaybe
   , setHeader
   , status
   )
 
-app :: AppCache -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
-app cache client cfg mPool manager = do
+newtype TestnetFaucetRequest = TestnetFaucetRequest Text
+
+instance FromJSON TestnetFaucetRequest where
+  parseJSON = withObject "TestnetFaucetRequest" $ \v ->
+    TestnetFaucetRequest <$> v .: "address"
+
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
+app cache client perpsClient cfg mPool manager = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
+
+  post "/api/testnet/faucet" $ do
+    TestnetFaucetRequest addr <- jsonData
+    if isValidAddress addr
+      then case mPool of
+        Just pool -> do
+          result <- liftIO $ claimTestnetFaucet pool perpsClient cfg addr
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
+      else handleError $ E.invalidAddress addr
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool
@@ -205,12 +226,15 @@ app cache client cfg mPool manager = do
           then do
             limit <- perpsHistoryLimit
             mCursor <- queryParamMaybe "cursor"
-            case traverse parseHistoryCursor mCursor of
-              Just cursor -> do
-                result <- liftIO $ getPerpsAccountOrders pool cfg addr limit cursor
+            mRouter <- queryParamMaybe "router"
+            case (traverse parseHistoryCursor mCursor, validateRouterParam mRouter) of
+              (Just cursor, Just router) -> do
+                result <- liftIO $ getPerpsAccountOrders pool cfg router addr limit cursor
                 handleResult result
-              Nothing ->
+              (Nothing, _) ->
                 handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+              (_, Nothing) ->
+                handleError $ E.invalidAddress $ maybe "" id mRouter
           else handleError $ E.invalidAddress addr
 
       get "/api/perps/accounts/:address/activity" $ do
@@ -219,12 +243,15 @@ app cache client cfg mPool manager = do
           then do
             limit <- perpsHistoryLimit
             mCursor <- queryParamMaybe "cursor"
-            case traverse parseHistoryCursor mCursor of
-              Just cursor -> do
-                result <- liftIO $ getPerpsAccountActivity pool cfg addr limit cursor
+            mRouter <- queryParamMaybe "router"
+            case (traverse parseHistoryCursor mCursor, validateRouterParam mRouter) of
+              (Just cursor, Just router) -> do
+                result <- liftIO $ getPerpsAccountActivity pool cfg router addr limit cursor
                 handleResult result
-              Nothing ->
+              (Nothing, _) ->
                 handleError $ E.invalidAmount "cursor must be blockNumber:tieBreaker"
+              (_, Nothing) ->
+                handleError $ E.invalidAddress $ maybe "" id mRouter
           else handleError $ E.invalidAddress addr
 
       get "/api/perps/indexer/status" $ do
@@ -234,19 +261,22 @@ app cache client cfg mPool manager = do
       get "/api/perps/orders/:orderId/wait" $ do
         rawOrderId <- pathParam "orderId"
         mAccount <- queryParamMaybe "account"
+        mRouter <- queryParamMaybe "router"
         mTimeoutSeconds <- queryParamMaybe "timeoutSeconds"
-        case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds) of
-          (Just orderId, Just timeoutSeconds)
+        case (parsePositiveInteger rawOrderId, traverse parsePositiveInt mTimeoutSeconds, validateRouterParam mRouter) of
+          (Just orderId, Just timeoutSeconds, Just router)
             | maybe True isValidAddress mAccount -> do
                 result <- liftIO $
-                  waitForPerpsOrderTerminal pool cfg orderId mAccount (maybe 60 id timeoutSeconds)
+                  waitForPerpsOrderTerminal pool cfg router orderId mAccount (maybe 60 id timeoutSeconds)
                 handleResult result
             | otherwise ->
                 handleError $ E.invalidAddress $ maybe "" id mAccount
-          (Nothing, _) ->
+          (Nothing, _, _) ->
             handleError $ E.invalidAmount "orderId must be a positive integer"
-          (_, Nothing) ->
+          (_, Nothing, _) ->
             handleError $ E.invalidAmount "timeoutSeconds must be a positive integer"
+          (_, _, Nothing) ->
+            handleError $ E.invalidAddress $ maybe "" id mRouter
     Nothing -> pure ()
 
   get "/api/perps/market/stats" $ do
@@ -359,10 +389,12 @@ basketHistoryParams :: ActionM BasketHistoryParams
 basketHistoryParams = do
   mRange <- queryParamMaybe "range"
   mInterval <- queryParamMaybe "interval"
+  mIncludeComponents <- queryParamMaybe "includeComponents"
   pure
     defaultBasketHistoryParams
       { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
       , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 60) mInterval
+      , bhpIncludeComponents = maybe (bhpIncludeComponents defaultBasketHistoryParams) parseBool mIncludeComponents
       }
   where
     normalizeRange :: Text -> Text
@@ -374,6 +406,14 @@ basketHistoryParams = do
 
     parseIntegerOr :: Integer -> Text -> Integer
     parseIntegerOr def txt = maybe def id (readMaybeInteger txt)
+
+    parseBool :: Text -> Bool
+    parseBool value =
+      case T.toLower (T.strip value) of
+        "1" -> True
+        "true" -> True
+        "yes" -> True
+        _ -> False
 
     readMaybeInteger :: Text -> Maybe Integer
     readMaybeInteger txt =
@@ -433,6 +473,12 @@ parseHistoryCursor txt =
       Just (blockNumber, tieBreaker)
     _ -> Nothing
 
+validateRouterParam :: Maybe Text -> Maybe (Maybe Text)
+validateRouterParam Nothing = Just Nothing
+validateRouterParam (Just router)
+  | isValidAddress router = Just $ Just router
+  | otherwise = Nothing
+
 corsMiddleware :: Config -> Middleware
 corsMiddleware cfg = cors $ const $ Just policy
   where
@@ -441,7 +487,7 @@ corsMiddleware cfg = cors $ const $ Just policy
     policy =
       simpleCorsResourcePolicy
         { corsOrigins = Just (map encodeUtf8 origins, True)
-        , corsMethods = ["GET", "OPTIONS"]
+        , corsMethods = ["GET", "POST", "OPTIONS"]
         , corsRequestHeaders = ["Content-Type", "Authorization"]
         }
 

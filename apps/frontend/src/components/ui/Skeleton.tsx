@@ -11,7 +11,7 @@ export function Skeleton({
   width,
   height,
 }: SkeletonProps) {
-  const baseStyles = 'bg-cyber-surface-light'
+  const baseStyles = 'bg-surface-muted'
 
   const variantStyles = {
     text: 'h-4',

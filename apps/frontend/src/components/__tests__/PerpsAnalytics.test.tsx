@@ -25,12 +25,14 @@ const tradingMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@reown/appkit/react', () => ({
+  createAppKit: vi.fn(),
   useAppKit: () => ({
     open: vi.fn(),
   }),
 }))
 
 vi.mock('wagmi', () => ({
+  http: vi.fn(() => ({})),
   useAccount: () => ({
     address: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
     isConnected: mockIsConnected,

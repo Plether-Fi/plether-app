@@ -8,16 +8,16 @@ interface OutputDisplayProps {
 }
 
 const variantColors: Record<TokenVariant, string> = {
-  BEAR: 'text-cyber-electric-fuchsia',
-  BULL: 'text-cyber-neon-green',
-  neutral: 'text-cyber-text-primary',
+  BEAR: 'text-brand-orange',
+  BULL: 'text-positive',
+  neutral: 'text-content-primary',
 }
 
 export function OutputDisplay({ label, value, token, variant = 'neutral' }: OutputDisplayProps) {
   return (
-    <div className="bg-cyber-surface-light p-3 border border-cyber-border-glow/30">
+    <div className="bg-surface-muted p-3 border border-brand-border/30">
       <div className="flex justify-between items-center text-sm">
-        <span className="text-cyber-text-secondary">{label}</span>
+        <span className="text-content-secondary">{label}</span>
         <span className={`font-medium ${variantColors[variant]}`}>
           {value} {token}
         </span>

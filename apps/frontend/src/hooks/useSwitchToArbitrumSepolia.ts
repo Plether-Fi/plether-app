@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react'
 import { modal, useAppKit } from '@reown/appkit/react'
 import { useSwitchChain } from 'wagmi'
 import { arbitrumSepolia } from 'wagmi/chains'
-import { appKitArbitrumSepolia } from '../config/wagmi'
+import { appKitArbitrumSepolia, syncAppKitModalStyleOverrides } from '../config/wagmi'
 
 function getErrorText(error: unknown): string {
   if (!error) return ''
@@ -71,7 +71,9 @@ export function useSwitchToArbitrumSepolia() {
     }
 
     try {
+      syncAppKitModalStyleOverrides()
       await open({ view: 'Networks' })
+      syncAppKitModalStyleOverrides()
     } catch (networkSelectorError) {
       lastError = networkSelectorError
       console.warn('Failed to open AppKit network selector.', networkSelectorError)

@@ -33,9 +33,11 @@ data Config = Config
   , cfgPythIngestionEnabled :: Bool
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
+  , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
   , cfgKeeperMaxBatchSize :: Int
@@ -132,9 +134,11 @@ loadConfig = do
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
-      perpsOrderRouter <- fromMaybe "0x485703D16fE36369c134dEe2A61c057733E7830f" <$> lookupEnv "PERPS_ORDER_ROUTER"
-      perpsPletherOracle <- fromMaybe "0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsUsdc <- fromMaybe "0xf1e1B188b87525C51ECe4bae8627ae621D769651" <$> lookupEnv "PERPS_USDC"
+      perpsOrderRouter <- fromMaybe "0x4A0a6c028164A1254e10C3e39cc89Af45090069e" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsPletherOracle <- fromMaybe "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA" <$> lookupEnv "PERPS_PLETHER_ORACLE"
       perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
@@ -184,9 +188,11 @@ loadConfig = do
                 , cfgPythIngestionEnabled = pythIngestionEnabled
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
+                , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = max 1 keeperPollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize

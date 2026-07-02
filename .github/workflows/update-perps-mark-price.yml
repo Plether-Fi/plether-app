@@ -30,9 +30,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Update Arbitrum Sepolia mark price
+      - name: Update Arbitrum Sepolia mark price from backend cache
         env:
           ARBITRUM_SEPOLIA_RPC_URL: ${{ secrets.ARBITRUM_SEPOLIA_RPC_URL }}
           PERPS_ORACLE_UPDATER_PRIVATE_KEY: ${{ secrets.PERPS_ORACLE_UPDATER_PRIVATE_KEY }}
-          PYTH_API_KEY: ${{ secrets.PYTH_API_KEY }}
-        run: node scripts/update-perps-mark-price.mjs
+          PERPS_ORACLE_UPDATER_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+          PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS: '120'
+        run: node scripts/perps-oracle-worker.mjs

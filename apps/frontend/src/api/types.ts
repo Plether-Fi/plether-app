@@ -150,7 +150,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
-  components: BasketComponentPrice[];
+  components?: BasketComponentPrice[];
 }
 
 export interface BasketHistory {
@@ -185,6 +185,14 @@ export interface PerpsMarketStats {
   rangeSeconds: number;
   generatedAt: number;
   volume24hUsdc: string;
+}
+
+export interface TestnetFaucetClaim {
+  address: string;
+  amount: string;
+  token: string;
+  txHash: string;
+  status: 'minted' | 'already_claimed';
 }
 
 // =============================================================================

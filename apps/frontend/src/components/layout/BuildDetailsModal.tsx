@@ -60,8 +60,8 @@ function DetailTable({ rows }: { rows: DetailRows }) {
     <dl className="grid grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
       {entries.map(([label, value]) => (
         <div key={label} className="contents">
-          <dt className="text-cyber-text-secondary">{label}</dt>
-          <dd className="min-w-0 break-all font-mono text-cyber-text-primary">{displayValue(value)}</dd>
+          <dt className="text-content-secondary">{label}</dt>
+          <dd className="min-w-0 break-all font-mono text-content-primary">{displayValue(value)}</dd>
         </div>
       ))}
     </dl>
@@ -70,8 +70,8 @@ function DetailTable({ rows }: { rows: DetailRows }) {
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <section className="space-y-3 border-t border-cyber-border-glow/30 pt-4 first:border-t-0 first:pt-0">
-      <h3 className="text-sm font-semibold text-cyber-text-primary">{title}</h3>
+    <section className="space-y-3 border-t border-brand-border/30 pt-4 first:border-t-0 first:pt-0">
+      <h3 className="text-sm font-semibold text-content-primary">{title}</h3>
       {children}
     </section>
   )
@@ -117,9 +117,9 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
 
         <Section title="Backend Protocol Config">
           {protocolConfig.isLoading ? (
-            <p className="text-sm text-cyber-text-secondary">Loading protocol config...</p>
+            <p className="text-sm text-content-secondary">Loading protocol config...</p>
           ) : protocolConfig.isError ? (
-            <p className="text-sm text-cyber-text-secondary">
+            <p className="text-sm text-content-secondary">
               Protocol config unavailable from the selected backend.
             </p>
           ) : backendConfig ? (
@@ -136,7 +136,7 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
               <DetailTable rows={backendConfig.contracts} />
             </div>
           ) : (
-            <p className="text-sm text-cyber-text-secondary">Protocol config returned no contract data.</p>
+            <p className="text-sm text-content-secondary">Protocol config returned no contract data.</p>
           )}
         </Section>
 

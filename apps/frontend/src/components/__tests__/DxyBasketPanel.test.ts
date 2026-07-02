@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { buildCandles, mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../../utils/dxyBasketChart'
+import {
+  alignBasketPointsToOracleMark,
+  buildCandles,
+  computeBasketDisplayPriceChange,
+  computeBasketComponentPriceChanges,
+  mergeLatestBasketPoint,
+  oracleNumberToDisplayDxyPrice,
+} from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
 
 const component: BasketComponentPrice = {
@@ -66,6 +73,55 @@ describe('DXY basket chart display transform', () => {
     expect((latest - first) / first).toBeGreaterThan(0)
   })
 
+  it('does not report a 0% change when only the live latest point is available', () => {
+    expect(computeBasketDisplayPriceChange([], latestPoint(180, '97000000'))).toBeUndefined()
+    expect(computeBasketDisplayPriceChange(undefined, latestPoint(180, '97000000'))).toBeUndefined()
+  })
+
+  it('computes display percent change from history and the live latest point', () => {
+    const change = computeBasketDisplayPriceChange(
+      [historyPoint(60, '98000000')],
+      latestPoint(180, '97000000')
+    )
+
+    expect(change).toBeCloseTo((1.03 - 1.02) / 1.02, 8)
+  })
+
+  it('computes component price changes from the 24h comparison point', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '101000000' }]
+    const changes = computeBasketComponentPriceChanges(
+      [
+        {
+          timestamp: latest.timestamp - 25 * 60 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '99000000' }],
+        },
+        {
+          timestamp: latest.timestamp - 24 * 60 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100000000' }],
+        },
+        {
+          timestamp: latest.timestamp - 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100500000' }],
+        },
+      ],
+      latest
+    )
+
+    expect(changes[component.feedId]).toBeCloseTo(0.01, 8)
+  })
+
+  it('does not compute component price changes without historical component data', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '101000000' }]
+
+    expect(computeBasketComponentPriceChanges([], latest)).toEqual({})
+    expect(computeBasketComponentPriceChanges([historyPoint(latest.timestamp, '97000000')], latest)).toEqual({})
+  })
+
   it('replaces the current history bucket with the live latest point', () => {
     const merged = mergeLatestBasketPoint(
       [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
@@ -74,7 +130,7 @@ describe('DXY basket chart display transform', () => {
 
     expect(merged).toHaveLength(2)
     expect(merged.at(-1)?.basketPrice).toBe('96000000')
-    expect(merged.at(-1)?.components[0]?.publishTime).toBe(121)
+    expect(merged.at(-1)?.components?.[0]?.publishTime).toBe(121)
   })
 
   it('appends the live latest point when it has moved into a new bucket', () => {
@@ -84,5 +140,28 @@ describe('DXY basket chart display transform', () => {
     )
 
     expect(merged.map((point) => point.timestamp)).toEqual([60, 120, 180])
+  })
+
+  it('uses the on-chain mark as the current chart point', () => {
+    const aligned = alignBasketPointsToOracleMark(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000'),
+      { timestamp: 150, basketPrice: '96500000' }
+    )
+
+    expect(aligned.map((point) => point.timestamp)).toEqual([60, 120, 150])
+    expect(aligned.at(-1)?.basketPrice).toBe('96500000')
+  })
+
+  it('replaces a backend sample from the same timestamp with the on-chain mark', () => {
+    const aligned = alignBasketPointsToOracleMark(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000'),
+      { timestamp: 120, basketPrice: '96500000' }
+    )
+
+    expect(aligned).toHaveLength(2)
+    expect(aligned.at(-1)?.timestamp).toBe(120)
+    expect(aligned.at(-1)?.basketPrice).toBe('96500000')
   })
 })

@@ -25,10 +25,10 @@ const preview: Preview = {
   ],
   parameters: {
     backgrounds: {
-      default: 'cyber-dark',
+      default: 'plether-bg',
       values: [
-        { name: 'cyber-dark', value: '#0a0a0f' },
-        { name: 'cyber-surface', value: '#12121a' },
+        { name: 'plether-bg', value: '#250917' },
+        { name: 'plether-surface', value: '#3B212D' },
       ],
     },
     controls: {

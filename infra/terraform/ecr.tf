@@ -1,5 +1,5 @@
 resource "aws_ecr_repository" "api" {
-  name                 = "plether-api"
+  name                 = var.environment == "mainnet" ? "plether-api" : "plether-api-${var.environment}"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 

@@ -65,6 +65,7 @@ library
         Plether.Handlers.History
         Plether.Keeper
         Plether.Handlers.PerpsHistory
+        Plether.Handlers.TestnetFaucet
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -177,6 +178,8 @@ test-suite plether-api-test
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.PerpsHistorySpec
+        Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec

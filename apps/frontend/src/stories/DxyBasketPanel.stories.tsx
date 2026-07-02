@@ -200,7 +200,7 @@ function DxyBasketStory({ initialInterval, market, chartStyle, state }: DxyBaske
   }, [initialInterval])
 
   return (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto max-w-5xl">
         <DxyBasketPanelView
           history={state === 'loading' || state === 'error' ? undefined : history}

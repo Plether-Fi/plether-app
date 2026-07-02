@@ -22,16 +22,16 @@ export function PositionsSection({
 
   return (
     <div className="mb-12">
-      <h2 className="text-xl font-semibold text-cyber-text-primary mb-4">Open Leveraged Positions</h2>
+      <h2 className="text-xl font-semibold text-content-primary mb-4">Open Leveraged Positions</h2>
 
       {isLoading ? (
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-8 text-center">
-          <div className="text-cyber-text-secondary">Loading positions...</div>
+        <div className="bg-surface-panel border border-brand-border/30 p-8 text-center">
+          <div className="text-content-secondary">Loading positions...</div>
         </div>
       ) : positions.length === 0 ? (
-        <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 p-8 text-center">
-          <div className="text-cyber-text-secondary mb-2">No open positions</div>
-          <p className="text-cyber-text-secondary/60 text-sm">
+        <div className="bg-surface-panel border border-brand-border/30 p-8 text-center">
+          <div className="text-content-secondary mb-2">No open positions</div>
+          <p className="text-content-secondary/60 text-sm">
             Open a leveraged position using the Leverage tab below
           </p>
         </div>
