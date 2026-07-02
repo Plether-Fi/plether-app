@@ -57,7 +57,7 @@ export function PerpsMarketStatePanel({
   const displayedNextDuration = nextDuration ?? schedule.nextDuration
 
   return (
-    <section className="border border-cyber-border-glow/20 bg-cyber-bg px-4 py-3">
+    <section className="border border-[#69393D] bg-cyber-bg px-4 py-3">
       <div className="flex items-start gap-3">
         <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full bg-current ${phaseToneClass(currentPhase)}`} />
         <p className="text-xs leading-5 text-cyber-text-secondary">

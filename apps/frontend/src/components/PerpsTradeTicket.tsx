@@ -1819,7 +1819,11 @@ export function PerpsTradeTicket({
     ]
   )
   const sidePanelPreviewRows = useMemo(
-    () => previewRows.filter((row) => row.label !== 'Resulting leverage'),
+    () => previewRows.filter((row) =>
+      row.label !== 'Resulting leverage' &&
+      row.label !== 'plDXY Perp exposure' &&
+      row.label !== 'Contract side capacity'
+    ),
     [previewRows]
   )
 
@@ -2145,7 +2149,7 @@ export function PerpsTradeTicket({
   }
 
   return (
-    <section className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-visible">
+    <section className="bg-cyber-surface-dark border border-[#69393D] overflow-visible">
       <div className="space-y-5 px-5 py-4">
         <div>
           <div className="mb-2 text-xs font-medium uppercase text-cyber-text-secondary">Direction</div>
@@ -3115,7 +3119,6 @@ export function PerpsTradeTicket({
           <div className="border border-cyber-border-glow/20 bg-cyber-bg p-4">
             <div className="space-y-2">
               <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
-              <AccountSummaryRow label="Amount" value={<TokenAmount amount={formatPerpsUsdc(marginActionAmountRaw)} />} />
               {shouldShowMarginActionPositionContext ? (
                 <>
                   <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />

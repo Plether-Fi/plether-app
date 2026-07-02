@@ -212,8 +212,10 @@ export function Perps() {
           }}
         />
       </div>
-      <div className="flex flex-col gap-2 lg:w-1/4 min-w-0">
-        <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+      <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
+        <div className="-mb-px">
+          <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+        </div>
         <PerpsTradeTicket
           enableLiveTrading
           oraclePriceRaw={perpsMarket.raw.markPrice}
