@@ -34,14 +34,14 @@ export function LoadingScreen({
   return (
     <div className="w-full">
       <div className="py-2 -my-2 overflow-x-clip">
-        <div className="h-1.5 w-full bg-cyber-border-glow/30">
+        <div className="h-1.5 w-full bg-brand-border/30">
           <div
             className={`h-full transition-all duration-500 ${
               hasError
-                ? 'bg-cyber-electric-fuchsia'
+                ? 'bg-brand-orange'
                 : isComplete
-                  ? 'bg-cyber-neon-green'
-                  : 'bg-cyber-warning-text'
+                  ? 'bg-positive'
+                  : 'bg-warning'
             }`}
             style={{ width: `${String(progress)}%` }}
           />
@@ -50,13 +50,13 @@ export function LoadingScreen({
 
       <div className="p-8">
         <div className="flex items-start justify-between mb-8">
-          <h2 className="text-2xl font-bold text-cyber-text-primary">
+          <h2 className="text-2xl font-bold text-content-primary">
             {title}
           </h2>
           {onClose && (
             <button
               onClick={onClose}
-              className="text-cyber-text-secondary hover:text-[#FFAB96] transition-colors -mt-1 -mr-2"
+              className="text-content-secondary hover:text-[#FFAB96] transition-colors -mt-1 -mr-2"
             >
               <span className="material-symbols-outlined">close</span>
             </button>
@@ -73,20 +73,20 @@ export function LoadingScreen({
                   <span
                     className={
                       step.status === 'pending'
-                        ? 'text-cyber-text-secondary'
+                        ? 'text-content-secondary'
                         : step.status === 'error'
-                          ? 'text-cyber-electric-fuchsia'
+                          ? 'text-brand-orange'
                           : step.status === 'confirming'
-                            ? 'text-cyber-neon-green'
-                            : 'text-cyber-text-primary'
+                            ? 'text-positive'
+                            : 'text-content-primary'
                     }
                   >
                     {index + 1}. {step.label}
                   </span>
                 </div>
                 {step.status === 'error' && errorMessage && (
-                  <div className="mt-3 ml-10 p-3 bg-cyber-electric-fuchsia/10 border border-cyber-electric-fuchsia/30">
-                    <p className="text-cyber-electric-fuchsia text-sm">{errorMessage}</p>
+                  <div className="mt-3 ml-10 p-3 bg-brand-orange/10 border border-brand-orange/30">
+                    <p className="text-brand-orange text-sm">{errorMessage}</p>
                   </div>
                 )}
               </div>
@@ -108,7 +108,7 @@ export function LoadingScreen({
               href={transactionUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex w-full items-center justify-center gap-2 bg-cyber-neon-green px-4 py-2 font-medium text-cyber-bg transition-colors hover:bg-[#00CC77] hover:underline hover:underline-offset-4"
+              className="flex w-full items-center justify-center gap-2 bg-positive px-4 py-2 font-medium text-app-bg transition-colors hover:bg-[#00CC77] hover:underline hover:underline-offset-4"
             >
               Show transaction
               <span className="material-symbols-outlined text-lg">open_in_new</span>
@@ -123,8 +123,8 @@ export function LoadingScreen({
 function StepIndicator({ status }: { status: LoadingStep['status'] }) {
   if (status === 'completed') {
     return (
-      <div className="w-6 h-6 rounded-full bg-cyber-neon-green flex items-center justify-center">
-        <span className="material-symbols-outlined text-cyber-bg text-base font-bold">
+      <div className="w-6 h-6 rounded-full bg-positive flex items-center justify-center">
+        <span className="material-symbols-outlined text-app-bg text-base font-bold">
           check
         </span>
       </div>
@@ -133,8 +133,8 @@ function StepIndicator({ status }: { status: LoadingStep['status'] }) {
 
   if (status === 'error') {
     return (
-      <div className="w-6 h-6 rounded-full bg-cyber-electric-fuchsia flex items-center justify-center">
-        <span className="material-symbols-outlined text-cyber-bg text-base font-bold">
+      <div className="w-6 h-6 rounded-full bg-brand-orange flex items-center justify-center">
+        <span className="material-symbols-outlined text-app-bg text-base font-bold">
           close
         </span>
       </div>
@@ -150,6 +150,6 @@ function StepIndicator({ status }: { status: LoadingStep['status'] }) {
   }
 
   return (
-    <div className="w-6 h-6 rounded-full border-2 border-cyber-text-secondary/50" />
+    <div className="w-6 h-6 rounded-full border-2 border-content-secondary/50" />
   )
 }

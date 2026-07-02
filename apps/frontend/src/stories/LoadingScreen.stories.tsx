@@ -12,7 +12,7 @@ const meta: Meta<typeof LoadingScreen> = {
   },
   decorators: [
     (Story) => (
-      <div className="bg-cyber-surface-dark max-w-md">
+      <div className="bg-surface-panel max-w-md">
         <Story />
       </div>
     ),

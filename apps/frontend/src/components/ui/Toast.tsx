@@ -30,15 +30,15 @@ export function Toast({ id, type, title, message, txHash, duration = 5000, onClo
   }
 
   const bgColor = {
-    success: 'bg-cyber-neon-green/20 border-cyber-neon-green',
+    success: 'bg-positive/20 border-positive',
     error: 'bg-red-500/20 border-red-500',
-    info: 'bg-cyber-bright-blue/20 border-cyber-bright-blue',
+    info: 'bg-brand-peach/20 border-brand-peach',
   }[type]
 
   const iconColor = {
-    success: 'text-cyber-neon-green',
+    success: 'text-positive',
     error: 'text-red-500',
-    info: 'text-cyber-bright-blue',
+    info: 'text-brand-peach',
   }[type]
 
   const icon = {
@@ -56,14 +56,14 @@ export function Toast({ id, type, title, message, txHash, duration = 5000, onClo
       <div className="flex items-start gap-3">
         <span className={`material-symbols-outlined ${iconColor}`}>{icon}</span>
         <div className="flex-1 min-w-0">
-          <p className="text-cyber-text-primary font-medium">{title}</p>
-          {message && <p className="text-cyber-text-secondary text-sm mt-1">{message}</p>}
+          <p className="text-content-primary font-medium">{title}</p>
+          {message && <p className="text-content-secondary text-sm mt-1">{message}</p>}
           {txHash && (
             <a
               href={`https://sepolia.etherscan.io/tx/${txHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-cyber-bright-blue text-sm mt-1 hover:underline inline-flex items-center gap-1"
+              className="text-brand-peach text-sm mt-1 hover:underline inline-flex items-center gap-1"
             >
               View on Etherscan
               <span className="material-symbols-outlined text-sm">open_in_new</span>
@@ -72,7 +72,7 @@ export function Toast({ id, type, title, message, txHash, duration = 5000, onClo
         </div>
         <button
           onClick={handleClose}
-          className="text-cyber-text-secondary hover:text-cyber-text-primary"
+          className="text-content-secondary hover:text-content-primary"
         >
           <span className="material-symbols-outlined text-lg">close</span>
         </button>

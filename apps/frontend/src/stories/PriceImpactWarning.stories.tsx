@@ -28,15 +28,15 @@ function PriceImpactWarningModal({
       <div className="space-y-4">
         <div className="bg-red-500/10 border border-red-500/30 p-4 text-center">
           <div className="text-3xl font-bold text-red-500">{priceImpact.toFixed(2)}%</div>
-          <div className="text-sm text-cyber-text-secondary mt-1">Price Impact</div>
+          <div className="text-sm text-content-secondary mt-1">Price Impact</div>
         </div>
 
-        <p className="text-sm text-cyber-text-secondary">
+        <p className="text-sm text-content-secondary">
           This trade has a price impact of <span className="text-red-500 font-medium">{priceImpact.toFixed(2)}%</span>,
-          which exceeds your maximum threshold of <span className="text-cyber-text-primary font-medium">{maxPriceImpact}%</span>.
+          which exceeds your maximum threshold of <span className="text-content-primary font-medium">{maxPriceImpact}%</span>.
         </p>
 
-        <p className="text-sm text-cyber-text-secondary">
+        <p className="text-sm text-content-secondary">
           You will receive significantly less value than your input. Are you sure you want to proceed?
         </p>
 

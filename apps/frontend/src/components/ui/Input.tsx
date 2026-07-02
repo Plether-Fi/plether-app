@@ -10,7 +10,7 @@ export const Input = ({ ref, label, error, rightElement, className = '', ...prop
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-sm font-medium text-cyber-text-secondary mb-1.5">
+          <label className="block text-sm font-medium text-content-secondary mb-1.5">
             {label}
           </label>
         )}
@@ -18,11 +18,11 @@ export const Input = ({ ref, label, error, rightElement, className = '', ...prop
           <input
             ref={ref}
             className={`
-              w-full px-4 py-3 bg-cyber-bg border  text-cyber-text-primary
-              placeholder-cyber-text-secondary/50 focus:outline-none
+              w-full px-4 py-3 bg-app-bg border  text-content-primary
+              placeholder-content-secondary/50 focus:outline-none
               focus:border-[#FFAB96]
               transition-all
-              ${error ? 'border-cyber-electric-fuchsia' : 'border-cyber-border-glow/30'}
+              ${error ? 'border-brand-orange' : 'border-brand-border/30'}
               ${rightElement ? 'pr-20' : ''}
               ${className}
             `}
@@ -34,7 +34,7 @@ export const Input = ({ ref, label, error, rightElement, className = '', ...prop
             </div>
           )}
         </div>
-        {error && <p className="mt-1 text-sm text-cyber-electric-fuchsia">{error}</p>}
+        {error && <p className="mt-1 text-sm text-brand-orange">{error}</p>}
       </div>
     )
   }

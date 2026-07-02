@@ -1,13 +1,13 @@
 export function Terms() {
   return (
-    <div className="max-w-3xl mx-auto space-y-8 text-sm text-cyber-text-secondary">
+    <div className="max-w-3xl mx-auto space-y-8 text-sm text-content-secondary">
       <div>
-        <h1 className="text-2xl font-bold text-cyber-text-primary mb-2">Terms of Service</h1>
-        <p className="text-xs text-cyber-text-secondary/70">Last updated: March 2026</p>
+        <h1 className="text-2xl font-bold text-content-primary mb-2">Terms of Service</h1>
+        <p className="text-xs text-content-secondary/70">Last updated: March 2026</p>
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">1. Acceptance of Terms</h2>
+        <h2 className="text-lg font-semibold text-content-primary">1. Acceptance of Terms</h2>
         <p>
           By accessing or using the Plether protocol interface (the "Interface") operated by
           Plether Labs Limited ("we", "us", or "our"), you agree to be bound by these Terms of
@@ -16,7 +16,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">2. Description of Service</h2>
+        <h2 className="text-lg font-semibold text-content-primary">2. Description of Service</h2>
         <p>
           The Interface provides a web-based means of interacting with the Plether protocol,
           a set of autonomous smart contracts deployed on the Ethereum blockchain. The Interface
@@ -26,7 +26,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">3. Eligibility</h2>
+        <h2 className="text-lg font-semibold text-content-primary">3. Eligibility</h2>
         <p>
           You must be of legal age in your jurisdiction to use the Interface. By using the
           Interface, you represent that you are not a resident of, or located in, any
@@ -37,7 +37,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">4. No Financial Advice</h2>
+        <h2 className="text-lg font-semibold text-content-primary">4. No Financial Advice</h2>
         <p>
           Nothing provided through the Interface constitutes financial, investment, legal, or
           tax advice. We make no recommendations regarding any asset, strategy, or course of
@@ -47,7 +47,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">5. Smart Contract Risks</h2>
+        <h2 className="text-lg font-semibold text-content-primary">5. Smart Contract Risks</h2>
         <p>
           The Plether protocol relies on smart contracts that may contain bugs, vulnerabilities,
           or unexpected behavior. Interactions with smart contracts are irreversible. You
@@ -57,7 +57,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">6. Limitation of Liability</h2>
+        <h2 className="text-lg font-semibold text-content-primary">6. Limitation of Liability</h2>
         <p>
           TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, PLETHER LABS LIMITED AND ITS
           DIRECTORS, OFFICERS, EMPLOYEES, AND AGENTS SHALL NOT BE LIABLE FOR ANY INDIRECT,
@@ -68,7 +68,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">7. Indemnification</h2>
+        <h2 className="text-lg font-semibold text-content-primary">7. Indemnification</h2>
         <p>
           You agree to indemnify, defend, and hold harmless Plether Labs Limited and its
           affiliates from any claims, damages, losses, or expenses arising from your use of the
@@ -77,7 +77,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">8. Modifications</h2>
+        <h2 className="text-lg font-semibold text-content-primary">8. Modifications</h2>
         <p>
           We reserve the right to modify these Terms at any time. Changes will be effective
           upon posting to the Interface. Your continued use of the Interface after changes
@@ -86,7 +86,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">9. Governing Law</h2>
+        <h2 className="text-lg font-semibold text-content-primary">9. Governing Law</h2>
         <p>
           These Terms shall be governed by and construed in accordance with the laws of the
           jurisdiction in which Plether Labs Limited is incorporated, without regard to

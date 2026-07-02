@@ -1,4 +1,4 @@
-import type { BasketHistoryPoint, BasketLatest } from '../api'
+import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../api'
 
 export interface ChartPoint {
   timestamp: number
@@ -13,9 +13,99 @@ export interface ChartCandle {
   close: number
 }
 
+export interface OracleMarkPoint {
+  timestamp: number
+  basketPrice: string
+}
+
 export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
   return Math.max(0, 2 - rawOraclePrice)
+}
+
+function basketDisplayPrice(point: BasketHistoryPoint): number {
+  return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
+}
+
+function componentKey(component: BasketComponentPrice): string {
+  return component.feedId || component.symbol
+}
+
+function componentOraclePrice(component: BasketComponentPrice): number {
+  return Number(component.price) / 1e8
+}
+
+function findHistoricalComponent(
+  points: BasketHistoryPoint[],
+  key: string,
+  targetTimestamp: number,
+  latestTimestamp: number
+): BasketComponentPrice | undefined {
+  for (let index = points.length - 1; index >= 0; index -= 1) {
+    const point = points[index]
+    if (point.timestamp >= latestTimestamp || point.timestamp > targetTimestamp) continue
+
+    const component = point.components?.find((item) => componentKey(item) === key)
+    if (component) return component
+  }
+
+  for (const point of points) {
+    if (point.timestamp >= latestTimestamp) continue
+
+    const component = point.components?.find((item) => componentKey(item) === key)
+    if (component) return component
+  }
+
+  return undefined
+}
+
+export function computeBasketDisplayPriceChange(
+  historyPoints: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined
+): number | undefined {
+  if (!latest || !historyPoints?.length) return undefined
+
+  const mergedPoints = mergeLatestBasketPoint(historyPoints, latest)
+  const firstPoint = mergedPoints.at(0)
+  const latestPoint = mergedPoints.at(-1)
+  if (!firstPoint || !latestPoint || firstPoint.timestamp === latestPoint.timestamp) return undefined
+
+  const firstPrice = basketDisplayPrice(firstPoint)
+  const latestPrice = basketDisplayPrice(latestPoint)
+  if (firstPrice <= 0) return undefined
+
+  return (latestPrice - firstPrice) / firstPrice
+}
+
+export function computeBasketComponentPriceChanges(
+  historyPoints: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined,
+  windowSeconds = 24 * 60 * 60
+): Partial<Record<string, number>> {
+  if (!latest || !historyPoints?.length) return {}
+
+  const points = [...mergeLatestBasketPoint(historyPoints, latest)].sort((left, right) => left.timestamp - right.timestamp)
+  const latestPoint = points.at(-1)
+  if (latestPoint?.timestamp !== latest.timestamp) return {}
+
+  const targetTimestamp = latest.timestamp - windowSeconds
+  const changes: Partial<Record<string, number>> = {}
+
+  for (const latestComponent of latest.components) {
+    const key = componentKey(latestComponent)
+    const latestPrice = componentOraclePrice(latestComponent)
+    if (!key || latestPrice <= 0) continue
+
+    const historicalComponent = findHistoricalComponent(points, key, targetTimestamp, latest.timestamp)
+    if (!historicalComponent) continue
+
+    const historicalPrice = componentOraclePrice(historicalComponent)
+    if (historicalPrice <= 0) continue
+
+    changes[key] = (latestPrice - historicalPrice) / historicalPrice
+  }
+
+  return changes
 }
 
 export function mergeLatestBasketPoint(
@@ -39,20 +129,25 @@ export function mergeLatestBasketPoint(
   return [...historyPoints, livePoint]
 }
 
-export function basketDisplayPriceChange(
-  historyPoints: BasketHistoryPoint[] | undefined,
-  latest: BasketLatest | undefined
-): number | undefined {
-  const mergedPoints = mergeLatestBasketPoint(historyPoints ?? [], latest)
-  const firstPoint = mergedPoints.at(0)
-  const latestPoint = mergedPoints.at(-1)
-  if (!firstPoint || !latestPoint) return undefined
+export function alignBasketPointsToOracleMark(
+  historyPoints: BasketHistoryPoint[],
+  latest: BasketLatest | undefined,
+  oracleMark: OracleMarkPoint | undefined
+): BasketHistoryPoint[] {
+  const points = mergeLatestBasketPoint(historyPoints, latest)
+  if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
 
-  const firstPrice = oracleNumberToDisplayDxyPrice(Number(firstPoint.basketPrice) / 1e8)
-  const latestPrice = oracleNumberToDisplayDxyPrice(Number(latestPoint.basketPrice) / 1e8)
-  if (firstPrice <= 0) return undefined
+  const components = latest?.components ?? points.at(-1)?.components
+  const markPoint: BasketHistoryPoint = {
+    timestamp: oracleMark.timestamp,
+    basketPrice: oracleMark.basketPrice,
+    ...(components ? { components } : {}),
+  }
 
-  return (latestPrice - firstPrice) / firstPrice
+  return [
+    ...points.filter((point) => point.timestamp < oracleMark.timestamp),
+    markPoint,
+  ]
 }
 
 export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {

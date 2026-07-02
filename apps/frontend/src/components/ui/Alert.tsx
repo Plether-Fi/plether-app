@@ -4,19 +4,19 @@ type AlertVariant = 'info' | 'warning' | 'success' | 'error'
 
 const variantStyles: Record<AlertVariant, { container: string; icon: string }> = {
   info: {
-    container: 'bg-cyber-bright-blue/10 border-cyber-bright-blue/30 text-cyber-bright-blue',
+    container: 'bg-brand-peach/10 border-brand-peach/30 text-brand-peach',
     icon: 'info',
   },
   warning: {
-    container: 'bg-cyber-warning-bg border-cyber-warning-text/30 text-cyber-warning-text',
+    container: 'bg-warning-bg border-warning/30 text-warning',
     icon: 'warning',
   },
   success: {
-    container: 'bg-cyber-neon-green/10 border-cyber-neon-green/30 text-cyber-neon-green',
+    container: 'bg-positive/10 border-positive/30 text-positive',
     icon: 'check_circle',
   },
   error: {
-    container: 'bg-cyber-electric-fuchsia/10 border-cyber-electric-fuchsia/30 text-cyber-electric-fuchsia',
+    container: 'bg-brand-orange/10 border-brand-orange/30 text-brand-orange',
     icon: 'error',
   },
 }

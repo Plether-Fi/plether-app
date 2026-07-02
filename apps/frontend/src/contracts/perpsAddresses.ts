@@ -8,7 +8,11 @@ export interface PerpsContractAddresses {
   perpsPublicLens: Address
   marginClearinghouse: Address
   orderRouter: Address
+  orderRouterAdmin: Address
   cfdEngine: Address
+  cfdEnginePlanner: Address
+  cfdEngineSettlementSidecar: Address
+  cfdEngineAdmin: Address
   housePool: Address
   seniorVault: Address
   juniorVault: Address
@@ -19,15 +23,19 @@ export interface PerpsContractAddresses {
 
 export const PERPS_ARBITRUM_SEPOLIA = {
   pyth: '0x4374e5a8b9C22271E9EB878A2AA31DE97DF15DAF',
-  usdc: '0x55E007D79906572cCCA8e75B1Beb302787348D6E',
-  perpsPublicLens: '0xf3871a2e8247515CC913aad682951Eb3f2A673FB',
-  marginClearinghouse: '0x00B89B6e696A43129DA7Ec8a814bb61C9A6189b8',
-  orderRouter: '0x485703D16fE36369c134dEe2A61c057733E7830f',
-  cfdEngine: '0x128f195B92b50db1eEBCbBd249d5C5e946DCd786',
-  housePool: '0x493Ed3466e212Bc3F04075CAaf2837F70b7bAD8a',
-  seniorVault: '0x17eC59e7284CB9fb17B5625153c6Af7f58708981',
-  juniorVault: '0xfED1D3F433d74148F9C04b34ed6d49752f34ff8E',
-  pletherOracle: '0x0e7c23b6Eb951DF97f7d2Fb2382B4405d88318bb',
-  cfdEngineLens: '0xEEE25f5bdC515E3676198dE7262b5aF043b8a37a',
-  cfdEngineAccountLens: '0x74f0a25BcC4b243E915Df1CA6385250aCff1eeE9',
+  usdc: '0xf1e1B188b87525C51ECe4bae8627ae621D769651',
+  perpsPublicLens: '0xDdDCfb123569774427802fcA9D19CBF00c14e2Ad',
+  marginClearinghouse: '0x731bb0939CE531728459394A277B28Cbff8df049',
+  orderRouter: '0x4A0a6c028164A1254e10C3e39cc89Af45090069e',
+  orderRouterAdmin: '0xf11858573eE79EF64e38e47572785D67cE7641Ec',
+  cfdEngine: '0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224',
+  cfdEnginePlanner: '0x7dDC8AdF27456A71e02e517E28a975832D49d195',
+  cfdEngineSettlementSidecar: '0x78C79E81fF5221DCdfB6B384A86990bffAFd4D6b',
+  cfdEngineAdmin: '0x03957FACB0d371f170737fa0252CDC1088bba78A',
+  housePool: '0x793dAbc20Ab0eCEb0AD8060b1fb307212C9EB6df',
+  seniorVault: '0x352F2C0Ad6e0Db6EbC3fBE7738857a804327f53b',
+  juniorVault: '0x783daF5eC664932764a59Ae387C3eAbD6cC61A74',
+  pletherOracle: '0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA',
+  cfdEngineLens: '0xB7F0A32EfD67193782171Efc60D5D13A44bd5177',
+  cfdEngineAccountLens: '0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29',
 } satisfies PerpsContractAddresses

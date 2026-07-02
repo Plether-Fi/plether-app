@@ -6,9 +6,12 @@ interface SettingsState {
   slippage: number
   maxPriceImpact: number
   riskAccepted: boolean
+  sepoliaWelcomeDismissed: boolean
   setSlippage: (slippage: number) => void
   setMaxPriceImpact: (maxPriceImpact: number) => void
   acceptRisk: () => void
+  dismissSepoliaWelcome: () => void
+  openSepoliaWelcome: () => void
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -18,6 +21,7 @@ export const useSettingsStore = create<SettingsState>()(
         slippage: DEFAULT_SLIPPAGE,
         maxPriceImpact: DEFAULT_MAX_PRICE_IMPACT,
         riskAccepted: false,
+        sepoliaWelcomeDismissed: false,
 
         setSlippage: (slippage) =>
           set({ slippage: Math.min(slippage, MAX_SLIPPAGE) }),
@@ -26,6 +30,10 @@ export const useSettingsStore = create<SettingsState>()(
           set({ maxPriceImpact: Math.min(maxPriceImpact, MAX_PRICE_IMPACT) }),
 
         acceptRisk: () => set({ riskAccepted: true }),
+
+        dismissSepoliaWelcome: () => set({ sepoliaWelcomeDismissed: true }),
+
+        openSepoliaWelcome: () => set({ sepoliaWelcomeDismissed: false }),
       }),
       {
         name: STORAGE_KEYS.SETTINGS,

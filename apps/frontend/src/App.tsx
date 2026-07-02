@@ -3,8 +3,10 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
 import { RiskDisclaimer } from './components/RiskDisclaimer'
+import { TestnetWelcomeModal } from './components/TestnetWelcomeModal'
 import { Spinner } from './components/ui/Spinner'
 import { useApiChainSync } from './api'
+import { isSepoliaDeployment } from './utils/deployment'
 
 const Perps = lazy(() => import('./pages/Perps'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -37,7 +39,7 @@ function App() {
         </Suspense>
       </Layout>
       <TransactionModal />
-      <RiskDisclaimer />
+      {isSepoliaDeployment() ? <TestnetWelcomeModal /> : <RiskDisclaimer />}
     </BrowserRouter>
   )
 }

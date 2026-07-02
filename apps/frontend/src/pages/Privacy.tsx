@@ -1,13 +1,13 @@
 export function Privacy() {
   return (
-    <div className="max-w-3xl mx-auto space-y-8 text-sm text-cyber-text-secondary">
+    <div className="max-w-3xl mx-auto space-y-8 text-sm text-content-secondary">
       <div>
-        <h1 className="text-2xl font-bold text-cyber-text-primary mb-2">Privacy Policy</h1>
-        <p className="text-xs text-cyber-text-secondary/70">Last updated: March 2026</p>
+        <h1 className="text-2xl font-bold text-content-primary mb-2">Privacy Policy</h1>
+        <p className="text-xs text-content-secondary/70">Last updated: March 2026</p>
       </div>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">1. Information We Collect</h2>
+        <h2 className="text-lg font-semibold text-content-primary">1. Information We Collect</h2>
         <p>
           The Plether Interface is designed to minimize data collection. We do not collect
           personally identifiable information (PII). The following data may be processed:
@@ -20,7 +20,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">2. How We Use Information</h2>
+        <h2 className="text-lg font-semibold text-content-primary">2. How We Use Information</h2>
         <p>We use the information described above to:</p>
         <ul className="list-disc list-inside space-y-1 ml-2">
           <li>Display your positions, balances, and transaction history</li>
@@ -31,19 +31,19 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">3. Third-Party Services</h2>
+        <h2 className="text-lg font-semibold text-content-primary">3. Third-Party Services</h2>
         <p>The Interface integrates with the following third-party services:</p>
         <ul className="list-disc list-inside space-y-1 ml-2">
           <li>
-            <span className="text-cyber-text-primary">WalletConnect / Reown</span> — for wallet
+            <span className="text-content-primary">WalletConnect / Reown</span> — for wallet
             connectivity. Subject to their own privacy policies.
           </li>
           <li>
-            <span className="text-cyber-text-primary">RPC Providers (Alchemy)</span> — to read
+            <span className="text-content-primary">RPC Providers (Alchemy)</span> — to read
             from and submit transactions to the Ethereum network.
           </li>
           <li>
-            <span className="text-cyber-text-primary">PostHog EU Cloud</span> — for anonymous
+            <span className="text-content-primary">PostHog EU Cloud</span> — for anonymous
             product analytics and sampled, masked session replay.
           </li>
         </ul>
@@ -54,7 +54,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">4. Data Retention</h2>
+        <h2 className="text-lg font-semibold text-content-primary">4. Data Retention</h2>
         <p>
           On-chain data is permanent and publicly accessible on the Ethereum blockchain. We do
           not store wallet addresses or transaction data beyond what is necessary for the
@@ -64,7 +64,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">5. Cookies and Local Storage</h2>
+        <h2 className="text-lg font-semibold text-content-primary">5. Cookies and Local Storage</h2>
         <p>
           The Interface uses browser localStorage to persist your preferences (slippage settings,
           risk acknowledgment). We do not use tracking cookies. PostHog analytics is configured
@@ -78,7 +78,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">6. Your Rights</h2>
+        <h2 className="text-lg font-semibold text-content-primary">6. Your Rights</h2>
         <p>
           Since we do not collect PII, most data subject rights (access, deletion, portability)
           do not apply. You can clear your local preferences at any time by clearing your
@@ -88,7 +88,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">7. Changes to This Policy</h2>
+        <h2 className="text-lg font-semibold text-content-primary">7. Changes to This Policy</h2>
         <p>
           We may update this Privacy Policy from time to time. Changes will be posted on this
           page with an updated revision date.
@@ -96,7 +96,7 @@ export function Privacy() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-cyber-text-primary">8. Contact</h2>
+        <h2 className="text-lg font-semibold text-content-primary">8. Contact</h2>
         <p>
           For questions about this Privacy Policy, please contact Plether Labs Limited through
           the channels listed on our website.

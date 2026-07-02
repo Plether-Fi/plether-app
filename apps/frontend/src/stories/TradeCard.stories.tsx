@@ -101,13 +101,13 @@ export const BuyBearFlow: Story = {
 
     await step('Verify Buy mode is selected by default', async () => {
       const buyButton = canvas.getByRole('button', { name: /buy/i })
-      expect(buyButton).toHaveClass('bg-cyber-surface-dark')
+      expect(buyButton).toHaveClass('bg-surface-panel')
     })
 
     await step('Select plDXY-BEAR token', async () => {
       const bearButton = canvas.getByRole('button', { name: /pldxy-bear/i })
       await userEvent.click(bearButton)
-      expect(bearButton).toHaveClass('border-cyber-electric-fuchsia')
+      expect(bearButton).toHaveClass('border-brand-orange')
     })
 
     await step('Enter amount to buy', async () => {
@@ -144,13 +144,13 @@ export const SellBullFlow: Story = {
     await step('Switch to Sell mode', async () => {
       const sellButton = canvas.getByRole('button', { name: /^sell$/i })
       await userEvent.click(sellButton)
-      expect(sellButton).toHaveClass('bg-cyber-surface-dark')
+      expect(sellButton).toHaveClass('bg-surface-panel')
     })
 
     await step('Select plDXY-BULL token', async () => {
       const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
       await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-cyber-neon-green')
+      expect(bullButton).toHaveClass('border-positive')
     })
 
     await step('Enter amount to sell', async () => {
@@ -180,19 +180,19 @@ export const TokenToggle: Story = {
 
     await step('Start with BULL selected', async () => {
       const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
-      expect(bullButton).toHaveClass('border-cyber-neon-green')
+      expect(bullButton).toHaveClass('border-positive')
     })
 
     await step('Switch to BULL', async () => {
       const bullButton = canvas.getByRole('button', { name: /pldxy-bull/i })
       await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-cyber-neon-green')
+      expect(bullButton).toHaveClass('border-positive')
     })
 
     await step('Switch back to BEAR', async () => {
       const bearButton = canvas.getByRole('button', { name: /pldxy-bear/i })
       await userEvent.click(bearButton)
-      expect(bearButton).toHaveClass('border-cyber-electric-fuchsia')
+      expect(bearButton).toHaveClass('border-brand-orange')
     })
   },
 }
@@ -215,19 +215,19 @@ export const ModeToggle: Story = {
 
     await step('Start in Buy mode', async () => {
       const buyButton = canvas.getByRole('button', { name: /^buy$/i })
-      expect(buyButton).toHaveClass('bg-cyber-surface-dark')
+      expect(buyButton).toHaveClass('bg-surface-panel')
     })
 
     await step('Switch to Sell mode', async () => {
       const sellButton = canvas.getByRole('button', { name: /^sell$/i })
       await userEvent.click(sellButton)
-      expect(sellButton).toHaveClass('bg-cyber-surface-dark')
+      expect(sellButton).toHaveClass('bg-surface-panel')
     })
 
     await step('Switch back to Buy mode', async () => {
       const buyButton = canvas.getByRole('button', { name: /^buy$/i })
       await userEvent.click(buyButton)
-      expect(buyButton).toHaveClass('bg-cyber-surface-dark')
+      expect(buyButton).toHaveClass('bg-surface-panel')
     })
   },
 }

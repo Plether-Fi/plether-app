@@ -4,9 +4,11 @@ import { Header } from './Header'
 import { Footer } from './Footer'
 import { MobileNav } from './MobileNav'
 import { ApiErrorBanner } from './ApiErrorBanner'
+import { SepoliaNoticeBar } from './SepoliaNoticeBar'
 import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
 import { useAccount } from 'wagmi'
 import { useTransactionStore } from '../../stores/transactionStore'
+import { isSepoliaDeployment } from '../../utils/deployment'
 
 interface LayoutProps {
   children: ReactNode
@@ -23,7 +25,8 @@ export function Layout({ children }: LayoutProps) {
   }, [cleanupOldTransactions])
 
   return (
-    <div className="min-h-screen flex flex-col bg-cyber-bg text-cyber-text-primary">
+    <div className="min-h-screen flex flex-col bg-app-bg text-content-primary">
+      {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
       {isConnected && <WrongNetworkBanner />}
       <div className="sticky top-0 z-50">
         <Header />

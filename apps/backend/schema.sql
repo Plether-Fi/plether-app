@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_perps_basket_snapshots_timestamp ON perps_basket_snapshots(timestamp DESC);
 
+-- Sepolia testnet mock USDC faucet claims
+CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
+    address VARCHAR(42) NOT NULL,
+    amount BIGINT NOT NULL,
+    token_address VARCHAR(42) NOT NULL,
+    tx_hash VARCHAR(66),
+    status VARCHAR(16) NOT NULL,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (address, token_address)
+);
+CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
+
 -- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution
 CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
     id SERIAL PRIMARY KEY,
@@ -81,20 +95,25 @@ CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window
 
 -- Perps keeper indexer state
 CREATE TABLE IF NOT EXISTS perps_keeper_state (
-    id INTEGER PRIMARY KEY DEFAULT 1,
+    id INTEGER DEFAULT 1,
+    order_router TEXT NOT NULL,
     last_indexed_block BIGINT NOT NULL,
     updated_at TIMESTAMP DEFAULT NOW(),
-    CONSTRAINT perps_keeper_state_single_row CHECK (id = 1)
+    PRIMARY KEY (order_router)
 );
 
-INSERT INTO perps_keeper_state (id, last_indexed_block) VALUES (1, 0) ON CONFLICT DO NOTHING;
+INSERT INTO perps_keeper_state (id, order_router, last_indexed_block)
+VALUES (1, '0x0000000000000000000000000000000000000000', 0)
+ON CONFLICT DO NOTHING;
 
 -- Perps keeper pending/executed/failed order queue
 CREATE TABLE IF NOT EXISTS perps_keeper_orders (
-    order_id BIGINT PRIMARY KEY,
+    order_id BIGINT NOT NULL,
+    order_router TEXT NOT NULL,
     account VARCHAR(42) NOT NULL,
     side INTEGER NOT NULL,
     commit_block BIGINT NOT NULL,
+    commit_event_block BIGINT,
     commit_time BIGINT NOT NULL,
     commit_tx_hash VARCHAR(66) NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',
@@ -108,7 +127,8 @@ CREATE TABLE IF NOT EXISTS perps_keeper_orders (
     last_error TEXT,
     last_attempt_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (order_router, order_id)
 );
-CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending ON perps_keeper_orders(order_id ASC) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_pending ON perps_keeper_orders(order_router, order_id ASC) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block ON perps_keeper_orders(commit_block DESC);

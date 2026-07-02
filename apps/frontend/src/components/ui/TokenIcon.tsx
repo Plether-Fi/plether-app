@@ -13,9 +13,9 @@ const sizeStyles: Record<TokenIconSize, string> = {
 }
 
 const colorStyles: Record<TokenSide, string> = {
-  BEAR: 'bg-cyber-electric-fuchsia/20 text-cyber-electric-fuchsia',
-  BULL: 'bg-cyber-neon-green/20 text-cyber-neon-green',
-  USDC: 'bg-cyber-bright-blue/20 text-cyber-bright-blue',
+  BEAR: 'bg-brand-orange/20 text-brand-orange',
+  BULL: 'bg-positive/20 text-positive',
+  USDC: 'bg-brand-peach/20 text-brand-peach',
 }
 
 const labels: Record<TokenSide, string> = {

@@ -63,7 +63,7 @@ export const OpenBearPosition: Story = {
 
     await step('Verify BEAR side is selected by default', async () => {
       const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
-      expect(bearButton).toHaveClass('border-cyber-electric-fuchsia')
+      expect(bearButton).toHaveClass('border-brand-orange')
     })
 
     await step('Enter collateral amount', async () => {
@@ -100,7 +100,7 @@ export const OpenBullPosition: Story = {
     await step('Switch to BULL side', async () => {
       const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
       await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-cyber-neon-green')
+      expect(bullButton).toHaveClass('border-positive')
     })
 
     await step('Enter collateral amount', async () => {
@@ -124,19 +124,19 @@ export const SideToggle: Story = {
 
     await step('Start with BEAR selected', async () => {
       const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
-      expect(bearButton).toHaveClass('border-cyber-electric-fuchsia')
+      expect(bearButton).toHaveClass('border-brand-orange')
     })
 
     await step('Switch to BULL', async () => {
       const bullButton = canvas.getByRole('button', { name: /dxy-bull/i })
       await userEvent.click(bullButton)
-      expect(bullButton).toHaveClass('border-cyber-neon-green')
+      expect(bullButton).toHaveClass('border-positive')
     })
 
     await step('Switch back to BEAR', async () => {
       const bearButton = canvas.getByRole('button', { name: /dxy-bear/i })
       await userEvent.click(bearButton)
-      expect(bearButton).toHaveClass('border-cyber-electric-fuchsia')
+      expect(bearButton).toHaveClass('border-brand-orange')
     })
   },
 }

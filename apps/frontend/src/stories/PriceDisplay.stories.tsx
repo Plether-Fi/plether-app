@@ -32,11 +32,11 @@ export const BothVariants: Story = {
   render: () => (
     <div className="space-y-6">
       <div>
-        <p className="text-cyber-text-secondary text-sm mb-2">Compact:</p>
+        <p className="text-content-secondary text-sm mb-2">Compact:</p>
         <PriceDisplay variant="compact" />
       </div>
       <div>
-        <p className="text-cyber-text-secondary text-sm mb-2">Detailed:</p>
+        <p className="text-content-secondary text-sm mb-2">Detailed:</p>
         <PriceDisplay variant="detailed" />
       </div>
     </div>

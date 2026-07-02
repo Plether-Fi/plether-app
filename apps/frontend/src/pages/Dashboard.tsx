@@ -151,8 +151,8 @@ export function Dashboard() {
     <div className="space-y-10">
       {/* Page title */}
       <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-cyber-text-primary mb-1">Dashboard</h1>
-        <p className="text-cyber-text-secondary font-light">Your portfolio overview</p>
+        <h1 className="text-3xl font-semibold text-content-primary mb-1">Dashboard</h1>
+        <p className="text-content-secondary font-light">Your portfolio overview</p>
       </div>
 
       {/* Portfolio tiles - always visible */}
@@ -213,7 +213,7 @@ export function Dashboard() {
       {isConnected ? (
         <>
           {/* Trade / Leverage / Yield widget */}
-          <div className="bg-cyber-surface-dark border border-cyber-border-glow/30 overflow-hidden">
+          <div className="bg-surface-panel border border-brand-border/30 overflow-hidden">
             <MainTabNav activeTab={mainTab} onTabChange={handleTabChange} />
 
             {/* Tab content */}
@@ -262,7 +262,7 @@ export function Dashboard() {
           <div className="mt-8 text-center pb-8">
             <Link
               to="/history"
-              className="inline-flex items-center gap-2 text-cyber-electric-fuchsia hover:text-cyber-electric-fuchsia/80 font-medium text-sm transition-colors"
+              className="inline-flex items-center gap-2 text-brand-orange hover:text-brand-orange/80 font-medium text-sm transition-colors"
             >
               View Transaction History
               <span className="material-symbols-outlined text-sm">arrow_forward</span>

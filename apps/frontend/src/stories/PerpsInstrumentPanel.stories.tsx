@@ -6,20 +6,20 @@ function PoolLiquidityTooltip() {
   return (
     <div className="w-full space-y-2 text-left">
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-cyber-text-secondary">Long capacity</span>
-        <span className="whitespace-nowrap font-semibold text-cyber-text-primary">953.33 USDC</span>
+        <span className="min-w-0 text-content-secondary">Long capacity</span>
+        <span className="whitespace-nowrap font-semibold text-content-primary">953.33 USDC</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-cyber-text-secondary">Short capacity</span>
-        <span className="whitespace-nowrap font-semibold text-cyber-text-primary">4 810.22 USDC</span>
+        <span className="min-w-0 text-content-secondary">Short capacity</span>
+        <span className="whitespace-nowrap font-semibold text-content-primary">4 810.22 USDC</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-cyber-text-secondary">Minimum order size</span>
-        <span className="whitespace-nowrap font-semibold text-cyber-text-primary">103.18 USDC</span>
+        <span className="min-w-0 text-content-secondary">Minimum order size</span>
+        <span className="whitespace-nowrap font-semibold text-content-primary">103.18 USDC</span>
       </div>
       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-cyber-text-secondary">Minimum new position</span>
-        <span className="whitespace-nowrap font-semibold text-cyber-text-primary">1 031.8 USDC</span>
+        <span className="min-w-0 text-content-secondary">Minimum new position</span>
+        <span className="whitespace-nowrap font-semibold text-content-primary">1 031.8 USDC</span>
       </div>
     </div>
   )
@@ -80,7 +80,7 @@ type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   render: (args) => (
-    <div className="min-h-screen bg-cyber-bg p-4 md:p-8">
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
       <div className="mx-auto max-w-5xl">
         <PerpsInstrumentPanel {...args} />
       </div>

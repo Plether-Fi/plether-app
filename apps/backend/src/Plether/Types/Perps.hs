@@ -18,6 +18,7 @@ import GHC.Generics (Generic)
 data BasketHistoryParams = BasketHistoryParams
   { bhpRange :: Text
   , bhpIntervalSeconds :: Integer
+  , bhpIncludeComponents :: Bool
   }
   deriving stock (Show)
 
@@ -26,6 +27,7 @@ defaultBasketHistoryParams =
   BasketHistoryParams
     { bhpRange = "7d"
     , bhpIntervalSeconds = 60
+    , bhpIncludeComponents = False
     }
 
 basketRangeSeconds :: Text -> Integer
@@ -39,17 +41,17 @@ basketRangeSeconds range =
 data BasketHistoryPoint = BasketHistoryPoint
   { bhpTimestamp :: Integer
   , bhpBasketPrice :: Integer
-  , bhpComponents :: Value
+  , bhpComponents :: Maybe Value
   }
   deriving stock (Show, Generic)
 
 instance ToJSON BasketHistoryPoint where
   toJSON BasketHistoryPoint {..} =
-    object
+    object $
       [ "timestamp" .= bhpTimestamp
       , "basketPrice" .= show bhpBasketPrice
-      , "components" .= bhpComponents
       ]
+        <> maybe [] (\components -> ["components" .= components]) bhpComponents
 
 data BasketHistory = BasketHistory
   { bhRange :: Text

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Hex } from 'viem'
 import { useAccount } from 'wagmi'
+import { defaultApiBaseUrl } from '../api/client'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 export interface PerpsOrderHistoryRow {
@@ -16,8 +17,10 @@ export interface PerpsOrderHistoryRow {
   revealTxHash?: Hex
   failureReason?: string
   executionPriceRaw?: bigint
+  vpiUsdcRaw?: bigint
   activitySizeDeltaRaw?: bigint
   activityPriceRaw?: bigint
+  activityVpiUsdcRaw?: bigint
 }
 
 export interface PerpsTradeHistoryRow {
@@ -73,10 +76,12 @@ interface BackendOrderRow {
   terminalStatus?: string
   failureReason?: string
   executionPrice?: string
+  vpiUsdc?: string
   cleanupActor?: string
   activityType?: string
   activitySizeDelta?: string
   activityPrice?: string
+  activityVpiUsdc?: string
   activityPnlUsdc?: string
 }
 
@@ -107,7 +112,7 @@ function shortTime(timestamp: number | undefined): string {
 }
 
 function perpsApiUrl(path: string): URL {
-  const apiBase = (import.meta.env.VITE_API_URL as string | undefined) ?? '/api/v1'
+  const apiBase = defaultApiBaseUrl()
   const normalizedBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase
   return new URL(`${normalizedBase}${path}`, window.location.origin)
 }
@@ -136,20 +141,40 @@ function orderKind(row: BackendOrderRow): string {
 }
 
 function orderStatus(row: BackendOrderRow): string {
+  if (row.terminalStatus === 'Failed' && row.failureReason) {
+    return `Failed: ${orderFailureReasonLabel(row.failureReason)}`
+  }
   if (row.terminalStatus) return row.terminalStatus
   return 'Committed'
+}
+
+function orderFailureReasonLabel(reason: string): string {
+  return {
+    Expired: 'Expired',
+    CloseOnly: 'Close-only',
+    SlippageExceeded: 'Slippage exceeded',
+    EnginePanic: 'Engine panic',
+    AccountLiquidated: 'Account liquidated',
+    EngineRevert: 'Engine rejected',
+  }[reason] ?? reason
+}
+
+function isUnexecutedTerminalOrder(row: BackendOrderRow): boolean {
+  return row.terminalStatus === 'Failed' || row.terminalStatus === 'Expired / Cleaned up'
 }
 
 function orderSize(row: BackendOrderRow): string {
   const sizeDelta = parseBigInt(row.activitySizeDelta)
   const price = parseBigInt(row.activityPrice ?? row.executionPrice)
   const notional = sizeDeltaToNotionalUsdc(sizeDelta, price)
-  return notional === undefined ? '--' : formatPerpsUsdc(notional)
+  if (notional !== undefined) return formatPerpsUsdc(notional)
+  return isUnexecutedTerminalOrder(row) ? 'Not executed' : '--'
 }
 
 function orderPrice(row: BackendOrderRow): string {
   const price = parseBigInt(row.executionPrice ?? row.activityPrice)
-  return price === undefined ? '--' : formatDisplayDxyPrice(price)
+  if (price !== undefined) return formatDisplayDxyPrice(price)
+  return isUnexecutedTerminalOrder(row) ? 'Not executed' : '--'
 }
 
 function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
@@ -157,8 +182,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
+  const vpiUsdcRaw = parseBigInt(row.vpiUsdc)
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
+  const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
 
   return {
     orderId,
@@ -173,8 +200,10 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     revealTxHash: asHex(row.terminalTxHash),
     failureReason: row.failureReason,
     executionPriceRaw,
+    vpiUsdcRaw,
     activitySizeDeltaRaw,
     activityPriceRaw,
+    activityVpiUsdcRaw,
   }
 }
 
