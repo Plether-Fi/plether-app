@@ -275,13 +275,9 @@ a {
 }
 
 .landing-section--trust {
-  min-height: calc(100svh - var(--site-header-height, 0px) + var(--trust-scroll-space, 1600px));
+  min-height: calc(100svh - var(--site-header-height, 0px) + var(--trust-scroll-space, 0px));
   padding-bottom: 0;
   background: var(--plether-orange);
-}
-
-.landing-section--trust-static {
-  min-height: auto;
 }
 
 .landing-section--primitive {
@@ -1129,15 +1125,8 @@ a {
   justify-content: center;
   justify-content: safe center;
   margin-inline: auto;
-  padding: clamp(92px, 7vw, 135px) 0;
+  padding: clamp(64px, 7vw, 120px) 0;
   text-align: center;
-}
-
-.trust--all-open {
-  position: relative;
-  top: auto;
-  height: auto;
-  min-height: calc(100svh - var(--site-header-height, 0px));
 }
 
 .trust__marker {
@@ -1164,19 +1153,35 @@ a {
   margin-bottom: 0;
 }
 
-.trust-list {
-  display: flex;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: clamp(28px, 2.1vw, 40px);
+.trust-slide-stage {
+  position: relative;
   width: 100%;
+  min-height: min(520px, 48svh);
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
-.trust-item {
+.trust-slide {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
   color: var(--plether-cream);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(calc(var(--trust-slide-offset, 1) * 64%));
+  transition: opacity 320ms ease, transform 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
-.trust-item__button {
+.trust-slide--active {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.trust-slide__title {
   display: block;
   width: 100%;
   border: 0;
@@ -1192,29 +1197,13 @@ a {
   text-align: center;
 }
 
-.trust-item__panel {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition: grid-template-rows 260ms ease, opacity 180ms ease;
-}
-
-.trust-item__panel > div {
-  overflow: hidden;
-}
-
-.trust-item__panel p {
+.trust-slide__description {
   max-width: 960px;
   margin: clamp(16px, 1.6vw, 28px) auto 0;
   color: rgba(255, 245, 249, 0.86);
   font-size: 20px;
   font-weight: 500;
   line-height: 1.36;
-}
-
-.trust-item--expanded .trust-item__panel {
-  grid-template-rows: 1fr;
-  opacity: 1;
 }
 
 @keyframes trust-marker-spin {
@@ -1230,20 +1219,14 @@ a {
 @media (max-height: 760px) {
   .trust {
     justify-content: safe center;
-    padding: 16px 0 0;
+    padding: 42px 0;
   }
 
-  .trust--overflowing {
-    justify-content: flex-start;
-    padding-top: 54px;
-    padding-bottom: 0;
+  .trust-slide-stage {
+    min-height: 0;
   }
 
-  .trust-list {
-    gap: 16px;
-  }
-
-  .trust-item__button {
+  .trust-slide__title {
     font-size: 48px;
   }
 
@@ -1255,8 +1238,19 @@ a {
     margin-top: 16px;
   }
 
-  .trust-item__panel p {
+  .trust-slide__description {
     margin-top: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trust-slide {
+    transform: none;
+    transition: opacity 180ms ease;
+  }
+
+  .trust__marker--value-step > span {
+    animation: none;
   }
 }
 
@@ -1267,7 +1261,7 @@ a {
   flex-direction: column;
   align-items: center;
   margin-inline: auto;
-  padding: calc(clamp(250px, 16.3vw, 312px) - 20px) 0 0;
+  padding: clamp(110px, 8vw, 154px) 0 0;
   text-align: center;
 }
 
@@ -1829,7 +1823,7 @@ a {
   }
 
   .source {
-    padding-top: 156px;
+    padding-top: 132px;
   }
 
   .site-nav {
@@ -2182,15 +2176,15 @@ a {
     padding: 54px 0;
   }
 
-  .trust-list {
-    gap: 22px;
+  .trust-slide-stage {
+    min-height: 0;
   }
 
-  .trust-item__button {
+  .trust-slide__title {
     font-size: 32px;
   }
 
-  .trust-item__panel p {
+  .trust-slide__description {
     font-size: 20px;
   }
 
@@ -2227,7 +2221,7 @@ a {
 
   .source {
     flex: 0 0 auto;
-    padding-top: 130px;
+    padding-top: 80px;
     padding-bottom: 0;
   }
 
@@ -2330,5 +2324,38 @@ a {
 
   .footer__type {
     display: none;
+  }
+}
+
+@media (max-width: 980px) and (orientation: landscape), (max-height: 520px) {
+  .trust {
+    padding: 12px 0;
+  }
+
+  .trust-slide-stage {
+    flex: 0 1 auto;
+    min-height: clamp(145px, 48svh, 220px);
+  }
+
+  .trust-slide__title {
+    font-size: clamp(26px, 5vw, 38px);
+  }
+
+  .trust-slide__description {
+    max-width: min(780px, 88vw);
+    margin-top: 8px;
+    font-size: clamp(15px, 2.2vw, 18px);
+    line-height: 1.18;
+  }
+
+  .trust__marker {
+    width: 14px;
+    height: 14px;
+    flex-basis: 14px;
+    margin-bottom: 10px;
+  }
+
+  .trust__marker--bottom {
+    margin-top: 10px;
   }
 }

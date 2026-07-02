@@ -12,9 +12,11 @@ const STABLECOINS_URL = 'https://app.rwa.xyz/stablecoins'
 const ECB_STABLECOIN_URL = 'https://x.com/ecb/status/2052644951427805440?s=20'
 const PRIMITIVE_SCRUB_DISTANCE = 640
 const PRIMITIVE_MOBILE_SCRUB_DISTANCE = 420
-const TRUST_SCROLL_DISTANCE = 1600
-const TRUST_MOBILE_SCROLL_DISTANCE = 1200
-const EXPOSURE_REPLAY_IDLE_MS = 3000
+const TRUST_SLIDE_STEP_MIN = 420
+const TRUST_SLIDE_STEP_MAX = 720
+const TRUST_SLIDE_STEP_RATIO = 0.72
+const TRUST_SLIDE_ACTIVATION_BIAS = 0.08
+const EXPOSURE_REPLAY_IDLE_MS = 1000
 const EXPOSURE_REPLAY_TRANSITION_MS = 2880
 const EXPOSURE_REPLAY_REVERSE_PAUSE_MS = 1000
 const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
@@ -452,19 +454,19 @@ function LandingPage() {
   const exposureSectionRef = useRef<HTMLElement | null>(null)
   const builtSectionRef = useRef<HTMLElement | null>(null)
   const trustSectionRef = useRef<HTMLElement | null>(null)
-  const trustContentRef = useRef<HTMLDivElement | null>(null)
   const sourceSectionRef = useRef<HTMLElement | null>(null)
   const ctaSectionRef = useRef<HTMLElement | null>(null)
   const footerRef = useRef<HTMLElement | null>(null)
   const primitiveMarkProgressRef = useRef(0)
+  const activeTrustSlideIndexRef = useRef(0)
+  const isTrustSlideInitializedRef = useRef(false)
   const [headerTheme, setHeaderTheme] = useState<HeaderTheme>('orange')
   const [primitiveMarkProgress, setPrimitiveMarkProgress] = useState(0)
   const [isExposureAnimationActive, setIsExposureAnimationActive] = useState(false)
   const [isExposureAnimationReversed, setIsExposureAnimationReversed] = useState(false)
   const [isBuiltAnimationActive, setIsBuiltAnimationActive] = useState(false)
-  const [expandedTrustIndex, setExpandedTrustIndex] = useState<number | null>(null)
-  const [isTrustContentOverflowing, setIsTrustContentOverflowing] = useState(false)
-  const isTrustStatic = isTrustContentOverflowing
+  const [activeTrustSlideIndex, setActiveTrustSlideIndex] = useState(0)
+  const [trustMarkerSpinStep, setTrustMarkerSpinStep] = useState(0)
 
   useEffect(() => {
     if (!isExposureAnimationActive) {
@@ -543,8 +545,29 @@ function LandingPage() {
       return primitiveSection.offsetTop - getHeaderHeight()
     }
     const getScrubDistance = () => mobileQuery?.matches ? PRIMITIVE_MOBILE_SCRUB_DISTANCE : PRIMITIVE_SCRUB_DISTANCE
-    const getTrustScrollDistance = () => mobileQuery?.matches ? TRUST_MOBILE_SCROLL_DISTANCE : TRUST_SCROLL_DISTANCE
+    const getTrustSlideStep = () => {
+      const visibleViewportHeight = window.innerHeight - getHeaderHeight()
+      return Math.min(TRUST_SLIDE_STEP_MAX, Math.max(TRUST_SLIDE_STEP_MIN, visibleViewportHeight * TRUST_SLIDE_STEP_RATIO))
+    }
+    const getTrustScrollDistance = () => (TRUST_ITEMS.length - 1) * getTrustSlideStep()
     const shouldReduceMotion = () => reducedMotionQuery?.matches ?? false
+    const setTrustSlide = (nextIndex: number) => {
+      const clampedIndex = Math.min(TRUST_ITEMS.length - 1, Math.max(0, nextIndex))
+
+      if (activeTrustSlideIndexRef.current === clampedIndex) {
+        isTrustSlideInitializedRef.current = true
+        return
+      }
+
+      activeTrustSlideIndexRef.current = clampedIndex
+      setActiveTrustSlideIndex(clampedIndex)
+
+      if (isTrustSlideInitializedRef.current) {
+        setTrustMarkerSpinStep((step) => step + 1)
+      } else {
+        isTrustSlideInitializedRef.current = true
+      }
+    }
     const setPrimitiveProgress = (nextProgress: number) => {
       const clampedProgress = clampProgress(nextProgress)
 
@@ -558,7 +581,7 @@ function LandingPage() {
     const updatePrimitiveLayoutVars = () => {
       document.documentElement.style.setProperty('--site-header-height', `${getHeaderHeight()}px`)
       document.documentElement.style.setProperty('--primitive-scroll-space', shouldReduceMotion() ? '0px' : `${getScrubDistance()}px`)
-      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() || isTrustContentOverflowing ? '0px' : `${getTrustScrollDistance()}px`)
+      document.documentElement.style.setProperty('--trust-scroll-space', shouldReduceMotion() ? '0px' : `${getTrustScrollDistance()}px`)
     }
     const updatePrimitiveProgress = () => {
       const triggerY = getPrimitiveTriggerY()
@@ -605,30 +628,30 @@ function LandingPage() {
       setIsBuiltAnimationActive((builtSectionRef.current?.getBoundingClientRect().top ?? Number.POSITIVE_INFINITY) <= header.offsetHeight + 1)
 
       const trustSection = trustSectionRef.current
-      const trustItems = trustSection ? Array.from(trustSection.querySelectorAll<HTMLElement>('.trust-item')) : []
 
-      if (!trustSection || trustItems.length === 0) {
-        setExpandedTrustIndex(null)
+      if (!trustSection) {
+        setTrustSlide(0)
         return
       }
 
-      if (isTrustContentOverflowing) {
-        setExpandedTrustIndex(null)
-        return
-      }
-
+      const trustRect = trustSection.getBoundingClientRect()
       const trustStart = trustSection.offsetTop - header.offsetHeight
-      const trustDistance = shouldReduceMotion() ? 1 : getTrustScrollDistance()
-      const trustEnd = trustStart + trustDistance
+      const trustScrollDistance = shouldReduceMotion() ? 1 : getTrustScrollDistance()
+      const trustEnd = trustStart + trustScrollDistance
 
       if (window.scrollY < trustStart) {
-        setExpandedTrustIndex(null)
+        setTrustSlide(0)
+        return
+      }
+
+      if (trustRect.bottom <= header.offsetHeight) {
+        setTrustSlide(TRUST_ITEMS.length - 1)
         return
       }
 
       const trustProgress = clampProgress((window.scrollY - trustStart) / Math.max(1, trustEnd - trustStart))
-      const activeTrustIndex = Math.min(trustItems.length - 1, Math.floor(trustProgress * trustItems.length))
-      setExpandedTrustIndex(activeTrustIndex)
+      const activeTrustIndex = Math.round((trustProgress * (TRUST_ITEMS.length - 1)) + TRUST_SLIDE_ACTIVATION_BIAS)
+      setTrustSlide(activeTrustIndex)
     }
     const handleReducedMotionChange = () => {
       updateHeaderTheme()
@@ -652,83 +675,7 @@ function LandingPage() {
       document.documentElement.style.removeProperty('--primitive-scroll-space')
       document.documentElement.style.removeProperty('--trust-scroll-space')
     }
-  }, [isTrustContentOverflowing])
-
-  useEffect(() => {
-    const trust = trustContentRef.current
-
-    if (!trust) {
-      return
-    }
-
-    let animationFrame = 0
-    let settleTimer = 0
-
-    const getLength = (value: string) => Number(value.replace('px', '').trim()) || 0
-    const getBlockSize = (element: Element | null) => {
-      if (!element) {
-        return 0
-      }
-
-      const styles = window.getComputedStyle(element)
-      return element.getBoundingClientRect().height + getLength(styles.marginTop) + getLength(styles.marginBottom)
-    }
-
-    const updateOverflowState = () => {
-      const topMarker = trust.querySelector('.trust__marker:not(.trust__marker--bottom)')
-      const bottomMarker = trust.querySelector('.trust__marker--bottom')
-      const trustList = trust.querySelector('.trust-list')
-      const trustItems = Array.from(trust.querySelectorAll('.trust-item'))
-
-      if (!topMarker || !bottomMarker || !trustList || trustItems.length === 0) {
-        setIsTrustContentOverflowing(false)
-        return
-      }
-
-      const trustStyles = window.getComputedStyle(trust)
-      const trustListStyles = window.getComputedStyle(trustList)
-      const stickyFrameHeight = window.innerHeight - (headerRef.current?.offsetHeight ?? 0)
-      const availableHeight = stickyFrameHeight - getLength(trustStyles.paddingTop) - getLength(trustStyles.paddingBottom)
-      const itemGap = getLength(trustListStyles.rowGap || trustListStyles.gap)
-      const buttonHeight = trustItems.reduce((height, item) => height + getBlockSize(item.querySelector('.trust-item__button')), 0)
-      const maxPanelHeight = Math.max(
-        ...trustItems.map((item) => {
-          const panelCopy = item.querySelector('.trust-item__panel p')
-
-          if (!panelCopy) {
-            return 0
-          }
-
-          const styles = window.getComputedStyle(panelCopy)
-          return panelCopy.scrollHeight + getLength(styles.marginTop) + getLength(styles.marginBottom)
-        }),
-      )
-      const steppedContentHeight =
-        getBlockSize(topMarker) +
-        getBlockSize(bottomMarker) +
-        buttonHeight +
-        maxPanelHeight +
-        itemGap * Math.max(0, trustItems.length - 1)
-
-      setIsTrustContentOverflowing(steppedContentHeight > availableHeight + 1)
-    }
-
-    const scheduleUpdate = () => {
-      window.cancelAnimationFrame(animationFrame)
-      window.clearTimeout(settleTimer)
-      animationFrame = window.requestAnimationFrame(updateOverflowState)
-      settleTimer = window.setTimeout(updateOverflowState, 320)
-    }
-
-    scheduleUpdate()
-    window.addEventListener('resize', scheduleUpdate)
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame)
-      window.clearTimeout(settleTimer)
-      window.removeEventListener('resize', scheduleUpdate)
-    }
-  }, [expandedTrustIndex])
+  }, [])
 
   return (
     <main className="landing-page">
@@ -846,46 +793,45 @@ function LandingPage() {
 
       <section
         ref={trustSectionRef}
-        className={`landing-section landing-section--trust${isTrustStatic ? ' landing-section--trust-static' : ''}`}
+        className="landing-section landing-section--trust"
         aria-labelledby="trust-title"
       >
-        <div className={`trust${isTrustStatic ? ' trust--all-open' : ''}`} ref={trustContentRef}>
-          <span className={`trust__marker${expandedTrustIndex === null || isTrustStatic ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
-            <span key={`trust-marker-top-${expandedTrustIndex ?? 'idle'}`} />
+        <div className="trust">
+          <span className={`trust__marker${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`} aria-hidden="true">
+            <span key={`trust-marker-top-${trustMarkerSpinStep}`} />
           </span>
           <h2 id="trust-title" className="sr-only">Plether trust guarantees</h2>
-          <div className="trust-list" role="list">
+          <div className="trust-slide-stage" role="list">
             {TRUST_ITEMS.map((item, index) => {
-              const panelId = `trust-panel-${index}`
               const titleId = `trust-title-${index}`
-              const isExpanded = isTrustStatic || expandedTrustIndex === index
+              const slideOffset = index - activeTrustSlideIndex
+              const isActive = activeTrustSlideIndex === index
+              const slideState = slideOffset < 0 ? 'previous' : slideOffset > 0 ? 'next' : 'active'
 
               return (
                 <div
-                  className={`trust-item${isExpanded ? ' trust-item--expanded' : ''}`}
+                  className={`trust-slide trust-slide--${slideState}`}
                   role="listitem"
                   key={item.title}
+                  aria-hidden={!isActive}
+                  style={{ '--trust-slide-offset': slideOffset } as CSSProperties}
                 >
                   <h3
-                    className="trust-item__button"
+                    className="trust-slide__title"
                     id={titleId}
                   >
                     {item.title}
                   </h3>
-                  <div className="trust-item__panel" id={panelId} aria-hidden={!isExpanded} aria-labelledby={titleId}>
-                    <div>
-                      <p>{item.description}</p>
-                    </div>
-                  </div>
+                  <p className="trust-slide__description" aria-labelledby={titleId}>{item.description}</p>
                 </div>
               )
             })}
           </div>
           <span
-            className={`trust__marker trust__marker--bottom${expandedTrustIndex === null || isTrustStatic ? '' : ' trust__marker--value-step'}`}
+            className={`trust__marker trust__marker--bottom${trustMarkerSpinStep === 0 ? '' : ' trust__marker--value-step'}`}
             aria-hidden="true"
           >
-            <span key={`trust-marker-bottom-${expandedTrustIndex ?? 'idle'}`} />
+            <span key={`trust-marker-bottom-${trustMarkerSpinStep}`} />
           </span>
         </div>
       </section>
