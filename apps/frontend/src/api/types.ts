@@ -121,6 +121,7 @@ export interface ProtocolConfig {
     minLeverage: number;
     maxLeverage: number;
     liquidationLtv: number;
+    adverseConfidenceMultiplierBps: string;
   };
   markets: MarketConfig;
   chainId: number;

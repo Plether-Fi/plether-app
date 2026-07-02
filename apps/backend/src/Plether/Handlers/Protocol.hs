@@ -20,6 +20,7 @@ import Plether.Ethereum.Client (EthClient, ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.BasketOracle as Oracle
 import qualified Plether.Ethereum.Contracts.Morpho as Morpho
 import qualified Plether.Ethereum.Contracts.MorphoIrm as MorphoIrm
+import qualified Plether.Ethereum.Contracts.Perps as Perps
 import qualified Plether.Ethereum.Contracts.StakedToken as Staked
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
 import Plether.Types
@@ -226,10 +227,11 @@ getProtocolConfig client cfg = do
 
   eBearParams <- Morpho.idToMarketParams client morphoAddr bearMarketBs
   eBullParams <- Morpho.idToMarketParams client morphoAddr bullMarketBs
+  eAdverseConfidenceMultiplierBps <- Perps.adverseConfidenceMultiplierBps client (cfgPerpsPletherOracle cfg)
   eBlockNum <- ethBlockNumber client
 
-  case (eBearParams, eBullParams, eBlockNum) of
-    (Right bearParams, Right bullParams, Right blockNum) -> do
+  case (eBearParams, eBullParams, eAdverseConfidenceMultiplierBps, eBlockNum) of
+    (Right bearParams, Right bullParams, Right adverseConfidenceMultiplierBpsValue, Right blockNum) -> do
       let config =
             ProtocolConfig
               { configContracts =
@@ -263,6 +265,7 @@ getProtocolConfig client cfg = do
                     , constMinLeverage = 1.1
                     , constMaxLeverage = 10.0
                     , constLiquidationLtv = 0.86
+                    , constAdverseConfidenceMultiplierBps = adverseConfidenceMultiplierBpsValue
                     }
               , configMarkets =
                   MarketConfig
@@ -274,6 +277,7 @@ getProtocolConfig client cfg = do
               , configChainId = cfgChainId cfg
               }
       pure $ Right $ mkResponse blockNum (cfgChainId cfg) config
-    (Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+    (Left err, _, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
+    (_, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err

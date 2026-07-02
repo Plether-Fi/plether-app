@@ -4,6 +4,7 @@ import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
@@ -23,6 +24,12 @@ import {
   type PerpsDirection,
   type PerpsOracleFreshness,
 } from '../utils/perps'
+import {
+  calculateRawBasketOracleConfidenceSpreadPercent,
+  formatAdverseConfidenceMultiplier,
+  formatAdverseOracleConfidenceSpread,
+  formatOracleConfidenceSpreadPercent,
+} from '../utils/perpsOracleConfidence'
 import {
   perpsChainState,
   perpsConnectedState,
@@ -60,6 +67,7 @@ type CleanupStatus = 'idle' | 'pending' | 'failed'
 
 interface PreviewRow {
   label: string
+  labelContent?: ReactNode
   value: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'muted'
 }
@@ -129,6 +137,8 @@ interface PerpsTradeTicketProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
   oraclePriceDisplay?: string
+  latestBasket?: BasketLatest
+  adverseConfidenceMultiplierBps?: string
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   availableToTradeRaw?: bigint
@@ -727,7 +737,7 @@ function PreviewRows({
 
         return (
           <div key={row.label} className="flex min-h-6 items-center justify-between gap-3 text-sm">
-            <dt className="text-cyber-text-secondary">{row.label}</dt>
+            <dt className="text-cyber-text-secondary">{row.labelContent ?? row.label}</dt>
             <dd className={`flex min-h-6 items-center justify-end text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
@@ -1198,6 +1208,8 @@ export function PerpsTradeTicket({
   oraclePriceRaw,
   oraclePublishTime,
   oraclePriceDisplay,
+  latestBasket,
+  adverseConfidenceMultiplierBps,
   oracleFreshness,
   oracleFreshnessTooltip,
   availableToTradeRaw,
@@ -1760,6 +1772,50 @@ export function PerpsTradeTicket({
       openPreview.postMarginUsdc
     )
   })()
+  const adverseOracleConfidenceSpreadValue = useMemo(
+    () => formatAdverseOracleConfidenceSpread(latestBasket, adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [adverseConfidenceMultiplierBps, latestBasket]
+  )
+  const rawOracleConfidenceSpreadValue = useMemo(
+    () => formatOracleConfidenceSpreadPercent(
+      calculateRawBasketOracleConfidenceSpreadPercent(latestBasket)
+    ) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [latestBasket]
+  )
+  const adverseOracleConfidenceMultiplierValue = useMemo(
+    () => formatAdverseConfidenceMultiplier(adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [adverseConfidenceMultiplierBps]
+  )
+  const adverseOracleConfidenceSpreadLabel = (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <span>Adverse oracle confidence spread</span>
+      <Tooltip
+        content={(
+          <div className="space-y-2">
+            <p>
+              Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
+            </p>
+            <p>
+              It protects LPs by adding a price cushion when oracle prices are less certain.
+            </p>
+            <p>
+              Calculation: <span className="font-semibold text-cyber-text-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-cyber-text-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-cyber-text-primary">{adverseOracleConfidenceSpreadValue}</span>.
+            </p>
+          </div>
+        )}
+        position="bottom-end"
+        className="w-[360px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+      >
+        <span
+          aria-label="Adverse oracle confidence spread info"
+          className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-cyber-text-secondary/80 transition-colors hover:text-[#FFAB96]"
+          tabIndex={0}
+        >
+          i
+        </span>
+      </Tooltip>
+    </span>
+  )
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
@@ -1782,6 +1838,11 @@ export function PerpsTradeTicket({
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+      {
+        label: 'Adverse oracle confidence spread',
+        labelContent: adverseOracleConfidenceSpreadLabel,
+        value: adverseOracleConfidenceSpreadValue,
+      },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined },
@@ -1816,6 +1877,10 @@ export function PerpsTradeTicket({
       selectedOpenCapacityUsdc,
       dxyExposureNumber,
       slippageNumber,
+      adverseOracleConfidenceSpreadValue,
+      rawOracleConfidenceSpreadValue,
+      adverseOracleConfidenceMultiplierValue,
+      adverseOracleConfidenceSpreadLabel,
     ]
   )
   const sidePanelPreviewRows = useMemo(

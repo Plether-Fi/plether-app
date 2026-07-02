@@ -6,6 +6,7 @@ import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
+import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
@@ -44,6 +45,7 @@ function formatMarkAge(ageSeconds: number): string {
 
 export function Perps() {
   const perpsMarket = usePerpsMarket()
+  const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
@@ -221,6 +223,8 @@ export function Perps() {
           oraclePriceRaw={perpsMarket.raw.markPrice}
           oraclePublishTime={perpsMarket.oracleFreshnessTime}
           oraclePriceDisplay={perpsMarket.oraclePrice}
+          latestBasket={perpsMarket.latestBasket}
+          adverseConfidenceMultiplierBps={protocolConfig.data?.data.constants.adverseConfidenceMultiplierBps}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
           availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}

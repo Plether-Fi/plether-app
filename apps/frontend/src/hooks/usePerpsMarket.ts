@@ -306,6 +306,7 @@ export function usePerpsMarket() {
         executionFeeBps,
       },
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
+      latestBasket: latestBasket?.data,
       oracleFreshness,
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
