@@ -27,6 +27,7 @@ import {
 } from './dxyBasketChartConfig'
 import { Alert, Skeleton, Tooltip } from './ui'
 import {
+  basketDisplayPriceChange,
   buildCandles,
   mergeLatestBasketPoint,
   oracleNumberToDisplayDxyPrice,
@@ -98,6 +99,7 @@ function componentWeight(component: BasketComponentPrice): string {
 
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
+  changeHistory?: BasketHistory
   latest?: BasketLatest
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
@@ -283,6 +285,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
 export function DxyBasketPanelView({
   history,
+  changeHistory,
   latest,
   chartInterval = '1m',
   chartStyle = 'candlestick',
@@ -326,10 +329,7 @@ export function DxyBasketPanelView({
   const latestPoint = chartPoints.at(-1) ?? null
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const firstPoint = chartPoints.at(0) ?? null
-  const changePct = firstPoint !== null && latestPoint !== null && firstPoint.price > 0
-    ? (latestPoint.price - firstPoint.price) / firstPoint.price
-    : null
+  const changePct = basketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? '#00FF99' : '#FF00CC'
 
@@ -432,11 +432,13 @@ export function DxyBasketPanel() {
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
+  const { data: changeData } = usePerpsBasketHistory('24h', 60)
   const { data: latestData } = usePerpsBasketLatest()
 
   return (
     <DxyBasketPanelView
       history={data?.data}
+      changeHistory={changeData?.data}
       latest={latestData?.data}
       chartInterval={chartInterval}
       isLoading={isLoading}

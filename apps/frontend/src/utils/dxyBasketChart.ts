@@ -39,6 +39,22 @@ export function mergeLatestBasketPoint(
   return [...historyPoints, livePoint]
 }
 
+export function basketDisplayPriceChange(
+  historyPoints: BasketHistoryPoint[] | undefined,
+  latest: BasketLatest | undefined
+): number | undefined {
+  const mergedPoints = mergeLatestBasketPoint(historyPoints ?? [], latest)
+  const firstPoint = mergedPoints.at(0)
+  const latestPoint = mergedPoints.at(-1)
+  if (!firstPoint || !latestPoint) return undefined
+
+  const firstPrice = oracleNumberToDisplayDxyPrice(Number(firstPoint.basketPrice) / 1e8)
+  const latestPrice = oracleNumberToDisplayDxyPrice(Number(latestPoint.basketPrice) / 1e8)
+  if (firstPrice <= 0) return undefined
+
+  return (latestPrice - firstPrice) / firstPrice
+}
+
 export function buildCandles(points: ChartPoint[], intervalSeconds: number): ChartCandle[] {
   const candles: ChartCandle[] = []
   let currentCandle: ChartCandle | undefined

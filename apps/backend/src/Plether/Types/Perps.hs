@@ -33,6 +33,7 @@ basketRangeSeconds range =
   case T.toLower range of
     "24h" -> 24 * 60 * 60
     "30d" -> 30 * 24 * 60 * 60
+    "1y" -> 365 * 24 * 60 * 60
     _ -> 7 * 24 * 60 * 60
 
 data BasketHistoryPoint = BasketHistoryPoint

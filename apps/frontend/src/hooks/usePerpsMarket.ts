@@ -13,7 +13,7 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, type PerpsOracleFreshness } from '../utils/perps'
-import { mergeLatestBasketPoint, oracleNumberToDisplayDxyPrice } from '../utils/dxyBasketChart'
+import { basketDisplayPriceChange } from '../utils/dxyBasketChart'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -86,24 +86,11 @@ function percentChangeTone(value: number | undefined): 'positive' | 'negative' |
   return 'default'
 }
 
-function basketDisplayPrice(point: BasketHistoryPoint): number {
-  return oracleNumberToDisplayDxyPrice(Number(point.basketPrice) / 1e8)
-}
-
 function computeDisplayPriceChange24h(
   points: BasketHistoryPoint[] | undefined,
   latest: BasketLatest | undefined
 ): number | undefined {
-  const mergedPoints = mergeLatestBasketPoint(points ?? [], latest)
-  const firstPoint = mergedPoints.at(0)
-  const latestPoint = mergedPoints.at(-1)
-  if (!firstPoint || !latestPoint) return undefined
-
-  const firstPrice = basketDisplayPrice(firstPoint)
-  const latestPrice = basketDisplayPrice(latestPoint)
-  if (firstPrice <= 0) return undefined
-
-  return (latestPrice - firstPrice) / firstPrice
+  return basketDisplayPriceChange(points, latest)
 }
 
 function openInterestNotionalUsdc(openInterest: bigint | undefined, markPrice: bigint | undefined): bigint | undefined {

@@ -370,6 +370,7 @@ basketHistoryParams = do
       case T.toLower (T.strip range) of
         "24h" -> "24h"
         "30d" -> "30d"
+        "1y" -> "1y"
         _ -> "7d"
 
     parseIntegerOr :: Integer -> Text -> Integer
