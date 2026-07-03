@@ -11,6 +11,7 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
+const PRESERVE_API_PROXY_PATH = process.env.VITE_API_PROXY_PRESERVE_PATH === '1';
 
 function parseHeadersFile(): Record<string, string> {
   const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
@@ -26,7 +27,9 @@ function apiProxyConfig(): ProxyOptions {
   return {
     target: process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
     changeOrigin: true,
-    rewrite: (proxyPath) => proxyPath.replace(/^\/api\/(?:v1|sepolia_v1)/, '/api'),
+    rewrite: PRESERVE_API_PROXY_PATH
+      ? undefined
+      : (proxyPath) => proxyPath.replace(/^\/api\/(?:v1|sepolia_v1)/, '/api'),
   };
 }
 
