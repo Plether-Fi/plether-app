@@ -11,6 +11,7 @@ import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../
 import {
   DXY_BASKET_CHART_INTERVALS,
   basketRangeForChartInterval,
+  basketRequestIntervalSecondsForChartInterval,
 } from '../dxyBasketChartConfig'
 
 const component: BasketComponentPrice = {
@@ -57,6 +58,13 @@ describe('DXY basket chart display transform', () => {
     expect(basketRangeForChartInterval('5m')).toBe('7d')
     expect(basketRangeForChartInterval('1h')).toBe('30d')
     expect(basketRangeForChartInterval('1d')).toBe('1y')
+  })
+
+  it('requests only the resolution needed for each chart interval', () => {
+    expect(basketRequestIntervalSecondsForChartInterval('1m')).toBe(60)
+    expect(basketRequestIntervalSecondsForChartInterval('5m')).toBe(5 * 60)
+    expect(basketRequestIntervalSecondsForChartInterval('1h')).toBe(60 * 60)
+    expect(basketRequestIntervalSecondsForChartInterval('1d')).toBe(24 * 60 * 60)
   })
 
   it('plots raw basket prices as reversed DXY display prices', () => {

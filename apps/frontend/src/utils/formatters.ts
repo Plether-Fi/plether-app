@@ -72,7 +72,7 @@ export function parseAmount(value: string, decimals: number): bigint {
  */
 export function getHealthFactorColor(healthFactor: number): string {
   if (healthFactor >= 1.5) return 'text-green-500'
-  if (healthFactor >= 1.2) return 'text-yellow-500'
+  if (healthFactor >= 1.2) return 'text-brand-peach'
   return 'text-red-500'
 }
 

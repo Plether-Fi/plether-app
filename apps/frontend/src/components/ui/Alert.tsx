@@ -8,7 +8,7 @@ const variantStyles: Record<AlertVariant, { container: string; icon: string }> =
     icon: 'info',
   },
   warning: {
-    container: 'bg-warning-bg border-warning/30 text-warning',
+    container: 'bg-brand-peach/10 border-brand-peach/40 text-brand-peach',
     icon: 'warning',
   },
   success: {

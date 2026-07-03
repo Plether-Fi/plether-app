@@ -729,7 +729,7 @@ function CopyableValue({
 
 function previewToneClass(tone: PreviewRow['tone']): string {
   if (tone === 'positive') return 'text-positive'
-  if (tone === 'warning') return 'text-yellow-300'
+  if (tone === 'warning') return 'text-brand-peach'
   if (tone === 'muted') return 'text-content-secondary'
   return 'text-content-primary'
 }
@@ -2414,8 +2414,9 @@ export function PerpsTradeTicket({
           <span className="text-sm font-semibold">Reduce only</span>
         </label>
 
-        <label className="flex cursor-pointer items-start gap-3 py-1 text-content-primary transition-colors hover:text-[#FFAB96]">
+        <div className="flex items-start gap-3 py-1 text-content-primary">
           <input
+            id="perps-margin-call-simulator"
             type="checkbox"
             checked={isMarginCallSimulatorEnabled}
             onChange={(event) => {
@@ -2429,8 +2430,24 @@ export function PerpsTradeTicket({
             }}
             className="mt-0.5 h-4 w-4 accent-[#FFAB96]"
           />
-          <span className="text-sm font-semibold">Margin Call Simulator</span>
-        </label>
+          <span className="inline-flex items-center gap-1.5">
+            <label
+              className="cursor-pointer text-sm font-semibold transition-colors hover:text-[#FFAB96]"
+              htmlFor="perps-margin-call-simulator"
+            >
+              Margin Call Simulator
+            </label>
+            <Tooltip content="Maximum leverage mode" position="top">
+              <span
+                aria-label="Margin Call Simulator info"
+                className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
+                tabIndex={0}
+              >
+                i
+              </span>
+            </Tooltip>
+          </span>
+        </div>
 
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">

@@ -18,7 +18,7 @@ function phaseToneClass(phase: PerpsMarketPhase): string {
       return 'text-positive'
     case 'close-only':
     case 'degraded':
-      return 'text-yellow-300'
+      return 'text-brand-peach'
     case 'closed':
     case 'paused':
       return 'text-brand-orange'

@@ -38,6 +38,7 @@ import {
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
+const NEGATIVE_LINE_COLOR = '#FF572D'
 const CHART_GRID_COLOR = 'rgba(255, 171, 150, 0.16)'
 const CHART_AXIS_COLOR = 'rgba(255, 171, 150, 0.32)'
 const CHART_TEXT_COLOR = '#D9CCD3'
@@ -124,7 +125,7 @@ interface DxyBasketChartProps {
 }
 
 function areaTopColor(lineColor: string): string {
-  return lineColor === '#00FF99' ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 0, 204, 0.24)'
+  return lineColor === DEFAULT_LINE_COLOR ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 87, 45, 0.24)'
 }
 
 function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: number; nowSeconds: number }) {
@@ -335,7 +336,11 @@ export function DxyBasketPanelView({
     }))
   }, [chartBuckets])
 
-  const latestPoint = chartPoints.at(-1) ?? null
+  const headerPrice = oracleMark
+    ? oracleNumberToDisplayDxyPrice(toOraclePrice(oracleMark.basketPrice))
+    : latest
+      ? oracleNumberToDisplayDxyPrice(toOraclePrice(latest.basketPrice))
+      : (chartPoints.at(-1)?.price ?? null)
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
   const componentPriceChanges = useMemo(
     () => computeBasketComponentPriceChanges(changeHistory?.points, latest),
@@ -344,7 +349,7 @@ export function DxyBasketPanelView({
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
-  const lineColor = positiveChange ? '#00FF99' : '#FF00CC'
+  const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -364,15 +369,15 @@ export function DxyBasketPanelView({
             <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
             <span>plDXY Perp Price</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
-            {isLoading ? (
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            {headerPrice == null && isLoading ? (
               <Skeleton width={126} height={34} />
             ) : (
-              <span className="text-3xl font-semibold text-content-primary">
-                {latestPoint ? formatPrice(latestPoint.price) : '--'}
+              <span className="text-3xl font-semibold leading-none text-content-primary">
+                {headerPrice == null ? '--' : formatPrice(headerPrice)}
               </span>
             )}
-            <span className={`text-sm font-semibold ${positiveChange ? 'text-positive' : 'text-brand-orange'}`}>
+            <span className={`text-sm font-semibold leading-none ${positiveChange ? 'text-positive' : 'text-brand-orange'}`}>
               {formatPercent(changePct)}
             </span>
           </div>

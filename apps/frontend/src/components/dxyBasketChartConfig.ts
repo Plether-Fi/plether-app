@@ -26,9 +26,9 @@ export function basketIntervalSecondsForChartInterval(interval: DxyBasketChartIn
 export function basketRequestIntervalSecondsForChartInterval(_interval: DxyBasketChartInterval): number {
   const requestIntervals: Record<DxyBasketChartInterval, number> = {
     '1m': 60,
-    '5m': 60,
-    '1h': 60,
-    '1d': 60,
+    '5m': 5 * 60,
+    '1h': 60 * 60,
+    '1d': 24 * 60 * 60,
   }
 
   return requestIntervals[_interval]
