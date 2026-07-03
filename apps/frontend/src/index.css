@@ -6,8 +6,8 @@
   --color-app-bg: #250917;
   --color-surface-panel: #3B212D;
   --color-surface-muted: #3B212D;
-  --color-content-primary: #E0E0FF;
-  --color-content-secondary: #A6B3D9;
+  --color-content-primary: #FFF5F9;
+  --color-content-secondary: #D8CBD0;
   --color-positive: #00FF99;
   --color-brand-orange: #FF572D;
   --color-brand-peach: #FFAB96;
@@ -49,7 +49,7 @@
 
 html {
   background-color: #250917;
-  color: #E0E0FF;
+  color: #FFF5F9;
 }
 
 body {
