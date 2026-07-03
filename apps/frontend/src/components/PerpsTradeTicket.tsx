@@ -2399,8 +2399,9 @@ export function PerpsTradeTicket({
         </div>
 
         <div className="space-y-2">
-          <label className="flex cursor-pointer items-center gap-3 py-0.5 text-content-primary transition-colors hover:text-[#FFAB96]">
+          <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
+              id="perps-reduce-only"
               type="checkbox"
               checked={isReduceOnly}
               onChange={(event) => {
@@ -2412,8 +2413,24 @@ export function PerpsTradeTicket({
               }}
               className="h-4 w-4 accent-[#FFAB96]"
             />
-            <span className="text-sm font-semibold">Reduce only</span>
-          </label>
+            <span className="inline-flex items-center gap-1.5">
+              <label
+                className="cursor-pointer text-sm font-semibold transition-colors hover:text-[#FFAB96]"
+                htmlFor="perps-reduce-only"
+              >
+                Reduce only
+              </label>
+              <Tooltip content="Only reduces or closes your current position. It will not open a new position or increase exposure." position="top">
+                <span
+                  aria-label="Reduce only info"
+                  className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
+                  tabIndex={0}
+                >
+                  i
+                </span>
+              </Tooltip>
+            </span>
+          </div>
 
           <div className="flex items-center gap-3 py-0.5 text-content-primary">
             <input
