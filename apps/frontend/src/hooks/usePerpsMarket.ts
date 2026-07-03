@@ -278,6 +278,7 @@ export function usePerpsMarket() {
         basketComponents: latestBasket?.data.components,
       },
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
+      latestBasket: latestBasket?.data,
       oracleFreshness,
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),

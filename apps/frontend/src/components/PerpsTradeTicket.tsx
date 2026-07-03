@@ -5,6 +5,7 @@ import { zeroAddress } from 'viem'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
@@ -27,6 +28,12 @@ import {
   type PerpsDirection,
   type PerpsOracleFreshness,
 } from '../utils/perps'
+import {
+  calculateRawBasketOracleConfidenceSpreadPercent,
+  formatAdverseConfidenceMultiplier,
+  formatAdverseOracleConfidenceSpread,
+  formatOracleConfidenceSpreadPercent,
+} from '../utils/perpsOracleConfidence'
 import {
   perpsChainState,
   perpsConnectedState,
@@ -134,6 +141,8 @@ interface PerpsTradeTicketProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
   oraclePriceDisplay?: string
+  latestBasket?: BasketLatest
+  adverseConfidenceMultiplierBps?: string
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -720,7 +729,7 @@ function CopyableValue({
 
 function previewToneClass(tone: PreviewRow['tone']): string {
   if (tone === 'positive') return 'text-positive'
-  if (tone === 'warning') return 'text-yellow-300'
+  if (tone === 'warning') return 'text-brand-peach'
   if (tone === 'muted') return 'text-content-secondary'
   return 'text-content-primary'
 }
@@ -1245,6 +1254,8 @@ export function PerpsTradeTicket({
   oraclePriceRaw,
   oraclePublishTime,
   oraclePriceDisplay,
+  latestBasket,
+  adverseConfidenceMultiplierBps,
   oracleFreshness,
   oracleFreshnessTooltip,
   oracleBasketComponents,
@@ -1828,7 +1839,6 @@ export function PerpsTradeTicket({
   const previewOracleConfidenceSpreadRaw = adverseOraclePriceRaw !== undefined && oraclePriceRaw !== undefined
     ? absBigInt(adverseOraclePriceRaw - oraclePriceRaw)
     : undefined
-  const previewOracleConfidenceSpreadValue = formatConfidenceSpread(previewOracleConfidenceSpreadRaw, oraclePriceRaw)
   const previewLiquidationPrice = (() => {
     if (!enableLiveTrading) return formatOptionalPrice(liquidationPrice)
     if (openPreview === undefined) return shouldReadTradePreview ? previewLensFallbackValue : PREVIEW_UNAVAILABLE_VALUE
@@ -1856,6 +1866,33 @@ export function PerpsTradeTicket({
       openPreview.postMarginUsdc
     )
   })()
+  const adverseOracleConfidenceSpreadValue = useMemo(
+    () => formatAdverseOracleConfidenceSpread(latestBasket, adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [adverseConfidenceMultiplierBps, latestBasket]
+  )
+  const rawOracleConfidenceSpreadValue = useMemo(
+    () => formatOracleConfidenceSpreadPercent(
+      calculateRawBasketOracleConfidenceSpreadPercent(latestBasket)
+    ) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [latestBasket]
+  )
+  const adverseOracleConfidenceMultiplierValue = useMemo(
+    () => formatAdverseConfidenceMultiplier(adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
+    [adverseConfidenceMultiplierBps]
+  )
+  const adverseOracleConfidenceSpreadTooltip = (
+    <div className="space-y-2">
+      <p>
+        Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
+      </p>
+      <p>
+        It protects LPs by adding a price cushion when oracle prices are less certain.
+      </p>
+      <p>
+        Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
+      </p>
+    </div>
+  )
 
   const previewRows = useMemo<PreviewRow[]>(
     () => [
@@ -1878,7 +1915,11 @@ export function PerpsTradeTicket({
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
-      { label: 'Oracle confidence spread', value: previewOracleConfidenceSpreadValue, tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP },
+      {
+        label: 'Adverse oracle confidence spread',
+        value: adverseOracleConfidenceSpreadValue,
+        tooltip: adverseOracleConfidenceSpreadTooltip,
+      },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
@@ -1900,7 +1941,6 @@ export function PerpsTradeTicket({
       oraclePublishTime,
       nowSeconds,
       previewPrice,
-      previewOracleConfidenceSpreadValue,
       previewContractNotionalUsdc,
       previewExecutionFeeUsdc,
       previewInitialMarginUsdc,
@@ -1914,10 +1954,18 @@ export function PerpsTradeTicket({
       selectedOpenCapacityUsdc,
       dxyExposureNumber,
       slippageNumber,
+      adverseOracleConfidenceSpreadValue,
+      rawOracleConfidenceSpreadValue,
+      adverseOracleConfidenceMultiplierValue,
+      adverseOracleConfidenceSpreadTooltip,
     ]
   )
   const sidePanelPreviewRows = useMemo(
-    () => previewRows.filter((row) => row.label !== 'Resulting leverage'),
+    () => previewRows.filter((row) =>
+      row.label !== 'Resulting leverage' &&
+      row.label !== 'plDXY Perp exposure' &&
+      row.label !== 'Contract side capacity'
+    ),
     [previewRows]
   )
 
@@ -2350,39 +2398,75 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        <label className="flex cursor-pointer items-center gap-3 py-1 text-content-primary transition-colors hover:text-[#FFAB96]">
-          <input
-            type="checkbox"
-            checked={isReduceOnly}
-            onChange={(event) => {
-              trackPerpsButtonClicked('toggle_reduce_only', {
-                ...commonAnalyticsProperties,
-                reduce_only: event.target.checked,
-              })
-              setIsReduceOnly(event.target.checked)
-            }}
-            className="h-4 w-4 accent-[#FFAB96]"
-          />
-          <span className="text-sm font-semibold">Reduce only</span>
-        </label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-3 py-0.5 text-content-primary">
+            <input
+              id="perps-reduce-only"
+              type="checkbox"
+              checked={isReduceOnly}
+              onChange={(event) => {
+                trackPerpsButtonClicked('toggle_reduce_only', {
+                  ...commonAnalyticsProperties,
+                  reduce_only: event.target.checked,
+                })
+                setIsReduceOnly(event.target.checked)
+              }}
+              className="h-4 w-4 accent-[#FFAB96]"
+            />
+            <span className="inline-flex items-center gap-1.5">
+              <label
+                className="cursor-pointer text-sm font-semibold transition-colors hover:text-[#FFAB96]"
+                htmlFor="perps-reduce-only"
+              >
+                Reduce only
+              </label>
+              <Tooltip content="Only reduces or closes your current position. It will not open a new position or increase exposure." position="top">
+                <span
+                  aria-label="Reduce only info"
+                  className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
+                  tabIndex={0}
+                >
+                  i
+                </span>
+              </Tooltip>
+            </span>
+          </div>
 
-        <label className="flex cursor-pointer items-start gap-3 py-1 text-content-primary transition-colors hover:text-[#FFAB96]">
-          <input
-            type="checkbox"
-            checked={isMarginCallSimulatorEnabled}
-            onChange={(event) => {
-              trackPerpsButtonClicked('toggle_margin_call_simulator', commonAnalyticsProperties)
-              if (event.target.checked) {
-                setIsMarginCallSimulatorConfirmationOpen(true)
-              } else {
-                setIsMarginCallSimulatorEnabled(false)
-                setIsMarginCallSimulatorConfirmationOpen(false)
-              }
-            }}
-            className="mt-0.5 h-4 w-4 accent-[#FFAB96]"
-          />
-          <span className="text-sm font-semibold">Margin Call Simulator</span>
-        </label>
+          <div className="flex items-center gap-3 py-0.5 text-content-primary">
+            <input
+              id="perps-margin-call-simulator"
+              type="checkbox"
+              checked={isMarginCallSimulatorEnabled}
+              onChange={(event) => {
+                trackPerpsButtonClicked('toggle_margin_call_simulator', commonAnalyticsProperties)
+                if (event.target.checked) {
+                  setIsMarginCallSimulatorConfirmationOpen(true)
+                } else {
+                  setIsMarginCallSimulatorEnabled(false)
+                  setIsMarginCallSimulatorConfirmationOpen(false)
+                }
+              }}
+              className="h-4 w-4 accent-[#FFAB96]"
+            />
+            <span className="inline-flex items-center gap-1.5">
+              <label
+                className="cursor-pointer text-sm font-semibold transition-colors hover:text-[#FFAB96]"
+                htmlFor="perps-margin-call-simulator"
+              >
+                Margin Call Simulator
+              </label>
+              <Tooltip content="Maximum leverage mode" position="top">
+                <span
+                  aria-label="Margin Call Simulator info"
+                  className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
+                  tabIndex={0}
+                >
+                  i
+                </span>
+              </Tooltip>
+            </span>
+          </div>
+        </div>
 
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
@@ -3240,7 +3324,6 @@ export function PerpsTradeTicket({
           <div className="border border-brand-border/20 bg-app-bg p-4">
             <div className="space-y-2">
               <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
-              <AccountSummaryRow label="Amount" value={<TokenAmount amount={formatPerpsUsdc(marginActionAmountRaw)} />} />
               {shouldShowMarginActionPositionContext ? (
                 <>
                   <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />

@@ -228,6 +228,7 @@ data Constants = Constants
   , constMinLeverage :: Double
   , constMaxLeverage :: Double
   , constLiquidationLtv :: Double
+  , constAdverseConfidenceMultiplierBps :: Integer
   }
   deriving stock (Show, Generic)
 
@@ -238,6 +239,7 @@ instance ToJSON Constants where
       , "minLeverage" .= constMinLeverage
       , "maxLeverage" .= constMaxLeverage
       , "liquidationLtv" .= constLiquidationLtv
+      , "adverseConfidenceMultiplierBps" .= show constAdverseConfidenceMultiplierBps
       ]
 
 data MarketConfig = MarketConfig

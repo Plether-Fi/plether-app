@@ -36,10 +36,10 @@ test.describe('Trading Page', () => {
 
     if (await bearButton.isVisible()) {
       await bearButton.click()
-      await expect(bearButton).toHaveClass(/border-cyber-electric-fuchsia/)
+      await expect(bearButton).toHaveClass(/border-brand-orange/)
 
       await bullButton.click()
-      await expect(bullButton).toHaveClass(/border-cyber-neon-green/)
+      await expect(bullButton).toHaveClass(/border-positive/)
     }
   })
 

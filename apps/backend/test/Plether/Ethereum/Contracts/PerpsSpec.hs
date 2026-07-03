@@ -48,6 +48,10 @@ spec = do
       word call 4 `shouldBe` fromIntegral (BS.length payload)
       BS.take (BS.length payload) (bytesAtWord call 5) `shouldBe` payload
 
+  describe "PletherOracle config calldata" $ do
+    it "encodes adverseConfidenceMultiplierBps()" $ do
+      adverseConfidenceMultiplierBpsCall `shouldEncodeTo` "0x6c6def16"
+
   describe "decodePerpsOrderEvent" $ do
     it "decodes OrderCommitted" $ do
       let logEntry =

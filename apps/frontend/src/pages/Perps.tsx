@@ -6,6 +6,7 @@ import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import { TokenAmount } from '../components/ui'
+import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
@@ -44,6 +45,7 @@ function formatMarkAge(ageSeconds: number): string {
 
 export function Perps() {
   const perpsMarket = usePerpsMarket()
+  const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
@@ -215,13 +217,17 @@ export function Perps() {
           }}
         />
       </div>
-      <div className="flex flex-col gap-2 lg:w-1/4 min-w-0">
-        <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+      <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
+        <div className="-mb-px">
+          <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+        </div>
         <PerpsTradeTicket
           enableLiveTrading
           oraclePriceRaw={perpsMarket.raw.markPrice}
           oraclePublishTime={perpsMarket.oracleFreshnessTime}
           oraclePriceDisplay={perpsMarket.oraclePrice}
+          latestBasket={perpsMarket.latestBasket}
+          adverseConfidenceMultiplierBps={protocolConfig.data?.data.constants.adverseConfidenceMultiplierBps}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
           oracleBasketComponents={perpsMarket.raw.basketComponents}
