@@ -3,6 +3,7 @@ module Plether.Ethereum.Multicall
   , CallResult (..)
   , multicall
   , multicallAddress
+  , decodeResults
   ) where
 
 import Data.ByteString (ByteString)
@@ -25,7 +26,7 @@ data CallResult = CallResult
   { resultSuccess :: Bool
   , resultData :: ByteString
   }
-  deriving stock (Show)
+  deriving stock (Eq, Show)
 
 multicall :: EthClient -> [Call] -> IO (Either RpcError [CallResult])
 multicall client calls = do
@@ -81,14 +82,15 @@ decodeResultArray 0 _ = []
 decodeResultArray n bs
   | BS.length bs < 64 = []
   | otherwise =
-      let offsets = map (\i -> fromIntegral $ decodeUint256 (BS.take 32 $ BS.drop (i * 32) bs)) [0 .. n - 1]
-          results = map (decodeResultStruct . flip BS.drop bs . fromIntegral) offsets
+      let offsets :: [Int]
+          offsets = map (\i -> fromIntegral $ decodeUint256 (BS.take 32 $ BS.drop (i * 32) bs)) [0 .. n - 1]
+          results = map (decodeResultStruct . flip BS.drop bs) offsets
        in results
 
 decodeResultStruct :: ByteString -> CallResult
 decodeResultStruct bs =
   let success = decodeUint256 (BS.take 32 bs) /= 0
       dataOffset = fromIntegral $ decodeUint256 (BS.take 32 $ BS.drop 32 bs)
-      dataLen = fromIntegral $ decodeUint256 (BS.take 32 $ BS.drop (32 + dataOffset) bs)
-      resultData = BS.take dataLen $ BS.drop (64 + dataOffset) bs
+      dataLen = fromIntegral $ decodeUint256 (BS.take 32 $ BS.drop dataOffset bs)
+      resultData = BS.take dataLen $ BS.drop (dataOffset + 32) bs
    in CallResult success resultData
