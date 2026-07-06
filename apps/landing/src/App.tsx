@@ -1,7 +1,19 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from 'react'
 import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
 
-const APP_URL = 'https://app.plether.com'
+const DEFAULT_APP_URL = 'https://app.plether.com'
+const getAppUrl = () => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_APP_URL
+  }
+
+  const { protocol, hostname, port } = window.location
+  const appHostname = hostname.startsWith('app.') ? hostname : `app.${hostname}`
+
+  return `${protocol}//${appHostname}${port ? `:${port}` : ''}`
+}
+
+const APP_URL = getAppUrl()
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
