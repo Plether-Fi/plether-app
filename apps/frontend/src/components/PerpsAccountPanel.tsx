@@ -551,7 +551,6 @@ function PositionView({
           <dl className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
             <AccountSummaryRow label="Free margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginLimitRaw)} />} />
             <AccountSummaryRow label="Current position margin" value={<TokenAmount amount={formatPerpsUsdc(position.marginUsdc)} />} />
-            <AccountSummaryRow label="Added margin" value={<TokenAmount amount={formatPerpsUsdc(positionMarginAmountRaw)} />} />
             <AccountSummaryRow label="Resulting position margin" value={<TokenAmount amount={formatPerpsUsdc(resultingPositionMargin)} />} />
             <AccountSummaryRow label="Current leverage" value={formatPositionLeverageForMargin(position, position.marginUsdc)} />
             <AccountSummaryRow label="Resulting leverage" value={formatPositionLeverageForMargin(position, resultingPositionMargin)} />

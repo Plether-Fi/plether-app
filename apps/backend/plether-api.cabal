@@ -183,6 +183,8 @@ test-suite plether-api-test
         Plether.KeeperSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
+        Plether.Types.ProtocolSpec
+        Plether.Types.PerpsSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,

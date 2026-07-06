@@ -11,12 +11,14 @@ module Plether.Ethereum.Contracts.Perps
   , maxOrderAge
   , orderSettlementWindow
   , orderExecutionStalenessLimit
+  , adverseConfidenceMultiplierBps
   , isOracleFrozen
   , getOrderExecutionPolicy
   , getUpdateFee
   , executeOrderCall
   , executeOrderBatchCall
   , getUpdateFeeCall
+  , adverseConfidenceMultiplierBpsCall
   , orderFailureReasonText
   ) where
 
@@ -152,6 +154,11 @@ orderExecutionStalenessLimit client oracle = do
   result <- ethCall client (CallParams oracle (encodeCall "orderExecutionStalenessLimit()" []))
   pure $ fmap decodeUint256 result
 
+adverseConfidenceMultiplierBps :: EthClient -> Text -> IO (Either RpcError Integer)
+adverseConfidenceMultiplierBps client oracle = do
+  result <- ethCall client (CallParams oracle adverseConfidenceMultiplierBpsCall)
+  pure $ fmap decodeUint256 result
+
 isOracleFrozen :: EthClient -> Text -> IO (Either RpcError Bool)
 isOracleFrozen client oracle = do
   result <- ethCall client (CallParams oracle (encodeCall "isOracleFrozen()" []))
@@ -188,6 +195,10 @@ getUpdateFeeCall updateData =
 getOrderExecutionPolicyCall :: Bool -> ByteString
 getOrderExecutionPolicyCall isClose =
   encodeCall "getOrderExecutionPolicy(bool)" [encodeBool isClose]
+
+adverseConfidenceMultiplierBpsCall :: ByteString
+adverseConfidenceMultiplierBpsCall =
+  encodeCall "adverseConfidenceMultiplierBps()" []
 
 executeOrderCall :: Integer -> [ByteString] -> ByteString
 executeOrderCall orderId updateData =

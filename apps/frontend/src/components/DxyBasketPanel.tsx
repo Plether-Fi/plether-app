@@ -29,6 +29,7 @@ import { Alert, Skeleton, Tooltip } from './ui'
 import {
   alignBasketPointsToOracleMark,
   buildCandles,
+  computeBasketDisplayPriceChange,
   computeBasketComponentPriceChanges,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
@@ -37,6 +38,7 @@ import {
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
+const NEGATIVE_LINE_COLOR = '#FF572D'
 const CHART_GRID_COLOR = 'rgba(255, 171, 150, 0.16)'
 const CHART_AXIS_COLOR = 'rgba(255, 171, 150, 0.32)'
 const CHART_TEXT_COLOR = '#D9CCD3'
@@ -105,7 +107,7 @@ function componentChangeClass(value: number): string {
 
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
-  componentChangeHistory?: BasketHistory
+  changeHistory?: BasketHistory
   latest?: BasketLatest
   oracleMark?: OracleMarkPoint
   chartInterval?: DxyBasketChartInterval
@@ -123,7 +125,7 @@ interface DxyBasketChartProps {
 }
 
 function areaTopColor(lineColor: string): string {
-  return lineColor === '#00FF99' ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 0, 204, 0.24)'
+  return lineColor === DEFAULT_LINE_COLOR ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 87, 45, 0.24)'
 }
 
 function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: number; nowSeconds: number }) {
@@ -292,7 +294,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
 export function DxyBasketPanelView({
   history,
-  componentChangeHistory,
+  changeHistory,
   latest,
   oracleMark,
   chartInterval = '1m',
@@ -334,14 +336,20 @@ export function DxyBasketPanelView({
     }))
   }, [chartBuckets])
 
-  const latestPoint = chartPoints.at(-1) ?? null
+  const headerPrice = oracleMark
+    ? oracleNumberToDisplayDxyPrice(toOraclePrice(oracleMark.basketPrice))
+    : latest
+      ? oracleNumberToDisplayDxyPrice(toOraclePrice(latest.basketPrice))
+      : (chartPoints.at(-1)?.price ?? null)
   const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
   const componentPriceChanges = useMemo(
-    () => computeBasketComponentPriceChanges(componentChangeHistory?.points, latest),
-    [componentChangeHistory?.points, latest]
+    () => computeBasketComponentPriceChanges(changeHistory?.points, latest),
+    [changeHistory?.points, latest]
   )
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
-  const lineColor = '#00FF99'
+  const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
+  const positiveChange = changePct == null || changePct >= 0
+  const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
 
   useEffect(() => {
     const interval = window.setInterval(() => {
@@ -361,14 +369,17 @@ export function DxyBasketPanelView({
             <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
             <span>plDXY Perp Price</span>
           </div>
-          <div className="mt-1 flex flex-wrap items-end gap-x-4 gap-y-1">
-            {isLoading ? (
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+            {headerPrice == null && isLoading ? (
               <Skeleton width={126} height={34} />
             ) : (
-              <span className="text-3xl font-semibold text-content-primary">
-                {latestPoint ? formatPrice(latestPoint.price) : '--'}
+              <span className="text-3xl font-semibold leading-none text-content-primary">
+                {headerPrice == null ? '--' : formatPrice(headerPrice)}
               </span>
             )}
+            <span className={`text-sm font-semibold leading-none ${positiveChange ? 'text-positive' : 'text-brand-orange'}`}>
+              {formatPercent(changePct)}
+            </span>
           </div>
         </div>
 
@@ -459,7 +470,7 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
-  const { data: componentChangeData } = usePerpsBasketHistory('24h', 60, true)
+  const { data: changeData } = usePerpsBasketHistory('24h', 60, true)
   const { data: latestData } = usePerpsBasketLatest()
   const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
     if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined
@@ -473,7 +484,7 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
   return (
     <DxyBasketPanelView
       history={data?.data}
-      componentChangeHistory={componentChangeData?.data}
+      changeHistory={changeData?.data}
       latest={latestData?.data}
       oracleMark={oracleMark}
       chartInterval={chartInterval}

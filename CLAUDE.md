@@ -191,8 +191,8 @@ if (Result.isOk(result)) {
 
 ### Theme Colors
 Defined in `apps/frontend/src/index.css` via `@theme`:
-- `cyber-neon-green` (#00FF99) - Primary accent, plDXY-BULL
-- `cyber-electric-fuchsia` (#FF00CC) - plDXY-BEAR, secondary actions
+- `positive` (#00FF99) - plDXY-BULL and positive state
+- `brand-orange` (#FF572D) - plDXY-BEAR, negative state, and warning actions
 - `bear` / `bull` - Aliases for token-specific styling
 
 ### Currency Display

@@ -518,17 +518,53 @@ getBasketSnapshots
 getBasketSnapshots conn fromTimestamp toTimestamp intervalSeconds limit includeComponents = do
   if includeComponents
     then query conn
-      "SELECT timestamp, interval_seconds, basket_price, component_prices \
-      \FROM perps_basket_snapshots \
-      \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
+      "WITH selected_interval AS (\
+      \  SELECT COALESCE(\
+      \    (SELECT interval_seconds FROM perps_basket_snapshots \
+      \     WHERE interval_seconds = ? AND timestamp >= ? AND timestamp <= ? LIMIT 1),\
+      \    (SELECT MIN(interval_seconds) FROM perps_basket_snapshots \
+      \     WHERE timestamp >= ? AND timestamp <= ?)\
+      \  ) AS interval_seconds\
+      \) \
+      \SELECT timestamp, interval_seconds, basket_price, component_prices \
+      \FROM (\
+      \  SELECT DISTINCT ON (bucket) \
+      \    timestamp, interval_seconds, basket_price, component_prices \
+      \  FROM (\
+      \    SELECT perps_basket_snapshots.timestamp, perps_basket_snapshots.interval_seconds, basket_price, component_prices, perps_basket_snapshots.timestamp / ? AS bucket \
+      \    FROM perps_basket_snapshots \
+      \    CROSS JOIN selected_interval \
+      \    WHERE perps_basket_snapshots.timestamp >= ? AND perps_basket_snapshots.timestamp <= ? \
+      \      AND perps_basket_snapshots.interval_seconds = selected_interval.interval_seconds \
+      \  ) candidates \
+      \  ORDER BY bucket, timestamp DESC\
+      \) sampled \
       \ORDER BY timestamp ASC LIMIT ?"
-      (fromTimestamp, toTimestamp, intervalSeconds, limit)
+      (intervalSeconds, fromTimestamp, toTimestamp, fromTimestamp, toTimestamp, intervalSeconds, fromTimestamp, toTimestamp, limit)
     else query conn
-      "SELECT timestamp, interval_seconds, basket_price, NULL::jsonb AS component_prices \
-      \FROM perps_basket_snapshots \
-      \WHERE timestamp >= ? AND timestamp <= ? AND interval_seconds = ? \
+      "WITH selected_interval AS (\
+      \  SELECT COALESCE(\
+      \    (SELECT interval_seconds FROM perps_basket_snapshots \
+      \     WHERE interval_seconds = ? AND timestamp >= ? AND timestamp <= ? LIMIT 1),\
+      \    (SELECT MIN(interval_seconds) FROM perps_basket_snapshots \
+      \     WHERE timestamp >= ? AND timestamp <= ?)\
+      \  ) AS interval_seconds\
+      \) \
+      \SELECT timestamp, interval_seconds, basket_price, NULL::jsonb AS component_prices \
+      \FROM (\
+      \  SELECT DISTINCT ON (bucket) \
+      \    timestamp, interval_seconds, basket_price \
+      \  FROM (\
+      \    SELECT perps_basket_snapshots.timestamp, perps_basket_snapshots.interval_seconds, basket_price, perps_basket_snapshots.timestamp / ? AS bucket \
+      \    FROM perps_basket_snapshots \
+      \    CROSS JOIN selected_interval \
+      \    WHERE perps_basket_snapshots.timestamp >= ? AND perps_basket_snapshots.timestamp <= ? \
+      \      AND perps_basket_snapshots.interval_seconds = selected_interval.interval_seconds \
+      \  ) candidates \
+      \  ORDER BY bucket, timestamp DESC\
+      \) sampled \
       \ORDER BY timestamp ASC LIMIT ?"
-      (fromTimestamp, toTimestamp, intervalSeconds, limit)
+      (intervalSeconds, fromTimestamp, toTimestamp, fromTimestamp, toTimestamp, intervalSeconds, fromTimestamp, toTimestamp, limit)
 
 getBasketSnapshotTimes
   :: Connection

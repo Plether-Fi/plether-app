@@ -97,8 +97,8 @@ function installAppKitThemeOverrides() {
       --apkt-tokens-theme-borderPrimaryDark: rgba(255, 171, 150, 0.18);
       --apkt-tokens-theme-borderSecondary: rgba(255, 171, 150, 0.28);
       --apkt-tokens-theme-textPrimary: #FFF5F9;
-      --apkt-tokens-theme-textSecondary: #E0E0FF;
-      --apkt-tokens-theme-textTertiary: #A6B3D9;
+      --apkt-tokens-theme-textSecondary: #D8CBD0;
+      --apkt-tokens-theme-textTertiary: #D8CBD0;
       --apkt-tokens-theme-textInvert: #FFF5F9;
       --apkt-tokens-theme-iconDefault: #FFF5F9;
       --apkt-tokens-theme-iconInverse: #FFF5F9;

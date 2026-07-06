@@ -8,6 +8,11 @@ import {
   oracleNumberToDisplayDxyPrice,
 } from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
+import {
+  DXY_BASKET_CHART_INTERVALS,
+  basketRangeForChartInterval,
+  basketRequestIntervalSecondsForChartInterval,
+} from '../dxyBasketChartConfig'
 
 const component: BasketComponentPrice = {
   symbol: 'EUR/USD',
@@ -42,6 +47,26 @@ function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
 }
 
 describe('DXY basket chart display transform', () => {
+  it('uses the intended default history window for each chart interval', () => {
+    expect(Object.fromEntries(DXY_BASKET_CHART_INTERVALS.map((item) => [item.label, item.range]))).toEqual({
+      '1m': '24h',
+      '5m': '7d',
+      '1H': '30d',
+      D: '1y',
+    })
+    expect(basketRangeForChartInterval('1m')).toBe('24h')
+    expect(basketRangeForChartInterval('5m')).toBe('7d')
+    expect(basketRangeForChartInterval('1h')).toBe('30d')
+    expect(basketRangeForChartInterval('1d')).toBe('1y')
+  })
+
+  it('requests only the resolution needed for each chart interval', () => {
+    expect(basketRequestIntervalSecondsForChartInterval('1m')).toBe(60)
+    expect(basketRequestIntervalSecondsForChartInterval('5m')).toBe(5 * 60)
+    expect(basketRequestIntervalSecondsForChartInterval('1h')).toBe(60 * 60)
+    expect(basketRequestIntervalSecondsForChartInterval('1d')).toBe(24 * 60 * 60)
+  })
+
   it('plots raw basket prices as reversed DXY display prices', () => {
     expect(oracleNumberToDisplayDxyPrice(0.9831)).toBeCloseTo(1.0169, 8)
     expect(oracleNumberToDisplayDxyPrice(1)).toBeCloseTo(1, 8)
@@ -71,6 +96,15 @@ describe('DXY basket chart display transform', () => {
     const latest = oracleNumberToDisplayDxyPrice(0.97)
 
     expect((latest - first) / first).toBeGreaterThan(0)
+  })
+
+  it('computes header percent change from the supplied history window', () => {
+    const changePct = computeBasketDisplayPriceChange(
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      latestPoint(180, '96000000')
+    )
+
+    expect(changePct).toBeCloseTo((1.04 - 1.02) / 1.02, 8)
   })
 
   it('does not report a 0% change when only the live latest point is available', () => {

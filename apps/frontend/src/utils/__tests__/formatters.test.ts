@@ -120,10 +120,10 @@ describe('getHealthFactorColor', () => {
     expect(getHealthFactorColor(10)).toBe('text-green-500')
   })
 
-  it('returns yellow for at-risk positions (1.2 - 1.5)', () => {
-    expect(getHealthFactorColor(1.2)).toBe('text-yellow-500')
-    expect(getHealthFactorColor(1.3)).toBe('text-yellow-500')
-    expect(getHealthFactorColor(1.49)).toBe('text-yellow-500')
+  it('returns light orange for at-risk positions (1.2 - 1.5)', () => {
+    expect(getHealthFactorColor(1.2)).toBe('text-brand-peach')
+    expect(getHealthFactorColor(1.3)).toBe('text-brand-peach')
+    expect(getHealthFactorColor(1.49)).toBe('text-brand-peach')
   })
 
   it('returns red for dangerous positions (< 1.2)', () => {
