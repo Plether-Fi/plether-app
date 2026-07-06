@@ -181,6 +181,12 @@ variable "consolidate_workers" {
   description = "Run keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
 }
 
+variable "workers_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired task count for the consolidated workers service."
+}
+
 variable "container_cpu" {
   type    = number
   default = 256
