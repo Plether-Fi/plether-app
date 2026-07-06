@@ -1,5 +1,5 @@
 import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
-import { defaultApiBaseUrl } from '../api/client'
+import { getScopedApiBaseUrl } from '../api/client'
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
@@ -346,7 +346,7 @@ function cacheHistoricalPythPayload(publishTime: number, payload: PerpsPythUpdat
 }
 
 function perpsApiUrl(path: string): URL {
-  const apiBase = defaultApiBaseUrl()
+  const apiBase = getScopedApiBaseUrl('perps')
   const normalizedBase = apiBase.endsWith('/') ? apiBase.slice(0, -1) : apiBase
   return new URL(`${normalizedBase}${path}`, window.location.origin)
 }

@@ -6,6 +6,7 @@ module Plether.Handlers.User
   ) where
 
 import Control.Concurrent.STM (atomically)
+import Data.ByteString (ByteString)
 import Data.Text (Text)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Plether.Cache
@@ -24,6 +25,7 @@ import qualified Plether.Ethereum.Contracts.Morpho as Morpho
 import qualified Plether.Ethereum.Contracts.MorphoOracle as MorphoOracle
 import qualified Plether.Ethereum.Contracts.StakedToken as Staked
 import qualified Plether.Ethereum.Contracts.SyntheticSplitter as Splitter
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Types
 import Plether.Utils.Hex (hexToByteString)
 
@@ -79,14 +81,23 @@ getUserBalancesRaw :: EthClient -> Config -> Text -> IO (Either ApiError UserBal
 getUserBalancesRaw client cfg userAddr = do
   let addrs = currentAddresses (cfgDeployments cfg)
 
-  eUsdc <- ERC20.balanceOf client (addrUsdc addrs) userAddr
-  eBear <- ERC20.balanceOf client (addrDxyBear addrs) userAddr
-  eBull <- ERC20.balanceOf client (addrDxyBull addrs) userAddr
-  eStakedBear <- Staked.balanceOf client (addrStakingBear addrs) userAddr
-  eStakedBull <- Staked.balanceOf client (addrStakingBull addrs) userAddr
+  eResults <-
+    multicallBytes
+      client
+      [ (addrUsdc addrs, ERC20.balanceOfCall userAddr)
+      , (addrDxyBear addrs, ERC20.balanceOfCall userAddr)
+      , (addrDxyBull addrs, ERC20.balanceOfCall userAddr)
+      , (addrStakingBear addrs, Staked.balanceOfCall userAddr)
+      , (addrStakingBull addrs, Staked.balanceOfCall userAddr)
+      ]
 
-  case (eUsdc, eBear, eBull, eStakedBear, eStakedBull) of
-    (Right usdc, Right bear, Right bull, Right stakedBear, Right stakedBull) -> do
+  case eResults of
+    Right [usdcBs, bearBs, bullBs, stakedBearBs, stakedBullBs] -> do
+      let usdc = ERC20.decodeBalanceOf usdcBs
+          bear = ERC20.decodeBalanceOf bearBs
+          bull = ERC20.decodeBalanceOf bullBs
+          stakedBear = Staked.decodeBalanceOf stakedBearBs
+          stakedBull = Staked.decodeBalanceOf stakedBullBs
       eStakedBearAssets <-
         if stakedBear > 0
           then Staked.convertToAssets client (addrStakingBear addrs) stakedBear
@@ -111,11 +122,8 @@ getUserBalancesRaw client cfg userAddr = do
                 }
         (Left err, _) -> pure $ Left $ rpcErrorToApiError err
         (_, Left err) -> pure $ Left $ rpcErrorToApiError err
-    (Left err, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err, _, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+    Left err -> pure $ Left err
+    _ -> pure $ Left $ internalError "Failed to fetch balances"
 
 getUserPositions :: EthClient -> Config -> Text -> IO (Either ApiError (ApiResponse UserPositions))
 getUserPositions client cfg userAddr = do
@@ -157,35 +165,56 @@ getAllowancesRaw :: EthClient -> Config -> Text -> IO (Either ApiError UserAllow
 getAllowancesRaw client cfg userAddr = do
   let addrs = currentAddresses (cfgDeployments cfg)
 
-  eUsdcSplitter <- ERC20.allowance client (addrUsdc addrs) userAddr (addrSyntheticSplitter addrs)
-  eUsdcZap <- ERC20.allowance client (addrUsdc addrs) userAddr (addrZapRouter addrs)
-  eUsdcCurve <- ERC20.allowance client (addrUsdc addrs) userAddr (addrCurvePool addrs)
-  eUsdcLevRouter <- ERC20.allowance client (addrUsdc addrs) userAddr (addrLeverageRouter addrs)
-  eUsdcBullLevRouter <- ERC20.allowance client (addrUsdc addrs) userAddr (addrBullLeverageRouter addrs)
+  eResults <-
+    multicallBytes
+      client
+      [ (addrUsdc addrs, ERC20.allowanceCall userAddr (addrSyntheticSplitter addrs))
+      , (addrUsdc addrs, ERC20.allowanceCall userAddr (addrZapRouter addrs))
+      , (addrUsdc addrs, ERC20.allowanceCall userAddr (addrCurvePool addrs))
+      , (addrUsdc addrs, ERC20.allowanceCall userAddr (addrLeverageRouter addrs))
+      , (addrUsdc addrs, ERC20.allowanceCall userAddr (addrBullLeverageRouter addrs))
+      , (addrDxyBear addrs, ERC20.allowanceCall userAddr (addrSyntheticSplitter addrs))
+      , (addrDxyBear addrs, ERC20.allowanceCall userAddr (addrStakingBear addrs))
+      , (addrDxyBear addrs, ERC20.allowanceCall userAddr (addrLeverageRouter addrs))
+      , (addrDxyBear addrs, ERC20.allowanceCall userAddr (addrCurvePool addrs))
+      , (addrDxyBull addrs, ERC20.allowanceCall userAddr (addrSyntheticSplitter addrs))
+      , (addrDxyBull addrs, ERC20.allowanceCall userAddr (addrStakingBull addrs))
+      , (addrDxyBull addrs, ERC20.allowanceCall userAddr (addrBullLeverageRouter addrs))
+      , (addrDxyBull addrs, ERC20.allowanceCall userAddr (addrZapRouter addrs))
+      , (addrUsdc addrs, ERC20.allowanceCall userAddr (addrMorpho addrs))
+      ]
 
-  eBearSplitter <- ERC20.allowance client (addrDxyBear addrs) userAddr (addrSyntheticSplitter addrs)
-  eBearStaking <- ERC20.allowance client (addrDxyBear addrs) userAddr (addrStakingBear addrs)
-  eBearLeverage <- ERC20.allowance client (addrDxyBear addrs) userAddr (addrLeverageRouter addrs)
-  eBearCurve <- ERC20.allowance client (addrDxyBear addrs) userAddr (addrCurvePool addrs)
-
-  eBullSplitter <- ERC20.allowance client (addrDxyBull addrs) userAddr (addrSyntheticSplitter addrs)
-  eBullStaking <- ERC20.allowance client (addrDxyBull addrs) userAddr (addrStakingBull addrs)
-  eBullLeverage <- ERC20.allowance client (addrDxyBull addrs) userAddr (addrBullLeverageRouter addrs)
-  eBullZap <- ERC20.allowance client (addrDxyBull addrs) userAddr (addrZapRouter addrs)
-
-  -- Morpho USDC allowances need the morpho address
-  eUsdcMorpho <- ERC20.allowance client (addrUsdc addrs) userAddr (addrMorpho addrs)
-
-  case ( eUsdcSplitter, eUsdcZap, eUsdcCurve, eUsdcLevRouter, eUsdcBullLevRouter
-       , eBearSplitter, eBearStaking, eBearLeverage, eBearCurve
-       , eBullSplitter, eBullStaking, eBullLeverage, eBullZap
-       , eUsdcMorpho
-       ) of
-    ( Right usdcSplitter, Right usdcZap, Right usdcCurve, Right usdcLevRouter, Right usdcBullLevRouter
-      , Right bearSplitter, Right bearStaking, Right bearLeverage, Right bearCurve
-      , Right bullSplitter, Right bullStaking, Right bullLeverage, Right bullZap
-      , Right usdcMorpho
-      ) ->
+  case eResults of
+    Right
+      [ usdcSplitterBs
+        , usdcZapBs
+        , usdcCurveBs
+        , usdcLevRouterBs
+        , usdcBullLevRouterBs
+        , bearSplitterBs
+        , bearStakingBs
+        , bearLeverageBs
+        , bearCurveBs
+        , bullSplitterBs
+        , bullStakingBs
+        , bullLeverageBs
+        , bullZapBs
+        , usdcMorphoBs
+        ] -> do
+        let usdcSplitter = ERC20.decodeAllowance usdcSplitterBs
+            usdcZap = ERC20.decodeAllowance usdcZapBs
+            usdcCurve = ERC20.decodeAllowance usdcCurveBs
+            usdcLevRouter = ERC20.decodeAllowance usdcLevRouterBs
+            usdcBullLevRouter = ERC20.decodeAllowance usdcBullLevRouterBs
+            bearSplitter = ERC20.decodeAllowance bearSplitterBs
+            bearStaking = ERC20.decodeAllowance bearStakingBs
+            bearLeverage = ERC20.decodeAllowance bearLeverageBs
+            bearCurve = ERC20.decodeAllowance bearCurveBs
+            bullSplitter = ERC20.decodeAllowance bullSplitterBs
+            bullStaking = ERC20.decodeAllowance bullStakingBs
+            bullLeverage = ERC20.decodeAllowance bullLeverageBs
+            bullZap = ERC20.decodeAllowance bullZapBs
+            usdcMorpho = ERC20.decodeAllowance usdcMorphoBs
         pure $
           Right $
             UserAllowances
@@ -214,180 +243,228 @@ getAllowancesRaw client cfg userAddr = do
                     , bullAllowZapRouter = bullZap
                     }
               }
+    Left err -> pure $ Left err
     _ -> pure $ Left $ internalError "Failed to fetch allowances"
 
 -- Leverage positions
 getLeveragePositions :: EthClient -> Config -> Text -> IO (Either ApiError LeveragePositions)
 getLeveragePositions client cfg userAddr = do
   let addrs = currentAddresses (cfgDeployments cfg)
-  eBear <- getLeveragePosition client addrs "BEAR" userAddr
-  eBull <- getLeveragePosition client addrs "BULL" userAddr
-  case (eBear, eBull) of
-    (Right bear, Right bull) ->
-      pure $ Right $ LeveragePositions { levPosBear = bear, levPosBull = bull }
-    (Left err, _) -> pure $ Left err
-    (_, Left err) -> pure $ Left err
-
-getLeveragePosition :: EthClient -> Addresses -> Text -> Text -> IO (Either ApiError (Maybe LeveragePosition))
-getLeveragePosition client addrs side userAddr = do
-  let routerAddr = if side == "BEAR" then addrLeverageRouter addrs else addrBullLeverageRouter addrs
       morphoAddr = addrMorpho addrs
-      marketIdHex = if side == "BEAR" then addrMorphoMarketBear addrs else addrMorphoMarketBull addrs
-      marketIdBs = hexToByteString marketIdHex
+      bearMarketIdBs = hexToByteString (addrMorphoMarketBear addrs)
+      bullMarketIdBs = hexToByteString (addrMorphoMarketBull addrs)
 
-  eCollateral <- LevRouter.getCollateral client routerAddr userAddr
-  eDebt <- LevRouter.getActualDebt client routerAddr userAddr
-  eOracle <- Oracle.latestRoundData client (addrBasketOracle addrs)
-  eCap <- Splitter.getCap client (addrSyntheticSplitter addrs)
-  eMarketParams <- Morpho.idToMarketParams client morphoAddr marketIdBs
+  eResults <-
+    multicallBytes
+      client
+      [ (addrLeverageRouter addrs, LevRouter.getCollateralCall userAddr)
+      , (addrLeverageRouter addrs, LevRouter.getActualDebtCall userAddr)
+      , (addrBasketOracle addrs, Oracle.latestRoundDataCall)
+      , (addrSyntheticSplitter addrs, Splitter.capCall)
+      , (morphoAddr, Morpho.idToMarketParamsCall bearMarketIdBs)
+      , (addrBullLeverageRouter addrs, LevRouter.getCollateralCall userAddr)
+      , (addrBullLeverageRouter addrs, LevRouter.getActualDebtCall userAddr)
+      , (addrBasketOracle addrs, Oracle.latestRoundDataCall)
+      , (addrSyntheticSplitter addrs, Splitter.capCall)
+      , (morphoAddr, Morpho.idToMarketParamsCall bullMarketIdBs)
+      ]
 
-  case (eCollateral, eDebt, eOracle, eCap, eMarketParams) of
-    (Right collateral, Right debt, Right oracle, Right cap, Right mp)
-      | collateral == 0 -> pure $ Right Nothing
-      | otherwise -> do
-          let oraclePrice = Oracle.rdAnswer oracle
-              tokenPrice =
-                if side == "BEAR"
-                  then oraclePrice
-                  else if cap > oraclePrice then cap - oraclePrice else 0
-              lltv = Morpho.mpLltv mp
-              -- collateral(21 dec) * tokenPrice(8 dec) / 10^23 = USDC(6 dec)
-              collateralUsd = (collateral * tokenPrice) `div` (10 ^ (23 :: Integer))
-              netValue = if collateralUsd > debt then collateralUsd - debt else 0
-              -- leverage = collateralUsd * 100 / equity (result is leverage * 100)
-              leverage =
-                if netValue > 0
-                  then (collateralUsd * 100) `div` netValue
-                  else 0
-              -- healthFactor = collateralUsd * lltv * 100 / (debt * 10^18)
-              healthFactor =
-                if debt > 0 && lltv > 0
-                  then (collateralUsd * lltv * 100) `div` (debt * 10 ^ (18 :: Integer))
-                  else 0
-              -- liquidationPrice = debt * 10^41 / (collateral * lltv)
-              liquidationPriceRaw =
-                if collateral > 0 && lltv > 0
-                  then (debt * 10 ^ (41 :: Integer)) `div` (collateral * lltv)
-                  else 0
-              -- Convert to 6 dec display; for BULL, flip the price
-              liquidationPrice =
-                if side == "BEAR"
-                  then liquidationPriceRaw `div` 100
-                  else
-                    if cap > liquidationPriceRaw
-                      then (cap - liquidationPriceRaw) `div` 100
-                      else 0
-          pure $
-            Right $
-              Just $
-                LeveragePosition
-                  { levCollateral = collateral
-                  , levCollateralUsd = collateralUsd
-                  , levDebt = debt
-                  , levHealthFactor = healthFactor
-                  , levLiquidationPrice = liquidationPrice
-                  , levLeverage = leverage
-                  , levNetValue = netValue
-                  }
-    (Left err, _, _, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err, _, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+  case eResults of
+    Right
+      [ bearCollateralBs
+        , bearDebtBs
+        , bearOracleBs
+        , bearCapBs
+        , bearMarketParamsBs
+        , bullCollateralBs
+        , bullDebtBs
+        , bullOracleBs
+        , bullCapBs
+        , bullMarketParamsBs
+        ] ->
+        pure $
+          Right $
+            LeveragePositions
+              { levPosBear =
+                  buildLeveragePosition
+                    "BEAR"
+                    (LevRouter.decodeCollateral bearCollateralBs)
+                    (LevRouter.decodeActualDebt bearDebtBs)
+                    (Oracle.decodeLatestRoundData bearOracleBs)
+                    (Splitter.decodeCap bearCapBs)
+                    (Morpho.decodeIdToMarketParams bearMarketParamsBs)
+              , levPosBull =
+                  buildLeveragePosition
+                    "BULL"
+                    (LevRouter.decodeCollateral bullCollateralBs)
+                    (LevRouter.decodeActualDebt bullDebtBs)
+                    (Oracle.decodeLatestRoundData bullOracleBs)
+                    (Splitter.decodeCap bullCapBs)
+                    (Morpho.decodeIdToMarketParams bullMarketParamsBs)
+              }
+    Left err -> pure $ Left err
+    _ -> pure $ Left $ internalError "Failed to fetch leverage positions"
+
+buildLeveragePosition :: Text -> Integer -> Integer -> Oracle.RoundData -> Integer -> Morpho.MarketParams -> Maybe LeveragePosition
+buildLeveragePosition side collateral debt oracle cap mp
+  | collateral == 0 = Nothing
+  | otherwise =
+      Just $
+        LeveragePosition
+          { levCollateral = collateral
+          , levCollateralUsd = collateralUsd
+          , levDebt = debt
+          , levHealthFactor = healthFactor
+          , levLiquidationPrice = liquidationPrice
+          , levLeverage = leverage
+          , levNetValue = netValue
+          }
+  where
+    oraclePrice = Oracle.rdAnswer oracle
+    tokenPrice =
+      if side == "BEAR"
+        then oraclePrice
+        else if cap > oraclePrice then cap - oraclePrice else 0
+    lltv = Morpho.mpLltv mp
+    collateralUsd = (collateral * tokenPrice) `div` (10 ^ (23 :: Integer))
+    netValue = if collateralUsd > debt then collateralUsd - debt else 0
+    leverage =
+      if netValue > 0
+        then (collateralUsd * 100) `div` netValue
+        else 0
+    healthFactor =
+      if debt > 0 && lltv > 0
+        then (collateralUsd * lltv * 100) `div` (debt * 10 ^ (18 :: Integer))
+        else 0
+    liquidationPriceRaw =
+      if collateral > 0 && lltv > 0
+        then (debt * 10 ^ (41 :: Integer)) `div` (collateral * lltv)
+        else 0
+    liquidationPrice =
+      if side == "BEAR"
+        then liquidationPriceRaw `div` 100
+        else
+          if cap > liquidationPriceRaw
+            then (cap - liquidationPriceRaw) `div` 100
+            else 0
 
 -- Lending positions
 getLendingPositions :: EthClient -> Config -> Text -> IO (Either ApiError LendingPositions)
 getLendingPositions client cfg userAddr = do
   let addrs = currentAddresses (cfgDeployments cfg)
-  eBear <- getLendingPosition client addrs "BEAR" userAddr
-  eBull <- getLendingPosition client addrs "BULL" userAddr
-  case (eBear, eBull) of
-    (Right bear, Right bull) ->
-      pure $ Right $ LendingPositions { lendPosBear = bear, lendPosBull = bull }
-    (Left err, _) -> pure $ Left err
-    (_, Left err) -> pure $ Left err
+      morphoAddr = addrMorpho addrs
+      bearMarketIdBs = hexToByteString (addrMorphoMarketBear addrs)
+      bullMarketIdBs = hexToByteString (addrMorphoMarketBull addrs)
 
-getLendingPosition :: EthClient -> Addresses -> Text -> Text -> IO (Either ApiError (Maybe LendingPosition))
-getLendingPosition client addrs side userAddr = do
-  let morphoAddr = addrMorpho addrs
-      marketIdHex = if side == "BEAR" then addrMorphoMarketBear addrs else addrMorphoMarketBull addrs
-      marketIdBs = hexToByteString marketIdHex
-      oracleAddr = if side == "BEAR" then addrMorphoOracleBear addrs else addrMorphoOracleBull addrs
+  eResults <-
+    multicallBytes
+      client
+      [ (morphoAddr, Morpho.positionCall bearMarketIdBs userAddr)
+      , (morphoAddr, Morpho.marketCall bearMarketIdBs)
+      , (addrMorphoOracleBear addrs, MorphoOracle.priceCall)
+      , (morphoAddr, Morpho.idToMarketParamsCall bearMarketIdBs)
+      , (morphoAddr, Morpho.positionCall bullMarketIdBs userAddr)
+      , (morphoAddr, Morpho.marketCall bullMarketIdBs)
+      , (addrMorphoOracleBull addrs, MorphoOracle.priceCall)
+      , (morphoAddr, Morpho.idToMarketParamsCall bullMarketIdBs)
+      ]
 
-  ePosition <- Morpho.position client morphoAddr marketIdBs userAddr
-  eMarket <- Morpho.market client morphoAddr marketIdBs
-  eOraclePrice <- MorphoOracle.price client oracleAddr
-  eMarketParams <- Morpho.idToMarketParams client morphoAddr marketIdBs
+  case eResults of
+    Right
+      [ bearPositionBs
+        , bearMarketBs
+        , bearOraclePriceBs
+        , bearMarketParamsBs
+        , bullPositionBs
+        , bullMarketBs
+        , bullOraclePriceBs
+        , bullMarketParamsBs
+        ] ->
+        pure $
+          Right $
+            LendingPositions
+              { lendPosBear =
+                  buildLendingPosition
+                    (Morpho.decodePosition bearPositionBs)
+                    (Morpho.decodeMarket bearMarketBs)
+                    (MorphoOracle.decodePrice bearOraclePriceBs)
+                    (Morpho.decodeIdToMarketParams bearMarketParamsBs)
+              , lendPosBull =
+                  buildLendingPosition
+                    (Morpho.decodePosition bullPositionBs)
+                    (Morpho.decodeMarket bullMarketBs)
+                    (MorphoOracle.decodePrice bullOraclePriceBs)
+                    (Morpho.decodeIdToMarketParams bullMarketParamsBs)
+              }
+    Left err -> pure $ Left err
+    _ -> pure $ Left $ internalError "Failed to fetch lending positions"
 
-  case (ePosition, eMarket, eOraclePrice, eMarketParams) of
-    (Right pos, Right mkt, Right oraclePrice, Right mp)
-      | Morpho.posSupplyShares pos == 0 && Morpho.posBorrowShares pos == 0 && Morpho.posCollateral pos == 0 ->
-          pure $ Right Nothing
-      | otherwise -> do
-          let supplyShares = Morpho.posSupplyShares pos
-              borrowShares = Morpho.posBorrowShares pos
-              collateral = Morpho.posCollateral pos
-              totalSupplyAssets = Morpho.mktTotalSupplyAssets mkt
-              totalSupplyShares = Morpho.mktTotalSupplyShares mkt
-              totalBorrowAssets = Morpho.mktTotalBorrowAssets mkt
-              totalBorrowShares = Morpho.mktTotalBorrowShares mkt
-              lltv = Morpho.mpLltv mp
-
-              suppliedAssets =
-                if totalSupplyShares > 0
-                  then (supplyShares * totalSupplyAssets) `div` totalSupplyShares
-                  else 0
-              borrowedAssets =
-                if totalBorrowShares > 0
-                  then (borrowShares * totalBorrowAssets) `div` totalBorrowShares
-                  else 0
-              -- collateralUsd: collateral(21 dec) * oraclePrice(1e24 scale) / 10^39 = USDC(6 dec)
-              collateralUsd =
-                if oraclePrice > 0
-                  then (collateral * oraclePrice) `div` (10 ^ (39 :: Integer))
-                  else 0
-              -- maxBorrow: collateral(21 dec) * oraclePrice(1e24 scale) * lltv(18 dec) / 10^57 = USDC(6 dec)
-              maxBorrow =
-                if lltv > 0 && oraclePrice > 0
-                  then (collateral * oraclePrice * lltv) `div` (10 ^ (57 :: Integer))
-                  else 0
-              availableToBorrow =
-                if maxBorrow > borrowedAssets then maxBorrow - borrowedAssets else 0
-              -- healthFactor = maxBorrow * 1e18 / borrowedAssets
-              healthFactor =
-                if borrowedAssets > 0
-                  then (maxBorrow * 10 ^ (18 :: Integer)) `div` borrowedAssets
-                  else 0
-
-          pure $
-            Right $
-              Just $
-                LendingPosition
-                  { lendSupplied = suppliedAssets
-                  , lendSuppliedShares = supplyShares
-                  , lendBorrowed = borrowedAssets
-                  , lendBorrowedShares = borrowShares
-                  , lendAvailableToBorrow = availableToBorrow
-                  , lendCollateral = collateralUsd
-                  , lendHealthFactor = healthFactor
-                  }
-    (Left err, _, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err, _, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, _, _, Left err) -> pure $ Left $ rpcErrorToApiError err
+buildLendingPosition :: Morpho.Position -> Morpho.Market -> Integer -> Morpho.MarketParams -> Maybe LendingPosition
+buildLendingPosition pos mkt oraclePrice mp
+  | Morpho.posSupplyShares pos == 0 && Morpho.posBorrowShares pos == 0 && Morpho.posCollateral pos == 0 = Nothing
+  | otherwise =
+      Just $
+        LendingPosition
+          { lendSupplied = suppliedAssets
+          , lendSuppliedShares = supplyShares
+          , lendBorrowed = borrowedAssets
+          , lendBorrowedShares = borrowShares
+          , lendAvailableToBorrow = availableToBorrow
+          , lendCollateral = collateralUsd
+          , lendHealthFactor = healthFactor
+          }
+  where
+    supplyShares = Morpho.posSupplyShares pos
+    borrowShares = Morpho.posBorrowShares pos
+    collateral = Morpho.posCollateral pos
+    totalSupplyAssets = Morpho.mktTotalSupplyAssets mkt
+    totalSupplyShares = Morpho.mktTotalSupplyShares mkt
+    totalBorrowAssets = Morpho.mktTotalBorrowAssets mkt
+    totalBorrowShares = Morpho.mktTotalBorrowShares mkt
+    lltv = Morpho.mpLltv mp
+    suppliedAssets =
+      if totalSupplyShares > 0
+        then (supplyShares * totalSupplyAssets) `div` totalSupplyShares
+        else 0
+    borrowedAssets =
+      if totalBorrowShares > 0
+        then (borrowShares * totalBorrowAssets) `div` totalBorrowShares
+        else 0
+    collateralUsd =
+      if oraclePrice > 0
+        then (collateral * oraclePrice) `div` (10 ^ (39 :: Integer))
+        else 0
+    maxBorrow =
+      if lltv > 0 && oraclePrice > 0
+        then (collateral * oraclePrice * lltv) `div` (10 ^ (57 :: Integer))
+        else 0
+    availableToBorrow =
+      if maxBorrow > borrowedAssets then maxBorrow - borrowedAssets else 0
+    healthFactor =
+      if borrowedAssets > 0
+        then (maxBorrow * 10 ^ (18 :: Integer)) `div` borrowedAssets
+        else 0
 
 -- Morpho authorization
 getMorphoAuthorization :: EthClient -> Config -> Text -> IO (Either ApiError MorphoAuthorization)
 getMorphoAuthorization client cfg userAddr = do
   let addrs = currentAddresses (cfgDeployments cfg)
       morphoAddr = addrMorpho addrs
-  eBear <- Morpho.isAuthorized client morphoAddr userAddr (addrLeverageRouter addrs)
-  eBull <- Morpho.isAuthorized client morphoAddr userAddr (addrBullLeverageRouter addrs)
-  case (eBear, eBull) of
-    (Right bear, Right bull) ->
-      pure $ Right $ MorphoAuthorization { authBearLeverageRouter = bear, authBullLeverageRouter = bull }
-    (Left err, _) -> pure $ Left $ rpcErrorToApiError err
-    (_, Left err) -> pure $ Left $ rpcErrorToApiError err
+  eResults <-
+    multicallBytes
+      client
+      [ (morphoAddr, Morpho.isAuthorizedCall userAddr (addrLeverageRouter addrs))
+      , (morphoAddr, Morpho.isAuthorizedCall userAddr (addrBullLeverageRouter addrs))
+      ]
+  pure $ case eResults of
+    Right [bearBs, bullBs] ->
+      Right $
+        MorphoAuthorization
+          { authBearLeverageRouter = Morpho.decodeIsAuthorized bearBs
+          , authBullLeverageRouter = Morpho.decodeIsAuthorized bullBs
+          }
+    Right _ -> Left $ internalError "Failed to fetch Morpho authorization"
+    Left err -> Left err
 
 emptyLeverage :: LeveragePositions
 emptyLeverage = LeveragePositions { levPosBear = Nothing, levPosBull = Nothing }
@@ -405,3 +482,22 @@ emptyAllowances =
 
 emptyAuth :: MorphoAuthorization
 emptyAuth = MorphoAuthorization { authBearLeverageRouter = False, authBullLeverageRouter = False }
+
+multicallBytes :: EthClient -> [(Text, ByteString)] -> IO (Either ApiError [ByteString])
+multicallBytes client calls = do
+  eResults <-
+    Multicall.multicall
+      client
+      [ Multicall.Call
+          { Multicall.callTarget = target
+          , Multicall.callAllowFailure = False
+          , Multicall.callCalldata = calldata
+          }
+      | (target, calldata) <- calls
+      ]
+  pure $ case eResults of
+    Left err -> Left $ rpcErrorToApiError err
+    Right results
+      | length results /= length calls -> Left $ internalError "Multicall returned an unexpected number of results"
+      | any (not . Multicall.resultSuccess) results -> Left $ internalError "Multicall subcall failed"
+      | otherwise -> Right $ map Multicall.resultData results

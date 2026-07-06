@@ -1,5 +1,5 @@
-import posthog from 'posthog-js/dist/module.full.no-external'
-import type { Properties } from 'posthog-js/dist/module.full.no-external'
+import posthog from 'posthog-js'
+import type { Properties } from 'posthog-js'
 
 export type AnalyticsPropertyValue = string | number | boolean | null | undefined
 export type AnalyticsProperties = Record<string, AnalyticsPropertyValue>

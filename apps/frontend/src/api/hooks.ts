@@ -5,11 +5,10 @@
  * automatic caching, refetching, and state management.
  */
 
-import { useQuery, useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
-import { useAccount, useChainId } from 'wagmi';
 import { Result } from 'better-result';
-import { defaultApiChainId, plethApi, PlethApiError } from './client';
+import { perpsApi, spotApi, PlethApiError } from './client';
 import type {
   Side,
   ZapDirection,
@@ -26,23 +25,24 @@ import type {
 // Query Keys
 // =============================================================================
 
-let currentChainId: number | undefined;
+const SPOT_API_SCOPE = 'spot';
+const PERPS_API_SCOPE = 'perps';
 
 export const apiQueryKeys = {
   protocol: {
-    all: () => ['protocol', currentChainId] as const,
+    all: () => ['protocol', SPOT_API_SCOPE] as const,
     status: () => [...apiQueryKeys.protocol.all(), 'status'] as const,
     config: () => [...apiQueryKeys.protocol.all(), 'config'] as const,
   },
   perps: {
-    all: () => ['perps', currentChainId] as const,
+    all: () => ['perps', PERPS_API_SCOPE] as const,
     basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
     basketHistory: (range: BasketHistoryRange, intervalSeconds: number, includeComponents = false) =>
       [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds, includeComponents] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
   },
   user: {
-    all: (address: string) => ['user', currentChainId, address] as const,
+    all: (address: string) => ['user', SPOT_API_SCOPE, address] as const,
     dashboard: (address: string) => [...apiQueryKeys.user.all(address), 'dashboard'] as const,
     balances: (address: string) => [...apiQueryKeys.user.all(address), 'balances'] as const,
     positions: (address: string) => [...apiQueryKeys.user.all(address), 'positions'] as const,
@@ -56,7 +56,7 @@ export const apiQueryKeys = {
       [...apiQueryKeys.user.all(address), 'lendingHistory', params] as const,
   },
   quotes: {
-    all: () => ['quotes', currentChainId] as const,
+    all: () => ['quotes', SPOT_API_SCOPE] as const,
     mint: (amount: string) => [...apiQueryKeys.quotes.all(), 'mint', amount] as const,
     burn: (amount: string) => [...apiQueryKeys.quotes.all(), 'burn', amount] as const,
     zap: (direction: ZapDirection, amount: string) =>
@@ -86,7 +86,7 @@ function unwrapResult<T>(result: Result<ApiResponse<T>, PlethApiError>): ApiResp
 export function useProtocolStatus() {
   return useQuery({
     queryKey: apiQueryKeys.protocol.status(),
-    queryFn: async () => unwrapResult(await plethApi.getProtocolStatus()),
+    queryFn: async () => unwrapResult(await spotApi.getProtocolStatus()),
     staleTime: 30_000,
     refetchInterval: (query) => query.state.status === 'error' ? false : 30_000,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
@@ -96,7 +96,7 @@ export function useProtocolStatus() {
 export function useProtocolConfig() {
   return useQuery({
     queryKey: apiQueryKeys.protocol.config(),
-    queryFn: async () => unwrapResult(await plethApi.getProtocolConfig()),
+    queryFn: async () => unwrapResult(await spotApi.getProtocolConfig()),
     staleTime: 60 * 60 * 1000,
   });
 }
@@ -108,7 +108,7 @@ export function usePerpsBasketHistory(
 ) {
   return useQuery({
     queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds, includeComponents),
-    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketHistory(range, intervalSeconds, includeComponents)),
+    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketHistory(range, intervalSeconds, includeComponents)),
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
   });
@@ -117,7 +117,7 @@ export function usePerpsBasketHistory(
 export function usePerpsBasketLatest() {
   return useQuery({
     queryKey: apiQueryKeys.perps.basketLatest(),
-    queryFn: async () => unwrapResult(await plethApi.getPerpsBasketLatest()),
+    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketLatest()),
     staleTime: 5 * 1000,
     refetchInterval: 5 * 1000,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
@@ -127,7 +127,7 @@ export function usePerpsBasketLatest() {
 export function usePerpsMarketStats() {
   return useQuery({
     queryKey: apiQueryKeys.perps.marketStats(),
-    queryFn: async () => unwrapResult(await plethApi.getPerpsMarketStats()),
+    queryFn: async () => unwrapResult(await perpsApi.getPerpsMarketStats()),
     staleTime: 30 * 1000,
     refetchInterval: 30 * 1000,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
@@ -143,7 +143,7 @@ export function useUserDashboard(address: string | undefined) {
     queryKey: apiQueryKeys.user.dashboard(address ?? ''),
     queryFn: async () => {
       if (!address) throw new Error('Address required');
-      return unwrapResult(await plethApi.getUserDashboard(address));
+      return unwrapResult(await spotApi.getUserDashboard(address));
     },
     enabled: !!address,
     staleTime: 12_000,
@@ -156,7 +156,7 @@ export function useUserBalances(address: string | undefined) {
     queryKey: apiQueryKeys.user.balances(address ?? ''),
     queryFn: async () => {
       if (!address) throw new Error('Address required');
-      return unwrapResult(await plethApi.getUserBalances(address));
+      return unwrapResult(await spotApi.getUserBalances(address));
     },
     enabled: !!address,
     staleTime: 12_000,
@@ -169,7 +169,7 @@ export function useUserPositions(address: string | undefined) {
     queryKey: apiQueryKeys.user.positions(address ?? ''),
     queryFn: async () => {
       if (!address) throw new Error('Address required');
-      return unwrapResult(await plethApi.getUserPositions(address));
+      return unwrapResult(await spotApi.getUserPositions(address));
     },
     enabled: !!address,
     staleTime: 12_000,
@@ -182,7 +182,7 @@ export function useUserAllowances(address: string | undefined, params?: Allowanc
     queryKey: apiQueryKeys.user.allowances(address ?? '', params),
     queryFn: async () => {
       if (!address) throw new Error('Address required');
-      return unwrapResult(await plethApi.getUserAllowances(address, params));
+      return unwrapResult(await spotApi.getUserAllowances(address, params));
     },
     enabled: !!address,
     staleTime: 5 * 60 * 1000,
@@ -198,7 +198,7 @@ export function useMintQuote(amount: string | undefined) {
     queryKey: apiQueryKeys.quotes.mint(amount ?? ''),
     queryFn: async () => {
       if (!amount) throw new Error('Amount required');
-      return unwrapResult(await plethApi.getMintQuote(amount));
+      return unwrapResult(await spotApi.getMintQuote(amount));
     },
     enabled: !!amount && amount !== '0',
     staleTime: 5_000,
@@ -210,7 +210,7 @@ export function useBurnQuote(amount: string | undefined) {
     queryKey: apiQueryKeys.quotes.burn(amount ?? ''),
     queryFn: async () => {
       if (!amount) throw new Error('Amount required');
-      return unwrapResult(await plethApi.getBurnQuote(amount));
+      return unwrapResult(await spotApi.getBurnQuote(amount));
     },
     enabled: !!amount && amount !== '0',
     staleTime: 5_000,
@@ -222,7 +222,7 @@ export function useZapQuote(direction: ZapDirection, amount: string | undefined)
     queryKey: apiQueryKeys.quotes.zap(direction, amount ?? ''),
     queryFn: async () => {
       if (!amount) throw new Error('Amount required');
-      return unwrapResult(await plethApi.getZapQuote(direction, amount));
+      return unwrapResult(await spotApi.getZapQuote(direction, amount));
     },
     enabled: !!amount && amount !== '0',
     staleTime: 5_000,
@@ -234,7 +234,7 @@ export function useTradeQuote(from: TradeFrom, amount: string | undefined) {
     queryKey: apiQueryKeys.quotes.trade(from, amount ?? ''),
     queryFn: async () => {
       if (!amount) throw new Error('Amount required');
-      return unwrapResult(await plethApi.getTradeQuote(from, amount));
+      return unwrapResult(await spotApi.getTradeQuote(from, amount));
     },
     enabled: !!amount && amount !== '0',
     staleTime: 5_000,
@@ -250,7 +250,7 @@ export function useLeverageQuote(
     queryKey: apiQueryKeys.quotes.leverage(side, principal ?? '', leverage ?? ''),
     queryFn: async () => {
       if (!principal || !leverage) throw new Error('Principal and leverage required');
-      return unwrapResult(await plethApi.getLeverageQuote(side, principal, leverage));
+      return unwrapResult(await spotApi.getLeverageQuote(side, principal, leverage));
     },
     enabled: !!principal && principal !== '0' && !!leverage,
     staleTime: 5_000,
@@ -266,7 +266,7 @@ export function useTransactionHistory(address: string | undefined, params?: Hist
     queryKey: apiQueryKeys.user.history(address ?? '', params),
     queryFn: async ({ pageParam }) => {
       if (!address) throw new Error('Address required');
-      const result = await plethApi.getTransactionHistory(address, {
+      const result = await spotApi.getTransactionHistory(address, {
         ...params,
         page: pageParam,
       });
@@ -289,7 +289,7 @@ export function useLeverageHistory(address: string | undefined, params?: { side?
     queryKey: apiQueryKeys.user.leverageHistory(address ?? '', params),
     queryFn: async ({ pageParam }) => {
       if (!address) throw new Error('Address required');
-      const result = await plethApi.getLeverageHistory(address, {
+      const result = await spotApi.getLeverageHistory(address, {
         ...params,
         page: pageParam,
       });
@@ -312,7 +312,7 @@ export function useLendingHistory(address: string | undefined, params?: { side?:
     queryKey: apiQueryKeys.user.lendingHistory(address ?? '', params),
     queryFn: async ({ pageParam }) => {
       if (!address) throw new Error('Address required');
-      const result = await plethApi.getLendingHistory(address, {
+      const result = await spotApi.getLendingHistory(address, {
         ...params,
         page: pageParam,
       });
@@ -331,31 +331,6 @@ export function useLendingHistory(address: string | undefined, params?: { side?:
 }
 
 // =============================================================================
-// Chain Sync
-// =============================================================================
-
-export function useApiChainSync(): void {
-  const walletChainId = useChainId();
-  const { isConnected } = useAccount();
-  const chainId = isConnected ? walletChainId : defaultApiChainId();
-  const queryClient = useQueryClient();
-  const prevChainId = useRef(chainId);
-
-  useEffect(() => {
-    if (chainId === prevChainId.current) return;
-    prevChainId.current = chainId;
-    currentChainId = chainId;
-    plethApi.setChainId(chainId);
-    void queryClient.invalidateQueries();
-  }, [chainId, queryClient]);
-
-  useEffect(() => {
-    currentChainId = chainId;
-    plethApi.setChainId(chainId);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-}
-
-// =============================================================================
 // WebSocket Hooks
 // =============================================================================
 
@@ -365,8 +340,8 @@ export function useWebSocketPrices(enabled = true) {
   useEffect(() => {
     if (!enabled) return;
 
-    plethApi.connectWebSocket();
-    const unsubscribe = plethApi.subscribeToPrices(setPrices);
+    spotApi.connectWebSocket();
+    const unsubscribe = spotApi.subscribeToPrices(setPrices);
 
     return () => {
       unsubscribe();
@@ -377,11 +352,11 @@ export function useWebSocketPrices(enabled = true) {
 }
 
 function subscribeToConnection(callback: () => void) {
-  return plethApi.onMessage(callback);
+  return spotApi.onMessage(callback);
 }
 
 function getConnectionSnapshot() {
-  return plethApi.isWebSocketConnected;
+  return spotApi.isWebSocketConnected;
 }
 
 export function useWebSocketConnection(address?: string) {
@@ -394,23 +369,23 @@ export function useWebSocketConnection(address?: string) {
   }, [address]);
 
   const connect = useCallback(() => {
-    plethApi.connectWebSocket(addressRef.current);
+    spotApi.connectWebSocket(addressRef.current);
   }, []);
 
   const disconnect = useCallback(() => {
-    plethApi.disconnectWebSocket();
+    spotApi.disconnectWebSocket();
   }, []);
 
   const subscribe = useCallback((userAddress: string) => {
-    plethApi.subscribeToUser(userAddress);
+    spotApi.subscribeToUser(userAddress);
   }, []);
 
   const unsubscribe = useCallback(() => {
-    plethApi.unsubscribeFromUser();
+    spotApi.unsubscribeFromUser();
   }, []);
 
   useEffect(() => {
-    const unsub = plethApi.onMessage(setLastMessage);
+    const unsub = spotApi.onMessage(setLastMessage);
     return unsub;
   }, []);
 

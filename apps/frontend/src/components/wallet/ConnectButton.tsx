@@ -1,5 +1,6 @@
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
+import { useLocation } from 'react-router-dom'
 import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
@@ -22,6 +23,7 @@ export function ConnectButton() {
   } = useSwitchToArbitrumSepolia()
   const { open } = useAppKit()
   const chainId = useChainId()
+  const location = useLocation()
 
   const getNetworkName = () => {
     switch (chainId) {
@@ -40,6 +42,8 @@ export function ConnectButton() {
 
   const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
   const isArbitrumSepolia = chainId === arbitrumSepolia.id
+  const isPerpsRoute = location.pathname === '/'
+  const shouldShowPerpsNetworkSwitch = isPerpsRoute && !isArbitrumSepolia
 
   if (!isConnected) {
     return (
@@ -76,7 +80,7 @@ export function ConnectButton() {
           {isWrongNetwork ? 'Wrong Network' : getNetworkName()}
         </span>
 
-        {!isArbitrumSepolia ? (
+        {shouldShowPerpsNetworkSwitch ? (
           <button
             type="button"
             onClick={() => { void switchToArbitrumSepolia() }}
@@ -125,7 +129,7 @@ export function ConnectButton() {
           <span className="material-symbols-outlined text-xl">logout</span>
         </button>
       </div>
-      {switchError && !isArbitrumSepolia ? (
+      {switchError && shouldShowPerpsNetworkSwitch ? (
         <p className="max-w-md text-right text-xs leading-4 text-[#FFAB96]">
           {switchError}
         </p>

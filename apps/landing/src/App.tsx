@@ -970,6 +970,7 @@ function MediaKitPage() {
           </div>
         </section>
       </main>
+      <SiteFooter />
     </div>
   )
 }

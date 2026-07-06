@@ -1,4 +1,5 @@
 import { Link, useLocation } from 'react-router-dom'
+import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
   { path: '/', label: 'Perps', icon: 'trending_up', color: 'positive' },
@@ -24,11 +25,12 @@ const colorStyles: Record<string, { active: string; hover: string }> = {
 
 export function MobileNav() {
   const location = useLocation()
+  const visibleNavLinks = isPrimaryAppDeployment() ? navLinks.filter(({ path }) => path !== '/') : navLinks
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface-panel border-t border-brand-border/30 safe-area-bottom">
       <div className="flex items-center justify-around h-16">
-        {navLinks.map(({ path, label, icon, color }) => {
+        {visibleNavLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path ||
             (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
           const styles = colorStyles[color]

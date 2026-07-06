@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isSepoliaDeployment } from '../deployment'
+import { isPrimaryAppDeployment, isSepoliaDeployment } from '../deployment'
 
 describe('isSepoliaDeployment', () => {
   it('matches known Sepolia frontend hosts', () => {
@@ -17,5 +17,18 @@ describe('isSepoliaDeployment', () => {
     expect(isSepoliaDeployment('localhost', 11155111)).toBe(true)
     expect(isSepoliaDeployment('127.0.0.1', 421614)).toBe(true)
     expect(isSepoliaDeployment('localhost', 1)).toBe(false)
+  })
+})
+
+describe('isPrimaryAppDeployment', () => {
+  it('matches the production app host', () => {
+    expect(isPrimaryAppDeployment('app.plether.com')).toBe(true)
+    expect(isPrimaryAppDeployment('APP.PLETHER.COM')).toBe(true)
+  })
+
+  it('does not match landing, testnet, or local hosts', () => {
+    expect(isPrimaryAppDeployment('plether.fi')).toBe(false)
+    expect(isPrimaryAppDeployment('app.sepolia.plether.com')).toBe(false)
+    expect(isPrimaryAppDeployment('localhost')).toBe(false)
   })
 })
