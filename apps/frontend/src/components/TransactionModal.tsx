@@ -85,14 +85,14 @@ export function TransactionModal() {
     <>
       {/* Backdrop - only covers content below header */}
       <div
-        className="fixed inset-0 top-[78px] z-40 cursor-pointer bg-app-bg"
+        className="fixed inset-0 top-[78px] z-40 cursor-pointer bg-app-bg/45 backdrop-blur-md"
         onClick={close}
       />
 
       {/* Modal - fixed to right side below header, aligned with header content */}
       <div className="fixed top-[78px] left-0 right-0 z-50 pointer-events-none">
         <div className="max-w-7xl mx-auto px-6 lg:px-8 flex justify-end">
-          <div className="pointer-events-auto w-full max-w-md bg-surface-panel border border-brand-border/50">
+          <div className="pointer-events-auto w-full max-w-md border border-brand-border/50 bg-surface-panel/80 shadow-2xl shadow-app-bg/50 backdrop-blur-xl">
             <TransactionNavigator
               currentIndex={currentIndex}
               total={transactions.length}
