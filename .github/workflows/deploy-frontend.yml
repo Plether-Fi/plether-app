@@ -29,13 +29,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 25
+          node-version: 25.2.1
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
 
+      - name: Pin npm
+        run: npm install -g npm@11.6.2
+
       - name: Install dependencies
         working-directory: apps/frontend
-        run: npm install
+        run: npm ci
 
       - name: Resolve deploy target
         id: target
