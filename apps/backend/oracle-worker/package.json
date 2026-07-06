@@ -1,0 +1,10 @@
+{
+  "name": "plether-backend-oracle-worker",
+  "private": true,
+  "version": "0.0.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "dependencies": {
+    "viem": "^2.43.5"
+  }
+}
