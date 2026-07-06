@@ -31,7 +31,7 @@ RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe
 FROM node:22-bookworm-slim AS oracle-worker
 
 WORKDIR /oracle
-COPY apps/frontend/package.json apps/frontend/package-lock.json ./
+COPY apps/backend/oracle-worker/package.json apps/backend/oracle-worker/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
 COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.mjs
 
