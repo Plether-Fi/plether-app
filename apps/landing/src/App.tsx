@@ -1,19 +1,7 @@
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type RefObject, type ReactNode } from 'react'
 import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
 
-const DEFAULT_APP_URL = 'https://app.plether.com'
-const getAppUrl = () => {
-  if (typeof window === 'undefined') {
-    return DEFAULT_APP_URL
-  }
-
-  const { protocol, hostname, port } = window.location
-  const appHostname = hostname.startsWith('app.') ? hostname : `app.${hostname}`
-
-  return `${protocol}//${appHostname}${port ? `:${port}` : ''}`
-}
-
-const APP_URL = getAppUrl()
+const APP_URL = 'https://app.sepolia.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
@@ -35,7 +23,7 @@ const PRIMITIVE_MOBILE_MEDIA = '(max-width: 680px)'
 const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const MOBILE_MENU_ITEMS = [
-  { href: APP_URL, label: 'Launch App', opensInNewWindow: true },
+  { href: APP_URL, label: 'Launch Testnet', opensInNewWindow: true },
   { href: DOCS_URL, label: 'Read Docs' },
   { href: X_URL, label: 'X' },
   { href: CORE_REPO_URL, label: 'Github' },
@@ -300,7 +288,7 @@ function SiteHeader({
             <a href={DOCS_URL} target="_blank" rel="noreferrer">Docs</a>
             <DividerDot />
             <a className="launch-button launch-button--nav" href={APP_URL} target="_blank" rel="noreferrer">
-              <span className="button-label">Launch App</span>
+              <span className="button-label">Launch Testnet</span>
             </a>
           </nav>
           <button
@@ -704,7 +692,7 @@ function LandingPage() {
               <p>Immutable contracts.<br />No ADL. MEV-resistant.<br />Settled in USDC.</p>
               <div className="button-row">
                 <a className="launch-button" href={APP_URL} target="_blank" rel="noreferrer">
-                  <span className="button-label">Launch App</span>
+                  <span className="button-label">Launch Testnet</span>
                 </a>
                 <a className="docs-button" href={DOCS_URL} target="_blank" rel="noreferrer">
                   <span className="button-label">Read Docs</span>
@@ -881,7 +869,7 @@ function LandingPage() {
             </a>
           </h2>
           <a className="launch-button cta__button" href={APP_URL} target="_blank" rel="noreferrer">
-            <span className="button-label">Launch App</span>
+            <span className="button-label">Launch Testnet</span>
           </a>
         </div>
 
