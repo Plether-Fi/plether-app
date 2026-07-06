@@ -26,7 +26,7 @@ function apiProxyConfig(): ProxyOptions {
   return {
     target: process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
     changeOrigin: true,
-    rewrite: (proxyPath) => proxyPath.replace(/^\/api\/(?:v1|sepolia_v1)/, '/api'),
+    rewrite: (proxyPath) => proxyPath.replace(/^\/api\/(?:spot|perps)\/v1/, '/api'),
   };
 }
 
@@ -69,9 +69,8 @@ export default defineConfig({
   server: {
     headers: parseHeadersFile(),
     proxy: {
-      '/api/v1': apiProxyConfig(),
-      '/api/sepolia_v1': apiProxyConfig(),
-      '/api': apiProxyConfig(),
+      '/api/spot/v1': apiProxyConfig(),
+      '/api/perps/v1': apiProxyConfig(),
       '/pyth-hermes': pythHermesProxyConfig(),
     },
   },

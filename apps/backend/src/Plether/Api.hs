@@ -8,7 +8,7 @@ import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400, status429, status503)
+import Network.HTTP.Types.Status (status200, status400, status429, status500, status503)
 import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
@@ -436,6 +436,9 @@ handleError err = do
   status $
     case E.errCode err of
       E.RateLimited -> status429
+      E.RpcError -> status503
+      E.NetworkError -> status503
+      E.InternalError -> status500
       _ -> status400
   json err
 

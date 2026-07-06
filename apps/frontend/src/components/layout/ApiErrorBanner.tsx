@@ -1,4 +1,4 @@
-import { useProtocolStatus } from '../../api'
+import { isUpstreamApiError, useProtocolStatus } from '../../api'
 
 export function ApiErrorBanner() {
   const { isError, error, failureCount, fetchStatus } = useProtocolStatus()
@@ -9,11 +9,14 @@ export function ApiErrorBanner() {
   const isRetrying = fetchStatus === 'fetching'
   const hasRetriesLeft = !isError && failureCount > 0
   const errorMessage = error?.message ?? 'Connection failed'
-  const isNetworkError = errorMessage.includes('fetch') ||
-                         errorMessage.includes('network') ||
+  const isUpstreamError = isUpstreamApiError(error)
+  const isNetworkError = !error ||
+                         /fetch|network|connection|failed/i.test(errorMessage) ||
                          errorMessage.includes('NETWORK_ERROR')
 
-  const baseMessage = isNetworkError
+  const baseMessage = isUpstreamError
+    ? 'Protocol data is temporarily unavailable. Some prices and APY values may be stale.'
+    : isNetworkError
     ? 'Unable to connect to backend API.'
     : `API Error: ${errorMessage}`
 

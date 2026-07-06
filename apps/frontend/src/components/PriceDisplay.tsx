@@ -1,5 +1,5 @@
 import { Skeleton, TokenAmount, TokenLabel, Tooltip } from './ui'
-import { useProtocolStatus } from '../api'
+import { isUpstreamApiError, useProtocolStatus } from '../api'
 import type { ProtocolStatus } from '../config/constants'
 import { ORACLE_STALE_SECONDS } from '../config/constants'
 
@@ -19,11 +19,12 @@ function formatTimeAgo(unixSeconds: number): string {
 export function PriceDisplay({
   variant = 'compact',
 }: PriceDisplayProps) {
-  const { data: protocolData, isLoading } = useProtocolStatus()
+  const { data: protocolData, isLoading, error, failureCount } = useProtocolStatus()
+  const protocolUnavailable = !protocolData && (isUpstreamApiError(error) || failureCount > 0)
 
   const bullPriceStr = protocolData?.data.prices.bull ?? '0'
   const bullPrice = BigInt(bullPriceStr)
-  const priceUnknown = bullPrice === 0n
+  const priceUnknown = protocolUnavailable || bullPrice === 0n
   const price = bullPrice > 0n ? Number(bullPrice) / 1e8 : 0
 
   const bullChange = protocolData?.data.prices.priceChange24h?.bull ?? null
@@ -32,13 +33,15 @@ export function PriceDisplay({
   const isStale = updatedAt > 0 && (Date.now() / 1000 - updatedAt) > ORACLE_STALE_SECONDS
 
   const apiStatus = protocolData?.data.status
-  const baseStatus: ProtocolStatus = apiStatus === 'ACTIVE'
-    ? 'Active'
-    : apiStatus === 'PAUSED'
-      ? 'Paused'
-      : apiStatus === 'LIQUIDATED'
-        ? 'Settled'
-        : 'Active'
+  const baseStatus: ProtocolStatus = protocolUnavailable
+    ? 'Stale'
+    : apiStatus === 'ACTIVE'
+      ? 'Active'
+      : apiStatus === 'PAUSED'
+        ? 'Paused'
+        : apiStatus === 'LIQUIDATED'
+          ? 'Settled'
+          : 'Active'
 
   const status: ProtocolStatus = isStale && baseStatus === 'Active' ? 'Stale' : baseStatus
 
@@ -57,7 +60,13 @@ export function PriceDisplay({
 
   const statusBadge = (
     <Tooltip
-      content={isStale ? `Oracle last updated ${formatTimeAgo(updatedAt)}` : ''}
+      content={
+        protocolUnavailable
+          ? 'Current protocol data is unavailable from the backend.'
+          : isStale
+            ? `Oracle last updated ${formatTimeAgo(updatedAt)}`
+            : ''
+      }
       position="bottom"
     >
       <span className={`whitespace-nowrap border px-2 py-0.5 text-xs font-medium ${getStatusStyles(status)}`}>
@@ -84,7 +93,7 @@ export function PriceDisplay({
             </span>
           )}
         </div>
-        {isStale ? statusBadge : (
+        {isStale || protocolUnavailable ? statusBadge : (
           <span className={`shrink-0 whitespace-nowrap border px-2 py-0.5 text-xs font-medium ${getStatusStyles(status)}`}>
             {status}
           </span>
@@ -97,7 +106,7 @@ export function PriceDisplay({
     <div className="bg-surface-panel  border border-brand-border/30 p-4">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-content-secondary text-sm">plDXY Index Price</h3>
-        {isStale ? statusBadge : (
+        {isStale || protocolUnavailable ? statusBadge : (
           <span className={`px-2 py-0.5 text-xs font-medium border ${getStatusStyles(status)}`}>
             {status}
           </span>
@@ -115,7 +124,7 @@ export function PriceDisplay({
         </div>
       )}
       <p className="text-xs mt-2 text-content-secondary">
-        Updated from Backend API
+        {protocolUnavailable ? 'Backend protocol data unavailable' : 'Updated from Backend API'}
       </p>
     </div>
   )

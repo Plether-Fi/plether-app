@@ -3,7 +3,6 @@ import { useLocation } from 'react-router-dom'
 import { Header } from './Header'
 import { Footer } from './Footer'
 import { MobileNav } from './MobileNav'
-import { ApiErrorBanner } from './ApiErrorBanner'
 import { SepoliaNoticeBar } from './SepoliaNoticeBar'
 import { WrongNetworkBanner } from '../wallet/WrongNetworkBanner'
 import { useAccount } from 'wagmi'
@@ -30,7 +29,6 @@ export function Layout({ children }: LayoutProps) {
       {isConnected && <WrongNetworkBanner />}
       <div className="sticky top-0 z-50">
         <Header />
-        <ApiErrorBanner />
       </div>
       <main className={`flex-grow px-6 lg:px-8 py-10 w-full pb-24 lg:pb-10 ${fullWidth ? '' : 'max-w-7xl mx-auto'}`}>
         {children}

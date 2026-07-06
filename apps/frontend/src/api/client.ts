@@ -57,6 +57,19 @@ export class PlethApiError extends Error {
   }
 }
 
+export function isUpstreamApiError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+
+  const maybeError = error as { code?: unknown; status?: unknown };
+  return (
+    maybeError.code === 'RPC_ERROR' ||
+    maybeError.code === 'NETWORK_ERROR' ||
+    maybeError.status === 502 ||
+    maybeError.status === 503 ||
+    maybeError.status === 504
+  );
+}
+
 // =============================================================================
 // Configuration
 // =============================================================================
@@ -77,10 +90,14 @@ function deriveWsUrl(baseUrl: string): string {
 const DEV_API_URL = import.meta.env.VITE_API_URL as string | undefined;
 const DEFAULT_API_CHAIN_ID = parseDefaultChainId(import.meta.env.VITE_DEFAULT_CHAIN_ID as string | undefined);
 const TESTNET_API_CHAIN_IDS = new Set([11155111, 421614]);
+export type ApiScope = 'spot' | 'perps';
+
+export function apiScopeToApiPath(scope: ApiScope): string {
+  return scope === 'perps' ? '/api/perps/v1' : '/api/spot/v1';
+}
 
 export function chainIdToApiPath(chainId: number): string {
-  if (TESTNET_API_CHAIN_IDS.has(chainId)) return '/api/sepolia_v1';
-  return '/api/v1';
+  return apiScopeToApiPath(TESTNET_API_CHAIN_IDS.has(chainId) ? 'perps' : 'spot');
 }
 
 function parseDefaultChainId(value: string | undefined): number {
@@ -90,7 +107,7 @@ function parseDefaultChainId(value: string | undefined): number {
 
 export function defaultApiBaseUrl(): string {
   if (DEV_API_URL) return DEV_API_URL;
-  if (isSepoliaDeployment()) return '/api/sepolia_v1';
+  if (isSepoliaDeployment()) return apiScopeToApiPath('perps');
   return chainIdToApiPath(DEFAULT_API_CHAIN_ID);
 }
 
@@ -101,7 +118,7 @@ export function defaultApiChainId(): number {
 
 export function getConfiguredApiBaseUrl(chainId: number): string {
   if (DEV_API_URL) return DEV_API_URL;
-  if (isSepoliaDeployment()) return '/api/sepolia_v1';
+  if (isSepoliaDeployment()) return apiScopeToApiPath('perps');
   return chainIdToApiPath(chainId);
 }
 
@@ -109,8 +126,21 @@ export function getConfiguredApiWsUrl(chainId: number): string {
   return deriveWsUrl(getConfiguredApiBaseUrl(chainId));
 }
 
+export function getScopedApiBaseUrl(scope: ApiScope): string {
+  if (DEV_API_URL) return DEV_API_URL;
+  return apiScopeToApiPath(scope);
+}
+
+export function getScopedApiWsUrl(scope: ApiScope): string {
+  return deriveWsUrl(getScopedApiBaseUrl(scope));
+}
+
 export function getConfiguredApiSource(): string {
   return DEV_API_URL ? 'VITE_API_URL' : 'active chain route';
+}
+
+export function getScopedApiSource(): string {
+  return DEV_API_URL ? 'VITE_API_URL' : 'fixed product scope';
 }
 
 function getInitialBaseUrl(): string {
@@ -585,7 +615,16 @@ export class PlethApiClient {
 }
 
 // =============================================================================
-// Default Client Instance
+// Scoped Client Instances
 // =============================================================================
 
-export const plethApi = new PlethApiClient();
+export function createScopedApiClient(scope: ApiScope): PlethApiClient {
+  const baseUrl = getScopedApiBaseUrl(scope);
+  return new PlethApiClient({
+    baseUrl,
+    wsUrl: deriveWsUrl(baseUrl),
+  });
+}
+
+export const spotApi = createScopedApiClient('spot');
+export const perpsApi = createScopedApiClient('perps');

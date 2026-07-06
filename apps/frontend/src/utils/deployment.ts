@@ -4,6 +4,7 @@ const TESTNET_HOSTS = new Set([
   'plether-testnet.pages.dev',
 ])
 
+const PRIMARY_APP_HOSTS = new Set(['app.plether.com'])
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1'])
 const TESTNET_CHAIN_IDS = new Set([11155111, 421614])
 
@@ -20,4 +21,8 @@ export function isSepoliaDeployment(
   if (TESTNET_HOSTS.has(normalized)) return true
   if (LOCAL_HOSTS.has(normalized)) return TESTNET_CHAIN_IDS.has(defaultChainId)
   return false
+}
+
+export function isPrimaryAppDeployment(hostname = window.location.hostname): boolean {
+  return PRIMARY_APP_HOSTS.has(hostname.toLowerCase())
 }

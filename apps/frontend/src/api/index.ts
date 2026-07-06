@@ -7,15 +7,22 @@
 
 // Client
 export {
-  plethApi,
+  apiScopeToApiPath,
+  createScopedApiClient,
+  perpsApi,
+  spotApi,
   PlethApiClient,
   PlethApiError,
   chainIdToApiPath,
   getConfiguredApiBaseUrl,
   getConfiguredApiSource,
   getConfiguredApiWsUrl,
+  getScopedApiBaseUrl,
+  getScopedApiSource,
+  getScopedApiWsUrl,
+  isUpstreamApiError,
 } from './client';
-export type { PlethApiConfig } from './client';
+export type { ApiScope, PlethApiConfig } from './client';
 
 // Types
 export type {
@@ -99,8 +106,6 @@ export {
   // WebSocket hooks
   useWebSocketPrices,
   useWebSocketConnection,
-  // Chain sync
-  useApiChainSync,
   // Query keys
   apiQueryKeys,
 } from './hooks';

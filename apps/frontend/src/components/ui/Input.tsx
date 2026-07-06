@@ -29,7 +29,7 @@ export const Input = ({ ref, label, error, rightElement, className = '', ...prop
             {...props}
           />
           {rightElement && (
-            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+            <div className="absolute right-3 top-1/2 flex -translate-y-1/2 items-center">
               {rightElement}
             </div>
           )}

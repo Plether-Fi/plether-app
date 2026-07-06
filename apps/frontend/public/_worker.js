@@ -1,6 +1,6 @@
 const ROUTES = {
-  '/api/sepolia_v1/': 'SEPOLIA_BACKEND_URL',
-  '/api/v1/': 'MAINNET_BACKEND_URL',
+  '/api/perps/v1/': 'SEPOLIA_BACKEND_URL',
+  '/api/spot/v1/': 'MAINNET_BACKEND_URL',
 };
 
 export default {
@@ -9,7 +9,7 @@ export default {
 
     for (const [prefix, envKey] of Object.entries(ROUTES)) {
       if (url.pathname.startsWith(prefix) || url.pathname === prefix.slice(0, -1)) {
-        const origin = env[envKey];
+        const origin = env.BACKEND_URL ?? env[envKey];
         if (!origin) return new Response('Backend not configured', { status: 502 });
 
         const backendPath = '/api' + url.pathname.slice(prefix.length - 1);

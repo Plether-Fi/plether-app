@@ -3,7 +3,7 @@ import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
-import { plethApi } from '../api'
+import { perpsApi } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
@@ -90,6 +90,17 @@ export function TestnetWelcomeModalView({
             <p className="text-content-secondary">
               Next, deposit those funds into the exchange margin account before placing orders.
             </p>
+            <p className="text-content-secondary">
+              You also need some Arbitrum Sepolia ETH to pay transaction fees.{' '}
+              <a
+                href="https://www.alchemy.com/faucets/arbitrum-sepolia"
+                target="_blank"
+                rel="noreferrer"
+                className="text-positive hover:underline"
+              >
+                Get Arbitrum Sepolia ETH from Alchemy.
+              </a>
+            </p>
             <a
               href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}
               target="_blank"
@@ -163,7 +174,7 @@ export function TestnetWelcomeModal() {
 
     setFieldError(null)
     setIsSubmitting(true)
-    const result = await plethApi.claimTestnetFaucet(trimmedAddress)
+    const result = await perpsApi.claimTestnetFaucet(trimmedAddress)
     setIsSubmitting(false)
 
     if (Result.isError(result)) {

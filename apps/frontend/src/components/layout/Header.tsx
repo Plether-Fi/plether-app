@@ -2,6 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { ConnectButton } from '../wallet/ConnectButton'
 import { PendingTxBadge } from '../PendingTxBadge'
 import { PriceDisplay } from '../PriceDisplay'
+import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
   { path: '/', label: 'Perps' },
@@ -12,18 +13,21 @@ const navLinks = [
 
 export function Header() {
   const location = useLocation()
+  const shouldHidePerps = isPrimaryAppDeployment()
+  const visibleNavLinks = shouldHidePerps ? navLinks.filter(({ path }) => path !== '/') : navLinks
+  const homePath = shouldHidePerps ? '/spot' : '/'
 
   return (
     <header className="border-b border-brand-border/30 bg-surface-panel py-4">
       <div className="flex w-full min-w-0 items-center justify-between px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-10">
-          <Link to="/" className="flex shrink-0 items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
+          <Link to={homePath} className="flex shrink-0 items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
             <img src="/logomark.svg" alt="Plether" className="h-8 w-8" />
             <img src="/logotype.svg" alt="" aria-hidden="true" className="h-7 w-auto" />
           </Link>
 
           <nav className="hidden min-w-0 items-center gap-1 md:flex">
-            {navLinks.map(({ path, label }) => {
+            {visibleNavLinks.map(({ path, label }) => {
               const isActive = location.pathname === path ||
                 (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
               return (
