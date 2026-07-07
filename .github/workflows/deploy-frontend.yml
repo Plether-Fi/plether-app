@@ -45,7 +45,7 @@ jobs:
         run: |
           if [ "$TARGET_ENV" = "sepolia" ]; then
             echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
-            echo "default_chain_id=11155111" >> "$GITHUB_OUTPUT"
+            echo "default_chain_id=421614" >> "$GITHUB_OUTPUT"
           else
             echo "project=plether" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=1" >> "$GITHUB_OUTPUT"

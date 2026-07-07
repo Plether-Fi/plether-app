@@ -112,7 +112,7 @@ export function defaultApiBaseUrl(): string {
 }
 
 export function defaultApiChainId(): number {
-  if (isSepoliaDeployment()) return 11155111;
+  if (isSepoliaDeployment()) return 421614;
   return DEFAULT_API_CHAIN_ID;
 }
 

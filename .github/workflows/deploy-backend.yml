@@ -90,6 +90,37 @@ jobs:
             --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
             --query taskDefinition > task-def.json
 
+      - name: Patch Sepolia task definition network
+        if: matrix.environment == 'sepolia'
+        run: |
+          jq \
+            --arg container "${{ matrix.container_name }}" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+            def upsert_secret($name; $valueFrom):
+              .secrets = (
+                ((.secrets // []) | map(select(.name != $name)))
+                + [{"name": $name, "valueFrom": $valueFrom}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == $container then
+                (.secrets // [] | map(select(.name == "PERPS_RPC_URL")) | .[0].valueFrom) as $rpcSecret
+                |
+                upsert_env("CHAIN_ID"; "421614")
+                | upsert_env("INDEXER_START_BLOCK"; "280884700")
+                | upsert_secret("RPC_URL"; $rpcSecret)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
+
       - name: Update task definition image
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
