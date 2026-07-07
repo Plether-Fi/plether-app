@@ -383,6 +383,7 @@ apps/backend/
 │   ├── Ethereum/         # RPC client & contracts
 │   └── Utils/            # Helpers
 ├── config/
+│   ├── addresses.arbitrum-sepolia.json
 │   ├── addresses.mainnet.json
 │   └── addresses.sepolia.json
 ├── schema.sql            # Database schema

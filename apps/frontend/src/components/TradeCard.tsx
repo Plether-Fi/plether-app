@@ -89,10 +89,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         : BigInt(dashAllowances.bear.curvePool)
       return allowance < inputAmountBigInt
     }
-    if (mode === 'sell') {
-      return BigInt(dashAllowances.bull.zapRouter) < inputAmountBigInt
-    }
-    return false
+    const allowance = mode === 'buy'
+      ? BigInt(dashAllowances.usdc.zap)
+      : BigInt(dashAllowances.bull.zapRouter)
+    return allowance < inputAmountBigInt
   })()
 
   const insufficientBalance = inputAmountBigInt > inputBalance

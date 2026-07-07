@@ -163,6 +163,7 @@ loadConfig = do
           addressFile = case chainId of
             1 -> "config/addresses.mainnet.json"
             11155111 -> "config/addresses.sepolia.json"
+            421614 -> "config/addresses.arbitrum-sepolia.json"
             31337 -> "config/addresses.local.json"
             _ -> "config/addresses.sepolia.json"
 

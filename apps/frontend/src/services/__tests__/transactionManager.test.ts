@@ -85,4 +85,24 @@ describe('transactionManager permit signing', () => {
     expect(domain.version).toBe('2')
     expect(domain.name).toBe('USD Coin')
   })
+
+  it('buys plDXY-BULL with approval and zapMint when USDC permit is unavailable', async () => {
+    mockReadContract.mockImplementation((_config: unknown, args: { functionName: string }) => {
+      if (args.functionName === 'allowance') return Promise.resolve(0n)
+      throw new Error(`Unexpected readContract ${args.functionName}`)
+    })
+
+    await transactionManager.executeZapBuy(1000000n, 900000000000000000n, 100n)
+
+    expect(mockSignTypedData).not.toHaveBeenCalled()
+    expect(mockWriteContract).toHaveBeenCalledTimes(2)
+    expect(mockWriteContract.mock.calls[0][1].functionName).toBe('approve')
+    expect(mockWriteContract.mock.calls[0][1].args[1]).toBe(1000000n)
+    expect(mockWriteContract.mock.calls[1][1].functionName).toBe('zapMint')
+    expect(mockWriteContract.mock.calls[1][1].args.slice(0, 3)).toEqual([
+      1000000n,
+      900000000000000000n,
+      100n,
+    ])
+  })
 })

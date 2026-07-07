@@ -48,6 +48,7 @@ COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perp
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
+COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
 
 WORKDIR /app

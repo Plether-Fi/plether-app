@@ -463,24 +463,28 @@ class TransactionManager {
     const ctx = await this.getOperationContext(operationKey)
     if (!ctx) return
 
-    const { addresses } = ctx
-    let permit!: PermitResult
+    const { addresses, address } = ctx
+    const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.ZAP_ROUTER, address, usdcAmount)
+
+    const prerequisites: Prerequisite[] = []
+    if (!hasAllowance) {
+      prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.ZAP_ROUTER, usdcAmount))
+    }
+
+    const deadline = getDeadline()
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'swap',
       title: 'Buying plDXY-BULL',
-      permitSign: async () => {
-        permit = await this.signPermit(addresses.USDC, addresses.ZAP_ROUTER, usdcAmount, ctx)
-      },
-      prerequisites: [],
+      prerequisites,
       mainStep: {
         label: 'Buy plDXY-BULL',
         execute: (config) => writeContract(config, {
           address: addresses.ZAP_ROUTER,
           abi: ZAP_ROUTER_ABI,
-          functionName: 'zapMintWithPermit',
-          args: [usdcAmount, minBullOut, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
+          functionName: 'zapMint',
+          args: [usdcAmount, minBullOut, slippageBps, deadline],
         }),
       },
       onRetry: options?.onRetry ?? (() => void this.executeZapBuy(usdcAmount, minBullOut, slippageBps, options)),

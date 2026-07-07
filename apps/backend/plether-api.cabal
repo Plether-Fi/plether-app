@@ -174,6 +174,7 @@ test-suite plether-api-test
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
+        Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec

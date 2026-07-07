@@ -20,7 +20,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
       id-token: write
@@ -41,6 +41,9 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push Docker image
         id: build
         env:
@@ -54,9 +57,13 @@ jobs:
           fi
 
           IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker build -f apps/backend/Dockerfile -t $IMAGE -t $ECR_REGISTRY/$ECR_REPOSITORY:latest .
-          docker push $IMAGE
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker buildx build \
+            --platform linux/arm64 \
+            -f apps/backend/Dockerfile \
+            -t $IMAGE \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            --push \
+            .
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
@@ -82,6 +89,37 @@ jobs:
           aws ecs describe-task-definition \
             --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
             --query taskDefinition > task-def.json
+
+      - name: Patch Sepolia task definition network
+        if: matrix.environment == 'sepolia'
+        run: |
+          jq \
+            --arg container "${{ matrix.container_name }}" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+            def upsert_secret($name; $valueFrom):
+              .secrets = (
+                ((.secrets // []) | map(select(.name != $name)))
+                + [{"name": $name, "valueFrom": $valueFrom}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == $container then
+                (.secrets // [] | map(select(.name == "PERPS_RPC_URL")) | .[0].valueFrom) as $rpcSecret
+                |
+                upsert_env("CHAIN_ID"; "421614")
+                | upsert_env("INDEXER_START_BLOCK"; "280884700")
+                | upsert_secret("RPC_URL"; $rpcSecret)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
 
       - name: Update task definition image
         id: task-def

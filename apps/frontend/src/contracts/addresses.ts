@@ -1,5 +1,5 @@
 import { type Address } from 'viem'
-import { sepolia } from 'wagmi/chains'
+import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 
 export const DEFAULT_CHAIN_ID = sepolia.id
 
@@ -45,6 +45,7 @@ function loadAddresses(filename: string): ContractAddresses | null {
 }
 
 const MAINNET_ADDRESSES = loadAddresses('addresses.mainnet.json')
+const ARBITRUM_SEPOLIA_ADDRESSES = loadAddresses('addresses.arbitrum-sepolia.json')
 const LOCAL_ADDRESSES = loadAddresses('addresses.local.json')
 
 const sepoliaAddresses = loadAddresses('addresses.sepolia.json')
@@ -55,13 +56,18 @@ export const SEPOLIA_ADDRESSES = sepoliaAddresses
 
 export function getAddresses(chainId: number): ContractAddresses {
   switch (chainId) {
-    case 1:
+    case mainnet.id:
       if (!MAINNET_ADDRESSES) {
         throw new Error('Mainnet addresses not found')
       }
       return MAINNET_ADDRESSES
-    case 11155111:
+    case sepolia.id:
       return SEPOLIA_ADDRESSES
+    case arbitrumSepolia.id:
+      if (!ARBITRUM_SEPOLIA_ADDRESSES) {
+        throw new Error('Arbitrum Sepolia addresses not found')
+      }
+      return ARBITRUM_SEPOLIA_ADDRESSES
     case 31337:
       if (!LOCAL_ADDRESSES) {
         console.warn('Local addresses not found. Copy addresses.local.example.json to addresses.local.json')
