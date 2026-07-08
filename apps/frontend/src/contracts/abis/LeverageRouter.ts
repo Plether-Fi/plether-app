@@ -186,6 +186,44 @@ export const LEVERAGE_ROUTER_ABI = [
   },
 ] as const
 
+export const BEAR_OPEN_LEVERAGE_ABI = [
+  {
+    type: 'function',
+    name: 'openLeverage',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'principal', type: 'uint256' },
+      { name: 'leverage', type: 'uint256' },
+      { name: 'maxSlippageBps', type: 'uint256' },
+      { name: 'minAmountOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+    outputs: [
+      { type: 'uint256', name: 'positionSize' },
+      { type: 'uint256', name: 'debt' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'openLeverageWithPermit',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { name: 'principal', type: 'uint256' },
+      { name: 'leverage', type: 'uint256' },
+      { name: 'maxSlippageBps', type: 'uint256' },
+      { name: 'minAmountOut', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+      { name: 'v', type: 'uint8' },
+      { name: 'r', type: 'bytes32' },
+      { name: 's', type: 'bytes32' },
+    ],
+    outputs: [
+      { type: 'uint256', name: 'positionSize' },
+      { type: 'uint256', name: 'debt' },
+    ],
+  },
+] as const
+
 // BEAR Router specific - previewAddCollateral returns 2 values
 export const BEAR_LEVERAGE_ROUTER_ABI = [
   ...LEVERAGE_ROUTER_ABI,

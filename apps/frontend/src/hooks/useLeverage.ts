@@ -2,7 +2,7 @@ import { useAccount, useReadContract, useWriteContract, usePublicClient, useSign
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { zeroAddress, keccak256, encodeAbiParameters } from 'viem'
 import { Result } from 'better-result'
-import { LEVERAGE_ROUTER_ABI, MORPHO_ABI, PLETH_CORE_ABI, BASKET_ORACLE_ABI, ERC20_ABI } from '../contracts/abis'
+import { LEVERAGE_ROUTER_ABI, BEAR_OPEN_LEVERAGE_ABI, MORPHO_ABI, PLETH_CORE_ABI, BASKET_ORACLE_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
 import { useTransactionModal } from './useTransactionModal'
@@ -199,6 +199,7 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
     principal: bigint,
     leverage: bigint,
     maxSlippageBps: bigint,
+    minAmountOut: bigint,
     deadline: bigint
   ): Promise<Result<`0x${string}`, LeverageError>> => {
     if (!routerAddress) {
@@ -208,8 +209,10 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
     return sendTransaction(
       { type: 'leverage', title: `Opening ${side} leverage position`,
         steps: [{ label: 'Open position' }, { label: 'Confirming onchain (~12s)' }] },
-      { address: routerAddress, abi: LEVERAGE_ROUTER_ABI, functionName: 'openLeverage',
-        args: [principal, leverage, maxSlippageBps, deadline] },
+      { address: routerAddress, abi: side === 'BEAR' ? BEAR_OPEN_LEVERAGE_ABI : LEVERAGE_ROUTER_ABI, functionName: 'openLeverage',
+        args: side === 'BEAR'
+          ? [principal, leverage, maxSlippageBps, minAmountOut, deadline]
+          : [principal, leverage, maxSlippageBps, deadline] },
     )
   }
 
@@ -257,7 +260,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
   const { writeContractAsync, isPending, error, reset: resetWrite } = useWriteContract()
   const { signTypedDataAsync } = useSignTypedData()
 
-  const { data: usdcNonce } = useReadContract({
+  const { data: usdcNonce, error: usdcNonceError } = useReadContract({
     address: addresses?.USDC,
     abi: ERC20_ABI,
     functionName: 'nonces',
@@ -286,22 +289,56 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
     usdcAmount: bigint,
     maxSlippageBps: bigint,
   ): Promise<Result<`0x${string}`, LeverageError>> => {
-    if (!routerAddress || !address || !chainId || !addresses || usdcNonce === undefined || !usdcName) {
+    const canUsePermit = usdcNonce !== undefined
+    const permitUnsupported = !!usdcNonceError
+
+    if (!routerAddress || !address || !chainId || !addresses || (!canUsePermit && !permitUnsupported) || (canUsePermit && !usdcName)) {
       return Result.err(new NotConnectedError())
     }
 
+    let hasAllowance = true
+    if (!canUsePermit) {
+      try {
+        const allowance = await publicClient.readContract({
+          address: addresses.USDC,
+          abi: ERC20_ABI,
+          functionName: 'allowance',
+          args: [address, routerAddress],
+        })
+        hasAllowance = allowance >= usdcAmount
+      } catch (err) {
+        const txError = err instanceof Error && '_tag' in err
+          ? err as TransactionError
+          : parseTransactionError(err)
+        return Result.err(txError)
+      }
+    }
+
     const txId = crypto.randomUUID()
+    const steps = canUsePermit
+      ? [
+          { label: 'Sign permit', status: 'pending' as const },
+          { label: 'Add collateral', status: 'pending' as const },
+          { label: 'Confirming onchain (~12s)', status: 'pending' as const },
+        ]
+      : [
+          ...(!hasAllowance
+            ? [
+                { label: 'Approve USDC', status: 'pending' as const },
+                { label: 'Confirming onchain (~12s)', status: 'pending' as const },
+              ]
+            : []),
+          { label: 'Add collateral', status: 'pending' as const },
+          { label: 'Confirming onchain (~12s)', status: 'pending' as const },
+        ]
+
     addTransaction({
       id: txId,
       type: 'leverage',
       status: 'pending',
       hash: undefined,
       title: 'Adding collateral',
-      steps: [
-        { label: 'Sign permit', status: 'pending' as const },
-        { label: 'Add collateral', status: 'pending' as const },
-        { label: 'Confirming onchain (~12s)', status: 'pending' as const },
-      ],
+      steps,
     })
     txModal.open({ transactionId: txId })
     setStepInProgress(txId, 0)
@@ -313,41 +350,68 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
 
     return Result.tryPromise({
       try: async () => {
-        setIsSigningPermit(true)
         const deadline = getDeadline(60)
+        let stepIndex = 0
+        let txHash: `0x${string}`
 
-        const signature = await signTypedDataAsync({
-          domain: {
-            name: usdcName,
-            version: '2',
-            chainId,
-            verifyingContract: addresses.USDC,
-          },
-          types: EIP2612_PERMIT_TYPES,
-          primaryType: 'Permit',
-          message: {
-            owner: address,
-            spender: routerAddress,
-            value: usdcAmount,
-            nonce: usdcNonce,
-            deadline,
-          },
-        })
-        setIsSigningPermit(false)
+        if (canUsePermit) {
+          setIsSigningPermit(true)
+          const signature = await signTypedDataAsync({
+            domain: {
+              name: usdcName,
+              version: '2',
+              chainId,
+              verifyingContract: addresses.USDC,
+            },
+            types: EIP2612_PERMIT_TYPES,
+            primaryType: 'Permit',
+            message: {
+              owner: address,
+              spender: routerAddress,
+              value: usdcAmount,
+              nonce: usdcNonce,
+              deadline,
+            },
+          })
+          setIsSigningPermit(false)
 
-        const { r, s, v } = splitSignature(signature)
+          const { r, s, v } = splitSignature(signature)
+          stepIndex = 1
+          setStepInProgress(txId, stepIndex)
+          txHash = await writeContractAsync({
+            address: routerAddress,
+            abi: LEVERAGE_ROUTER_ABI,
+            functionName: 'addCollateralWithPermit',
+            args: [usdcAmount, maxSlippageBps, deadline, v, r, s],
+          })
+        } else {
+          if (!hasAllowance) {
+            const approvalHash = await writeContractAsync({
+              address: addresses.USDC,
+              abi: ERC20_ABI,
+              functionName: 'approve',
+              args: [routerAddress, usdcAmount],
+            })
+            setStepInProgress(txId, 1)
+            const approvalReceipt = await publicClient.waitForTransactionReceipt({ hash: approvalHash })
+            if (approvalReceipt.status === 'reverted') {
+              throw new Error('Approval transaction reverted')
+            }
+            stepIndex = 2
+          }
 
-        setStepInProgress(txId, 1)
-        const txHash = await writeContractAsync({
-          address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'addCollateralWithPermit',
-          args: [usdcAmount, maxSlippageBps, deadline, v, r, s],
-        })
+          setStepInProgress(txId, stepIndex)
+          txHash = await writeContractAsync({
+            address: routerAddress,
+            abi: LEVERAGE_ROUTER_ABI,
+            functionName: 'addCollateral',
+            args: [usdcAmount, maxSlippageBps, deadline],
+          })
+        }
 
         setHash(txHash)
         setIsConfirming(true)
-        setStepInProgress(txId, 2)
+        setStepInProgress(txId, stepIndex + 1)
 
         const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash })
 
@@ -372,7 +436,7 @@ export function useAdjustCollateral(side: 'BEAR' | 'BULL', onSuccessCallback?: (
         return txError
       },
     })
-  }, [routerAddress, address, chainId, addresses, usdcNonce, usdcName, addTransaction, setStepInProgress, setStepSuccess, setStepError, txModal, signTypedDataAsync, writeContractAsync, publicClient])
+  }, [routerAddress, address, chainId, addresses, usdcNonce, usdcNonceError, usdcName, addTransaction, setStepInProgress, setStepSuccess, setStepError, txModal, signTypedDataAsync, writeContractAsync, publicClient])
 
   const removeCollateral = useCallback(async (
     collateralToWithdraw: bigint,

@@ -65,6 +65,8 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
 
   // Position value = collateral tokens (18 dec) * token price (8 dec) / 10^20 = USDC (6 dec)
   const expectedPositionValue = expectedCollateralTokens * tokenPrice / 10n ** 20n
+  const slippageBps = BigInt(Math.floor(slippage * 100))
+  const minCollateralOut = expectedCollateralTokens - (expectedCollateralTokens * slippageBps / 10000n)
 
   const authorization = dashboardData?.data.authorization
   const needsMorphoAuthorization = selectedSide === 'BEAR'
@@ -81,14 +83,12 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
   }, [refetchBalances, onPositionOpened])
 
   const handleOpenPosition = useCallback(() => {
-    if (collateralBigInt <= 0n) return
+    if (collateralBigInt <= 0n || previewLoading || expectedCollateralTokens <= 0n) return
 
-    const slippageBps = BigInt(Math.floor(slippage * 100))
-
-    void transactionManager.executeOpenLeverage(selectedSide, collateralBigInt, contractLeverage, slippageBps, {
+    void transactionManager.executeOpenLeverage(selectedSide, collateralBigInt, contractLeverage, slippageBps, minCollateralOut, {
       onRetry: handleOpenPosition,
     }).then(handleOpenSuccess)
-  }, [collateralBigInt, selectedSide, contractLeverage, slippage, handleOpenSuccess])
+  }, [collateralBigInt, previewLoading, expectedCollateralTokens, selectedSide, contractLeverage, slippageBps, minCollateralOut, handleOpenSuccess])
 
   const getButtonText = () => {
     if (isRunning) return 'Processing...'
@@ -97,7 +97,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     return `Open ${selectedSide} Position`
   }
 
-  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || isRunning || insufficientBalance
+  const isDisabled = !collateralAmount || parseFloat(collateralAmount) <= 0 || isRunning || insufficientBalance || previewLoading || expectedCollateralTokens <= 0n
 
   const expectedEquity = expectedPositionValue > expectedDebt ? expectedPositionValue - expectedDebt : 0n
   const positionSizeDisplay = previewLoading && collateralBigInt > 0n
