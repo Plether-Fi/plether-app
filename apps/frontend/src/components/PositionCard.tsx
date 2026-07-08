@@ -1,4 +1,4 @@
-import { TokenIcon } from './ui'
+import { InfoTooltip, TokenIcon } from './ui'
 import { formatUsd, formatPercent } from '../utils/formatters'
 import { HEALTH_FACTOR_WARNING, HEALTH_FACTOR_DANGER } from '../config/constants'
 import type { LeveragePosition } from '../types'
@@ -53,7 +53,7 @@ export function PositionCard({ position, onAdjust, onClose, isClosing }: Positio
           <div className="flex flex-col">
             <div className="flex items-center gap-1 text-xs text-content-secondary mb-1">
               Health
-              <span className="material-symbols-outlined text-[10px] text-content-secondary">help</span>
+              <InfoTooltip content="Ratio of collateral value to debt. Lower values increase liquidation risk." />
             </div>
             <span className={`text-sm font-semibold ${healthColor}`}>
               {position.healthFactor.toFixed(2)}
