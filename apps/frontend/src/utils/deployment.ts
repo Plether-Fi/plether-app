@@ -7,10 +7,11 @@ const TESTNET_HOSTS = new Set([
 const PRIMARY_APP_HOSTS = new Set(['app.plether.com'])
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1'])
 const TESTNET_CHAIN_IDS = new Set([11155111, 421614])
+const DEFAULT_DEV_CHAIN_ID = 11155111
 
 function parseChainId(value: string | undefined): number {
   const parsed = Number(value)
-  return Number.isInteger(parsed) ? parsed : 1
+  return Number.isInteger(parsed) ? parsed : DEFAULT_DEV_CHAIN_ID
 }
 
 export function isSepoliaDeployment(

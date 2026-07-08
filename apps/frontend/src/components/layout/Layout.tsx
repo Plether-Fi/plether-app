@@ -25,9 +25,9 @@ export function Layout({ children }: LayoutProps) {
 
   return (
     <div className="min-h-screen flex flex-col bg-app-bg text-content-primary">
-      {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
       {isConnected && <WrongNetworkBanner />}
       <div className="sticky top-0 z-50">
+        {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
       </div>
       <main className={`flex-grow px-6 lg:px-8 py-10 w-full pb-24 lg:pb-10 ${fullWidth ? '' : 'max-w-7xl mx-auto'}`}>

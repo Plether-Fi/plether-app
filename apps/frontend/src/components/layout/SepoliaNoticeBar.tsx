@@ -4,9 +4,9 @@ export function SepoliaNoticeBar() {
   const openSepoliaWelcome = useSettingsStore((s) => s.openSepoliaWelcome)
 
   return (
-    <div className="flex min-h-8 items-center justify-center gap-3 bg-white px-4 py-1.5 text-center text-xs font-medium text-[#250917] sm:text-sm">
+    <div className="flex min-h-11 items-center justify-center gap-3 bg-brand-yellow px-4 py-2.5 text-center text-xs font-medium text-[#250917] sm:text-sm">
       <span>
-        You are on Sepolia testnet. Try Plether Perps with mock funds and an Arbitrum
+        You are on Sepolia testnet. Try Plether Perps and Spot with mock funds and an Arbitrum
         Sepolia-ready wallet. Feedback: <a href="mailto:support@plether.com" className="underline underline-offset-4">support@plether.com</a>.
       </span>
       <button
