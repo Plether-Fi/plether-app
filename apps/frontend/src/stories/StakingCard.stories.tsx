@@ -102,7 +102,7 @@ export const StakeBearFlow: Story = {
 
     await step('Verify Stake mode is selected by default', async () => {
       const stakeButton = canvas.getByRole('button', { name: /^stake$/i })
-      expect(stakeButton).toHaveClass('bg-surface-panel')
+      expect(stakeButton).toHaveClass('bg-brand-orange')
     })
 
     await step('Enter stake amount', async () => {
@@ -139,7 +139,7 @@ export const UnstakeBullFlow: Story = {
     await step('Switch to Unstake mode', async () => {
       const unstakeButton = canvas.getByRole('button', { name: /^unstake$/i })
       await userEvent.click(unstakeButton)
-      expect(unstakeButton).toHaveClass('bg-surface-panel')
+      expect(unstakeButton).toHaveClass('bg-positive')
     })
 
     await step('Enter unstake amount', async () => {
@@ -171,19 +171,19 @@ export const ModeToggle: Story = {
 
     await step('Start in Stake mode', async () => {
       const stakeButton = canvas.getByRole('button', { name: /^stake$/i })
-      expect(stakeButton).toHaveClass('bg-surface-panel')
+      expect(stakeButton).toHaveClass('bg-brand-orange')
     })
 
     await step('Switch to Unstake mode', async () => {
       const unstakeButton = canvas.getByRole('button', { name: /^unstake$/i })
       await userEvent.click(unstakeButton)
-      expect(unstakeButton).toHaveClass('bg-surface-panel')
+      expect(unstakeButton).toHaveClass('bg-brand-orange')
     })
 
     await step('Switch back to Stake mode', async () => {
       const stakeButton = canvas.getByRole('button', { name: /^stake$/i })
       await userEvent.click(stakeButton)
-      expect(stakeButton).toHaveClass('bg-surface-panel')
+      expect(stakeButton).toHaveClass('bg-brand-orange')
     })
   },
 }

@@ -117,10 +117,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => { setSelectedSide('BULL'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
               selectedSide === 'BULL'
-                ? 'border-2 border-positive bg-positive/10'
-                : 'border border-brand-border/30 bg-surface-panel hover:border-positive/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-positive bg-positive/10 text-positive'
+                : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-positive/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedSide === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
@@ -128,10 +128,10 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
           </button>
           <button
             onClick={() => { setSelectedSide('BEAR'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
               selectedSide === 'BEAR'
-                ? 'border-2 border-brand-orange bg-brand-orange/10'
-                : 'border border-brand-border/30 bg-surface-panel hover:border-brand-orange/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-brand-orange bg-brand-orange/10 text-brand-orange'
+                : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-brand-orange/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedSide === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
@@ -163,7 +163,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
           step="0.1"
           value={Math.min(targetLeverage, maxEffectiveLeverage)}
           onChange={(e) => { setTargetLeverage(parseFloat(e.target.value)); }}
-          className="w-full h-2 bg-surface-muted appearance-none cursor-pointer accent-brand-orange"
+          className="leverage-slider h-2 w-full cursor-pointer appearance-none accent-brand-orange"
         />
         <div className="flex justify-between text-xs text-content-secondary mt-1">
           <span>1.1x</span>
@@ -171,22 +171,22 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         </div>
       </div>
 
-      <div className="bg-surface-muted p-4 space-y-3 border border-brand-border/30">
-        <h4 className="text-sm font-medium text-content-secondary">Position Preview</h4>
-        <div className="flex justify-between">
+      <div className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
+        <div className="mb-3 text-xs font-medium uppercase text-content-secondary">PREVIEW</div>
+        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
           <span className="text-content-secondary text-sm">Position Value</span>
-          <span className="text-content-primary">{positionSizeDisplay} USDC</span>
+          <span className="text-content-primary font-semibold">{positionSizeDisplay} USDC</span>
         </div>
-        <div className="flex justify-between">
+        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
           <span className="text-content-secondary text-sm">Your Equity</span>
-          <span className="text-content-primary">{equityDisplay} USDC</span>
+          <span className="text-content-primary font-semibold">{equityDisplay} USDC</span>
         </div>
-        <div className="flex justify-between">
+        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
           <span className="text-content-secondary text-sm flex items-center gap-1">
             Debt
             <InfoTooltip content="USDC borrowed from Morpho against your position" />
           </span>
-          <span className="text-warning">{debtDisplay} USDC</span>
+          <span className="text-warning font-semibold">{debtDisplay} USDC</span>
         </div>
       </div>
 
