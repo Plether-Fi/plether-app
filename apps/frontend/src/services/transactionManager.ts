@@ -2,7 +2,7 @@ import { type Config, getPublicClient, getWalletClient, waitForTransactionReceip
 import { useTransactionStore, type TransactionType } from '../stores/transactionStore'
 import { useTransactionModal } from '../hooks/useTransactionModal'
 import { type ContractAddresses, getAddresses } from '../contracts/addresses'
-import { STAKED_TOKEN_ABI, ERC20_ABI, CURVE_POOL_ABI, ZAP_ROUTER_ABI, PLETH_CORE_ABI, LEVERAGE_ROUTER_ABI, MORPHO_ABI } from '../contracts/abis'
+import { STAKED_TOKEN_ABI, ERC20_ABI, CURVE_POOL_ABI, ZAP_ROUTER_ABI, PLETH_CORE_ABI, LEVERAGE_ROUTER_ABI, BEAR_OPEN_LEVERAGE_ABI, MORPHO_ABI } from '../contracts/abis'
 import { parseTransactionError, getErrorMessage } from '../utils/errors'
 import { getDeadline } from '../utils/deadline'
 import { EIP2612_PERMIT_TYPES, splitSignature } from '../utils/permit'
@@ -627,6 +627,7 @@ class TransactionManager {
     principal: bigint,
     leverage: bigint,
     slippageBps: bigint,
+    minAmountOut: bigint,
     options?: { onRetry?: () => void }
   ): Promise<void> {
     const operationKey = `leverage-open-${side}`
@@ -688,14 +689,18 @@ class TransactionManager {
         label: `Open ${side} position`,
         execute: (cfg) => writeContract(cfg, {
           address: routerAddress,
-          abi: LEVERAGE_ROUTER_ABI,
+          abi: side === 'BEAR' ? BEAR_OPEN_LEVERAGE_ABI : LEVERAGE_ROUTER_ABI,
           functionName: permitNonce === null ? 'openLeverage' : 'openLeverageWithPermit',
-          args: permitNonce === null
-            ? [principal, leverage, slippageBps, deadline]
-            : [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
+          args: side === 'BEAR'
+            ? permitNonce === null
+              ? [principal, leverage, slippageBps, minAmountOut, deadline]
+              : [principal, leverage, slippageBps, minAmountOut, permit.deadline, permit.v, permit.r, permit.s]
+            : permitNonce === null
+              ? [principal, leverage, slippageBps, deadline]
+              : [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
         }),
       },
-      onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, options)),
+      onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, minAmountOut, options)),
     })
   }
 

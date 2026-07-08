@@ -246,10 +246,19 @@ describe('useOpenLeverage', () => {
 
     const { result } = renderHook(() => useOpenLeverage('BEAR'))
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
+    const minAmountOut = 1500000000000000000n
 
     await act(async () => {
-      await result.current.openPosition(1000000000000000000n, 2000000000000000000n, 100n, deadline)
+      await result.current.openPosition(1000000000000000000n, 2000000000000000000n, 100n, minAmountOut, deadline)
     })
+
+    expect(mockWriteContract.mock.calls[0][0].args).toEqual([
+      1000000000000000000n,
+      2000000000000000000n,
+      100n,
+      minAmountOut,
+      deadline,
+    ])
 
     const { transactions } = useTransactionStore.getState()
     expect(transactions).toHaveLength(1)
@@ -271,6 +280,7 @@ describe('useOpenLeverage', () => {
         1000000000000000000n,
         2000000000000000000n,
         100n,
+        1500000000000000000n,
         deadline
       )
     })
@@ -297,6 +307,7 @@ describe('useOpenLeverage', () => {
         1000000000000000000n,
         2000000000000000000n,
         100n,
+        1500000000000000000n,
         deadline
       )
     })
@@ -322,6 +333,7 @@ describe('useOpenLeverage', () => {
         1000000000000000000n,
         2000000000000000000n,
         100n,
+        1500000000000000000n,
         deadline
       )
     })
@@ -342,7 +354,7 @@ describe('useOpenLeverage', () => {
     const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600)
 
     await act(async () => {
-      await result.current.openPosition(1000000000000000000n, 2000000000000000000n, 100n, deadline)
+      await result.current.openPosition(1000000000000000000n, 2000000000000000000n, 100n, 1500000000000000000n, deadline)
     })
 
     // Update mocks to simulate confirmed transaction

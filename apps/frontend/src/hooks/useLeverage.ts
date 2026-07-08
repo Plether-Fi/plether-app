@@ -2,7 +2,7 @@ import { useAccount, useReadContract, useWriteContract, usePublicClient, useSign
 import { useRef, useEffect, useMemo, useState, useCallback } from 'react'
 import { zeroAddress, keccak256, encodeAbiParameters } from 'viem'
 import { Result } from 'better-result'
-import { LEVERAGE_ROUTER_ABI, MORPHO_ABI, PLETH_CORE_ABI, BASKET_ORACLE_ABI, ERC20_ABI } from '../contracts/abis'
+import { LEVERAGE_ROUTER_ABI, BEAR_OPEN_LEVERAGE_ABI, MORPHO_ABI, PLETH_CORE_ABI, BASKET_ORACLE_ABI, ERC20_ABI } from '../contracts/abis'
 import { getAddresses } from '../contracts/addresses'
 import { useTransactionStore } from '../stores/transactionStore'
 import { useTransactionModal } from './useTransactionModal'
@@ -199,6 +199,7 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
     principal: bigint,
     leverage: bigint,
     maxSlippageBps: bigint,
+    minAmountOut: bigint,
     deadline: bigint
   ): Promise<Result<`0x${string}`, LeverageError>> => {
     if (!routerAddress) {
@@ -208,8 +209,10 @@ export function useOpenLeverage(side: 'BEAR' | 'BULL') {
     return sendTransaction(
       { type: 'leverage', title: `Opening ${side} leverage position`,
         steps: [{ label: 'Open position' }, { label: 'Confirming onchain (~12s)' }] },
-      { address: routerAddress, abi: LEVERAGE_ROUTER_ABI, functionName: 'openLeverage',
-        args: [principal, leverage, maxSlippageBps, deadline] },
+      { address: routerAddress, abi: side === 'BEAR' ? BEAR_OPEN_LEVERAGE_ABI : LEVERAGE_ROUTER_ABI, functionName: 'openLeverage',
+        args: side === 'BEAR'
+          ? [principal, leverage, maxSlippageBps, minAmountOut, deadline]
+          : [principal, leverage, maxSlippageBps, deadline] },
     )
   }
 
