@@ -99,15 +99,18 @@ select:not(:disabled) {
   background: #FFC0B0;
 }
 
+.leverage-slider,
 .perps-leverage-slider {
   background: #FFAB96;
   transition: background-color 150ms ease;
 }
 
+.leverage-slider:hover,
 .perps-leverage-slider:hover {
   background: #FF572D;
 }
 
+.leverage-slider::-webkit-slider-thumb,
 .perps-leverage-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
@@ -119,21 +122,25 @@ select:not(:disabled) {
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
+.leverage-slider:hover::-webkit-slider-thumb,
 .perps-leverage-slider:hover::-webkit-slider-thumb {
   border-color: #FFF5F9;
   background: #FF572D;
 }
 
+.leverage-slider::-moz-range-track,
 .perps-leverage-slider::-moz-range-track {
   height: 8px;
   background: #FFAB96;
   transition: background-color 150ms ease;
 }
 
+.leverage-slider:hover::-moz-range-track,
 .perps-leverage-slider:hover::-moz-range-track {
   background: #FF572D;
 }
 
+.leverage-slider::-moz-range-thumb,
 .perps-leverage-slider::-moz-range-thumb {
   width: 14px;
   height: 14px;
@@ -144,6 +151,7 @@ select:not(:disabled) {
   transition: background-color 150ms ease, border-color 150ms ease;
 }
 
+.leverage-slider:hover::-moz-range-thumb,
 .perps-leverage-slider:hover::-moz-range-thumb {
   border-color: #FFF5F9;
   background: #FF572D;

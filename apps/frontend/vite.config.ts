@@ -10,8 +10,14 @@ import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
-const PRESERVE_API_PROXY_PATH = process.env.VITE_API_PROXY_PRESERVE_PATH === '1';
+const DEFAULT_API_PROXY_TARGET = 'https://app.sepolia.plether.com';
+
+function shouldPreserveApiProxyPath(target: string): boolean {
+  if (process.env.VITE_API_PROXY_PRESERVE_PATH !== undefined) {
+    return process.env.VITE_API_PROXY_PRESERVE_PATH === '1';
+  }
+  return target === DEFAULT_API_PROXY_TARGET;
+}
 
 function parseHeadersFile(): Record<string, string> {
   const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
@@ -24,10 +30,12 @@ function parseHeadersFile(): Record<string, string> {
 }
 
 function apiProxyConfig(): ProxyOptions {
+  const target = process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET;
+
   return {
-    target: process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET,
+    target,
     changeOrigin: true,
-    rewrite: PRESERVE_API_PROXY_PATH
+    rewrite: shouldPreserveApiProxyPath(target)
       ? undefined
       : (proxyPath) => proxyPath.replace(/^\/api\/(?:spot|perps)\/v1/, '/api'),
   };

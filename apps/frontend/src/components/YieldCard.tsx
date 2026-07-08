@@ -375,25 +375,25 @@ export function YieldCard({
     <div className="max-w-4xl mx-auto">
       {/* Summary row */}
       <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-surface-muted p-3 border border-brand-border/30">
+        <div className="border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Supplied</p>
           <p className="text-lg font-bold text-content-primary">
             {formatUsd(bearMarket.suppliedAmount + bullMarket.suppliedAmount)} USDC
           </p>
         </div>
-        <div className="bg-surface-muted p-3 border border-brand-border/30">
+        <div className="border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Borrowed</p>
           <p className="text-lg font-bold text-content-primary">
             {formatUsd(bearMarket.borrowedAmount + bullMarket.borrowedAmount)} USDC
           </p>
         </div>
-        <div className="bg-surface-muted p-3 border border-brand-border/30">
+        <div className="border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Collateral</p>
           <p className="text-lg font-bold text-content-primary">
             {formatUsd(bearMarket.collateral + bullMarket.collateral)} USDC
           </p>
         </div>
-        <div className="bg-surface-muted p-3 border border-brand-border/30">
+        <div className="border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Available</p>
           <p className="text-lg font-bold text-content-primary">
             {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)} USDC

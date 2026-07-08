@@ -3,14 +3,19 @@ import { Tooltip } from './Tooltip'
 
 interface InfoTooltipProps {
   content: ReactNode
+  ariaLabel?: string
 }
 
-export function InfoTooltip({ content }: InfoTooltipProps) {
+export function InfoTooltip({ content, ariaLabel = 'More information' }: InfoTooltipProps) {
   return (
-    <Tooltip content={content}>
-      <span className="inline-flex items-center justify-center w-4 h-4 text-content-secondary hover:text-[#FFAB96] cursor-help transition-colors">
-        <span className="material-symbols-outlined text-sm">help</span>
-      </span>
+    <Tooltip content={content} className="max-w-80 whitespace-normal">
+      <button
+        type="button"
+        className="text-content-secondary transition-colors hover:text-[#FFAB96]"
+        aria-label={ariaLabel}
+      >
+        (i)
+      </button>
     </Tooltip>
   )
 }

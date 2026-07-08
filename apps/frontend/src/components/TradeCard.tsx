@@ -182,10 +182,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <div className="grid grid-cols-2 gap-4">
           <button
             onClick={() => { setSelectedToken('BULL'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
               selectedToken === 'BULL'
-                ? 'border-2 border-positive bg-positive/10'
-                : 'border border-brand-border/30 bg-surface-panel hover:border-positive/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-positive bg-positive/10 text-positive'
+                : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-positive/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedToken === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
@@ -193,10 +193,10 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           </button>
           <button
             onClick={() => { setSelectedToken('BEAR'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 ${
+            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
               selectedToken === 'BEAR'
-                ? 'border-2 border-brand-orange bg-brand-orange/10'
-                : 'border border-brand-border/30 bg-surface-panel hover:border-brand-orange/50 hover:bg-[#3B212D]'
+                ? 'border-2 border-brand-orange bg-brand-orange/10 text-brand-orange'
+                : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-brand-orange/50 hover:bg-[#3B212D]'
             }`}
           >
             <div className={`font-semibold ${selectedToken === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
@@ -244,32 +244,32 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       </div>
 
       {showDetails && (
-        <div className="bg-surface-muted p-3 space-y-2 text-sm border border-brand-border/30">
-          <div className="flex justify-between">
+        <div className="space-y-2 border border-brand-border/20 bg-app-bg p-3 text-sm">
+          <div className="flex min-h-6 items-center justify-between gap-3">
             <span className="text-content-secondary">Route</span>
-            <span className="text-content-primary">
+            <span className="text-right font-semibold text-content-primary">
               {selectedToken === 'BEAR'
                 ? (mode === 'buy' ? 'USDC → Curve → plDXY-BEAR' : 'plDXY-BEAR → Curve → USDC')
                 : (mode === 'buy' ? 'USDC → ZapRouter → plDXY-BULL' : 'plDXY-BULL → ZapRouter → USDC')}
             </span>
           </div>
-          <div className="flex justify-between">
+          <div className="flex min-h-6 items-center justify-between gap-3">
             <span className="text-content-secondary">Price Impact</span>
             <span className={
-              priceImpact > 1 ? 'text-red-500' :
-              priceImpact > slippage ? 'text-warning' :
-              'text-content-primary'
+              priceImpact > 1 ? 'font-semibold text-red-500' :
+              priceImpact > slippage ? 'font-semibold text-warning' :
+              'font-semibold text-content-primary'
             }>
               {priceImpact > 0 ? `${priceImpact.toFixed(2)}%` : '-'}
             </span>
           </div>
           {selectedToken === 'BULL' && mode === 'buy' && (
-            <div className="flex justify-between items-center">
+            <div className="flex min-h-6 items-center justify-between gap-3">
               <span className="text-content-secondary flex items-center gap-1">
                 Safety Buffer
                 <InfoTooltip content="Flash loan safety margin. You may receive up to 0.5% of output as BEAR instead of BULL, depending on slippage." />
               </span>
-              <span className="text-content-primary">0.5%</span>
+              <span className="font-semibold text-content-primary">0.5%</span>
             </div>
           )}
         </div>
