@@ -74,6 +74,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
   const isBear = side === 'BEAR'
   const textColor = isBear ? 'text-brand-orange' : 'text-positive'
   const bgColor = isBear ? 'bg-brand-orange' : 'bg-positive'
+  const activeTextColor = isBear ? 'text-content-primary' : 'text-app-bg'
   const activeBorderColor = isBear ? 'border-brand-orange/50' : 'border-positive/50'
 
   const balance = mode === 'stake' ? tokenBalance : stakedBalance
@@ -121,7 +122,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
             onClick={() => { setMode('stake'); setAmount('') }}
             className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'stake'
-                ? `bg-surface-panel ${textColor} border ${activeBorderColor}`
+                ? `${bgColor} ${activeTextColor} border ${activeBorderColor}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >
@@ -131,7 +132,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
             onClick={() => { setMode('unstake'); setAmount('') }}
             className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
               mode === 'unstake'
-                ? `bg-surface-panel ${textColor} border ${activeBorderColor}`
+                ? `${bgColor} ${activeTextColor} border ${activeBorderColor}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
             }`}
           >

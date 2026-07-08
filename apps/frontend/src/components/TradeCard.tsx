@@ -159,7 +159,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           onClick={() => { setMode('buy'); setInputAmount('') }}
           className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'buy'
-              ? 'bg-surface-panel text-brand-peach border border-brand-peach/50'
+              ? 'border border-brand-peach bg-brand-peach text-app-bg'
               : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >
@@ -169,7 +169,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
           onClick={() => { setMode('sell'); setInputAmount('') }}
           className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
             mode === 'sell'
-              ? 'bg-surface-panel text-brand-peach border border-brand-peach/50'
+              ? 'border border-brand-peach bg-brand-peach text-app-bg'
               : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
           }`}
         >

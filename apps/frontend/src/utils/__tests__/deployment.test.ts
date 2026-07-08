@@ -14,6 +14,7 @@ describe('isSepoliaDeployment', () => {
   })
 
   it('matches local hosts only when the default chain is testnet', () => {
+    expect(isSepoliaDeployment('localhost')).toBe(true)
     expect(isSepoliaDeployment('localhost', 11155111)).toBe(true)
     expect(isSepoliaDeployment('127.0.0.1', 421614)).toBe(true)
     expect(isSepoliaDeployment('localhost', 1)).toBe(false)

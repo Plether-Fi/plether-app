@@ -101,7 +101,7 @@ export const BuyBearFlow: Story = {
 
     await step('Verify Buy mode is selected by default', async () => {
       const buyButton = canvas.getByRole('button', { name: /buy/i })
-      expect(buyButton).toHaveClass('bg-surface-panel')
+      expect(buyButton).toHaveClass('bg-brand-peach')
     })
 
     await step('Select plDXY-BEAR token', async () => {
