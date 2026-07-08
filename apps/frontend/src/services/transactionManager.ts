@@ -233,11 +233,12 @@ class TransactionManager {
     spender: `0x${string}`,
     amount: bigint,
     ctx: OperationContext,
+    nonce?: bigint,
   ): Promise<{ v: number; r: `0x${string}`; s: `0x${string}`; deadline: bigint }> {
     const { config, chainId, address } = ctx
 
-    const [nonce, name, version] = await Promise.all([
-      readContract(config, {
+    const [permitNonce, name, version] = await Promise.all([
+      nonce ?? readContract(config, {
         address: tokenAddress,
         abi: ERC20_ABI,
         functionName: 'nonces',
@@ -269,13 +270,29 @@ class TransactionManager {
         owner: address,
         spender,
         value: amount,
-        nonce,
+        nonce: permitNonce,
         deadline,
       },
     })
 
     const { r, s, v } = splitSignature(signature)
     return { v, r, s, deadline }
+  }
+
+  private async readPermitNonce(
+    tokenAddress: `0x${string}`,
+    ownerAddress: `0x${string}`,
+  ): Promise<bigint | null> {
+    try {
+      return await readContract(this.getConfig(), {
+        address: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: 'nonces',
+        args: [ownerAddress],
+      })
+    } catch {
+      return null
+    }
   }
 
   async executeUnstake(
@@ -349,24 +366,33 @@ class TransactionManager {
     const ctx = await this.getOperationContext(operationKey)
     if (!ctx) return
 
-    const { addresses } = ctx
+    const { addresses, address } = ctx
     let permit!: PermitResult
+    const permitNonce = await this.readPermitNonce(addresses.USDC, address)
+    const prerequisites: Prerequisite[] = []
+
+    if (permitNonce === null) {
+      const hasAllowance = await this.checkAllowance(addresses.USDC, addresses.SYNTHETIC_SPLITTER, address, usdcRequired)
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired))
+      }
+    }
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'mint',
       title: 'Minting token pairs',
-      permitSign: async () => {
-        permit = await this.signPermit(addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx)
+      permitSign: permitNonce === null ? undefined : async () => {
+        permit = await this.signPermit(addresses.USDC, addresses.SYNTHETIC_SPLITTER, usdcRequired, ctx, permitNonce)
       },
-      prerequisites: [],
+      prerequisites,
       mainStep: {
         label: 'Mint pairs',
         execute: (config) => writeContract(config, {
           address: addresses.SYNTHETIC_SPLITTER,
           abi: PLETH_CORE_ABI,
-          functionName: 'mintWithPermit',
-          args: [pairAmount, permit.deadline, permit.v, permit.r, permit.s],
+          functionName: permitNonce === null ? 'mint' : 'mintWithPermit',
+          args: permitNonce === null ? [pairAmount] : [pairAmount, permit.deadline, permit.v, permit.r, permit.s],
         }),
       },
       onRetry: options?.onRetry ?? (() => void this.executeMint(pairAmount, usdcRequired, options)),
@@ -387,22 +413,31 @@ class TransactionManager {
     const stakingAddress = side === 'BEAR' ? addresses.STAKING_BEAR : addresses.STAKING_BULL
 
     let permit!: PermitResult
+    const permitNonce = await this.readPermitNonce(tokenAddress, address)
+    const prerequisites: Prerequisite[] = []
+
+    if (permitNonce === null) {
+      const hasAllowance = await this.checkAllowance(tokenAddress, stakingAddress, address, amount)
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite(`Approve plDXY-${side}`, tokenAddress, stakingAddress, amount))
+      }
+    }
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'stake',
       title: `Staking plDXY-${side}`,
-      permitSign: async () => {
-        permit = await this.signPermit(tokenAddress, stakingAddress, amount, ctx)
+      permitSign: permitNonce === null ? undefined : async () => {
+        permit = await this.signPermit(tokenAddress, stakingAddress, amount, ctx, permitNonce)
       },
-      prerequisites: [],
+      prerequisites,
       mainStep: {
         label: `Stake plDXY-${side}`,
         execute: (config) => writeContract(config, {
           address: stakingAddress,
           abi: STAKED_TOKEN_ABI,
-          functionName: 'depositWithPermit',
-          args: [amount, address, permit.deadline, permit.v, permit.r, permit.s],
+          functionName: permitNonce === null ? 'deposit' : 'depositWithPermit',
+          args: permitNonce === null ? [amount, address] : [amount, address, permit.deadline, permit.v, permit.r, permit.s],
         }),
       },
       onRetry: options?.onRetry ?? (() => void this.executeStake(side, amount, options)),
@@ -632,13 +667,21 @@ class TransactionManager {
     }
 
     let permit!: PermitResult
+    const permitNonce = await this.readPermitNonce(addresses.USDC, address)
+    if (permitNonce === null) {
+      const hasAllowance = await this.checkAllowance(addresses.USDC, routerAddress, address, principal)
+      if (!hasAllowance) {
+        prerequisites.push(this.makeApprovalPrerequisite('Approve USDC', addresses.USDC, routerAddress, principal))
+      }
+    }
+    const deadline = getDeadline()
 
     await this.executeOperation(ctx, {
       operationKey,
       txType: 'leverage',
       title: `Opening ${side} leverage position`,
-      permitSign: async () => {
-        permit = await this.signPermit(addresses.USDC, routerAddress, principal, ctx)
+      permitSign: permitNonce === null ? undefined : async () => {
+        permit = await this.signPermit(addresses.USDC, routerAddress, principal, ctx, permitNonce)
       },
       prerequisites,
       mainStep: {
@@ -646,8 +689,10 @@ class TransactionManager {
         execute: (cfg) => writeContract(cfg, {
           address: routerAddress,
           abi: LEVERAGE_ROUTER_ABI,
-          functionName: 'openLeverageWithPermit',
-          args: [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
+          functionName: permitNonce === null ? 'openLeverage' : 'openLeverageWithPermit',
+          args: permitNonce === null
+            ? [principal, leverage, slippageBps, deadline]
+            : [principal, leverage, slippageBps, permit.deadline, permit.v, permit.r, permit.s],
         }),
       },
       onRetry: options?.onRetry ?? (() => void this.executeOpenLeverage(side, principal, leverage, slippageBps, options)),

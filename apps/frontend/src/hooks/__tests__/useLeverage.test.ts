@@ -14,6 +14,7 @@ const mockUseReadContract = vi.fn()
 const mockUseWriteContract = vi.fn()
 const mockUseWaitForTransactionReceipt = vi.fn()
 const mockWaitForTransactionReceipt = vi.fn()
+const mockPublicReadContract = vi.fn()
 
 vi.mock('wagmi', () => ({
   useAccount: () => mockUseAccount(),
@@ -22,6 +23,7 @@ vi.mock('wagmi', () => ({
   useWaitForTransactionReceipt: () => mockUseWaitForTransactionReceipt(),
   useSignTypedData: () => ({ signTypedDataAsync: mockSignTypedDataAsync }),
   usePublicClient: () => ({
+    readContract: mockPublicReadContract,
     waitForTransactionReceipt: mockWaitForTransactionReceipt,
   }),
 }))
@@ -491,6 +493,42 @@ describe('useAdjustCollateral', () => {
 
     const { transactions } = useTransactionStore.getState()
     expect(transactions[0].title).toBe('Adding collateral')
+  })
+
+  it('adds collateral with approval when USDC permit nonces reverts', async () => {
+    let readCallCount = 0
+    mockUseReadContract.mockImplementation(() => {
+      readCallCount++
+      if (readCallCount === 1) return { data: undefined, error: new Error('reverted') } // nonces
+      if (readCallCount === 2) return { data: undefined } // name, not needed without permit
+      return { data: undefined }
+    })
+    mockPublicReadContract.mockResolvedValue(0n)
+    mockWriteContractAsync
+      .mockResolvedValueOnce('0xapprovecollateralhash')
+      .mockResolvedValueOnce('0xaddcollateralhash')
+
+    const { result } = renderHook(() => useAdjustCollateral('BEAR'))
+    let adjustResult: Result<`0x${string}`, LeverageError> | undefined
+
+    await act(async () => {
+      adjustResult = await result.current.addCollateral(500000000000000000n, 100n)
+    })
+
+    expect(mockSignTypedDataAsync).not.toHaveBeenCalled()
+    expect(mockWriteContractAsync).toHaveBeenCalledTimes(2)
+    expect(mockWriteContractAsync.mock.calls[0][0].functionName).toBe('approve')
+    expect(mockWriteContractAsync.mock.calls[1][0].functionName).toBe('addCollateral')
+    expect(adjustResult).toBeDefined()
+    expect(Result.isOk(adjustResult!)).toBe(true)
+
+    const { transactions } = useTransactionStore.getState()
+    expect(transactions[0].steps.map(step => step.label)).toEqual([
+      'Approve USDC',
+      'Confirming onchain (~12s)',
+      'Add collateral',
+      'Confirming onchain (~12s)',
+    ])
   })
 
   it('removes collateral and creates transaction', async () => {
