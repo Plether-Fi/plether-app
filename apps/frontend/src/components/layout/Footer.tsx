@@ -16,6 +16,9 @@ export function Footer() {
             <a href="https://docs.plether.com" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Docs
             </a>
+            <a href="https://discord.gg/KqaG7B7szU" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
+              Discord
+            </a>
             <Link to="/terms" className={footerLinkClass}>
               Terms of Service
             </Link>

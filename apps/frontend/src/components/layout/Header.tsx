@@ -1,14 +1,10 @@
 import { Link, useLocation } from 'react-router-dom'
 import { ConnectButton } from '../wallet/ConnectButton'
 import { PendingTxBadge } from '../PendingTxBadge'
-import { PriceDisplay } from '../PriceDisplay'
 import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
   { path: '/', label: 'Perps' },
-  { path: '/spot', label: 'Spot' },
-  { path: '/stake', label: 'Stake' },
-  { path: '/mint', label: 'Mint & Redeem' },
 ]
 
 export function Header() {
@@ -28,8 +24,7 @@ export function Header() {
 
           <nav className="hidden min-w-0 items-center gap-1 md:flex">
             {visibleNavLinks.map(({ path, label }) => {
-              const isActive = location.pathname === path ||
-                (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
+              const isActive = location.pathname === path
               return (
                 <Link
                   key={path}
@@ -51,9 +46,6 @@ export function Header() {
         </div>
 
         <div className="flex min-w-0 items-center gap-4 text-sm">
-          <div className="hidden min-w-0 items-center gap-4 lg:flex">
-            <PriceDisplay variant="compact" />
-          </div>
           <PendingTxBadge />
           <ConnectButton />
         </div>
