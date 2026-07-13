@@ -4,6 +4,7 @@ import syntheticSplitterSource from './solidity/SyntheticSplitter.sol?raw'
 const APP_URL = 'https://app.sepolia.plether.com'
 const DOCS_URL = 'https://docs.plether.com'
 const X_URL = 'https://x.com/plether_fi'
+const DISCORD_URL = 'https://discord.gg/KqaG7B7szU'
 const CORE_REPO_URL = 'https://github.com/Plether-Fi/plether-core'
 const MANIFESTO_URL = '/manifesto'
 const MEDIA_KIT_URL = '/media-kit'
@@ -24,8 +25,9 @@ const REDUCED_MOTION_MEDIA = '(prefers-reduced-motion: reduce)'
 type HeaderTheme = 'orange' | 'dark' | 'light'
 const MOBILE_MENU_ITEMS = [
   { href: APP_URL, label: 'Launch Testnet', opensInNewWindow: true },
-  { href: DOCS_URL, label: 'Read Docs' },
   { href: X_URL, label: 'X' },
+  { href: DISCORD_URL, label: 'Discord', opensInNewWindow: true },
+  { href: DOCS_URL, label: 'Read Docs' },
   { href: CORE_REPO_URL, label: 'Github' },
   { href: MANIFESTO_URL, label: 'Manifesto' },
   { href: AUDITS_URL, label: 'Audit Reports' },
@@ -284,6 +286,8 @@ function SiteHeader({
           <Brand />
           <nav className="site-nav" aria-label="Primary navigation">
             <a href={X_URL} aria-label="Plether on X" target="_blank" rel="noreferrer">X</a>
+            <DividerDot />
+            <a href={DISCORD_URL} target="_blank" rel="noreferrer">Discord</a>
             <DividerDot />
             <a href={DOCS_URL} target="_blank" rel="noreferrer">Docs</a>
             <DividerDot />
