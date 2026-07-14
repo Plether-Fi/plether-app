@@ -6,8 +6,16 @@ export function SepoliaNoticeBar() {
   return (
     <div className="flex min-h-11 items-center justify-center gap-3 bg-brand-yellow px-4 py-2.5 text-center text-xs font-medium text-[#250917] sm:text-sm">
       <span>
-        You are on a testnet. Try Plether Perps and Spot with mock funds and an Arbitrum
-        Sepolia-ready wallet. Feedback: <a href="mailto:support@plether.com" className="underline underline-offset-4">support@plether.com</a>.
+        You are on Arbitrum Sepolia testnet. Try trading with mock funds. Join the Arbitrum
+        testnet competition and win a share of $1,000 USDC. July 20 to August 2.{' '}
+        <a
+          href="https://docs.google.com/forms/d/e/1FAIpQLSermuZhWjpHO5X51lWfAjDa8N7uoPKSVdLvjTIk0j1laNpg-w/viewform"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="underline underline-offset-4"
+        >
+          Register here.
+        </a>
       </span>
       <button
         type="button"
