@@ -1886,18 +1886,25 @@ export function PerpsTradeTicket({
     () => formatAdverseConfidenceMultiplier(adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
     [adverseConfidenceMultiplierBps]
   )
-  const adverseOracleConfidenceSpreadTooltip = (
-    <div className="space-y-2">
-      <p>
-        Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
-      </p>
-      <p>
-        It protects LPs by adding a price cushion when oracle prices are less certain.
-      </p>
-      <p>
-        Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
-      </p>
-    </div>
+  const adverseOracleConfidenceSpreadTooltip = useMemo(
+    () => (
+      <div className="space-y-2">
+        <p>
+          Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
+        </p>
+        <p>
+          It protects LPs by adding a price cushion when oracle prices are less certain.
+        </p>
+        <p>
+          Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
+        </p>
+      </div>
+    ),
+    [
+      adverseOracleConfidenceMultiplierValue,
+      adverseOracleConfidenceSpreadValue,
+      rawOracleConfidenceSpreadValue,
+    ]
   )
 
   const previewRows = useMemo<PreviewRow[]>(
@@ -1961,8 +1968,6 @@ export function PerpsTradeTicket({
       dxyExposureNumber,
       slippageNumber,
       adverseOracleConfidenceSpreadValue,
-      rawOracleConfidenceSpreadValue,
-      adverseOracleConfidenceMultiplierValue,
       adverseOracleConfidenceSpreadTooltip,
     ]
   )
