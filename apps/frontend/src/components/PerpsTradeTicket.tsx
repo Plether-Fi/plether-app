@@ -1320,6 +1320,7 @@ export function PerpsTradeTicket({
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
+  const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
   const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
@@ -1383,6 +1384,10 @@ export function PerpsTradeTicket({
   const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
     if (order.status === 'Committed') return false
 
+    const terminalOrderKey = `${order.orderId.toString()}:${order.status}:${order.revealTxHash ?? ''}`
+    if (handledTerminalOrderKeyRef.current === terminalOrderKey) return true
+    handledTerminalOrderKeyRef.current = terminalOrderKey
+
     setCommitTxHash((current) => current ?? order.commitTxHash)
     setExecuteTxHash(order.revealTxHash)
 
@@ -1417,6 +1422,7 @@ export function PerpsTradeTicket({
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return undefined
+    if (handledTerminalOrderKeyRef.current?.startsWith(`${orderId.toString()}:`)) return undefined
     if (orderWaitStartedForRef.current === orderId) return undefined
 
     const activeOrderId = orderId
@@ -2292,6 +2298,7 @@ export function PerpsTradeTicket({
   }
 
   function resetReviewLifecycle() {
+    handledTerminalOrderKeyRef.current = undefined
     setLifecycleState('preview')
     setOrderId(undefined)
     setCommitTxHash(undefined)

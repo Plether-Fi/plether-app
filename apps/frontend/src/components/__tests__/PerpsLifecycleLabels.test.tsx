@@ -478,6 +478,13 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Edit position margin' })).not.toBeInTheDocument()
   })
 
+  it('labels initial position loading without reporting that position data is absent', () => {
+    render(<PerpsAccountPanel isConnected isLoading />)
+
+    expect(screen.getByText('Loading position data...')).toBeInTheDocument()
+    expect(screen.queryByText('No position data')).not.toBeInTheDocument()
+  })
+
   it('hides manual finalization during the automatic finalization grace period', async () => {
     vi.useFakeTimers()
     const onAccountRefresh = vi.fn()
@@ -606,6 +613,21 @@ describe('perps lifecycle labels', () => {
   it('shows the execution confirmation when refreshed order history sees keeper execution', async () => {
     mockIsConnected = true
     perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
+    const onAccountRefresh = vi.fn()
+    const terminalOrder = {
+      orderId: 72n,
+      time: '23 Jun, 11:14',
+      market: 'plDXY Perp',
+      side: 'Long',
+      type: 'Open',
+      price: '1.0286',
+      size: '1 000',
+      status: 'Executed' as const,
+      commitTxHash: '0x971c00000000000000000000000000000000eeab',
+      revealTxHash: '0xec0c00000000000000000000000000000000d745',
+      executionPriceRaw: 97_138_163n,
+      vpiUsdcRaw: 12_345_678n,
+    }
     const baseProps = {
       enableLiveTrading: true,
       initialLifecycleState: 'revealPending' as const,
@@ -621,6 +643,7 @@ describe('perps lifecycle labels', () => {
       withdrawableUsdcRaw: 2_000_000_000n,
       minOpenNotionalUsdc: 100_000_000n,
       minNewPositionNotionalUsdc: 100_000_000n,
+      onAccountRefresh,
     }
 
     const { rerender } = render(<PerpsTradeTicket {...baseProps} orderHistory={[]} />)
@@ -630,22 +653,7 @@ describe('perps lifecycle labels', () => {
     rerender(
       <PerpsTradeTicket
         {...baseProps}
-        orderHistory={[
-          {
-            orderId: 72n,
-            time: '23 Jun, 11:14',
-            market: 'plDXY Perp',
-            side: 'Long',
-            type: 'Open',
-            price: '1.0286',
-            size: '1 000',
-            status: 'Executed',
-            commitTxHash: '0x971c00000000000000000000000000000000eeab',
-            revealTxHash: '0xec0c00000000000000000000000000000000d745',
-            executionPriceRaw: 97_138_163n,
-            vpiUsdcRaw: 12_345_678n,
-          },
-        ]}
+        orderHistory={[terminalOrder]}
       />
     )
 
@@ -657,6 +665,13 @@ describe('perps lifecycle labels', () => {
     expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
     expect(within(finalResult!).getByText('VPI / Price impact')).toBeInTheDocument()
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
+    expect(onAccountRefresh).toHaveBeenCalledTimes(1)
+
+    rerender(<PerpsTradeTicket {...baseProps} orderHistory={[{ ...terminalOrder }]} />)
+
+    await act(async () => {})
+    expect(onAccountRefresh).toHaveBeenCalledTimes(1)
+    expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(1)
   })
 
   it('keeps waiting for keeper execution after the first terminal wait times out', async () => {
