@@ -4,19 +4,7 @@ Use the trade ticket to open a **LONG USD** or **SHORT USD** position, or to add
 
 Both actions begin with a sponsored submission and then follow Plether’s delayed-order process:
 
-```
-Configure
-→ Review
-→ Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-→ Order Pending in FIFO
-→ Funds reserved
-→ Executed or failed
-→ Position updated
-```
+![Complete open-or-increase lifecycle from configuration through sponsored submission, FIFO execution and position update.](../.gitbook/assets/diagrams/open-increase-position-lifecycle.svg)
 
 The sponsored operation is **Confirmed** when the order commitment reaches the chain. The position changes only when that committed order later executes.
 
@@ -62,7 +50,7 @@ New opening and increase commitments are blocked during:
 
 A previously committed order can remain pending if the market becomes close-only while it waits.
 
-> **Screenshot placeholder — Market and account readiness**
+![Market and account readiness](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
 >
 > Show the `Open` market state, Available to Trade and either an empty Position panel or an existing same-direction position.
 
@@ -244,11 +232,11 @@ The preview uses the current state. Execution runs the calculation again after e
 
 Price, pool depth, market skew, carry and account balances can all change during that interval.
 
-> **Screenshot placeholder — Opening preview**
+![Opening preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
 >
 > Show direction, exposure, leverage, margin, execution limit, liquidation price, execution fee, VPI, confidence adjustment and execution reward.
 
-> **Screenshot placeholder — Increase preview**
+![Increase preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--increase-long-preview.png)
 >
 > Place the current position beside the projected result. Include total exposure, average entry price, resulting margin, leverage and liquidation price.
 
@@ -336,13 +324,7 @@ Select `Confirm Commit` and approve the wallet authorization. Plether then submi
 
 The interface reports:
 
-```
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-```
+![Open-or-increase sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/open-increase-sponsored-submission.svg)
 
 If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no order is created. Check the operation status before retrying.
 
@@ -383,7 +365,7 @@ Execution in the commitment block is blocked.
 
 If `Finalize Trade` becomes available in the interface, manual finalization submits the data needed to process the same pending order. It follows the same FIFO, oracle and acceptable-price rules.
 
-> **Screenshot placeholder — Pending order**
+![Pending order](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
 >
 > Show `Pending reveal`, the expiry countdown, `Cancel unavailable` and any manual-finalization action.
 
@@ -457,7 +439,7 @@ The difference reflects the adverse oracle confidence adjustment shown in the tr
 
 Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed borrow base.
 
-> **Screenshot placeholder — Executed position**
+![Executed position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 >
 > Show the updated Position panel together with the matching entry in Order History.
 

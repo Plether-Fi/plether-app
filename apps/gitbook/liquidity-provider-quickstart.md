@@ -45,11 +45,7 @@ The two tranches underwrite the same HousePool but take different positions in t
 
 The basic waterfall is:
 
-```
-Losses:       Junior first → Senior second
-New revenue:  Restore impaired Senior → Junior receives the residual
-Coupon:       Junior NAV → Senior
-```
+![Three-lane diagram summarizing loss absorption, new-revenue allocation and Senior coupon funding.](.gitbook/assets/diagrams/senior-junior-waterfall-rules.svg)
 
 #### Senior is protected, not protected from everything
 
@@ -140,7 +136,7 @@ At minimum, the interface should show:
 
 Do not choose a tranche based only on the highest displayed return. Understand where it sits in the loss and withdrawal waterfall.
 
-> **Screenshot placeholder — LP overview**
+![LP overview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 >
 > Show the future `[Liquidity]` page with Senior and Junior cards. Include total assets, share price, target or historical return, relative risk, current deposit mode, active fee and withdrawal availability.
 
@@ -166,7 +162,7 @@ If the vault allowance is insufficient, the first step is approving the selected
 
 Verify that the spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
 
-> **Screenshot placeholder — Deposit preview**
+![Deposit preview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png)
 >
 > Show the selected tranche, deposit amount, estimated shares, share price, deposit mode, active fee and approval status. The vault address should be visible or linked to the verified deployment page.
 
@@ -255,7 +251,7 @@ After the epoch is finalized:
 
 If Senior impairment prevents the epoch from finalizing, cancellation becomes available again so depositors can recover their escrowed USDC.
 
-> **Screenshot placeholder — Pending deposit**
+![Pending deposit](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
 >
 > Show the requested USDC, selected tranche, epoch number, estimated activation time and current state:
 >
@@ -286,7 +282,7 @@ For Junior, share value reflects residual realized revenue minus Senior coupon t
 
 A rising historical share price does not guarantee that the next period will be profitable.
 
-> **Screenshot placeholder — LP position**
+![LP position](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png)
 >
 > Show tranche shares, current USDC value, share price, change in value, current withdrawable amount, cooldown and any pending epochs.
 
@@ -346,7 +342,7 @@ If the maximum is lower than your intended withdrawal, the remaining shares stay
 
 Ordinary partial withdrawals must satisfy the vault’s minimum amount. A complete residual exit can still be permitted when the remaining value is below that minimum.
 
-> **Screenshot placeholder — Withdrawal preview**
+![Withdrawal preview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
 >
 > Show total position value, share balance, current maximum withdrawal, requested amount, shares burned, cooldown, active fee and expected wallet receipt.
 
@@ -398,10 +394,10 @@ Before approving the vault:
 
 ### Continue reading
 
-* **Senior and Junior liquidity**
-* **How the tranche waterfall works**
-* **Where LP returns come from**
-* **Pending deposit epochs**
-* **The LP withdrawal firewall**
-* **LP fees during market closures**
-* **LP risks and loss scenarios**
+* [**Senior and Junior liquidity**](how-plether-works/the-housepool-and-tranche-waterfall.md#senior-and-junior-at-a-glance)
+* [**How the tranche waterfall works**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-waterfall)
+* [**Where LP returns come from**](how-plether-works/the-housepool-and-tranche-waterfall.md#what-creates-lp-revenue)
+* [**Pending deposit epochs**](how-plether-works/the-housepool-and-tranche-waterfall.md#delayed-deposit-epochs)
+* [**The LP withdrawal firewall**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall)
+* [**LP fees during market closures**](how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps)
+* [**LP risks and loss scenarios**](welcome/risks-you-should-understand-first.md#risks-for-liquidity-providers)

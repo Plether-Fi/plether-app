@@ -16,21 +16,13 @@ Gas sponsorship covers network gas only. Protocol execution fees, VPI, carry, ex
 
 The relationship can be summarized as:
 
-```
-Connected wallet
-      │ signs and controls
-      ▼
-Trading Account
-      │ owns
-      ▼
-Positions · Orders · Margin Account · Trader claims
-```
+![Hierarchy showing the connected wallet signing for and controlling the Trading Account, which owns positions, orders, margin and trader claims.](../.gitbook/assets/diagrams/wallet-trading-account-ownership.svg)
 
 Your Margin Account has no separate wallet address. It is part of Plether’s internal accounting and belongs to the Trading Account address.
 
 Depending on your network, wallet and account history, the Connected wallet and Trading Account may use the same address or two different addresses.
 
-> **Screenshot placeholder:** Account panel showing the Connected wallet address, Trading Account address, account type and Margin Account balance.
+![Wallet, Trading Account, model and Margin Account](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png)
 
 ### Which actions Plether can sponsor
 
@@ -93,15 +85,7 @@ Before signing, check:
 
 A wallet signature is created offchain. Producing it does not submit a transaction and does not consume network gas.
 
-```
-You review and sign
-        ↓
-Plether checks sponsorship eligibility
-        ↓
-The authorized operation is submitted
-        ↓
-Plether pays the eligible network gas
-```
+![Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas.](../.gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg)
 
 The signature remains an important authorization. It allows the Trading Account to perform the specific action shown in the wallet and application.
 
@@ -149,7 +133,7 @@ Your wallet may ask you to authorize the account delegation before sponsored tra
 
 Plether shows the active account model and Trading Account address before you sign.
 
-> **Screenshot placeholder:** Trading Account setup showing the Connected wallet, account model and active Trading Account address.
+![Trading Account setup](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png)
 
 ### Your first deposit
 
@@ -187,19 +171,13 @@ The sponsored operation grants an exact USDC approval and deposits the selected 
 
 After confirmation, the deposited amount appears in the Trading Account’s Margin Account.
 
-> **Screenshot placeholder:** First-deposit flow showing the USDC authorization, deposit signature and resulting Margin Account balance.
+![First deposit authorization and batch](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png)
 
 ### Withdrawing USDC
 
 A withdrawal begins with the Trading Account’s withdrawable Margin Account balance.
 
-```
-Choose amount
-→ Review Trading Account and recipient
-→ Sign withdrawal
-→ Sponsored operation confirms
-→ USDC reaches the displayed wallet
-```
+![Sponsored withdrawal sequence from amount selection and recipient review to owner-wallet receipt.](../.gitbook/assets/diagrams/sponsored-withdrawal-flow.svg)
 
 Your withdrawable balance continues to account for open positions, maintenance requirements, pending orders, reserved execution rewards, accrued carry and other settlement obligations.
 
@@ -218,7 +196,7 @@ The Connected wallet and Trading Account use the same address. USDC withdrawn fr
 
 Gas sponsorship does not increase the amount available for withdrawal.
 
-> **Screenshot placeholder:** Withdrawal confirmation showing the Trading Account, destination address, USDC amount and sponsored gas status.
+![Sponsored withdrawal destination](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--withdrawal-confirmation.png)
 
 ### Existing users and account continuity
 
@@ -309,7 +287,7 @@ Avoid repeating an order because its status took longer than expected. A confirm
 
 During a sponsorship outage, positions remain active, carry continues to accrue, pending orders remain in FIFO and liquidation rules continue to apply.
 
-> **Screenshot placeholder:** Sponsorship-unavailable message showing the reason, retry time and any explicitly supported alternative.
+![Sponsor unavailable](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--sponsor-unavailable.png)
 
 ### Why Plether never silently falls back to the owner EOA
 

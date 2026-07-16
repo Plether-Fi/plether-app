@@ -47,6 +47,8 @@ playwright-report/
 
 # Story screenshots
 screenshots/
+!apps/gitbook/.gitbook/assets/screenshots/
+!apps/gitbook/.gitbook/assets/screenshots/**
 
 # Vite cache
 .vite/

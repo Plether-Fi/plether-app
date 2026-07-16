@@ -18,22 +18,7 @@ These conditions are related, but they are not interchangeable.
 
 Plether’s regular market calendar is defined in UTC and does not move with daylight saving time.
 
-```
-OPEN
-    Sunday 22:00 → Friday 19:00
-
-CLOSE-ONLY · LIVE ORACLE
-    Friday 19:00 → Friday 22:00
-
-CLOSE-ONLY · ORACLE FROZEN
-    Friday 22:00 → Sunday 21:00
-
-CLOSE-ONLY · LIVE ORACLE
-    Sunday 21:00 → Sunday 22:00
-
-OPEN
-    From Sunday 22:00
-```
+![Weekly timeline showing open, close-only live-oracle and close-only frozen-oracle periods.](../.gitbook/assets/diagrams/weekly-market-state-schedule.svg)
 
 | Time in UTC               | Public market state | Oracle policy | New risk |
 | ------------------------- | ------------------- | ------------- | -------- |
@@ -191,11 +176,7 @@ The state at execution determines whether the spread applies. A close committed 
 
 When collectible account value is limited, settlement follows this priority:
 
-```
-Execution fee
-→ Base close obligation
-→ Frozen-close spread
-```
+![Frozen-close collection priority from execution fee through base obligation to frozen-close spread.](../.gitbook/assets/diagrams/frozen-close-collection-priority.svg)
 
 The base close obligation is the ordinary close settlement before the additional frozen spread.
 
@@ -310,7 +291,7 @@ Before the close-only window, traders should consider:
 
 The current protocol setting uses a **3.00% market-close margin requirement**. This is a timelocked risk parameter, not part of the fixed index formula.
 
-> **Screenshot placeholder:** Margin Call Simulator — show the active maintenance requirement and warning that it becomes stricter at market closure.
+![Margin Call Simulator warning](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-call-simulator-confirmation.png)
 
 ### Carry does not pause
 
@@ -543,13 +524,13 @@ Check the oracle freshness indicator as well:
 * `updated … ago`
 * `checking backend for a fresh update`
 
-> **Screenshot placeholder:** Market open banner — annotate the countdown to close-only.
+![Open-market countdown](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
 
-> **Screenshot placeholder:** Close-only banner beside a Reduce-only order — explain that new risk is blocked while reductions remain available.
+![Close-only and Reduce-only ticket](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--close-only-reduce-only.png)
 
-> **Screenshot placeholder:** Plether Dollar Index freshness indicator — show the last update age and stale state.
+![Stale oracle freshness](../.gitbook/assets/screenshots/storybook-perps-instrument-panel--stale-oracle.png)
 
-> **Screenshot placeholder:** Frozen close preview — show normal VPI and the 0.50% frozen-close spread as separate values.
+![Frozen close VPI and fixed spread](../.gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png)
 
 The current weekly countdown follows the regular Friday-to-Sunday schedule. Around configured holiday closures, the onchain state is authoritative even if the displayed duration still reflects the ordinary week.
 

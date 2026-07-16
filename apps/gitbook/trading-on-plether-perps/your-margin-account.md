@@ -4,15 +4,7 @@ Every Plether trade settles through a USDC Margin Account associated with the **
 
 The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI, carry and realized PnL update it. Eligible USDC can then be withdrawn to the owner wallet.
 
-```
-Owner-wallet USDC, when used
-→ Trading Account USDC
-→ Margin Account USDC
-→ available, assigned or reserved USDC
-→ trade settlement
-→ withdrawable USDC
-→ owner wallet
-```
+![USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
 
 ### Three places USDC can appear
 
@@ -46,7 +38,7 @@ The interface presents several values drawn from the same account:
 
 These values answer different account questions. Portfolio value measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
 
-> **Screenshot placeholder — Margin Account overview**
+![Margin Account overview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png)
 >
 > Capture the Margin Account and Position panels with **Available to Trade**, **Position margin**, **Portfolio value**, **Maintenance margin** and **Withdrawable** visible.
 
@@ -132,7 +124,7 @@ The complete `500 USDC` entered Plether. The account used `40 USDC` to settle ca
 
 Deposits have no market-state, oracle-freshness or degraded-mode restriction. They remain available as a protective account action.
 
-> **Screenshot placeholder — Deposit Margin**
+![Deposit Margin](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png)
 >
 > Capture the deposit window with owner-wallet balance, Trading Account balance, deposit amount, `Max`, authorization status and sponsored-operation status.
 
@@ -175,7 +167,7 @@ Pending orders are binding and have no trader cancellation action. Failed or exp
 
 Terminal account settlement has wider reach than an ordinary partial reduction. A full close or liquidation may consume committed margin from other orders when free USDC and position margin cannot cover the account obligation. Partial reductions leave committed order margin protected.
 
-> **Screenshot placeholder — Pending reservations**
+![Pending reservations](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
 >
 > Pair the **Margin Account** and **Open Orders** panels. Show the change in Available to Trade after order margin and the execution reward have been reserved.
 
@@ -223,7 +215,7 @@ Adding margin is immediate and bypasses the delayed order queue. It remains avai
 
 Position margin returns to the free account bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remaining amount.
 
-> **Screenshot placeholder — Edit Position Margin**
+![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 >
 > Capture available USDC, current position margin, amount being added, resulting position margin and resulting leverage.
 
@@ -285,7 +277,7 @@ If either step fails, neither step is applied. The USDC is not left behind in th
 
 For a same-address Trading Account, the owner wallet and Trading Account use one address, so the withdrawn USDC reaches that address directly.
 
-> **Screenshot placeholder — Withdraw Margin**
+![Withdraw Margin](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-margin.png)
 >
 > Capture the withdrawal window with Withdrawable, requested amount and the resulting Margin Account balance.
 
@@ -312,7 +304,7 @@ Account movement
 + net close economics
 ```
 
-A profitable close is credited immediately when the HousePool has enough unreserved cash to pay the complete fresh payout. When full payment is unavailable, the fresh payout becomes a trader claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is credited immediately when the HousePool has enough unreserved cash. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
 
 ### Trader claims
 
@@ -330,20 +322,13 @@ Claim settlement becomes available once the HousePool has enough physical cash t
 
 The flow is:
 
-```
-Trader claim
-→ Owner wallet authorizes Settle Claim
-→ Sponsored settlement confirms
-→ Margin Account USDC
-→ Sponsored withdrawal
-→ Owner wallet
-```
+![Sequence from a trader claim through owner authorization, sponsored settlement, Margin Account credit and sponsored withdrawal.](../.gitbook/assets/diagrams/claim-to-owner-wallet.svg)
 
 Claim settlement and wallet withdrawal are separate sponsored operations.
 
 An existing claim can also offset a later uncovered loss from the same account during a close or liquidation. The remaining claim balance reflects any such netting.
 
-> **Screenshot placeholder — Trader claim**
+![Trader claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 >
 > Show the claim amount, settlement status, `Settle Claim` action and Margin Account destination.
 
@@ -385,7 +370,7 @@ Exposure:             unchanged
 
 Any carry accrued before the margin addition is collected first.
 
-When the position closes, its remaining margin is released. Net close settlement is then credited to the Margin Account or recorded as a trader claim, depending on HousePool settlement liquidity.
+When the position closes, its remaining margin is released separately. The complete fresh HousePool-funded payout is then either credited to the Margin Account or recorded in full as a trader claim, depending on HousePool settlement liquidity.
 
 ### Common account situations
 

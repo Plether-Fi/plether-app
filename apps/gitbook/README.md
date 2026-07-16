@@ -43,7 +43,7 @@ Before a trade can increase risk, the protocol checks whether the HousePool has 
 
 Plether does not forcibly reduce an unrelated profitable position to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-If the pool cannot pay realized profit immediately, the unpaid amount becomes a senior trader claim against the pool. It is not erased, but its settlement may be delayed until sufficient cash is available.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim is not erased, but its settlement may be delayed until sufficient cash is available.
 
 Bounded liability does not remove risk. Traders can still be liquidated, and liquidity providers can still lose capital. It makes the obligation measurable before the protocol takes it on.
 
@@ -80,8 +80,9 @@ Onchain finance already runs on dollars. Plether makes the dollar itself a marke
 
 #### Where to go next
 
-* **How Plether works in five minutes**
-* **Start trading**
-* **Provide liquidity**
-* **Understand fees, carry, and liquidation**
-* **Read the risk and security disclosures**
+* [**How Plether works in five minutes**](welcome/how-plether-works-in-5-minutes.md)
+* [**Start trading**](trader-quickstart.md)
+* [**Provide liquidity**](liquidity-provider-quickstart.md)
+* [**Understand fees, carry and VPI**](how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Understand margin and liquidation**](how-plether-works/margin-leverage-and-liquidation.md)
+* [**Read the risk and security disclosures**](welcome/risks-you-should-understand-first.md)

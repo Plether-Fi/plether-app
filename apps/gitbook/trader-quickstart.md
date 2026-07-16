@@ -10,9 +10,9 @@ Depending on the supported account model, the connected wallet and Trading Accou
 
 ### The flow in one line
 
-`Trading Account MockUSDC → Margin Account → Sponsored order commitment → Open position → Closed settlement → Margin Account → Owner wallet`
+`Trading Account MockUSDC → Margin Account → Sponsored order commitment → Open position → Closed settlement → Margin Account credit or trader claim → Owner wallet after withdrawal`
 
-Closing a position does not send funds directly to the owner wallet. Settlement first returns to the Trading Account’s Margin Account. You withdraw separately.
+Closing a position does not send funds directly to the owner wallet. Released margin and any fully funded fresh payout first credit the Trading Account’s Margin Account. If the HousePool cannot fund the complete fresh payout immediately, that payout is recorded in full as a trader claim and reaches the Margin Account only after claim settlement. You withdraw separately.
 
 ### Before you begin
 
@@ -27,7 +27,7 @@ Use only the official Plether application. Never send tokens directly to a Pleth
 
 ### 1. Connect your wallet and get test funds
 
-Open Plether Perps DEX and select `Connect Wallet`.
+Open [Plether Perps DEX](https://app.sepolia.plether.com) and select `Connect Wallet`.
 
 Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**. The account panel then shows:
 
@@ -43,7 +43,9 @@ If you previously closed the welcome window, select `Get mock USDC` in the testn
 
 MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed for real dollars.
 
-<figure><img src=".gitbook/assets/Zrzut ekranu 2026-07-14 o 17.04.41.png" alt="" width="375"><figcaption></figcaption></figure>
+![Testnet welcome window asking for the Trading Account address before minting 100,000 MockUSDC.](.gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png)
+
+_Enter the active Trading Account address—not a separate owner-wallet address—before requesting MockUSDC._
 
 ### 2. Deposit USDC into your Margin Account
 
@@ -75,7 +77,9 @@ These values do not need to be equal. Open positions, pending orders, carry and 
 
 Keep some USDC free rather than committing the entire account to one position.
 
-<figure><img src=".gitbook/assets/Zrzut ekranu 2026-07-14 o 17.06.22.png" alt="" width="375"><figcaption></figcaption></figure>
+![First deposit flow showing a limited owner-wallet USDC authorization and the sponsored Trading Account deposit operation.](.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png)
+
+_A first deposit can require wallet authorization followed by one atomic sponsored Trading Account operation._
 
 ### 3. Check the market state
 
@@ -169,13 +173,7 @@ If everything matches your intent, select `Confirm Commit`. Your wallet authoriz
 
 The submission lifecycle is:
 
-```
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-```
+![Quickstart lifecycle from Preparing and wallet confirmation through sponsored submission to Confirmed.](.gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg)
 
 **Confirmed** means the order commitment reached the chain. It does not mean the position has changed yet.
 
@@ -276,13 +274,13 @@ A reduction or close is still:
 
 Partial reductions must satisfy the current minimum-order and remaining-position rules. A complete residual close may be permitted even when the remaining amount is below the ordinary minimum.
 
-When the close executes, released margin and settlement return to the Trading Account’s Margin Account. They do not go directly to the owner wallet.
+When the close executes, released margin follows the normal Margin Account path. The complete fresh HousePool-funded payout is either credited to the Margin Account immediately in full or recorded in full as a trader claim. Neither outcome sends USDC directly to the owner wallet.
 
 > **Trader claims**
 >
-> In an exceptional cash-shortfall scenario, part of a profitable close can become a **trader claim** instead of immediately withdrawable USDC.
+> In an exceptional cash-shortfall scenario, released position margin follows the normal account path, while the complete fresh HousePool-funded payout is either credited immediately in full or recorded in full as a **trader claim**. Plether never splits one fresh payout between an immediate credit and a new claim.
 >
-> A trader claim is a protocol liability owned by the Trading Account. It is not wallet USDC and cannot be treated as available margin until settled. See **Trader claims** for the complete settlement process and liquidity conditions.
+> A trader claim is a protocol liability owned by the Trading Account. It is not wallet USDC and cannot be treated as available margin until settled. See [**Check and settle a trader claim**](trading-on-plether-perps/check-and-settle-a-trader-claim.md) for the complete settlement process and liquidity conditions.
 
 ### 11. Withdraw USDC
 
@@ -333,9 +331,9 @@ Before selecting `Confirm Commit`:
 
 ### Continue reading
 
-* **How delayed orders execute**
-* **Margin and liquidation**
-* **Fees, VPI and cost of carry**
-* **Managing and closing a position**
-* **Trader claims**
-* **Market hours and closures**
+* [**How delayed orders execute**](how-plether-works/how-orders-execute.md)
+* [**Margin and liquidation**](how-plether-works/margin-leverage-and-liquidation.md)
+* [**Fees, VPI and cost of carry**](how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Managing and closing a position**](trading-on-plether-perps/reduce-or-close-a-position.md)
+* [**Trader claims**](trading-on-plether-perps/check-and-settle-a-trader-claim.md)
+* [**Market hours and closures**](how-plether-works/market-states-and-oracle-closures.md)

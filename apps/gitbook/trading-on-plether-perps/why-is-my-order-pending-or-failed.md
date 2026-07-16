@@ -2,25 +2,7 @@
 
 An action can fail before an order exists or after a confirmed order commitment. These are separate lifecycles and require different responses.
 
-```
-Sponsored submission
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-
-Delayed order
-Confirmed commitment
-→ Order Pending
-   ├─ Executed
-   └─ Failed
-      ├─ Expired and cleaned up
-      ├─ Slippage exceeded
-      ├─ Engine rejected
-      ├─ Account liquidated
-      └─ Engine panic
-```
+![Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
 
 The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
 
@@ -49,7 +31,7 @@ A confirmed UserOperation or transaction does not always mean the trade executed
 
 Check **Order History** for the terminal result.
 
-> **Screenshot placeholder:** Sponsored operation failed, UserOperation dropped, Finalization transaction failed and Order failed shown side by side.
+![Four failure classes side by side](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--failure-state-comparison.png)
 
 ### UserOperation hash versus transaction hash
 
@@ -236,7 +218,7 @@ RPC interruptions, congestion, keeper downtime and delayed Pyth caching can exte
 
 The trade modal gives automatic finalization a short grace period. It then exposes **Finalize Trade**.
 
-> **Screenshot placeholder:** Finalization modal showing Order ID, acceptable price, estimated execution reward, countdown and Finalize Trade.
+![Finalization modal details](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png)
 
 ### Manual finalization
 
@@ -352,7 +334,7 @@ Cleanup remains subject to global FIFO. An earlier unexpired order cannot be ski
 
 The interface can reach zero slightly before the contract considers the order strictly older than its maximum age. If cleanup reverts exactly as the countdown reaches zero, wait for the next block and retry.
 
-> **Screenshot placeholder:** Open Orders showing Pending reveal, expiry countdown, Cancel unavailable, Expired and Clean Up.
+![Pending and expired Open Orders](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending-and-expired.png)
 
 ### What Failed means
 

@@ -7,7 +7,7 @@ When a position closes, Plether answers two separate questions:
 1. What is the position’s final net settlement?
 2. Can the HousePool fund the full amount immediately?
 
-If sufficient settlement liquidity is available, the positive settlement is credited to the Trading Account’s Margin Account. If it is not, the position still closes and the entire unpaid amount becomes a trader claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately to the Trading Account’s Margin Account or, when sufficient settlement liquidity is unavailable, recorded in full as a trader claim. Plether never splits one fresh payout between an immediate credit and a new claim.
 
 This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC.
 
@@ -20,28 +20,14 @@ This separation prevents a temporary cash shortage from trapping traders in open
 | **Realized PnL**        | The result of the price movement on the closed position, before VPI, execution fees, carry and any frozen-close spread |
 | **Released margin**     | The trader’s existing collateral unlocked from the closed portion                                                      |
 | **Fresh trader payout** | A positive net settlement that must be funded by the HousePool                                                        |
-| **Trader claim**        | A fresh payout that could not be funded immediately                                                                    |
+| **Trader claim**        | A complete fresh payout recorded in full because it could not be funded immediately                                    |
 | **Withdrawable USDC**   | Margin Account USDC that can currently leave the protocol after all account checks                                     |
 
 A profitable close may involve several of these values at once.
 
 ### The settlement flow
 
-```mermaid
-flowchart TD
-    A[Close executes] --> B[Release margin assigned to the closed portion]
-    A --> C[Calculate net close settlement]
-
-    C -->|Positive| D{Can the HousePool fund the full amount?}
-    D -->|Yes| E[Credit the full amount to the Margin Account]
-    D -->|No| F[Record the full amount as a trader claim]
-
-    F --> G[Settle later when aggregate claims are fully covered]
-    G --> E
-    E --> H[Withdraw subject to normal account checks]
-
-    C -->|Zero or negative| I[Collect execution fee, base obligation and any frozen spread in priority order]
-```
+![Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement.](../.gitbook/assets/diagrams/settlement-liquidity-flow.svg)
 
 The process is the same for LONG USD and SHORT USD positions.
 
@@ -230,7 +216,7 @@ For example, if a trader is owed `250 USDC` but only `200 USDC` is available abo
 
 Existing claims therefore cannot be bypassed by newer profitable closes.
 
-Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. A trader claim records the unpaid net positive settlement—not gross PnL before costs.
+Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. When that complete payout cannot be funded immediately, a trader claim records the full net positive settlement—not gross PnL before costs.
 
 For example:
 
@@ -242,7 +228,7 @@ Fresh trader payout:                250 USDC
 
 If immediate settlement liquidity is insufficient, the resulting claim is `250 USDC`, not `300 USDC`.
 
-> **Screenshot placeholder — Close settlement result**
+![Close settlement result](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
 >
 > Show released margin, realized PnL, signed VPI, execution fee, carry, frozen spread assessed, frozen spread paid, frozen spread waived, net settlement, immediate Margin Account credit and trader claim created.
 
@@ -268,7 +254,7 @@ A trader claim is a USDC-denominated amount that the HousePool owes to a specifi
 
 It is:
 
-* recorded onchain at the full unpaid amount;
+* recorded onchain at the complete fresh payout amount;
 * separate from the Trading Account’s Margin Account balance;
 * reserved ahead of LP withdrawals;
 * added to any existing claim belonging to the same account;
@@ -325,7 +311,7 @@ Claim settlement requires authorization from the Trading Account’s owner walle
 
 If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
 
-> **Screenshot placeholder — Trader claim panel**
+![Trader claim panel](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 >
 > Show the account’s claim balance, aggregate coverage status, “Settlement available” or “Settlement unavailable,” the destination as “Margin Account,” and the **Settle claim** action.
 
@@ -345,11 +331,7 @@ If the same account later produces a terminal negative settlement, its existing 
 
 For an oracle-frozen voluntary full close, collection still follows:
 
-```
-Execution fee
-→ base close obligation
-→ frozen-close spread
-```
+![Collection order from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
 
 Claim value used against the execution fee or base obligation can prevent genuine bad debt. Claim value remaining after those obligations can pay the frozen-close spread to LPs.
 
@@ -454,7 +436,7 @@ A waived spread is not recorded as:
 
 LP accounting recognizes only the amount actually paid.
 
-> **Screenshot placeholder — HousePool liquidity**
+![Complete HousePool liquidity breakdown](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 >
 > Show canonical assets, maximum live trader liability, aggregate trader claims, total withdrawal reserve, free LP liquidity and Senior and Junior maximum withdrawals.
 

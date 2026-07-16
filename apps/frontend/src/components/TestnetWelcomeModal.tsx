@@ -50,12 +50,13 @@ export function TestnetWelcomeModalView({
           execution without real funds.
         </p>
         <p>
-          Enter your wallet address and we will send you 100,000 mock USDC on Arbitrum Sepolia to
-          start testing. Testnet balances and positions have no real-world value and could be reset
-          at any time.
+          Enter the Trading Account address shown in Plether and we will send it 100,000 mock USDC
+          on Arbitrum Sepolia to start testing. With a same-address account, this is also your
+          connected wallet address.
         </p>
         <p>
-          Use a wallet that supports Arbitrum Sepolia. You will need that network for trading.
+          Testnet balances and positions have no real-world value and could be reset at any time.
+          Eligible trader actions are gas-sponsored while sponsorship is available.
         </p>
         <p>
           Thanks for being here early. This is a safe testnet environment, so try things freely.
@@ -63,7 +64,7 @@ export function TestnetWelcomeModalView({
         </p>
 
         <Input
-          label="Wallet address"
+          label="Trading Account address"
           value={walletAddress}
           onChange={(event) => {
             onWalletAddressChange(event.target.value)
@@ -84,22 +85,12 @@ export function TestnetWelcomeModalView({
           <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
             <p className="font-medium">
               {claim.status === 'already_claimed'
-                ? 'Mock USDC was already claimed for this wallet.'
-                : 'Mock USDC minted to your wallet.'}
+                ? 'Mock USDC was already claimed for this Trading Account.'
+                : 'Mock USDC minted to your Trading Account.'}
             </p>
             <p className="text-content-secondary">
-              Next, deposit those funds into the exchange margin account before placing orders.
-            </p>
-            <p className="text-content-secondary">
-              You also need some Arbitrum Sepolia ETH to pay transaction fees.{' '}
-              <a
-                href="https://www.alchemy.com/faucets/arbitrum-sepolia"
-                target="_blank"
-                rel="noreferrer"
-                className="text-positive hover:underline"
-              >
-                Get Arbitrum Sepolia ETH from Alchemy.
-              </a>
+              Next, use the sponsored deposit flow to move those funds into the Trading Account&apos;s
+              Margin Account before placing orders.
             </p>
             <a
               href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}

@@ -211,7 +211,7 @@ The simplified value flow is:
 | **Open position**     | Position margin is locked and trade costs settle | Pool assumes a bounded payout liability           |
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
 | **Losing close**      | Reachable trader USDC is collected               | Realized value enters pool economics              |
-| **Profitable close**  | Margin is released and profit is credited        | Pool funds the profit or records a trader claim   |
+| **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
 | **Carry realization** | Carry is collected from reachable collateral     | Realized carry becomes LP revenue                 |
 | **LP deposit**        | No change to trader margin                       | USDC enters through a tranche vault               |
 
@@ -226,7 +226,7 @@ For conservative pool accounting:
 * Unrealized trader profits are treated as liabilities.
 * Unrealized trader losses are not treated as spendable LP assets.
 * A trader loss becomes pool value only when it is physically collected.
-* A trader profit becomes a margin credit or an explicit trader claim.
+* Released margin follows separately; the complete fresh trader payout becomes either a full Margin Account credit or a trader claim recorded in full.
 * An uncovered realized loss becomes bad debt.
 
 This avoids treating money owed by a losing trader as if the pool already possessed it.
@@ -243,11 +243,11 @@ A profitable close accounts for:
 * Accrued carry
 * Released position margin
 
-If sufficient unreserved HousePool cash is available, the net result is credited to the Trading Account’s Margin Account.
+Released position margin follows separately. If sufficient unreserved HousePool cash is available, the complete fresh HousePool-funded payout is credited to the Trading Account’s Margin Account.
 
 It is not sent directly to the wallet. The trader withdraws separately.
 
-If the pool cannot fund the profit immediately, the position can still close. The unpaid amount becomes a **trader claim** owned by the Trading Account.
+If the pool cannot fund the complete fresh payout immediately, the position can still close. The complete fresh payout is recorded in full as a **trader claim** owned by the Trading Account. Plether does not split one fresh payout between an immediate Margin Account credit and a new claim.
 
 The claim:
 

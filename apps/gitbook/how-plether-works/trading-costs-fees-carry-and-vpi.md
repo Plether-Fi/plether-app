@@ -13,13 +13,7 @@ The distinction matters:
 
 Only the oracle adjustment changes the price recorded on the position. The other items change the USDC economics around that price.
 
-```
-Oracle price → entry, exit and directional PnL
-
-Execution fee + VPI + carry
-+ frozen-close spread when applicable
-→ account settlement
-```
+![Two-input flowchart showing oracle price determining directional PnL while fees, VPI, carry and frozen spread feed account settlement.](../.gitbook/assets/diagrams/trading-price-and-settlement-costs.svg)
 
 ### Sponsored network gas is not a trading discount
 
@@ -293,11 +287,7 @@ The active rate is part of the 48-hour timelocked risk configuration. It must re
 
 When the trader’s available value is limited, close settlement follows this order:
 
-```
-Protocol execution fee
-→ Base close obligation
-→ Frozen-close spread
-```
+![Protocol collection order from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/protocol-close-collection-order.svg)
 
 A partial reduction must settle its complete obligation, including the full frozen-close spread. If it cannot, the reduction does not execute.
 
@@ -518,11 +508,7 @@ Moving existing free USDC into assigned position margin does not add new account
 
 It can still reduce future carry:
 
-```
-Higher assigned position margin
-→ lower LP-backed borrow base
-→ lower future carry
-```
+![Flow showing higher assigned position margin reducing the LP-backed borrow base and future carry.](../.gitbook/assets/diagrams/margin-reduces-future-carry.svg)
 
 This is why adding position margin can matter even when it has little immediate effect on account-level liquidation health.
 
@@ -713,9 +699,9 @@ A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, p
 
 If the active frontend does not yet display these fields, the onchain preview and event remain the authoritative breakdown.
 
-\[Screenshot placeholder: **Commit Preview**—annotate Estimated protocol execution fee, VPI / Price impact, Estimated execution reward and Adverse oracle confidence spread.]
+![Commit Preview cost lines](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
 
-\[Future UI placeholder: **Frozen close preview**—show signed VPI and the frozen-close spread as separate line items, followed by assessed, paid and waived spread.]
+![Frozen close preview costs](../.gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png)
 
 #### Two meanings of “Cost of carry”
 
@@ -726,7 +712,7 @@ The current interface uses **Cost of carry** in two places:
 
 The header does not currently show the position’s live side-utilization-adjusted annualized rate.
 
-\[Screenshot placeholder: Market header beside **Current Position**—show the percentage in the header and accrued USDC on the position.]
+![Market header and accrued position carry](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
 
 #### Current preview limitations
 
@@ -741,7 +727,7 @@ The execution-reward preview is also derived from frontend defaults rather than 
 
 Treat the commit preview as an estimate. The onchain result and updated clearinghouse balance are authoritative.
 
-\[Screenshot placeholder: **Final Result**—show the transition from estimated values to finalized execution values.]
+![Estimated-to-final result](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
 
 ### What LPs receive
 
