@@ -832,7 +832,7 @@ function PreviewRows({
                 onClick={onSlippageClick}
               >
                 <span className="group-hover:underline group-focus-visible:underline">{row.label}</span>
-                <span className="flex min-h-6 items-center justify-end text-right font-semibold group-hover:underline group-focus-visible:underline">
+                <span className="flex min-h-6 items-center justify-end text-right font-normal group-hover:underline group-focus-visible:underline">
                   {row.value}
                 </span>
               </button>
@@ -862,7 +862,7 @@ function PreviewRows({
                 </Tooltip>
               ) : null}
             </dt>
-            <dd className={`flex min-h-6 min-w-0 items-center justify-end overflow-hidden text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
+            <dd className={`flex min-h-6 min-w-0 items-center justify-end overflow-hidden text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
       })}
