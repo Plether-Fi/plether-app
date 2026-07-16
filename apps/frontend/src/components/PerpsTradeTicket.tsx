@@ -120,6 +120,9 @@ interface ClosePreviewView {
   executionFeeUsdc: bigint
   remainingSize: bigint
   remainingMargin: bigint
+  frozenSpreadUsdc: bigint
+  frozenSpreadPaidUsdc: bigint
+  frozenSpreadWaivedUsdc: bigint
 }
 
 interface PerpsTradeTicketProps {
@@ -143,6 +146,9 @@ interface PerpsTradeTicketProps {
   oraclePriceDisplay?: string
   latestBasket?: BasketLatest
   adverseConfidenceMultiplierBps?: string
+  oracleFrozen?: boolean
+  /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
+  closePreviewFixture?: ClosePreviewView
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -176,7 +182,10 @@ const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
-const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
+const LIVE_SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
+const ORACLE_FROZEN_SLIPPAGE_OPTIONS = [0.5, 0.55, 0.75, 1, Infinity]
+const DEFAULT_LIVE_SLIPPAGE = 0.1
+const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0.55
 const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
@@ -195,7 +204,9 @@ const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
 const VPI_PRICE_IMPACT_TOOLTIP =
   'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
 const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
-  'Execution uses the adverse side of the Pyth confidence range, not only the midpoint basket price. This protects the pool from oracle uncertainty and behaves like a small execution spread, but it is not a separate USDC fee.'
+  'Execution uses the adverse side of the Pyth confidence range for opens and for live or FAD-only closes. Oracle-frozen voluntary closes/reductions waive that price shift and use the separate frozen close spread instead; confidence-width validation still applies.'
+const FROZEN_CLOSE_SPREAD_TOOLTIP =
+  'Oracle-frozen closes/reductions use this fixed LP-owned spread instead of the adverse-confidence price shift to protect LPs from price uncertainty. Wait until the market reopens to avoid this spread.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
@@ -474,6 +485,9 @@ function parseClosePreview(value: unknown): ClosePreviewView | undefined {
     executionFeeUsdc: tupleBigInt(value, 7, 'executionFeeUsdc'),
     remainingSize: tupleBigInt(value, 15, 'remainingSize'),
     remainingMargin: tupleBigInt(value, 16, 'remainingMargin'),
+    frozenSpreadUsdc: tupleBigInt(value, 21, 'frozenSpreadUsdc'),
+    frozenSpreadPaidUsdc: tupleBigInt(value, 22, 'frozenSpreadPaidUsdc'),
+    frozenSpreadWaivedUsdc: tupleBigInt(value, 23, 'frozenSpreadWaivedUsdc'),
   }
 }
 
@@ -1256,6 +1270,8 @@ export function PerpsTradeTicket({
   oraclePriceDisplay,
   latestBasket,
   adverseConfidenceMultiplierBps,
+  oracleFrozen = false,
+  closePreviewFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
   oracleBasketComponents,
@@ -1289,13 +1305,16 @@ export function PerpsTradeTicket({
   const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
+  const slippageOptions = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
   const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
   const [size, setSize] = useState(initialSize)
   const [leverage, setLeverage] = useState(5)
-  const [slippage, setSlippage] = useState(0.1)
+  const [slippage, setSlippage] = useState(
+    oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
+  )
   const [lifecycleState, setLifecycleState] = useState<TradeLifecycleState>(initialLifecycleState)
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
@@ -1463,6 +1482,15 @@ export function PerpsTradeTicket({
   }, [maxLeverage])
 
   useEffect(() => {
+    const options = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
+    const fallback = oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
+
+    setSlippage((currentSlippage) => (
+      options.includes(currentSlippage) ? currentSlippage : fallback
+    ))
+  }, [oracleFrozen])
+
+  useEffect(() => {
     if (!canEnableMarginCallSimulator) {
       setIsMarginCallSimulatorEnabled(false)
     }
@@ -1511,6 +1539,7 @@ export function PerpsTradeTicket({
   const hasCurrentPosition = Boolean(currentPosition?.exists && currentPositionDxyExposureRaw > 0n)
   const isOppositePositionDirection = hasCurrentPosition && currentPosition !== undefined && direction !== currentPosition.direction
   const isReducingCurrentPosition = hasCurrentPosition && (isReduceOnly || isOppositePositionDirection)
+  const isOracleFrozenClose = oracleFrozen && isReducingCurrentPosition
   const effectiveOrderDirection = isReducingCurrentPosition && currentPosition?.direction
     ? currentPosition.direction
     : direction
@@ -1702,6 +1731,7 @@ export function PerpsTradeTicket({
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+      ?? (!enableLiveTrading ? closePreviewFixture : undefined)
     : undefined
   const tradePreviewFailure = readFailure(tradePreviewData as readonly ContractResult[] | undefined, 0)
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
@@ -1825,6 +1855,9 @@ export function PerpsTradeTicket({
   const previewVpiUsdc = isReducingCurrentPosition ? closePreview?.vpiDeltaUsdc : openPreview?.vpiUsdc
   const previewLensFallbackValue = isTradePreviewPending ? PREVIEW_LOADING_VALUE : PREVIEW_UNAVAILABLE_VALUE
   const previewLensFallbackTone = isTradePreviewPending ? 'muted' : undefined
+  const previewFrozenCloseSpreadValue = closePreview === undefined
+    ? previewLensFallbackValue
+    : formatUsdcRaw(closePreview.frozenSpreadUsdc)
   const previewMaintenanceMarginValue = previewMaintenanceMarginUsdc === undefined
     ? previewLensFallbackValue
     : formatUsdcRaw(previewMaintenanceMarginUsdc)
@@ -1880,20 +1913,23 @@ export function PerpsTradeTicket({
     () => formatAdverseConfidenceMultiplier(adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
     [adverseConfidenceMultiplierBps]
   )
-  const adverseOracleConfidenceSpreadTooltip = (
+  const adverseOracleConfidenceSpreadTooltip = useMemo(() => (
     <div className="space-y-2">
       <p>
         Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
       </p>
       <p>
-        It protects LPs by adding a price cushion when oracle prices are less certain.
+        It applies to opens and to close/reduce execution in live and FAD-only regimes. An oracle-frozen close/reduce replaces this row with the fixed frozen close spread.
       </p>
       <p>
         Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
       </p>
     </div>
-  )
-
+  ), [
+    adverseOracleConfidenceMultiplierValue,
+    adverseOracleConfidenceSpreadValue,
+    rawOracleConfidenceSpreadValue,
+  ])
   const previewRows = useMemo<PreviewRow[]>(
     () => [
       {
@@ -1915,11 +1951,18 @@ export function PerpsTradeTicket({
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
       { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
-      {
-        label: 'Adverse oracle confidence spread',
-        value: adverseOracleConfidenceSpreadValue,
-        tooltip: adverseOracleConfidenceSpreadTooltip,
-      },
+      isOracleFrozenClose
+        ? {
+            label: 'Estimated frozen close spread',
+            value: previewFrozenCloseSpreadValue,
+            tone: previewFrozenCloseSpreadValue === PREVIEW_LOADING_VALUE ? 'muted' as const : undefined,
+            tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+          }
+        : {
+            label: 'Adverse oracle confidence spread',
+            value: adverseOracleConfidenceSpreadValue,
+            tooltip: adverseOracleConfidenceSpreadTooltip,
+          },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
@@ -1955,9 +1998,9 @@ export function PerpsTradeTicket({
       dxyExposureNumber,
       slippageNumber,
       adverseOracleConfidenceSpreadValue,
-      rawOracleConfidenceSpreadValue,
-      adverseOracleConfidenceMultiplierValue,
       adverseOracleConfidenceSpreadTooltip,
+      isOracleFrozenClose,
+      previewFrozenCloseSpreadValue,
     ]
   )
   const sidePanelPreviewRows = useMemo(
@@ -2511,7 +2554,7 @@ export function PerpsTradeTicket({
               isSlippageConfigOpen ? (
                 <div className="mt-3 py-3">
                   <div className="grid grid-cols-5 gap-2">
-                    {SLIPPAGE_OPTIONS.map((option) => (
+                    {slippageOptions.map((option) => (
                       <button
                         key={option.toString()}
                         type="button"

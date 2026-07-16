@@ -63,6 +63,9 @@ const CLOSE_PREVIEW_COMPONENTS = [
   { name: 'postOpDegradedMode', type: 'bool' },
   { name: 'effectiveAssetsAfterUsdc', type: 'uint256' },
   { name: 'maxLiabilityAfterUsdc', type: 'uint256' },
+  { name: 'frozenSpreadUsdc', type: 'uint256' },
+  { name: 'frozenSpreadPaidUsdc', type: 'uint256' },
+  { name: 'frozenSpreadWaivedUsdc', type: 'uint256' },
 ] as const
 
 const OPEN_PREVIEW_COMPONENTS = [
