@@ -1,0 +1,613 @@
+# How PnL is calculated
+
+> Price PnL tells you what the market movement did. It does not tell you how much cash is available to withdraw.
+
+Plether’s directional PnL is linear:
+
+* **LONG USD** profits when the displayed price rises.
+* **SHORT USD** profits when the displayed price falls.
+
+That first calculation is simple. Settlement is where the distinctions begin.
+
+Gross PnL, account equity, released margin, net settlement, trader claims and wallet balance are related—but they are not the same number.
+
+````
+```mermaid
+flowchart TD
+    A["Entry price + current mark + position quantity"] --> B["Unrealized price PnL"]
+    B --> C["Account equity and liquidation health"]
+
+    D["Entry price + close execution price + closed quantity"] --> E["Realized price PnL"]
+    E --> F["Apply VPI, execution fee and accrued carry"]
+    F --> G["Net close settlement"]
+    G --> H{"Positive or negative?"}
+    H -->|"Positive"| I{"Free HousePool cash?"}
+    I -->|"Available"| J["Credit Margin Account"]
+    I -->|"Unavailable"| K["Record trader claim"]
+    H -->|"Negative"| L["Collect reachable account collateral"]
+    L --> M["Record bad debt if a shortfall remains"]
+```
+````
+
+### Start with the displayed price
+
+Plether’s oracle calculates the raw foreign-currency basket, represented here as `B`.
+
+The interface converts it into the dollar-oriented price:
+
+```
+D = 2.00 − B
+```
+
+Where:
+
+* `B` is the bounded foreign-currency basket used internally.
+* `D` is the **plDXY Perp price** displayed to traders.
+
+Both are defined inside the fixed settlement range:
+
+```
+0.00 ≤ B ≤ 2.00
+0.00 ≤ D ≤ 2.00
+```
+
+For example:
+
+```
+Raw basket B:       0.92
+Displayed price D:  2.00 − 0.92 = 1.08
+```
+
+The inversion changes the direction of a move, but not its magnitude:
+
+```
+|change in D| = |change in B|
+```
+
+All trader-facing formulas below use `D`, the price displayed in the interface.
+
+### Exposure, quantity and notional are different
+
+Behind every position is a fixed contract quantity, represented here as `Q`. That quantity changes only when the position is increased or reduced.
+
+The current interface derives several different values from it:
+
+| Interface value         | Meaning                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| **plDXY Perp price**    | Current displayed price `D`                                        |
+| **plDXY Perp exposure** | `Q × current D`                                                    |
+| **Entry price**         | Displayed execution price when the position was opened or averaged |
+| **Entry notional**      | `Q × raw entry basket price`                                       |
+| **Contract notional**   | `Q × current raw basket price`                                     |
+| **Position margin**     | USDC collateral assigned to the position                           |
+| **Unrealized PnL**      | Gross price PnL from entry to the current mark                     |
+
+The distinction matters because **plDXY Perp exposure** and **Entry notional** use different price bases.
+
+> Do not calculate PnL by subtracting Entry notional from current plDXY Perp exposure.
+
+The interface handles the conversion into contract quantity. For understanding PnL, the important variable is `Q`: the amount of index exposure whose value changes with price.
+
+`[Screenshot placeholder: Current Position showing plDXY Perp exposure, Entry notional, Entry price, Leverage, Liquidation price, Unrealized PnL and Cost of carry]`
+
+### Gross PnL
+
+Let:
+
+* `Q` = position quantity
+* `Dentry` = displayed entry price
+* `Dmark` = current displayed mark
+
+#### LONG USD
+
+```
+Gross PnL = Q × (Dmark − Dentry)
+```
+
+The result is positive when the displayed price rises and negative when it falls.
+
+#### SHORT USD
+
+```
+Gross PnL = Q × (Dentry − Dmark)
+```
+
+The result is positive when the displayed price falls and negative when it rises.
+
+| Direction | Profits when     | Gross PnL              |
+| --------- | ---------------- | ---------------------- |
+| LONG USD  | `Dmark > Dentry` | `Q × (Dmark − Dentry)` |
+| SHORT USD | `Dmark < Dentry` | `Q × (Dentry − Dmark)` |
+
+The contracts apply the required decimal scaling automatically. The examples below use human-readable units.
+
+### LONG USD example
+
+Suppose a trader holds:
+
+```
+Position quantity: 10,000
+Entry price:         1.00
+Current mark:        1.04
+```
+
+Gross unrealized PnL is:
+
+```
+10,000 × (1.04 − 1.00)
+= +400 USDC
+```
+
+If the mark falls to `0.97` instead:
+
+```
+10,000 × (0.97 − 1.00)
+= −300 USDC
+```
+
+### SHORT USD example
+
+Suppose a trader holds:
+
+```
+Position quantity: 10,000
+Entry price:         1.00
+Current mark:        0.96
+```
+
+Gross unrealized PnL is:
+
+```
+10,000 × (1.00 − 0.96)
+= +400 USDC
+```
+
+If the mark rises to `1.03`:
+
+```
+10,000 × (1.00 − 1.03)
+= −300 USDC
+```
+
+These results include only directional price movement.
+
+They do not include:
+
+* VPI
+* Protocol execution fees
+* Carry
+* Execution rewards
+* Gas
+* Released margin
+
+### How leverage affects PnL
+
+Leverage does not appear as a second multiplier in the PnL formula.
+
+Once the position quantity has been established:
+
+```
+PnL = quantity × directional price change
+```
+
+Higher leverage allows a trader to support a larger quantity with less collateral. It therefore magnifies PnL relative to the trader’s margin, but it does not multiply an already-calculated PnL again.
+
+Two positions with the same quantity, entry and current mark have the same gross PnL—even if one has more margin assigned than the other.
+
+Their liquidation risk will be different.
+
+The current Plether interface does not display an ROI or PnL-percentage field. **Unrealized PnL** is shown directly in USDC.
+
+### Which price is used?
+
+#### Unrealized PnL uses the current mark
+
+Unrealized PnL uses:
+
+* The position’s actual entry price
+* The current central oracle mark
+* The full remaining position quantity
+
+The mark is not a guaranteed close price.
+
+#### Realized PnL uses the close execution price
+
+When you reduce or close a position, Plether uses the actual confidence-adjusted execution price resolved through the delayed-order process.
+
+Expressed using displayed prices:
+
+| Action          | Confidence adjustment |
+| --------------- | --------------------- |
+| Open LONG USD   | Higher entry          |
+| Close LONG USD  | Lower exit            |
+| Open SHORT USD  | Lower entry           |
+| Close SHORT USD | Higher exit           |
+
+This adjustment is embedded in the execution price. It is not a separate USDC fee.
+
+As a result:
+
+* A newly opened position may begin with a small negative unrealized PnL.
+* The realized PnL from a close may be lower than the unrealized PnL visible before commitment.
+* Price movement during delayed execution can create an additional difference.
+
+VPI, fees and carry are still applied separately.
+
+### Unrealized PnL is not cash
+
+The interface describes **Unrealized PnL** as price PnL from entry to the current mark, before execution fees, VPI and pending carry.
+
+It answers a hypothetical question:
+
+> What is the position’s gross directional result at the current mark?
+
+No USDC has moved merely because unrealized PnL changed.
+
+Positive unrealized PnL is not yet:
+
+* Credited to your Margin Account
+* Withdrawable to your wallet
+* Paid out of the HousePool
+
+Negative unrealized PnL is not yet:
+
+* Collected as HousePool cash
+* Realized LP revenue
+* Final bad debt
+
+Plether treats the two sides conservatively:
+
+* Unrealized trader profits are recognized as potential pool liabilities.
+* Unrealized trader losses are not treated as spendable pool assets.
+
+Settlement is what turns PnL into cash movement, a trader claim or bad debt.
+
+`[Screenshot placeholder: Unrealized PnL tooltip stating that it excludes execution fees, VPI / price impact and pending carry]`
+
+### Entry price after increasing a position
+
+Increasing an existing position in the same direction creates a quantity-weighted average entry:
+
+```
+New entry =
+(old quantity × old entry + added quantity × added execution price)
+÷ total quantity
+```
+
+Because `D = 2.00 − B` is linear, the same weighted-average formula works with displayed prices.
+
+For example:
+
+```
+Existing quantity: 10,000 at 1.00
+Added quantity:      5,000 at 1.06
+```
+
+The new entry is:
+
+```
+(10,000 × 1.00 + 5,000 × 1.06)
+÷ 15,000
+= 1.02
+```
+
+Increasing the position does not realize the existing price PnL.
+
+At a mark of `1.06`, the original position had:
+
+```
+10,000 × (1.06 − 1.00)
+= +600 USDC
+```
+
+After the increase:
+
+```
+15,000 × (1.06 − 1.02)
+= +600 USDC
+```
+
+The same gross PnL remains embedded in the larger position, subject to contract rounding.
+
+The increase can still change account balances because:
+
+* Opening VPI and the execution fee are settled.
+* Accrued carry is checkpointed.
+* Additional margin may be locked.
+* A new execution reward is paid.
+
+### Partial closes
+
+A partial close realizes price PnL only on the quantity being closed:
+
+```
+Realized price PnL =
+closed quantity × directional price difference
+```
+
+The remaining position:
+
+* Keeps the same entry price
+* Keeps the same direction
+* Retains the unclosed quantity
+* Releases position margin proportionally
+* Retains its proportional maximum-payout envelope
+
+Suppose the LONG USD position above has:
+
+```
+Total quantity: 15,000
+Entry price:     1.02
+Close quantity:  5,000
+Close price:     1.08
+```
+
+Gross realized PnL is:
+
+```
+5,000 × (1.08 − 1.02)
+= +300 USDC
+```
+
+The remaining position is:
+
+```
+Remaining quantity: 10,000
+Entry price:         1.02
+```
+
+At the same `1.08` mark, its gross unrealized PnL is:
+
+```
+10,000 × (1.08 − 1.02)
+= +600 USDC
+```
+
+Position margin is released proportionally. That released margin is not profit—it is existing collateral becoming free again.
+
+A partial close also checkpoints the carry accrued by the position up to that point. Gross price PnL may therefore be proportional to the quantity closed while the final account adjustment is not perfectly proportional.
+
+### From gross realized PnL to net settlement
+
+Once the close execution price is fixed, Plether calculates gross realized price PnL.
+
+The close then applies separate USDC adjustments:
+
+```
+Net close adjustment
+=
+Gross realized price PnL
+− Signed close VPI
+− Protocol execution fee
+− Accrued carry
+```
+
+For VPI:
+
+* A positive value is a charge.
+* A negative value is a rebate.
+* Subtracting a negative value increases the trader’s result.
+
+Opening VPI and the opening execution fee are not subtracted again. They were already settled when the position opened or increased.
+
+The order execution reward is separate from this formula. It pays for resolving the delayed order and is not directional PnL.
+
+#### Example net settlement
+
+Assume a LONG USD close produces:
+
+```
+Gross realized PnL:       +390 USDC
+Close VPI charge:          −12 USDC
+Protocol execution fee:     −4 USDC
+Accrued carry:              −6 USDC
+```
+
+The net close adjustment is:
+
+```
+390 − 12 − 4 − 6
+= +368 USDC
+```
+
+If `1,000 USDC` of position margin is released, the accounting should show two separate entries:
+
+```
+Margin released:         1,000 USDC
+Net close adjustment:     +368 USDC
+```
+
+The `1,000 USDC` is returned collateral. Only the `368 USDC` is the net result created by that close.
+
+A complete lifetime result would also account for:
+
+* Opening VPI
+* Opening execution fee
+* Opening and closing execution rewards
+* Any earlier increases or reductions
+* Network gas paid in ETH
+
+### When a close realizes a loss
+
+For a negative settlement, Plether collects the amount owed from collateral reachable inside the trader’s Plether account.
+
+Conceptually:
+
+```
+Amount owed
+=
+Gross realized loss
++ positive VPI
++ execution fee
++ accrued carry
+− applicable rebates
+```
+
+The amount collected can include:
+
+* Free USDC in the Margin Account
+* Margin released by the close
+* Other collateral reachable under terminal settlement rules
+
+Loss is therefore not necessarily limited to the margin originally assigned to the position.
+
+Plether cannot debit USDC or other assets held outside the protocol in the trader’s wallet.
+
+#### Partial-close protection
+
+A partial close cannot leave an underfunded residual position while passing an uncovered loss to LPs.
+
+If the loss from the closed portion cannot be collected without invading collateral protected for the remaining position, the partial close fails. The trader may need to:
+
+* Add collateral
+* Close a larger portion
+* Close the complete position
+
+#### Full-close shortfall
+
+A full close can use all collateral defined as terminally reachable inside the account.
+
+If an existing trader claim belongs to the same account, it can be reduced against a terminal shortfall before loss is socialized.
+
+Any remaining uncovered economic loss becomes bad debt and is absorbed through the LP tranche waterfall.
+
+### Position equity is broader than PnL
+
+Liquidation is not based on Unrealized PnL alone.
+
+Conceptually:
+
+```
+Net account equity
+≈ reachable in-protocol USDC
++ unrealized price PnL
+− accrued carry
+− any provisional VPI rebate adjustment
+```
+
+That equity is compared with the applicable maintenance-margin requirement.
+
+This explains why two positions with identical quantity, entry and mark can have different health:
+
+* One account may hold more free USDC.
+* One may have more position margin.
+* One may have accrued more carry.
+* One may have pending reservations.
+* One may have provisional VPI accounting attached to the position.
+
+The interface reflects these distinctions:
+
+| Interface field        | Meaning                                      |
+| ---------------------- | -------------------------------------------- |
+| **Unrealized PnL**     | Gross price result only                      |
+| **Cost of carry**      | Accrued unpaid carry in USDC                 |
+| **Portfolio value**    | Net account equity, floored at zero          |
+| **Maintenance margin** | Minimum equity requirement                   |
+| **Available to Trade** | Free buying power after locked funds         |
+| **Withdrawable**       | Amount that can currently leave the protocol |
+
+Portfolio value is not the same as position margin, and Unrealized PnL does not automatically become free buying power.
+
+`[Screenshot placeholder: Margin Account showing Portfolio value, Unrealized PnL, Maintenance margin and Withdrawable]`
+
+### Profitable closes: cash or trader claim
+
+If the net close adjustment is positive, Plether checks whether the HousePool has sufficient unreserved cash.
+
+#### Immediate payout
+
+If sufficient cash is available:
+
+1. The HousePool transfers the payout to the Margin Clearinghouse.
+2. The trader’s Margin Account is credited.
+3. The trader may withdraw through the normal withdrawal flow.
+
+The profit is not sent directly to the wallet.
+
+#### Trader claim
+
+If sufficient free cash is not available:
+
+1. The position still closes.
+2. Plether records the unpaid amount as a trader claim.
+3. The claim remains a senior HousePool liability.
+4. LP withdrawals remain restricted around that liability.
+
+A claim is not immediately withdrawable USDC.
+
+It becomes settleable once aggregate trader claims are fully covered by physical HousePool cash. Settlement credits the trader’s Margin Account, after which the normal withdrawal process applies.
+
+### Current interface status
+
+The current testnet interface does not yet provide a complete net-close reconciliation.
+
+In particular:
+
+* **Transaction History → Result** shows gross realized price PnL.
+* It is before close VPI, execution fee and carry.
+* The Final Result view shows fee and VPI lines but not complete net settlement.
+* Released margin is not presented separately.
+* Trader claim balances are not currently displayed.
+* There is no current interface action for settling a trader claim.
+* Portfolio value does not include a separate outstanding trader claim.
+
+A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
+
+`[Screenshot placeholder: Transaction History close row showing Close Long or Close Short, execution Price and Result. Caption: Result is gross realized price PnL, not net settlement.]`
+
+`[Future UI placeholder: Close receipt showing realized price PnL, VPI, execution fee, accrued carry, released margin, net settlement, immediate credit and trader claim]`
+
+`[Future UI placeholder: Trader claim balance and Settle claim action]`
+
+### The fixed range bounds gross PnL
+
+Because the displayed price is bounded between `0.00` and `2.00`, the maximum gross directional result is calculable at entry.
+
+| Direction | Best boundary | Maximum gross profit  | Worst boundary | Maximum gross price loss |
+| --------- | ------------- | --------------------- | -------------- | ------------------------ |
+| LONG USD  | `2.00`        | `Q × (2.00 − Dentry)` | `0.00`         | `Q × Dentry`             |
+| SHORT USD | `0.00`        | `Q × Dentry`          | `2.00`         | `Q × (2.00 − Dentry)`    |
+
+These are mathematical price boundaries, not promised outcomes.
+
+A position can be liquidated before reaching either endpoint. VPI, fees, carry and execution rewards also sit outside gross price PnL, so maximum gross price loss is not the same as maximum total account cost.
+
+If the external FX market moves beyond Plether’s settlement range, Plether PnL stops extending beyond the applicable boundary. That creates basis risk relative to an unbounded external market.
+
+### Rounding
+
+Plether’s contracts calculate with:
+
+* 18-decimal position quantities
+* 8-decimal index prices
+* 6-decimal USDC accounting
+
+Values smaller than the supported accounting precision are truncated according to contract arithmetic. The interface may display fewer decimals than the contracts store.
+
+Small differences between a hand calculation and the final onchain result can therefore come from:
+
+* Price-display rounding
+* Weighted-entry rounding
+* USDC precision
+* Proportional margin rounding
+* The actual confidence-adjusted execution price
+
+Use the confirmed onchain result as the final record.
+
+### A practical reconciliation
+
+To understand a Plether position, read the numbers in this order:
+
+1. Use the displayed dollar-oriented price `D = 2.00 − B`.
+2. Calculate gross price PnL from quantity and directional price movement.
+3. Keep position margin separate from profit.
+4. Adjust account equity for reachable collateral, carry and applicable VPI accounting.
+5. At close, use the actual confidence-adjusted execution price.
+6. Subtract close VPI, the execution fee and accrued carry.
+7. Show released margin separately.
+8. Determine whether positive settlement became Margin Account cash or a trader claim.
+9. For a loss, determine how much reachable collateral was collected and whether any shortfall remained.
+
+The central distinction is simple:
+
+> PnL measures price performance. Settlement determines who owes cash. Custody determines whether that cash can be withdrawn.

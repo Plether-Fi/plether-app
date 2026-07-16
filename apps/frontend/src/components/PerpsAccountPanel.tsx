@@ -359,7 +359,7 @@ function PositionView({
   const [positionMarginError, setPositionMarginError] = useState<string | undefined>()
 
   if (isConnected === false) return <EmptyState label="connected wallet" />
-  if (isLoading) return <EmptyState label="position data" />
+  if (isLoading) return <LoadingState label="position data" />
   if (!position?.exists) return <EmptyState label="current position" />
 
   const positionMarginAmountRaw = parsePerpsUsdc(positionMarginAmount)

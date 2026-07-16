@@ -256,6 +256,7 @@ export function Perps() {
           oraclePriceDisplay={perpsMarket.oraclePrice}
           latestBasket={perpsMarket.latestBasket}
           adverseConfidenceMultiplierBps={protocolConfig.data?.data.constants.adverseConfidenceMultiplierBps}
+          oracleFrozen={perpsMarket.oracleFrozen}
           oracleFreshness={perpsMarket.oracleFreshness}
           oracleFreshnessTooltip={dxyFreshnessTooltip}
           oracleBasketComponents={perpsMarket.raw.basketComponents}
