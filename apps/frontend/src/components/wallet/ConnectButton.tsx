@@ -42,8 +42,10 @@ export function ConnectButton() {
 
   const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
   const isArbitrumSepolia = chainId === arbitrumSepolia.id
-  const isPerpsRoute = location.pathname === '/'
-  const shouldShowPerpsNetworkSwitch = isPerpsRoute && !isArbitrumSepolia
+  const isArbitrumSepoliaRoute = location.pathname === '/'
+    || location.pathname === '/vaults'
+    || location.pathname.startsWith('/vaults/')
+  const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
 
   if (!isConnected) {
     return (

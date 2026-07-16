@@ -1,4 +1,4 @@
-import { type ChangeEvent } from 'react'
+import { type ChangeEvent, useId } from 'react'
 import { formatAmount, formatUsd } from '../utils/formatters'
 import { TokenLabel } from './ui'
 
@@ -28,6 +28,9 @@ export function TokenInput({
   error,
   compact = false,
 }: TokenInputProps) {
+  const inputId = useId()
+  const errorId = `${inputId}-error`
+
   const handleChange = (e: ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value
     if (newValue === '' || /^\d*\.?\d*$/.test(newValue)) {
@@ -45,17 +48,20 @@ export function TokenInput({
   return (
     <div className="w-full">
       {label && (
-        <label className="block text-sm font-medium text-content-secondary mb-1.5">
+        <label htmlFor={inputId} className="block text-sm font-medium text-content-secondary mb-1.5">
           {label}
         </label>
       )}
       <div className="relative">
         <input
           type="text"
+          id={inputId}
           inputMode="decimal"
           value={value}
           onChange={handleChange}
           disabled={disabled}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? errorId : undefined}
           placeholder="0.00"
           className={`
             w-full bg-app-bg border text-content-primary
@@ -70,6 +76,7 @@ export function TokenInput({
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-2">
           {balance !== undefined && (
             <button
+              type="button"
               onClick={handleMax}
               disabled={disabled}
               className="bg-content-secondary/10 px-2 py-1 text-xs font-semibold text-content-secondary transition-colors hover:bg-[#3B212D] hover:text-content-primary hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
@@ -91,7 +98,7 @@ export function TokenInput({
         </div>
       )}
 
-      {error && <p className="mt-1 text-sm text-brand-orange">{error}</p>}
+      {error && <p id={errorId} className="mt-1 text-sm text-brand-orange">{error}</p>}
     </div>
   )
 }
