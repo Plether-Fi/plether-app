@@ -776,18 +776,11 @@ Before closing, distinguish:
 
 ### The central distinction
 
-```
-Execution fees pay the protocol for completed trades.
-
-VPI prices the trade’s change in HousePool imbalance.
-
-Carry pays LPs for bounded payout capacity committed through time.
-
-Frozen-close spreads compensate LPs for voluntary exits
-executed against bounded stale oracle data.
-
-Execution rewards pay keepers to process the delayed-order queue.
-```
+* **Execution fees** pay the protocol for completed trades.
+* **VPI** prices the trade’s change in HousePool imbalance.
+* **Carry** pays LPs for bounded payout capacity committed through time.
+* **Frozen-close spreads** compensate LPs for voluntary exits executed against bounded stale oracle data.
+* **Execution rewards** pay keepers to process the delayed-order queue.
 
 None of these changes the underlying foreign-exchange market.
 

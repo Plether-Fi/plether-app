@@ -38,9 +38,7 @@ The interface presents several values drawn from the same account:
 
 These values answer different account questions. Portfolio value measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
 
-![Margin Account overview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png)
->
-> Capture the Margin Account and Position panels with **Available to Trade**, **Position margin**, **Portfolio value**, **Maintenance margin** and **Withdrawable** visible.
+![Margin Account and Position overview with collateral, health and withdrawal values](../.gitbook/assets/screenshots/storybook-documentation-margin-account--overview.png)
 
 ### How account USDC is allocated
 
@@ -124,9 +122,7 @@ The complete `500 USDC` entered Plether. The account used `40 USDC` to settle ca
 
 Deposits have no market-state, oracle-freshness or degraded-mode restriction. They remain available as a protective account action.
 
-![Deposit Margin](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png)
->
-> Capture the deposit window with owner-wallet balance, Trading Account balance, deposit amount, `Max`, authorization status and sponsored-operation status.
+![First deposit showing owner-wallet, Trading Account and sponsored operation states](../.gitbook/assets/screenshots/storybook-documentation-margin-account--deposit.png)
 
 ### What happens when you commit an order
 
@@ -167,9 +163,7 @@ Pending orders are binding and have no trader cancellation action. Failed or exp
 
 Terminal account settlement has wider reach than an ordinary partial reduction. A full close or liquidation may consume committed margin from other orders when free USDC and position margin cannot cover the account obligation. Partial reductions leave committed order margin protected.
 
-![Pending reservations](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
->
-> Pair the **Margin Account** and **Open Orders** panels. Show the change in Available to Trade after order margin and the execution reward have been reserved.
+![Margin Account and Open Orders paired to explain pending reservations](../.gitbook/assets/screenshots/storybook-documentation-margin-account--pending-reservations.png)
 
 ### Position margin
 
@@ -196,11 +190,9 @@ Plether realizes accrued carry first. The requested USDC then moves from **Avail
 
 The immediate account effect is:
 
-```
-Position margin increases
-Available to Trade decreases
-Exposure remains unchanged
-```
+* **Position margin** increases.
+* **Available to Trade** decreases.
+* **Exposure** remains unchanged.
 
 Total account USDC stays unchanged apart from carry collected during the transaction.
 
@@ -215,9 +207,7 @@ Adding margin is immediate and bypasses the delayed order queue. It remains avai
 
 Position margin returns to the free account bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remaining amount.
 
-![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
->
-> Capture available USDC, current position margin, amount being added, resulting position margin and resulting leverage.
+![Add-position-margin form with current and resulting collateral and leverage](../.gitbook/assets/screenshots/storybook-documentation-margin-account--add-position-margin.png)
 
 ### Available to Trade and Withdrawable
 
@@ -277,9 +267,7 @@ If either step fails, neither step is applied. The USDC is not left behind in th
 
 For a same-address Trading Account, the owner wallet and Trading Account use one address, so the withdrawn USDC reaches that address directly.
 
-![Withdraw Margin](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-margin.png)
->
-> Capture the withdrawal window with Withdrawable, requested amount and the resulting Margin Account balance.
+![Withdrawal preview with current limit, requested amount and resulting balance](../.gitbook/assets/screenshots/storybook-documentation-margin-account--withdrawal.png)
 
 ### Reductions, closes and account settlement
 
@@ -328,9 +316,7 @@ Claim settlement and wallet withdrawal are separate sponsored operations.
 
 An existing claim can also offset a later uncovered loss from the same account during a close or liquidation. The remaining claim balance reflects any such netting.
 
-![Trader claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
->
-> Show the claim amount, settlement status, `Settle Claim` action and Margin Account destination.
+![Trader claim with settlement state, action and Margin Account destination](../.gitbook/assets/screenshots/storybook-documentation-margin-account--trader-claim.png)
 
 ### Example: how account USDC moves
 

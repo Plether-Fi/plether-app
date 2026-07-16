@@ -247,7 +247,7 @@ Plether treats the two sides conservatively:
 
 Settlement is what turns PnL into cash movement, a trader claim or bad debt.
 
-![Unrealized PnL tooltip](../.gitbook/assets/screenshots/storybook-perps-account-panel--unrealized-pnl-tooltip.png)
+![Unrealized PnL metric and settlement context](../.gitbook/assets/screenshots/storybook-documentation-metric-details--unrealized-pnl.png)
 
 ### Entry price after increasing a position
 

@@ -50,9 +50,7 @@ New opening and increase commitments are blocked during:
 
 A previously committed order can remain pending if the market becomes close-only while it waits.
 
-![Market and account readiness](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
->
-> Show the `Open` market state, Available to Trade and either an empty Position panel or an existing same-direction position.
+![Open-market readiness with available collateral and existing-position context](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--market-and-account-readiness.png)
 
 ### 1. Choose LONG USD or SHORT USD
 
@@ -232,13 +230,9 @@ The preview uses the current state. Execution runs the calculation again after e
 
 Price, pool depth, market skew, carry and account balances can all change during that interval.
 
-![Opening preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
->
-> Show direction, exposure, leverage, margin, execution limit, liquidation price, execution fee, VPI, confidence adjustment and execution reward.
+![Opening preview with complete exposure, risk, execution-limit and cost information](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--opening-preview.png)
 
-![Increase preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--increase-long-preview.png)
->
-> Place the current position beside the projected result. Include total exposure, average entry price, resulting margin, leverage and liquidation price.
+![Current position beside its projected post-increase result](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--increase-projection-comparison.png)
 
 ### How an increase changes entry price
 
@@ -365,9 +359,7 @@ Execution in the commitment block is blocked.
 
 If `Finalize Trade` becomes available in the interface, manual finalization submits the data needed to process the same pending order. It follows the same FIFO, oracle and acceptable-price rules.
 
-![Pending order](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
->
-> Show `Pending reveal`, the expiry countdown, `Cancel unavailable` and any manual-finalization action.
+![Pending reveal with expiry, cancellation state and manual finalization](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--pending-reveal-with-manual-finalization.png)
 
 ### Waiting and terminal outcomes
 
@@ -439,9 +431,7 @@ The difference reflects the adverse oracle confidence adjustment shown in the tr
 
 Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed borrow base.
 
-![Executed position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
->
-> Show the updated Position panel together with the matching entry in Order History.
+![Executed position paired with its matching Order History record](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--executed-position-and-order-history.png)
 
 ### Why an opening or increase may be unavailable
 

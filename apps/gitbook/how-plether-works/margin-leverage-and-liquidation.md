@@ -6,11 +6,9 @@ That distinction is fundamental. The USDC shown as **Position margin** is not an
 
 The practical model is:
 
-```
-Position margin organizes collateral.
-Account equity determines health.
-Maintenance margin determines liquidation.
-```
+* **Position margin** organizes collateral.
+* **Account equity** determines account health.
+* **Maintenance margin** determines when the account becomes liquidatable.
 
 ### Where your USDC sits
 
@@ -435,11 +433,9 @@ In practice:
 
 ### The central distinction
 
-```
-Position size determines price sensitivity.
-Assigned margin satisfies position-level requirements.
-Account equity determines ongoing health.
-Maintenance margin determines full liquidation.
-```
+* **Position size** determines price sensitivity.
+* **Assigned margin** satisfies position-level requirements.
+* **Account equity** determines ongoing health.
+* **Maintenance margin** determines when full liquidation is permitted.
 
 The fixed `0.00–2.00` range makes directional liability measurable. It does not bound carry, fees or liquidation bounties, and it does not prevent liquidation before either boundary is reached.

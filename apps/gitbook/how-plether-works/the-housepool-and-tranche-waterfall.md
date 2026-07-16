@@ -601,14 +601,14 @@ The current trader interface shows **Pool liquidity**.
 
 That value represents free HousePool USDC after protected reserves—not total HousePool assets, total tranche NAV or the amount every LP can withdraw.
 
-Its tooltip currently focuses on:
+The interface breaks this number into:
 
 * LONG USD capacity;
 * SHORT USD capacity;
 * minimum order size;
 * minimum new position.
 
-![Pool liquidity tooltip](../.gitbook/assets/screenshots/storybook-perps-instrument-panel--pool-liquidity-tooltip-visible.png)
+![Pool liquidity definition, capacities and minimums](../.gitbook/assets/screenshots/storybook-documentation-metric-details--pool-liquidity.png)
 
 ### Senior risks
 
@@ -797,15 +797,12 @@ Degraded mode contains the problem. It does not guarantee that trader claims can
 
 ### The distinction to remember
 
-```
-Solvency asks whether remaining liabilities are backed.
-
-Settlement liquidity asks whether a trader can be paid now.
-
-Withdrawal liquidity asks how much cash can safely leave the HousePool.
-
-The tranche waterfall determines which LP capital absorbs loss.
-```
+| Check | Question it answers |
+| --- | --- |
+| **Solvency** | Are the remaining liabilities fully backed? |
+| **Settlement liquidity** | Can a trader be paid now? |
+| **Withdrawal liquidity** | How much cash can safely leave the HousePool? |
+| **Tranche waterfall** | Which LP capital absorbs a realized loss? |
 
 These checks use the same physical backing, but they answer different questions.
 
@@ -839,13 +836,9 @@ After depositing:
 
 The HousePool has three layers of obligation:
 
-```
-First: protect trader settlement liabilities.
-
-Second: apply Senior and Junior accounting priority.
-
-Third: allow LP withdrawals only from physically free USDC.
-```
+1. Protect trader settlement liabilities.
+2. Apply Senior and Junior accounting priority.
+3. Allow LP withdrawals only from physically free USDC.
 
 Senior and Junior divide the residual economic claim on the HousePool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
 

@@ -88,11 +88,9 @@ For a partial close, the margin supporting the remaining position stays locked.
 
 If a voluntary close produces an amount owed by the account, reachable value is allocated in this order:
 
-```
 1. Execution fee
 2. Base close obligation
 3. Frozen-close spread
-```
 
 The base close obligation is the ordinary close settlement before the additional frozen spread. The spread is junior to both the execution fee and the base obligation.
 
@@ -228,9 +226,7 @@ Fresh trader payout:                250 USDC
 
 If immediate settlement liquidity is insufficient, the resulting claim is `250 USDC`, not `300 USDC`.
 
-![Close settlement result](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
->
-> Show released margin, realized PnL, signed VPI, execution fee, carry, frozen spread assessed, frozen spread paid, frozen spread waived, net settlement, immediate Margin Account credit and trader claim created.
+![Full close reconciliation separating released margin, trading economics, immediate credit and the complete trader claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
 
 ### Immediate settlement does not mean wallet settlement
 
@@ -280,11 +276,9 @@ A waived frozen-close spread is not a trader claim. It is a trader-owed charge t
 
 Plether does not maintain a first-claim, first-paid queue.
 
-All trader claims are considered together. The relevant question is whether the HousePool can cover the aggregate claim balance:
+All trader claims are considered together. Claim settlement is available only when:
 
 ```
-Claim settlement is available when:
-
 canonical HousePool assets
 ≥ aggregate trader claims
 ```
@@ -311,9 +305,7 @@ Claim settlement requires authorization from the Trading Account’s owner walle
 
 If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
 
-![Trader claim panel](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
->
-> Show the account’s claim balance, aggregate coverage status, “Settlement available” or “Settlement unavailable,” the destination as “Margin Account,” and the **Settle claim** action.
+![Trader claim with aggregate coverage, settlement availability, Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 
 ### A claim is not position collateral
 
@@ -436,9 +428,7 @@ A waived spread is not recorded as:
 
 LP accounting recognizes only the amount actually paid.
 
-![Complete HousePool liquidity breakdown](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
->
-> Show canonical assets, maximum live trader liability, aggregate trader claims, total withdrawal reserve, free LP liquidity and Senior and Junior maximum withdrawals.
+![HousePool liquidity breakdown showing the obligations protected before LP withdrawals](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 
 ### Trader claims and bad debt are opposites
 

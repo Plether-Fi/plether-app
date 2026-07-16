@@ -8,6 +8,10 @@ interface PerpsClaimPanelProps {
   status: TraderClaimStatus
   tradingAccountAddress: string
   marginAccountUsdc?: string
+  aggregateClaimsUsdc?: string
+  housePoolAssetsUsdc?: string
+  coverageRatio?: string
+  settlementDestination?: string
   initialConfirmationOpen?: boolean
   settledCreditUsdc?: string
 }
@@ -31,6 +35,10 @@ export function PerpsClaimPanel({
   status,
   tradingAccountAddress,
   marginAccountUsdc,
+  aggregateClaimsUsdc,
+  housePoolAssetsUsdc,
+  coverageRatio,
+  settlementDestination = 'Margin Account',
   initialConfirmationOpen = false,
   settledCreditUsdc,
 }: PerpsClaimPanelProps) {
@@ -38,9 +46,9 @@ export function PerpsClaimPanel({
   const isAvailable = status === 'available'
   const isSettled = status === 'settled'
   const statusLabel = status === 'waiting'
-    ? 'Waiting for settlement liquidity'
+    ? 'Settlement unavailable'
     : status === 'available'
-      ? 'Available to settle'
+      ? 'Settlement available'
       : 'Settled'
 
   return (
@@ -53,9 +61,25 @@ export function PerpsClaimPanel({
 
         <dl className="px-5">
           <ClaimRow label="Claim owner" value={<span title={tradingAccountAddress}>{truncateAddress(tradingAccountAddress)}</span>} />
-          <ClaimRow label="Claim balance" value={<TokenAmount amount={claimUsdc} />} />
+          <ClaimRow label="Account claim" value={<TokenAmount amount={claimUsdc} />} />
+          {aggregateClaimsUsdc && housePoolAssetsUsdc ? (
+            <ClaimRow
+              label="Aggregate claim coverage"
+              value={(
+                <span className="flex flex-col items-end gap-1">
+                  <span className={isAvailable || isSettled ? 'text-positive' : 'text-brand-peach'}>
+                    {isAvailable || isSettled ? 'Covered' : 'Under-covered'}
+                    {coverageRatio ? ` · ${coverageRatio}` : ''}
+                  </span>
+                  <span className="text-xs font-normal text-content-secondary">
+                    <TokenAmount amount={housePoolAssetsUsdc} /> assets / <TokenAmount amount={aggregateClaimsUsdc} /> claims
+                  </span>
+                </span>
+              )}
+            />
+          ) : null}
           <ClaimRow
-            label="Settlement status"
+            label="Settlement availability"
             value={(
               <span className={
                 isSettled
@@ -68,8 +92,9 @@ export function PerpsClaimPanel({
               </span>
             )}
           />
+          <ClaimRow label="Settlement destination" value={settlementDestination} />
           {marginAccountUsdc ? (
-            <ClaimRow label="Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
+            <ClaimRow label="Current Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
           ) : null}
           {settledCreditUsdc ? (
             <ClaimRow
@@ -87,7 +112,7 @@ export function PerpsClaimPanel({
           ) : null}
           {status === 'available' ? (
             <Button className="w-full" onClick={() => { setIsConfirmationOpen(true) }}>
-              Settle Claim
+              Settle claim
             </Button>
           ) : null}
           {status === 'settled' ? (
@@ -101,7 +126,7 @@ export function PerpsClaimPanel({
       <Modal
         isOpen={isConfirmationOpen}
         onClose={() => { setIsConfirmationOpen(false) }}
-        title="Settle Trader Claim"
+        title="Settle trader claim"
         size="md"
       >
         <div className="space-y-5">
@@ -110,14 +135,14 @@ export function PerpsClaimPanel({
           </p>
           <dl className="border border-brand-border/20 bg-app-bg px-4">
             <ClaimRow label="Complete claim" value={<TokenAmount amount={claimUsdc} />} />
-            <ClaimRow label="Destination" value="Margin Account" />
+            <ClaimRow label="Destination" value={settlementDestination} />
             <ClaimRow label="Network gas" value={<span className="text-positive">Sponsored</span>} />
           </dl>
           <div className="grid grid-cols-2 gap-3">
             <Button variant="secondary" onClick={() => { setIsConfirmationOpen(false) }}>
               Cancel
             </Button>
-            <Button>Authorize Settlement</Button>
+            <Button>Authorize settlement</Button>
           </div>
         </div>
       </Modal>

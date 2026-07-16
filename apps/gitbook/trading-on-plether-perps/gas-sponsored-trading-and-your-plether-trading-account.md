@@ -114,11 +114,7 @@ Use the Trading Account address when reviewing Plether activity in a block explo
 
 On compatible networks and wallets, EIP-7702 allows the Connected wallet to use smart-account execution while keeping its existing address:
 
-```
-Connected wallet address
-=
-Trading Account address
-```
+**Same-address account:** the Connected wallet and Trading Account use the same address.
 
 Positions, orders, margin and claims remain associated with the same address. This provides the simplest continuity for traders who already have Plether activity under their wallet address.
 
@@ -150,12 +146,7 @@ When USDC starts in your Connected wallet, the usual flow requires two signature
 
     You sign the sponsored Trading Account operation. It receives the authorized USDC, grants the clearinghouse an exact approval and deposits the amount into your Margin Account.
 
-The interface may present these steps as:
-
-```
-1. Authorize 1,000 USDC
-2. Deposit 1,000 USDC
-```
+The interface may label these prompts `Authorize 1,000 USDC` and `Deposit 1,000 USDC`.
 
 Both are signatures. Plether pays the network gas for the eligible onchain operation.
 
