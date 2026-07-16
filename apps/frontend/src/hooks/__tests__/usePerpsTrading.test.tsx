@@ -283,5 +283,29 @@ describe('usePerpsTrading', () => {
       maxPriorityFeePerGas: 13n,
     }))
     expect(mocks.invalidateQueries).toHaveBeenCalled()
+    const invalidateOptions = mocks.invalidateQueries.mock.calls[0][0] as {
+      predicate: (query: { queryKey: readonly unknown[] }) => boolean
+    }
+    expect(invalidateOptions.predicate({
+      queryKey: ['readContracts', {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        contracts: [{ address: PERPS_ARBITRUM_SEPOLIA.cfdEngine }],
+      }],
+    })).toBe(true)
+    expect(invalidateOptions.predicate({
+      queryKey: ['readContract', {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: '0x0000000000000000000000000000000000000001',
+      }],
+    })).toBe(false)
+    expect(invalidateOptions.predicate({
+      queryKey: ['readContract', {
+        chainId: 11155111,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+      }],
+    })).toBe(false)
+    expect(invalidateOptions.predicate({
+      queryKey: ['protocol', 'status'],
+    })).toBe(false)
   })
 })

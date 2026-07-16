@@ -38,6 +38,38 @@ interface ExecuteOrderResult {
   failedReason?: number
 }
 
+const PERPS_CONTRACT_ADDRESSES = new Set(
+  Object.values(PERPS_ARBITRUM_SEPOLIA).map((address) => address.toLowerCase())
+)
+
+function isPerpsContractAddress(value: unknown): boolean {
+  return typeof value === 'string' && PERPS_CONTRACT_ADDRESSES.has(value.toLowerCase())
+}
+
+function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
+  const [queryType, parameters] = queryKey
+  if (queryType !== 'readContract' && queryType !== 'readContracts') return false
+  if (typeof parameters !== 'object' || parameters === null) return false
+
+  const queryParameters = parameters as {
+    chainId?: unknown
+    address?: unknown
+    contracts?: { address?: unknown }[]
+  }
+  if (
+    queryParameters.chainId !== undefined &&
+    queryParameters.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+  ) {
+    return false
+  }
+  if (isPerpsContractAddress(queryParameters.address)) return true
+  if (!Array.isArray(queryParameters.contracts)) return false
+
+  return queryParameters.contracts.some(
+    (contract) => isPerpsContractAddress(contract.address)
+  )
+}
+
 interface CleanupExpiredOrderResult {
   hash: Hex
 }
@@ -455,7 +487,9 @@ export function usePerpsTrading() {
   const queryClient = useQueryClient()
 
   const invalidatePerpsReads = useCallback(() => {
-    void queryClient.invalidateQueries()
+    void queryClient.invalidateQueries({
+      predicate: (query) => isPerpsContractQuery(query.queryKey),
+    })
   }, [queryClient])
 
   const approveUsdcForMargin = useCallback(async (amount: bigint) => {
