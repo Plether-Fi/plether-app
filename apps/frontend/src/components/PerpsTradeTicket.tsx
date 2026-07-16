@@ -50,6 +50,7 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
+import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
 
 type Direction = PerpsDirection
@@ -1143,14 +1144,23 @@ function PendingProgressCircle({ progressPercent }: { progressPercent: number })
   )
 }
 
-function SuccessStateCard({ title, description }: { title: string; description: string }) {
+function SuccessStateCard({
+  title,
+  description,
+  celebrate = false,
+}: {
+  title: string
+  description: string
+  celebrate?: boolean
+}) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
+    <div className="relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
+      {celebrate ? <PerpsFinalizationConfetti /> : null}
+      <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
-      <div className="mt-5 text-xl font-semibold text-content-primary">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+      <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
+      <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
     </div>
   )
 }
@@ -3172,7 +3182,11 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'executed' ? (
             <>
-              <SuccessStateCard title={executedTitle} description="Execution settled onchain and the final price is confirmed." />
+              <SuccessStateCard
+                title={executedTitle}
+                description="Execution settled onchain and the final price is confirmed."
+                celebrate
+              />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
                 <PreviewRows
