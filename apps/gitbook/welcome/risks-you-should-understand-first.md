@@ -18,6 +18,7 @@ This page is a summary, not an exhaustive list. Smart contracts and financial sy
 | **Entry solvency check**             | Rejects new exposure the pool cannot support at entry             | A guarantee that bad debt or later insolvency is impossible        |
 | **No counterparty ADL**              | Another trader’s failure does not reduce your profitable position | Protection from liquidation of your own under-margined position    |
 | **Delayed oracle execution**         | Reduces front-running and keeper price-selection risk             | Guaranteed execution, no slippage, or freedom from all MEV         |
+| **Gas-sponsored Trading Account**    | Eligible actions without owner-wallet native gas                       | Guaranteed sponsor or bundler availability, or permission to act without a wallet signature |
 | **Withdrawal firewall**              | Prevents encumbered LP capital from leaving the pool              | Immediate or unconditional LP withdrawals                          |
 | **Non-upgradeable logic**            | Prevents the owner from replacing deployed code                   | Proof that the deployed code is correct or free of vulnerabilities |
 | **Senior tranche priority**          | Junior absorbs losses before Senior                               | Principal protection or guaranteed yield                           |
@@ -48,7 +49,7 @@ This is an admission rule. It does not guarantee that:
 
 The solvency check depends on correct code, correct accounting, valid oracle data and functioning external infrastructure.
 
-A profitable close can complete while some or all of the amount owed becomes a trader claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
+A profitable close can complete even when its complete fresh HousePool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
 
 ### No counterparty ADL does not mean no forced exit
 
@@ -70,7 +71,7 @@ The distinction is simple:
 | Event                                    | First affected                         | What happens next                                                                      |
 | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
 | A trader loses                           | The trader’s reachable USDC collateral | Any remaining deficit becomes bad debt absorbed by HousePool capital                   |
-| A trader profits                         | Available HousePool cash               | Any unpaid amount becomes a senior trader claim                                        |
+| A trader profits                         | Available HousePool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
 | The HousePool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
 | A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new risk and affected withdrawals while protective actions remain |
@@ -142,7 +143,7 @@ After commitment:
 * Missing or stale oracle data can leave the order pending.
 * Slippage, expiry or certain invalid states can fail it terminally.
 * A failed order is not automatically retried.
-* Depending on the failure reason, the reserved execution bounty may still be paid to the keeper.
+* Depending on the failure reason, the reserved execution reward may still be paid to the keeper.
 
 A blocked queue head must be resolved before later orders can execute. Heavy queue cleanup can require more than one keeper transaction.
 
@@ -154,16 +155,16 @@ The price visible when an order is committed is not a guaranteed execution price
 
 Actual trade economics can include:
 
-* The first eligible post-commit Pyth update
-* An adverse oracle-confidence adjustment
+* The eligible Pyth observation under the active market-state policy
+* The oracle-confidence policy active for that market state
 * Virtual price impact
 * The acceptable-price limit chosen by the trader
 * The protocol execution fee
-* The keeper execution bounty
+* The execution reward
 
-Virtual price impact depends on HousePool depth and directional imbalance. It can improve or worsen execution during live markets.
+Virtual price impact depends on HousePool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
 
-During frozen-oracle closes, virtual price impact becomes a one-way LP-protection surcharge. There is no rebate path in that state.
+During an oracle-frozen voluntary close, normal signed VPI remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies.
 
 Plether’s execution model reduces specific forms of price-selection MEV. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
 
@@ -199,14 +200,14 @@ Traders are responsible for reducing exposure or adding collateral before the st
 
 A profitable close does not always produce immediately withdrawable USDC.
 
-If the HousePool lacks sufficient free cash, the unpaid amount becomes a trader claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
 
 A trader claim is:
 
 * A senior liability recorded by the protocol
-* Associated with a specific beneficiary
+* Owned by a specific Trading Account
 * Settled only when aggregate claims are sufficiently cash-covered
-* Credited into the trader’s margin account rather than directly to their wallet
+* Credited into the Trading Account’s Margin Account rather than directly to the owner wallet
 
 It is not:
 
@@ -363,6 +364,44 @@ A material fix can require a new deployment and user migration.
 
 Immutability makes behavior harder to change. It does not make behavior correct.
 
+### Smart-account risk
+
+Sponsored trading depends on the Trading Account’s smart-account execution path in addition to Plether’s perps contracts.
+
+Depending on the account model, this can include:
+
+* Smart-account code and signature validation
+* EntryPoint compatibility
+* Nonce and replay protection
+* Owner-wallet recovery and key security
+* EIP-7702 delegation state
+* Correct account initialization and ownership checks
+
+A defect or incompatible account state can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. Changing or removing an EIP-7702 delegation can invalidate an outstanding sponsored operation that has not yet been submitted.
+
+The Trading Account owns the positions, orders, Margin Account and trader claims. Losing control of its owner wallet can therefore affect the ability to manage that complete protocol state.
+
+### Sponsor-service and bundler availability risk
+
+Eligible trader actions depend on a sponsor approving network-gas funding and a bundler accepting and submitting the signed UserOperation.
+
+An action can be delayed or rejected because of:
+
+* Sponsor downtime or depleted budgets
+* Per-account or protocol-wide rate limits
+* Gas-price or action-policy limits
+* Failed operation simulation
+* Bundler policy rejection
+* Bundler, RPC or EntryPoint outages
+* A UserOperation being dropped before inclusion
+* An expired signature, invalid nonce or changed account delegation
+
+Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO execution rules even if sponsorship later becomes unavailable.
+
+A sponsorship outage can be especially consequential for a position that needs margin, reduction or closure. The position remains active, carry continues to accrue and liquidation rules continue to apply while the action is delayed.
+
+Sponsorship failure does not authorize Plether to transact for the user. The sponsor decides whether to pay gas; it cannot create the owner-wallet signature, replace the signed instruction with another action or withdraw funds without the required authorization. Plether also does not silently fall back to charging the owner wallet or submitting from a different address.
+
 ### Audit and deployment risk
 
 Plether Perps has completed an external pre-audit security consultation.
@@ -436,9 +475,9 @@ The current deployment depends on Arbitrum Sepolia and its surrounding infrastru
 
 Sequencer interruption, congestion, transaction-ordering effects, RPC failure or wider Ethereum and Arbitrum disruption can delay actions or make the protocol temporarily unavailable.
 
-Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data and correct transaction construction.
+Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data, smart-account services and correct operation construction.
 
-Wallet approvals and signed transactions are generally irreversible. Users are responsible for verifying the network, contract addresses and transaction details.
+Wallet approvals, signed authorizations and confirmed operations are generally irreversible. Users are responsible for verifying the network, owner wallet, Trading Account, contract addresses and action details.
 
 ### Governance and pause risk
 
@@ -496,6 +535,8 @@ Do not open a position unless you can answer yes to each question:
 * Can the position survive carry, fees and the higher market-close margin requirement?
 * Am I willing to submit a delayed order that cannot be cancelled?
 * Have I set an acceptable-price limit I understand?
+* Have I verified the active Trading Account and the action covered by sponsorship?
+* Can I tolerate sponsor or bundler unavailability while my position remains active?
 * Can I tolerate delayed execution during an oracle, keeper or chain outage?
 * Can I tolerate profitable settlement becoming a trader claim rather than immediate USDC?
 * Does Plether’s arithmetic basket actually hedge the exposure I intend to hedge?
@@ -522,7 +563,7 @@ Before interacting:
 * Confirm that you are using the intended network and verified contracts.
 * Read the current deployment and audit disclosures.
 * Review live parameters rather than relying on examples in documentation.
-* Understand the dependencies on Pyth, USDC, keepers, the deployment chain and governance.
+* Understand the dependencies on Pyth, USDC, smart accounts, sponsors, bundlers, keepers, the deployment chain and governance.
 * Use only capital you can afford to lose or have temporarily unavailable.
 
 ## The short version
@@ -535,12 +576,13 @@ Before interacting:
 6. LP withdrawals depend on free, unencumbered HousePool cash.
 7. Non-upgradeable contracts can still contain defects.
 8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
+9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
 
 ## Where to go next
 
-* **Trader quickstart**
-* **Liquidity provider quickstart**
-* **Margin and liquidation**
-* **Fees, carry and virtual price impact**
-* **Market hours and closures**
-* **Security, audits and governance**
+* [**Trader quickstart**](../trader-quickstart.md)
+* [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md)
+* [**Margin and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md)
+* [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
+* [**Security, audits and governance**](#risks-shared-by-everyone)

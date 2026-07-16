@@ -165,6 +165,24 @@ select:not(:disabled) {
   animation: perps-line-slide-out 1200ms ease-out both;
 }
 
+.perps-confetti-cannon {
+  position: absolute;
+  top: 1.25rem;
+}
+
+.perps-confetti-cannon-left {
+  left: 1.5rem;
+}
+
+.perps-confetti-cannon-middle {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.perps-confetti-cannon-right {
+  right: 1.5rem;
+}
+
 @keyframes perps-line-slide-in {
   from {
     transform: translate3d(0, 140%, 0);
@@ -187,6 +205,10 @@ select:not(:disabled) {
   .perps-line-swap-in,
   .perps-line-swap-out {
     animation: none;
+  }
+
+  .perps-confetti-burst {
+    display: none;
   }
 }
 

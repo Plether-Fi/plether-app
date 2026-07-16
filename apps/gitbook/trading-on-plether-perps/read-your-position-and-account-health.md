@@ -6,15 +6,7 @@ Plether evaluates liquidation with account-wide collateral. Free USDC and eligib
 
 A useful reading order is:
 
-```
-Market state
-→ Current Position
-→ Portfolio value
-→ Maintenance margin
-→ Liquidation price
-→ Pending orders
-→ Available to Trade and Withdrawable
-```
+![Recommended reading order from market state through position, risk, pending orders and available balances.](../.gitbook/assets/diagrams/account-health-reading-order.svg)
 
 ### Check the market state first
 
@@ -34,7 +26,7 @@ During a FAD window, Plether applies the active FAD margin requirement. This can
 
 Degraded mode is a protocol-wide containment state. It blocks new exposure and position-backed withdrawals. Closes, liquidations, mark updates and recapitalization remain available.
 
-> **Screenshot placeholder:** Market header showing the Plether Dollar Index, last update time, FAD status, oracle state and degraded-mode warning.
+![Market header and protocol state](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--degraded-market-and-account.png)
 
 ### Read the Current Position panel
 
@@ -51,7 +43,7 @@ The position panel contains:
 | **Unrealized PnL**      | Price PnL between entry and the current mark                          |
 | **Cost of carry**       | Carry accrued since the last position checkpoint                      |
 
-> **Screenshot placeholder:** Current Position panel with all fields visible and the position-margin edit control highlighted.
+![Complete Current Position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Direction
 
@@ -217,7 +209,7 @@ Depositing new USDC into the Margin Account adds collateral and increases accoun
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
-> **Screenshot placeholder:** Edit Position Margin modal showing Available to Trade, current position margin and resulting position margin.
+![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Read the Margin Account
 
@@ -234,7 +226,7 @@ The account summary separates economic value, free collateral and currently with
 | **Pending execution reward** | USDC reserved for terminal order processing                            |
 | **Trader claim**             | Deferred HousePool payment awaiting settlement into the Margin Account |
 
-> **Screenshot placeholder:** Margin Account summary showing Portfolio value, Unrealized PnL, Maintenance margin, Available to Trade and Withdrawable.
+![Margin Account summary](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png)
 
 ### Portfolio value
 

@@ -146,6 +146,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Contract notional').length).toBeGreaterThan(0)
     expect(screen.getByText('Trade executed at 1.0089 USDC')).toBeInTheDocument()
+    expect(document.querySelector('[data-finalization-confetti]')).toHaveAttribute('aria-hidden', 'true')
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const finalResultQueries = within(finalResult!)
@@ -185,6 +186,7 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByText('Commit Preview')).toBeInTheDocument()
     expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+    expect(document.querySelector('[data-finalization-confetti]')).not.toBeInTheDocument()
   })
 
   it('renders order and transaction history tabs from live rows', () => {

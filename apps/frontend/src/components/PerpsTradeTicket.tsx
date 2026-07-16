@@ -51,7 +51,9 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
+import { DOCS_LINKS } from '../config/docs'
+import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
+import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -70,12 +72,22 @@ type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 
-interface PreviewRow {
+interface PreviewRowBase {
   label: string
   value: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'muted'
-  tooltip?: ReactNode
 }
+
+type PreviewRow = PreviewRowBase & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -132,6 +144,10 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialLeverage?: number
+  initialMarginAction?: MarginAction
+  initialMarginActionAmount?: string
+  initialMarginCallSimulatorConfirmationOpen?: boolean
   initialOrderId?: bigint
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
@@ -148,6 +164,8 @@ interface PerpsTradeTicketProps {
   latestBasket?: BasketLatest
   adverseConfidenceMultiplierBps?: string
   oracleFrozen?: boolean
+  /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
+  openPreviewFixture?: OpenPreviewView
   /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
   closePreviewFixture?: ClosePreviewView
   oracleFreshness?: PerpsOracleFreshness
@@ -832,6 +850,7 @@ function PreviewRows({
                   content={row.tooltip}
                   position="bottom-end"
                   className="w-[340px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+                  docsLink={row.tooltipDocsLink}
                 >
                   <span
                     aria-label={`${row.label} info`}
@@ -1182,14 +1201,23 @@ function PendingProgressCircle({ progressPercent }: { progressPercent: number })
   )
 }
 
-function SuccessStateCard({ title, description }: { title: string; description: string }) {
+function SuccessStateCard({
+  title,
+  description,
+  celebrate = false,
+}: {
+  title: string
+  description: string
+  celebrate?: boolean
+}) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
+    <div className="relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
+      {celebrate ? <PerpsFinalizationConfetti /> : null}
+      <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
-      <div className="mt-5 text-xl font-semibold text-content-primary">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+      <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
+      <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
     </div>
   )
 }
@@ -1234,17 +1262,30 @@ function AccountContextRow({
   )
 }
 
+interface AccountSummaryRowBaseProps {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'positive' | 'negative'
+}
+
+type AccountSummaryRowProps = AccountSummaryRowBaseProps & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
+
 function AccountSummaryRow({
   label,
   value,
   tone = 'default',
   tooltip,
-}: {
-  label: string
-  value: ReactNode
-  tone?: 'default' | 'positive' | 'negative'
-  tooltip?: ReactNode
-}) {
+  tooltipDocsLink,
+}: AccountSummaryRowProps) {
   const valueClass = tone === 'positive'
     ? 'text-positive'
     : tone === 'negative'
@@ -1260,6 +1301,7 @@ function AccountSummaryRow({
             content={tooltip}
             position="bottom-end"
             className="w-[320px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+            docsLink={tooltipDocsLink}
           >
             <span
               aria-label={`${label} info`}
@@ -1300,6 +1342,10 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialLeverage = 5,
+  initialMarginAction,
+  initialMarginActionAmount = '',
+  initialMarginCallSimulatorConfirmationOpen = false,
   initialOrderId,
   initialCommitTxHash,
   initialExecuteTxHash,
@@ -1316,6 +1362,7 @@ export function PerpsTradeTicket({
   latestBasket,
   adverseConfidenceMultiplierBps,
   oracleFrozen = false,
+  openPreviewFixture,
   closePreviewFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
@@ -1367,9 +1414,11 @@ export function PerpsTradeTicket({
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
-  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
+  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(
+    initialMarginCallSimulatorConfirmationOpen
+  )
   const [size, setSize] = useState(initialSize)
-  const [leverage, setLeverage] = useState(5)
+  const [leverage, setLeverage] = useState(initialLeverage)
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
@@ -1388,8 +1437,8 @@ export function PerpsTradeTicket({
   const [committedOracleFrozenClose, setCommittedOracleFrozenClose] = useState<boolean | undefined>()
   const [committedFrozenCloseSpreadUsdc, setCommittedFrozenCloseSpreadUsdc] = useState<bigint | undefined>()
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
-  const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
-  const [marginActionAmount, setMarginActionAmount] = useState('')
+  const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
+  const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
   const [marginActionError, setMarginActionError] = useState<string | undefined>()
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
@@ -1827,6 +1876,7 @@ export function PerpsTradeTicket({
   })
   const openPreview = !isReducingCurrentPosition
     ? parseOpenPreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+      ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
@@ -2069,15 +2119,23 @@ export function PerpsTradeTicket({
             value: previewFrozenCloseSpreadValue,
             tone: previewFrozenCloseSpreadValue === PREVIEW_LOADING_VALUE ? 'muted' as const : undefined,
             tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+            tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
           }
         : {
             label: 'Adverse oracle confidence spread',
             value: adverseOracleConfidenceSpreadValue,
             tooltip: adverseOracleConfidenceSpreadTooltip,
+            tooltipDocsLink: DOCS_LINKS.oracleConfidence,
           },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
-      { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+      {
+        label: 'VPI / Price impact',
+        value: previewVpiValue,
+        tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined,
+        tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+      },
       { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
       {
         label: 'Contract side capacity',
@@ -2636,7 +2694,11 @@ export function PerpsTradeTicket({
               >
                 Reduce only
               </label>
-              <Tooltip content="Only reduces or closes your current position. It will not open a new position or increase exposure." position="top">
+              <Tooltip
+                content="Only reduces or closes your current position. It will not open a new position or increase exposure."
+                position="top"
+                docsLink={DOCS_LINKS.reduceOnly}
+              >
                 <span
                   aria-label="Reduce only info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2671,7 +2733,11 @@ export function PerpsTradeTicket({
               >
                 Margin Call Simulator
               </label>
-              <Tooltip content="Maximum leverage mode" position="top">
+              <Tooltip
+                content="Maximum leverage mode"
+                position="top"
+                docsLink={DOCS_LINKS.marginCallSimulator}
+              >
                 <span
                   aria-label="Margin Call Simulator info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2821,6 +2887,7 @@ export function PerpsTradeTicket({
                   require a fresh mark and must pass protocol state, pending carry, and post-withdraw margin checks.
                 </span>
               }
+              tooltipDocsLink={DOCS_LINKS.withdrawable}
             />
           </div>
         </div>
@@ -3336,7 +3403,11 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'executed' ? (
             <>
-              <SuccessStateCard title={executedTitle} description="Execution settled onchain and the final price is confirmed." />
+              <SuccessStateCard
+                title={executedTitle}
+                description="Execution settled onchain and the final price is confirmed."
+                celebrate
+              />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
                 <PreviewRows
@@ -3354,13 +3425,20 @@ export function PerpsTradeTicket({
                           label: 'Estimated frozen close spread',
                           value: finalFrozenCloseSpreadValue,
                           tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+                          tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
                         }
                       : {
                           label: finalOracleConfidenceSpreadLabel,
                           value: finalOracleConfidenceSpreadValue,
                           tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
+                          tooltipDocsLink: DOCS_LINKS.oracleConfidence,
                         },
-                    { label: finalVpiLabel, value: finalVpiValue, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+                    {
+                      label: finalVpiLabel,
+                      value: finalVpiValue,
+                      tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+                    },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },
@@ -3571,13 +3649,19 @@ export function PerpsTradeTicket({
 
           <div className="border border-brand-border/20 bg-app-bg p-4">
             <div className="space-y-2">
-              <AccountSummaryRow
-                label={marginActionLimitLabel}
-                value={<TokenAmount amount={marginActionLimitDisplay} />}
-                tooltip={marginAction === 'deposit'
-                  ? 'Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms.'
-                  : undefined}
-              />
+              {marginAction === 'deposit' ? (
+                <AccountSummaryRow
+                  label={marginActionLimitLabel}
+                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                  tooltip="Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms."
+                  tooltipDocsLink={DOCS_LINKS.withdrawable}
+                />
+              ) : (
+                <AccountSummaryRow
+                  label={marginActionLimitLabel}
+                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                />
+              )}
               {isSponsoredAccountConfigured ? (
                 <>
                   {marginAction === 'deposit' ? (
@@ -3585,6 +3669,7 @@ export function PerpsTradeTicket({
                       label="Available to trade"
                       value={<TokenAmount amount={availableToTradeDisplayAmount} />}
                       tooltip="Free margin already deposited in the Margin Account and available for orders."
+                      tooltipDocsLink={DOCS_LINKS.withdrawable}
                     />
                   ) : null}
                   {marginAction !== 'deposit' || usesTradingAccountDepositBalance ? (

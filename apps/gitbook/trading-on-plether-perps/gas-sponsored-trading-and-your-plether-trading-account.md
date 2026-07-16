@@ -2,7 +2,7 @@
 
 Plether sponsors network gas for eligible perps actions, subject to availability and policy limits. You continue using your existing wallet and approve every action.
 
-Your connected wallet owns your Plether Trading Account. The Trading Account submits transactions to Plether’s contracts, while Plether pays the network gas.
+Your connected wallet controls your Plether Trading Account through its signature rules. The Trading Account submits authorized operations to Plether’s contracts, while Plether pays the eligible network gas.
 
 Gas sponsorship covers network gas only. Protocol execution fees, VPI, carry, execution rewards and frozen-close spreads remain USDC costs.
 
@@ -16,27 +16,19 @@ Gas sponsorship covers network gas only. Protocol execution fees, VPI, carry, ex
 
 The relationship can be summarized as:
 
-```
-Connected wallet
-      │ signs and controls
-      ▼
-Trading Account
-      │ owns
-      ▼
-Positions · Orders · Margin Account · Trader claims
-```
+![Hierarchy showing the connected wallet signing for and controlling the Trading Account, which owns positions, orders, margin and trader claims.](../.gitbook/assets/diagrams/wallet-trading-account-ownership.svg)
 
 Your Margin Account has no separate wallet address. It is part of Plether’s internal accounting and belongs to the Trading Account address.
 
 Depending on your network, wallet and account history, the Connected wallet and Trading Account may use the same address or two different addresses.
 
-> **Screenshot placeholder:** Account panel showing the Connected wallet address, Trading Account address, account type and Margin Account balance.
+![Wallet, Trading Account, model and Margin Account](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png)
 
 ### Which actions Plether can sponsor
 
 Eligible actions include:
 
-| Action                    | What the sponsored transaction does                               |
+| Action                    | What the sponsored operation does                                 |
 | ------------------------- | ----------------------------------------------------------------- |
 | **Deposit USDC**          | Moves USDC into the Trading Account’s Margin Account              |
 | **Open or increase**      | Commits an order to open a position or increase existing exposure |
@@ -93,15 +85,7 @@ Before signing, check:
 
 A wallet signature is created offchain. Producing it does not submit a transaction and does not consume network gas.
 
-```
-You review and sign
-        ↓
-Plether checks sponsorship eligibility
-        ↓
-The authorized operation is submitted
-        ↓
-Plether pays the eligible network gas
-```
+![Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas.](../.gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg)
 
 The signature remains an important authorization. It allows the Trading Account to perform the specific action shown in the wallet and application.
 
@@ -130,11 +114,7 @@ Use the Trading Account address when reviewing Plether activity in a block explo
 
 On compatible networks and wallets, EIP-7702 allows the Connected wallet to use smart-account execution while keeping its existing address:
 
-```
-Connected wallet address
-=
-Trading Account address
-```
+**Same-address account:** the Connected wallet and Trading Account use the same address.
 
 Positions, orders, margin and claims remain associated with the same address. This provides the simplest continuity for traders who already have Plether activity under their wallet address.
 
@@ -149,7 +129,7 @@ Your wallet may ask you to authorize the account delegation before sponsored tra
 
 Plether shows the active account model and Trading Account address before you sign.
 
-> **Screenshot placeholder:** Trading Account setup showing the Connected wallet, account model and active Trading Account address.
+![Trading Account setup](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png)
 
 ### Your first deposit
 
@@ -166,12 +146,7 @@ When USDC starts in your Connected wallet, the usual flow requires two signature
 
     You sign the sponsored Trading Account operation. It receives the authorized USDC, grants the clearinghouse an exact approval and deposits the amount into your Margin Account.
 
-The interface may present these steps as:
-
-```
-1. Authorize 1,000 USDC
-2. Deposit 1,000 USDC
-```
+The interface may label these prompts `Authorize 1,000 USDC` and `Deposit 1,000 USDC`.
 
 Both are signatures. Plether pays the network gas for the eligible onchain operation.
 
@@ -187,19 +162,13 @@ The sponsored operation grants an exact USDC approval and deposits the selected 
 
 After confirmation, the deposited amount appears in the Trading Account’s Margin Account.
 
-> **Screenshot placeholder:** First-deposit flow showing the USDC authorization, deposit signature and resulting Margin Account balance.
+![First deposit authorization and batch](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png)
 
 ### Withdrawing USDC
 
 A withdrawal begins with the Trading Account’s withdrawable Margin Account balance.
 
-```
-Choose amount
-→ Review Trading Account and recipient
-→ Sign withdrawal
-→ Sponsored operation confirms
-→ USDC reaches the displayed wallet
-```
+![Sponsored withdrawal sequence from amount selection and recipient review to owner-wallet receipt.](../.gitbook/assets/diagrams/sponsored-withdrawal-flow.svg)
 
 Your withdrawable balance continues to account for open positions, maintenance requirements, pending orders, reserved execution rewards, accrued carry and other settlement obligations.
 
@@ -218,7 +187,7 @@ The Connected wallet and Trading Account use the same address. USDC withdrawn fr
 
 Gas sponsorship does not increase the amount available for withdrawal.
 
-> **Screenshot placeholder:** Withdrawal confirmation showing the Trading Account, destination address, USDC amount and sponsored gas status.
+![Sponsored withdrawal destination](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--withdrawal-confirmation.png)
 
 ### Existing users and account continuity
 
@@ -287,7 +256,7 @@ Possible statuses include:
 | **Sponsored**               | The action is eligible and Plether will pay its network gas |
 | **Sponsorship unavailable** | No sponsored submission has been accepted                   |
 | **Submitted**               | The operation has been sent for onchain inclusion           |
-| **Confirmed**               | The sponsored transaction completed                         |
+| **Confirmed**               | The sponsored operation completed                           |
 | **Order Pending**           | The order commitment succeeded and is waiting for execution |
 | **Failed**                  | The operation or underlying contract call did not complete  |
 
@@ -309,7 +278,7 @@ Avoid repeating an order because its status took longer than expected. A confirm
 
 During a sponsorship outage, positions remain active, carry continues to accrue, pending orders remain in FIFO and liquidation rules continue to apply.
 
-> **Screenshot placeholder:** Sponsorship-unavailable message showing the reason, retry time and any explicitly supported alternative.
+![Sponsor unavailable](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--sponsor-unavailable.png)
 
 ### Why Plether never silently falls back to the owner EOA
 
@@ -361,7 +330,7 @@ Native gas may still be required for external applications, unsponsored actions 
 
 #### Why is my sponsored order still pending?
 
-Sponsorship covers the transaction that commits the order. Execution remains a separate step.
+Sponsorship covers the operation that commits the order. Execution remains a separate step.
 
 After the commitment is confirmed, the order enters Plether’s FIFO queue and waits for the required oracle and keeper conditions.
 

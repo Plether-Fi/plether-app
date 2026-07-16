@@ -42,3 +42,23 @@ export const ClosedThenOpen: Story = {
   },
   render: (args) => <PanelFrame {...args} />,
 }
+
+export const CloseOnlyThenOpen: Story = {
+  args: {
+    currentPhase: 'close-only',
+    currentDuration: '2h 42m',
+    nextPhase: 'open',
+    nextDuration: '1d 12h',
+  },
+  render: (args) => <PanelFrame {...args} />,
+}
+
+export const Degraded: Story = {
+  args: {
+    currentPhase: 'degraded',
+    currentDuration: 'until recapitalized',
+    nextPhase: 'open',
+    nextDuration: 'after recovery',
+  },
+  render: (args) => <PanelFrame {...args} />,
+}

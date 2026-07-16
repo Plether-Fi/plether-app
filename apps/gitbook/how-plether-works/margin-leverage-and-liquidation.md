@@ -6,11 +6,9 @@ That distinction is fundamental. The USDC shown as **Position margin** is not an
 
 The practical model is:
 
-```
-Position margin organizes collateral.
-Account equity determines health.
-Maintenance margin determines liquidation.
-```
+* **Position margin** organizes collateral.
+* **Account equity** determines account health.
+* **Maintenance margin** determines when the account becomes liquidatable.
 
 ### Where your USDC sits
 
@@ -21,11 +19,11 @@ All trader collateral is held in the MarginClearinghouse. Within it, USDC is div
 | Free USDC                | Available for new orders, fees, carry, supporting open positions or withdrawal—subject to risk checks |
 | Position margin          | USDC assigned to the active position                                                                  |
 | Committed order margin   | USDC reserved for a pending order                                                                     |
-| Execution bounty reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
+| Execution reward reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
 
 The total of these buckets forms the account’s settlement balance, but not every bucket is available for every purpose.
 
-Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution bounty reserves are kept separate from ordinary position health.
+Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution reward reserves are kept separate from ordinary position health.
 
 A trader claim—a receivable recorded when the pool cannot immediately cash-settle an amount—is not physical collateral and does not keep another position healthy.
 
@@ -163,7 +161,7 @@ Leverage is also a snapshot. It can change because:
 
 Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
 
-\[Screenshot placeholder: **Current Position** panel—annotate Leverage, Liquidation price, Unrealized PnL, Cost of carry and the shared-collateral notice.]
+![Current Position annotations](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Depositing USDC versus adding position margin
 
@@ -200,7 +198,7 @@ Direct position-margin removal is not supported.
 
 Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
-\[Screenshot placeholder: **Margin Account** card beside the **Edit Position Margin** modal—annotate Free margin, Current position margin, Resulting position margin and Resulting leverage.]
+![Position and Edit Position Margin modal](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 
@@ -338,7 +336,7 @@ A successful liquidation proceeds broadly as follows:
 
 Liquidation does not charge the normal voluntary-close execution fee or a new voluntary-close VPI adjustment. Pending carry and any applicable negative accrued-VPI adjustment still form part of terminal accounting.
 
-The keeper bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
+The liquidation bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
 
 ### Liquidation is always full
 
@@ -363,18 +361,18 @@ Until the close executes:
 
 Liquidation uses a separate protective path and does not wait behind the global order queue. If liquidation happens first, pending orders for that account fail with **Account liquidated**.
 
-Reserved order execution bounties are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
+Reserved order execution rewards are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
 
-\[Screenshot placeholder: A pending close in **Open Orders**—annotate its execution window and add: “Exposure remains live until execution.”]
+![Pending close remains exposed](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
 
 ### Liquidation does not necessarily consume everything
 
 An account can be liquidatable while it still has positive equity. Maintenance margin is a safety threshold above zero.
 
-After carry, applicable adjustments and the keeper bounty:
+After carry, applicable adjustments and the liquidation bounty:
 
 * a positive residual is preserved for the trader;
-* if immediate pool cash is unavailable, some value may be recorded as a trader claim;
+* released margin follows separately; if a fresh HousePool-funded payout cannot be funded in full, the complete fresh payout is recorded in full as a trader claim;
 * an existing trader claim may be netted against a terminal shortfall;
 * only the remaining uncovered loss becomes bad debt borne by the LP waterfall.
 
@@ -435,11 +433,9 @@ In practice:
 
 ### The central distinction
 
-```
-Position size determines price sensitivity.
-Assigned margin satisfies position-level requirements.
-Account equity determines ongoing health.
-Maintenance margin determines full liquidation.
-```
+* **Position size** determines price sensitivity.
+* **Assigned margin** satisfies position-level requirements.
+* **Account equity** determines ongoing health.
+* **Maintenance margin** determines when full liquidation is permitted.
 
 The fixed `0.00–2.00` range makes directional liability measurable. It does not bound carry, fees or liquidation bounties, and it does not prevent liquidation before either boundary is reached.

@@ -11,6 +11,7 @@ import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
 import { usePerpsIdentity } from '../perps-aa'
+import { DOCS_LINKS } from '../config/docs'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -160,6 +161,7 @@ export function Perps() {
           label: 'Pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           tooltip: poolLiquidityTooltip,
+          tooltipDocsLink: DOCS_LINKS.poolLiquidity,
           tooltipClassName: 'w-[400px] whitespace-normal p-4',
           tooltipPosition: 'left',
         },
@@ -167,6 +169,7 @@ export function Perps() {
           label: 'Cost of carry',
           value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
           tooltip: costOfCarryTooltip,
+          tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
           tooltipClassName: 'w-[520px] whitespace-normal p-4',
           tooltipPosition: 'left',
         },

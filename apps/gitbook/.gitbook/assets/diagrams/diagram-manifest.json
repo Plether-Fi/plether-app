@@ -1,0 +1,186 @@
+{
+  "diagramCount": 30,
+  "generator": "scripts/generate-diagrams.mjs",
+  "diagrams": [
+    {
+      "title": "Delayed-order execution pipeline",
+      "source": "how-plether-works/how-orders-execute.md",
+      "asset": ".gitbook/assets/diagrams/delayed-order-execution-pipeline.svg",
+      "alt": "Flowchart showing a Plether order moving from Preview through Commit, FIFO execution and final execution checks."
+    },
+    {
+      "title": "Sponsored submission lifecycle",
+      "source": "how-plether-works/how-orders-execute.md",
+      "asset": ".gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg",
+      "alt": "Five-stage sponsored submission lifecycle from Preparing through wallet confirmation to Confirmed."
+    },
+    {
+      "title": "Two-part order lifecycle",
+      "source": "how-plether-works/how-orders-execute.md",
+      "asset": ".gitbook/assets/diagrams/preview-commit-finalize.svg",
+      "alt": "Three-stage order lifecycle: Preview, Commit and Finalize."
+    },
+    {
+      "title": "Final collection priority",
+      "source": "how-plether-works/how-orders-execute.md",
+      "asset": ".gitbook/assets/diagrams/final-collection-priority.svg",
+      "alt": "Collection priority from execution fee to base close obligation and frozen-close spread."
+    },
+    {
+      "title": "PnL and close-settlement outcomes",
+      "source": "how-plether-works/how-pnl-is-calculated.md",
+      "asset": ".gitbook/assets/diagrams/pnl-and-close-settlement-outcomes.svg",
+      "alt": "Flowchart separating unrealized PnL and liquidation health from realized PnL and close-settlement outcomes."
+    },
+    {
+      "title": "Weekly market-state schedule",
+      "source": "how-plether-works/market-states-and-oracle-closures.md",
+      "asset": ".gitbook/assets/diagrams/weekly-market-state-schedule.svg",
+      "alt": "Weekly timeline showing open, close-only live-oracle and close-only frozen-oracle periods."
+    },
+    {
+      "title": "Frozen-close collection priority",
+      "source": "how-plether-works/market-states-and-oracle-closures.md",
+      "asset": ".gitbook/assets/diagrams/frozen-close-collection-priority.svg",
+      "alt": "Frozen-close collection priority from execution fee through base obligation to frozen-close spread."
+    },
+    {
+      "title": "Close settlement and liquidity flow",
+      "source": "how-plether-works/settlement-liquidity-and-trader-claims.md",
+      "asset": ".gitbook/assets/diagrams/settlement-liquidity-flow.svg",
+      "alt": "Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement."
+    },
+    {
+      "title": "Claim and collateral collection order",
+      "source": "how-plether-works/settlement-liquidity-and-trader-claims.md",
+      "asset": ".gitbook/assets/diagrams/claim-collateral-collection-order.svg",
+      "alt": "Collection order from execution fee to base close obligation and frozen-close spread."
+    },
+    {
+      "title": "HousePool tranche waterfall",
+      "source": "how-plether-works/the-housepool-and-tranche-waterfall.md",
+      "asset": ".gitbook/assets/diagrams/housepool-tranche-waterfall.svg",
+      "alt": "Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior."
+    },
+    {
+      "title": "Trading price and settlement costs",
+      "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
+      "asset": ".gitbook/assets/diagrams/trading-price-and-settlement-costs.svg",
+      "alt": "Two-input flowchart showing oracle price determining directional PnL while fees, VPI, carry and frozen spread feed account settlement."
+    },
+    {
+      "title": "Protocol close-collection order",
+      "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
+      "asset": ".gitbook/assets/diagrams/protocol-close-collection-order.svg",
+      "alt": "Protocol collection order from execution fee to base close obligation and frozen-close spread."
+    },
+    {
+      "title": "How assigned margin reduces carry",
+      "source": "how-plether-works/trading-costs-fees-carry-and-vpi.md",
+      "asset": ".gitbook/assets/diagrams/margin-reduces-future-carry.svg",
+      "alt": "Flow showing higher assigned position margin reducing the LP-backed borrow base and future carry."
+    },
+    {
+      "title": "Senior–Junior waterfall rules",
+      "source": "liquidity-provider-quickstart.md",
+      "asset": ".gitbook/assets/diagrams/senior-junior-waterfall-rules.svg",
+      "alt": "Three-lane diagram summarizing loss absorption, new-revenue allocation and Senior coupon funding."
+    },
+    {
+      "title": "Quickstart sponsored-operation lifecycle",
+      "source": "trader-quickstart.md",
+      "asset": ".gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg",
+      "alt": "Quickstart lifecycle from Preparing and wallet confirmation through sponsored submission to Confirmed."
+    },
+    {
+      "title": "Trader-claim lifecycle",
+      "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
+      "asset": ".gitbook/assets/diagrams/trader-claim-lifecycle.svg",
+      "alt": "Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal."
+    },
+    {
+      "title": "Claim-settlement funding path",
+      "source": "trading-on-plether-perps/check-and-settle-a-trader-claim.md",
+      "asset": ".gitbook/assets/diagrams/claim-settlement-funding-path.svg",
+      "alt": "Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account."
+    },
+    {
+      "title": "Wallet authorization and Trading Account ownership",
+      "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
+      "asset": ".gitbook/assets/diagrams/wallet-trading-account-ownership.svg",
+      "alt": "Hierarchy showing the connected wallet signing for and controlling the Trading Account, which owns positions, orders, margin and trader claims."
+    },
+    {
+      "title": "Authorization and gas sponsorship",
+      "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
+      "asset": ".gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg",
+      "alt": "Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas."
+    },
+    {
+      "title": "Sponsored withdrawal flow",
+      "source": "trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md",
+      "asset": ".gitbook/assets/diagrams/sponsored-withdrawal-flow.svg",
+      "alt": "Sponsored withdrawal sequence from amount selection and recipient review to owner-wallet receipt."
+    },
+    {
+      "title": "Open or increase position lifecycle",
+      "source": "trading-on-plether-perps/open-or-increase-a-position.md",
+      "asset": ".gitbook/assets/diagrams/open-increase-position-lifecycle.svg",
+      "alt": "Complete open-or-increase lifecycle from configuration through sponsored submission, FIFO execution and position update."
+    },
+    {
+      "title": "Open-or-increase sponsored submission",
+      "source": "trading-on-plether-perps/open-or-increase-a-position.md",
+      "asset": ".gitbook/assets/diagrams/open-increase-sponsored-submission.svg",
+      "alt": "Open-or-increase sponsored submission states from Preparing to Confirmed."
+    },
+    {
+      "title": "Reading position and account health",
+      "source": "trading-on-plether-perps/read-your-position-and-account-health.md",
+      "asset": ".gitbook/assets/diagrams/account-health-reading-order.svg",
+      "alt": "Recommended reading order from market state through position, risk, pending orders and available balances."
+    },
+    {
+      "title": "Reduce or close position lifecycle",
+      "source": "trading-on-plether-perps/reduce-or-close-a-position.md",
+      "asset": ".gitbook/assets/diagrams/reduce-close-position-lifecycle.svg",
+      "alt": "Complete reduce-or-close lifecycle from amount selection through sponsored submission, FIFO execution and account update."
+    },
+    {
+      "title": "Reduce-or-close sponsored submission",
+      "source": "trading-on-plether-perps/reduce-or-close-a-position.md",
+      "asset": ".gitbook/assets/diagrams/reduce-close-sponsored-submission.svg",
+      "alt": "Reduce-or-close sponsored submission states from Preparing to Confirmed."
+    },
+    {
+      "title": "From sponsored confirmation to position change",
+      "source": "trading-on-plether-perps/trader-troubleshooting.md",
+      "asset": ".gitbook/assets/diagrams/confirmed-order-execution-path.svg",
+      "alt": "Sequence from sponsored operation confirmation through pending order execution to a changed position."
+    },
+    {
+      "title": "Sponsored-operation troubleshooting states",
+      "source": "trading-on-plether-perps/trader-troubleshooting.md",
+      "asset": ".gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg",
+      "alt": "Sponsored-operation troubleshooting lifecycle from Preparing through wallet confirmation to Confirmed."
+    },
+    {
+      "title": "Submission failures versus delayed-order outcomes",
+      "source": "trading-on-plether-perps/why-is-my-order-pending-or-failed.md",
+      "asset": ".gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg",
+      "alt": "Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes."
+    },
+    {
+      "title": "USDC flow across trader accounts",
+      "source": "trading-on-plether-perps/your-margin-account.md",
+      "asset": ".gitbook/assets/diagrams/usdc-account-flow.svg",
+      "alt": "USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal."
+    },
+    {
+      "title": "From trader claim to owner wallet",
+      "source": "trading-on-plether-perps/your-margin-account.md",
+      "asset": ".gitbook/assets/diagrams/claim-to-owner-wallet.svg",
+      "alt": "Sequence from a trader claim through owner authorization, sponsored settlement, Margin Account credit and sponsored withdrawal."
+    }
+  ]
+}

@@ -14,7 +14,9 @@ LP capital is not idle collateral. It can be used to pay winning traders. In ret
 >
 > Control names in square brackets below are placeholders for the forthcoming LP interface.
 >
-> The `Deposit` button in the existing welcome window and trader ticket funds a **trader margin account**. It does not provide liquidity to the HousePool.
+> The `Deposit` button in the existing welcome window and trader ticket funds a trader’s **Margin Account**. It does not provide liquidity to the HousePool.
+>
+> **Gas sponsorship scope:** the trader sponsorship promise does not currently include LP approvals, deposits, pending-epoch actions, share claims or withdrawals. LP users must keep enough Arbitrum Sepolia ETH for those transactions. Treat an LP method as sponsored only if a later interface explicitly marks that specific action as **Sponsored**.
 
 ### What you receive
 
@@ -43,11 +45,7 @@ The two tranches underwrite the same HousePool but take different positions in t
 
 The basic waterfall is:
 
-```
-Losses:       Junior first → Senior second
-New revenue:  Restore impaired Senior → Junior receives the residual
-Coupon:       Junior NAV → Senior
-```
+![Three-lane diagram summarizing loss absorption, new-revenue allocation and Senior coupon funding.](.gitbook/assets/diagrams/senior-junior-waterfall-rules.svg)
 
 #### Senior is protected, not protected from everything
 
@@ -138,9 +136,7 @@ At minimum, the interface should show:
 
 Do not choose a tranche based only on the highest displayed return. Understand where it sits in the loss and withdrawal waterfall.
 
-> **Screenshot placeholder — LP overview**
->
-> Show the future `[Liquidity]` page with Senior and Junior cards. Include total assets, share price, target or historical return, relative risk, current deposit mode, active fee and withdrawal availability.
+![Prototype LP overview comparing Senior and Junior alongside pool-level liquidity](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 
 ### 5. Enter the deposit
 
@@ -164,9 +160,7 @@ If the vault allowance is insufficient, the first step is approving the selected
 
 Verify that the spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
 
-> **Screenshot placeholder — Deposit preview**
->
-> Show the selected tranche, deposit amount, estimated shares, share price, deposit mode, active fee and approval status. The vault address should be visible or linked to the verified deployment page.
+![Prototype tranche deposit preview with pricing, routing, fee, approval and verified vault context](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png)
 
 ### 6. Immediate versus pending deposits
 
@@ -253,13 +247,7 @@ After the epoch is finalized:
 
 If Senior impairment prevents the epoch from finalizing, cancellation becomes available again so depositors can recover their escrowed USDC.
 
-> **Screenshot placeholder — Pending deposit**
->
-> Show the requested USDC, selected tranche, epoch number, estimated activation time and current state:
->
-> `Pending → Active → Finalized → Shares claimed`
->
-> Include the appropriate `[Cancel request]`, `[Finalize epoch]` and `[Claim shares]` actions.
+![Prototype pending-deposit request with epoch timing, lifecycle state and available actions](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
 
 ### 9. Monitor your LP position
 
@@ -284,9 +272,7 @@ For Junior, share value reflects residual realized revenue minus Senior coupon t
 
 A rising historical share price does not guarantee that the next period will be profitable.
 
-> **Screenshot placeholder — LP position**
->
-> Show tranche shares, current USDC value, share price, change in value, current withdrawable amount, cooldown and any pending epochs.
+![Prototype LP position with value, share performance, withdrawal capacity and pending epochs](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png)
 
 ### 10. Understand withdrawal availability
 
@@ -344,9 +330,7 @@ If the maximum is lower than your intended withdrawal, the remaining shares stay
 
 Ordinary partial withdrawals must satisfy the vault’s minimum amount. A complete residual exit can still be permitted when the remaining value is below that minimum.
 
-> **Screenshot placeholder — Withdrawal preview**
->
-> Show total position value, share balance, current maximum withdrawal, requested amount, shares burned, cooldown, active fee and expected wallet receipt.
+![Prototype LP withdrawal preview with requested amount, burned shares, fee and expected receipt](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
 
 ### Oracle-frozen LP actions
 
@@ -368,7 +352,7 @@ The surcharge begins only when the oracle is actually frozen. A market-close run
 
 | Problem                                             | What to check                                                                          |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| MockUSDC was deposited but no LP shares appeared    | You may have used the trader Margin Account deposit instead of a Tranche Vault         |
+| MockUSDC was deposited but no LP shares appeared    | You may have used the Trading Account’s Margin Account deposit instead of a Tranche Vault |
 | Immediate deposit is unavailable                    | Open trader positions require the pending-epoch route                                  |
 | Pending request shows no shares                     | Wait for activation, epoch finalization and then claim                                 |
 | Pending request cannot be cancelled                 | The activation epoch has probably begun                                                |
@@ -386,7 +370,7 @@ Before approving the vault:
 * Confirm whether you are choosing Senior or Junior.
 * Understand the tranche’s place in the loss waterfall.
 * Verify the official vault address.
-* Confirm that you are not depositing into the trader margin account.
+* Confirm that you are not depositing into the Trading Account’s Margin Account.
 * Check whether the deposit is immediate or pending.
 * Review the expected shares and current share price.
 * Check the current oracle-frozen fee.
@@ -396,10 +380,10 @@ Before approving the vault:
 
 ### Continue reading
 
-* **Senior and Junior liquidity**
-* **How the tranche waterfall works**
-* **Where LP returns come from**
-* **Pending deposit epochs**
-* **The LP withdrawal firewall**
-* **LP fees during market closures**
-* **LP risks and loss scenarios**
+* [**Senior and Junior liquidity**](how-plether-works/the-housepool-and-tranche-waterfall.md#senior-and-junior-at-a-glance)
+* [**How the tranche waterfall works**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-waterfall)
+* [**Where LP returns come from**](how-plether-works/the-housepool-and-tranche-waterfall.md#what-creates-lp-revenue)
+* [**Pending deposit epochs**](how-plether-works/the-housepool-and-tranche-waterfall.md#delayed-deposit-epochs)
+* [**The LP withdrawal firewall**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall)
+* [**LP fees during market closures**](how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps)
+* [**LP risks and loss scenarios**](welcome/risks-you-should-understand-first.md#risks-for-liquidity-providers)

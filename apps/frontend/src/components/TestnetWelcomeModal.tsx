@@ -53,12 +53,14 @@ export function TestnetWelcomeModalView({
           execution without real funds.
         </p>
         <p>
-          Enter your {isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address and we will send you 100,000 mock USDC on Arbitrum Sepolia to
-          start testing. Testnet balances and positions have no real-world value and could be reset
-          at any time.
+          Enter your {isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address and
+          we will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.
         </p>
         <p>
-          Use a wallet that supports Arbitrum Sepolia. You will need that network for trading.
+          Testnet balances and positions have no real-world value and could be reset at any time.
+          {isTradingAccountRecipient
+            ? ' Eligible trader actions are gas-sponsored while sponsorship is available.'
+            : ' Use a wallet that supports Arbitrum Sepolia because it will pay network gas.'}
         </p>
         <p>
           Thanks for being here early. This is a safe testnet environment, so try things freely.
@@ -92,7 +94,9 @@ export function TestnetWelcomeModalView({
                 : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
-              Next, deposit those funds into the exchange margin account before placing orders.
+              {isTradingAccountRecipient
+                ? 'Next, use the sponsored deposit flow to move those funds into the Trading Account’s Margin Account before placing orders.'
+                : 'Next, deposit those funds into the exchange margin account before placing orders.'}
             </p>
             {isTradingAccountRecipient ? (
               <p className="text-content-secondary">

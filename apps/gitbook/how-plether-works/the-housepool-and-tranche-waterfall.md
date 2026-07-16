@@ -112,18 +112,7 @@ Plether does not count unrealized trader losses as current LP assets. A trader l
 
 The resulting revenue or loss then passes through the waterfall:
 
-````
-```mermaid
-flowchart TD
-    A["HousePool value after trader liabilities"] --> B{"Revenue or loss?"}
-
-    B -->|"Loss"| C["Junior absorbs first"]
-    C --> D["Senior absorbs only the remainder"]
-
-    B -->|"Revenue"| E["Restore impaired Senior to its high-water mark"]
-    E --> F["Residual revenue goes to Junior"]
-```
-````
+![Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.](../.gitbook/assets/diagrams/housepool-tranche-waterfall.svg)
 
 #### When the pool realizes a loss
 
@@ -255,7 +244,7 @@ Potential outflows or losses include:
 * trader residuals following liquidation;
 * uncollectible trader losses and bad debt.
 
-The protocol execution fee is designated for the protocol treasury. Order and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
+The protocol execution fee is designated for the protocol treasury. Order execution rewards and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
 
 Recapitalization is also not trading revenue. It is new capital explicitly introduced to repair the waterfall.
 
@@ -275,7 +264,7 @@ That asymmetry is deliberate. It prevents LPs from withdrawing against money the
 
 ### Trader claims rank ahead of LPs
 
-A profitable close can complete even if the HousePool cannot immediately fund the complete payout. The unpaid amount becomes a trader claim.
+A profitable close can complete even if the HousePool cannot immediately fund the complete fresh payout. Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or recorded in full as a trader claim; Plether never splits it between the two.
 
 Trader claims:
 
@@ -376,7 +365,7 @@ Before finalization:
 
 The current contracts use one-hour epoch identifiers and assign requests two epochs ahead. Depending on when a request is submitted within the current hour, activation occurs roughly one to two hours later.
 
-\[Screenshot placeholder: **Deposit request → activation → finalization → claim** flow—pending LP frontend implementation.]
+![Deposit request lifecycle](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
 
 #### Cancellation during impairment
 
@@ -600,11 +589,11 @@ There is currently no interface for:
 * tranche return history;
 * cooldowns or frozen-oracle fees.
 
-The visible **Deposit** and **Withdraw** buttons on the Perps page operate the trader margin account. They are not HousePool LP actions.
+The visible **Deposit** and **Withdraw** buttons on the Perps page operate the Trading Account’s Margin Account. They are not HousePool LP actions.
 
-\[Screenshot placeholder: Senior and Junior tranche overview—pending LP frontend implementation.]
+![Senior and Junior overview](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 
-\[Screenshot placeholder: LP withdrawal preview showing share balance, tranche NAV, max withdraw, cooldown and active reserves—pending LP frontend implementation.]
+![LP withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
 
 #### “Pool liquidity” is not total LP capital
 
@@ -612,14 +601,14 @@ The current trader interface shows **Pool liquidity**.
 
 That value represents free HousePool USDC after protected reserves—not total HousePool assets, total tranche NAV or the amount every LP can withdraw.
 
-Its tooltip currently focuses on:
+The interface breaks this number into:
 
 * LONG USD capacity;
 * SHORT USD capacity;
 * minimum order size;
 * minimum new position.
 
-\[Screenshot: **Pool liquidity** tooltip—caption: “Free deployable USDC after reserves, not total HousePool NAV.”]
+![Pool liquidity definition, capacities and minimums](../.gitbook/assets/screenshots/storybook-documentation-metric-details--pool-liquidity.png)
 
 ### Senior risks
 
@@ -808,15 +797,12 @@ Degraded mode contains the problem. It does not guarantee that trader claims can
 
 ### The distinction to remember
 
-```
-Solvency asks whether remaining liabilities are backed.
-
-Settlement liquidity asks whether a trader can be paid now.
-
-Withdrawal liquidity asks how much cash can safely leave the HousePool.
-
-The tranche waterfall determines which LP capital absorbs loss.
-```
+| Check | Question it answers |
+| --- | --- |
+| **Solvency** | Are the remaining liabilities fully backed? |
+| **Settlement liquidity** | Can a trader be paid now? |
+| **Withdrawal liquidity** | How much cash can safely leave the HousePool? |
+| **Tranche waterfall** | Which LP capital absorbs a realized loss? |
 
 These checks use the same physical backing, but they answer different questions.
 
@@ -850,13 +836,9 @@ After depositing:
 
 The HousePool has three layers of obligation:
 
-```
-First: protect trader settlement liabilities.
-
-Second: apply Senior and Junior accounting priority.
-
-Third: allow LP withdrawals only from physically free USDC.
-```
+1. Protect trader settlement liabilities.
+2. Apply Senior and Junior accounting priority.
+3. Allow LP withdrawals only from physically free USDC.
 
 Senior and Junior divide the residual economic claim on the HousePool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
 

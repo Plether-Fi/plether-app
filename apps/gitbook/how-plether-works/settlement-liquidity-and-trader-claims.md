@@ -5,9 +5,9 @@ A profitable close and an immediately withdrawable balance are not always the sa
 When a position closes, Plether answers two separate questions:
 
 1. What is the position’s final net settlement?
-2. Can the House Pool fund the full amount immediately?
+2. Can the HousePool fund the full amount immediately?
 
-If sufficient settlement liquidity is available, the positive settlement is credited to the trader’s Margin Account. If it is not, the position still closes and the entire unpaid amount becomes a trader claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately to the Trading Account’s Margin Account or, when sufficient settlement liquidity is unavailable, recorded in full as a trader claim. Plether never splits one fresh payout between an immediate credit and a new claim.
 
 This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC.
 
@@ -19,31 +19,15 @@ This separation prevents a temporary cash shortage from trapping traders in open
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | **Realized PnL**        | The result of the price movement on the closed position, before VPI, execution fees, carry and any frozen-close spread |
 | **Released margin**     | The trader’s existing collateral unlocked from the closed portion                                                      |
-| **Fresh trader payout** | A positive net settlement that must be funded by the House Pool                                                        |
-| **Trader claim**        | A fresh payout that could not be funded immediately                                                                    |
+| **Fresh trader payout** | A positive net settlement that must be funded by the HousePool                                                        |
+| **Trader claim**        | A complete fresh payout recorded in full because it could not be funded immediately                                    |
 | **Withdrawable USDC**   | Margin Account USDC that can currently leave the protocol after all account checks                                     |
 
 A profitable close may involve several of these values at once.
 
 ### The settlement flow
 
-````
-```mermaid
-flowchart TD
-    A[Close executes] --> B[Release margin assigned to the closed portion]
-    A --> C[Calculate net close settlement]
-
-    C -->|Positive| D{Can the House Pool fund the full amount?}
-    D -->|Yes| E[Credit the full amount to the Margin Account]
-    D -->|No| F[Record the full amount as a trader claim]
-
-    F --> G[Settle later when aggregate claims are fully covered]
-    G --> E
-    E --> H[Withdraw subject to normal account checks]
-
-    C -->|Zero or negative| I[Collect execution fee, base obligation and any frozen spread in priority order]
-```
-````
+![Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement.](../.gitbook/assets/diagrams/settlement-liquidity-flow.svg)
 
 The process is the same for LONG USD and SHORT USD positions.
 
@@ -86,7 +70,7 @@ The execution-time market state determines whether it applies. A close committed
 
 The rate is part of the protocol’s timelocked risk configuration. It must remain nonzero and cannot exceed `1,000 bps`, or `10.00%`. The live onchain value is authoritative.
 
-A positive net result is a fresh payout owed by the House Pool. A negative result is an amount owed by the trader’s account.
+A positive net result is a fresh payout owed by the HousePool. A negative result is an amount owed by the trader’s account.
 
 The net settlement is separate from the position margin being released.
 
@@ -94,7 +78,7 @@ The net settlement is separate from the position margin being released.
 
 The proportional margin assigned to the closed size is removed from active position margin.
 
-That USDC already exists inside the Margin Account. It does not require a new transfer from the House Pool.
+That USDC already exists inside the Margin Account. It does not require a new transfer from the HousePool.
 
 On a profitable close, the released margin normally becomes free settlement balance. On a losing close, some or all of it may be consumed by the loss.
 
@@ -104,11 +88,9 @@ For a partial close, the margin supporting the remaining position stays locked.
 
 If a voluntary close produces an amount owed by the account, reachable value is allocated in this order:
 
-```
 1. Execution fee
 2. Base close obligation
 3. Frozen-close spread
-```
 
 The base close obligation is the ordinary close settlement before the additional frozen spread. The spread is junior to both the execution fee and the base obligation.
 
@@ -141,7 +123,7 @@ The waived amount:
 * Does not become bad debt
 * Does not become a trader claim
 * Does not become an LP receivable
-* Does not create a future House Pool reserve
+* Does not create a future HousePool reserve
 * Does not become protocol revenue
 
 Genuine uncovered base trading loss continues through the ordinary bad-debt rules. Only the uncollectible frozen-close spread receives the waiver treatment.
@@ -210,12 +192,12 @@ The same funding would be insufficient for a partial reduction. A partial reduct
 
 ### Step 3: Fund or record the positive settlement
 
-Before paying a new positive settlement, Plether reserves House Pool cash for all existing trader claims.
+Before paying a new positive settlement, Plether reserves HousePool cash for all existing trader claims.
 
 ```
 Fresh payout capacity
 = max(
-    canonical House Pool assets
+    canonical HousePool assets
     − aggregate trader claims,
     0
   )
@@ -232,7 +214,7 @@ For example, if a trader is owed `250 USDC` but only `200 USDC` is available abo
 
 Existing claims therefore cannot be bypassed by newer profitable closes.
 
-Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. A trader claim records the unpaid net positive settlement—not gross PnL before costs.
+Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. When that complete payout cannot be funded immediately, a trader claim records the full net positive settlement—not gross PnL before costs.
 
 For example:
 
@@ -244,13 +226,11 @@ Fresh trader payout:                250 USDC
 
 If immediate settlement liquidity is insufficient, the resulting claim is `250 USDC`, not `300 USDC`.
 
-> **Screenshot placeholder — Close settlement result**
->
-> Show released margin, realized PnL, signed VPI, execution fee, carry, frozen spread assessed, frozen spread paid, frozen spread waived, net settlement, immediate Margin Account credit and trader claim created.
+![Full close reconciliation separating released margin, trading economics, immediate credit and the complete trader claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
 
 ### Immediate settlement does not mean wallet settlement
 
-An immediate payout moves USDC from the House Pool to the clearinghouse and credits the trader’s Margin Account.
+An immediate payout moves USDC from the HousePool to the clearinghouse and credits the Trading Account’s Margin Account.
 
 It is not transferred directly to the trader’s wallet.
 
@@ -266,12 +246,12 @@ If the trader is flat and the balance is otherwise unencumbered, it can normally
 
 ### What is a trader claim?
 
-A trader claim is a USDC-denominated amount that the House Pool owes to a specific account.
+A trader claim is a USDC-denominated amount that the HousePool owes to a specific Trading Account.
 
 It is:
 
-* recorded onchain at the full unpaid amount;
-* separate from the trader’s Margin Account balance;
+* recorded onchain at the complete fresh payout amount;
+* separate from the Trading Account’s Margin Account balance;
 * reserved ahead of LP withdrawals;
 * added to any existing claim belonging to the same account;
 * fixed in USDC rather than continuing to move with the index.
@@ -290,45 +270,42 @@ A claim does not expire, but it has no guaranteed settlement date.
 
 “Senior” in this context describes the contract’s internal cash-priority rules. It does not describe a separate legal claim outside the protocol.
 
-A waived frozen-close spread is not a trader claim. It is a trader-owed charge that Plether did not collect—not an amount the House Pool owes the trader.
+A waived frozen-close spread is not a trader claim. It is a trader-owed charge that Plether did not collect—not an amount the HousePool owes the trader.
 
 ### Claims are balances, not a queue
 
 Plether does not maintain a first-claim, first-paid queue.
 
-All trader claims are considered together. The relevant question is whether the House Pool can cover the aggregate claim balance:
+All trader claims are considered together. Claim settlement is available only when:
 
 ```
-Claim settlement is available when:
-
-canonical House Pool assets
+canonical HousePool assets
 ≥ aggregate trader claims
 ```
 
-If aggregate claims are under-covered, settlement is unavailable to every claimant—even if the House Pool could individually pay one smaller claim.
+If aggregate claims are under-covered, settlement is unavailable to every claimant—even if the HousePool could individually pay one smaller claim.
 
 This prevents settlement from becoming a race in which the first caller extracts cash while other claims remain under-covered.
 
-Once aggregate coverage is restored, any beneficiary can settle their complete claim. Paying one claim reduces House Pool assets and aggregate claims by the same amount, preserving coverage for the remaining claimants.
+Once aggregate coverage is restored, each Trading Account can settle its complete claim after its owner wallet authorizes the action. Paying one claim reduces HousePool assets and aggregate claims by the same amount, preserving coverage for the remaining claimants.
 
 ### How to settle a trader claim
 
 When aggregate claims are fully covered:
 
-1. The beneficiary initiates the settlement action for their own account.
+1. The owner wallet authorizes settlement for the claim-owning Trading Account.
 2. Plether checkpoints carry if the account still has an open position.
-3. The full claim moves from the House Pool to the clearinghouse.
-4. The trader’s claim balance is reduced by the same amount.
-5. The Margin Account receives the settlement credit.
-6. The trader can withdraw through the normal margin withdrawal flow.
+3. Plether submits the eligible sponsored Trading Account operation.
+4. The full claim moves from the HousePool to the clearinghouse.
+5. The Trading Account’s claim balance is reduced by the same amount.
+6. The Margin Account receives the settlement credit.
+7. The trader can withdraw through the normal sponsored Margin Account withdrawal flow.
 
-Claim settlement is beneficiary-only and all-or-nothing. The protocol does not support entering a smaller settlement amount.
+Claim settlement requires authorization from the Trading Account’s owner wallet and is all-or-nothing. The sponsor and bundler can relay the authorized operation, but they cannot create the owner signature. The protocol does not support entering a smaller settlement amount.
 
 If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
 
-> **Screenshot placeholder — Trader claim panel**
->
-> Show the account’s claim balance, aggregate coverage status, “Settlement available” or “Settlement unavailable,” the destination as “Margin Account,” and the **Settle claim** action.
+![Trader claim with aggregate coverage, settlement availability, Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 
 ### A claim is not position collateral
 
@@ -346,11 +323,7 @@ If the same account later produces a terminal negative settlement, its existing 
 
 For an oracle-frozen voluntary full close, collection still follows:
 
-```
-Execution fee
-→ base close obligation
-→ frozen-close spread
-```
+![Collection order from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/claim-collateral-collection-order.svg)
 
 Claim value used against the execution fee or base obligation can prevent genuine bad debt. Claim value remaining after those obligations can pay the frozen-close spread to LPs.
 
@@ -386,14 +359,14 @@ Settlement liquidity, claim serviceability and LP withdrawal liquidity answer di
 | Question                              | Protocol rule                                                                                   |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Can a new positive close be paid now? | The full payout must fit after reserving all existing trader claims                             |
-| Can an existing claim be settled?     | House Pool assets must cover all aggregate trader claims                                        |
+| Can an existing claim be settled?     | HousePool assets must cover all aggregate trader claims                                        |
 | Can an LP withdraw?                   | Assets must remain after live trader liability, claims and other explicit reserves are deducted |
 
 A generic “Pool liquidity” number should therefore not be treated as a guarantee that a particular payout or claim can be settled.
 
 ### How claims affect LP withdrawals
 
-Trader claims become reserved liabilities as soon as they are recorded. The House Pool does not need to transfer USDC for the reserve to take effect.
+Trader claims become reserved liabilities as soon as they are recorded. The HousePool does not need to transfer USDC for the reserve to take effect.
 
 The core withdrawal reserve is:
 
@@ -415,12 +388,12 @@ Core withdrawal reserve
 + aggregate trader claims
 ```
 
-At the House Pool level:
+At the HousePool level:
 
 ```
 Free LP liquidity
 = max(
-    canonical House Pool assets
+    canonical HousePool assets
     − maximum modeled live liability
     − aggregate trader claims
     − other explicit reserves,
@@ -440,9 +413,9 @@ Within the LP stack:
 
 When a claim is recorded, the closed portion’s live-position liability also disappears. The obligation changes from a contingent position liability into a realized claim; it is not meant to be counted twice.
 
-When the claim is eventually settled, House Pool assets and claim liabilities fall by the same amount. The economic effect was already recognized when the claim was created.
+When the claim is eventually settled, HousePool assets and claim liabilities fall by the same amount. The economic effect was already recognized when the claim was created.
 
-A paid frozen-close spread follows different accounting. Any amount retained, collected in cash or recovered from the same account’s trader claim is recorded as LP-owned House Pool revenue.
+A paid frozen-close spread follows different accounting. Any amount retained, collected in cash or recovered from the same account’s trader claim is recorded as LP-owned HousePool revenue.
 
 A waived spread is not recorded as:
 
@@ -455,15 +428,13 @@ A waived spread is not recorded as:
 
 LP accounting recognizes only the amount actually paid.
 
-> **Screenshot placeholder — House Pool liquidity**
->
-> Show canonical assets, maximum live trader liability, aggregate trader claims, total withdrawal reserve, free LP liquidity and Senior and Junior maximum withdrawals.
+![HousePool liquidity breakdown showing the obligations protected before LP withdrawals](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 
 ### Trader claims and bad debt are opposites
 
 | Trader claim                                                 | Bad debt                                                                                         |
 | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
-| The House Pool owes the trader                               | The trader account could not pay the protocol                                                    |
+| The HousePool owes the trader                               | The trader account could not pay the protocol                                                    |
 | Created by a positive net settlement                         | Created by an uncovered terminal base trading-loss obligation                                    |
 | Reserved ahead of LP withdrawals                             | Absorbed economically by LP capital                                                              |
 | Settles when aggregate claims are cash-covered               | Repaired through future revenue or recapitalization                                              |
@@ -471,7 +442,7 @@ LP accounting recognizes only the amount actually paid.
 
 A waived frozen-close spread belongs to neither column.
 
-It is a charge the protocol forgoes to let a terminal full close complete. The House Pool does not owe it to the trader, and the trader’s inability to pay it does not increase bad debt or create an LP receivable.
+It is a charge the protocol forgoes to let a terminal full close complete. The HousePool does not owe it to the trader, and the trader’s inability to pay it does not increase bad debt or create an LP receivable.
 
 ### Claims and degraded mode
 
@@ -480,7 +451,7 @@ For remaining open positions, Plether measures effective backing after existing 
 ```
 Effective assets
 = max(
-    canonical House Pool assets
+    canonical HousePool assets
     − aggregate trader claims,
     0
   )
@@ -521,7 +492,7 @@ A trader claim:
 * cannot be used as margin;
 * may be netted against a later terminal loss from the same account.
 
-There is no external backstop promising when the House Pool will regain full aggregate claim coverage.
+There is no external backstop promising when the HousePool will regain full aggregate claim coverage.
 
 ### Worked examples
 
@@ -533,7 +504,7 @@ A trader closes a position with:
 
 * Released margin: `1,000 USDC`
 * Net positive settlement: `250 USDC`
-* House Pool assets: `5,000 USDC`
+* HousePool assets: `5,000 USDC`
 * Existing aggregate claims: `1,000 USDC`
 
 Fresh payout capacity is `4,000 USDC`, so the entire payout fits.
@@ -551,7 +522,7 @@ Assume instead:
 
 * Released margin: `1,000 USDC`
 * Net positive settlement: `250 USDC`
-* House Pool assets: `1,200 USDC`
+* HousePool assets: `1,200 USDC`
 * Existing aggregate claims: `1,000 USDC`
 
 Only `200 USDC` is available above existing claims.
@@ -567,14 +538,14 @@ Result:
 
 #### Example 3: claim coverage is restored
 
-House Pool assets later reach `1,250 USDC`, matching aggregate claims of `1,250 USDC`.
+HousePool assets later reach `1,250 USDC`, matching aggregate claims of `1,250 USDC`.
 
 The trader settles their `250 USDC` claim.
 
 Result:
 
-* `250 USDC` moves to the trader’s Margin Account.
-* House Pool assets fall to `1,000 USDC`.
+* `250 USDC` moves to the Trading Account’s Margin Account.
+* HousePool assets fall to `1,000 USDC`.
 * Aggregate claims fall to `1,000 USDC`.
 * The remaining claims stay fully covered.
 
