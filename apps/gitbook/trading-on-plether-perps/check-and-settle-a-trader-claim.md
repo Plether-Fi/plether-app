@@ -10,16 +10,7 @@ Claims can arise from:
 
 The position action still completes. Released position margin follows the normal account settlement path, while the unfunded HousePool payment is recorded separately as a trader claim.
 
-```
-Position settles
-→ Fresh payout cannot be funded in full
-→ Trader claim is recorded
-→ HousePool cash coverage returns
-→ Owner wallet authorizes settlement
-→ Sponsored Trading Account operation confirms
-→ USDC is credited to the Margin Account
-→ Optional withdrawal to the owner wallet
-```
+![Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal.](../.gitbook/assets/diagrams/trader-claim-lifecycle.svg)
 
 ### How a claim is created
 
@@ -44,9 +35,9 @@ Cash available for fresh payouts:      300 USDC
 
 The `2,000 USDC` of position margin follows the normal account path. The complete `500 USDC` fresh payout becomes a trader claim.
 
-Additional unpaid payouts earned by the same account are added to its existing claim balance.
+Additional complete fresh payouts that cannot be funded immediately are recorded in full and added to the account’s existing claim balance.
 
-> **Screenshot placeholder:** Completed reduction or close showing released margin and the separately recorded trader claim.
+![Close created a claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--close-created-claim.png)
 
 ### Check your claim
 
@@ -80,7 +71,7 @@ The claim remains denominated in USDC. It does not accrue interest or yield and 
 
 Claims are included in the protocol’s liability and LP-withdrawal accounting while they remain outstanding.
 
-> **Screenshot placeholder:** Margin Account showing the Trader claim balance and settlement status.
+![Claim balance and status](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--waiting-for-liquidity.png)
 
 ### When a claim becomes available to settle
 
@@ -156,7 +147,7 @@ Review:
 
 The confirmation should make clear that the entire balance will be settled and that transferring the USDC to your wallet requires a separate withdrawal.
 
-> **Screenshot placeholder:** Settle Claim confirmation showing the full balance and Margin Account destination.
+![Settlement confirmation](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--settlement-confirmation.png)
 
 #### 4. Authorize the sponsored operation
 
@@ -182,15 +173,11 @@ After confirmation:
 * Available to Trade and Withdrawable should be recalculated.
 * Any carry associated with an open position should be updated.
 
-```
-HousePool
-→ Margin Clearinghouse
-→ Your Margin Account
-```
+![Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
 The sponsored settlement operation does not transfer USDC directly to the owner wallet.
 
-> **Screenshot placeholder:** Successful settlement showing a zero claim balance and the corresponding Margin Account credit.
+![Zero claim and account credit](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--successfully-settled.png)
 
 ### Carry when you have an open position
 

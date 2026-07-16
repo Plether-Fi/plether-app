@@ -16,7 +16,7 @@ Start by checking the operation and onchain state before submitting another acti
 
 Do not commit a replacement order until the original is absent from **Open Orders**. A second commitment creates another binding order with its own margin and execution-reward reservations.
 
-> **Screenshot placeholder:** Market state, oracle freshness, connected wallet, Trading Account, sponsorship status and the Open Orders and Order History tabs.
+![Complete market, account and order context](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
 
 ### Identify the current state
 
@@ -37,24 +37,13 @@ Do not commit a replacement order until the original is absent from **Open Order
 
 A successful commitment only creates an order. Position size and entry price change after that order executes.
 
-```
-Sponsored operation confirmed
-→ Order becomes Pending
-→ Order reaches execution
-→ Position changes
-```
+![Sequence from sponsored operation confirmation through pending order execution to a changed position.](../.gitbook/assets/diagrams/confirmed-order-execution-path.svg)
 
 ### My sponsored operation did not confirm
 
 The sponsored-submission lifecycle is:
 
-```
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-```
+![Sponsored-operation troubleshooting lifecycle from Preparing through wallet confirmation to Confirmed.](../.gitbook/assets/diagrams/troubleshooting-sponsored-submission.svg)
 
 These failures occur before the delayed order lifecycle:
 
@@ -120,9 +109,9 @@ Adjust the size, leverage or margin according to the displayed reason. Market-st
 
 A reverted sponsored commitment rolls back the complete action. No order, margin reservation or execution-reward reservation remains.
 
-> **Screenshot placeholder:** Disabled Review button with an insufficient-margin, minimum-size or skew-cap message.
+![Disabled Review error states](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--disabled-review-messages.png)
 
-See **Open or increase a position**, **Market states and oracle closures** and **Solvency at a glance**.
+See [**Open or increase a position**](open-or-increase-a-position.md), [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md) and [**Solvency at a glance**](../how-plether-works/the-housepool-and-tranche-waterfall.md#solvency-at-a-glance).
 
 ### I cannot reduce or close
 
@@ -166,7 +155,7 @@ Full-close treatment does not bypass slippage, expiry, oracle validation or exec
 
 Close commitments remain available at contract level during degraded mode and while new risk commitments are paused.
 
-See **Reduce or close a position**.
+See [**Reduce or close a position**](reduce-or-close-a-position.md).
 
 ### My order remains Pending
 
@@ -199,9 +188,9 @@ Pending orders cannot be cancelled or repriced. They end through execution, term
 
 Use **Finalize Trade** when the active order modal makes it available. Once an order expires, use **Clean Up** to release eligible reservations and remove it from the queue.
 
-> **Screenshot placeholder:** Pending reveal state with the finalization countdown, Finalize Trade and an expired Open Orders row showing Clean Up.
+![Finalization and expired cleanup](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--pending-finalization-and-cleanup.png)
 
-See **How orders execute** and **Why is my order pending or failed?**
+See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md).
 
 ### My finalization transaction failed
 
@@ -264,9 +253,9 @@ Cleanup releases committed opening margin and pays the reserved execution reward
 
 Liquidation removes the position and marks all of that account’s pending orders as Failed.
 
-See **Why is my order pending or failed?** for the detailed failure lifecycle.
+See [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md) for the detailed failure lifecycle.
 
-> **Screenshot placeholder:** Order History showing a failed order, its reason and commit/finalization transaction links.
+![Failed Order History](../.gitbook/assets/screenshots/storybook-perps-account-panel--order-history-failures.png)
 
 ### My operation succeeded, but the position did not change
 
@@ -320,7 +309,7 @@ Review:
 
 A deposit increases free Margin Account USDC. To assign part of it directly to the current position, use **Edit Position Margin** and **Add margin**.
 
-See **Your Margin Account**.
+See [**Your Margin Account**](your-margin-account.md).
 
 ### I cannot add position margin
 
@@ -365,9 +354,9 @@ Trader withdrawals are paid from the Margin Clearinghouse. HousePool payout liqu
 
 A reverted withdrawal leaves the account balance unchanged.
 
-> **Screenshot placeholder:** Withdraw Margin modal showing Withdrawable and an amount-exceeds-withdrawable message.
+![Withdraw exceeds limit](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-exceeds-available.png)
 
-See **Your Margin Account** and **Read your position and account health**.
+See [**Your Margin Account**](your-margin-account.md) and [**Read your position and account health**](read-your-position-and-account-health.md).
 
 ### The execution price differs from the preview
 
@@ -392,7 +381,7 @@ For the dollar-oriented price shown in the interface:
 
 A voluntary close during `oracleFrozen` uses the validated frozen basket and the fixed `50 bps` frozen-close spread. The usual adverse confidence price shift is removed for this path, while confidence-width validation and signed VPI remain active.
 
-See **How orders execute** and **Market states and oracle closures**.
+See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md).
 
 ### My realized result differs from Unrealized PnL
 
@@ -411,7 +400,7 @@ The execution reward is reserved separately when the order is committed.
 
 Compare the final execution result with the close preview and transaction details rather than the displayed Unrealized PnL alone.
 
-See **How PnL is calculated** and **Fees, VPI and cost of carry**.
+See [**How PnL is calculated**](../how-plether-works/how-pnl-is-calculated.md) and [**Fees, VPI and cost of carry**](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 
 ### Available to Trade is lower than expected
 
@@ -423,7 +412,7 @@ Available to Trade excludes:
 
 Carry can also reduce the balance when an account action checkpoints it.
 
-Unrealized profit can contribute to Portfolio value before it becomes free Margin Account USDC. Realization may produce an immediate Margin Account credit or a trader claim, depending on HousePool settlement liquidity.
+Unrealized profit can contribute to Portfolio value before it becomes free Margin Account USDC. Released margin follows separately. At realization, the complete fresh HousePool-funded payout is either credited immediately in full or recorded in full as a trader claim, depending on HousePool settlement liquidity.
 
 ### My liquidation price or account health changed
 
@@ -444,7 +433,7 @@ Actual liquidation uses an adverse confidence-adjusted oracle price. A position 
 
 If **Liquidation price** shows **Not in range**, the projected threshold is outside the protocol’s bounded settlement range under the current position state.
 
-See **Margin, leverage and liquidation** and **Read your position and account health**.
+See [**Margin, leverage and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md) and [**Read your position and account health**](read-your-position-and-account-health.md).
 
 ### My close is pending while liquidation risk is increasing
 
@@ -467,7 +456,7 @@ If liquidation executes first:
 * Reserved execution rewards are forfeited to the protocol treasury.
 * Committed-order margin may be consumed by terminal settlement.
 * Any remainder is released.
-* A positive residual is paid immediately or recorded as a trader claim.
+* Released margin follows separately; a complete fresh positive payout is either credited immediately in full or recorded in full as a trader claim.
 
 Liquidation applies no new VPI delta and no frozen-close spread.
 
@@ -485,7 +474,7 @@ An oracle-frozen close can still become unavailable if the stored basket exceeds
 
 Carry continues accruing through FAD, oracle-frozen and stale periods.
 
-See **Market states and oracle closures**.
+See [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md).
 
 ### I have a trader claim but cannot settle it
 
@@ -505,7 +494,7 @@ Successful settlement credits the Margin Account. Moving the USDC to the wallet 
 
 An existing claim may also be consumed against a shortfall from a losing terminal full close or liquidation.
 
-See **Check and settle a trader claim** and **Settlement liquidity and trader claims**.
+See [**Check and settle a trader claim**](check-and-settle-a-trader-claim.md) and [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md).
 
 ### Open Orders and Order History disagree
 

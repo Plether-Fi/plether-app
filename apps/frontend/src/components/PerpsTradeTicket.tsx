@@ -131,6 +131,10 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialLeverage?: number
+  initialMarginAction?: MarginAction
+  initialMarginActionAmount?: string
+  initialMarginCallSimulatorConfirmationOpen?: boolean
   initialOrderId?: bigint
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
@@ -147,6 +151,8 @@ interface PerpsTradeTicketProps {
   latestBasket?: BasketLatest
   adverseConfidenceMultiplierBps?: string
   oracleFrozen?: boolean
+  /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
+  openPreviewFixture?: OpenPreviewView
   /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
   closePreviewFixture?: ClosePreviewView
   oracleFreshness?: PerpsOracleFreshness
@@ -1255,6 +1261,10 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialLeverage = 5,
+  initialMarginAction,
+  initialMarginActionAmount = '',
+  initialMarginCallSimulatorConfirmationOpen = false,
   initialOrderId,
   initialCommitTxHash,
   initialExecuteTxHash,
@@ -1271,6 +1281,7 @@ export function PerpsTradeTicket({
   latestBasket,
   adverseConfidenceMultiplierBps,
   oracleFrozen = false,
+  openPreviewFixture,
   closePreviewFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
@@ -1309,9 +1320,11 @@ export function PerpsTradeTicket({
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
-  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
+  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(
+    initialMarginCallSimulatorConfirmationOpen
+  )
   const [size, setSize] = useState(initialSize)
-  const [leverage, setLeverage] = useState(5)
+  const [leverage, setLeverage] = useState(initialLeverage)
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
@@ -1326,8 +1339,8 @@ export function PerpsTradeTicket({
   const [isFinalVpiEstimated, setIsFinalVpiEstimated] = useState(false)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
-  const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
-  const [marginActionAmount, setMarginActionAmount] = useState('')
+  const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
+  const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
   const [marginActionError, setMarginActionError] = useState<string | undefined>()
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
@@ -1734,6 +1747,7 @@ export function PerpsTradeTicket({
   })
   const openPreview = !isReducingCurrentPosition
     ? parseOpenPreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+      ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))

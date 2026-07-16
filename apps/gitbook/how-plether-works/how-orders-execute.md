@@ -13,15 +13,7 @@ The order enters a global queue, then settles under the oracle regime active whe
 * Live and FAD-only execution uses the first eligible post-commit observation.
 * An `oracleFrozen` voluntary close uses the bounded frozen-market policy.
 
-```
-Preview
-→ Commit
-→ Global FIFO queue
-→ Execution-time oracle regime
-→ Eligible observation under that regime
-→ Price and risk checks
-→ Executed or Failed
-```
+![Flowchart showing a Plether order moving from Preview through Commit, FIFO execution and final execution checks.](../.gitbook/assets/diagrams/delayed-order-execution-pipeline.svg)
 
 This introduces a short delay by design. The delay separates the trading decision from the price used to settle it, reducing the surface for front-running and selective execution.
 
@@ -29,21 +21,13 @@ This introduces a short delay by design. The delay separates the trading decisio
 
 The sponsored commitment first moves through:
 
-```
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-```
+![Five-stage sponsored submission lifecycle from Preparing through wallet confirmation to Confirmed.](../.gitbook/assets/diagrams/order-sponsored-submission-lifecycle.svg)
 
 Here, **Confirmed** means the order commitment reached the chain. It does not mean the trade has executed.
 
 The delayed order then follows the protocol stages:
 
-```
-Preview → Commit → Finalize
-```
+![Three-stage order lifecycle: Preview, Commit and Finalize.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
 
 The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper normally submits the separate finalization transaction.
 
@@ -68,7 +52,7 @@ This includes:
 * Liquidation price
 * Available side capacity
 
-> **Screenshot placeholder:** Commit Preview — highlight the Execution limit, Adverse oracle confidence spread, VPI and Estimated execution reward.
+![Commit Preview costs and limits](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
 
 For a voluntary reduction or close, the onchain preview also exposes:
 
@@ -216,7 +200,7 @@ If automatic finalization does not arrive during the interface’s keeper grace 
 
 The finalizing address receives the reserved execution reward through its Margin Account. If the owner EOA and Trading Account use different addresses, they are different Plether accounts.
 
-> **Screenshot placeholder:** Finalize state — show the keeper grace countdown and the manual Finalize Trade action.
+![Finalization countdown and manual action](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png)
 
 ### From index observation to execution price
 
@@ -364,11 +348,7 @@ The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps
 
 If trader-owned value must be collected, settlement follows this priority:
 
-```
-Execution fee
-→ base close obligation
-→ frozen-close spread
-```
+![Collection priority from execution fee to base close obligation and frozen-close spread.](../.gitbook/assets/diagrams/final-collection-priority.svg)
 
 A partial reduction must settle its complete obligation, including the full spread. If it cannot, the reduction does not execute.
 
@@ -441,9 +421,9 @@ Every paid dollar belongs to LPs. None is credited to the protocol treasury.
 
 A terminal full close remains an **Executed** order when part of the spread is waived. The position closes successfully, and the event records the paid and waived amounts.
 
-> **Screenshot placeholder:** Final Result — compare Final price, Target exposure, Execution exposure, VPI and Execution reward.
+![Final Result values](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
 
-> **Future UI placeholder:** Frozen close result — show signed VPI and frozen spread assessed, paid and waived as separate values.
+![Frozen close final result](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--frozen-close-result.png)
 
 #### Failed
 
@@ -494,7 +474,7 @@ After cleanup:
 
 The interface changes the action from **Cancel unavailable** to **Clean Up** when cleanup becomes available.
 
-> **Screenshot placeholder:** Open Orders — show Pending reveal, expiry countdown, Cancel unavailable and Clean Up.
+![Pending and expired Open Orders](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending-and-expired.png)
 
 ### Execution during protective market states
 

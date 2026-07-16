@@ -362,8 +362,8 @@ Users should rely on the active oracle configuration and deployment reference ra
 
 ### Where to go next
 
-* **Risks you should understand first**
-* **Trader quickstart**
-* **Fees, carry and virtual price impact**
-* **Market hours and closures**
-* **Oracle and execution pricing**
+* [**Risks you should understand first**](risks-you-should-understand-first.md)
+* [**Trader quickstart**](../trader-quickstart.md)
+* [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
+* [**Oracle and execution pricing**](../how-plether-works/how-orders-execute.md#from-index-observation-to-execution-price)

@@ -49,7 +49,7 @@ This is an admission rule. It does not guarantee that:
 
 The solvency check depends on correct code, correct accounting, valid oracle data and functioning external infrastructure.
 
-A profitable close can complete while some or all of the amount owed becomes a trader claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
+A profitable close can complete even when its complete fresh HousePool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
 
 ### No counterparty ADL does not mean no forced exit
 
@@ -71,7 +71,7 @@ The distinction is simple:
 | Event                                    | First affected                         | What happens next                                                                      |
 | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
 | A trader loses                           | The trader’s reachable USDC collateral | Any remaining deficit becomes bad debt absorbed by HousePool capital                   |
-| A trader profits                         | Available HousePool cash               | Any unpaid amount becomes a senior trader claim                                        |
+| A trader profits                         | Available HousePool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
 | The HousePool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
 | A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new risk and affected withdrawals while protective actions remain |
@@ -200,7 +200,7 @@ Traders are responsible for reducing exposure or adding collateral before the st
 
 A profitable close does not always produce immediately withdrawable USDC.
 
-If the HousePool lacks sufficient free cash, the unpaid amount becomes a trader claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, if sufficient free cash is unavailable, recorded in full as a trader claim. Plether does not split it between an immediate credit and a new claim.
 
 A trader claim is:
 
@@ -580,9 +580,9 @@ Before interacting:
 
 ## Where to go next
 
-* **Trader quickstart**
-* **Liquidity provider quickstart**
-* **Margin and liquidation**
-* **Fees, carry and virtual price impact**
-* **Market hours and closures**
-* **Security, audits and governance**
+* [**Trader quickstart**](../trader-quickstart.md)
+* [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md)
+* [**Margin and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md)
+* [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
+* [**Security, audits and governance**](#risks-shared-by-everyone)

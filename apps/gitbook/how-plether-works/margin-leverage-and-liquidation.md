@@ -163,7 +163,7 @@ Leverage is also a snapshot. It can change because:
 
 Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
 
-\[Screenshot placeholder: **Current Position** panel—annotate Leverage, Liquidation price, Unrealized PnL, Cost of carry and the shared-collateral notice.]
+![Current Position annotations](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Depositing USDC versus adding position margin
 
@@ -200,7 +200,7 @@ Direct position-margin removal is not supported.
 
 Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
-\[Screenshot placeholder: **Margin Account** card beside the **Edit Position Margin** modal—annotate Free margin, Current position margin, Resulting position margin and Resulting leverage.]
+![Position and Edit Position Margin modal](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 
@@ -365,7 +365,7 @@ Liquidation uses a separate protective path and does not wait behind the global 
 
 Reserved order execution rewards are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
 
-\[Screenshot placeholder: A pending close in **Open Orders**—annotate its execution window and add: “Exposure remains live until execution.”]
+![Pending close remains exposed](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
 
 ### Liquidation does not necessarily consume everything
 
@@ -374,7 +374,7 @@ An account can be liquidatable while it still has positive equity. Maintenance m
 After carry, applicable adjustments and the liquidation bounty:
 
 * a positive residual is preserved for the trader;
-* if immediate pool cash is unavailable, some value may be recorded as a trader claim;
+* released margin follows separately; if a fresh HousePool-funded payout cannot be funded in full, the complete fresh payout is recorded in full as a trader claim;
 * an existing trader claim may be netted against a terminal shortfall;
 * only the remaining uncovered loss becomes bad debt borne by the LP waterfall.
 

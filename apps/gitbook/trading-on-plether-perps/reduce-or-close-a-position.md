@@ -4,19 +4,7 @@ Reducing removes part of an existing position. Closing removes the complete posi
 
 Both actions begin with a sponsored submission and then use Plether’s delayed-order process:
 
-```
-Choose the amount
-→ Set an acceptable price
-→ Review
-→ Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-→ Join the FIFO queue
-→ Execute or fail
-→ Update the position and Margin Account
-```
+![Complete reduce-or-close lifecycle from amount selection through sponsored submission, FIFO execution and account update.](../.gitbook/assets/diagrams/reduce-close-position-lifecycle.svg)
 
 The sponsored operation is **Confirmed** when the close commitment reaches the chain. The position remains exposed until the committed order later executes.
 
@@ -61,20 +49,22 @@ Exposure that exists only as a pending opening order cannot be reduced yet. Wait
 
 Risk-reducing close orders remain available during normal trading, FAD-only close windows, `oracleFrozen`, degraded mode and router pause. Usable oracle data, execution-reward backing and the ordinary close validations are still required.
 
-> **Screenshot placeholder:** Open position showing direction, exposure, entry price, current mark, position margin, unrealized PnL and the Reduce/Close action.
+![Open position and close context](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
-### 1. Choose the amount
+### 1. Choose the amount in the trade ticket
 
-Open the position panel and select **Reduce** or **Close**.
+Use the Position panel to review the exposure you currently hold, then create the exit in the trade ticket. The Position panel does not have separate **Reduce** or **Close** controls.
 
-For a reduction, enter the amount of exposure to remove:
+In the trade ticket, enable `Reduce only`. This ensures the order can only reduce or close the current position; it cannot increase exposure or open a position in the opposite direction.
+
+For a partial reduction, enter the amount of exposure to remove. The action becomes `Review Reduce`:
 
 ```
 Remaining exposure
 = current exposure − reduction amount
 ```
 
-For a full close, select the complete amount currently available.
+For a full close, select `Current Position` or `Max` to fill the complete amount currently available. The action becomes `Review Close`.
 
 Earlier pending reductions count against the amount available to later orders. If the live position is 10,000 units and an earlier order is already reducing 3,000, only the projected remaining 7,000 units are available to a later close.
 
@@ -124,7 +114,7 @@ Slippage remains active in every market state. It applies to the execution price
 
 If the interface offers an **Unlimited** setting, it removes the execution-price boundary. The other close requirements continue to apply.
 
-> **Screenshot placeholder:** Reduce ticket showing amount, projected remaining exposure and acceptable exit price.
+![Reduce ticket](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--reduce-long-preview.png)
 
 ### 3. Review the close preview
 
@@ -157,9 +147,9 @@ Carry forms part of the final close economics. Depending on the interface, it ma
 
 An invalid preview may contain partial or zero economic values. Read the invalid reason before relying on the remaining fields.
 
-> **Screenshot placeholder:** Partial-reduction preview showing released margin, remaining position, leverage and liquidation price.
+![Partial-reduction preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--reduce-long-preview.png)
 
-> **Screenshot placeholder:** Full-close review showing PnL, execution fee, VPI, carry, execution reward and expected settlement.
+![Full-close review](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--close-long-preview.png)
 
 ### 4. Commit the order
 
@@ -167,13 +157,7 @@ After reviewing the close, confirm the wallet authorization. Plether submits the
 
 The interface reports:
 
-```
-Preparing
-→ Wallet confirmation
-→ Sponsored operation submitted
-→ Pending
-→ Confirmed
-```
+![Reduce-or-close sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/reduce-close-sponsored-submission.svg)
 
 If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no close order is created. Check the operation status before retrying.
 
@@ -222,7 +206,7 @@ A voluntary full close also does not clear unrelated queued orders. Review the a
 
 If liquidation occurs first, Plether clears the account’s pending orders and transfers their reserved execution rewards to the protocol treasury.
 
-> **Screenshot placeholder:** Pending close showing amount, acceptable price, queue status and expiry information.
+![Pending close](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
 
 ### How settlement is calculated
 
@@ -389,7 +373,7 @@ A trader claim remains outside Available to Trade, account equity and Withdrawab
 
 An existing same-account claim can later be consumed when settling a losing terminal full close.
 
-See **Settlement liquidity and trader claims** for the complete process.
+See [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md) for the complete process.
 
 ### If the close does not execute
 
@@ -497,13 +481,13 @@ After a full close, confirm:
 * All remaining position margin has been released.
 * Final PnL and costs appear in history.
 * Any frozen spread is itemized.
-* The Margin Account reflects the immediate settlement.
-* Any deferred payout appears as a trader claim.
+* The Margin Account reflects released margin and any complete fresh payout funded immediately.
+* If HousePool liquidity cannot fund that complete fresh payout, it appears in full as a trader claim instead.
 * Remaining pending orders still match your intended exposure.
 
-> **Screenshot placeholder:** Executed partial reduction beside the remaining position and Margin Account movement.
+![Partial reduction and remaining position](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--executed-partial-reduction.png)
 
-> **Screenshot placeholder:** Completed full close showing final costs, account credit and any trader claim.
+![Full-close final costs and claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
 
 ### Before confirming
 

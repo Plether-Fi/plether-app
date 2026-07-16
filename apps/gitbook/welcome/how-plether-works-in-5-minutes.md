@@ -146,7 +146,7 @@ This is **solvency before volume**. It does not mean that LP principal is guaran
 
 Plether does not forcibly reduce unrelated profitable positions to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-If a profitable close cannot be paid immediately, the unpaid amount becomes a senior trader claim. The claim remains an obligation of the pool and can later be settled into the Trading Account’s Margin Account when sufficient cash is available.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim remains an obligation of the pool and can later be settled into the Trading Account’s Margin Account when sufficient cash is available.
 
 If a terminal settlement reveals insolvency, the protocol enters degraded mode. New risk is blocked while closes, liquidations and recapitalization remain available.
 
@@ -174,10 +174,10 @@ Frozen-market execution prioritizes risk reduction over normal live-price guaran
 
 ### Where to go next
 
-* **Understanding the Plether dollar index**
-* **Trader quickstart**
-* **Liquidity provider quickstart**
-* **Fees, carry and price impact**
-* **Margin and liquidation**
-* **Market states and closures**
-* **Risk and security**
+* [**Understanding the Plether Dollar Index**](understanding-the-plether-dollar-index.md)
+* [**Trader quickstart**](../trader-quickstart.md)
+* [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md)
+* [**Fees, carry and price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Margin and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md)
+* [**Market states and closures**](../how-plether-works/market-states-and-oracle-closures.md)
+* [**Risk and security**](risks-you-should-understand-first.md)
