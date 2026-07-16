@@ -51,7 +51,7 @@ See [Gas-sponsored trading and your Plether Trading Account](../trading-on-pleth
 | Carry                        | Continuously while LP capital supports a position           | HousePool                                   |
 | Order execution reward       | Reserved in USDC when an order is committed                 | Order executor or clearer                   |
 | Liquidation bounty           | Successful liquidation                                      | Liquidation keeper                          |
-| Oracle confidence adjustment | Order execution                                             | Changes execution price; not a separate fee |
+| Oracle confidence adjustment | Opens and live/FAD voluntary closes                         | Changes execution price; not a separate fee |
 
 These USDC costs and price adjustments should not be combined with sponsored network gas or into one unexplained “price impact” number. They perform different jobs and behave differently.
 
@@ -280,7 +280,7 @@ The spread:
 * Does not apply during open markets
 * Does not apply during FAD-only close-only windows with a live oracle
 * Does not apply to liquidations
-* Is separate from VPI, the execution fee, carry and the adverse oracle confidence adjustment
+* Is separate from VPI, the execution fee, carry and the active oracle-confidence policy
 * Is fixed rather than dependent on pool skew or oracle age
 * Belongs entirely to LPs when retained or collected
 * Never credits the protocol treasury
@@ -631,7 +631,7 @@ It does include:
 * all pending carry;
 * any negative accumulated VPI subject to clawback;
 * the side-adverse liquidation price;
-* the separate liquidation keeper bounty.
+* the separate liquidation bounty.
 
 Previously paid positive VPI is not charged again.
 
@@ -639,7 +639,7 @@ Any remaining positive value is preserved for the trader. Any uncovered trading-
 
 ### The order execution reward
 
-The interface calls this the **Execution reward**. At the protocol level, it is a reserved order-execution bounty.
+The interface and this documentation call this the **Execution reward**. It is reserved for the account that executes or clears the order.
 
 It is separate from the protocol execution fee.
 
@@ -660,7 +660,7 @@ A failed order does not pay the protocol execution fee, VPI or frozen-close spre
 
 ### Oracle confidence adjustment
 
-Plether executes against the side adverse to the trader within the accepted oracle confidence interval.
+For opens and live or FAD-only voluntary closes, Plether executes against the side adverse to the trader within the accepted oracle confidence interval.
 
 This behaves like a small execution spread, but it is neither a separate USDC fee nor the frozen-close spread.
 
@@ -672,9 +672,9 @@ It changes the execution price itself and can therefore indirectly affect:
 * the USDC amount of the frozen-close spread, when applicable;
 * entry price and PnL.
 
-The confidence adjustment does not determine whether the frozen-close spread applies or change its configured rate.
+During an `oracleFrozen` voluntary reduction or close, confidence-width validation remains active but the adverse price shift is waived. The validated unshifted price is used, and the separate frozen-close spread applies instead. Liquidations continue using their own adverse confidence policy.
 
-The interface displays the confidence adjustment separately as **Adverse oracle confidence spread**.
+When applicable, the interface displays the confidence adjustment separately as **Adverse oracle confidence spread**.
 
 ### Reading the current interface
 
@@ -767,7 +767,7 @@ High VPI, frozen-close spread or carry revenue should never be read without the 
 
 Before committing an order, review:
 
-* the confidence-adjusted execution price;
+* the oracle execution price under the active market-state policy;
 * the acceptable-price boundary;
 * the estimated protocol execution fee;
 * whether VPI is a charge or provisional rebate;

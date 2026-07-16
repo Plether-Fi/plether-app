@@ -143,7 +143,7 @@ After commitment:
 * Missing or stale oracle data can leave the order pending.
 * Slippage, expiry or certain invalid states can fail it terminally.
 * A failed order is not automatically retried.
-* Depending on the failure reason, the reserved execution bounty may still be paid to the keeper.
+* Depending on the failure reason, the reserved execution reward may still be paid to the keeper.
 
 A blocked queue head must be resolved before later orders can execute. Heavy queue cleanup can require more than one keeper transaction.
 
@@ -155,16 +155,16 @@ The price visible when an order is committed is not a guaranteed execution price
 
 Actual trade economics can include:
 
-* The first eligible post-commit Pyth update
-* An adverse oracle-confidence adjustment
+* The eligible Pyth observation under the active market-state policy
+* The oracle-confidence policy active for that market state
 * Virtual price impact
 * The acceptable-price limit chosen by the trader
 * The protocol execution fee
-* The keeper execution bounty
+* The execution reward
 
-Virtual price impact depends on HousePool depth and directional imbalance. It can improve or worsen execution during live markets.
+Virtual price impact depends on HousePool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
 
-During frozen-oracle closes, virtual price impact becomes a one-way LP-protection surcharge. There is no rebate path in that state.
+During an oracle-frozen voluntary close, normal signed VPI remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies.
 
 Plether’s execution model reduces specific forms of price-selection MEV. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
 
@@ -205,9 +205,9 @@ If the HousePool lacks sufficient free cash, the unpaid amount becomes a trader 
 A trader claim is:
 
 * A senior liability recorded by the protocol
-* Associated with a specific beneficiary
+* Owned by a specific Trading Account
 * Settled only when aggregate claims are sufficiently cash-covered
-* Credited into the trader’s margin account rather than directly to their wallet
+* Credited into the Trading Account’s Margin Account rather than directly to the owner wallet
 
 It is not:
 

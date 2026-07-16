@@ -2,7 +2,7 @@
 
 Plether sponsors network gas for eligible perps actions, subject to availability and policy limits. You continue using your existing wallet and approve every action.
 
-Your connected wallet owns your Plether Trading Account. The Trading Account submits transactions to Plether’s contracts, while Plether pays the network gas.
+Your connected wallet controls your Plether Trading Account through its signature rules. The Trading Account submits authorized operations to Plether’s contracts, while Plether pays the eligible network gas.
 
 Gas sponsorship covers network gas only. Protocol execution fees, VPI, carry, execution rewards and frozen-close spreads remain USDC costs.
 
@@ -36,7 +36,7 @@ Depending on your network, wallet and account history, the Connected wallet and 
 
 Eligible actions include:
 
-| Action                    | What the sponsored transaction does                               |
+| Action                    | What the sponsored operation does                                 |
 | ------------------------- | ----------------------------------------------------------------- |
 | **Deposit USDC**          | Moves USDC into the Trading Account’s Margin Account              |
 | **Open or increase**      | Commits an order to open a position or increase existing exposure |
@@ -287,7 +287,7 @@ Possible statuses include:
 | **Sponsored**               | The action is eligible and Plether will pay its network gas |
 | **Sponsorship unavailable** | No sponsored submission has been accepted                   |
 | **Submitted**               | The operation has been sent for onchain inclusion           |
-| **Confirmed**               | The sponsored transaction completed                         |
+| **Confirmed**               | The sponsored operation completed                           |
 | **Order Pending**           | The order commitment succeeded and is waiting for execution |
 | **Failed**                  | The operation or underlying contract call did not complete  |
 
@@ -361,7 +361,7 @@ Native gas may still be required for external applications, unsponsored actions 
 
 #### Why is my sponsored order still pending?
 
-Sponsorship covers the transaction that commits the order. Execution remains a separate step.
+Sponsorship covers the operation that commits the order. Execution remains a separate step.
 
 After the commitment is confirmed, the order enters Plether’s FIFO queue and waits for the required oracle and keeper conditions.
 

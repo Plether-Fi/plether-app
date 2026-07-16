@@ -14,7 +14,7 @@ LP capital is not idle collateral. It can be used to pay winning traders. In ret
 >
 > Control names in square brackets below are placeholders for the forthcoming LP interface.
 >
-> The `Deposit` button in the existing welcome window and trader ticket funds a **trader margin account**. It does not provide liquidity to the HousePool.
+> The `Deposit` button in the existing welcome window and trader ticket funds a trader’s **Margin Account**. It does not provide liquidity to the HousePool.
 >
 > **Gas sponsorship scope:** the trader sponsorship promise does not currently include LP approvals, deposits, pending-epoch actions, share claims or withdrawals. LP users must keep enough Arbitrum Sepolia ETH for those transactions. Treat an LP method as sponsored only if a later interface explicitly marks that specific action as **Sponsored**.
 
@@ -370,7 +370,7 @@ The surcharge begins only when the oracle is actually frozen. A market-close run
 
 | Problem                                             | What to check                                                                          |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| MockUSDC was deposited but no LP shares appeared    | You may have used the trader Margin Account deposit instead of a Tranche Vault         |
+| MockUSDC was deposited but no LP shares appeared    | You may have used the Trading Account’s Margin Account deposit instead of a Tranche Vault |
 | Immediate deposit is unavailable                    | Open trader positions require the pending-epoch route                                  |
 | Pending request shows no shares                     | Wait for activation, epoch finalization and then claim                                 |
 | Pending request cannot be cancelled                 | The activation epoch has probably begun                                                |
@@ -388,7 +388,7 @@ Before approving the vault:
 * Confirm whether you are choosing Senior or Junior.
 * Understand the tranche’s place in the loss waterfall.
 * Verify the official vault address.
-* Confirm that you are not depositing into the trader margin account.
+* Confirm that you are not depositing into the Trading Account’s Margin Account.
 * Check whether the deposit is immediate or pending.
 * Review the expected shares and current share price.
 * Check the current oracle-frozen fee.

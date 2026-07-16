@@ -21,11 +21,11 @@ All trader collateral is held in the MarginClearinghouse. Within it, USDC is div
 | Free USDC                | Available for new orders, fees, carry, supporting open positions or withdrawal—subject to risk checks |
 | Position margin          | USDC assigned to the active position                                                                  |
 | Committed order margin   | USDC reserved for a pending order                                                                     |
-| Execution bounty reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
+| Execution reward reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
 
 The total of these buckets forms the account’s settlement balance, but not every bucket is available for every purpose.
 
-Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution bounty reserves are kept separate from ordinary position health.
+Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution reward reserves are kept separate from ordinary position health.
 
 A trader claim—a receivable recorded when the pool cannot immediately cash-settle an amount—is not physical collateral and does not keep another position healthy.
 
@@ -338,7 +338,7 @@ A successful liquidation proceeds broadly as follows:
 
 Liquidation does not charge the normal voluntary-close execution fee or a new voluntary-close VPI adjustment. Pending carry and any applicable negative accrued-VPI adjustment still form part of terminal accounting.
 
-The keeper bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
+The liquidation bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
 
 ### Liquidation is always full
 
@@ -363,7 +363,7 @@ Until the close executes:
 
 Liquidation uses a separate protective path and does not wait behind the global order queue. If liquidation happens first, pending orders for that account fail with **Account liquidated**.
 
-Reserved order execution bounties are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
+Reserved order execution rewards are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
 
 \[Screenshot placeholder: A pending close in **Open Orders**—annotate its execution window and add: “Exposure remains live until execution.”]
 
@@ -371,7 +371,7 @@ Reserved order execution bounties are forfeited to the protocol treasury during 
 
 An account can be liquidatable while it still has positive equity. Maintenance margin is a safety threshold above zero.
 
-After carry, applicable adjustments and the keeper bounty:
+After carry, applicable adjustments and the liquidation bounty:
 
 * a positive residual is preserved for the trader;
 * if immediate pool cash is unavailable, some value may be recorded as a trader claim;

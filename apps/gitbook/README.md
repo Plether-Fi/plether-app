@@ -25,15 +25,15 @@ The market is basket-derived. It is not a wrapped futures contract or a tokenize
 
 ### How a trade works
 
-1. Deposit USDC into your margin account.
-2. Submit a binding order to open, increase, reduce, or close a position.
-3. A keeper executes the order against the first eligible Pyth price published after it was committed.
+1. Deposit USDC into your Margin Account.
+2. Authorize the Trading Account action; Plether submits the eligible sponsored operation that commits the binding order.
+3. A keeper executes the order against the eligible Pyth observation under the active market-state policy. Live execution uses the first eligible post-commit observation.
 4. The HousePool takes the other side of the position.
 5. Profit, loss, fees, and remaining margin are accounted for in USDC.
 
 Orders enter a global first-in, first-out queue and cannot be cancelled after commitment.
 
-Because the execution price comes from a post-commit oracle update—not a price selected by the trader or keeper—the design reduces front-running and keeper price-selection risk.
+During live execution, the price comes from a post-commit oracle update—not a price selected by the trader or keeper. Frozen voluntary closes use Plether’s bounded frozen-market policy. Both paths reduce keeper price-selection risk while preserving the applicable oracle safeguards.
 
 ### Solvency before volume
 

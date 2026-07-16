@@ -251,7 +251,7 @@ The finalizer pays:
 
 The reserved USDC execution reward is credited to the finalizing address’s Margin Account when the order reaches a terminal state.
 
-If the finalizing address is the same Trading Account that owns the order, the reward is credited back to that Trading Account’s Margin Account. A separate owner EOA is a different address and therefore a different Plether account. Network gas and the Pyth fee remain separate ETH costs.
+If the finalizing address is the same Trading Account that owns the order, the reward is credited back to that Trading Account’s Margin Account. A separate owner EOA is a different address and therefore a different Plether account. A trader who explicitly chooses an unsponsored manual-finalization route pays that route’s network gas and Pyth update fee; normal sponsored order commitment does not require owner-wallet ETH.
 
 The current Open Orders panel provides monitoring and expired-order cleanup. Manual finalization is available through the active trade modal. Closing or reloading that modal may leave keeper processing as the remaining path until expiry.
 

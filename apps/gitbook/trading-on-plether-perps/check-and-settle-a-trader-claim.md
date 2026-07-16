@@ -52,13 +52,13 @@ Additional unpaid payouts earned by the same account are added to its existing c
 
 Open the **Margin Account** and find **Trader claim**.
 
-The claim panel should show:
+The claim panel shows:
 
 * Claim balance
 * Settlement status
 * Settlement action, when available
 
-The proposed statuses are:
+The settlement statuses are:
 
 | Status                               | Meaning                                                         |
 | ------------------------------------ | --------------------------------------------------------------- |
@@ -143,7 +143,7 @@ A different wallet cannot authorize settlement for that Trading Account. The spo
 
 Confirm that the status is **Available to settle**.
 
-Liquidity can change between loading the page and transaction confirmation. The contract performs the final coverage check when the transaction executes.
+Liquidity can change between loading the page and operation confirmation. The contract performs the final coverage check when the operation executes.
 
 #### 3. Select Settle Claim
 

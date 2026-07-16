@@ -45,7 +45,7 @@ MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed f
 
 <figure><img src=".gitbook/assets/Zrzut ekranu 2026-07-14 o 17.04.41.png" alt="" width="375"><figcaption></figcaption></figure>
 
-### 2. Deposit USDC into your margin account
+### 2. Deposit USDC into your Margin Account
 
 First confirm that the faucet-funded MockUSDC appears as **Trading Account USDC**. This is token balance held at the Trading Account address, outside Plether’s internal Margin Account.
 
@@ -58,7 +58,7 @@ Depending on the account model and token capabilities, the wallet may request:
 1. A USDC transfer or approval authorization.
 2. Authorization for the sponsored deposit operation.
 
-Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Plether Margin Account, where it becomes available for trading.
+Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Margin Account, where it becomes available for trading.
 
 The interface separates several balances:
 
@@ -187,7 +187,7 @@ You can close the review window before committing. Once the commitment confirms 
 * It enters the global first-in, first-out queue.
 * It is not yet an open position.
 
-Plether does not let the trader or keeper choose a favorable future price. Execution uses the first eligible Pyth observation strictly after the order was committed, adjusted for oracle confidence, VPI and your execution limit.
+Plether does not let the trader or keeper choose a favorable future price. Live execution uses the first eligible Pyth observation strictly after commitment and applies the active confidence policy and your execution limit. VPI is calculated separately in USDC. An oracle-frozen voluntary close instead uses the validated unshifted price and the separate frozen-close spread.
 
 If that price exceeds your slippage limit, the order fails rather than executing outside it.
 

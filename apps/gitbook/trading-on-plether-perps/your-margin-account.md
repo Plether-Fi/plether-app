@@ -90,7 +90,7 @@ Portfolio value
 
 The calculation uses the latest mark accepted by the protocol.
 
-Eligible free USDC and assigned position margin can support account health. Pending order margin and reserved execution rewards remain unavailable to ordinary position-health calculations while their reservations are active.
+Eligible free USDC, assigned position margin and committed order margin remain terminally reachable and can contribute to account equity. Reserved execution rewards are excluded from account health because they are already committed to terminal order processing.
 
 An unsettled trader claim also remains outside Portfolio value. It enters the Margin Account after successful claim settlement.
 
@@ -345,7 +345,7 @@ An existing claim can also offset a later uncovered loss from the same account d
 
 > **Screenshot placeholder — Trader claim**
 >
-> Add this screenshot when the interface exposes the claim panel. Show the claim amount, settlement status, `Settle Claim` action and Margin Account destination.
+> Show the claim amount, settlement status, `Settle Claim` action and Margin Account destination.
 
 ### Example: how account USDC moves
 
