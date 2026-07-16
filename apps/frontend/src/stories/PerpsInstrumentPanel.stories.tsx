@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
 import { TokenAmount } from '../components/ui'
+import { DOCS_LINKS } from '../config/docs'
 
 function PoolLiquidityTooltip() {
   return (
@@ -61,6 +62,7 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
         label: 'Pool liquidity',
         value: <TokenAmount amount="6.3M" />,
         tooltip: <PoolLiquidityTooltip />,
+        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
         tooltipClassName: 'w-[400px] whitespace-normal p-4',
         tooltipPosition: 'left',
       },
@@ -68,6 +70,7 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
         label: 'Cost of carry',
         value: '5.24%',
         tooltip: <CostOfCarryTooltip />,
+        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
         tooltipClassName: 'w-[520px] whitespace-normal p-4',
         tooltipPosition: 'left',
       },
@@ -100,6 +103,7 @@ export const PositiveSession: Story = {
         label: 'Pool liquidity',
         value: <TokenAmount amount="8.7M" />,
         tooltip: <PoolLiquidityTooltip />,
+        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
         tooltipClassName: 'w-[400px] whitespace-normal p-4',
         tooltipPosition: 'left',
       },
@@ -107,6 +111,7 @@ export const PositiveSession: Story = {
         label: 'Cost of carry',
         value: '4.87%',
         tooltip: <CostOfCarryTooltip />,
+        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
         tooltipClassName: 'w-[520px] whitespace-normal p-4',
         tooltipPosition: 'left',
       },
