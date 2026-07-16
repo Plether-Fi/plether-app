@@ -591,14 +591,8 @@ A 24/7 chain does not create a 24/7 reference market.
 
 Plether handles that boundary in stages:
 
-```
-Close-only prevents new weekend risk.
-
-Oracle-frozen policy preserves bounded risk reduction
-and adds a fixed LP-owned spread to voluntary exits.
-
-Freshness limits stop execution when the available price
-can no longer be defended.
-```
+1. **Close-only** prevents new weekend risk while the live-oracle policy remains usable.
+2. **Oracle-frozen policy** preserves bounded risk reduction and adds a fixed LP-owned spread to voluntary exits.
+3. **Freshness limits** stop execution when the available price can no longer be defended.
 
 The purpose is not to pretend the FX market remains open. It is to keep the protocol honest about when it has a price—and what it can safely do with it.

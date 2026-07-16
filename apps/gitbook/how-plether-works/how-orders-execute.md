@@ -569,17 +569,10 @@ After finalization:
 
 Plether’s execution model separates five decisions:
 
-```
-The oracle determines the market observation.
-
-The confidence policy determines the conservative execution price.
-
-The trader’s execution limit determines whether that price is acceptable.
-
-The execution-time market state determines the oracle regime
-and whether the frozen-close spread applies.
-
-The engine determines whether the resulting position and settlement are valid.
-```
+* **Market observation:** the oracle supplies the eligible market data.
+* **Execution price:** the active confidence policy converts that observation into a conservative execution price.
+* **Price acceptance:** the trader’s execution limit determines whether the calculated price is acceptable.
+* **Execution regime:** the market state at execution determines which oracle rules apply and whether the frozen-close spread is charged.
+* **Final validity:** the engine verifies that the resulting position and settlement satisfy the protocol’s risk and accounting rules.
 
 Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and settled only when the HousePool can support the result.

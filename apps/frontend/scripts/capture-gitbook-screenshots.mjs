@@ -30,12 +30,6 @@ const MIME_TYPES = new Map([
   ['.woff2', 'font/woff2'],
 ])
 
-const HOVER_TARGETS = new Map([
-  ['perps-account-panel--unrealized-pnl-tooltip', '[aria-label="Unrealized PnL details"]'],
-  ['perps-instrument-panel--pool-liquidity-tooltip-visible', '[aria-label="Pool liquidity details"]'],
-  ['perps-instrument-panel--cost-of-carry-tooltip-visible', '[aria-label="Cost of carry details"]'],
-])
-
 function parseManifest(markdown) {
   const records = []
   const rowPattern = /^\| `([^`]+\.md):(\d+)` \| ([^|]+?) \| .*?\?path=\/story\/([a-z0-9-]+).*? \|/gm
@@ -63,6 +57,85 @@ function cleanAltText(value) {
 
 function safeStoryFilename(storyId) {
   return `storybook-${storyId}.png`
+}
+
+function isSupportInstruction(line) {
+  return /^\s*\*\s+Screenshot of /i.test(line)
+}
+
+function supportInstructionMatches(line, record) {
+  if (!isSupportInstruction(line)) return false
+
+  const normalizedLine = line.toLowerCase()
+  const normalizedAltText = cleanAltText(record.altText).toLowerCase()
+
+  if (normalizedAltText.includes('open orders')) return normalizedLine.includes('open orders')
+  if (normalizedAltText.includes('order history')) return normalizedLine.includes('order history')
+  if (normalizedAltText.includes('account or position field')) {
+    return normalizedLine.includes('margin account') || normalizedLine.includes('position field')
+  }
+
+  return false
+}
+
+async function syncManifestLineNumbers(manifest, records) {
+  const groupedRecords = new Map()
+  for (const record of records) {
+    const fileRecords = groupedRecords.get(record.documentationPath) ?? []
+    fileRecords.push(record)
+    groupedRecords.set(record.documentationPath, fileRecords)
+  }
+
+  let updatedManifest = manifest
+  let updatedReferences = 0
+
+  for (const [relativeDocumentationPath, fileRecords] of groupedRecords) {
+    const documentationPath = path.join(gitbookDirectory, relativeDocumentationPath)
+    const lines = (await fs.readFile(documentationPath, 'utf8')).split('\n')
+    const usedLineIndexes = new Set()
+
+    for (const record of fileRecords.sort((a, b) => a.documentationLine - b.documentationLine)) {
+      const expectedLineIndex = record.documentationLine - 1
+      const expectedFilename = safeStoryFilename(record.storyId)
+      const candidateLineIndexes = lines
+        .map((line, index) => ({ index, line }))
+        .filter(({ index, line }) =>
+          !usedLineIndexes.has(index) &&
+          (line.includes(expectedFilename) || supportInstructionMatches(line, record))
+        )
+        .sort((a, b) =>
+          Math.abs(a.index - expectedLineIndex) - Math.abs(b.index - expectedLineIndex)
+        )
+        .map(({ index }) => index)
+      const lineIndex = candidateLineIndexes[0]
+
+      if (lineIndex === undefined) {
+        throw new Error(
+          `Could not locate mapped screenshot for ${relativeDocumentationPath}:${record.documentationLine.toString()}`
+        )
+      }
+
+      usedLineIndexes.add(lineIndex)
+      const actualLine = lineIndex + 1
+      if (actualLine === record.documentationLine) continue
+
+      const currentReference = `| \`${relativeDocumentationPath}:${record.documentationLine.toString()}\` |`
+      const updatedReference = `| \`${relativeDocumentationPath}:${actualLine.toString()}\` |`
+      if (!updatedManifest.includes(currentReference)) {
+        throw new Error(`Could not update screenshot-map reference ${currentReference}`)
+      }
+
+      updatedManifest = updatedManifest.replace(currentReference, updatedReference)
+      record.documentationLine = actualLine
+      updatedReferences += 1
+    }
+  }
+
+  if (updatedReferences > 0) {
+    await fs.writeFile(manifestPath, updatedManifest)
+  }
+
+  return { updatedReferences }
 }
 
 async function startStaticServer() {
@@ -149,13 +222,14 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
           transition-delay: 0s !important;
           transition-duration: 0s !important;
         }
+
+        [role="tooltip"] {
+          display: none !important;
+        }
       `,
     })
 
-    const hoverTarget = HOVER_TARGETS.get(storyId)
-    if (hoverTarget) {
-      await page.locator(hoverTarget).hover()
-    }
+    await page.mouse.move(1, 1)
 
     await page.waitForTimeout(storyId.startsWith('perps-trade-ticket--') ? 1_600 : 300)
 
@@ -187,7 +261,6 @@ async function captureStory(page, baseUrl, storyId, outputPath) {
           ? [
               ...root.querySelectorAll('section, article, table'),
               ...root.querySelectorAll(':scope > * > *'),
-              ...document.querySelectorAll('[role="tooltip"]'),
             ].filter(visible)
           : []
       const elements = content.length > 0 ? content : root && visible(root) ? [root] : []
@@ -264,7 +337,7 @@ async function syncDocumentation(records) {
         .map((line, index) => ({ index, line }))
         .filter(({ index, line }) =>
           !usedLineIndexes.has(index) &&
-          (line.includes(expectedFilename) || /^\s*\*\s+Screenshot of /i.test(line))
+          (line.includes(expectedFilename) || supportInstructionMatches(line, record))
         )
         .sort((a, b) =>
           Math.abs(a.index - expectedLineIndex) - Math.abs(b.index - expectedLineIndex)
@@ -288,7 +361,7 @@ async function syncDocumentation(records) {
 
       usedLineIndexes.add(lineIndex)
 
-      if (/^\s*\*\s+Screenshot of /i.test(sourceLine)) {
+      if (isSupportInstruction(sourceLine)) {
         retainedSupportInstructions += 1
         continue
       }
@@ -310,6 +383,13 @@ async function main() {
   const records = parseManifest(manifest)
   if (records.length !== 79) {
     throw new Error(`Expected 79 screenshot mappings, found ${records.length.toString()}`)
+  }
+  const manifestSyncResult = await syncManifestLineNumbers(manifest, records)
+  if (process.argv.includes('--sync-manifest-only')) {
+    process.stdout.write(
+      `Synchronized ${manifestSyncResult.updatedReferences.toString()} screenshot-map line references.\n`
+    )
+    return
   }
 
   await fs.access(path.join(storybookDirectory, 'index.json'))
@@ -349,6 +429,7 @@ async function main() {
     manifest: path.relative(gitbookDirectory, manifestPath),
     mappedReferences: records.length,
     uniqueStories: uniqueStoryIds.length,
+    manifestReferencesUpdated: manifestSyncResult.updatedReferences,
     ...syncResult,
     captures,
   }

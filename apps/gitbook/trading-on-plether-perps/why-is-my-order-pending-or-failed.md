@@ -313,14 +313,7 @@ An expired order continues to:
 * Count toward the pending-order limit
 * Leave a pending close’s position fully exposed
 
-The interface changes the status to:
-
-```
-Expired
-Clean up to release reserved margin
-```
-
-Select **Clean Up** to process the expiry.
+The interface changes the status to **Expired** and displays `Clean Up`. Select it to process the expiry and release the reserved margin.
 
 Cleanup:
 

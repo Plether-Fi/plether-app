@@ -136,9 +136,7 @@ At minimum, the interface should show:
 
 Do not choose a tranche based only on the highest displayed return. Understand where it sits in the loss and withdrawal waterfall.
 
-![LP overview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
->
-> Show the future `[Liquidity]` page with Senior and Junior cards. Include total assets, share price, target or historical return, relative risk, current deposit mode, active fee and withdrawal availability.
+![Prototype LP overview comparing Senior and Junior alongside pool-level liquidity](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
 
 ### 5. Enter the deposit
 
@@ -162,9 +160,7 @@ If the vault allowance is insufficient, the first step is approving the selected
 
 Verify that the spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
 
-![Deposit preview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png)
->
-> Show the selected tranche, deposit amount, estimated shares, share price, deposit mode, active fee and approval status. The vault address should be visible or linked to the verified deployment page.
+![Prototype tranche deposit preview with pricing, routing, fee, approval and verified vault context](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png)
 
 ### 6. Immediate versus pending deposits
 
@@ -251,13 +247,7 @@ After the epoch is finalized:
 
 If Senior impairment prevents the epoch from finalizing, cancellation becomes available again so depositors can recover their escrowed USDC.
 
-![Pending deposit](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
->
-> Show the requested USDC, selected tranche, epoch number, estimated activation time and current state:
->
-> `Pending → Active → Finalized → Shares claimed`
->
-> Include the appropriate `[Cancel request]`, `[Finalize epoch]` and `[Claim shares]` actions.
+![Prototype pending-deposit request with epoch timing, lifecycle state and available actions](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
 
 ### 9. Monitor your LP position
 
@@ -282,9 +272,7 @@ For Junior, share value reflects residual realized revenue minus Senior coupon t
 
 A rising historical share price does not guarantee that the next period will be profitable.
 
-![LP position](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png)
->
-> Show tranche shares, current USDC value, share price, change in value, current withdrawable amount, cooldown and any pending epochs.
+![Prototype LP position with value, share performance, withdrawal capacity and pending epochs](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png)
 
 ### 10. Understand withdrawal availability
 
@@ -342,9 +330,7 @@ If the maximum is lower than your intended withdrawal, the remaining shares stay
 
 Ordinary partial withdrawals must satisfy the vault’s minimum amount. A complete residual exit can still be permitted when the remaining value is below that minimum.
 
-![Withdrawal preview](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
->
-> Show total position value, share balance, current maximum withdrawal, requested amount, shares burned, cooldown, active fee and expected wallet receipt.
+![Prototype LP withdrawal preview with requested amount, burned shares, fee and expected receipt](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
 
 ### Oracle-frozen LP actions
 
