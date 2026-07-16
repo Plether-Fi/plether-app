@@ -10,7 +10,9 @@ Much of onchain finance is already denominated in dollars. If you hold USDC but 
 
 Plether makes that position explicit.
 
-Plether Perps is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. Traders use USDC margin to take either side:
+Plether Perps is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. It is built for **USDC-first, gas-sponsored trading**: eligible perps actions use wallet authorization and a sponsored operation instead of requiring the trader to hold the network’s native gas token. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for the account model, eligible actions and availability limits.
+
+Traders use USDC margin to take either side:
 
 | Position      | Your view                  | Profits when                        |
 | ------------- | -------------------------- | ----------------------------------- |
@@ -23,15 +25,15 @@ The market is basket-derived. It is not a wrapped futures contract or a tokenize
 
 ### How a trade works
 
-1. Deposit USDC into your margin account.
-2. Submit a binding order to open, increase, reduce, or close a position.
-3. A keeper executes the order against the first eligible Pyth price published after it was committed.
+1. Deposit USDC into your Margin Account.
+2. Authorize the Trading Account action; Plether submits the eligible sponsored operation that commits the binding order.
+3. A keeper executes the order against the eligible Pyth observation under the active market-state policy. Live execution uses the first eligible post-commit observation.
 4. The HousePool takes the other side of the position.
 5. Profit, loss, fees, and remaining margin are accounted for in USDC.
 
 Orders enter a global first-in, first-out queue and cannot be cancelled after commitment.
 
-Because the execution price comes from a post-commit oracle update—not a price selected by the trader or keeper—the design reduces front-running and keeper price-selection risk.
+During live execution, the price comes from a post-commit oracle update—not a price selected by the trader or keeper. Frozen voluntary closes use Plether’s bounded frozen-market policy. Both paths reduce keeper price-selection risk while preserving the applicable oracle safeguards.
 
 ### Solvency before volume
 

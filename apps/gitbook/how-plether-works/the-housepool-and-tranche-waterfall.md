@@ -112,7 +112,6 @@ Plether does not count unrealized trader losses as current LP assets. A trader l
 
 The resulting revenue or loss then passes through the waterfall:
 
-````
 ```mermaid
 flowchart TD
     A["HousePool value after trader liabilities"] --> B{"Revenue or loss?"}
@@ -123,7 +122,6 @@ flowchart TD
     B -->|"Revenue"| E["Restore impaired Senior to its high-water mark"]
     E --> F["Residual revenue goes to Junior"]
 ```
-````
 
 #### When the pool realizes a loss
 
@@ -255,7 +253,7 @@ Potential outflows or losses include:
 * trader residuals following liquidation;
 * uncollectible trader losses and bad debt.
 
-The protocol execution fee is designated for the protocol treasury. Order and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
+The protocol execution fee is designated for the protocol treasury. Order execution rewards and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
 
 Recapitalization is also not trading revenue. It is new capital explicitly introduced to repair the waterfall.
 
@@ -600,7 +598,7 @@ There is currently no interface for:
 * tranche return history;
 * cooldowns or frozen-oracle fees.
 
-The visible **Deposit** and **Withdraw** buttons on the Perps page operate the trader margin account. They are not HousePool LP actions.
+The visible **Deposit** and **Withdraw** buttons on the Perps page operate the Trading Account’s Margin Account. They are not HousePool LP actions.
 
 \[Screenshot placeholder: Senior and Junior tranche overview—pending LP frontend implementation.]
 

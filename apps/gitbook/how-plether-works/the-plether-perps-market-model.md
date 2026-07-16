@@ -13,7 +13,7 @@ Plether separates the functions that many trading venues combine:
 | **Reference price**       | External FX oracle data                    |
 | **Order sequencing**      | Binding, delayed FIFO queue                |
 | **Trade-cost adjustment** | Oracle confidence and virtual price impact |
-| **Trader collateral**     | USDC margin account                        |
+| **Trader collateral**     | Trading Account’s USDC Margin Account      |
 | **Settlement capital**    | USDC-funded HousePool                      |
 | **LP risk allocation**    | Senior and Junior tranches                 |
 
@@ -44,7 +44,7 @@ This makes LONG and SHORT behave conventionally in the application:
 
 The contracts account against the raw basket. The interface displays its fixed complement. Both describe the same economic position.
 
-For the basket construction itself, see **Understanding the Plether Dollar Index**.
+For the basket construction itself, see [Understanding the Plether Dollar Index](../welcome/understanding-the-plether-dollar-index.md).
 
 ### Not an order book
 
@@ -88,12 +88,12 @@ Plether separates price discovery from risk pricing:
 
 A Plether order follows a commit-now, price-later process:
 
-1. The trader deposits USDC into a Plether margin account.
-2. The trader commits a LONG USD or SHORT USD order.
+1. The trader deposits USDC into the Trading Account’s Margin Account.
+2. The owner wallet authorizes a LONG USD or SHORT USD commitment, and Plether submits the eligible sponsored operation.
 3. Margin and an execution reward are reserved.
 4. The order enters the global FIFO queue.
 5. Plether resolves the first eligible Pyth observation strictly after commitment.
-6. The protocol applies an adverse oracle-confidence adjustment.
+6. During live or FAD-only execution, the protocol applies an adverse oracle-confidence adjustment. Frozen voluntary closes use the validated unshifted price and the separate frozen-close spread.
 7. The order’s execution limit and risk checks are evaluated.
 8. If valid, the engine records the position and locks its margin.
 
@@ -101,7 +101,7 @@ The order is binding once committed. The trader cannot cancel because the market
 
 Virtual price impact is applied separately to the trade’s economics. It does not replace the oracle or become the new market price.
 
-The full process is covered in **How orders execute**.
+The full process is covered in [How orders execute](how-orders-execute.md).
 
 ### The HousePool is the economic counterparty
 
@@ -206,7 +206,7 @@ The simplified value flow is:
 
 | Event                 | Trader side                                      | HousePool side                                    |
 | --------------------- | ------------------------------------------------ | ------------------------------------------------- |
-| **Deposit margin**    | USDC enters the trader margin account            | No change                                         |
+| **Deposit margin**    | USDC enters the Trading Account’s Margin Account | No change                                         |
 | **Commit order**      | Margin and execution reward are reserved         | No change                                         |
 | **Open position**     | Position margin is locked and trade costs settle | Pool assumes a bounded payout liability           |
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
@@ -243,19 +243,19 @@ A profitable close accounts for:
 * Accrued carry
 * Released position margin
 
-If sufficient unreserved HousePool cash is available, the net result is credited to the trader’s Plether margin account.
+If sufficient unreserved HousePool cash is available, the net result is credited to the Trading Account’s Margin Account.
 
 It is not sent directly to the wallet. The trader withdraws separately.
 
-If the pool cannot fund the profit immediately, the position can still close. The unpaid amount becomes a **trader claim** associated with that address.
+If the pool cannot fund the profit immediately, the position can still close. The unpaid amount becomes a **trader claim** owned by the Trading Account.
 
 The claim:
 
 * Remains a senior HousePool liability
 * Is excluded from LP-withdrawable value
 * Is not placed in a FIFO queue
-* Can be settled only by its beneficiary
-* Settles into the trader margin account
+* Requires authorization from the Trading Account’s owner wallet
+* Settles through an eligible sponsored operation into the Margin Account
 * Requires aggregate trader claims to be fully cash-covered before settlement
 
 Bounded solvency and immediate liquidity are different questions. A liability can be fully recorded even when it cannot yet be paid out as free USDC.
@@ -349,388 +349,10 @@ Plether separates three things:
 
 Traders post USDC margin and choose LONG USD or SHORT USD. The protocol calculates the position’s maximum possible profit inside the fixed settlement range. It accepts the order only if the HousePool can support the resulting liability.
 
-When the position settles, value moves between the trader’s margin account and the HousePool. Junior and Senior LP capital determine how the pool absorbs the outcome.
+When the position settles, value moves between the Trading Account’s Margin Account and the HousePool. Junior and Senior LP capital determine how the pool absorbs the outcome.
 
 That is the Plether market model: **oracle-priced, margin-backed and bounded by design.**
 
 ### Continue reading
 
-Next: **How orders execute**
-
-6:14 PMWorked for 7m 18s
-
-## How orders execute
-
-> The order is binding before the execution price is known. That is the point.
-
-Plether uses delayed, oracle-priced execution.
-
-A trader first commits an order with a direction, size, margin and acceptable-price boundary. Plether then settles that order against the first eligible Pyth basket observation after commitment.
-
-The trader chooses the exposure. The oracle determines the price. The queue determines the order of execution.
-
-````
-```mermaid
-flowchart LR
-    A["Review order"] --> B["Commit onchain"]
-    B --> C["Collateral reserved"]
-    C --> D["Global FIFO queue"]
-    D --> E["Resolve post-commit Pyth price"]
-    E --> F{"Execution checks pass?"}
-    F -->|"Yes"| G["Position updated"]
-    F -->|"Terminal failure"| H["Order cleared as failed"]
-    F -->|"Not executable yet"| I["Order remains pending"]
-```
-````
-
-### Why execution is delayed
-
-Plether does not execute a trade in the same transaction in which it is submitted.
-
-That separation prevents either party from choosing the price after seeing the other side’s action:
-
-* The trader cannot observe the post-commit price and then cancel an unfavourable order.
-* The executor cannot ignore the first eligible price and select a more convenient later observation.
-* Every committed order follows the same verifiable execution rule.
-
-This is different from an order book, where an order matches against another market participant, and different from an AMM, where a reserve curve determines the execution price.
-
-Plether’s price comes from the oracle. The HousePool provides the settlement capacity.
-
-### Step 1: Preview the order
-
-The trade ticket lets you choose:
-
-* **LONG USD** or **SHORT USD**
-* Position size
-* Margin and leverage
-* Whether you are opening, increasing or reducing exposure
-* Your acceptable price or slippage setting
-
-Depending on the action, the ticket displays **Review Long**, **Review Short**, **Review Reduce** or **Review Close**.
-
-The preview estimates the resulting position, margin, liquidation level, VPI and applicable costs using the current protocol state.
-
-It is not a guaranteed quote.
-
-Between preview and execution, several things can change:
-
-* The Plether Dollar Index
-* Oracle confidence
-* HousePool depth
-* Directional imbalance
-* Available market capacity
-* Your account state
-* Protocol market state
-
-The preview and the final executor use the same accounting rules, but they evaluate different moments in time.
-
-`[Screenshot placeholder: Commit Preview showing Preview → Commit → Finalize, the Delayed execution notice, Cancel and Confirm Commit]`
-
-### Step 2: Commit the order
-
-Selecting **Confirm Commit** submits the order onchain.
-
-The commitment records:
-
-* Direction
-* Position-size change
-* Margin assigned to the order
-* Acceptable-price boundary
-* Whether the order is an open, increase or reduction
-* Commit time and block
-* The order’s position in the execution queue
-
-Any margin attached to the order is reserved immediately. Plether also reserves an execution bounty used to reward whoever finalizes or clears the order.
-
-Reserved funds remain inside the Margin Account, but they are no longer available for withdrawal or for another order.
-
-The commitment does not create the new exposure yet.
-
-| Pending instruction | What has happened                | What has not happened                 |
-| ------------------- | -------------------------------- | ------------------------------------- |
-| Open                | Margin and bounty are reserved   | The new position does not exist yet   |
-| Increase            | Additional funds are reserved    | Existing exposure has not increased   |
-| Reduce or close     | The close instruction is binding | The existing position is still active |
-
-> Committing a close does not close the position. PnL, carry and liquidation risk continue until the close executes.
-
-#### Cancel before commit is not order cancellation
-
-The **Cancel** button in the preview simply closes the review window before an order exists.
-
-Once **Confirm Commit** succeeds, the order cannot be cancelled or replaced. The Open Orders tab therefore shows **Cancel unavailable**.
-
-This is deliberate. Allowing post-commit cancellation would turn every pending order into a free option on the next oracle movement.
-
-### Step 3: Enter the global FIFO queue
-
-Every committed order enters one global first-in, first-out queue.
-
-Only the first unresolved order can execute. An executor cannot skip an inconvenient order to process a later one.
-
-This applies across all traders, not only within one account.
-
-Batch execution can process several consecutive orders efficiently, but it must preserve the same order. Manual finalization cannot jump the queue either.
-
-Plether also tracks each account’s pending instructions in sequence. This allows it to understand, for example, that a pending close follows a pending increase. However, each instruction is checked again when it reaches execution.
-
-If an earlier instruction fails, a later instruction that depended on it may also become invalid.
-
-Do not submit duplicate orders simply because the first one is still pending.
-
-### Step 4: Select the oracle observation
-
-During normal live-market operation, Plether does not use:
-
-* The price displayed when you opened the trade ticket
-* The latest price when the executor arrives
-* A price chosen by a keeper
-* An average of the waiting period
-
-It uses the first valid Pyth basket observation strictly after commitment and within the protocol’s settlement window.
-
-The historical proof also establishes that the preceding observation was no later than the commitment. This prevents an executor from skipping the first eligible observation and submitting a later one.
-
-The selected basket must pass several checks:
-
-* All six FX component prices must be positive and valid.
-* Each component must satisfy the confidence-width limit.
-* Component publish times must be sufficiently aligned.
-* The observation must fall inside the permitted settlement window.
-* Execution cannot occur in the commitment block during normal live-market operation.
-* The resulting basket must satisfy the active oracle policy.
-
-The order may be finalized later while still using the price from its original post-commit settlement window. Finalization time does not become execution time.
-
-If an eligible observation cannot yet be proven, Plether does not invent a fallback price. The order remains pending.
-
-### The mark price and execution price are different
-
-Pyth publishes both a price and a confidence interval. The confidence interval represents uncertainty around the observation.
-
-Plether first calculates the central basket mark. It then applies a protocol-defined fraction of the basket confidence against the trader to obtain the order’s execution price.
-
-Using the dollar-oriented price shown in the interface:
-
-| Order           | Confidence adjustment       |
-| --------------- | --------------------------- |
-| Open LONG USD   | Slightly higher entry price |
-| Close LONG USD  | Slightly lower exit price   |
-| Open SHORT USD  | Slightly lower entry price  |
-| Close SHORT USD | Slightly higher exit price  |
-
-The central mark itself is not moved by this adjustment. It applies only to execution.
-
-This adjustment is:
-
-* Not AMM slippage
-* Not VPI
-* Not a protocol fee
-* Not selected by the executor
-
-As elsewhere in Plether, the raw basket is bounded to the fixed `0.00–2.00` settlement range. The interface then presents the dollar-oriented price:
-
-```
-Displayed price = 2.00 − bounded raw basket
-```
-
-### Step 5: Check the acceptable price
-
-The interface translates your slippage setting into an acceptable-price boundary.
-
-Using the displayed dollar-oriented price:
-
-| Order           | Execution requirement                |
-| --------------- | ------------------------------------ |
-| Open LONG USD   | At or below your maximum entry price |
-| Close LONG USD  | At or above your minimum exit price  |
-| Open SHORT USD  | At or above your minimum entry price |
-| Close SHORT USD | At or below your maximum exit price  |
-
-If the confidence-adjusted execution price falls outside that boundary, the order fails.
-
-It is not automatically retried at another price. To try again, you must submit a new order with a fresh commitment.
-
-#### What the price limit does not cover
-
-The acceptable-price boundary protects the oracle execution price. It does not cap every USDC amount associated with the trade.
-
-The following remain separate:
-
-* **VPI:** a charge or rebate based on how the trade changes directional imbalance
-* **Protocol execution fee:** charged on executed notional
-* **Carry:** accumulated cost of LP-backed exposure
-* **Execution bounty:** reserved to pay for finalizing or clearing the order
-
-A trade can therefore execute within its price tolerance while its final USDC accounting differs from the preview.
-
-### Step 6: Finalize the order
-
-After commitment, the interface displays **Waiting for verified market data** while the automated execution system attempts to finalize the order.
-
-The finalization panel shows:
-
-* **Settlement Details**
-* **Manual finalization**
-* **Available in …**
-* Progress toward manual finalization becoming available
-
-The interface initially gives automation a short grace period. This is an interface convention, not an exclusive keeper right at the protocol level.
-
-Execution is permissionless. Any address can finalize the queue head by providing the required Pyth data and oracle update fee.
-
-If automated finalization does not complete, the interface displays:
-
-* **Ready to finalize manually**
-* **Manual finalization — Available now**
-* **Finalize Trade**
-
-Manual finalization requires another wallet transaction. It uses the same price-selection and FIFO rules as automated finalization; it cannot select a different price or bypass earlier orders.
-
-`[Screenshot placeholder: Waiting for verified market data with the finalization progress indicator and Manual finalization — Available in …]`
-
-`[Screenshot placeholder: Ready to finalize manually with the Finalize Trade button]`
-
-Messages such as **Final price not ready yet**, **Historical price data required** or **Retry shortly** generally mean the required oracle proof was not available to that attempt. They do not necessarily mean the order has failed.
-
-### Step 7: Revalidate the trade
-
-Passing the oracle and price-limit checks is not enough by itself.
-
-Immediately before changing state, Plether revalidates the complete trade.
-
-For an opening or increase, this includes:
-
-* Account collateral
-* Initial-margin requirements
-* Position direction
-* Minimum position economics
-* Directional imbalance limits
-* Available HousePool capacity
-* Maximum bounded payout liability
-* Current protocol and market state
-
-For a reduction or close, the engine calculates:
-
-* Realized PnL
-* Accrued carry
-* VPI
-* Protocol execution fee
-* Margin released
-* Collectible trader loss or trader payout
-* Health of any remaining position
-
-Only after the complete transition passes does Plether update the position and settle the corresponding balances.
-
-This is why a trade can pass its preview and commitment checks but still fail at execution. A preview describes the current state; execution must be safe in the state that actually exists when the order is processed.
-
-### Possible order outcomes
-
-#### Executed
-
-All checks pass.
-
-* The position is created or updated.
-* Margin and settlement balances are updated.
-* The execution bounty is credited to the finalizer.
-* The order moves to Order History as **Executed**.
-* The finalization window displays **Trade executed at …**.
-
-#### Still pending
-
-Execution cannot safely proceed yet, but the instruction has not terminally failed.
-
-Possible reasons include:
-
-* Eligible historical Pyth data is not yet available.
-* The submitted data does not prove the required first post-commit observation.
-* The order is still behind an earlier queue head.
-* Finalization was attempted in the commitment block.
-* A previously committed opening has entered a close-only period.
-
-While pending, committed margin and the execution bounty remain reserved.
-
-The interface may describe this state as **Pending reveal**. Here, “reveal” means resolving the verified historical oracle price. It does not require a second trader signature.
-
-#### Failed
-
-A terminal condition prevents execution.
-
-Examples include:
-
-* **Failed: Slippage exceeded**
-* **Failed: Engine rejected**
-* **Failed: Account liquidated**
-* Another execution-time account or protocol invalidation
-
-The requested position change does not occur. For an ordinary terminal failure, committed position margin is released and the reserved bounty is paid to the address that clears the order.
-
-> A failed order can still consume its execution bounty. The bounty pays for resolving the order lifecycle—not for guaranteeing a fill.
-
-There is no automatic retry or requeue. A fresh trade requires a new order.
-
-### Expiry and cleanup
-
-Orders have a protocol-configured maximum age. The live interface displays the applicable countdown as **Expires in …**.
-
-Expiry does not perform an automatic background transaction. Once the timeout passes, the order still needs to be cleared onchain.
-
-The Open Orders tab then displays:
-
-* **Expired**
-* **Clean up to release reserved margin**
-* **Clean Up**
-
-Cleanup:
-
-* Marks the order as terminally failed
-* Removes it from the live queue
-* Releases committed position margin
-* Resolves the reserved execution bounty
-* Allows later orders to proceed
-
-Cleanup is not early cancellation. It is permissionless settlement of an order that has already expired.
-
-`[Screenshot placeholder: Open Orders showing Pending reveal, Expires in … and Cancel unavailable, followed by an expired order showing Clean Up]`
-
-### Close-only and frozen-oracle periods
-
-Plether preserves risk-reducing actions when the protocol stops accepting new exposure.
-
-During a close-only period:
-
-* New openings and increases cannot be committed.
-* Valid reductions and full closes can still be submitted.
-* A previously committed opening may remain pending if the market enters close-only mode before it executes.
-* That order must eventually execute, become terminally invalid or expire before later orders can pass it.
-
-When the FX oracle is genuinely frozen, closes use Plether’s frozen-market execution policy. The normal strictly post-commit rule is relaxed so traders are not trapped solely because the underlying FX feeds are offline.
-
-New risk remains blocked, and frozen-market closes use additional LP protections, including one-way VPI rather than a skew-reduction rebate.
-
-The fixed `0.00–2.00` settlement range continues to apply.
-
-### A pending close does not prevent liquidation
-
-Liquidation is a separate keeper path. It does not wait for a trader-submitted close to reach the front of the order queue.
-
-If an account becomes liquidatable while its close is pending, the position can be fully liquidated first. Its pending instructions are then failed and their reserved value is resolved through the liquidation accounting path.
-
-A pending close is an instruction—not protection from market movement.
-
-### What traders should remember
-
-* The price on the ticket is a preview, not a guaranteed fill.
-* A committed order cannot be cancelled.
-* Normal execution uses the first eligible Pyth observation after commitment.
-* All orders follow one global FIFO queue.
-* Manual finalization cannot bypass that queue.
-* Slippage protects the oracle execution price, not VPI, fees or carry.
-* Failed and expired orders can still consume their execution bounty.
-* An opening creates no exposure until execution.
-* A position remains active until its close actually executes.
-
-Plether does not promise instant execution. It defines an execution rule that can be independently verified.
-
-**Next: How PnL is calculated.**
+Next: [How orders execute](how-orders-execute.md)

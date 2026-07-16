@@ -39,11 +39,11 @@ The market price has a hard upper bound. This limits the maximum possible payout
 
 ### 2. Traders deposit margin
 
-Every position starts with USDC margin.
+Every position starts with USDC margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
 
 Margin absorbs losses and determines how far the market can move against a position before it becomes liquidatable. Adding more margin reduces effective leverage and moves the liquidation threshold farther away.
 
-Each address can hold one live direction at a time. A trader can:
+Each Trading Account can hold one live direction at a time. A trader can:
 
 * Open a position
 * Increase its size
@@ -57,16 +57,16 @@ Positions have no scheduled expiry. They remain open until the trader closes the
 
 ### 3. Orders commit first and price later
 
-Plether does not execute an order in the same transaction in which it is submitted.
+Plether does not execute an order in the same operation in which it is committed.
 
 Instead:
 
-1. The trader submits a binding order.
-2. Required margin and a keeper execution bounty are reserved.
+1. The owner wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
+2. Required margin and an execution reward are reserved.
 3. The order enters a global first-in, first-out queue.
 4. A permissionless keeper supplies the required Pyth data.
 5. While the FX market is live, execution uses the first eligible oracle update published after the order was committed.
-6. The protocol applies oracle confidence adjustments, price impact and the trader’s acceptable-price limit.
+6. The protocol applies the active confidence policy, VPI and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
 7. The position executes or the order fails according to protocol rules.
 
 The trader cannot cancel an order after commitment.
@@ -84,17 +84,17 @@ A position has several separate economic components:
 | **Directional PnL** | Gains or loses value as the dollar moves relative to the basket          |
 | **Margin**          | Supports the position and absorbs losses                                 |
 | **Execution fee**   | Protocol fee charged when position size changes                          |
-| **Price impact**    | Adjusts execution according to HousePool depth and directional imbalance |
+| **Price impact**    | Applies a separate USDC charge or rebate based on HousePool imbalance     |
 | **Carry**           | Time-based cost for using LP-backed capital                              |
-| **Keeper bounty**   | Pays the keeper that processes the delayed order                         |
+| **Execution reward** | Pays the account that processes the delayed order                        |
 
 #### Price impact
 
 Plether uses virtual price impact to respond to directional imbalance.
 
-A trade that adds to the pool’s existing exposure can receive a worse execution price. A trade that reduces that exposure can receive a better price during normal market conditions.
+A trade that adds to the pool’s existing imbalance can pay a VPI charge. A trade that reduces that imbalance can receive a bounded VPI rebate during normal market conditions.
 
-This changes execution economics without allowing a trader to move the external oracle price.
+VPI changes the trade’s USDC economics. It does not change the oracle execution price recorded on the position or move the external oracle price.
 
 #### Carry instead of funding
 
@@ -146,7 +146,7 @@ This is **solvency before volume**. It does not mean that LP principal is guaran
 
 Plether does not forcibly reduce unrelated profitable positions to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-If a profitable close cannot be paid immediately, the unpaid amount becomes a senior trader claim. The claim remains an obligation of the pool and can later be settled into the trader’s margin account when sufficient cash is available.
+If a profitable close cannot be paid immediately, the unpaid amount becomes a senior trader claim. The claim remains an obligation of the pool and can later be settled into the Trading Account’s Margin Account when sufficient cash is available.
 
 If a terminal settlement reveals insolvency, the protocol enters degraded mode. New risk is blocked while closes, liquidations and recapitalization remain available.
 

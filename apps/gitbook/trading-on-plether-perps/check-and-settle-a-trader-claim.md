@@ -1,6 +1,6 @@
 # Check and settle a trader claim
 
-A trader claim records USDC owed to your account when the HousePool cannot fund a fresh trader payout in full at execution.
+A trader claim records USDC owed to the **Trading Account** when the HousePool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
 
 Claims can arise from:
 
@@ -15,9 +15,10 @@ Position settles
 → Fresh payout cannot be funded in full
 → Trader claim is recorded
 → HousePool cash coverage returns
-→ Claim owner settles
+→ Owner wallet authorizes settlement
+→ Sponsored Trading Account operation confirms
 → USDC is credited to the Margin Account
-→ Optional wallet withdrawal
+→ Optional withdrawal to the owner wallet
 ```
 
 ### How a claim is created
@@ -51,13 +52,13 @@ Additional unpaid payouts earned by the same account are added to its existing c
 
 Open the **Margin Account** and find **Trader claim**.
 
-The claim panel should show:
+The claim panel shows:
 
 * Claim balance
 * Settlement status
 * Settlement action, when available
 
-The proposed statuses are:
+The settlement statuses are:
 
 | Status                               | Meaning                                                         |
 | ------------------------------------ | --------------------------------------------------------------- |
@@ -120,9 +121,9 @@ The remaining claim stays fully covered.
 
 #### There is no claim queue
 
-Trader claims are recorded as balances for individual accounts. Creation time does not determine settlement priority.
+Trader claims are recorded as balances for individual Trading Accounts. Creation time does not determine settlement priority.
 
-While aggregate coverage is insufficient, settlement remains unavailable to every claimant. Once full coverage returns, any beneficiary can settle their complete balance.
+While aggregate coverage is insufficient, settlement remains unavailable to every claimant. Once full coverage returns, each Trading Account can settle its complete balance after its owner wallet authorizes the action.
 
 #### Settlement is all-or-nothing
 
@@ -132,23 +133,24 @@ If aggregate coverage is insufficient, the transaction reverts and the complete 
 
 ### How to settle your claim
 
-#### 1. Connect the account that owns the claim
+#### 1. Connect the owner wallet
 
-The transaction must be sent by the address associated with the claim.
+Connect the owner wallet that controls the claim-owning Trading Account, then confirm the active Trading Account address in the interface.
 
-A different wallet, keeper or relayer cannot settle it on your behalf.
+A different wallet cannot authorize settlement for that Trading Account. The sponsor and bundler can relay the authorized operation, but they cannot create the owner signature.
 
 #### 2. Check the settlement status
 
 Confirm that the status is **Available to settle**.
 
-Liquidity can change between loading the page and transaction confirmation. The contract performs the final coverage check when the transaction executes.
+Liquidity can change between loading the page and operation confirmation. The contract performs the final coverage check when the operation executes.
 
 #### 3. Select Settle Claim
 
 Review:
 
-* Claim-owning account
+* Connected owner wallet
+* Claim-owning Trading Account
 * Full claim balance
 * Settlement destination: **Margin Account**
 
@@ -156,9 +158,9 @@ The confirmation should make clear that the entire balance will be settled and t
 
 > **Screenshot placeholder:** Settle Claim confirmation showing the full balance and Margin Account destination.
 
-#### 4. Confirm the transaction
+#### 4. Authorize the sponsored operation
 
-Claim settlement requires the network’s native gas token.
+The connected wallet signs the settlement authorization, and Plether submits the eligible sponsored Trading Account operation. The owner wallet does not need the network’s native gas token while settlement sponsorship is available.
 
 It does not require:
 
@@ -166,6 +168,8 @@ It does not require:
 * A Pyth price update
 * An acceptable price
 * An execution fee or keeper reward
+
+Sponsorship remains subject to availability and policy limits. A sponsorship or bundler failure does not change the claim balance; request a fresh operation after the displayed issue is resolved.
 
 The settlement path does not depend on a live FX oracle or an open trading session. FAD, an oracle closure, frozen-oracle mode or degraded mode do not independently block it when the cash-coverage requirement is satisfied.
 
@@ -184,7 +188,7 @@ HousePool
 → Your Margin Account
 ```
 
-The transaction does not transfer USDC directly to your wallet.
+The sponsored settlement operation does not transfer USDC directly to the owner wallet.
 
 > **Screenshot placeholder:** Successful settlement showing a zero claim balance and the corresponding Margin Account credit.
 
@@ -228,7 +232,7 @@ With an open position or pending orders, Withdrawable may be lower because Pleth
 * Reserved execution rewards
 * Current market-state withdrawal requirements
 
-Claim settlement and wallet withdrawal are separate transactions.
+Claim settlement and wallet withdrawal are separate sponsored operations.
 
 ### A claim can be consumed before settlement
 
@@ -265,20 +269,20 @@ Recognized HousePool assets remain below aggregate trader claims. Your complete 
 
 Coverage was insufficient when the transaction executed. This can happen if onchain state changed after the page loaded.
 
-The claim remains unchanged. A reverted transaction may still consume network gas.
+The claim remains unchanged. For an eligible sponsored settlement, Plether pays any network gas consumed by the included operation rather than charging the owner wallet’s native-token balance.
 
 #### No trader claim
 
-The connected account currently has no claim. It may have been:
+The active Trading Account currently has no claim. It may have been:
 
 * Settled previously
 * Consumed during a terminal full close
 * Consumed during liquidation
-* Recorded under another account
+* Recorded under another Trading Account
 
 #### Account owner required
 
-Connect the wallet that owns the claim. Settlement must be submitted directly by the beneficiary account.
+Connect the owner wallet that controls the claim-owning Trading Account. The wallet authorizes settlement; the sponsored operation is submitted from the Trading Account.
 
 #### Wallet USDC did not increase
 

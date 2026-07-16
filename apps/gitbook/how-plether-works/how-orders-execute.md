@@ -25,15 +25,27 @@ Preview
 
 This introduces a short delay by design. The delay separates the trading decision from the price used to settle it, reducing the surface for front-running and selective execution.
 
-### The three stages
+### Two related lifecycles
 
-The interface presents the process as:
+The sponsored commitment first moves through:
+
+```
+Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+```
+
+Here, **Confirmed** means the order commitment reached the chain. It does not mean the trade has executed.
+
+The delayed order then follows the protocol stages:
 
 ```
 Preview → Commit → Finalize
 ```
 
-The trader normally signs the commitment transaction. A keeper normally submits the finalization transaction.
+The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper normally submits the separate finalization transaction.
 
 If keeper finalization is delayed, the trader may be able to finalize the order manually.
 
@@ -95,7 +107,7 @@ Pool depth, directional imbalance, market state and account state can change whi
 
 ### 2. Commit the order
 
-Selecting **Confirm Commit** submits the trading intent onchain.
+Selecting **Confirm Commit** requests the owner-wallet authorization and submits the eligible sponsored Trading Account operation.
 
 The commitment records:
 
@@ -196,13 +208,13 @@ A keeper normally supplies the historical Pyth data, pays the oracle update fee 
 
 The reserved USDC execution reward is then credited to the finalizer.
 
-If automatic finalization does not arrive during the interface’s keeper grace period, the modal exposes **Finalize Trade**. Manual finalization requires:
+If automatic finalization does not arrive during the interface’s keeper grace period, the modal exposes **Finalize Trade**. Order-commitment sponsorship does not automatically cover manual finalization. Unless the interface explicitly marks this action as **Sponsored**, manual finalization requires:
 
 * A wallet transaction
 * ETH for network gas
 * ETH for the Pyth update fee
 
-A trader who manually finalizes becomes the finalizer and receives the reserved execution reward through the clearinghouse.
+The finalizing address receives the reserved execution reward through its Margin Account. If the owner EOA and Trading Account use different addresses, they are different Plether accounts.
 
 > **Screenshot placeholder:** Finalize state — show the keeper grace countdown and the manual Finalize Trade action.
 
@@ -213,7 +225,7 @@ Plether distinguishes five different quantities.
 | Quantity            | Meaning                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------- |
 | Central index price | The neutral oracle-derived Plether Dollar Index value                                                   |
-| Execution price     | The central price after the adverse confidence adjustment                                               |
+| Execution price     | The policy-adjusted oracle price: adverse during live/FAD execution and unshifted for frozen voluntary closes |
 | Execution limit     | The trader’s acceptable-price boundary                                                                  |
 | VPI                 | A separate USDC charge or rebate based on HousePool imbalance                                           |
 | Frozen-close spread | A separate LP-owned USDC charge on reduced notional for voluntary closes executed during `oracleFrozen` |
@@ -230,7 +242,7 @@ Where `B` is the underlying foreign-currency basket. All prices shown below use 
 
 Pyth provides a price and a confidence interval for each component.
 
-Plether propagates those intervals through the index, then shifts the execution price conservatively against the trader:
+During live and FAD-only execution, Plether propagates those intervals through the index, then shifts the execution price conservatively against the trader:
 
 | Action                     | Execution adjustment |
 | -------------------------- | -------------------- |
@@ -241,11 +253,13 @@ Plether propagates those intervals through the index, then shifts the execution 
 
 For example, a LONG USD position opens slightly above the central index price and closes slightly below it.
 
+During an `oracleFrozen` voluntary reduction or close, confidence-width validation remains active but this adverse price shift is waived. The validated unshifted price is used, and the separate frozen-close spread applies instead. Liquidations continue using their liquidation-specific adverse confidence policy.
+
 This adjustment is not a separate USDC fee. It changes the price at which the position enters or exits.
 
 It is also not the frozen-close spread:
 
-* The confidence adjustment changes the execution price.
+* When applicable, the confidence adjustment changes the execution price.
 * The frozen-close spread is a separate USDC settlement charge.
 
 As a result, a position may initially show a small unrealized loss even if the central index has not moved.

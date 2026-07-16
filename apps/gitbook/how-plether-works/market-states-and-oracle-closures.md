@@ -150,7 +150,7 @@ The following protections remain:
 * Component timestamps must remain sufficiently aligned
 * The basket must remain within the frozen staleness limit
 * The execution price remains inside the fixed `0.00–2.00` range
-* The adverse confidence adjustment still applies
+* Confidence-width validation still applies, but voluntary closes waive the adverse confidence price shift
 * The trader’s acceptable-price boundary still applies
 
 Frozen execution does not necessarily use “Friday’s closing price.” It uses the latest basket that Pyth can validate within the active policy. That basket may have been updated after the initial closure observation.
@@ -179,7 +179,7 @@ The spread:
 * Applies only to voluntary closes and reductions executed while `oracleFrozen`
 * Is currently **50 bps**, or **0.50% of reduced notional**
 * Does not vary with pool skew, VPI, elapsed closure time or mark staleness
-* Is separate from VPI, the execution fee, accrued carry and Pyth’s adverse confidence adjustment
+* Is separate from VPI, the execution fee, accrued carry and the active Pyth confidence policy
 * Does not apply during the open market
 * Does not apply during the live-oracle shoulders of the close-only window
 * Does not apply to liquidations
@@ -388,7 +388,7 @@ This is a liveness risk, not debt forgiveness. The position remains open, carry 
 
 ### Adding and withdrawing trader margin
 
-Depositing USDC into the margin account and adding margin to an existing position remain available even when the oracle is stale.
+Depositing USDC into the Margin Account and adding margin to an existing position remain available even when the oracle is stale.
 
 These actions reduce risk and do not require a current index price.
 
@@ -588,7 +588,7 @@ Before Friday 19:00 UTC or an announced closure day:
 During oracle-frozen operation:
 
 * Confirm the timestamp of the price being used
-* Review the adverse confidence adjustment
+* Confirm that the voluntary close uses the unshifted validated price
 * Review normal signed VPI and the separate 0.50% frozen-close spread
 * If reducing only part of a position, confirm that the account can settle the complete close obligation
 * Check the assessed, paid and waived spread amounts in the close preview or result

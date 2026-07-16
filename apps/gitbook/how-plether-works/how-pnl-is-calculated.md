@@ -11,7 +11,6 @@ That first calculation is simple. Settlement is where the distinctions begin.
 
 Gross PnL, account equity, released margin, net settlement, trader claims and wallet balance are related—but they are not the same number.
 
-````
 ```mermaid
 flowchart TD
     A["Entry price + current mark + position quantity"] --> B["Unrealized price PnL"]
@@ -27,7 +26,6 @@ flowchart TD
     H -->|"Negative"| L["Collect reachable account collateral"]
     L --> M["Record bad debt if a shortfall remains"]
 ```
-````
 
 ### Start with the displayed price
 
@@ -177,7 +175,7 @@ They do not include:
 * Protocol execution fees
 * Carry
 * Execution rewards
-* Gas
+* Sponsored network gas or any explicitly self-funded network and oracle-update costs
 * Released margin
 
 ### How leverage affects PnL
@@ -212,18 +210,19 @@ The mark is not a guaranteed close price.
 
 #### Realized PnL uses the close execution price
 
-When you reduce or close a position, Plether uses the actual confidence-adjusted execution price resolved through the delayed-order process.
+When you reduce or close a position, Plether uses the execution price resolved under the oracle policy active at finalization.
 
 Expressed using displayed prices:
 
-| Action          | Confidence adjustment |
-| --------------- | --------------------- |
-| Open LONG USD   | Higher entry          |
-| Close LONG USD  | Lower exit            |
-| Open SHORT USD  | Lower entry           |
-| Close SHORT USD | Higher exit           |
+| Action or regime                         | Execution-price policy                                      |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| Open LONG USD                            | Adverse confidence shift produces a higher entry            |
+| Live or FAD-only close of LONG USD       | Adverse confidence shift produces a lower exit              |
+| Open SHORT USD                           | Adverse confidence shift produces a lower entry             |
+| Live or FAD-only close of SHORT USD      | Adverse confidence shift produces a higher exit             |
+| Voluntary close during `oracleFrozen`    | Validated unshifted price; separate frozen-close spread      |
 
-This adjustment is embedded in the execution price. It is not a separate USDC fee.
+When the adverse confidence adjustment applies, it is embedded in the execution price rather than charged as a separate USDC fee.
 
 As a result:
 
@@ -380,6 +379,7 @@ Gross realized price PnL
 − Signed close VPI
 − Protocol execution fee
 − Accrued carry
+− Frozen-close spread, when applicable
 ```
 
 For VPI:
@@ -394,7 +394,7 @@ The order execution reward is separate from this formula. It pays for resolving 
 
 #### Example net settlement
 
-Assume a LONG USD close produces:
+Assume a LONG USD close executes during a live or FAD-only market state, so no frozen-close spread applies:
 
 ```
 Gross realized PnL:       +390 USDC
@@ -425,7 +425,7 @@ A complete lifetime result would also account for:
 * Opening execution fee
 * Opening and closing execution rewards
 * Any earlier increases or reductions
-* Network gas paid in ETH
+* Any explicitly self-funded network or oracle-update costs; eligible sponsored network gas is paid by Plether
 
 ### When a close realizes a loss
 
@@ -519,7 +519,7 @@ If the net close adjustment is positive, Plether checks whether the HousePool ha
 If sufficient cash is available:
 
 1. The HousePool transfers the payout to the Margin Clearinghouse.
-2. The trader’s Margin Account is credited.
+2. The Trading Account’s Margin Account is credited.
 3. The trader may withdraw through the normal withdrawal flow.
 
 The profit is not sent directly to the wallet.
@@ -535,11 +535,11 @@ If sufficient free cash is not available:
 
 A claim is not immediately withdrawable USDC.
 
-It becomes settleable once aggregate trader claims are fully covered by physical HousePool cash. Settlement credits the trader’s Margin Account, after which the normal withdrawal process applies.
+It becomes settleable once aggregate trader claims are fully covered by physical HousePool cash. Settlement credits the Trading Account’s Margin Account, after which the normal withdrawal process applies.
 
 ### Current interface status
 
-The current testnet interface does not yet provide a complete net-close reconciliation.
+The current interface does not yet provide a complete net-close reconciliation in one view.
 
 In particular:
 
@@ -547,8 +547,8 @@ In particular:
 * It is before close VPI, execution fee and carry.
 * The Final Result view shows fee and VPI lines but not complete net settlement.
 * Released margin is not presented separately.
-* Trader claim balances are not currently displayed.
-* There is no current interface action for settling a trader claim.
+* Trader claim balance and settlement status appear separately in the Margin Account.
+* **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization.
 * Portfolio value does not include a separate outstanding trader claim.
 
 A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
@@ -557,7 +557,7 @@ A profitable close that creates a claim can therefore appear under-credited in t
 
 `[Future UI placeholder: Close receipt showing realized price PnL, VPI, execution fee, accrued carry, released margin, net settlement, immediate credit and trader claim]`
 
-`[Future UI placeholder: Trader claim balance and Settle claim action]`
+`[Screenshot placeholder: Trader claim balance, settlement status and Settle Claim action in the Margin Account]`
 
 ### The fixed range bounds gross PnL
 
@@ -590,7 +590,7 @@ Small differences between a hand calculation and the final onchain result can th
 * Weighted-entry rounding
 * USDC precision
 * Proportional margin rounding
-* The actual confidence-adjusted execution price
+* The execution-price policy active at finalization
 
 Use the confirmed onchain result as the final record.
 
@@ -602,11 +602,12 @@ To understand a Plether position, read the numbers in this order:
 2. Calculate gross price PnL from quantity and directional price movement.
 3. Keep position margin separate from profit.
 4. Adjust account equity for reachable collateral, carry and applicable VPI accounting.
-5. At close, use the actual confidence-adjusted execution price.
+5. At close, use the execution price produced by the active oracle policy.
 6. Subtract close VPI, the execution fee and accrued carry.
-7. Show released margin separately.
-8. Determine whether positive settlement became Margin Account cash or a trader claim.
-9. For a loss, determine how much reachable collateral was collected and whether any shortfall remained.
+7. Subtract the frozen-close spread when it applies.
+8. Show released margin separately.
+9. Determine whether positive settlement became Margin Account cash or a trader claim.
+10. For a loss, determine how much reachable collateral was collected and whether any shortfall remained.
 
 The central distinction is simple:
 
