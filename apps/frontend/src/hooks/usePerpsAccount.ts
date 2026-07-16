@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { zeroAddress } from 'viem'
 import { useAccount, useReadContracts } from 'wagmi'
 import {
@@ -268,6 +268,10 @@ function findLiquidationPrice({
 export function usePerpsAccount(markPrice?: bigint) {
   const { address, isConnected } = useAccount()
   const account = address ?? zeroAddress
+  const lastSuccessfulPositionRef = useRef<{
+    account: string
+    position: PerpsPosition
+  } | undefined>(undefined)
 
   const { data, isLoading, error, refetch } = useReadContracts({
     contracts: [
@@ -383,7 +387,7 @@ export function usePerpsAccount(markPrice?: bigint) {
     },
   })
 
-  return useMemo(() => {
+  const freshAccount = useMemo(() => {
     const accountView = readResult(data, 0)
     const position = parsePosition(readResult(data, 1), markPrice)
     const walletUsdc = readResult(data, 3) as bigint | undefined
@@ -448,11 +452,15 @@ export function usePerpsAccount(markPrice?: bigint) {
         const bExpiry = b.expiryTime ?? 0n
         return aExpiry < bExpiry ? -1 : aExpiry > bExpiry ? 1 : 0
       })[0]?.orderId
+    const accountHasOpenPosition = accountView === undefined
+      ? undefined
+      : Boolean(tupleValue(accountView, 4, 'hasOpenPosition'))
 
     return {
       address: address,
       isConnected,
-      isLoading: isLoading || pendingOrderViewsLoading,
+      isLoading,
+      isPendingOrderDetailsLoading: pendingOrderViewsLoading,
       error,
       refetch,
       walletUsdc,
@@ -466,7 +474,8 @@ export function usePerpsAccount(markPrice?: bigint) {
       maxOrderAge,
       firstPendingOrderId,
       firstPendingOrderExpiryTime,
-      hasOpenPosition: Boolean(tupleValue(accountView, 4, 'hasOpenPosition')) && Boolean(positionWithLiquidationPrice?.exists),
+      accountHasOpenPosition,
+      hasOpenPosition: Boolean(accountHasOpenPosition) && Boolean(positionWithLiquidationPrice?.exists),
       liquidatable: Boolean(tupleValue(accountView, 5, 'liquidatable')) || Boolean(positionWithLiquidationPrice?.liquidatable),
       position: positionWithLiquidationPrice,
       pendingOrders,
@@ -480,4 +489,39 @@ export function usePerpsAccount(markPrice?: bigint) {
       },
     }
   }, [address, basicPendingOrders, data, error, isConnected, isLoading, markPrice, pendingOrderViewsData, pendingOrderViewsLoading, refetch])
+
+  useEffect(() => {
+    if (!isConnected || freshAccount.position === undefined) return
+
+    lastSuccessfulPositionRef.current = {
+      account,
+      position: freshAccount.position,
+    }
+  }, [account, freshAccount.position, isConnected])
+
+  const stablePosition = freshAccount.position ?? (
+    freshAccount.accountHasOpenPosition !== false &&
+    lastSuccessfulPositionRef.current?.account === account
+      ? lastSuccessfulPositionRef.current.position
+      : undefined
+  )
+
+  return useMemo(() => {
+    const { accountHasOpenPosition, ...accountData } = freshAccount
+
+    return {
+      ...accountData,
+      hasOpenPosition: accountHasOpenPosition === undefined
+        ? Boolean(stablePosition?.exists)
+        : accountHasOpenPosition && Boolean(stablePosition?.exists),
+      liquidatable: freshAccount.liquidatable || Boolean(stablePosition?.liquidatable),
+      position: stablePosition,
+      display: {
+        ...freshAccount.display,
+        positionNotional: formatPerpsUsdc(stablePosition?.estimatedNotionalUsdc),
+        entryPrice: formatDisplayDxyPrice(stablePosition?.entryPrice),
+        pnl: formatSignedPerpsUsdc(stablePosition?.unrealizedPnlUsdc),
+      },
+    }
+  }, [freshAccount, stablePosition])
 }

@@ -1320,6 +1320,7 @@ export function PerpsTradeTicket({
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
+  const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
   const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
@@ -1383,6 +1384,10 @@ export function PerpsTradeTicket({
   const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
     if (order.status === 'Committed') return false
 
+    const terminalOrderKey = `${order.orderId.toString()}:${order.status}:${order.revealTxHash ?? ''}`
+    if (handledTerminalOrderKeyRef.current === terminalOrderKey) return true
+    handledTerminalOrderKeyRef.current = terminalOrderKey
+
     setCommitTxHash((current) => current ?? order.commitTxHash)
     setExecuteTxHash(order.revealTxHash)
 
@@ -1417,6 +1422,7 @@ export function PerpsTradeTicket({
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return undefined
+    if (handledTerminalOrderKeyRef.current?.startsWith(`${orderId.toString()}:`)) return undefined
     if (orderWaitStartedForRef.current === orderId) return undefined
 
     const activeOrderId = orderId
@@ -1880,18 +1886,25 @@ export function PerpsTradeTicket({
     () => formatAdverseConfidenceMultiplier(adverseConfidenceMultiplierBps) ?? PREVIEW_UNAVAILABLE_VALUE,
     [adverseConfidenceMultiplierBps]
   )
-  const adverseOracleConfidenceSpreadTooltip = (
-    <div className="space-y-2">
-      <p>
-        Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
-      </p>
-      <p>
-        It protects LPs by adding a price cushion when oracle prices are less certain.
-      </p>
-      <p>
-        Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
-      </p>
-    </div>
+  const adverseOracleConfidenceSpreadTooltip = useMemo(
+    () => (
+      <div className="space-y-2">
+        <p>
+          Oracle confidence spread is the uncertainty range around the latest basket price. The adverse spread is that range after the protocol applies its safety multiplier.
+        </p>
+        <p>
+          It protects LPs by adding a price cushion when oracle prices are less certain.
+        </p>
+        <p>
+          Calculation: <span className="font-semibold text-content-primary">{rawOracleConfidenceSpreadValue}</span> raw spread * <span className="font-semibold text-content-primary">{adverseOracleConfidenceMultiplierValue}</span> = <span className="font-semibold text-content-primary">{adverseOracleConfidenceSpreadValue}</span>.
+        </p>
+      </div>
+    ),
+    [
+      adverseOracleConfidenceMultiplierValue,
+      adverseOracleConfidenceSpreadValue,
+      rawOracleConfidenceSpreadValue,
+    ]
   )
 
   const previewRows = useMemo<PreviewRow[]>(
@@ -1955,8 +1968,6 @@ export function PerpsTradeTicket({
       dxyExposureNumber,
       slippageNumber,
       adverseOracleConfidenceSpreadValue,
-      rawOracleConfidenceSpreadValue,
-      adverseOracleConfidenceMultiplierValue,
       adverseOracleConfidenceSpreadTooltip,
     ]
   )
@@ -2292,6 +2303,7 @@ export function PerpsTradeTicket({
   }
 
   function resetReviewLifecycle() {
+    handledTerminalOrderKeyRef.current = undefined
     setLifecycleState('preview')
     setOrderId(undefined)
     setCommitTxHash(undefined)
