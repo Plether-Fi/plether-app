@@ -2,15 +2,17 @@
 
 > **Deposit USDC. Choose your dollar view. Commit now; price later.**
 
-Plether Perps lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket.
+Plether Perps lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket. Eligible trader actions use USDC-first, gas-sponsored execution.
 
-This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. You open an onchain position backed by USDC in your Plether Perps DEX margin account.
+This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. Your connected wallet authorizes a Plether **Trading Account**, which owns your positions, orders, Margin Account and trader claims.
+
+Depending on the supported account model, the connected wallet and Trading Account may have the same address or two different addresses. Confirm the active Trading Account before funding or trading. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for details.
 
 ### The flow in one line
 
-`Wallet MockUSDC → Margin account → Committed order → Open position → Closed settlement → Margin account → Wallet`
+`Trading Account MockUSDC → Margin Account → Sponsored order commitment → Open position → Closed settlement → Margin Account → Owner wallet`
 
-Closing a position does not send funds directly to your wallet. Settlement first returns to your Plether Perps DEX margin account. You withdraw separately.
+Closing a position does not send funds directly to the owner wallet. Settlement first returns to the Trading Account’s Margin Account. You withdraw separately.
 
 ### Before you begin
 
@@ -18,7 +20,6 @@ You need:
 
 * A compatible self-custody wallet
 * Arbitrum Sepolia selected in your wallet
-* Arbitrum Sepolia ETH for transaction fees
 * MockUSDC for collateral
 * Enough time to monitor your order until it executes or fails
 
@@ -28,14 +29,15 @@ Use only the official Plether application. Never send tokens directly to a Pleth
 
 Open Plether Perps DEX and select `Connect Wallet`.
 
-Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**.
+Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**. The account panel then shows:
 
-Two assets are required:
+* Your connected owner wallet
+* Your active Trading Account address
+* Whether the two addresses are the same or different
 
-* **Arbitrum Sepolia ETH** pays network transaction fees.
-* **MockUSDC** acts as testnet collateral.
+MockUSDC acts as testnet collateral. Eligible trader operations are gas-sponsored, subject to sponsorship availability and policy limits, so native ETH is not a prerequisite for this quickstart.
 
-The welcome window lets you enter your wallet address and select `Get 100,000 mock USDC`. It also links to an Arbitrum Sepolia ETH faucet.
+The welcome window lets you enter an address and select `Get 100,000 mock USDC`. Enter the **Trading Account address shown in the account panel**, not a different owner-wallet address. With a same-address account, these are naturally the same.
 
 If you previously closed the welcome window, select `Get mock USDC` in the testnet notice bar to open it again.
 
@@ -45,28 +47,29 @@ MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed f
 
 ### 2. Deposit USDC into your margin account
 
+First confirm that the faucet-funded MockUSDC appears as **Trading Account USDC**. This is token balance held at the Trading Account address, outside Plether’s internal Margin Account.
+
 Find the **Margin Account** section in the trade ticket and select `Deposit`.
 
-Enter the amount of MockUSDC you want to deposit and confirm the transaction.
+Enter the amount of MockUSDC you want to deposit and review the active Trading Account. The normal flow uses a wallet authorization and sponsored operation.
 
-If your existing token allowance is insufficient, the application will first request approval to use the specified MockUSDC. In that case, depositing requires two wallet confirmations:
+Depending on the account model and token capabilities, the wallet may request:
 
-1. Approve MockUSDC.
-2. Deposit MockUSDC.
+1. A USDC transfer or approval authorization.
+2. Authorization for the sponsored deposit operation.
 
-Wait for both transactions to confirm.
-
-Depositing does not open a position. It moves MockUSDC from your wallet into your Plether margin account, where it becomes available for trading.
+Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Plether Margin Account, where it becomes available for trading.
 
 The interface separates several balances:
 
-| Balance                | Meaning                                            |
-| ---------------------- | -------------------------------------------------- |
-| **Wallet balance**     | MockUSDC held outside Plether                      |
-| **Available to Trade** | Account collateral currently available for orders  |
-| **Position margin**    | USDC assigned to an open position                  |
-| **Withdrawable**       | Free USDC that can currently return to your wallet |
-| **Portfolio value**    | Current account equity, including position PnL     |
+| Balance                  | Meaning                                                             |
+| ------------------------ | ------------------------------------------------------------------- |
+| **Owner-wallet USDC**    | MockUSDC held by the connected owner wallet outside Plether         |
+| **Trading Account USDC** | MockUSDC held at the Trading Account address outside Plether        |
+| **Available to Trade**   | Margin Account collateral currently available for orders           |
+| **Position margin**      | Margin Account USDC assigned to an open position                    |
+| **Withdrawable**         | Free Margin Account USDC that can currently reach the owner wallet  |
+| **Portfolio value**      | Current Trading Account equity, including position PnL              |
 
 These values do not need to be equal. Open positions, pending orders, carry and margin requirements can make your withdrawable balance lower than your portfolio value.
 
@@ -103,7 +106,7 @@ The displayed perps price is dollar-oriented, so the interface behaves conventio
 
 On the current testnet interface, the direction buttons may appear as `Long plDXY Perp` and `Short plDXY Perp`. These correspond to **LONG USD** and **SHORT USD** respectively.
 
-Plether supports one live direction per wallet. You can increase a position in the same direction, but you cannot reverse it in one transaction. To change from LONG USD to SHORT USD—or the other way around—you must close the existing position first and wait for that close to execute.
+Plether supports one live direction per Trading Account. You can increase a position in the same direction, but you cannot reverse it in one order. To change from LONG USD to SHORT USD—or the other way around—you must close the existing position first and wait for that close to execute.
 
 For a new position:
 
@@ -162,7 +165,19 @@ Select `Review Long` or `Review Short`.
 
 The **Commit Preview** repeats the order terms. Check the direction, exposure, leverage, execution limit, liquidation price and total funding requirement one final time.
 
-If everything matches your intent, select `Confirm Commit` and approve the wallet transaction.
+If everything matches your intent, select `Confirm Commit`. Your wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
+
+The submission lifecycle is:
+
+```
+Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+```
+
+**Confirmed** means the order commitment reached the chain. It does not mean the position has changed yet.
 
 You can close the review window before committing. Once the commitment confirms onchain, the rules change:
 
@@ -182,7 +197,7 @@ After commitment, the application displays `Finalizing execution price`.
 
 A keeper gets the first opportunity to finalize the order. If automatic finalization does not happen during the initial grace period, the interface exposes `Finalize Trade`.
 
-Manual finalization requires another wallet transaction. It does not let you choose a different price; it submits the data needed to settle the already committed order.
+Manual finalization requires a separate wallet authorization and onchain operation. It does not let you choose a different price; it submits the data needed to settle the already committed order. Manual finalization remains outside sponsorship unless the interface explicitly marks it as **Sponsored**.
 
 Monitor the order until it reaches a terminal state:
 
@@ -261,19 +276,19 @@ A reduction or close is still:
 
 Partial reductions must satisfy the current minimum-order and remaining-position rules. A complete residual close may be permitted even when the remaining amount is below the ordinary minimum.
 
-When the close executes, released margin and settlement return to your Plether margin account. They do not go directly to your wallet.
+When the close executes, released margin and settlement return to the Trading Account’s Margin Account. They do not go directly to the owner wallet.
 
 > **Trader claims**
 >
 > In an exceptional cash-shortfall scenario, part of a profitable close can become a **trader claim** instead of immediately withdrawable USDC.
 >
-> A trader claim is a protocol liability associated with your address. It is not wallet USDC and cannot be treated as available margin until settled. See **Trader claims** for the complete settlement process and liquidity conditions.
+> A trader claim is a protocol liability owned by the Trading Account. It is not wallet USDC and cannot be treated as available margin until settled. See **Trader claims** for the complete settlement process and liquidity conditions.
 
 ### 11. Withdraw USDC
 
 In the **Margin Account** section, select `Withdraw`.
 
-Enter an amount no greater than the displayed **Withdrawable** balance and confirm the transaction.
+Enter an amount no greater than the displayed **Withdrawable** balance and authorize the sponsored withdrawal operation.
 
 Withdrawable USDC excludes collateral or funds required for:
 
@@ -286,14 +301,14 @@ Withdrawable USDC excludes collateral or funds required for:
 
 You can withdraw free USDC while a position remains open, but doing so can reduce the account buffer protecting that position. Review the position’s health and liquidation price before confirming.
 
-After a successful withdrawal, MockUSDC moves from your Plether margin account back to the connected wallet.
+For a separate smart account, the sponsored withdrawal atomically moves MockUSDC from the Margin Account through the Trading Account to its verified owner wallet. For a same-address Trading Account, the withdrawn MockUSDC reaches that shared address directly.
 
 ### Common problems
 
 | Problem                                              | What to check                                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Wallet is connected but trading is disabled          | Switch to Arbitrum Sepolia                                                        |
-| Deposit does not proceed                             | MockUSDC balance, token approval and ETH for gas                                  |
+| Deposit does not proceed                             | Trading Account address, MockUSDC balance, authorization and sponsorship status   |
 | Order preview is invalid                             | Minimum size, deposited margin, side capacity, market state and fresh oracle data |
 | Order remains pending                                | Open Orders countdown, earlier FIFO orders and oracle availability                |
 | Order expired                                        | Use `Clean Up`, then submit a new order                                           |

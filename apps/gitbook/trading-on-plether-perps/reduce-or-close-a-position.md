@@ -2,19 +2,23 @@
 
 Reducing removes part of an existing position. Closing removes the complete position.
 
-Both actions use Plether’s delayed-order process:
+Both actions begin with a sponsored submission and then use Plether’s delayed-order process:
 
 ```
 Choose the amount
 → Set an acceptable price
 → Review
-→ Commit
+→ Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
 → Join the FIFO queue
 → Execute or fail
 → Update the position and Margin Account
 ```
 
-The position remains exposed until the order executes.
+The sponsored operation is **Confirmed** when the close commitment reaches the chain. The position remains exposed until the committed order later executes.
 
 ### Reduce or close
 
@@ -48,7 +52,8 @@ Check:
 * The account has an executed open position.
 * Earlier pending closes have been accounted for.
 * The close execution reward can be reserved.
-* The wallet has enough native gas token.
+* The correct owner wallet and Trading Account are selected.
+* Sponsorship is shown as available for the prepared action.
 * The acceptable execution price reflects the exit you intend.
 * The position has enough liquidation buffer to remain open while the order waits.
 
@@ -158,9 +163,21 @@ An invalid preview may contain partial or zero economic values. Read the invalid
 
 ### 4. Commit the order
 
-Confirm the wallet transaction after reviewing the close.
+After reviewing the close, confirm the wallet authorization. Plether submits the sponsored Trading Account operation.
 
-At commitment:
+The interface reports:
+
+```
+Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+```
+
+If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no close order is created. Check the operation status before retrying.
+
+After the sponsored commitment confirms:
 
 * The order enters the global FIFO queue.
 * The close execution reward is reserved.

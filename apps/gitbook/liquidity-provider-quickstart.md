@@ -15,6 +15,8 @@ LP capital is not idle collateral. It can be used to pay winning traders. In ret
 > Control names in square brackets below are placeholders for the forthcoming LP interface.
 >
 > The `Deposit` button in the existing welcome window and trader ticket funds a **trader margin account**. It does not provide liquidity to the HousePool.
+>
+> **Gas sponsorship scope:** the trader sponsorship promise does not currently include LP approvals, deposits, pending-epoch actions, share claims or withdrawals. LP users must keep enough Arbitrum Sepolia ETH for those transactions. Treat an LP method as sponsored only if a later interface explicitly marks that specific action as **Sponsored**.
 
 ### What you receive
 

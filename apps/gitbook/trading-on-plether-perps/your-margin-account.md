@@ -1,17 +1,30 @@
 # Your Margin Account
 
-Every Plether trade settles through a USDC Margin Account associated with the connected wallet.
+Every Plether trade settles through a USDC Margin Account associated with the **Trading Account**.
 
-Deposits credit the account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI, carry and realized PnL update it. Eligible USDC can then be withdrawn to the wallet.
+The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI, carry and realized PnL update it. Eligible USDC can then be withdrawn to the owner wallet.
 
 ```
-Wallet USDC
-→ Margin Account
+Owner-wallet USDC, when used
+→ Trading Account USDC
+→ Margin Account USDC
 → available, assigned or reserved USDC
 → trade settlement
 → withdrawable USDC
-→ Wallet
+→ owner wallet
 ```
+
+### Three places USDC can appear
+
+| Balance                  | Where it exists                                                                        | What it can do                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Can be held normally or authorized for transfer into a Trading Account |
+| **Trading Account USDC** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
+| **Margin Account USDC**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
+
+With a same-address EIP-7702 account, owner-wallet USDC and Trading Account USDC are the same token balance because both roles use one address. With a separate smart account, they are balances at two different addresses.
+
+The Margin Account has no separate wallet address. Sending USDC to a Plether contract does not credit it; use the deposit flow.
 
 ### Reading your account
 
@@ -19,7 +32,8 @@ The interface presents several values drawn from the same account:
 
 | Value                         | Meaning                                                                |
 | ----------------------------- | ---------------------------------------------------------------------- |
-| **Wallet balance**            | USDC held in the connected wallet                                      |
+| **Owner-wallet balance**      | USDC held by the connected owner wallet outside Plether                |
+| **Trading Account balance**   | USDC held by the Trading Account outside its Margin Account            |
 | **Available to Trade**        | Free, unreserved USDC inside Plether                                   |
 | **Position margin**           | USDC assigned to the open position                                     |
 | **Pending order margin**      | USDC committed to an opening or increase order                         |
@@ -27,8 +41,8 @@ The interface presents several values drawn from the same account:
 | **Unrealized PnL**            | Directional profit or loss under the latest usable mark                |
 | **Portfolio value**           | Current account equity after PnL, carry and applicable VPI treatment   |
 | **Maintenance margin**        | The account-equity threshold used to determine liquidation eligibility |
-| **Withdrawable**              | The maximum amount that can currently return to the wallet             |
-| **Trader claim**              | A separately recorded USDC amount owed by the HousePool                |
+| **Withdrawable**              | The maximum amount that can currently reach the verified owner wallet  |
+| **Trader claim**              | A separately recorded USDC amount owed to the Trading Account          |
 
 These values answer different account questions. Portfolio value measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
 
@@ -89,24 +103,27 @@ To deposit:
 1. Open the **Margin Account** section.
 2. Select `Deposit`.
 3. Enter the amount.
-4. Approve USDC if the existing allowance is insufficient.
-5. Confirm the deposit transaction.
+4. Review the owner wallet, Trading Account and USDC source.
+5. Complete any requested USDC authorization.
+6. Authorize the sponsored deposit operation.
 
-The approval transaction grants the required token allowance. The deposit transaction transfers USDC into Plether.
+When USDC is already held by the Trading Account, the sponsored operation grants the exact approval needed and deposits it into the Margin Account.
 
-After confirmation, the deposited amount enters **Available to Trade**, subject to any carry collected during the same transaction.
+When USDC starts in a separate owner wallet and the token supports signed transfers, the wallet first signs a limited USDC transfer authorization. The sponsored Trading Account operation then receives the USDC, approves the clearinghouse and deposits the amount as one batch. If the batch reverts, the Margin Account is not credited.
+
+After confirmation, the deposited amount enters **Available to Trade**, subject to any carry collected during the same sponsored operation.
 
 #### Deposits and accrued carry
 
 An account with an open position checkpoints and realizes carry when its settlement balance changes.
 
-Plether first credits the deposit and then applies accrued carry. A deposit can therefore increase the displayed account balance by less than the amount transferred from the wallet.
+Plether first credits the deposit and then applies accrued carry. A deposit can therefore increase the displayed Margin Account balance by less than the amount transferred from the funding balance.
 
 For example:
 
 ```
 Deposit:                         500 USDC
-Carry collected in transaction:  40 USDC
+Carry collected in operation:    40 USDC
 
 Net account increase:            460 USDC
 ```
@@ -117,7 +134,7 @@ Deposits have no market-state, oracle-freshness or degraded-mode restriction. Th
 
 > **Screenshot placeholder — Deposit Margin**
 >
-> Capture the deposit window with wallet balance, deposit amount, `Max` and the approval or deposit action.
+> Capture the deposit window with owner-wallet balance, Trading Account balance, deposit amount, `Max`, authorization status and sponsored-operation status.
 
 ### What happens when you commit an order
 
@@ -247,19 +264,26 @@ During a scheduled oracle closure, Plether may use the stored mark within the fr
 
 Withdrawing while a position remains open reduces the account buffer supporting that position. Exposure and assigned position margin remain unchanged.
 
-The displayed Withdrawable value is an estimate based on the current state. Carry, accepted marks and account reservations can change before the withdrawal transaction confirms.
+The displayed Withdrawable value is an estimate based on the current state. Carry, accepted marks and account reservations can change before the withdrawal operation confirms.
 
-#### Withdrawing to your wallet
+#### Withdrawing to the owner wallet
 
 To withdraw:
 
 1. Open the **Margin Account** section.
 2. Select `Withdraw`.
 3. Enter an amount no greater than **Withdrawable**.
-4. Review the remaining account buffer.
-5. Confirm the transaction.
+4. Review the Trading Account, verified owner-wallet recipient and remaining account buffer.
+5. Authorize the sponsored withdrawal operation.
 
-A successful withdrawal moves USDC from the Margin Account to the connected wallet.
+For a separate smart account, the operation atomically:
+
+1. Withdraws eligible USDC from the Margin Account to the Trading Account.
+2. Transfers the same USDC from the Trading Account to its verified owner wallet.
+
+If either step fails, neither step is applied. The USDC is not left behind in the separate Trading Account.
+
+For a same-address Trading Account, the owner wallet and Trading Account use one address, so the withdrawn USDC reaches that address directly.
 
 > **Screenshot placeholder — Withdraw Margin**
 >
@@ -292,7 +316,7 @@ A profitable close is credited immediately when the HousePool has enough unreser
 
 ### Trader claims
 
-A trader claim records a fixed USDC obligation owed to the account by the HousePool.
+A trader claim records a fixed USDC obligation owed to the Trading Account by the HousePool.
 
 While unsettled, the claim remains outside:
 
@@ -308,13 +332,14 @@ The flow is:
 
 ```
 Trader claim
-→ Settle Claim
+→ Owner wallet authorizes Settle Claim
+→ Sponsored settlement confirms
 → Margin Account USDC
-→ Withdraw
-→ Wallet
+→ Sponsored withdrawal
+→ Owner wallet
 ```
 
-Claim settlement and wallet withdrawal are separate transactions.
+Claim settlement and wallet withdrawal are separate sponsored operations.
 
 An existing claim can also offset a later uncovered loss from the same account during a close or liquidation. The remaining claim balance reflects any such netting.
 

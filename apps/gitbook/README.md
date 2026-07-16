@@ -10,7 +10,9 @@ Much of onchain finance is already denominated in dollars. If you hold USDC but 
 
 Plether makes that position explicit.
 
-Plether Perps is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. Traders use USDC margin to take either side:
+Plether Perps is an onchain perpetual market for trading the strength of the U.S. dollar against a transparent basket of six major currencies. It is built for **USDC-first, gas-sponsored trading**: eligible perps actions use wallet authorization and a sponsored operation instead of requiring the trader to hold the network’s native gas token. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for the account model, eligible actions and availability limits.
+
+Traders use USDC margin to take either side:
 
 | Position      | Your view                  | Profits when                        |
 | ------------- | -------------------------- | ----------------------------------- |

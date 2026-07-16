@@ -1,43 +1,94 @@
 # Trader troubleshooting
 
-Plether actions can stop at different stages. A rejected wallet request, a reverted commitment, a pending order and a terminally failed order require different responses.
+Plether actions can stop at different stages. A rejected wallet signature, unavailable sponsorship, a rejected or dropped UserOperation, a pending order and a terminally failed order require different responses.
 
-Start by checking the current onchain state before submitting another transaction.
+Start by checking the operation and onchain state before submitting another action.
 
 ### Check these first
 
-1. Confirm the connected wallet.
+1. Confirm the connected owner wallet and active Trading Account.
 2. Confirm the supported network.
-3. Keep enough native token for gas.
+3. Check the sponsorship status and any UserOperation hash.
 4. Check the market state and oracle timestamp.
 5. Open **Open Orders** and **Order History**.
-6. Inspect any available transaction hash in the block explorer.
+6. Inspect any linked transaction hash in the block explorer.
 7. Refresh the application.
 
 Do not commit a replacement order until the original is absent from **Open Orders**. A second commitment creates another binding order with its own margin and execution-reward reservations.
 
-> **Screenshot placeholder:** Market state, oracle freshness, connected wallet and the Open Orders and Order History tabs.
+> **Screenshot placeholder:** Market state, oracle freshness, connected wallet, Trading Account, sponsorship status and the Open Orders and Order History tabs.
 
 ### Identify the current state
 
-| What you see                      | Onchain result                      | Next step                                     |
-| --------------------------------- | ----------------------------------- | --------------------------------------------- |
-| Wallet request rejected           | Nothing was submitted               | Correct the wallet issue and retry            |
-| Commit transaction reverted       | No order was created                | Read the error and adjust the order           |
-| Order appears in Open Orders      | Order is Pending                    | Wait for execution conditions or expiry       |
-| Finalization transaction reverted | Order usually remains Pending       | Refresh its status before retrying            |
-| Order appears as Failed           | Order is terminal                   | Create a new order after addressing the cause |
-| Order appears as Executed         | Position settlement is final        | Refresh account and position data             |
-| App timed out after submission    | Result may still be pending onchain | Check the transaction hash before retrying    |
+| What you see                       | Onchain result                         | Next step                                                     |
+| ---------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
+| Wallet-signature rejected          | Nothing was authorized or submitted    | Review the request and sign again only if it matches your intent |
+| Sponsor unavailable                | No sponsored operation was accepted    | Wait for recovery or use an explicitly supported alternative  |
+| Sponsor rate-limited               | No sponsored operation was accepted    | Wait until the displayed retry time                            |
+| Bundler rejected                   | UserOperation was not submitted onchain | Read the simulation or policy error and request a fresh operation |
+| UserOperation Pending              | Inclusion is not yet known             | Check its hash; do not submit a duplicate                      |
+| UserOperation dropped              | Usually nothing was submitted onchain  | Check for a transaction hash, then request a fresh operation   |
+| Sponsored commitment reverted      | No order was created                   | Read the contract error and adjust the order                   |
+| Order appears in Open Orders       | Order is Pending                       | Wait for execution conditions or expiry                       |
+| Finalization transaction reverted  | Order usually remains Pending          | Refresh its status before retrying                             |
+| Order appears as Failed            | Order is terminal                      | Create a new order after addressing the cause                 |
+| Order appears as Executed          | Position settlement is final           | Refresh account and position data                             |
+| App timed out after submission     | Result may still be pending             | Check the UserOperation and transaction hashes before retrying |
 
 A successful commitment only creates an order. Position size and entry price change after that order executes.
 
 ```
-Commit confirmed
+Sponsored operation confirmed
 → Order becomes Pending
 → Order reaches execution
 → Position changes
 ```
+
+### My sponsored operation did not confirm
+
+The sponsored-submission lifecycle is:
+
+```
+Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+```
+
+These failures occur before the delayed order lifecycle:
+
+#### Wallet-signature rejected
+
+The owner wallet rejected or did not complete the authorization. Nothing was submitted, and Plether cannot create the signature on the user’s behalf.
+
+Check the network, Trading Account, action, USDC amount, recipient and authorization expiry before trying again.
+
+#### Sponsor unavailable
+
+The sponsor service did not approve gas funding. No sponsored operation or order was accepted.
+
+Existing positions, carry, pending orders and liquidation rules continue while sponsorship is unavailable. Wait for service recovery or use only an alternative that the interface explicitly supports for the same Trading Account.
+
+#### Sponsor rate-limited
+
+The action exceeded an account, action or protocol-wide sponsorship limit. Wait until the displayed retry time and request a fresh operation. Repeated submissions do not bypass the limit.
+
+#### Bundler rejected
+
+The bundler refused the UserOperation because simulation, nonce, account state, gas limits or bundler policy did not pass. No order was created.
+
+Refresh the Trading Account and request a newly prepared operation. A stale signed operation should not be resubmitted after account state changes.
+
+#### UserOperation dropped
+
+The bundler accepted the UserOperation but stopped tracking it before confirmed inclusion.
+
+1. Check the UserOperation hash for a linked transaction hash.
+2. Check **Open Orders** for an order ID.
+3. Request a fresh sponsored operation only when neither exists.
+
+A replacement normally requires a new wallet signature, nonce and sponsorship decision.
 
 ### I cannot review or commit an open or increase
 
@@ -67,7 +118,7 @@ The interface may show messages such as:
 
 Adjust the size, leverage or margin according to the displayed reason. Market-state, skew and solvency limits may require waiting for protocol conditions to change.
 
-A reverted commitment rolls back the complete transaction. No order, margin reservation or execution-reward reservation remains.
+A reverted sponsored commitment rolls back the complete action. No order, margin reservation or execution-reward reservation remains.
 
 > **Screenshot placeholder:** Disabled Review button with an insufficient-margin, minimum-size or skew-cap message.
 
@@ -217,15 +268,16 @@ See **Why is my order pending or failed?** for the detailed failure lifecycle.
 
 > **Screenshot placeholder:** Order History showing a failed order, its reason and commit/finalization transaction links.
 
-### My transaction succeeded, but the position did not change
+### My operation succeeded, but the position did not change
 
-Check which transaction succeeded.
+Check which operation or transaction succeeded.
 
-A successful deposit changes the Margin Account. A successful commit creates a pending order. A successful cleanup removes an expired order. Only successful order execution changes the position.
+A successful deposit changes the Margin Account. A successful sponsored commit creates a pending order. A successful cleanup removes an expired order. Only successful order execution changes the position.
 
 Review:
 
 * Transaction events
+* UserOperation hash
 * Order ID
 * Open Orders
 * Order History
@@ -237,21 +289,22 @@ If the order reached a terminal failure, the position remains unchanged.
 
 Check:
 
-* Wallet USDC balance
+* Owner-wallet USDC balance
+* Trading Account USDC balance
 * Deposit amount
-* Connected account
+* Active Trading Account
 * Network
-* Native gas balance
+* Sponsorship status
 * USDC allowance
 
-The first deposit may require two wallet confirmations:
+The first deposit may require two wallet authorizations:
 
-1. Approve USDC.
-2. Deposit USDC.
+1. Authorize the required USDC movement.
+2. Authorize the sponsored deposit operation.
 
-Approval alone does not move USDC into the Margin Account.
+The USDC authorization alone does not move USDC into the Margin Account.
 
-A reverted deposit leaves wallet and Margin Account balances unchanged.
+A failed deposit batch leaves the Margin Account unchanged.
 
 #### The deposit succeeded, but Available to Trade increased by less
 
@@ -273,7 +326,7 @@ See **Your Margin Account**.
 
 Adding position margin requires:
 
-* The claim-owning wallet to be connected
+* The owner wallet controlling the Trading Account to be connected
 * An existing open position
 * Sufficient free Margin Account USDC
 * An amount greater than zero
@@ -446,7 +499,7 @@ Total outstanding trader claims
 
 The condition applies to aggregate claims. Cash sufficient for one individual claim does not make that claim serviceable during an aggregate shortfall.
 
-Claim settlement processes the account’s complete balance. Retrying while coverage remains insufficient only spends gas.
+Claim settlement processes the Trading Account’s complete claim balance. Retrying while coverage remains insufficient cannot make the claim serviceable and may be rejected during simulation.
 
 Successful settlement credits the Margin Account. Moving the USDC to the wallet requires a separate withdrawal.
 
@@ -473,8 +526,10 @@ Avoid submitting a replacement while the result remains unclear.
 
 Include:
 
-* Wallet address
+* Owner-wallet address
+* Trading Account address and account model
 * Network
+* UserOperation hash
 * Order ID
 * Commit transaction hash
 * Finalization or cleanup transaction hash

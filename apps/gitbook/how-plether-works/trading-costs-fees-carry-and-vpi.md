@@ -21,20 +21,39 @@ Execution fee + VPI + carry
 → account settlement
 ```
 
+### Sponsored network gas is not a trading discount
+
+Plether sponsors the network gas for eligible trader actions, subject to availability and policy limits. The connected wallet authorizes the action, the Trading Account submits it through a UserOperation, and Plether pays the eligible native-token network cost.
+
+That sponsorship is separate from the trade’s USDC economics:
+
+| Category                         | Denomination          | Who pays or receives it                                                        |
+| -------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
+| **Sponsored network gas**        | Network native token  | Plether pays for an eligible sponsored operation                               |
+| **Execution fee**                | USDC                  | Trader pays the protocol treasury after successful execution                    |
+| **VPI**                          | USDC                  | Trader pays or receives value against the HousePool                             |
+| **Carry**                        | USDC                  | Trader pays the HousePool over time                                             |
+| **Order execution reward**       | USDC                  | Trading Account reserves it for the order executor or clearer                   |
+| **Frozen-close spread**          | USDC                  | Trader pays the HousePool when applicable                                       |
+| **Manual oracle-update costs**   | Native token          | The manual finalizer pays unless that exact operation is explicitly sponsored   |
+
+Gas sponsorship does not make trading free. It removes the owner wallet’s native-gas prerequisite for eligible actions; it does not remove margin requirements, trading costs, losses or settlement obligations.
+
+See [Gas-sponsored trading and your Plether Trading Account](../trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for eligible actions and availability limits.
+
 ### Cost summary
 
-| Item                            | When it applies                                             | Economic destination                        |
-| ------------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
-| Protocol execution fee          | Successful open, increase, reduction or voluntary close     | Protocol treasury                           |
-| VPI                             | Successful position-size change                             | Trader ↔ HousePool                          |
-| Frozen-close spread             | Voluntary reduction or close executed during `oracleFrozen` | HousePool; entirely LP-owned                |
-| Carry                           | Continuously while LP capital supports a position           | HousePool                                   |
-| Order execution reward          | Reserved when an order is committed                         | Order executor or clearer                   |
-| Liquidation bounty              | Successful liquidation                                      | Liquidation keeper                          |
-| Oracle confidence adjustment    | Order execution                                             | Changes execution price; not a separate fee |
-| Network and oracle-update costs | Transaction submission                                      | Network and oracle provider                 |
+| Item                         | When it applies                                             | Economic destination                        |
+| ---------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
+| Protocol execution fee       | Successful open, increase, reduction or voluntary close     | Protocol treasury                           |
+| VPI                          | Successful position-size change                             | Trader ↔ HousePool                          |
+| Frozen-close spread          | Voluntary reduction or close executed during `oracleFrozen` | HousePool; entirely LP-owned                |
+| Carry                        | Continuously while LP capital supports a position           | HousePool                                   |
+| Order execution reward       | Reserved in USDC when an order is committed                 | Order executor or clearer                   |
+| Liquidation bounty           | Successful liquidation                                      | Liquidation keeper                          |
+| Oracle confidence adjustment | Order execution                                             | Changes execution price; not a separate fee |
 
-These should not be combined into one unexplained “price impact” number. They perform different jobs and behave differently.
+These USDC costs and price adjustments should not be combined with sponsored network gas or into one unexplained “price impact” number. They perform different jobs and behave differently.
 
 ### Protocol execution fee
 

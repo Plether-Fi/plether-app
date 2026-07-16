@@ -2,19 +2,23 @@
 
 Use the trade ticket to open a **LONG USD** or **SHORT USD** position, or to add exposure to an existing position in the same direction.
 
-Both actions follow Plether’s delayed-order process:
+Both actions begin with a sponsored submission and then follow Plether’s delayed-order process:
 
 ```
 Configure
 → Review
-→ Commit
+→ Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+→ Order Pending in FIFO
 → Funds reserved
-→ FIFO queue
 → Executed or failed
 → Position updated
 ```
 
-The position changes when the order executes.
+The sponsored operation is **Confirmed** when the order commitment reaches the chain. The position changes only when that committed order later executes.
 
 ### Opening and increasing
 
@@ -43,7 +47,8 @@ Check that:
 
 * The **Market State** is `Open`.
 * The Margin Account has enough **Available to Trade**.
-* The wallet has enough native gas token for transactions.
+* The correct owner wallet and Trading Account are selected.
+* Sponsorship is shown as available for the prepared action.
 * Any existing position is in the same direction as the intended increase.
 * Existing pending orders do not duplicate or conflict with the instruction.
 
@@ -327,9 +332,21 @@ The review window should repeat:
 * Resulting leverage
 * Liquidation price
 
-Select `Confirm Commit` and approve the wallet transaction.
+Select `Confirm Commit` and approve the wallet authorization. Plether then submits the sponsored Trading Account operation.
 
-After the commitment confirms:
+The interface reports:
+
+```
+Preparing
+→ Wallet confirmation
+→ Sponsored operation submitted
+→ Pending
+→ Confirmed
+```
+
+If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no order is created. Check the operation status before retrying.
+
+After the sponsored commitment confirms:
 
 * Submitted margin enters the pending-order margin bucket.
 * The execution reward enters reserved settlement.
@@ -344,7 +361,7 @@ The protocol checks predictable failures during commitment when a sufficiently f
 
 ### 7. Wait for execution
 
-Track the instruction under **Open Orders**.
+Track the order under **Open Orders**. The order’s Pending state is separate from the earlier Pending state of the sponsored operation.
 
 | Status             | Meaning                                                             |
 | ------------------ | ------------------------------------------------------------------- |

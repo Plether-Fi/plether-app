@@ -18,6 +18,7 @@ This page is a summary, not an exhaustive list. Smart contracts and financial sy
 | **Entry solvency check**             | Rejects new exposure the pool cannot support at entry             | A guarantee that bad debt or later insolvency is impossible        |
 | **No counterparty ADL**              | Another trader’s failure does not reduce your profitable position | Protection from liquidation of your own under-margined position    |
 | **Delayed oracle execution**         | Reduces front-running and keeper price-selection risk             | Guaranteed execution, no slippage, or freedom from all MEV         |
+| **Gas-sponsored Trading Account**    | Eligible actions without owner-wallet native gas                       | Guaranteed sponsor or bundler availability, or permission to act without a wallet signature |
 | **Withdrawal firewall**              | Prevents encumbered LP capital from leaving the pool              | Immediate or unconditional LP withdrawals                          |
 | **Non-upgradeable logic**            | Prevents the owner from replacing deployed code                   | Proof that the deployed code is correct or free of vulnerabilities |
 | **Senior tranche priority**          | Junior absorbs losses before Senior                               | Principal protection or guaranteed yield                           |
@@ -363,6 +364,44 @@ A material fix can require a new deployment and user migration.
 
 Immutability makes behavior harder to change. It does not make behavior correct.
 
+### Smart-account risk
+
+Sponsored trading depends on the Trading Account’s smart-account execution path in addition to Plether’s perps contracts.
+
+Depending on the account model, this can include:
+
+* Smart-account code and signature validation
+* EntryPoint compatibility
+* Nonce and replay protection
+* Owner-wallet recovery and key security
+* EIP-7702 delegation state
+* Correct account initialization and ownership checks
+
+A defect or incompatible account state can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. Changing or removing an EIP-7702 delegation can invalidate an outstanding sponsored operation that has not yet been submitted.
+
+The Trading Account owns the positions, orders, Margin Account and trader claims. Losing control of its owner wallet can therefore affect the ability to manage that complete protocol state.
+
+### Sponsor-service and bundler availability risk
+
+Eligible trader actions depend on a sponsor approving network-gas funding and a bundler accepting and submitting the signed UserOperation.
+
+An action can be delayed or rejected because of:
+
+* Sponsor downtime or depleted budgets
+* Per-account or protocol-wide rate limits
+* Gas-price or action-policy limits
+* Failed operation simulation
+* Bundler policy rejection
+* Bundler, RPC or EntryPoint outages
+* A UserOperation being dropped before inclusion
+* An expired signature, invalid nonce or changed account delegation
+
+Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO execution rules even if sponsorship later becomes unavailable.
+
+A sponsorship outage can be especially consequential for a position that needs margin, reduction or closure. The position remains active, carry continues to accrue and liquidation rules continue to apply while the action is delayed.
+
+Sponsorship failure does not authorize Plether to transact for the user. The sponsor decides whether to pay gas; it cannot create the owner-wallet signature, replace the signed instruction with another action or withdraw funds without the required authorization. Plether also does not silently fall back to charging the owner wallet or submitting from a different address.
+
 ### Audit and deployment risk
 
 Plether Perps has completed an external pre-audit security consultation.
@@ -436,9 +475,9 @@ The current deployment depends on Arbitrum Sepolia and its surrounding infrastru
 
 Sequencer interruption, congestion, transaction-ordering effects, RPC failure or wider Ethereum and Arbitrum disruption can delay actions or make the protocol temporarily unavailable.
 
-Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data and correct transaction construction.
+Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data, smart-account services and correct operation construction.
 
-Wallet approvals and signed transactions are generally irreversible. Users are responsible for verifying the network, contract addresses and transaction details.
+Wallet approvals, signed authorizations and confirmed operations are generally irreversible. Users are responsible for verifying the network, owner wallet, Trading Account, contract addresses and action details.
 
 ### Governance and pause risk
 
@@ -496,6 +535,8 @@ Do not open a position unless you can answer yes to each question:
 * Can the position survive carry, fees and the higher market-close margin requirement?
 * Am I willing to submit a delayed order that cannot be cancelled?
 * Have I set an acceptable-price limit I understand?
+* Have I verified the active Trading Account and the action covered by sponsorship?
+* Can I tolerate sponsor or bundler unavailability while my position remains active?
 * Can I tolerate delayed execution during an oracle, keeper or chain outage?
 * Can I tolerate profitable settlement becoming a trader claim rather than immediate USDC?
 * Does Plether’s arithmetic basket actually hedge the exposure I intend to hedge?
@@ -522,7 +563,7 @@ Before interacting:
 * Confirm that you are using the intended network and verified contracts.
 * Read the current deployment and audit disclosures.
 * Review live parameters rather than relying on examples in documentation.
-* Understand the dependencies on Pyth, USDC, keepers, the deployment chain and governance.
+* Understand the dependencies on Pyth, USDC, smart accounts, sponsors, bundlers, keepers, the deployment chain and governance.
 * Use only capital you can afford to lose or have temporarily unavailable.
 
 ## The short version
@@ -535,6 +576,7 @@ Before interacting:
 6. LP withdrawals depend on free, unencumbered HousePool cash.
 7. Non-upgradeable contracts can still contain defects.
 8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
+9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
 
 ## Where to go next
 
