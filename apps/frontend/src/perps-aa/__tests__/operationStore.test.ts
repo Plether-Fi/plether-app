@@ -15,7 +15,7 @@ function begin(id: string) {
     ownerAddress: OWNER,
     accountAddress: ACCOUNT,
     chainId: 421614,
-    accountMode: 'separate-immutable',
+    accountMode: 'simple',
     manifestVersion: 'v1',
     action: 'place-order',
   })
@@ -29,18 +29,13 @@ describe('sponsored operation store', () => {
     })
   })
 
-  it('accepts sponsorship only after the stub request has completed', () => {
+  it('accepts sponsorship when managed preparation begins', () => {
     begin('operation-1')
 
     useSponsoredOperationStore.getState().transition(
       'operation-1',
-      'requesting-stub'
+      'requesting-sponsorship'
     )
-    expect(
-      useSponsoredOperationStore.getState().operations[0]?.sponsorshipAccepted
-    ).toBe(false)
-
-    useSponsoredOperationStore.getState().transition('operation-1', 'estimating')
     expect(
       useSponsoredOperationStore.getState().operations[0]?.sponsorshipAccepted
     ).toBe(true)

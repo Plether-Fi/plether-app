@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+  PERPS_ENTRY_POINT_V08,
   PerpsAaManifestValidationError,
   parsePerpsAaManifest,
 } from './manifest'
@@ -8,16 +10,13 @@ function validManifest(): Record<string, unknown> {
   return {
     version: 'perps-aa-arbitrum-sepolia-v1',
     chainId: 421614,
-    entryPoint: '0x1111111111111111111111111111111111111111',
-    paymaster: '0x2222222222222222222222222222222222222222',
-    policyId: `0x${'3'.repeat(64)}`,
-    sponsorServiceRpcUrl: 'https://sponsor.example.com/rpc',
-    bundlerRpcUrl: 'https://bundler.example.com/rpc',
-    smartAccountMode: 'separate-immutable',
-    smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    smartAccountImplementation:
-      '0x5555555555555555555555555555555555555555',
-    accountRuntimeCodeHash: `0x${'6'.repeat(64)}`,
+    entryPoint: PERPS_ENTRY_POINT_V08,
+    entryPointVersion: '0.8',
+    pimlicoRpcUrl: '/api/perps/v1/aa/pimlico',
+    smartAccountMode: 'simple',
+    smartAccountVersion: 'permissionless-simple-v0.8',
+    smartAccountIndex: '0',
+    smartAccountFactory: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
     usdc: '0x7777777777777777777777777777777777777777',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
@@ -40,21 +39,23 @@ describe('parsePerpsAaManifest', () => {
 
     expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-v1')
     expect(manifest.chainId).toBe(421614)
-    expect(manifest.smartAccountMode).toBe('separate-immutable')
+    expect(manifest.smartAccountMode).toBe('simple')
+    expect(manifest.entryPointVersion).toBe('0.8')
+    expect(manifest.pimlicoRpcUrl).toBe('/api/perps/v1/aa/pimlico')
     expect(manifest.smartAccountFactory).toMatch(/^0x[0-9A-Fa-f]{40}$/)
     expect(manifest.sponsorshipEnabled).toBe(false)
   })
 
   it('rejects missing and unknown fields instead of applying defaults', () => {
     const manifest = validManifest()
-    delete manifest.paymaster
+    delete manifest.pimlicoRpcUrl
     manifest.unreviewedEndpoint = 'https://example.com'
 
     expect(() => parsePerpsAaManifest(manifest)).toThrowError(
       PerpsAaManifestValidationError
     )
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
-      /missing required field "paymaster".*unknown field "unreviewedEndpoint"/
+      /missing required field "pimlicoRpcUrl".*unknown field "unreviewedEndpoint"/
     )
   })
 
@@ -65,12 +66,12 @@ describe('parsePerpsAaManifest', () => {
     expect(() => parsePerpsAaManifest(manifest)).toThrow(/supported v1/)
   })
 
-  it('rejects inconsistent account-mode configuration', () => {
+  it('rejects unsupported account modes', () => {
     const manifest = validManifest()
     manifest.smartAccountMode = 'eip-7702'
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
-      /smartAccountFactory.*must be null/
+      /smartAccountMode.*must be "simple"/
     )
   })
 
@@ -83,12 +84,38 @@ describe('parsePerpsAaManifest', () => {
     )
   })
 
-  it('rejects endpoint credentials in client-visible URLs', () => {
+  it('requires a same-origin proxy instead of a client-visible Pimlico URL', () => {
     const manifest = validManifest()
-    manifest.bundlerRpcUrl = 'https://secret:token@bundler.example.com/rpc'
+    manifest.pimlicoRpcUrl =
+      'https://api.pimlico.io/v2/421614/rpc?apikey=secret'
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
-      /must not embed credentials/
+      /same-origin/
+    )
+  })
+
+  it('pins the deterministic SimpleAccount index to zero', () => {
+    const manifest = validManifest()
+    manifest.smartAccountIndex = '1'
+
+    expect(() => parsePerpsAaManifest(manifest)).toThrow(
+      /smartAccountIndex.*must be "0"/
+    )
+  })
+
+  it('pins the reviewed EntryPoint and SimpleAccount factory', () => {
+    const entryPointManifest = validManifest()
+    entryPointManifest.entryPoint =
+      '0x1111111111111111111111111111111111111111'
+    expect(() => parsePerpsAaManifest(entryPointManifest)).toThrow(
+      /entryPoint.*reviewed deployment/
+    )
+
+    const factoryManifest = validManifest()
+    factoryManifest.smartAccountFactory =
+      '0x4444444444444444444444444444444444444444'
+    expect(() => parsePerpsAaManifest(factoryManifest)).toThrow(
+      /smartAccountFactory.*reviewed deployment/
     )
   })
 })

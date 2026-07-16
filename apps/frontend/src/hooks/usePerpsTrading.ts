@@ -9,7 +9,6 @@ import {
   buildReceiveWithAuthorizationTypedData,
   buildSettleTraderClaimAction,
   buildSmartAccountBalanceDepositAction,
-  buildWithdrawAction,
   buildWithdrawToOwnerAction,
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
@@ -366,7 +365,6 @@ export function usePerpsTrading() {
       const sponsored = requireSponsoredExecution()
       const useOwnerAuthorization = source === 'owner' || (
         source === undefined &&
-        sponsored.manifest.smartAccountMode === 'separate-immutable' &&
         sponsored.manifest.usdcSupportsEip3009
       )
       let action: PerpsActionPlan
@@ -441,18 +439,12 @@ export function usePerpsTrading() {
       }
 
       const sponsored = requireSponsoredExecution()
-      const action = sponsored.manifest.smartAccountMode === 'eip-7702'
-        ? buildWithdrawAction({
-            account: sponsored.accountAddress,
-            clearinghouse: sponsored.manifest.marginClearinghouse,
-            amount,
-          })
-        : buildWithdrawToOwnerAction({
-            account: sponsored.accountAddress,
-            owner: sponsored.ownerAddress,
-            usdc: sponsored.manifest.usdc,
-            clearinghouse: sponsored.manifest.marginClearinghouse,
-            amount,
+      const action = buildWithdrawToOwnerAction({
+        account: sponsored.accountAddress,
+        owner: sponsored.ownerAddress,
+        usdc: sponsored.manifest.usdc,
+        clearinghouse: sponsored.manifest.marginClearinghouse,
+        amount,
         })
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
@@ -643,7 +635,7 @@ export function usePerpsTrading() {
       const committed = parseEventLogs({
         abi: PERPS_ORDER_ROUTER_ABI,
         eventName: 'OrderCommitted',
-        logs: [...(result.receipt?.receipt?.logs ?? [])],
+        logs: [...result.receipt.receipt.logs],
       }).at(0)
       if (committed?.args.orderId === undefined) {
         throw new Error(

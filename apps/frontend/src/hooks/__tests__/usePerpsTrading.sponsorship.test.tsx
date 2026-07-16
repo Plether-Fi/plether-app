@@ -33,14 +33,12 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     version: 'perps-aa-arbitrum-sepolia-v1',
     chainId: 421614,
     entryPoint: '0x3333333333333333333333333333333333333333',
-    paymaster: '0x4444444444444444444444444444444444444444',
-    policyId: `0x${'66'.repeat(32)}`,
-    sponsorServiceRpcUrl: 'https://example.com/sponsor',
-    bundlerRpcUrl: 'https://example.com/bundler',
-    smartAccountMode: 'separate-immutable' as const,
+    entryPointVersion: '0.8' as const,
+    pimlicoRpcUrl: '/api/perps/v1/aa/pimlico',
+    smartAccountMode: 'simple' as const,
+    smartAccountVersion: 'permissionless-simple-v0.8' as const,
+    smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    smartAccountImplementation: '0x5555555555555555555555555555555555555555',
-    accountRuntimeCodeHash: `0x${'66'.repeat(32)}`,
     usdc: '0xf1e1B188b87525C51ECe4bae8627ae621D769651',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
@@ -77,9 +75,8 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       chainId: 421614,
       ownerAddress: OWNER,
       factoryAddress: '0x4444444444444444444444444444444444444444',
-      implementationAddress: '0x5555555555555555555555555555555555555555',
-      implementationVersion: 'immutable-v1',
-      accountRuntimeCodeHash: `0x${'66'.repeat(32)}`,
+      accountVersion: 'permissionless-simple-v0.8',
+      accountIndex: '0',
       smartAccount: {
         accountAddress: '0x2222222222222222222222222222222222222222',
         entryPoint: '0x3333333333333333333333333333333333333333',
@@ -133,7 +130,7 @@ describe('usePerpsTrading sponsorship route', () => {
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
   })
 
-  it('withdraws from a separate Trading Account to its verified Owner Wallet', async () => {
+  it('withdraws from the Simple Trading Account to its verified Owner Wallet', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 
     await expect(result.current.withdrawMargin(10_000_000n))

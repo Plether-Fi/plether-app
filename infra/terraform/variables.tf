@@ -60,6 +60,74 @@ variable "faucet_private_key" {
   sensitive = true
 }
 
+variable "provision_aa_proxy" {
+  type        = bool
+  default     = false
+  description = "Provision managed Pimlico proxy credentials on the API task, including while issuance is disabled for recovery."
+}
+
+variable "enable_aa_sponsorship" {
+  type        = bool
+  default     = false
+  description = "Authoritative managed sponsorship issuance/submission kill switch."
+}
+
+variable "pimlico_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "pimlico_sponsorship_policy_id" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "aa_proxy_origin_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "aa_ip_rate_limit_per_minute" {
+  type    = string
+  default = "120"
+}
+
+variable "aa_account_rate_limit_per_minute" {
+  type    = string
+  default = "30"
+}
+
+variable "aa_max_request_bytes" {
+  type    = string
+  default = "262144"
+}
+
+variable "aa_sponsored_gas_alert_wei_per_hour" {
+  type    = string
+  default = "0"
+}
+
+variable "alb_certificate_arn" {
+  type        = string
+  default     = ""
+  description = "ACM certificate ARN for the public API ALB. Required when the AA proxy is provisioned."
+}
+
+variable "api_hostname" {
+  type        = string
+  default     = ""
+  description = "Public DNS hostname covered by alb_certificate_arn and pointed at the API ALB."
+}
+
+variable "operations_alarm_sns_topic_arn" {
+  type        = string
+  default     = ""
+  description = "Optional SNS topic ARN for AA gas-usage and keeper-health CloudWatch alarms."
+}
+
 variable "db_password" {
   type      = string
   sensitive = true

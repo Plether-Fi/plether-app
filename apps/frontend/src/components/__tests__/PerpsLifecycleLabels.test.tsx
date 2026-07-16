@@ -1,6 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const identityMocks = vi.hoisted(() => ({
+  isAaManifestConfigured: false,
+  usdcSupportsEip3009: false,
+}))
+
 vi.mock('../../perps-aa', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../perps-aa')>()
   const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
@@ -11,9 +16,16 @@ vi.mock('../../perps-aa', async (importOriginal) => {
       ownerAddress: address,
       accountAddress: address,
       chainId: 421614,
-      isAaManifestConfigured: false,
-      sponsorshipEnabled: false,
-      manifest: null,
+      isAaManifestConfigured: identityMocks.isAaManifestConfigured,
+      sponsorshipEnabled: identityMocks.isAaManifestConfigured,
+      manifest: identityMocks.isAaManifestConfigured
+        ? {
+            smartAccountMode: 'simple',
+            usdcSupportsEip3009: identityMocks.usdcSupportsEip3009,
+            userOperationExplorerUrlTemplate:
+              'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
+          }
+        : null,
       identity: null,
       proposedIdentity: null,
       changedIdentityFields: [],
@@ -25,6 +37,7 @@ vi.mock('../../perps-aa', async (importOriginal) => {
 })
 import { PerpsAccountPanel } from '../PerpsAccountPanel'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
+import { useSponsoredOperationStore } from '../../perps-aa'
 
 vi.mock('@reown/appkit/react', () => ({
   createAppKit: vi.fn(),
@@ -88,6 +101,12 @@ vi.mock('../../hooks', () => ({
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
     mockIsConnected = false
+    identityMocks.isAaManifestConfigured = false
+    identityMocks.usdcSupportsEip3009 = false
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
     vi.useRealTimers()
     Object.values(perpsTradingMocks).forEach((mock) => {
       mock.mockReset()
@@ -331,6 +350,31 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
   })
 
+  it('distinguishes wallet USDC available to deposit from deposited buying power', () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        availableToTradeRaw={0n}
+        availableToTradeAmount="0"
+        ownerWalletUsdcRaw={100000000000n}
+        tradingAccountUsdcRaw={100000000000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('Available to deposit')).toBeInTheDocument()
+    expect(within(dialog).getByText('Available to trade')).toBeInTheDocument()
+    expect(within(dialog).getByText('Owner Wallet USDC')).toBeInTheDocument()
+    expect(within(dialog).queryByText('Trading Account balance')).not.toBeInTheDocument()
+    expect(within(dialog).queryByText('Trading Account USDC')).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('100 000')
+  })
+
   it('uses the engine new-position minimum when opening from zero', () => {
     mockIsConnected = true
 
@@ -534,6 +578,36 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('button', { name: 'Finalize Trade' })).toBeInTheDocument()
   })
 
+  it('keeps manual finalization disabled for sponsored Trading Accounts', async () => {
+    vi.useFakeTimers()
+    identityMocks.isAaManifestConfigured = true
+
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        showFinalizationProgress
+      />
+    )
+
+    expect(
+      screen.getByText('Waiting for verified market data')
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(21_000)
+    })
+
+    expect(
+      screen.queryByRole('button', { name: 'Finalize Trade' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', {
+        name: 'Price finalization progress',
+      })
+    ).toHaveAttribute('aria-valuenow', '100')
+  })
+
   it('shows the 20-second finalization progress circle in story mode without backend waiting', async () => {
     vi.useFakeTimers()
     const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.7)
@@ -624,6 +698,74 @@ describe('perps lifecycle labels', () => {
     expect(finalResult).toBeInTheDocument()
     expect(within(finalResult!).getByText('0x6c0d...b7d3')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
+  })
+
+  it('keeps settlement hashes compact and links both hashes to Blockscout', () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
+
+    const userOperationHash =
+      '0x13a03bd38e5603cf4be51d9adf9c5fc25b4ba529c60da857615b36b8393cc92b'
+    const commitTxHash =
+      '0xd7f7a49e3fc3e9286b84b8fbcb02763f00b7ab7867338ceec6f5f4bce44e1507'
+    const now = Date.now()
+
+    useSponsoredOperationStore.setState({
+      operations: [{
+        id: 'settlement-layout',
+        ownerAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        chainId: 421614,
+        accountMode: 'simple',
+        manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+        action: 'place-order',
+        lane: 'default',
+        status: 'confirmed',
+        sponsorshipAccepted: true,
+        userOperationHash,
+        transactionHash: commitTxHash,
+        retryCount: 0,
+        createdAt: now,
+        updatedAt: now,
+        statusTimestamps: { confirmed: now },
+      }],
+      activeLanes: {},
+    })
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialLifecycleState="revealPending"
+        initialReviewOpen
+        initialOrderId={52n}
+        initialCommitTxHash={commitTxHash}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog')
+    const abbreviatedHash = `${userOperationHash.slice(0, 6)}...${userOperationHash.slice(-4)}`
+    const hashText = within(dialog).getByText(abbreviatedHash)
+
+    expect(hashText).toHaveClass('truncate')
+    expect(hashText).toHaveAttribute('title', userOperationHash)
+    expect(within(dialog).queryByText(userOperationHash)).not.toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('link', {
+        name: 'Open UserOperation in block explorer',
+      })
+    ).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/op/${userOperationHash}`
+    )
+    expect(
+      within(dialog).getByRole('link', {
+        name: 'Open tx in block explorer',
+      })
+    ).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/tx/${commitTxHash}`
+    )
   })
 
   it('shows the execution confirmation when refreshed order history sees keeper execution', async () => {

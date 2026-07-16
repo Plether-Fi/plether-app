@@ -5,7 +5,6 @@ import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/Pe
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
-import { SponsoredOperationActivity } from '../components/SponsoredOperationActivity'
 import { TokenAmount } from '../components/ui'
 import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
@@ -220,7 +219,6 @@ export function Perps() {
           ) : null}
         </div>
       ) : null}
-      <SponsoredOperationActivity />
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
         <PerpsInstrumentPanel stats={instrumentStats} />

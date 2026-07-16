@@ -6,6 +6,10 @@ import {
   PerpsIdentityProvider,
   type PerpsAccountAddressResolver,
 } from './PerpsIdentityProvider'
+import {
+  PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+  PERPS_ENTRY_POINT_V08,
+} from './manifest'
 import { usePerpsIdentity } from './usePerpsIdentity'
 
 const ownerAddress =
@@ -17,16 +21,13 @@ function validManifest(): Record<string, unknown> {
   return {
     version: 'perps-aa-arbitrum-sepolia-v1',
     chainId: 421614,
-    entryPoint: '0x3333333333333333333333333333333333333333',
-    paymaster: '0x4444444444444444444444444444444444444444',
-    policyId: `0x${'5'.repeat(64)}`,
-    sponsorServiceRpcUrl: 'https://sponsor.example.com/rpc',
-    bundlerRpcUrl: 'https://bundler.example.com/rpc',
-    smartAccountMode: 'separate-immutable',
-    smartAccountFactory: '0x6666666666666666666666666666666666666666',
-    smartAccountImplementation:
-      '0x7777777777777777777777777777777777777777',
-    accountRuntimeCodeHash: `0x${'8'.repeat(64)}`,
+    entryPoint: PERPS_ENTRY_POINT_V08,
+    entryPointVersion: '0.8',
+    pimlicoRpcUrl: '/api/perps/v1/aa/pimlico',
+    smartAccountMode: 'simple',
+    smartAccountVersion: 'permissionless-simple-v0.8',
+    smartAccountIndex: '0',
+    smartAccountFactory: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
     usdc: '0x9999999999999999999999999999999999999999',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
@@ -108,7 +109,11 @@ describe('PerpsIdentityProvider', () => {
     const accountAddressResolver: PerpsAccountAddressResolver = vi.fn(
       async () => ({
         accountAddress,
-        implementationVersion: 'immutable-account-v1',
+        accountVersion: 'permissionless-simple-v0.8',
+        accountIndex: '0',
+        entryPoint: PERPS_ENTRY_POINT_V08,
+        entryPointVersion: '0.8',
+        factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
       })
     )
 

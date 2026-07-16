@@ -1,5 +1,3 @@
-import { JsonRpcRequestError, JsonRpcTimeoutError, JsonRpcTransportError } from './rpc'
-
 export type StableSponsorReason =
   | 'RESTART_ESTIMATION'
   | 'RATE_LIMITED'
@@ -71,6 +69,56 @@ function causeOf(value: unknown): unknown {
   return (value as { cause?: unknown }).cause
 }
 
+function recordOf(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object'
+    ? value as Record<string, unknown>
+    : undefined
+}
+
+function sponsorMetadata(error: unknown): {
+  reason?: StableSponsorReason
+  retryable?: boolean
+  callIndex?: number
+  rpcCode?: number
+} {
+  let current = error
+  const seen = new Set<object>()
+  let reason: StableSponsorReason | undefined
+  let retryable: boolean | undefined
+  let callIndex: number | undefined
+  let rpcCode: number | undefined
+
+  for (let depth = 0; depth < 8 && current !== undefined; depth += 1) {
+    const record = recordOf(current)
+    if (!record || seen.has(record)) break
+    seen.add(record)
+    const data = recordOf(record.data)
+    const currentReason = data?.reason ?? record.reason
+    const currentRetryable = data?.retryable ?? record.retryable
+    const currentCallIndex = data?.callIndex ?? record.callIndex
+    const currentRpcCode = record.code ?? record.rpcCode
+    if (reason === undefined && typeof currentReason === 'string') {
+      reason = currentReason as StableSponsorReason
+    }
+    if (retryable === undefined && typeof currentRetryable === 'boolean') {
+      retryable = currentRetryable
+    }
+    if (callIndex === undefined && typeof currentCallIndex === 'number') {
+      callIndex = currentCallIndex
+    }
+    if (rpcCode === undefined && typeof currentRpcCode === 'number') {
+      rpcCode = currentRpcCode
+    }
+    current = record.cause
+  }
+  return {
+    ...(reason !== undefined ? { reason } : {}),
+    ...(retryable !== undefined ? { retryable } : {}),
+    ...(callIndex !== undefined ? { callIndex } : {}),
+    ...(rpcCode !== undefined ? { rpcCode } : {}),
+  }
+}
+
 function walkCauses<T>(
   error: unknown,
   predicate: (value: unknown) => value is T
@@ -90,47 +138,23 @@ function walkCauses<T>(
 
 export function asSponsorRequestError(error: unknown): SponsorRequestError {
   if (error instanceof SponsorRequestError) return error
-
-  if (error instanceof JsonRpcRequestError) {
-    return new SponsorRequestError({
-      reason: error.data?.reason ?? 'UNKNOWN',
-      message: error.message,
-      retryable: error.data?.retryable ?? false,
-      callIndex: error.data?.callIndex,
-      rpcCode: error.rpcCode,
-      cause: error,
-    })
-  }
-
-  if (error instanceof JsonRpcTimeoutError || error instanceof JsonRpcTransportError) {
-    return new SponsorRequestError({
-      reason: 'SPONSOR_UNAVAILABLE',
-      message: error.message,
-      retryable: true,
-      cause: error,
-    })
-  }
+  const metadata = sponsorMetadata(error)
 
   return new SponsorRequestError({
-    reason: 'UNKNOWN',
+    reason: metadata.reason ?? 'UNKNOWN',
     message: error instanceof Error ? error.message : String(error),
-    retryable: false,
+    retryable: metadata.retryable ?? false,
+    callIndex: metadata.callIndex,
+    rpcCode: metadata.rpcCode,
     cause: error,
   })
 }
 
 export function findSponsorRequestError(error: unknown): SponsorRequestError | undefined {
-  const existing = walkCauses(
+  return walkCauses(
     error,
     (value): value is SponsorRequestError => value instanceof SponsorRequestError
   )
-  if (existing) return existing
-
-  const rpcError = walkCauses(
-    error,
-    (value): value is JsonRpcRequestError => value instanceof JsonRpcRequestError
-  )
-  return rpcError ? asSponsorRequestError(rpcError) : undefined
 }
 
 export function findBundlerRequestError(error: unknown): BundlerRequestError | undefined {

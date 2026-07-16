@@ -27,21 +27,25 @@ function memoryStorage(): PerpsIdentityStorage {
   }
 }
 
-function sponsoredIdentity(version = 'account-v1') {
+function sponsoredIdentity(version = 'permissionless-simple-v0.8') {
   return createPersistedPerpsIdentity({
     chainId: 421614,
     ownerAddress,
     accountAddress,
-    accountMode: 'separate-immutable',
-    implementationAddress:
+    accountMode: 'simple',
+    entryPoint:
       '0x3333333333333333333333333333333333333333',
-    implementationVersion: version,
+    entryPointVersion: '0.8',
+    factoryAddress:
+      '0x4444444444444444444444444444444444444444',
+    accountVersion: version,
+    accountIndex: '0',
     manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
   })
 }
 
 describe('Perps identity persistence', () => {
-  it('round-trips the complete chain/owner/account implementation tuple', () => {
+  it('round-trips the complete deterministic Trading Account tuple', () => {
     const storage = memoryStorage()
     const identity = sponsoredIdentity()
 
@@ -63,7 +67,7 @@ describe('Perps identity persistence', () => {
     ).toMatchObject({ status: 'invalid' })
   })
 
-  it('detects implementation continuity changes', () => {
+  it('detects account-version continuity changes', () => {
     const comparison = comparePerpsIdentities(
       sponsoredIdentity('account-v1'),
       sponsoredIdentity('account-v2')
@@ -71,7 +75,7 @@ describe('Perps identity persistence', () => {
 
     expect(comparison).toEqual({
       matches: false,
-      changedFields: ['implementationVersion'],
+      changedFields: ['accountVersion'],
     })
   })
 })

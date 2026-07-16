@@ -1,22 +1,27 @@
-import { getAddress, isAddress, type Address, type Hex } from 'viem'
+import { getAddress, isAddress, type Address } from 'viem'
 
 export const PERPS_AA_MANIFEST_V1_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
 
-export type PerpsSmartAccountMode = 'separate-immutable' | 'eip-7702'
+export const PERPS_ENTRY_POINT_V08 =
+  getAddress('0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108')
+export const PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY =
+  getAddress('0x13E9ed32155810FDbd067D4522C492D6f68E5944')
+
+export type PerpsSmartAccountMode = 'simple'
+export type PerpsEntryPointVersion = '0.8'
+export type PerpsSmartAccountVersion = 'permissionless-simple-v0.8'
 
 export interface PerpsAaDeploymentManifest {
   version: string
   chainId: number
   entryPoint: Address
-  paymaster: Address
-  policyId: Hex
-  sponsorServiceRpcUrl: string
-  bundlerRpcUrl: string
+  entryPointVersion: PerpsEntryPointVersion
+  pimlicoRpcUrl: string
   smartAccountMode: PerpsSmartAccountMode
-  smartAccountFactory: Address | null
-  smartAccountImplementation: Address
-  accountRuntimeCodeHash: Hex
+  smartAccountVersion: PerpsSmartAccountVersion
+  smartAccountIndex: string
+  smartAccountFactory: Address
   usdc: Address
   usdcSupportsEip3009: boolean
   usdcEip712Name: string | null
@@ -34,14 +39,12 @@ const MANIFEST_KEYS = [
   'version',
   'chainId',
   'entryPoint',
-  'paymaster',
-  'policyId',
-  'sponsorServiceRpcUrl',
-  'bundlerRpcUrl',
+  'entryPointVersion',
+  'pimlicoRpcUrl',
   'smartAccountMode',
+  'smartAccountVersion',
+  'smartAccountIndex',
   'smartAccountFactory',
-  'smartAccountImplementation',
-  'accountRuntimeCodeHash',
   'usdc',
   'usdcSupportsEip3009',
   'usdcEip712Name',
@@ -56,7 +59,6 @@ const MANIFEST_KEYS = [
 ] as const
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`
-const ZERO_BYTES32 = `0x${'0'.repeat(64)}`
 
 export class PerpsAaManifestValidationError extends Error {
   readonly issues: readonly string[]
@@ -134,20 +136,8 @@ function parseChainId(value: unknown): number {
 
 function parseAddress(
   value: unknown,
-  field: string,
-  options: { nullable: true }
-): Address | null
-function parseAddress(
-  value: unknown,
-  field: string,
-  options?: { nullable?: false }
-): Address
-function parseAddress(
-  value: unknown,
-  field: string,
-  options: { nullable?: boolean } = {}
-): Address | null {
-  if (value === null && options.nullable === true) return null
+  field: string
+): Address {
   if (typeof value !== 'string' || !isAddress(value)) {
     invalid(field, 'must be a valid checksummed or lowercase address')
   }
@@ -157,15 +147,32 @@ function parseAddress(
   return getAddress(value)
 }
 
-function parseBytes32(value: unknown, field: string): Hex {
-  if (
-    typeof value !== 'string' ||
-    !/^0x[0-9a-fA-F]{64}$/.test(value) ||
-    value.toLowerCase() === ZERO_BYTES32
-  ) {
-    invalid(field, 'must be a nonzero 32-byte hex value')
+function parsePinnedAddress(
+  value: unknown,
+  field: string,
+  expected: Address
+): Address {
+  const address = parseAddress(value, field)
+  if (address !== expected) {
+    invalid(field, `must be the reviewed deployment ${expected}`)
   }
-  return value.toLowerCase() as Hex
+  return address
+}
+
+function parseUnsignedDecimal(value: unknown, field: string): string {
+  const stringValue = parseNonEmptyString(value, field)
+  if (!/^(0|[1-9][0-9]*)$/.test(stringValue)) {
+    invalid(field, 'must be a canonical unsigned decimal string')
+  }
+  try {
+    const parsed = BigInt(stringValue)
+    if (parsed >= 1n << 256n) {
+      invalid(field, 'must fit uint256')
+    }
+  } catch {
+    invalid(field, 'must fit uint256')
+  }
+  return stringValue
 }
 
 function isLocalHostname(hostname: string): boolean {
@@ -200,6 +207,22 @@ function parseWebUrl(value: unknown, field: string): string {
   return stringValue
 }
 
+function parseRpcUrl(value: unknown, field: string): string {
+  const stringValue = parseNonEmptyString(value, field)
+  if (
+    !stringValue.startsWith('/api/perps/v1/aa/') ||
+    stringValue.startsWith('//') ||
+    stringValue.includes('#') ||
+    stringValue.includes('?')
+  ) {
+    invalid(
+      field,
+      'must be a same-origin /api/perps/v1/aa/ path without query parameters or fragments'
+    )
+  }
+  return stringValue
+}
+
 function parseUrlTemplate(
   value: unknown,
   field: string,
@@ -217,13 +240,29 @@ function parseUrlTemplate(
 }
 
 function parseAccountMode(value: unknown): PerpsSmartAccountMode {
-  if (value !== 'separate-immutable' && value !== 'eip-7702') {
+  if (value !== 'simple') {
+    invalid('smartAccountMode', 'must be "simple"')
+  }
+  return 'simple'
+}
+
+function parseEntryPointVersion(value: unknown): PerpsEntryPointVersion {
+  if (value !== '0.8') {
+    invalid('entryPointVersion', 'must be "0.8"')
+  }
+  return '0.8'
+}
+
+function parseSmartAccountVersion(
+  value: unknown
+): PerpsSmartAccountVersion {
+  if (value !== 'permissionless-simple-v0.8') {
     invalid(
-      'smartAccountMode',
-      'must be "separate-immutable" or "eip-7702"'
+      'smartAccountVersion',
+      'must be "permissionless-simple-v0.8"'
     )
   }
-  return value
+  return 'permissionless-simple-v0.8'
 }
 
 export function parsePerpsAaManifest(
@@ -245,23 +284,6 @@ export function parsePerpsAaManifest(
   }
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
-  const smartAccountFactory = parseAddress(
-    value.smartAccountFactory,
-    'smartAccountFactory',
-    { nullable: true }
-  )
-  if (smartAccountMode === 'separate-immutable' && smartAccountFactory === null) {
-    invalid(
-      'smartAccountFactory',
-      'is required for separate immutable accounts'
-    )
-  }
-  if (smartAccountMode === 'eip-7702' && smartAccountFactory !== null) {
-    invalid(
-      'smartAccountFactory',
-      'must be null for same-address EIP-7702 accounts'
-    )
-  }
 
   const usdcSupportsEip3009 = parseBoolean(
     value.usdcSupportsEip3009,
@@ -297,23 +319,31 @@ export function parsePerpsAaManifest(
   return {
     version,
     chainId: parseChainId(value.chainId),
-    entryPoint: parseAddress(value.entryPoint, 'entryPoint'),
-    paymaster: parseAddress(value.paymaster, 'paymaster'),
-    policyId: parseBytes32(value.policyId, 'policyId'),
-    sponsorServiceRpcUrl: parseWebUrl(
-      value.sponsorServiceRpcUrl,
-      'sponsorServiceRpcUrl'
+    entryPoint: parsePinnedAddress(
+      value.entryPoint,
+      'entryPoint',
+      PERPS_ENTRY_POINT_V08
     ),
-    bundlerRpcUrl: parseWebUrl(value.bundlerRpcUrl, 'bundlerRpcUrl'),
+    entryPointVersion: parseEntryPointVersion(value.entryPointVersion),
+    pimlicoRpcUrl: parseRpcUrl(value.pimlicoRpcUrl, 'pimlicoRpcUrl'),
     smartAccountMode,
-    smartAccountFactory,
-    smartAccountImplementation: parseAddress(
-      value.smartAccountImplementation,
-      'smartAccountImplementation'
+    smartAccountVersion: parseSmartAccountVersion(
+      value.smartAccountVersion
     ),
-    accountRuntimeCodeHash: parseBytes32(
-      value.accountRuntimeCodeHash,
-      'accountRuntimeCodeHash'
+    smartAccountIndex: (() => {
+      const index = parseUnsignedDecimal(
+        value.smartAccountIndex,
+        'smartAccountIndex'
+      )
+      if (index !== '0') {
+        invalid('smartAccountIndex', 'must be "0"')
+      }
+      return index
+    })(),
+    smartAccountFactory: parsePinnedAddress(
+      value.smartAccountFactory,
+      'smartAccountFactory',
+      PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY
     ),
     usdc: parseAddress(value.usdc, 'usdc'),
     usdcSupportsEip3009,

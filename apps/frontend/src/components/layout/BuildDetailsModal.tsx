@@ -162,13 +162,17 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
               Status: perpsIdentity.status,
               Enabled: perpsIdentity.sponsorshipEnabled,
               'Manifest version': perpsIdentity.manifest?.version,
-              'Policy ID': perpsIdentity.manifest?.policyId,
               'Account mode': perpsIdentity.identity?.accountMode ??
                 perpsIdentity.manifest?.smartAccountMode,
+              'Account version': perpsIdentity.identity?.accountVersion ??
+                perpsIdentity.manifest?.smartAccountVersion,
+              'Account index': perpsIdentity.identity?.accountIndex ??
+                perpsIdentity.manifest?.smartAccountIndex,
               'Owner Wallet': perpsIdentity.ownerAddress,
               'Trading Account': perpsIdentity.accountAddress,
               EntryPoint: perpsIdentity.manifest?.entryPoint,
-              Paymaster: perpsIdentity.manifest?.paymaster,
+              Factory: perpsIdentity.manifest?.smartAccountFactory,
+              'Pimlico proxy': perpsIdentity.manifest?.pimlicoRpcUrl,
               Error: perpsIdentity.error?.message,
             }}
           />

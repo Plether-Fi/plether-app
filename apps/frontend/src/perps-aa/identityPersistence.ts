@@ -9,8 +9,8 @@ import {
   type PerpsSmartAccountMode,
 } from './manifest'
 
-export const PERPS_IDENTITY_SCHEMA_VERSION = 1 as const
-export const PERPS_IDENTITY_STORAGE_PREFIX = 'plether_perps_identity_v1'
+export const PERPS_IDENTITY_SCHEMA_VERSION = 2 as const
+export const PERPS_IDENTITY_STORAGE_PREFIX = 'plether_perps_identity_v2'
 
 export type PerpsAccountMode = PerpsSmartAccountMode
 
@@ -20,9 +20,12 @@ export interface PersistedPerpsIdentity {
   ownerAddress: Address
   accountAddress: Address
   accountMode: PerpsAccountMode
-  implementationAddress: Address | null
-  implementationVersion: string | null
-  manifestVersion: string | null
+  entryPoint: Address
+  entryPointVersion: '0.8'
+  factoryAddress: Address
+  accountVersion: string
+  accountIndex: string
+  manifestVersion: string
 }
 
 export type PerpsIdentityField = Exclude<
@@ -51,8 +54,11 @@ const IDENTITY_KEYS = [
   'ownerAddress',
   'accountAddress',
   'accountMode',
-  'implementationAddress',
-  'implementationVersion',
+  'entryPoint',
+  'entryPointVersion',
+  'factoryAddress',
+  'accountVersion',
+  'accountIndex',
   'manifestVersion',
 ] as const
 
@@ -98,35 +104,45 @@ function parseAddress(value: unknown, field: string): Address {
   return getAddress(value)
 }
 
-function parseNullableAddress(value: unknown, field: string): Address | null {
-  if (value === null) return null
-  return parseAddress(value, field)
-}
-
-function parseNullableVersion(value: unknown, field: string): string | null {
-  if (value === null) return null
+function parseNonEmptyString(value: unknown, field: string): string {
   if (
     typeof value !== 'string' ||
     value.trim() === '' ||
     value !== value.trim()
   ) {
     throw new PerpsIdentityValidationError(
-      `Persisted Perps identity "${field}" must be null or a non-empty string`
+      `Persisted Perps identity "${field}" must be a non-empty string`
     )
   }
   return value
 }
 
+function parseUnsignedDecimal(value: unknown, field: string): string {
+  const stringValue = parseNonEmptyString(value, field)
+  if (!/^(0|[1-9][0-9]*)$/.test(stringValue)) {
+    throw new PerpsIdentityValidationError(
+      `Persisted Perps identity "${field}" must be a canonical unsigned decimal string`
+    )
+  }
+  try {
+    if (BigInt(stringValue) >= 1n << 256n) {
+      throw new Error('uint256 overflow')
+    }
+  } catch {
+    throw new PerpsIdentityValidationError(
+      `Persisted Perps identity "${field}" must fit uint256`
+    )
+  }
+  return stringValue
+}
+
 function parseAccountMode(value: unknown): PerpsAccountMode {
-  if (
-    value !== 'separate-immutable' &&
-    value !== 'eip-7702'
-  ) {
+  if (value !== 'simple') {
     throw new PerpsIdentityValidationError(
       'Persisted Perps identity has an unsupported account mode'
     )
   }
-  return value
+  return 'simple'
 }
 
 export function parsePersistedPerpsIdentity(
@@ -157,42 +173,38 @@ export function parsePersistedPerpsIdentity(
   const ownerAddress = parseAddress(value.ownerAddress, 'ownerAddress')
   const accountAddress = parseAddress(value.accountAddress, 'accountAddress')
   const accountMode = parseAccountMode(value.accountMode)
-  const implementationAddress = parseNullableAddress(
-    value.implementationAddress,
-    'implementationAddress'
+  const entryPoint = parseAddress(value.entryPoint, 'entryPoint')
+  if (value.entryPointVersion !== '0.8') {
+    throw new PerpsIdentityValidationError(
+      'Persisted Perps identity entryPointVersion must be "0.8"'
+    )
+  }
+  const factoryAddress = parseAddress(
+    value.factoryAddress,
+    'factoryAddress'
   )
-  const implementationVersion = parseNullableVersion(
-    value.implementationVersion,
-    'implementationVersion'
+  const accountVersion = parseNonEmptyString(
+    value.accountVersion,
+    'accountVersion'
   )
-  const manifestVersion = parseNullableVersion(
+  const accountIndex = parseUnsignedDecimal(
+    value.accountIndex,
+    'accountIndex'
+  )
+  const manifestVersion = parseNonEmptyString(
     value.manifestVersion,
     'manifestVersion'
   )
   const isSameAddress = isAddressEqual(ownerAddress, accountAddress)
 
-  if (
-    implementationAddress === null ||
-    implementationVersion === null ||
-    manifestVersion === null
-  ) {
-    throw new PerpsIdentityValidationError(
-      'Sponsored identity requires implementation and manifest metadata'
-    )
-  }
   if (!PERPS_AA_MANIFEST_V1_PATTERN.test(manifestVersion)) {
     throw new PerpsIdentityValidationError(
       'Sponsored identity manifestVersion is unsupported'
     )
   }
-  if (accountMode === 'separate-immutable' && isSameAddress) {
+  if (isSameAddress) {
     throw new PerpsIdentityValidationError(
-      'Separate immutable accountAddress must differ from ownerAddress'
-    )
-  }
-  if (accountMode === 'eip-7702' && !isSameAddress) {
-    throw new PerpsIdentityValidationError(
-      'EIP-7702 accountAddress must equal ownerAddress'
+      'Simple Trading Account address must differ from ownerAddress'
     )
   }
 
@@ -202,8 +214,11 @@ export function parsePersistedPerpsIdentity(
     ownerAddress,
     accountAddress,
     accountMode,
-    implementationAddress,
-    implementationVersion,
+    entryPoint,
+    entryPointVersion: '0.8',
+    factoryAddress,
+    accountVersion,
+    accountIndex,
     manifestVersion,
   }
 }
@@ -334,8 +349,11 @@ export function comparePerpsIdentities(
     'ownerAddress',
     'accountAddress',
     'accountMode',
-    'implementationAddress',
-    'implementationVersion',
+    'entryPoint',
+    'entryPointVersion',
+    'factoryAddress',
+    'accountVersion',
+    'accountIndex',
     'manifestVersion',
   ]
   const changedFields = fields.filter((field) => {

@@ -1,4 +1,21 @@
-import type { SponsoredOperationStatus } from '../perps-aa'
+import type {
+  SponsoredOperation,
+  SponsoredOperationStatus,
+} from '../perps-aa'
+
+export function sponsoredOperationActionLabel(
+  action: SponsoredOperation['action']
+): string {
+  return {
+    deposit: 'Deposit margin',
+    'place-order': 'Commit order',
+    'cancel-order': 'Cancel order',
+    'add-margin': 'Add position margin',
+    withdraw: 'Withdraw margin',
+    'withdraw-to-owner': 'Withdraw to Owner Wallet',
+    'settle-claim': 'Settle trader claim',
+  }[action]
+}
 
 export function sponsoredOperationStatusLabel(
   status: SponsoredOperationStatus

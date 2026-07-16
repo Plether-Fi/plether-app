@@ -1,23 +1,17 @@
 import { useEffect } from 'react'
-import { createPletherBundlerAdapter } from './adapters/bundler'
 import { clearDepositAuthorization } from './authorizationStore'
-import {
-  findBundlerRequestError,
-  findSponsorRequestError,
-} from './errors'
 import {
   hasSponsoredOperationSignal,
   isSponsoredOperationTerminal,
   SPONSORED_OPERATION_STORAGE_NAME,
   useSponsoredOperationStore,
 } from './operationStore'
-import { usePerpsIdentity } from './usePerpsIdentity'
+import { reconcilePimlicoUserOperation } from './operationReconciler'
+import { usePerpsAaRuntime } from './runtimeContext'
 
 export function SponsoredOperationRecovery() {
-  const identity = usePerpsIdentity()
-  const accountAddress = identity.accountAddress
-  const bundlerRpcUrl = identity.manifest?.bundlerRpcUrl
-  const paymaster = identity.manifest?.paymaster
+  const runtime = usePerpsAaRuntime()
+  const accountAddress = runtime?.smartAccount.accountAddress
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -32,9 +26,9 @@ export function SponsoredOperationRecovery() {
   }, [])
 
   useEffect(() => {
-    if (!bundlerRpcUrl || !accountAddress || !paymaster) return
+    if (!runtime || !accountAddress) return
 
-    const recoveryControllers = new Map<string, AbortController>()
+    const recovering = new Set<string>()
 
     const scan = () => {
       const store = useSponsoredOperationStore.getState()
@@ -71,70 +65,62 @@ export function SponsoredOperationRecovery() {
             operation.status === 'receipt-timeout'
           ) &&
           !hasSponsoredOperationSignal(operation.id) &&
-          !recoveryControllers.has(operation.id)
+          !recovering.has(operation.id)
         )
 
       for (const operation of recoverable) {
         const userOperationHash = operation.userOperationHash
         if (!userOperationHash) continue
 
-        const abortController = new AbortController()
-        recoveryControllers.set(operation.id, abortController)
-        const bundler = createPletherBundlerAdapter({
-          rpcUrl: bundlerRpcUrl,
-          getSignal: () => abortController.signal,
-          expectedSender: accountAddress,
-          expectedPaymaster: paymaster,
-        })
-
+        recovering.add(operation.id)
         store.transition(operation.id, 'confirming')
-        void bundler.waitForUserOperationReceipt?.({
+        void reconcilePimlicoUserOperation({
+          runtime,
           userOperationHash,
-        }).then((receipt) => {
-          const transactionHash = receipt.receipt?.transactionHash
-          if (transactionHash) {
+        }).then((outcome) => {
+          if (outcome.transactionHash) {
             useSponsoredOperationStore.getState().recordTransactionHash(
               operation.id,
-              transactionHash
+              outcome.transactionHash
             )
           }
-          if (operation.authorizationToken) {
-            clearDepositAuthorization({
-              chainId: operation.chainId,
-              ownerAddress: operation.ownerAddress,
-              accountAddress: operation.accountAddress,
-              token: operation.authorizationToken,
+
+          if (outcome.kind === 'confirmed') {
+            if (operation.authorizationToken) {
+              clearDepositAuthorization({
+                chainId: operation.chainId,
+                ownerAddress: operation.ownerAddress,
+                accountAddress: operation.accountAddress,
+                token: operation.authorizationToken,
+              })
+            }
+            useSponsoredOperationStore.getState().transition(
+              operation.id,
+              'confirmed'
+            )
+            return
+          }
+
+          if (outcome.kind === 'terminal') {
+            useSponsoredOperationStore.getState().failOperation({
+              id: operation.id,
+              status: outcome.terminalStatus,
+              reason: outcome.terminalStatus,
+              retryable: false,
             })
           }
-          useSponsoredOperationStore.getState().transition(
-            operation.id,
-            'confirmed'
-          )
-        }).catch((error: unknown) => {
-          if (abortController.signal.aborted) return
-          const bundlerError = findBundlerRequestError(error)
-          const sponsorError = findSponsorRequestError(error)
-          const terminalStatus = bundlerError?.terminalStatus
-          const operationStatus =
-            terminalStatus && terminalStatus !== 'receipt-timeout'
-              ? terminalStatus
-              : 'receipt-timeout'
+          // not_found and not_submitted are intentionally non-terminal.
+          // Pimlico retains status for a limited period, so neither proves
+          // that rebuilding the same Plether action is safe.
+        }).catch(() => {
           useSponsoredOperationStore.getState().failOperation({
             id: operation.id,
-            status: operationStatus,
-            reason: sponsorError?.reason ??
-              terminalStatus ??
-              'BUNDLER_UNAVAILABLE',
-            retryable: sponsorError?.retryable ??
-              bundlerError?.retryable ??
-              true,
-            replacementUserOperationHash:
-              bundlerError?.replacementUserOperationHash as
-                | `0x${string}`
-                | undefined,
+            status: 'receipt-timeout',
+            reason: 'BUNDLER_UNAVAILABLE',
+            retryable: false,
           })
         }).finally(() => {
-          recoveryControllers.delete(operation.id)
+          recovering.delete(operation.id)
         })
       }
     }
@@ -144,12 +130,9 @@ export function SponsoredOperationRecovery() {
 
     return () => {
       globalThis.clearInterval(interval)
-      for (const controller of recoveryControllers.values()) {
-        controller.abort()
-      }
-      recoveryControllers.clear()
+      recovering.clear()
     }
-  }, [accountAddress, bundlerRpcUrl, paymaster])
+  }, [accountAddress, runtime])
 
   return null
 }

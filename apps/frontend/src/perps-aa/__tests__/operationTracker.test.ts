@@ -28,28 +28,22 @@ describe('sponsored operation tracker', () => {
     })
   })
 
-  it('keeps sponsorship hidden until the stub has been accepted', () => {
+  it('marks sponsorship accepted when managed preparation begins', () => {
     const tracker = beginSponsoredOperationTracking({
       id: 'operation-1',
       ownerAddress: OWNER,
       accountAddress: ACCOUNT,
       chainId: 421614,
-      accountMode: 'separate-immutable',
+      accountMode: 'simple',
       manifestVersion: 'v1',
       action: 'deposit',
     })
 
-    tracker.onStatus('requesting-stub')
-    tracker.onStatus('estimating')
+    tracker.onStatus('requesting-sponsorship')
 
     expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenNthCalledWith(
       2,
-      'requesting-stub',
-      expect.objectContaining({ sponsorship_accepted: false })
-    )
-    expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenNthCalledWith(
-      3,
-      'estimating',
+      'requesting-sponsorship',
       expect.objectContaining({ sponsorship_accepted: true })
     )
   })
@@ -60,7 +54,7 @@ describe('sponsored operation tracker', () => {
       ownerAddress: OWNER,
       accountAddress: ACCOUNT,
       chainId: 421614,
-      accountMode: 'separate-immutable',
+      accountMode: 'simple',
       manifestVersion: 'v1',
       action: 'place-order',
     })
@@ -75,6 +69,25 @@ describe('sponsored operation tracker', () => {
       status: 'failed',
       reason: 'SPONSOR_BUDGET_EXCEEDED',
       retryable: true,
+    })
+  })
+
+  it('does not downgrade an operation after it is terminal', () => {
+    const tracker = beginSponsoredOperationTracking({
+      id: 'operation-1',
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      accountMode: 'simple',
+      manifestVersion: 'v1',
+      action: 'deposit',
+    })
+
+    tracker.onStatus('confirmed')
+    tracker.fail(new Error('post-confirmation local cleanup failed'))
+
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+      status: 'confirmed',
     })
   })
 })

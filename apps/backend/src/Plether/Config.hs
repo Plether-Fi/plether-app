@@ -1,5 +1,6 @@
 module Plether.Config
   ( Config (..)
+  , AaConfig (..)
   , Addresses (..)
   , Deployment (..)
   , loadConfig
@@ -14,6 +15,7 @@ import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import Plether.Utils.Address (isValidAddress)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -35,8 +37,11 @@ data Config = Config
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
+  , cfgPerpsCfdEngine :: Text
+  , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
@@ -46,6 +51,32 @@ data Config = Config
   , cfgKeeperFeeBufferBps :: Integer
   }
   deriving stock (Show)
+
+data AaConfig = AaConfig
+  { aaProxyOriginToken :: Text
+  , aaPimlicoApiKey :: Text
+  , aaSponsorshipPolicyId :: Text
+  , aaSponsorshipEnabled :: Bool
+  , aaIpRateLimitPerMinute :: Int
+  , aaAccountRateLimitPerMinute :: Int
+  , aaMaxRequestBytes :: Int
+  , aaSponsoredGasAlertWeiPerHour :: Integer
+  }
+
+instance Show AaConfig where
+  show cfg =
+    "AaConfig {aaProxyOriginToken = <redacted>, aaPimlicoApiKey = <redacted>, "
+      <> "aaSponsorshipPolicyId = <redacted>, aaSponsorshipEnabled = "
+      <> show (aaSponsorshipEnabled cfg)
+      <> ", aaIpRateLimitPerMinute = "
+      <> show (aaIpRateLimitPerMinute cfg)
+      <> ", aaAccountRateLimitPerMinute = "
+      <> show (aaAccountRateLimitPerMinute cfg)
+      <> ", aaMaxRequestBytes = "
+      <> show (aaMaxRequestBytes cfg)
+      <> ", aaSponsoredGasAlertWeiPerHour = "
+      <> show (aaSponsoredGasAlertWeiPerHour cfg)
+      <> "}"
 
 data Addresses = Addresses
   { addrUsdc :: Text
@@ -136,8 +167,18 @@ loadConfig = do
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsUsdc <- fromMaybe "0xf1e1B188b87525C51ECe4bae8627ae621D769651" <$> lookupEnv "PERPS_USDC"
       perpsOrderRouter <- fromMaybe "0x4A0a6c028164A1254e10C3e39cc89Af45090069e" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsCfdEngine <- fromMaybe "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224" <$> lookupEnv "PERPS_CFD_ENGINE"
+      perpsMarginClearinghouse <- fromMaybe "0x731bb0939CE531728459394A277B28Cbff8df049" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       perpsPletherOracle <- fromMaybe "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA" <$> lookupEnv "PERPS_PLETHER_ORACLE"
       perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
+      mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
+      mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
+      aaSponsorshipEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_SPONSORSHIP_ENABLED"
+      aaIpRateLimitStr <- fromMaybe "120" <$> lookupEnv "AA_IP_RATE_LIMIT_PER_MINUTE"
+      aaAccountRateLimitStr <- fromMaybe "30" <$> lookupEnv "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE"
+      aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
+      aaSponsoredGasAlertWeiStr <- fromMaybe "0" <$> lookupEnv "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR"
       mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
@@ -155,6 +196,10 @@ loadConfig = do
           pythIngestionEnabled = parseBool pythIngestionStr
           perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
           perpsIndexerStartBlock = fromMaybe 0 (readMaybe perpsIndexerStartBlockStr)
+          aaIpRateLimit = fromMaybe 120 (readMaybe aaIpRateLimitStr)
+          aaAccountRateLimit = fromMaybe 30 (readMaybe aaAccountRateLimitStr)
+          aaMaxRequestBytes = fromMaybe 262144 (readMaybe aaMaxRequestBytesStr)
+          aaSponsoredGasAlertWei = fromMaybe 0 (readMaybe aaSponsoredGasAlertWeiStr)
           keeperPollSeconds = fromMaybe 1 (readMaybe keeperPollSecondsStr)
           keeperMaxBatchSize = fromMaybe 20 (readMaybe keeperMaxBatchSizeStr)
           keeperConfirmations = fromMaybe 1 (readMaybe keeperConfirmationsStr)
@@ -166,14 +211,59 @@ loadConfig = do
             421614 -> "config/addresses.arbitrum-sepolia.json"
             31337 -> "config/addresses.local.json"
             _ -> "config/addresses.sepolia.json"
+          aaConfig =
+            case
+              ( parseBoolStrict aaSponsorshipEnabledStr
+              , mAaProxyOriginToken
+              , mPimlicoApiKey
+              , mPimlicoPolicyId
+              )
+            of
+              (Nothing, _, _, _) ->
+                Left
+                  "AA_SPONSORSHIP_ENABLED must be one of true, false, 1, 0, yes, no, on, or off"
+              (Just _, Nothing, Nothing, Nothing) -> Right Nothing
+              (Just aaSponsorshipEnabled, Just originToken, Just apiKey, Just policyId)
+                | not $
+                    validAaDeploymentAddresses
+                      perpsUsdc
+                      perpsOrderRouter
+                      perpsCfdEngine
+                      perpsMarginClearinghouse ->
+                    Left
+                      "Managed AA sponsorship requires the reviewed Arbitrum Sepolia \
+                      \PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
+                      \PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
+                | perpsChainId /= 421614 ->
+                    Left "Managed AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                | otherwise ->
+                    Right $
+                      Just $
+                        AaConfig
+                          { aaProxyOriginToken = T.pack originToken
+                          , aaPimlicoApiKey = T.pack apiKey
+                          , aaSponsorshipPolicyId = T.pack policyId
+                          , aaSponsorshipEnabled = aaSponsorshipEnabled
+                          , aaIpRateLimitPerMinute = max 1 aaIpRateLimit
+                          , aaAccountRateLimitPerMinute = max 1 aaAccountRateLimit
+                          , aaMaxRequestBytes = max 1024 aaMaxRequestBytes
+                          , aaSponsoredGasAlertWeiPerHour = max 0 aaSponsoredGasAlertWei
+                          }
+              _ ->
+                Left
+                  "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
+                  \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-      eDeployments <- loadDeployments addressFile
-      case eDeployments of
-        Left err -> pure $ Left $ "Failed to load addresses: " <> err
-        Right deployments ->
-          pure $
-            Right $
-              Config
+      case aaConfig of
+        Left err -> pure $ Left err
+        Right resolvedAaConfig -> do
+          eDeployments <- loadDeployments addressFile
+          case eDeployments of
+            Left err -> pure $ Left $ "Failed to load addresses: " <> err
+            Right deployments ->
+              pure $
+                Right $
+                  Config
                 { cfgRpcUrl = T.pack rpcUrl
                 , cfgChainId = chainId
                 , cfgPort = port
@@ -191,8 +281,11 @@ loadConfig = do
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
+                , cfgPerpsCfdEngine = T.pack perpsCfdEngine
+                , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = max 1 keeperPollSeconds
@@ -218,3 +311,29 @@ parseBool value =
     "no" -> False
     "off" -> False
     _ -> True
+
+parseBoolStrict :: String -> Maybe Bool
+parseBoolStrict value =
+  case T.toLower $ T.strip $ T.pack value of
+    "1" -> Just True
+    "true" -> Just True
+    "yes" -> Just True
+    "on" -> Just True
+    "0" -> Just False
+    "false" -> Just False
+    "no" -> Just False
+    "off" -> Just False
+    _ -> Nothing
+
+validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
+validAaDeploymentAddresses usdc router engine clearinghouse =
+  and
+    [ reviewed usdc "0xf1e1b188b87525c51ece4bae8627ae621d769651"
+    , reviewed router "0x4a0a6c028164a1254e10c3e39cc89af45090069e"
+    , reviewed engine "0xa1ebfb8ad9c90367ea30a29592419d447e3f8224"
+    , reviewed clearinghouse "0x731bb0939ce531728459394a277b28cbff8df049"
+    ]
+  where
+    reviewed raw expected =
+      let value = T.toLower $ T.strip $ T.pack raw
+       in isValidAddress value && value == expected

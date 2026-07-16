@@ -30,7 +30,11 @@ import {
 
 export interface ResolvedPerpsAccount {
   accountAddress: Address
-  implementationVersion: string
+  accountVersion: string
+  accountIndex: string
+  entryPoint: Address
+  entryPointVersion: '0.8'
+  factoryAddress: Address
 }
 
 export type PerpsAccountAddressResolver = (input: {
@@ -159,7 +163,10 @@ async function resolveConfiguredIdentity(input: {
 
   if (
     !isAddress(resolvedAccount.accountAddress) ||
-    resolvedAccount.implementationVersion.trim() === ''
+    resolvedAccount.accountVersion.trim() === '' ||
+    !/^(0|[1-9][0-9]*)$/.test(resolvedAccount.accountIndex) ||
+    !isAddress(resolvedAccount.entryPoint) ||
+    !isAddress(resolvedAccount.factoryAddress)
   ) {
     return blockedResolution(
       'ACCOUNT_RESOLUTION_FAILED',
@@ -170,10 +177,7 @@ async function resolveConfiguredIdentity(input: {
 
   const accountAddress = getAddress(resolvedAccount.accountAddress)
   const sameAddress = isAddressEqual(input.ownerAddress, accountAddress)
-  if (
-    (manifest.smartAccountMode === 'separate-immutable' && sameAddress) ||
-    (manifest.smartAccountMode === 'eip-7702' && !sameAddress)
-  ) {
+  if (sameAddress) {
     return blockedResolution(
       'ACCOUNT_RESOLUTION_FAILED',
       'The trading account address is inconsistent with the reviewed account mode.',
@@ -188,8 +192,11 @@ async function resolveConfiguredIdentity(input: {
       ownerAddress: input.ownerAddress,
       accountAddress,
       accountMode: manifest.smartAccountMode,
-      implementationAddress: manifest.smartAccountImplementation,
-      implementationVersion: resolvedAccount.implementationVersion,
+      entryPoint: resolvedAccount.entryPoint,
+      entryPointVersion: resolvedAccount.entryPointVersion,
+      factoryAddress: resolvedAccount.factoryAddress,
+      accountVersion: resolvedAccount.accountVersion,
+      accountIndex: resolvedAccount.accountIndex,
       manifestVersion: manifest.version,
     })
   } catch {

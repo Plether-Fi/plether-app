@@ -730,6 +730,48 @@ function CopyableValue({
   )
 }
 
+function UserOperationHashActions({
+  hash,
+  explorerUrlTemplate,
+}: {
+  hash: string
+  explorerUrlTemplate?: string
+}) {
+  const explorerUrl = explorerUrlTemplate?.replace(
+    '{userOperationHash}',
+    hash
+  )
+
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1">
+      <span className="min-w-0 truncate" title={hash}>{truncateHash(hash)}</span>
+      <button
+        type="button"
+        aria-label="Copy UserOperation hash"
+        title="Copy UserOperation hash"
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
+        onClick={() => {
+          void navigator.clipboard.writeText(hash)
+        }}
+      >
+        <span className="material-symbols-outlined !text-[14px] !leading-none">content_copy</span>
+      </button>
+      {explorerUrl ? (
+        <a
+          aria-label="Open UserOperation in block explorer"
+          title="Open UserOperation in block explorer"
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
+        >
+          <span className="material-symbols-outlined !text-[14px] !leading-none">open_in_new</span>
+        </a>
+      ) : null}
+    </span>
+  )
+}
+
 function previewToneClass(tone: PreviewRow['tone']): string {
   if (tone === 'positive') return 'text-positive'
   if (tone === 'warning') return 'text-brand-peach'
@@ -768,8 +810,8 @@ function PreviewRows({
         }
 
         return (
-          <div key={row.label} className="flex min-h-6 items-center justify-between gap-3 text-sm">
-            <dt className="inline-flex items-center gap-1.5 text-content-secondary">
+          <div key={row.label} className="flex min-h-6 min-w-0 items-center justify-between gap-3 text-sm">
+            <dt className="inline-flex shrink-0 items-center gap-1.5 text-content-secondary">
               {row.label}
               {row.tooltip ? (
                 <Tooltip
@@ -787,7 +829,7 @@ function PreviewRows({
                 </Tooltip>
               ) : null}
             </dt>
-            <dd className={`flex min-h-6 items-center justify-end text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
+            <dd className={`flex min-h-6 min-w-0 items-center justify-end overflow-hidden text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
       })}
@@ -1596,7 +1638,9 @@ export function PerpsTradeTicket({
   const pendingCloseExpiryContext = firstPendingCloseSecondsToExpiry === undefined
     ? ''
     : firstPendingCloseSecondsToExpiry <= 0
-      ? ` It is expired and can be cleaned up.`
+      ? isSponsoredAccountConfigured
+        ? ` It is expired and awaiting keeper cleanup.`
+        : ` It is expired and can be cleaned up.`
       : ` It expires in ${formatDuration(firstPendingCloseSecondsToExpiry)}.`
   const availableToTradeForMaxRaw = availableToTradeRaw ?? (enableLiveTrading ? 0n : parsePerpsUsdc(availableToTradeDisplayAmount))
   const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
@@ -1818,7 +1862,9 @@ export function PerpsTradeTicket({
       availableCloseSizeRaw <= 0n &&
       pendingCloseSizeRaw >= currentPosition.size
     ) {
-      return `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
+      return isSponsoredAccountConfigured
+        ? `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Wait for keeper finalization or cleanup before submitting another reduce order.`
+        : `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
     }
     if (
       isReducingCurrentPosition &&
@@ -1841,7 +1887,9 @@ export function PerpsTradeTicket({
             : `Oldest pending order expired ${formatDuration(Math.abs(oldestPendingOrderSecondsToExpiry))} ago.`
           : `Oldest pending order expires in ${formatDuration(oldestPendingOrderSecondsToExpiry)}.`
 
-      return `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
+      return isSponsoredAccountConfigured
+        ? `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Wait for the keeper to finalize or clean up an order before committing a new one.`
+        : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
     if (marginShortfall > 0n) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
@@ -2026,7 +2074,12 @@ export function PerpsTradeTicket({
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
   const displayUserOperationHash = latestSponsoredOperation?.userOperationHash
   const displayUserOperationHashValue = displayUserOperationHash
-    ? <CopyableValue ariaLabel="Copy UserOperation hash" value={displayUserOperationHash} />
+    ? (
+        <UserOperationHashActions
+          hash={displayUserOperationHash}
+          explorerUrlTemplate={identity.manifest?.userOperationExplorerUrlTemplate}
+        />
+      )
     : '--'
   const isTerminalRevealError = flowError !== undefined &&
     (isOrderNoLongerPendingMessage(flowError) || isTerminalOrderFailureMessage(flowError))
@@ -2101,11 +2154,12 @@ export function PerpsTradeTicket({
       : marginActionLabel
   const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
   const usesOwnerDepositAuthorization = isSponsoredAccountConfigured &&
-    identity.manifest?.smartAccountMode === 'separate-immutable' &&
+    identity.manifest?.smartAccountMode === 'simple' &&
     identity.manifest.usdcSupportsEip3009
-  const depositSourceBalance = isSponsoredAccountConfigured &&
-    identity.manifest?.smartAccountMode === 'separate-immutable' &&
+  const usesTradingAccountDepositBalance = isSponsoredAccountConfigured &&
+    identity.manifest?.smartAccountMode === 'simple' &&
     !identity.manifest.usdcSupportsEip3009
+  const depositSourceBalance = usesTradingAccountDepositBalance
     ? tradingAccountUsdcRaw
     : ownerWalletBalance
   const marginActionLimit = marginAction === 'withdraw'
@@ -2113,11 +2167,7 @@ export function PerpsTradeTicket({
     : depositSourceBalance
   const marginActionLimitLabel = marginAction === 'withdraw'
     ? 'Withdrawable'
-    : isSponsoredAccountConfigured &&
-        identity.manifest?.smartAccountMode === 'separate-immutable' &&
-        !identity.manifest.usdcSupportsEip3009
-      ? 'Trading Account balance'
-      : 'Owner Wallet balance'
+    : 'Available to deposit'
   const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
   const canUseMarginActionMax = marginActionLimit !== undefined && marginActionLimit > 0n
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
@@ -2208,7 +2258,7 @@ export function PerpsTradeTicket({
       setMarginActionError(undefined)
       if (marginAction === 'deposit') {
         const depositSource = isSponsoredAccountConfigured &&
-          identity.manifest?.smartAccountMode === 'separate-immutable' &&
+          identity.manifest?.smartAccountMode === 'simple' &&
           identity.manifest.usdcSupportsEip3009
           ? 'owner'
           : 'account'
@@ -2843,13 +2893,6 @@ export function PerpsTradeTicket({
                 }
               />
 
-              {isSponsoredAccountConfigured && latestSponsoredOperation?.sponsorshipAccepted ? (
-                <div className="border border-positive/40 bg-positive/10 p-3 text-sm text-content-primary">
-                  <span className="font-semibold text-positive">Sponsored by Plether</span>
-                  <span className="text-content-secondary"> · 0 ETH network gas from your wallet. USDC protocol costs still apply.</span>
-                </div>
-              ) : null}
-
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Commit Transaction</div>
                 <PreviewRows
@@ -2877,13 +2920,6 @@ export function PerpsTradeTicket({
                     : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
                 }
               />
-
-              {isSponsoredAccountConfigured && latestSponsoredOperation?.sponsorshipAccepted ? (
-                <div className="border border-positive/40 bg-positive/10 p-3 text-sm text-content-primary">
-                  <span className="font-semibold text-positive">Sponsored by Plether</span>
-                  <span className="text-content-secondary"> · 0 ETH network gas from your wallet. USDC protocol costs still apply.</span>
-                </div>
-              ) : null}
 
               {walletRequestWarning ? (
                 <div className="border border-[#FFAB96]/40 bg-[#FF572D]/10 p-4 text-sm leading-5 text-[#FFAB96]">
@@ -3439,17 +3475,34 @@ export function PerpsTradeTicket({
 
           <div className="border border-brand-border/20 bg-app-bg p-4">
             <div className="space-y-2">
-              <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
+              <AccountSummaryRow
+                label={marginActionLimitLabel}
+                value={<TokenAmount amount={marginActionLimitDisplay} />}
+                tooltip={marginAction === 'deposit'
+                  ? 'Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms.'
+                  : undefined}
+              />
               {isSponsoredAccountConfigured ? (
                 <>
-                  <AccountSummaryRow
-                    label="Owner Wallet USDC"
-                    value={<TokenAmount amount={formatPerpsUsdc(ownerWalletBalance)} />}
-                  />
-                  <AccountSummaryRow
-                    label="Trading Account USDC"
-                    value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
-                  />
+                  {marginAction === 'deposit' ? (
+                    <AccountSummaryRow
+                      label="Available to trade"
+                      value={<TokenAmount amount={availableToTradeDisplayAmount} />}
+                      tooltip="Free margin already deposited in the Margin Account and available for orders."
+                    />
+                  ) : null}
+                  {marginAction !== 'deposit' || usesTradingAccountDepositBalance ? (
+                    <AccountSummaryRow
+                      label="Owner Wallet USDC"
+                      value={<TokenAmount amount={formatPerpsUsdc(ownerWalletBalance)} />}
+                    />
+                  ) : null}
+                  {marginAction !== 'deposit' || !usesTradingAccountDepositBalance ? (
+                    <AccountSummaryRow
+                      label="Trading Account USDC"
+                      value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
+                    />
+                  ) : null}
                 </>
               ) : null}
               {shouldShowMarginActionPositionContext ? (

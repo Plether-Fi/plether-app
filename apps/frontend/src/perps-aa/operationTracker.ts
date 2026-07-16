@@ -13,6 +13,7 @@ import {
 } from './errors'
 import {
   createSponsoredOperationSignal,
+  isSponsoredOperationTerminal,
   releaseSponsoredOperationSignal,
   useSponsoredOperationStore,
 } from './operationStore'
@@ -116,6 +117,12 @@ export function beginSponsoredOperationTracking(
       if (currentOperation?.status === 'cancelled') {
         return
       }
+      if (
+        currentOperation &&
+        isSponsoredOperationTerminal(currentOperation.status)
+      ) {
+        return
+      }
       const sponsorError = findSponsorRequestError(error)
       const bundlerError = findBundlerRequestError(error)
       const hasSubmittedHash = currentOperation?.userOperationHash !== undefined
@@ -123,12 +130,12 @@ export function beginSponsoredOperationTracking(
       const operationStatus =
         terminalStatus && terminalStatus !== 'receipt-timeout'
           ? terminalStatus
-          : bundlerError && hasSubmittedHash
+          : hasSubmittedHash
             ? 'receipt-timeout'
             : 'failed'
       const reason = sponsorError?.reason ??
         terminalStatus ??
-        (bundlerError && hasSubmittedHash
+        (hasSubmittedHash
           ? 'BUNDLER_UNAVAILABLE'
           : undefined) ??
         'UNKNOWN'

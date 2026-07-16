@@ -4,6 +4,7 @@ import Control.Concurrent (forkIO)
 import Control.Monad (when)
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
@@ -75,6 +76,7 @@ main = do
 
       putStrLn ""
       putStrLn "Endpoints:"
+      putStrLn "  POST /api/aa/pimlico"
       putStrLn "  POST /api/testnet/faucet"
       putStrLn "  GET /api/protocol/status"
       putStrLn "  GET /api/protocol/config"
@@ -107,4 +109,5 @@ main = do
       client <- newClient (cfgRpcUrl cfg)
       perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
-      scotty (cfgPort cfg) (app cache client perpsClient cfg mPool manager)
+      pimlicoProxyState <- newPimlicoProxyState
+      scotty (cfgPort cfg) (app cache client perpsClient cfg mPool manager pimlicoProxyState)
