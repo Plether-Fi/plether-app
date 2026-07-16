@@ -7,6 +7,7 @@ import { perpsApi } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
+import { usePerpsIdentity } from '../perps-aa'
 import { Button, Input, Modal } from './ui'
 
 interface TestnetWelcomeModalViewProps {
@@ -16,6 +17,7 @@ interface TestnetWelcomeModalViewProps {
   submitError?: string
   claim?: TestnetFaucetClaim | null
   isSubmitting?: boolean
+  isTradingAccountRecipient?: boolean
   onClose: () => void
   onWalletAddressChange: (address: string) => void
   onRequestFunds: () => void
@@ -29,6 +31,7 @@ export function TestnetWelcomeModalView({
   submitError,
   claim,
   isSubmitting = false,
+  isTradingAccountRecipient = false,
   onClose,
   onWalletAddressChange,
   onRequestFunds,
@@ -50,7 +53,7 @@ export function TestnetWelcomeModalView({
           execution without real funds.
         </p>
         <p>
-          Enter your wallet address and we will send you 100,000 mock USDC on Arbitrum Sepolia to
+          Enter your {isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address and we will send you 100,000 mock USDC on Arbitrum Sepolia to
           start testing. Testnet balances and positions have no real-world value and could be reset
           at any time.
         </p>
@@ -63,12 +66,13 @@ export function TestnetWelcomeModalView({
         </p>
 
         <Input
-          label="Wallet address"
+          label={isTradingAccountRecipient ? 'Trading Account address' : 'Wallet address'}
           value={walletAddress}
           onChange={(event) => {
             onWalletAddressChange(event.target.value)
           }}
           placeholder="0x..."
+          disabled={isTradingAccountRecipient}
           error={fieldError}
           spellCheck={false}
           autoComplete="off"
@@ -84,23 +88,29 @@ export function TestnetWelcomeModalView({
           <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
             <p className="font-medium">
               {claim.status === 'already_claimed'
-                ? 'Mock USDC was already claimed for this wallet.'
-                : 'Mock USDC minted to your wallet.'}
+                ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
               Next, deposit those funds into the exchange margin account before placing orders.
             </p>
-            <p className="text-content-secondary">
-              You also need some Arbitrum Sepolia ETH to pay transaction fees.{' '}
-              <a
-                href="https://www.alchemy.com/faucets/arbitrum-sepolia"
-                target="_blank"
-                rel="noreferrer"
-                className="text-positive hover:underline"
-              >
-                Get Arbitrum Sepolia ETH from Alchemy.
-              </a>
-            </p>
+            {isTradingAccountRecipient ? (
+              <p className="text-content-secondary">
+                Plether sponsors eligible perps network gas, so the owner wallet and Trading Account do not need Arbitrum Sepolia ETH for the sponsored journey.
+              </p>
+            ) : (
+              <p className="text-content-secondary">
+                You also need some Arbitrum Sepolia ETH to pay transaction fees.{' '}
+                <a
+                  href="https://www.alchemy.com/faucets/arbitrum-sepolia"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-positive hover:underline"
+                >
+                  Get Arbitrum Sepolia ETH from Alchemy.
+                </a>
+              </p>
+            )}
             <a
               href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}
               target="_blank"
@@ -138,19 +148,23 @@ export function TestnetWelcomeModalView({
 
 export function TestnetWelcomeModal() {
   const { address: connectedAddress } = useAccount()
+  const perpsIdentity = usePerpsIdentity()
+  const faucetRecipient = perpsIdentity.isAaManifestConfigured
+    ? perpsIdentity.accountAddress
+    : connectedAddress
   const navigate = useNavigate()
   const dismissed = useSettingsStore((s) => s.sepoliaWelcomeDismissed)
   const dismiss = useSettingsStore((s) => s.dismissSepoliaWelcome)
   const requestMarginAction = usePerpsUiStore((s) => s.requestMarginAction)
-  const [walletAddress, setWalletAddress] = useState(connectedAddress ?? '')
+  const [walletAddress, setWalletAddress] = useState(faucetRecipient ?? '')
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [claim, setClaim] = useState<TestnetFaucetClaim | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const previousConnectedAddressRef = useRef<string | undefined>(connectedAddress)
+  const previousConnectedAddressRef = useRef<string | undefined>(faucetRecipient)
 
   useEffect(() => {
-    if (!connectedAddress) return
+    if (!faucetRecipient) return
 
     setWalletAddress((currentAddress) => {
       const previousConnectedAddress = previousConnectedAddressRef.current
@@ -158,10 +172,10 @@ export function TestnetWelcomeModal() {
         currentAddress.trim().length === 0 ||
         (previousConnectedAddress !== undefined && currentAddress === previousConnectedAddress)
 
-      return shouldUseConnectedAddress ? connectedAddress : currentAddress
+      return shouldUseConnectedAddress ? faucetRecipient : currentAddress
     })
-    previousConnectedAddressRef.current = connectedAddress
-  }, [connectedAddress])
+    previousConnectedAddressRef.current = faucetRecipient
+  }, [faucetRecipient])
 
   async function requestFunds() {
     const trimmedAddress = walletAddress.trim()
@@ -194,7 +208,9 @@ export function TestnetWelcomeModal() {
       submitError={submitError ?? undefined}
       claim={claim}
       isSubmitting={isSubmitting}
+      isTradingAccountRecipient={perpsIdentity.isAaManifestConfigured}
       onWalletAddressChange={(nextAddress) => {
+        if (perpsIdentity.isAaManifestConfigured) return
         setWalletAddress(nextAddress)
         setFieldError(null)
         setSubmitError(null)

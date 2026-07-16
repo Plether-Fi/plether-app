@@ -7,6 +7,7 @@ import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
 import { initAnalytics } from './analytics/client'
+import { PerpsAaProvider } from './perps-aa'
 
 initAnalytics()
 
@@ -33,7 +34,9 @@ createRoot(rootElement).render(
   <StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <App />
+        <PerpsAaProvider>
+          <App />
+        </PerpsAaProvider>
       </QueryClientProvider>
     </WagmiProvider>
   </StrictMode>

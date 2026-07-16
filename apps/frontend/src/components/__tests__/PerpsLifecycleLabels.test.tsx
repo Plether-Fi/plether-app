@@ -1,5 +1,28 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('../../perps-aa', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../perps-aa')>()
+  const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+  return {
+    ...actual,
+    usePerpsIdentity: () => ({
+      status: 'ready',
+      ownerAddress: address,
+      accountAddress: address,
+      chainId: 421614,
+      isAaManifestConfigured: false,
+      sponsorshipEnabled: false,
+      manifest: null,
+      identity: null,
+      proposedIdentity: null,
+      changedIdentityFields: [],
+      error: null,
+      confirmIdentityAfterContinuityCheck: () => false,
+      reloadIdentity: () => undefined,
+    }),
+  }
+})
 import { PerpsAccountPanel } from '../PerpsAccountPanel'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
 

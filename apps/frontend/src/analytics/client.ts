@@ -8,6 +8,8 @@ const DEFAULT_POSTHOG_HOST = 'https://eu.i.posthog.com'
 const DEFAULT_REPLAY_SAMPLE_RATE = 0.05
 
 const ALLOWED_PROPERTY_KEYS = new Set([
+  'account_mode',
+  'action_kind',
   'button_id',
   'chain_state',
   'close_reason',
@@ -16,12 +18,20 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'duration_ms',
   'error_category',
   'lifecycle_state',
+  'manifest_version',
   'market_phase',
   'modal_id',
+  'reason_code',
   'reduce_only',
+  'retry_count',
   'size_bucket',
+  'sponsorship_accepted',
+  'sponsorship_status',
   'surface',
+  'terminal_outcome',
   'validation_reason',
+  'wallet_family',
+  'wallet_version',
 ])
 
 const FORBIDDEN_PROPERTY_PATTERNS = [
@@ -36,7 +46,7 @@ const FORBIDDEN_PROPERTY_PATTERNS = [
   /rpc/i,
   /signature/i,
   /tx/i,
-  /wallet/i,
+  /wallet.*address/i,
 ]
 
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/

@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
-import { useAccount, useChainId, useReadContracts } from 'wagmi'
+import { useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
@@ -11,6 +11,7 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { usePerpsIdentity, useSponsoredOperationStore } from '../perps-aa'
 import {
   adverseConfidenceBasketPrice,
   directionToPerpsSide,
@@ -151,6 +152,8 @@ interface PerpsTradeTicketProps {
   portfolioValueRaw?: bigint
   withdrawableUsdcRaw?: bigint
   walletUsdcRaw?: bigint
+  ownerWalletUsdcRaw?: bigint
+  tradingAccountUsdcRaw?: bigint
   marginAllowanceUsdc?: bigint
   currentPosition?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
@@ -1264,6 +1267,8 @@ export function PerpsTradeTicket({
   portfolioValueRaw,
   withdrawableUsdcRaw,
   walletUsdcRaw,
+  ownerWalletUsdcRaw,
+  tradingAccountUsdcRaw,
   marginAllowanceUsdc,
   currentPosition,
   pendingOrders = [],
@@ -1282,11 +1287,22 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
-  const { address, isConnected } = useAccount()
+  const identity = usePerpsIdentity()
+  const address = identity.accountAddress
+  const isConnected = identity.ownerAddress !== undefined
+  const isSponsoredAccountConfigured = identity.isAaManifestConfigured
   const chainId = useChainId()
   const { open } = useAppKit()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
-  const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
+  const {
+    abandonDepositAuthorization,
+    depositMargin,
+    withdrawMargin,
+    commitOrder,
+    executeOrder,
+    cleanupExpiredOrder,
+  } = usePerpsTrading()
+  const sponsoredOperations = useSponsoredOperationStore((state) => state.operations)
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
   const [direction, setDirection] = useState<Direction>(initialDirection)
@@ -1327,6 +1343,17 @@ export function PerpsTradeTicket({
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = Math.min(leverage, maxLeverage)
+  const normalizedAccountAddress = address?.toLowerCase()
+  const latestSponsoredOperation = useMemo(
+    () => sponsoredOperations
+      .filter((operation) =>
+        operation.accountAddress.toLowerCase() === normalizedAccountAddress &&
+        operation.action === 'place-order'
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .at(0),
+    [normalizedAccountAddress, sponsoredOperations]
+  )
 
   useEffect(() => {
     onAccountRefreshRef.current = onAccountRefresh
@@ -1368,9 +1395,11 @@ export function PerpsTradeTicket({
 
     const timeout = window.setTimeout(() => {
       setKeeperRevealNowMs(Date.now())
-      setLifecycleState((currentState) => (
-        currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
-      ))
+      if (!isSponsoredAccountConfigured) {
+        setLifecycleState((currentState) => (
+          currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
+        ))
+      }
     }, Math.max(0, keeperRevealDeadlineMs - Date.now()))
 
     return () => {
@@ -1378,7 +1407,19 @@ export function PerpsTradeTicket({
       window.clearInterval(messageInterval)
       window.clearTimeout(timeout)
     }
-  }, [enableLiveTrading, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
+  }, [enableLiveTrading, isSponsoredAccountConfigured, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
+
+  useEffect(() => {
+    if (
+      isSponsoredAccountConfigured &&
+      (
+        lifecycleState === 'selfExecuteAvailable' ||
+        lifecycleState === 'selfExecutePending'
+      )
+    ) {
+      setLifecycleState('revealPending')
+    }
+  }, [isSponsoredAccountConfigured, lifecycleState])
 
   const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
     if (order.status === 'Committed') return false
@@ -1726,12 +1767,17 @@ export function PerpsTradeTicket({
     ? undefined
     : Number(firstPendingOrderExpiryTime) - nowSeconds
   const canCleanupOldestPendingOrder = enableLiveTrading &&
+    !isSponsoredAccountConfigured &&
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
   const liveValidationError = (() => {
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
+    if (isSponsoredAccountConfigured && identity.status !== 'ready') {
+      return identity.error?.message ??
+        'Confirm the Plether Trading Account before trading.'
+    }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
     if (isZeroSize) return 'Enter an order size.'
@@ -1978,12 +2024,20 @@ export function PerpsTradeTicket({
   const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
+  const displayUserOperationHash = latestSponsoredOperation?.userOperationHash
+  const displayUserOperationHashValue = displayUserOperationHash
+    ? <CopyableValue ariaLabel="Copy UserOperation hash" value={displayUserOperationHash} />
+    : '--'
   const isTerminalRevealError = flowError !== undefined &&
     (isOrderNoLongerPendingMessage(flowError) || isTerminalOrderFailureMessage(flowError))
   const shouldShowFinalizationProgress = enableLiveTrading || showFinalizationProgress
   const isKeeperRevealGraceActive = shouldShowFinalizationProgress &&
     lifecycleState === 'revealPending' &&
-    (keeperRevealDeadlineMs === undefined || keeperRevealNowMs < keeperRevealDeadlineMs)
+    (
+      isSponsoredAccountConfigured ||
+      keeperRevealDeadlineMs === undefined ||
+      keeperRevealNowMs < keeperRevealDeadlineMs
+    )
   const keeperRevealRemainingSeconds = keeperRevealDeadlineMs === undefined
     ? Math.ceil(KEEPER_REVEAL_GRACE_MS / 1_000)
     : Math.max(0, Math.ceil((keeperRevealDeadlineMs - keeperRevealNowMs) / 1_000))
@@ -2045,8 +2099,25 @@ export function PerpsTradeTicket({
     : enableLiveTrading && !isCorrectChain
       ? 'Switch Network'
       : marginActionLabel
-  const marginActionLimit = marginAction === 'withdraw' ? withdrawableUsdcRaw : walletUsdcRaw
-  const marginActionLimitLabel = marginAction === 'withdraw' ? 'Withdrawable' : 'Wallet balance'
+  const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
+  const usesOwnerDepositAuthorization = isSponsoredAccountConfigured &&
+    identity.manifest?.smartAccountMode === 'separate-immutable' &&
+    identity.manifest.usdcSupportsEip3009
+  const depositSourceBalance = isSponsoredAccountConfigured &&
+    identity.manifest?.smartAccountMode === 'separate-immutable' &&
+    !identity.manifest.usdcSupportsEip3009
+    ? tradingAccountUsdcRaw
+    : ownerWalletBalance
+  const marginActionLimit = marginAction === 'withdraw'
+    ? withdrawableUsdcRaw
+    : depositSourceBalance
+  const marginActionLimitLabel = marginAction === 'withdraw'
+    ? 'Withdrawable'
+    : isSponsoredAccountConfigured &&
+        identity.manifest?.smartAccountMode === 'separate-immutable' &&
+        !identity.manifest.usdcSupportsEip3009
+      ? 'Trading Account balance'
+      : 'Owner Wallet balance'
   const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
   const canUseMarginActionMax = marginActionLimit !== undefined && marginActionLimit > 0n
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
@@ -2136,7 +2207,16 @@ export function PerpsTradeTicket({
       setMarginActionStatus('pending')
       setMarginActionError(undefined)
       if (marginAction === 'deposit') {
-        await depositMargin(marginActionAmountRaw, marginAllowanceUsdc)
+        const depositSource = isSponsoredAccountConfigured &&
+          identity.manifest?.smartAccountMode === 'separate-immutable' &&
+          identity.manifest.usdcSupportsEip3009
+          ? 'owner'
+          : 'account'
+        await depositMargin(
+          marginActionAmountRaw,
+          marginAllowanceUsdc,
+          depositSource
+        )
       } else {
         await withdrawMargin(marginActionAmountRaw)
       }
@@ -2755,9 +2835,20 @@ export function PerpsTradeTicket({
           {lifecycleState === 'commitPreparing' ? (
             <>
               <PendingStateCard
-                title="Preparing wallet request"
-                description="Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again."
+                title={isSponsoredAccountConfigured ? 'Preparing sponsored transaction' : 'Preparing wallet request'}
+                description={
+                  isSponsoredAccountConfigured
+                    ? 'Plether is requesting sponsorship and estimating the final UserOperation before asking for your signature.'
+                    : 'Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again.'
+                }
               />
+
+              {isSponsoredAccountConfigured && latestSponsoredOperation?.sponsorshipAccepted ? (
+                <div className="border border-positive/40 bg-positive/10 p-3 text-sm text-content-primary">
+                  <span className="font-semibold text-positive">Sponsored by Plether</span>
+                  <span className="text-content-secondary"> · 0 ETH network gas from your wallet. USDC protocol costs still apply.</span>
+                </div>
+              ) : null}
 
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Commit Transaction</div>
@@ -2780,8 +2871,19 @@ export function PerpsTradeTicket({
             <>
               <PendingStateCard
                 title="Waiting for wallet confirmation"
-                description="Confirm the commit transaction in your wallet, then wait for it to be included onchain."
+                description={
+                  isSponsoredAccountConfigured
+                    ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
+                    : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
+                }
               />
+
+              {isSponsoredAccountConfigured && latestSponsoredOperation?.sponsorshipAccepted ? (
+                <div className="border border-positive/40 bg-positive/10 p-3 text-sm text-content-primary">
+                  <span className="font-semibold text-positive">Sponsored by Plether</span>
+                  <span className="text-content-secondary"> · 0 ETH network gas from your wallet. USDC protocol costs still apply.</span>
+                </div>
+              ) : null}
 
               {walletRequestWarning ? (
                 <div className="border border-[#FFAB96]/40 bg-[#FF572D]/10 p-4 text-sm leading-5 text-[#FFAB96]">
@@ -2800,6 +2902,9 @@ export function PerpsTradeTicket({
                     { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+                    ...(isSponsoredAccountConfigured
+                      ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
+                      : []),
                   ]}
                 />
               </div>
@@ -2873,13 +2978,18 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
+                    ...(isSponsoredAccountConfigured
+                      ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
+                      : []),
                     { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     {
-                      label: 'Manual finalization',
-                      value: shouldShowFinalizationProgress
-                        ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
-                        : 'Available after 04:38',
+                      label: isSponsoredAccountConfigured ? 'Keeper processing' : 'Manual finalization',
+                      value: isSponsoredAccountConfigured
+                        ? 'In progress'
+                        : shouldShowFinalizationProgress
+                          ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
+                          : 'Available after 04:38',
                       tone: shouldShowFinalizationProgress ? 'muted' : undefined,
                     },
                   ]}
@@ -3284,8 +3394,14 @@ export function PerpsTradeTicket({
         <div className="space-y-5">
           <p className="text-sm leading-6 text-content-secondary">
             {marginAction === 'withdraw'
-              ? 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
-              : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
+              ? isSponsoredAccountConfigured
+                ? 'Withdraw free USDC from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in the same sponsored action.'
+                : 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
+              : isSponsoredAccountConfigured
+                ? usesOwnerDepositAuthorization
+                  ? 'Authorize USDC from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
+                  : 'Deposit USDC held by the Plether Trading Account into its Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
+                : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
           </p>
 
           <Input
@@ -3324,6 +3440,18 @@ export function PerpsTradeTicket({
           <div className="border border-brand-border/20 bg-app-bg p-4">
             <div className="space-y-2">
               <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
+              {isSponsoredAccountConfigured ? (
+                <>
+                  <AccountSummaryRow
+                    label="Owner Wallet USDC"
+                    value={<TokenAmount amount={formatPerpsUsdc(ownerWalletBalance)} />}
+                  />
+                  <AccountSummaryRow
+                    label="Trading Account USDC"
+                    value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
+                  />
+                </>
+              ) : null}
               {shouldShowMarginActionPositionContext ? (
                 <>
                   <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />
@@ -3343,7 +3471,20 @@ export function PerpsTradeTicket({
 
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-              {marginActionError}
+              <p>{marginActionError}</p>
+              {marginAction === 'deposit' && usesOwnerDepositAuthorization ? (
+                <button
+                  type="button"
+                  className="mt-2 font-semibold underline underline-offset-2"
+                  onClick={() => {
+                    abandonDepositAuthorization()
+                    setMarginActionStatus('idle')
+                    setMarginActionError(undefined)
+                  }}
+                >
+                  Start with a new USDC authorization
+                </button>
+              ) : null}
             </div>
           ) : null}
 

@@ -27,6 +27,22 @@ export type PerpsMarginLifecycleEvent =
   | 'withdraw_submitted'
   | 'withdraw_succeeded'
   | 'withdraw_failed'
+export type PerpsSponsoredOperationStatus =
+  | 'building'
+  | 'requesting-stub'
+  | 'estimating'
+  | 'requesting-sponsorship'
+  | 'awaiting-signature'
+  | 'submitting'
+  | 'confirming'
+  | 'confirmed'
+  | 'failed'
+  | 'cancelled'
+  | 'execution-reverted'
+  | 'dropped'
+  | 'replaced'
+  | 'expired'
+  | 'receipt-timeout'
 
 export type PerpsAnalyticsProperties = AnalyticsProperties
 
@@ -103,6 +119,17 @@ export function trackPerpsValidationBlocked(
   captureAnalyticsEvent('perps validation blocked', compactProperties({
     surface: 'perps',
     validation_reason: reason,
+    ...properties,
+  }))
+}
+
+export function trackPerpsSponsoredOperation(
+  status: PerpsSponsoredOperationStatus,
+  properties?: PerpsAnalyticsProperties
+): void {
+  captureAnalyticsEvent('perps sponsored operation', compactProperties({
+    surface: 'perps',
+    sponsorship_status: status,
     ...properties,
   }))
 }

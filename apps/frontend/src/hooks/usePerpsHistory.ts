@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Hex } from 'viem'
-import { useAccount } from 'wagmi'
 import { getScopedApiBaseUrl } from '../api/client'
+import { usePerpsIdentity } from '../perps-aa'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, perpsSideLabel, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 export interface PerpsOrderHistoryRow {
@@ -349,14 +349,15 @@ async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryDa
 }
 
 export function usePerpsHistory() {
-  const { address, isConnected } = useAccount()
+  const { ownerAddress, accountAddress } = usePerpsIdentity()
+  const isConnected = ownerAddress !== undefined
   const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
   const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
 
   const refetch = useCallback(async () => {
-    if (!isConnected || !address) {
+    if (!isConnected || !accountAddress) {
       setOrderHistory([])
       setTradeHistory([])
       setError(undefined)
@@ -368,7 +369,7 @@ export function usePerpsHistory() {
     setError(undefined)
 
     try {
-      const nextHistory = await fetchPerpsHistory(address)
+      const nextHistory = await fetchPerpsHistory(accountAddress)
       setOrderHistory(nextHistory.orderHistory)
       setTradeHistory(nextHistory.tradeHistory)
       setIsLoading(false)
@@ -378,10 +379,10 @@ export function usePerpsHistory() {
       setTradeHistory([])
       setIsLoading(false)
     }
-  }, [address, isConnected])
+  }, [accountAddress, isConnected])
 
   useEffect(() => {
-    if (!isConnected || !address) {
+    if (!isConnected || !accountAddress) {
       window.setTimeout(() => {
         setOrderHistory([])
         setTradeHistory([])
@@ -392,14 +393,14 @@ export function usePerpsHistory() {
     }
 
     let cancelled = false
-    const accountAddress = address
+    const canonicalAccountAddress = accountAddress
 
     async function loadHistory() {
       setIsLoading(true)
       setError(undefined)
 
       try {
-        const nextHistory = await fetchPerpsHistory(accountAddress)
+        const nextHistory = await fetchPerpsHistory(canonicalAccountAddress)
 
         if (!cancelled) {
           setOrderHistory(nextHistory.orderHistory)
@@ -425,7 +426,7 @@ export function usePerpsHistory() {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [address, isConnected])
+  }, [accountAddress, isConnected])
 
   return useMemo(() => ({
     orderHistory,

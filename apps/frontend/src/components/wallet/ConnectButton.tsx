@@ -5,6 +5,7 @@ import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
+import { usePerpsIdentity } from '../../perps-aa'
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
@@ -14,6 +15,7 @@ const SWITCH_NETWORK_BUTTON_CLASS =
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
+  const perpsIdentity = usePerpsIdentity()
   const { disconnect } = useDisconnect()
   const {
     switchToArbitrumSepolia,
@@ -132,6 +134,15 @@ export function ConnectButton() {
       {switchError && shouldShowPerpsNetworkSwitch ? (
         <p className="max-w-md text-right text-xs leading-4 text-[#FFAB96]">
           {switchError}
+        </p>
+      ) : null}
+      {isPerpsRoute && perpsIdentity.isAaManifestConfigured ? (
+        <p className="max-w-md text-right text-xs leading-4 text-content-secondary">
+          Owner Wallet {formatAddress(perpsIdentity.ownerAddress ?? '')}
+          {' · '}
+          {perpsIdentity.accountAddress
+            ? `Trading Account ${formatAddress(perpsIdentity.accountAddress)}`
+            : perpsIdentity.error?.message ?? 'Trading Account continuity check required'}
         </p>
       ) : null}
     </div>
