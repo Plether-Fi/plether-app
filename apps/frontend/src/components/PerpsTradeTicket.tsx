@@ -51,6 +51,7 @@ import {
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
 import { DOCS_LINKS } from '../config/docs'
+import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
@@ -142,6 +143,10 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialLeverage?: number
+  initialMarginAction?: MarginAction
+  initialMarginActionAmount?: string
+  initialMarginCallSimulatorConfirmationOpen?: boolean
   initialOrderId?: bigint
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
@@ -158,6 +163,8 @@ interface PerpsTradeTicketProps {
   latestBasket?: BasketLatest
   adverseConfidenceMultiplierBps?: string
   oracleFrozen?: boolean
+  /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
+  openPreviewFixture?: OpenPreviewView
   /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
   closePreviewFixture?: ClosePreviewView
   oracleFreshness?: PerpsOracleFreshness
@@ -1149,14 +1156,23 @@ function PendingProgressCircle({ progressPercent }: { progressPercent: number })
   )
 }
 
-function SuccessStateCard({ title, description }: { title: string; description: string }) {
+function SuccessStateCard({
+  title,
+  description,
+  celebrate = false,
+}: {
+  title: string
+  description: string
+  celebrate?: boolean
+}) {
   return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
+    <div className="relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
+      {celebrate ? <PerpsFinalizationConfetti /> : null}
+      <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
-      <div className="mt-5 text-xl font-semibold text-content-primary">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+      <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
+      <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
     </div>
   )
 }
@@ -1281,6 +1297,10 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialLeverage = 5,
+  initialMarginAction,
+  initialMarginActionAmount = '',
+  initialMarginCallSimulatorConfirmationOpen = false,
   initialOrderId,
   initialCommitTxHash,
   initialExecuteTxHash,
@@ -1297,6 +1317,7 @@ export function PerpsTradeTicket({
   latestBasket,
   adverseConfidenceMultiplierBps,
   oracleFrozen = false,
+  openPreviewFixture,
   closePreviewFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
@@ -1335,9 +1356,11 @@ export function PerpsTradeTicket({
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
-  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
+  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(
+    initialMarginCallSimulatorConfirmationOpen
+  )
   const [size, setSize] = useState(initialSize)
-  const [leverage, setLeverage] = useState(5)
+  const [leverage, setLeverage] = useState(initialLeverage)
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
@@ -1352,8 +1375,8 @@ export function PerpsTradeTicket({
   const [isFinalVpiEstimated, setIsFinalVpiEstimated] = useState(false)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
-  const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
-  const [marginActionAmount, setMarginActionAmount] = useState('')
+  const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
+  const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
   const [marginActionError, setMarginActionError] = useState<string | undefined>()
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
@@ -1760,6 +1783,7 @@ export function PerpsTradeTicket({
   })
   const openPreview = !isReducingCurrentPosition
     ? parseOpenPreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+      ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
@@ -3201,7 +3225,11 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'executed' ? (
             <>
-              <SuccessStateCard title={executedTitle} description="Execution settled onchain and the final price is confirmed." />
+              <SuccessStateCard
+                title={executedTitle}
+                description="Execution settled onchain and the final price is confirmed."
+                celebrate
+              />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
                 <PreviewRows

@@ -1,0 +1,423 @@
+{
+  "manifest": "STORYBOOK_SCREENSHOT_MAP.md",
+  "mappedReferences": 79,
+  "uniqueStories": 46,
+  "replacements": 76,
+  "retainedSupportInstructions": 3,
+  "captures": [
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png",
+      "storyId": "documentation-lp-interface-prototype--deposit-preview",
+      "dimensions": {
+        "height": 587,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-lp-interface-prototype--deposit-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png",
+      "storyId": "documentation-lp-interface-prototype--overview",
+      "dimensions": {
+        "height": 527,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-lp-interface-prototype--overview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png",
+      "storyId": "documentation-lp-interface-prototype--pending-deposit",
+      "dimensions": {
+        "height": 496,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-lp-interface-prototype--pending-deposit"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png",
+      "storyId": "documentation-lp-interface-prototype--position",
+      "dimensions": {
+        "height": 471,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-lp-interface-prototype--position"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png",
+      "storyId": "documentation-lp-interface-prototype--withdrawal-preview",
+      "dimensions": {
+        "height": 562,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-lp-interface-prototype--withdrawal-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png",
+      "storyId": "documentation-trader-claims--available-to-settle",
+      "dimensions": {
+        "height": 380,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--available-to-settle"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--close-created-claim.png",
+      "storyId": "documentation-trader-claims--close-created-claim",
+      "dimensions": {
+        "height": 424,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--close-created-claim"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png",
+      "storyId": "documentation-trader-claims--completed-full-close",
+      "dimensions": {
+        "height": 539,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--completed-full-close"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--frozen-close-result.png",
+      "storyId": "documentation-trader-claims--frozen-close-result",
+      "dimensions": {
+        "height": 584,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--frozen-close-result"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--settlement-confirmation.png",
+      "storyId": "documentation-trader-claims--settlement-confirmation",
+      "dimensions": {
+        "height": 451,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--settlement-confirmation"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--successfully-settled.png",
+      "storyId": "documentation-trader-claims--successfully-settled",
+      "dimensions": {
+        "height": 449,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--successfully-settled"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-claims--waiting-for-liquidity.png",
+      "storyId": "documentation-trader-claims--waiting-for-liquidity",
+      "dimensions": {
+        "height": 404,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trader-claims--waiting-for-liquidity"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--close-only-reduce-only.png",
+      "storyId": "documentation-trader-workspace--close-only-reduce-only",
+      "dimensions": {
+        "height": 1510,
+        "width": 1200
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--close-only-reduce-only"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--degraded-market-and-account.png",
+      "storyId": "documentation-trader-workspace--degraded-market-and-account",
+      "dimensions": {
+        "height": 620,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--degraded-market-and-account"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--disabled-review-messages.png",
+      "storyId": "documentation-trader-workspace--disabled-review-messages",
+      "dimensions": {
+        "height": 274,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--disabled-review-messages"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--executed-partial-reduction.png",
+      "storyId": "documentation-trader-workspace--executed-partial-reduction",
+      "dimensions": {
+        "height": 408,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--executed-partial-reduction"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png",
+      "storyId": "documentation-trader-workspace--market-and-account-readiness",
+      "dimensions": {
+        "height": 1446,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--market-and-account-readiness"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trader-workspace--pending-finalization-and-cleanup.png",
+      "storyId": "documentation-trader-workspace--pending-finalization-and-cleanup",
+      "dimensions": {
+        "height": 353,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trader-workspace--pending-finalization-and-cleanup"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png",
+      "storyId": "documentation-trading-account-and-sponsorship--account-identity",
+      "dimensions": {
+        "height": 412,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--account-identity"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--failure-state-comparison.png",
+      "storyId": "documentation-trading-account-and-sponsorship--failure-state-comparison",
+      "dimensions": {
+        "height": 476,
+        "width": 1328
+      },
+      "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--failure-state-comparison"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png",
+      "storyId": "documentation-trading-account-and-sponsorship--first-deposit-authorization",
+      "dimensions": {
+        "height": 623,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--first-deposit-authorization"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--sponsor-unavailable.png",
+      "storyId": "documentation-trading-account-and-sponsorship--sponsor-unavailable",
+      "dimensions": {
+        "height": 449,
+        "width": 720
+      },
+      "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--sponsor-unavailable"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--withdrawal-confirmation.png",
+      "storyId": "documentation-trading-account-and-sponsorship--withdrawal-confirmation",
+      "dimensions": {
+        "height": 681,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--withdrawal-confirmation"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png",
+      "storyId": "perps-account-panel--connected-position",
+      "dimensions": {
+        "height": 408,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/perps-account-panel--connected-position"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png",
+      "storyId": "perps-account-panel--edit-position-margin",
+      "dimensions": {
+        "height": 683,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-account-panel--edit-position-margin"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png",
+      "storyId": "perps-account-panel--open-orders-pending",
+      "dimensions": {
+        "height": 258,
+        "width": 1200
+      },
+      "storyPath": "/?path=/story/perps-account-panel--open-orders-pending"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending-and-expired.png",
+      "storyId": "perps-account-panel--open-orders-pending-and-expired",
+      "dimensions": {
+        "height": 331,
+        "width": 1200
+      },
+      "storyPath": "/?path=/story/perps-account-panel--open-orders-pending-and-expired"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--order-history-failures.png",
+      "storyId": "perps-account-panel--order-history-failures",
+      "dimensions": {
+        "height": 291,
+        "width": 1200
+      },
+      "storyPath": "/?path=/story/perps-account-panel--order-history-failures"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png",
+      "storyId": "perps-account-panel--transaction-history-close-result",
+      "dimensions": {
+        "height": 238,
+        "width": 1200
+      },
+      "storyPath": "/?path=/story/perps-account-panel--transaction-history-close-result"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-account-panel--unrealized-pnl-tooltip.png",
+      "storyId": "perps-account-panel--unrealized-pnl-tooltip",
+      "dimensions": {
+        "height": 408,
+        "width": 1072
+      },
+      "storyPath": "/?path=/story/perps-account-panel--unrealized-pnl-tooltip"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png",
+      "storyId": "perps-final-reveal-modal--automatically-finalized-success",
+      "dimensions": {
+        "height": 1030,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-final-reveal-modal--automatically-finalized-success"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png",
+      "storyId": "perps-final-reveal-modal--manual-finalization-ready",
+      "dimensions": {
+        "height": 767,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-final-reveal-modal--manual-finalization-ready"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-instrument-panel--pool-liquidity-tooltip-visible.png",
+      "storyId": "perps-instrument-panel--pool-liquidity-tooltip-visible",
+      "dimensions": {
+        "height": 202,
+        "width": 1146
+      },
+      "storyPath": "/?path=/story/perps-instrument-panel--pool-liquidity-tooltip-visible"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-instrument-panel--stale-oracle.png",
+      "storyId": "perps-instrument-panel--stale-oracle",
+      "dimensions": {
+        "height": 202,
+        "width": 1146
+      },
+      "storyPath": "/?path=/story/perps-instrument-panel--stale-oracle"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png",
+      "storyId": "perps-market-state-panel--open-then-close-only",
+      "dimensions": {
+        "height": 94,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-market-state-panel--open-then-close-only"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--close-long-preview.png",
+      "storyId": "perps-trade-ticket--close-long-preview",
+      "dimensions": {
+        "height": 1000,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--close-long-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--deposit-margin.png",
+      "storyId": "perps-trade-ticket--deposit-margin",
+      "dimensions": {
+        "height": 491,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--deposit-margin"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--increase-long-preview.png",
+      "storyId": "perps-trade-ticket--increase-long-preview",
+      "dimensions": {
+        "height": 1028,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--increase-long-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png",
+      "storyId": "perps-trade-ticket--margin-account-summary",
+      "dimensions": {
+        "height": 1270,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--margin-account-summary"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-call-simulator-confirmation.png",
+      "storyId": "perps-trade-ticket--margin-call-simulator-confirmation",
+      "dimensions": {
+        "height": 965,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--margin-call-simulator-confirmation"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png",
+      "storyId": "perps-trade-ticket--open-long-preview",
+      "dimensions": {
+        "height": 1056,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--open-long-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--reduce-long-preview.png",
+      "storyId": "perps-trade-ticket--reduce-long-preview",
+      "dimensions": {
+        "height": 1028,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--reduce-long-preview"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-exceeds-available.png",
+      "storyId": "perps-trade-ticket--withdraw-exceeds-available",
+      "dimensions": {
+        "height": 557,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--withdraw-exceeds-available"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-margin.png",
+      "storyId": "perps-trade-ticket--withdraw-margin",
+      "dimensions": {
+        "height": 491,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trade-ticket--withdraw-margin"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png",
+      "storyId": "perps-trading-regime-comparison--oracle-frozen-close",
+      "dimensions": {
+        "height": 1434,
+        "width": 496
+      },
+      "storyPath": "/?path=/story/perps-trading-regime-comparison--oracle-frozen-close"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png",
+      "storyId": "testnet-welcome-modal--request-funds",
+      "dimensions": {
+        "height": 608,
+        "width": 560
+      },
+      "storyPath": "/?path=/story/testnet-welcome-modal--request-funds"
+    }
+  ]
+}

@@ -52,6 +52,8 @@ interface TradeRow {
 }
 
 interface PerpsAccountPanelProps {
+  initialTab?: PerpsAccountTab
+  initialPositionMarginModalOpen?: boolean
   position?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
   orderHistory?: PerpsOrderHistoryRow[]
@@ -351,6 +353,7 @@ function PositionView({
   freeBuyingPowerUsdc,
   isConnected,
   isLoading,
+  initialPositionMarginModalOpen,
   onAccountRefresh,
 }: {
   position?: PerpsPosition
@@ -358,10 +361,13 @@ function PositionView({
   freeBuyingPowerUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
+  initialPositionMarginModalOpen?: boolean
   onAccountRefresh?: () => void
 }) {
   const { addPositionMargin } = usePerpsTrading()
-  const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(false)
+  const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(
+    initialPositionMarginModalOpen ?? false
+  )
   const [positionMarginAmount, setPositionMarginAmount] = useState('')
   const [positionMarginStatus, setPositionMarginStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
   const [positionMarginError, setPositionMarginError] = useState<string | undefined>()
@@ -758,6 +764,7 @@ function AccountTabContent({
   isLoading,
   isHistoryLoading,
   historyError,
+  initialPositionMarginModalOpen,
   onAccountRefresh,
   nowSeconds,
   cleanupOrderId,
@@ -824,6 +831,7 @@ function AccountTabContent({
         freeBuyingPowerUsdc={freeBuyingPowerUsdc}
         isConnected={isConnected}
         isLoading={isLoading}
+        initialPositionMarginModalOpen={initialPositionMarginModalOpen}
         onAccountRefresh={onAccountRefresh}
       />
     )
@@ -850,7 +858,7 @@ function AccountTabContent({
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
-  const [activeTab, setActiveTab] = useState<PerpsAccountTab>('position')
+  const [activeTab, setActiveTab] = useState<PerpsAccountTab>(props.initialTab ?? 'position')
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [cleanupOrderId, setCleanupOrderId] = useState<bigint | undefined>()
   const [cleanupError, setCleanupError] = useState<string | undefined>()

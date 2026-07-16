@@ -1,66 +1,89 @@
 # Why is my order pending or failed?
 
-After the commitment transaction confirms, the order enters Plether’s global FIFO queue with a **Pending** status. Its margin and execution reward reservations become active, while the requested position change waits for execution.
+An action can fail before an order exists or after a confirmed order commitment. These are separate lifecycles and require different responses.
+
+![Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
+
+The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
 
 A **Failed** order has reached a terminal state. The same order cannot execute later.
-
-```
-Preview
-→ Commit transaction
-→ Pending order
-   ├─ Executed
-   └─ Failed
-      ├─ Expired and cleaned up
-      ├─ Slippage exceeded
-      ├─ Engine rejected
-      ├─ Account liquidated
-      └─ Engine panic
-```
 
 Committed orders cannot be cancelled, resized or given a new acceptable price.
 
 ### First identify what failed
 
-Several different events can appear as a failed transaction:
+| What you see                              | Does an order exist?        | Meaning                                                                  |
+| ----------------------------------------- | --------------------------- | ------------------------------------------------------------------------ |
+| **Wallet signature rejected**             | No                          | The owner wallet did not authorize the prepared action                   |
+| **Sponsorship unavailable / rate-limited** | No                          | The sponsor did not approve gas funding for this attempt                 |
+| **Bundler rejected**                      | No                          | The bundler refused the UserOperation before submission                  |
+| **UserOperation Pending**                 | Not yet known               | The operation is waiting for inclusion; do not submit a duplicate        |
+| **UserOperation dropped**                 | Usually no                  | The bundler stopped tracking it; check for a transaction receipt first   |
+| **Sponsored operation failed**            | No                          | The included commitment call failed and reservations reverted            |
+| Order appears under **Open Orders**       | Yes                         | The commitment succeeded and the order remains Pending                   |
+| **Finalization transaction failed**       | Yes, usually still Pending  | The delayed execution attempt reverted                                   |
+| **Order failed**                          | No longer active            | An onchain `OrderFailed` event made the order terminal                    |
+| **Expired** under Open Orders             | Yes, awaiting cleanup       | Its lifetime passed, but cleanup is still required                       |
+| **Expired / Cleaned up** in Order History | No longer active            | The expired order has been terminally removed                            |
+| **Executed**                              | No longer active            | The requested position change completed                                  |
 
-| What you see                                 | Meaning                                                           |
-| -------------------------------------------- | ----------------------------------------------------------------- |
-| Wallet is waiting for the commit transaction | An onchain order may not exist yet                                |
-| **Commit transaction failed**                | No order was created and attempted reservations reverted          |
-| Order appears under **Open Orders**          | The commitment succeeded and the order remains Pending            |
-| **Finalization transaction failed**          | The execution attempt reverted; the order usually remains Pending |
-| **Order failed**                             | An onchain `OrderFailed` event made the order terminal            |
-| **Expired** under Open Orders                | Its lifetime passed, but cleanup is still required                |
-| **Expired / Cleaned up** in Order History    | The expired order has been terminally removed                     |
-| **Executed**                                 | The requested position change completed                           |
-
-A successful wallet transaction does not always mean the trade executed. A finalization transaction can confirm while emitting `OrderFailed`.
+A confirmed UserOperation or transaction does not always mean the trade executed. A commitment only creates the order, and a later finalization transaction can confirm while emitting `OrderFailed`.
 
 Check **Order History** for the terminal result.
 
-> **Screenshot placeholder:** Commit transaction failed, Finalization transaction failed and Order failed shown side by side.
+![Four failure classes side by side](../.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--failure-state-comparison.png)
+
+### UserOperation hash versus transaction hash
+
+A sponsored smart-account action can expose two different identifiers:
+
+| Identifier             | What it identifies                                                                                                  |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **UserOperation hash** | The signed smart-account operation sent to the bundler; it can exist before any onchain transaction includes it     |
+| **Transaction hash**   | The onchain transaction submitted by the bundler; it can contain one or more UserOperations                         |
+
+Use the UserOperation hash to check sponsorship and bundler status. Once included, its receipt should identify the transaction hash. Use the transaction hash to inspect the block, EntryPoint events and Plether contract events.
+
+A UserOperation hash is not interchangeable with a transaction hash. A dropped UserOperation may never receive a transaction hash. Conversely, a confirmed bundler transaction does not by itself prove that the specific UserOperation’s inner Plether call succeeded.
+
+For an order commitment, the strongest confirmation is:
+
+1. The UserOperation receipt shows successful inclusion.
+2. The transaction receipt shows the successful Plether commitment event.
+3. An order ID appears under **Open Orders** or **Order History**.
 
 ### A quick troubleshooting sequence
 
-1. Check whether the commit transaction confirmed.
-2. Find the order under **Open Orders**.
-3. Check its expiry countdown.
-4. Check whether the market is live, FAD-only or `oracleFrozen`.
-5. Read the latest finalization or oracle message.
-6. Wait for automatic keeper processing.
-7. Use **Finalize Trade** when manual finalization becomes available.
-8. If the order has expired, use **Clean Up**.
-9. If Order History shows a terminal failure, request a new preview and create a new order.
+1. Check the sponsored operation status and UserOperation hash.
+2. If included, open the linked transaction hash and check whether the commitment call succeeded.
+3. Find the order ID under **Open Orders**.
+4. Check its expiry countdown.
+5. Check whether the market is live, FAD-only or `oracleFrozen`.
+6. Read the latest finalization or oracle message.
+7. Wait for automatic keeper processing.
+8. Use **Finalize Trade** when manual finalization becomes available.
+9. If the order has expired, use **Clean Up**.
+10. If Order History shows a terminal failure, request a new preview and create a new order.
 
 Do not submit a replacement until you know whether the original order is still Pending. A replacement creates another binding FIFO order.
 
-### The commit transaction failed
+### The sponsored commitment failed
 
-A reverted commit creates no order ID and leaves no margin or execution-reward reservation.
+Failures before successful inclusion include:
 
-The transaction’s state changes revert atomically, although a mined revert can still consume network gas.
+* Sponsorship unavailable
+* Sponsor rate limit reached
+* Invalid or expired wallet signature
+* Invalid nonce
+* Failed smart-account simulation
+* Bundler policy rejection
+* UserOperation dropped before inclusion
 
-Common causes include:
+These failures create no order ID and no margin or execution-reward reservation.
+
+If the UserOperation is included but the commitment call reverts, the attempted state changes revert atomically. No order or reservation remains. The sponsored submission can still consume network gas, but Plether pays that gas for an eligible sponsored operation rather than charging the owner wallet’s native-token balance.
+
+The underlying commitment call can fail for:
 
 | Commit error                     | Typical cause                                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------------------------- |
@@ -78,7 +101,7 @@ Common causes include:
 | Close reward unavailable         | Eligible account collateral cannot safely back the execution reward                             |
 | Pending-order limit              | Existing orders must execute or be cleaned before another can be committed                      |
 
-Correct the ticket and use **Retry Commit** or request a fresh preview.
+Correct the displayed sponsorship, account or ticket issue and request a fresh operation. Use **Retry Commit** only after the previous UserOperation is confirmed failed or dropped and no order ID exists.
 
 ### Why an order remains Pending
 
@@ -195,20 +218,22 @@ RPC interruptions, congestion, keeper downtime and delayed Pyth caching can exte
 
 The trade modal gives automatic finalization a short grace period. It then exposes **Finalize Trade**.
 
-> **Screenshot placeholder:** Finalization modal showing Order ID, acceptable price, estimated execution reward, countdown and Finalize Trade.
+![Finalization modal details](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png)
 
 ### Manual finalization
 
 Manual finalization is permissionless and follows the same rules as keeper execution.
+
+Order-commitment sponsorship does not automatically cover manual finalization. Unless the interface explicitly marks **Finalize Trade** as **Sponsored**, the manual finalizer submits a conventional transaction.
 
 The finalizer pays:
 
 * Network gas
 * The required Pyth update fee in native ETH
 
-The reserved USDC execution reward is credited to the finalizer’s Margin Account when the order reaches a terminal state.
+The reserved USDC execution reward is credited to the finalizing address’s Margin Account when the order reaches a terminal state.
 
-If you finalize your own order, the reward is credited back to your Margin Account as the processor. Network gas and the Pyth fee remain separate ETH costs.
+If the finalizing address is the same Trading Account that owns the order, the reward is credited back to that Trading Account’s Margin Account. A separate owner EOA is a different address and therefore a different Plether account. A trader who explicitly chooses an unsponsored manual-finalization route pays that route’s network gas and Pyth update fee; normal sponsored order commitment does not require owner-wallet ETH.
 
 The current Open Orders panel provides monitoring and expired-order cleanup. Manual finalization is available through the active trade modal. Closing or reloading that modal may leave keeper processing as the remaining path until expiry.
 
@@ -309,7 +334,7 @@ Cleanup remains subject to global FIFO. An earlier unexpired order cannot be ski
 
 The interface can reach zero slightly before the contract considers the order strictly older than its maximum age. If cleanup reverts exactly as the countdown reaches zero, wait for the next block and retry.
 
-> **Screenshot placeholder:** Open Orders showing Pending reveal, expiry countdown, Cancel unavailable, Expired and Clean Up.
+![Pending and expired Open Orders](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending-and-expired.png)
 
 ### What Failed means
 
@@ -466,6 +491,9 @@ Open Orders are read from onchain state, while Order History is indexed separate
 
 | What you see                                                      | What to do                                                                                    |
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Sponsorship unavailable or rate-limited                            | Wait for the displayed retry time; no order exists                                             |
+| UserOperation dropped and no transaction hash exists               | Request a fresh sponsored operation                                                            |
+| Bundler transaction confirmed but no order appears                 | Inspect the UserOperation receipt and Plether commitment event                                 |
 | Finalization transaction failed, but order remains in Open Orders | Retry finalization                                                                            |
 | Order disappeared and position did not change                     | Check Order History for a terminal failure                                                    |
 | Order History shows Type: Commit and Status: Failed               | Commitment succeeded; later execution failed before producing trade activity                  |

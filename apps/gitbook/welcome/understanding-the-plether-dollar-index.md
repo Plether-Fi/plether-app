@@ -234,11 +234,11 @@ The raw basket mark is the normalized value produced by the oracle.
 
 A trader’s final execution economics can differ from that reference because of:
 
-* The adverse oracle-confidence adjustment
+* The active oracle-confidence policy
 * Virtual price impact
 * The trader’s acceptable-price limit
 * The protocol execution fee
-* The keeper execution bounty
+* The execution reward
 
 These are separate components. A charted index level should not be interpreted as a guaranteed execution price.
 
@@ -299,7 +299,7 @@ If that happens:
 
 That divergence is part of the product’s basis risk. It is the trade-off that makes maximum liability knowable before a position is accepted.
 
-I would also remove the cap from any “live parameters” table. It belongs under **Protocol constants** alongside facts that define the product rather than tune it.
+The cap is a protocol constant rather than a live risk parameter. It defines the product and cannot be changed through ordinary parameter updates.
 
 ### Why the market follows FX hours
 
@@ -362,8 +362,8 @@ Users should rely on the active oracle configuration and deployment reference ra
 
 ### Where to go next
 
-* **Risks you should understand first**
-* **Trader quickstart**
-* **Fees, carry and virtual price impact**
-* **Market hours and closures**
-* **Oracle and execution pricing**
+* [**Risks you should understand first**](risks-you-should-understand-first.md)
+* [**Trader quickstart**](../trader-quickstart.md)
+* [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
+* [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
+* [**Oracle and execution pricing**](../how-plether-works/how-orders-execute.md#from-index-observation-to-execution-price)
