@@ -50,8 +50,9 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
+import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
+import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -70,12 +71,22 @@ type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 
-interface PreviewRow {
+interface PreviewRowBase {
   label: string
   value: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'muted'
-  tooltip?: ReactNode
 }
+
+type PreviewRow = PreviewRowBase & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -794,6 +805,7 @@ function PreviewRows({
                   content={row.tooltip}
                   position="bottom-end"
                   className="w-[340px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+                  docsLink={row.tooltipDocsLink}
                 >
                   <span
                     aria-label={`${row.label} info`}
@@ -1205,17 +1217,30 @@ function AccountContextRow({
   )
 }
 
+interface AccountSummaryRowBaseProps {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'positive' | 'negative'
+}
+
+type AccountSummaryRowProps = AccountSummaryRowBaseProps & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
+
 function AccountSummaryRow({
   label,
   value,
   tone = 'default',
   tooltip,
-}: {
-  label: string
-  value: ReactNode
-  tone?: 'default' | 'positive' | 'negative'
-  tooltip?: ReactNode
-}) {
+  tooltipDocsLink,
+}: AccountSummaryRowProps) {
   const valueClass = tone === 'positive'
     ? 'text-positive'
     : tone === 'negative'
@@ -1231,6 +1256,7 @@ function AccountSummaryRow({
             content={tooltip}
             position="bottom-end"
             className="w-[320px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+            docsLink={tooltipDocsLink}
           >
             <span
               aria-label={`${label} info`}
@@ -1991,15 +2017,23 @@ export function PerpsTradeTicket({
             value: previewFrozenCloseSpreadValue,
             tone: previewFrozenCloseSpreadValue === PREVIEW_LOADING_VALUE ? 'muted' as const : undefined,
             tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+            tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
           }
         : {
             label: 'Adverse oracle confidence spread',
             value: adverseOracleConfidenceSpreadValue,
             tooltip: adverseOracleConfidenceSpreadTooltip,
+            tooltipDocsLink: DOCS_LINKS.oracleConfidence,
           },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
-      { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+      {
+        label: 'VPI / Price impact',
+        value: previewVpiValue,
+        tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined,
+        tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+      },
       { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
       {
         label: 'Contract side capacity',
@@ -2498,7 +2532,11 @@ export function PerpsTradeTicket({
               >
                 Reduce only
               </label>
-              <Tooltip content="Only reduces or closes your current position. It will not open a new position or increase exposure." position="top">
+              <Tooltip
+                content="Only reduces or closes your current position. It will not open a new position or increase exposure."
+                position="top"
+                docsLink={DOCS_LINKS.reduceOnly}
+              >
                 <span
                   aria-label="Reduce only info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2533,7 +2571,11 @@ export function PerpsTradeTicket({
               >
                 Margin Call Simulator
               </label>
-              <Tooltip content="Maximum leverage mode" position="top">
+              <Tooltip
+                content="Maximum leverage mode"
+                position="top"
+                docsLink={DOCS_LINKS.marginCallSimulator}
+              >
                 <span
                   aria-label="Margin Call Simulator info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2683,6 +2725,7 @@ export function PerpsTradeTicket({
                   require a fresh mark and must pass protocol state, pending carry, and post-withdraw margin checks.
                 </span>
               }
+              tooltipDocsLink={DOCS_LINKS.withdrawable}
             />
           </div>
         </div>
@@ -3199,8 +3242,18 @@ export function PerpsTradeTicket({
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    { label: finalOracleConfidenceSpreadLabel, value: finalOracleConfidenceSpreadValue, tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP },
-                    { label: finalVpiLabel, value: finalVpiValue, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+                    {
+                      label: finalOracleConfidenceSpreadLabel,
+                      value: finalOracleConfidenceSpreadValue,
+                      tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.oracleConfidence,
+                    },
+                    {
+                      label: finalVpiLabel,
+                      value: finalVpiValue,
+                      tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+                    },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },

@@ -4,7 +4,8 @@ import { usePerpsTrading } from '../hooks'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
+import { DOCS_LINKS } from '../config/docs'
+import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -231,19 +232,32 @@ function AccountSummaryRow({ label, value }: { label: string; value: ReactNode }
   )
 }
 
+interface AccountMetricBaseProps {
+  label: string
+  value: ReactNode
+  tone?: PositionRow['tone']
+  action?: ReactNode
+}
+
+type AccountMetricProps = AccountMetricBaseProps & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
+
 function AccountMetric({
   label,
   value,
   tone,
   tooltip,
+  tooltipDocsLink,
   action,
-}: {
-  label: string
-  value: ReactNode
-  tone?: PositionRow['tone']
-  tooltip?: ReactNode
-  action?: ReactNode
-}) {
+}: AccountMetricProps) {
   return (
     <div className="min-w-0">
       <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
@@ -253,6 +267,7 @@ function AccountMetric({
             content={tooltip}
             position="left"
             className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
+            docsLink={tooltipDocsLink}
           >
             <span
               className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -478,29 +493,38 @@ function PositionView({
       </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
-        <AccountMetric label="Entry notional" value={currentPosition.entryNotional} tooltip={entryNotionalTooltip} />
+        <AccountMetric
+          label="Entry notional"
+          value={currentPosition.entryNotional}
+          tooltip={entryNotionalTooltip}
+          tooltipDocsLink={DOCS_LINKS.entryNotional}
+        />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
         <AccountMetric
           label="Leverage"
           value={currentPosition.leverage}
           tooltip={leverageTooltip}
+          tooltipDocsLink={DOCS_LINKS.positionLeverage}
           action={editPositionMarginAction}
         />
         <AccountMetric
           label="Liquidation price"
           value={currentPosition.liquidationPrice}
           tooltip={liquidationTooltip}
+          tooltipDocsLink={DOCS_LINKS.liquidationPrice}
         />
         <AccountMetric
           label="Unrealized PnL"
           value={currentPosition.pnl}
           tone={currentPosition.tone}
           tooltip={unrealizedPnlTooltip}
+          tooltipDocsLink={DOCS_LINKS.unrealizedPnl}
         />
         <AccountMetric
           label="Cost of carry"
           value={currentPosition.costOfCarryUsdc}
           tooltip={pendingCarryTooltip}
+          tooltipDocsLink={DOCS_LINKS.positionCostOfCarry}
         />
       </div>
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">

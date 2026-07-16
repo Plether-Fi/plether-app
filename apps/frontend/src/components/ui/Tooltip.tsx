@@ -1,11 +1,27 @@
-import { type CSSProperties, type ReactNode, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import {
+  type CSSProperties,
+  type FocusEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 import { createPortal } from 'react-dom'
+
+export interface TooltipDocsLink {
+  href: string
+  title: string
+}
 
 interface TooltipProps {
   content: ReactNode
   children: ReactNode
   position?: 'top' | 'bottom' | 'bottom-end' | 'left' | 'right'
   className?: string
+  docsLink?: TooltipDocsLink
 }
 
 interface TooltipCoordinates {
@@ -14,15 +30,53 @@ interface TooltipCoordinates {
 }
 
 const TOOLTIP_GAP_PX = 8
+const TOOLTIP_HIDE_DELAY_MS = 300
 const VIEWPORT_MARGIN_PX = 8
 
-export function Tooltip({ content, children, position = 'top', className = '' }: TooltipProps) {
+export function Tooltip({
+  content,
+  children,
+  position = 'top',
+  className = '',
+  docsLink,
+}: TooltipProps) {
   const whitespaceClass = className.includes('whitespace-') ? '' : 'whitespace-nowrap'
   const tooltipId = useId()
   const triggerRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
+  const hideTimerRef = useRef<number | undefined>(undefined)
   const [isVisible, setIsVisible] = useState(false)
   const [coordinates, setCoordinates] = useState<TooltipCoordinates>({ left: VIEWPORT_MARGIN_PX, top: VIEWPORT_MARGIN_PX })
+
+  const clearHideTimer = useCallback(() => {
+    if (hideTimerRef.current === undefined) return
+    window.clearTimeout(hideTimerRef.current)
+    hideTimerRef.current = undefined
+  }, [])
+
+  const showTooltip = useCallback(() => {
+    clearHideTimer()
+    setIsVisible(true)
+  }, [clearHideTimer])
+
+  const scheduleHideTooltip = useCallback(() => {
+    clearHideTimer()
+    hideTimerRef.current = window.setTimeout(() => {
+      hideTimerRef.current = undefined
+      setIsVisible(false)
+    }, TOOLTIP_HIDE_DELAY_MS)
+  }, [clearHideTimer])
+
+  const handleBlur = useCallback((event: FocusEvent<HTMLElement>) => {
+    const nextTarget = event.relatedTarget
+    if (
+      nextTarget instanceof Node
+      && (triggerRef.current?.contains(nextTarget) || tooltipRef.current?.contains(nextTarget))
+    ) {
+      return
+    }
+    scheduleHideTooltip()
+  }, [scheduleHideTooltip])
 
   const updatePosition = useCallback(() => {
     const triggerElement = triggerRef.current
@@ -92,6 +146,8 @@ export function Tooltip({ content, children, position = 'top', className = '' }:
     }
   }, [isVisible, updatePosition])
 
+  useEffect(() => clearHideTimer, [clearHideTimer])
+
   const tooltipStyle: CSSProperties = {
     left: coordinates.left,
     maxHeight: `calc(100vh - ${(VIEWPORT_MARGIN_PX * 2).toString()}px)`,
@@ -104,18 +160,10 @@ export function Tooltip({ content, children, position = 'top', className = '' }:
       ref={triggerRef}
       className="relative inline-flex"
       aria-describedby={isVisible ? tooltipId : undefined}
-      onBlur={() => {
-        setIsVisible(false)
-      }}
-      onFocus={() => {
-        setIsVisible(true)
-      }}
-      onMouseEnter={() => {
-        setIsVisible(true)
-      }}
-      onMouseLeave={() => {
-        setIsVisible(false)
-      }}
+      onBlur={handleBlur}
+      onFocus={showTooltip}
+      onMouseEnter={showTooltip}
+      onMouseLeave={scheduleHideTooltip}
     >
       {children}
       {isVisible
@@ -125,13 +173,29 @@ export function Tooltip({ content, children, position = 'top', className = '' }:
             id={tooltipId}
             role="tooltip"
             style={tooltipStyle}
+            onBlur={handleBlur}
+            onFocus={showTooltip}
+            onMouseEnter={showTooltip}
+            onMouseLeave={scheduleHideTooltip}
             className={`
-              pointer-events-none fixed z-[1000] box-border min-w-0 overflow-y-auto break-words border border-brand-border/50 ${whitespaceClass}
+              pointer-events-auto fixed z-[1000] box-border min-w-0 overflow-y-auto break-words border border-brand-border/50 ${whitespaceClass}
               bg-app-bg px-3 py-2 text-sm normal-case text-content-primary
               ${className}
             `}
           >
-            {content}
+            <div>{content}</div>
+            {docsLink ? (
+              <a
+                href={docsLink.href}
+                aria-label={`Read: "${docsLink.title}"`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-2 inline-block cursor-pointer font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+              >
+                <span>Read: </span>
+                <span className="italic">{`"${docsLink.title}"`}</span>
+              </a>
+            ) : null}
           </div>,
           document.body
         )
