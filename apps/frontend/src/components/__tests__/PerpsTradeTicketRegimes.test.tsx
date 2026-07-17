@@ -230,7 +230,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'It applies to opens and to close/reduce execution in live and FAD-only regimes.'
     )
-    expect(screen.getByRole('link', { name: `Read: "${DOCS_LINKS.oracleConfidence.title}"` }))
+    expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.oracleConfidence.title}` }))
       .toHaveAttribute('href', DOCS_LINKS.oracleConfidence.href)
   })
 
@@ -272,7 +272,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(tooltip).toHaveTextContent('Wait until the market reopens to avoid this spread')
     expect(tooltip).not.toHaveTextContent('full close')
     expect(tooltip).not.toHaveTextContent('separate')
-    expect(screen.getByRole('link', { name: `Read: "${DOCS_LINKS.frozenCloseSpread.title}"` }))
+    expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.frozenCloseSpread.title}` }))
       .toHaveAttribute('href', DOCS_LINKS.frozenCloseSpread.href)
     expect(tooltip).not.toHaveTextContent('12.3')
     expect(tooltip).not.toHaveTextContent('10.0')
