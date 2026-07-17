@@ -2,9 +2,9 @@
 
 > **Supply the balance sheet behind the market.**
 
-Plether liquidity providers deposit USDC into the **HousePool**, the capital base that stands behind trader profits and protocol liabilities.
+Plether liquidity providers deposit USDC[^usdc] into the **HousePool**, the capital base that stands behind trader profits and protocol liabilities.
 
-LP capital is not idle collateral. It can be used to pay winning traders. In return, LPs participate in realized trader losses, carry and other pool revenue according to the Senior–Junior waterfall.
+LP[^lp] capital is not idle collateral. It can be used to pay winning traders. In return, LPs participate in realized trader losses, carry[^carry] and other pool revenue according to the Senior–Junior waterfall.
 
 **Liability is the product. Return is what LPs receive for underwriting it.**
 
@@ -20,7 +20,7 @@ LP capital is not idle collateral. It can be used to pay winning traders. In ret
 
 ### What you receive
 
-LPs do not deposit directly into the HousePool. They deposit through one of two ERC-4626 tranche vaults:
+LPs do not deposit directly into the HousePool. They deposit through one of two ERC-4626[^erc4626] tranche[^tranche] vaults:
 
 * The **Senior Vault**
 * The **Junior Vault**
@@ -49,11 +49,11 @@ The basic waterfall is:
 
 #### Senior is protected, not protected from everything
 
-The Senior tranche receives a target coupon funded directly from Junior NAV.
+The Senior tranche receives a target coupon funded directly from Junior NAV[^nav].
 
 “Target” matters. The coupon is:
 
-* Not a guaranteed APY
+* Not a guaranteed APY[^apy]
 * Not external yield
 * Not necessarily funded by trading revenue
 * Limited by the amount of Junior capital available
@@ -81,8 +81,8 @@ LP share value can increase through:
 
 * Realized trader losses collected by the pool
 * Realized carry paid for LP-backed exposure
-* Positive VPI and other trader-to-pool price adjustments
-* Oracle-frozen LP surcharges retained inside the affected tranche
+* Positive VPI[^vpi] and other trader-to-pool price adjustments
+* Oracle-frozen[^oracle] LP surcharges retained inside the affected tranche
 
 LP share value can decrease through:
 
@@ -222,7 +222,7 @@ If you cancel:
 
 Once the activation epoch begins, the request normally becomes binding and can no longer be cancelled.
 
-The epoch must then be finalized. Finalization is permissionless: it may be submitted by the application, a keeper or any user.
+The epoch must then be finalized. Finalization is permissionless: it may be submitted by the application, a keeper[^keeper] or any user.
 
 Finalization:
 
@@ -334,7 +334,7 @@ Ordinary partial withdrawals must satisfy the vault’s minimum amount. A comple
 
 ### Oracle-frozen LP actions
 
-When the FX oracle is genuinely frozen, LP entry and exit can remain available under a tranche-specific surcharge.
+When the FX[^fx] oracle is genuinely frozen, LP entry and exit can remain available under a tranche-specific surcharge.
 
 The surcharge works differently from a protocol fee:
 
@@ -387,3 +387,15 @@ Before approving the vault:
 * [**The LP withdrawal firewall**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall)
 * [**LP fees during market closures**](how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps)
 * [**LP risks and loss scenarios**](welcome/risks-you-should-understand-first.md#risks-for-liquidity-providers)
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.
+[^apy]: Annual percentage yield, an annualized return measure that includes compounding.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fx]: Foreign exchange, the market for trading one currency against another.

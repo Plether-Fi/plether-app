@@ -1,6 +1,6 @@
 # Check and settle a trader claim
 
-A trader claim records USDC owed to the **Trading Account** when the HousePool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
+A trader claim records USDC[^usdc] owed to the **Trading Account** when the HousePool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
 
 Claims can arise from:
 
@@ -14,7 +14,7 @@ The position action still completes. Released position margin follows the normal
 
 ### How a claim is created
 
-Plether calculates the fresh trader payout after applying the position’s realized PnL, execution fee, signed VPI, carry and any applicable frozen-close spread.
+Plether calculates the fresh trader payout after applying the position’s realized PnL[^pnl], execution fee, signed VPI[^vpi], carry[^carry] and any applicable frozen-close spread.
 
 Existing position margin remains separate from this calculation. The claim covers only the fresh payment that requires HousePool cash.
 
@@ -69,7 +69,7 @@ Before settlement, the claim remains separate from your usable account collatera
 
 The claim remains denominated in USDC. It does not accrue interest or yield and has no expiry.
 
-Claims are included in the protocol’s liability and LP-withdrawal accounting while they remain outstanding.
+Claims are included in the protocol’s liability and LP-withdrawal[^lp] accounting while they remain outstanding.
 
 ![Claim balance and status](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--waiting-for-liquidity.png)
 
@@ -83,7 +83,7 @@ Recognized HousePool assets
 Total outstanding trader claims
 ```
 
-Recognized assets are the HousePool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL may differ from the amount used by the settlement check.
+Recognized assets are the HousePool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL[^tvl] may differ from the amount used by the settlement check.
 
 The test applies to aggregate claims rather than one account at a time.
 
@@ -128,7 +128,7 @@ If aggregate coverage is insufficient, the transaction reverts and the complete 
 
 Connect the owner wallet that controls the claim-owning Trading Account, then confirm the active Trading Account address in the interface.
 
-A different wallet cannot authorize settlement for that Trading Account. The sponsor and bundler can relay the authorized operation, but they cannot create the owner signature.
+A different wallet cannot authorize settlement for that Trading Account. The sponsor and bundler[^bundler] can relay the authorized operation, but they cannot create the owner signature.
 
 #### 2. Check the settlement status
 
@@ -158,11 +158,11 @@ It does not require:
 * A USDC approval
 * A Pyth price update
 * An acceptable price
-* An execution fee or keeper reward
+* An execution fee or keeper[^keeper] reward
 
 Sponsorship remains subject to availability and policy limits. A sponsorship or bundler failure does not change the claim balance; request a fresh operation after the displayed issue is resolved.
 
-The settlement path does not depend on a live FX oracle or an open trading session. FAD, an oracle closure, frozen-oracle mode or degraded mode do not independently block it when the cash-coverage requirement is satisfied.
+The settlement path does not depend on a live FX[^fx] oracle[^oracle] or an open trading session. FAD[^fad], an oracle closure, frozen-oracle mode or degraded mode do not independently block it when the cash-coverage requirement is satisfied.
 
 #### 5. Check the result
 
@@ -321,3 +321,15 @@ Outstanding claims remaining:       44,500 USDC
 ```
 
 The remaining claims continue to be fully covered.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^tvl]: Total value locked, the headline value of assets deposited in a protocol.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.

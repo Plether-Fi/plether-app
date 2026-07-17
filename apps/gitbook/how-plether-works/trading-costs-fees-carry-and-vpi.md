@@ -1,14 +1,14 @@
 # Trading costs: fees, carry and VPI
 
-A Plether trade has one oracle-derived execution price, but several separate USDC adjustments.
+A Plether trade has one oracle-derived[^oracle] execution price, but several separate USDC[^usdc] adjustments.
 
 The distinction matters:
 
-* The oracle price determines entry, exit and directional PnL.
+* The oracle price determines entry, exit and directional PnL[^pnl].
 * The execution fee pays the protocol for completed trades.
-* VPI prices the change in HousePool imbalance.
-* The frozen-close spread compensates LPs when a voluntary close settles during `oracleFrozen`.
-* Carry pays LPs for capital committed through time.
+* VPI[^vpi] prices the change in HousePool imbalance.
+* The frozen-close spread compensates LPs[^lp] when a voluntary close settles during `oracleFrozen`.
+* Carry[^carry] pays LPs for capital committed through time.
 * The execution reward pays whoever processes the delayed order.
 
 Only the oracle adjustment changes the price recorded on the position. The other items change the USDC economics around that price.
@@ -17,7 +17,7 @@ Only the oracle adjustment changes the price recorded on the position. The other
 
 ### Sponsored network gas is not a trading discount
 
-Plether sponsors the network gas for eligible trader actions, subject to availability and policy limits. The connected wallet authorizes the action, the Trading Account submits it through a UserOperation, and Plether pays the eligible native-token network cost.
+Plether sponsors the network gas for eligible trader actions, subject to availability and policy limits. The connected wallet authorizes the action, the Trading Account submits it through a UserOperation[^useroperation], and Plether pays the eligible native-token network cost.
 
 That sponsorship is separate from the trade’s USDC economics:
 
@@ -51,7 +51,7 @@ These USDC costs and price adjustments should not be combined with sponsored net
 
 ### Protocol execution fee
 
-Plether charges a configured fee on the contract notional being executed.
+Plether charges a configured fee on the contract notional[^notional] being executed.
 
 The public dollar-oriented price is:
 
@@ -93,7 +93,7 @@ The fee is based on the actual executed amount and price—not the number shown 
 
 Virtual Price Impact, or VPI, prices how a trade changes the directional liability carried by the HousePool.
 
-It is “virtual” because Plether does not move the oracle price or execute through an AMM. VPI is settled as a separate USDC adjustment.
+It is “virtual” because Plether does not move the oracle price or execute through an AMM[^amm]. VPI is settled as a separate USDC adjustment.
 
 #### The VPI curve
 
@@ -110,7 +110,7 @@ Where:
 * `L` is current HousePool depth, implemented as total pool assets;
 * `k` is the configured VPI factor.
 
-The skew is valued using the raw basket price `B`.
+The skew[^skew] is valued using the raw basket price `B`.
 
 A trade’s VPI is the movement along that curve:
 
@@ -256,7 +256,7 @@ Frozen-close spread
 = reduced contract notional × frozen-close spread rate
 ```
 
-The current rate is **50 bps**, or **0.50% of reduced contract notional**.
+The current rate is **50 bps[^bps]**, or **0.50% of reduced contract notional**.
 
 For example:
 
@@ -272,7 +272,7 @@ The spread:
 
 * Applies only to voluntary reductions and closes executed during `oracleFrozen`
 * Does not apply during open markets
-* Does not apply during FAD-only close-only windows with a live oracle
+* Does not apply during FAD-only[^fad] close-only windows with a live oracle
 * Does not apply to liquidations
 * Is separate from VPI, the execution fee, carry and the active oracle-confidence policy
 * Is fixed rather than dependent on pool skew or oracle age
@@ -737,9 +737,9 @@ Negative VPI is a HousePool outflow. A waived frozen-close spread is uncollected
 
 Trader profits, claims and bad debt can also offset or exceed VPI, spread and carry income.
 
-The protocol execution fee belongs to the protocol treasury. The order execution reward belongs to the keeper. Neither should be presented as direct LP yield.
+The protocol execution fee belongs to the protocol treasury. The order execution reward belongs to the keeper[^keeper]. Neither should be presented as direct LP yield.
 
-Once revenue enters the HousePool, tranche accounting determines its allocation:
+Once revenue enters the HousePool, tranche[^tranche] accounting determines its allocation:
 
 * senior claims receive waterfall priority;
 * junior capital absorbs first loss;
@@ -785,3 +785,18 @@ Before closing, distinguish:
 None of these changes the underlying foreign-exchange market.
 
 The oracle decides the price. Fees, VPI, carry and any frozen-close spread decide the USDC economics around it.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^bps]: Basis points; 100 bps equals 1%.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.

@@ -1,8 +1,8 @@
 # How orders execute
 
-Plether does not match traders in an order book, and it does not let an AMM determine the index price.
+Plether does not match traders in an order book, and it does not let an AMM[^amm] determine the index price.
 
-Orders use delayed, oracle-settled execution.
+Orders use delayed, oracle-settled[^oracle] execution.
 
 **Commit first. Price second.**
 
@@ -10,7 +10,7 @@ A trader commits the direction, size, margin and acceptable-price boundary befor
 
 The order enters a global queue, then settles under the oracle regime active when it is finalized:
 
-* Live and FAD-only execution uses the first eligible post-commit observation.
+* Live and FAD-only[^fad] execution uses the first eligible post-commit observation.
 * An `oracleFrozen` voluntary close uses the bounded frozen-market policy.
 
 ![Flowchart showing a Plether order moving from Preview through Commit, FIFO execution and final execution checks.](../.gitbook/assets/diagrams/delayed-order-execution-pipeline.svg)
@@ -29,7 +29,7 @@ The delayed order then follows the protocol stages:
 
 ![Three-stage order lifecycle: Preview, Commit and Finalize.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
 
-The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper normally submits the separate finalization transaction.
+The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper[^keeper] normally submits the separate finalization transaction.
 
 If keeper finalization is delayed, the trader may be able to finalize the order manually.
 
@@ -41,13 +41,13 @@ This includes:
 
 * Direction: LONG USD or SHORT USD
 * Target exposure
-* Contract notional
+* Contract notional[^notional]
 * Margin
 * Resulting leverage
 * Execution limit
 * Adverse oracle confidence spread
 * Estimated protocol execution fee
-* Estimated VPI
+* Estimated VPI[^vpi]
 * Estimated execution reward
 * Liquidation price
 * Available side capacity
@@ -57,7 +57,7 @@ This includes:
 For a voluntary reduction or close, the onchain preview also exposes:
 
 * `frozenSpreadUsdc` — frozen-close spread assessed
-* `frozenSpreadPaidUsdc` — amount collected for LPs
+* `frozenSpreadPaidUsdc` — amount collected for LPs[^lp]
 * `frozenSpreadWaivedUsdc` — uncollectible amount waived
 
 These values are nonzero only when the previewed execution is during `oracleFrozen`.
@@ -109,11 +109,11 @@ It also reserves an **execution reward**. This compensates whoever later finaliz
 * Position margin
 * Protocol execution fees
 * VPI
-* Carry
+* Carry[^carry]
 * Any frozen-close spread
 * Network gas
 
-For a reduction or close, the reward is taken from available account USDC where possible. Within defined safety bounds, it may instead be reserved from the position’s margin.
+For a reduction or close, the reward is taken from available account USDC[^usdc] where possible. Within defined safety bounds, it may instead be reserved from the position’s margin.
 
 At this point, no position size has been added or removed. The order is pending, but its reserved funds are no longer available for another order or withdrawal.
 
@@ -160,7 +160,7 @@ This prevents a keeper from choosing orders based on:
 
 Several consecutive orders may be processed together, but batching does not change their order.
 
-FIFO also creates a trade-off: if the queue head is temporarily blocked, later orders may have to wait.
+FIFO[^fifo] also creates a trade-off: if the queue head is temporarily blocked, later orders may have to wait.
 
 ### 4. Select the oracle observation
 
@@ -198,7 +198,7 @@ If automatic finalization does not arrive during the interface’s keeper grace 
 * ETH for network gas
 * ETH for the Pyth update fee
 
-The finalizing address receives the reserved execution reward through its Margin Account. If the owner EOA and Trading Account use different addresses, they are different Plether accounts.
+The finalizing address receives the reserved execution reward through its Margin Account. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts.
 
 ![Finalization countdown and manual action](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png)
 
@@ -317,7 +317,7 @@ For an opening or increase, this includes:
 
 For a reduction or close, settlement can include:
 
-* Realized PnL
+* Realized PnL[^pnl]
 * Released margin
 * Protocol execution fee
 * VPI charge or rebate
@@ -342,9 +342,9 @@ Frozen-close spread
 = reduced contract notional × 0.50%
 ```
 
-The rate is fixed rather than dependent on VPI, skew or oracle age. It belongs entirely to LPs and never credits the protocol treasury.
+The rate is fixed rather than dependent on VPI, skew[^skew] or oracle age. It belongs entirely to LPs and never credits the protocol treasury.
 
-The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps`, or `10.00%`. The live onchain value is authoritative.
+The current rate is timelocked, must remain nonzero and cannot exceed `1,000 bps`[^bps], or `10.00%`. The live onchain value is authoritative.
 
 If trader-owned value must be collected, settlement follows this priority:
 
@@ -576,3 +576,18 @@ Plether’s execution model separates five decisions:
 * **Final validity:** the engine verifies that the resulting position and settlement satisfy the protocol’s risk and accounting rules.
 
 Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and settled only when the HousePool can support the result.
+
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^eoa]: Externally owned account, a conventional blockchain account controlled by a private key.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^bps]: Basis points; 100 bps equals 1%.

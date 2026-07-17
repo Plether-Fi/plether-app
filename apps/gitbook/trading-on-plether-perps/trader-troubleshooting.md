@@ -1,6 +1,6 @@
 # Trader troubleshooting
 
-Plether actions can stop at different stages. A rejected wallet signature, unavailable sponsorship, a rejected or dropped UserOperation, a pending order and a terminally failed order require different responses.
+Plether actions can stop at different stages. A rejected wallet signature, unavailable sponsorship, a rejected or dropped UserOperation[^useroperation], a pending order and a terminally failed order require different responses.
 
 Start by checking the operation and onchain state before submitting another action.
 
@@ -9,7 +9,7 @@ Start by checking the operation and onchain state before submitting another acti
 1. Confirm the connected owner wallet and active Trading Account.
 2. Confirm the supported network.
 3. Check the sponsorship status and any UserOperation hash.
-4. Check the market state and oracle timestamp.
+4. Check the market state and oracle[^oracle] timestamp.
 5. Open **Open Orders** and **Order History**.
 6. Inspect any linked transaction hash in the block explorer.
 7. Refresh the application.
@@ -51,13 +51,13 @@ These failures occur before the delayed order lifecycle:
 
 The owner wallet rejected or did not complete the authorization. Nothing was submitted, and Plether cannot create the signature on the user’s behalf.
 
-Check the network, Trading Account, action, USDC amount, recipient and authorization expiry before trying again.
+Check the network, Trading Account, action, USDC[^usdc] amount, recipient and authorization expiry before trying again.
 
 #### Sponsor unavailable
 
 The sponsor service did not approve gas funding. No sponsored operation or order was accepted.
 
-Existing positions, carry, pending orders and liquidation rules continue while sponsorship is unavailable. Wait for service recovery or use only an alternative that the interface explicitly supports for the same Trading Account.
+Existing positions, carry[^carry], pending orders and liquidation rules continue while sponsorship is unavailable. Wait for service recovery or use only an alternative that the interface explicitly supports for the same Trading Account.
 
 #### Sponsor rate-limited
 
@@ -65,7 +65,7 @@ The action exceeded an account, action or protocol-wide sponsorship limit. Wait 
 
 #### Bundler rejected
 
-The bundler refused the UserOperation because simulation, nonce, account state, gas limits or bundler policy did not pass. No order was created.
+The bundler[^bundler] refused the UserOperation because simulation, nonce, account state, gas limits or bundler policy did not pass. No order was created.
 
 Refresh the Trading Account and request a newly prepared operation. A stale signed operation should not be resubmitted after account state changes.
 
@@ -90,7 +90,7 @@ Common causes include:
 * The requested margin fails the initial-margin requirement.
 * The account already holds a position in the opposite direction.
 * The account has reached its pending-order limit.
-* The requested direction exceeds the current skew limit.
+* The requested direction exceeds the current skew[^skew] limit.
 * The HousePool cannot admit the additional maximum liability.
 * The market is close-only.
 * The protocol is in degraded mode.
@@ -143,7 +143,7 @@ A partial reduction must fully cover its obligation, including:
 
 * Trading loss
 * Execution fee
-* Signed VPI
+* Signed VPI[^vpi]
 * Carry
 * Frozen-close spread, when applicable
 
@@ -161,10 +161,10 @@ See [**Reduce or close a position**](reduce-or-close-a-position.md).
 
 An order can remain pending because:
 
-* Earlier orders are ahead in the global FIFO queue.
+* Earlier orders are ahead in the global FIFO[^fifo] queue.
 * The first eligible post-commit Pyth observation is not available yet.
 * The order is still protected by same-block execution rules.
-* A keeper has not finalized it.
+* A keeper[^keeper] has not finalized it.
 * Historical oracle data could not be fetched or validated.
 * Oracle confidence is too wide.
 * Basket component timestamps are not sufficiently aligned.
@@ -181,7 +181,7 @@ While an order is pending:
 * The execution reward remains reserved.
 * A pending open creates no position exposure.
 * A pending close removes no position exposure.
-* The executed position continues accruing PnL and carry.
+* The executed position continues accruing PnL[^pnl] and carry.
 * The executed position remains liquidatable.
 
 Pending orders cannot be cancelled or repriced. They end through execution, terminal failure or expiry cleanup.
@@ -206,7 +206,7 @@ Possible causes include:
 * Basket component publish times diverged.
 * An earlier FIFO order blocked execution.
 * The transaction supplied insufficient gas.
-* The network, RPC or oracle-data service was unavailable.
+* The network, RPC[^rpc] or oracle-data service was unavailable.
 
 Open **Open Orders** and check whether the order is still present.
 
@@ -338,7 +338,7 @@ Common causes include:
 * The live mark required for an open-position withdrawal is stale.
 * The protocol is in degraded mode.
 
-An account with an open position must preserve the higher of the applicable initial-margin and current maintenance or FAD requirement after withdrawal.
+An account with an open position must preserve the higher of the applicable initial-margin and current maintenance or FAD[^fad] requirement after withdrawal.
 
 A flat account can still have funds reserved by pending orders and execution rewards.
 
@@ -379,7 +379,7 @@ For the dollar-oriented price shown in the interface:
 | Reduce or close LONG USD   | Execution at or above the minimum acceptable price |
 | Reduce or close SHORT USD  | Execution at or below the maximum acceptable price |
 
-A voluntary close during `oracleFrozen` uses the validated frozen basket and the fixed `50 bps` frozen-close spread. The usual adverse confidence price shift is removed for this path, while confidence-width validation and signed VPI remain active.
+A voluntary close during `oracleFrozen` uses the validated frozen basket and the fixed `50 bps`[^bps] frozen-close spread. The usual adverse confidence price shift is removed for this path, while confidence-width validation and signed VPI remain active.
 
 See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Market states and oracle closures**](../how-plether-works/market-states-and-oracle-closures.md).
 
@@ -530,3 +530,17 @@ Include:
 * Screenshot of the relevant Margin Account or position field
 
 Never share a seed phrase, private key or wallet recovery code.
+
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^bps]: Basis points; 100 bps equals 1%.
