@@ -348,7 +348,10 @@ function OperationHistoryItem({
 export function SponsoredOperationHistoryButton() {
   const identity = usePerpsIdentity()
   const operations = useSponsoredOperationStore((state) => state.operations)
-  const [openedForIdentity, setOpenedForIdentity] = useState<string | null>(null)
+  const [openedActivity, setOpenedActivity] = useState<{
+    identityKey: string
+    attentionCount: number
+  } | null>(null)
   const identityKey = identity.accountAddress && identity.chainId !== undefined
     ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
     : null
@@ -495,9 +498,11 @@ export function SponsoredOperationHistoryButton() {
     activeConfirmationFeedback?.phase === 'visible'
   const isConfirmationFeedbackExiting =
     activeConfirmationFeedback?.phase === 'exiting'
-  const needsAttentionCount = needsAttentionOperations.length
   const unreviewedAttentionCount = unreviewedAttentionOperations.length
   const inProgressCount = inProgressOperations.length
+  const attentionSummaryCount = openedActivity?.identityKey === identityKey
+    ? openedActivity.attentionCount
+    : 0
   const buttonTone = isConfirmationFeedbackVisible
     ? 'border-positive text-positive hover:bg-positive/15'
     : unreviewedAttentionCount > 0
@@ -531,10 +536,10 @@ export function SponsoredOperationHistoryButton() {
   const buttonLabel = showConfirmationFeedback
     ? `Transaction confirmed. ${openActivityLabel}`
     : openActivityLabel
-  const statusSummary = needsAttentionCount > 0
+  const statusSummary = attentionSummaryCount > 0
     ? {
-        title: `${actionCountLabel(needsAttentionCount)} ${needsAttentionCount === 1 ? 'needs' : 'need'} attention`,
-        description: `Review the highlighted ${needsAttentionCount === 1 ? 'action' : 'actions'} before retrying.${inProgressCount > 0 ? ` ${actionCountLabel(inProgressCount)} still in progress.` : ''}`,
+        title: `${actionCountLabel(attentionSummaryCount)} ${attentionSummaryCount === 1 ? 'needs' : 'need'} attention`,
+        description: `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.${inProgressCount > 0 ? ` ${actionCountLabel(inProgressCount)} still in progress.` : ''}`,
         tone: 'border-brand-orange/40 bg-brand-orange/10',
       }
     : inProgressCount > 0
@@ -568,7 +573,10 @@ export function SponsoredOperationHistoryButton() {
                 getSponsoredOperationAttentionRevision(operation),
             }))
           )
-          setOpenedForIdentity(identityKey)
+          setOpenedActivity({
+            identityKey,
+            attentionCount: unreviewedAttentionCount,
+          })
         }}
       >
         <span
@@ -610,9 +618,9 @@ export function SponsoredOperationHistoryButton() {
       </button>
 
       <Modal
-        isOpen={openedForIdentity === identityKey}
+        isOpen={openedActivity?.identityKey === identityKey}
         onClose={() => {
-          setOpenedForIdentity(null)
+          setOpenedActivity(null)
         }}
         title="Trading Account activity"
         size="xl"

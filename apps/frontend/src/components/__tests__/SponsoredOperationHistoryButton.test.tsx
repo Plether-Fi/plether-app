@@ -317,10 +317,19 @@ describe('SponsoredOperationHistoryButton', () => {
       useSponsoredOperationStore.getState().operations[0]
         ?.acknowledgedAttentionRevision
     ).toBe(1)
+    expect(screen.getByText('1 action needs attention')).toBeInTheDocument()
     expect(screen.getByText('Needs attention')).toBeInTheDocument()
     expect(screen.getByRole('button', {
       name: 'Open Trading Account activity.',
     })).toHaveTextContent('history')
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    }))
+    expect(screen.queryByText('1 action needs attention'))
+      .not.toBeInTheDocument()
+    expect(screen.getByText('Needs attention')).toBeInTheDocument()
 
     act(() => {
       useSponsoredOperationStore.getState().recordTransactionHash(
@@ -354,6 +363,7 @@ describe('SponsoredOperationHistoryButton', () => {
       useSponsoredOperationStore.getState().operations[0]
         ?.acknowledgedAttentionRevision
     ).toBe(2)
+    expect(screen.getByText('1 action needs attention')).toBeInTheDocument()
     expect(screen.getByRole('button', {
       name: 'Open Trading Account activity.',
     })).toHaveTextContent('history')
