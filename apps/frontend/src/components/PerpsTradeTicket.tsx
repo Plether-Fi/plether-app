@@ -1210,14 +1210,60 @@ function SuccessStateCard({
   description: string
   celebrate?: boolean
 }) {
-  return (
-    <div className="relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
-      {celebrate ? <PerpsFinalizationConfetti /> : null}
+  const [celebrationKey, setCelebrationKey] = useState(0)
+  const [celebrationOrigin, setCelebrationOrigin] = useState<{
+    x: number
+    y: number
+    stageWidth: number
+    stageHeight: number
+    direction: 'up' | 'down'
+  }>()
+  const className = 'relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center'
+  const content = (
+    <>
+      {celebrate ? <PerpsFinalizationConfetti key={celebrationKey} origin={celebrationOrigin} /> : null}
       <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
       <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
       <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+    </>
+  )
+
+  if (celebrate) {
+    return (
+      <button
+        type="button"
+        className={`${className} w-full cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-positive`}
+        aria-label="Replay celebration confetti"
+        onClick={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect()
+          const x = event.detail === 0
+            ? bounds.width / 2
+            : Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width)
+          const y = event.detail === 0
+            ? bounds.height / 2
+            : Math.min(Math.max(event.clientY - bounds.top, 0), bounds.height)
+          const direction = y > bounds.height / 2 ? 'up' : 'down'
+
+          setCelebrationOrigin({
+            x,
+            y,
+            stageWidth: Math.max(bounds.width, 1),
+            stageHeight: Math.max(direction === 'up' ? y : bounds.height - y, 1),
+            direction,
+          })
+          setCelebrationKey((currentKey) => currentKey + 1)
+        }}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   )
 }

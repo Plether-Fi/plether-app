@@ -146,7 +146,36 @@ describe('perps lifecycle labels', () => {
     expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Contract notional').length).toBeGreaterThan(0)
     expect(screen.getByText('Trade executed at 1.0089 USDC')).toBeInTheDocument()
-    expect(document.querySelector('[data-finalization-confetti]')).toHaveAttribute('aria-hidden', 'true')
+    const initialConfetti = document.querySelector('[data-finalization-confetti]')
+    expect(initialConfetti).toHaveAttribute('aria-hidden', 'true')
+
+    const celebrationCard = screen.getByRole('button', { name: 'Replay celebration confetti' })
+    vi.spyOn(celebrationCard, 'getBoundingClientRect').mockReturnValue({
+      bottom: 218,
+      height: 208,
+      left: 20,
+      right: 420,
+      top: 10,
+      width: 400,
+      x: 20,
+      y: 10,
+      toJSON: () => ({}),
+    })
+
+    fireEvent.click(celebrationCard, { clientX: 140, clientY: 90, detail: 1 })
+
+    const replayedConfetti = document.querySelector('[data-finalization-confetti]')
+    expect(replayedConfetti).toHaveAttribute('aria-hidden', 'true')
+    expect(replayedConfetti).not.toBe(initialConfetti)
+    expect(document.querySelector('[data-confetti-origin]')).toHaveStyle({ left: '120px', top: '80px' })
+
+    fireEvent.click(celebrationCard, { clientX: 360, clientY: 210, detail: 1 })
+
+    expect(document.querySelector('[data-confetti-origin]')).toHaveStyle({
+      left: '340px',
+      top: '200px',
+      transform: 'rotate(180deg)',
+    })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const finalResultQueries = within(finalResult!)
