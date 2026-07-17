@@ -1,5 +1,5 @@
-import { fireEvent, render, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { SponsoredOperation, SponsoredOperationStatus } from '../../perps-aa'
 
@@ -88,7 +88,11 @@ describe('SponsoredOperationHistoryButton', () => {
     })
   })
 
-  it('counts confirmed operations and shows current-account history newest first', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('prioritizes actions that need attention over in-progress and recent activity', () => {
     useSponsoredOperationStore.setState({
       operations: [
         operation({
@@ -115,7 +119,7 @@ describe('SponsoredOperationHistoryButton', () => {
         operation({
           id: 'other-account',
           action: 'settle-claim',
-          status: 'confirmed',
+          status: 'failed',
           updatedAt: 600,
           accountAddress: OTHER_ACCOUNT,
         }),
@@ -132,19 +136,37 @@ describe('SponsoredOperationHistoryButton', () => {
 
     render(<SponsoredOperationHistoryButton />)
 
-    const badge = screen.getByRole('button', {
-      name: /1 completed sponsored transaction; 1 pending; 1 failed/i,
+    const activityButton = screen.getByRole('button', {
+      name: /open trading account activity\. 1 action needs attention; 1 action in progress/i,
     })
-    expect(badge).toHaveTextContent('1')
+    expect(activityButton).not.toHaveTextContent('1')
 
-    fireEvent.click(badge)
+    fireEvent.click(activityButton)
+
+    expect(
+      useSponsoredOperationStore.getState().operations
+        .find((item) => item.id === 'failed')?.acknowledgedAttentionRevision
+    ).toBe(1)
+    expect(
+      useSponsoredOperationStore.getState().operations
+        .find((item) => item.id === 'other-account')
+        ?.acknowledgedAttentionRevision
+    ).toBeUndefined()
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action in progress.',
+    })).toHaveTextContent('progress_activity')
 
     const dialog = screen.getByRole('dialog')
     const historyItems = dialog.querySelectorAll('[data-operation-id]')
     expect(historyItems).toHaveLength(3)
-    expect(historyItems[0]).toHaveAttribute('data-operation-id', 'pending')
-    expect(historyItems[1]).toHaveAttribute('data-operation-id', 'confirmed')
-    expect(historyItems[2]).toHaveAttribute('data-operation-id', 'failed')
+    expect(historyItems[0]).toHaveAttribute('data-operation-id', 'failed')
+    expect(historyItems[1]).toHaveAttribute('data-operation-id', 'pending')
+    expect(historyItems[2]).toHaveAttribute('data-operation-id', 'confirmed')
+    expect(within(dialog).getByText('Needs attention')).toBeInTheDocument()
+    expect(within(dialog).getByText('In progress')).toBeInTheDocument()
+    expect(within(dialog).getByText('Recent activity')).toBeInTheDocument()
+
+    fireEvent.click(within(dialog).getByText('Account details'))
     expect(
       within(dialog).getByRole('button', {
         name: 'Copy Owner Wallet address',
@@ -155,6 +177,22 @@ describe('SponsoredOperationHistoryButton', () => {
         name: 'Copy Trading Account address',
       })
     ).toBeInTheDocument()
+    expect(
+      within(dialog).getByRole('link', {
+        name: 'View Owner Wallet on Blockscout',
+      })
+    ).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/address/${identityMocks.ownerAddress}`
+    )
+    expect(
+      within(dialog).getByRole('link', {
+        name: 'View Trading Account on Blockscout',
+      })
+    ).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/address/${identityMocks.accountAddress}`
+    )
     expect(within(dialog).getByText('Commit order')).toBeInTheDocument()
     expect(within(dialog).getByText('Deposit margin')).toBeInTheDocument()
     expect(within(dialog).getByText('Withdraw margin')).toBeInTheDocument()
@@ -162,8 +200,20 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(within(dialog).queryByText('Add position margin')).not.toBeInTheDocument()
     expect(within(dialog).getByText(/not eligible for sponsored network gas/i))
       .toBeInTheDocument()
+
+    const confirmedItem = dialog.querySelector('[data-operation-id="confirmed"]')
+    expect(confirmedItem).not.toBeNull()
     expect(
-      within(dialog).getByRole('link', {
+      within(confirmedItem as HTMLElement).getByRole('link', {
+        name: 'View transaction on Blockscout',
+      })
+    ).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`
+    )
+    fireEvent.click(within(confirmedItem as HTMLElement).getByText('Technical details'))
+    expect(
+      within(confirmedItem as HTMLElement).getByRole('link', {
         name: 'Open UserOperation in block explorer',
       })
     ).toHaveAttribute(
@@ -171,7 +221,7 @@ describe('SponsoredOperationHistoryButton', () => {
       `https://arbitrum-sepolia.blockscout.com/op/${USER_OPERATION_HASH}`
     )
     expect(
-      within(dialog).getByRole('link', {
+      within(confirmedItem as HTMLElement).getByRole('link', {
         name: 'Open Transaction in block explorer',
       })
     ).toHaveAttribute(
@@ -195,11 +245,11 @@ describe('SponsoredOperationHistoryButton', () => {
 
     render(<SponsoredOperationHistoryButton />)
 
-    const badge = screen.getByRole('button', {
-      name: /0 completed sponsored transactions; 1 pending; 0 failed/i,
+    const activityButton = screen.getByRole('button', {
+      name: /open trading account activity\. 1 action in progress/i,
     })
-    expect(badge).toHaveTextContent('0')
-    fireEvent.click(badge)
+    expect(activityButton).not.toHaveTextContent('0')
+    fireEvent.click(activityButton)
 
     fireEvent.click(
       within(screen.getByRole('dialog')).getByRole('button', {
@@ -210,5 +260,232 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(useSponsoredOperationStore.getState().operations[0]?.status)
       .toBe('cancelled')
     expect(screen.getByText('Cancelled locally')).toBeInTheDocument()
+  })
+
+  it('does not surface a completed count or redundant up-to-date message', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'confirmed',
+          action: 'deposit',
+          status: 'confirmed',
+          updatedAt: 300,
+          transactionHash: TRANSACTION_HASH,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+
+    const activityButton = screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })
+    expect(activityButton).not.toHaveTextContent('1')
+    expect(activityButton).toHaveAttribute('title', 'Trading Account activity')
+    expect(activityButton).toHaveClass('rounded-full')
+
+    fireEvent.click(activityButton)
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).queryByText('You’re up to date')).not.toBeInTheDocument()
+    expect(within(dialog).getByText('Recent activity')).toBeInTheDocument()
+  })
+
+  it('acknowledges visible failures until the operation fails again', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:00:00.000Z'))
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'failed',
+          action: 'withdraw',
+          status: 'failed',
+          updatedAt: Date.now() - 1_000,
+          reason: 'POLICY_DENIED',
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(
+      useSponsoredOperationStore.getState().operations[0]
+        ?.acknowledgedAttentionRevision
+    ).toBe(1)
+    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })).toHaveTextContent('history')
+
+    act(() => {
+      useSponsoredOperationStore.getState().recordTransactionHash(
+        'failed',
+        TRANSACTION_HASH
+      )
+    })
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })).toHaveTextContent('history')
+
+    act(() => {
+      useSponsoredOperationStore.getState().transition('failed', 'building')
+      useSponsoredOperationStore.getState().failOperation({
+        id: 'failed',
+        reason: 'POLICY_DENIED',
+        retryable: false,
+      })
+    })
+
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    })).toHaveTextContent('warning')
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+    expect(
+      useSponsoredOperationStore.getState().operations[0]
+        ?.acknowledgedAttentionRevision
+    ).toBe(2)
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })).toHaveTextContent('history')
+  })
+
+  it('shows a green confirmation check for five seconds, then restores history', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:00:00.000Z'))
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'deposit',
+          action: 'deposit',
+          status: 'confirming',
+          updatedAt: Date.now() - 1_000,
+          userOperationHash: USER_OPERATION_HASH,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+
+    act(() => {
+      useSponsoredOperationStore.getState().transition('deposit', 'confirmed')
+    })
+
+    const confirmationButton = screen.getByRole('button', {
+      name: 'Transaction confirmed. Open Trading Account activity.',
+    })
+    expect(confirmationButton).toHaveAttribute('title', 'Transaction confirmed')
+    expect(confirmationButton).toHaveClass(
+      'rounded-full',
+      'border-positive',
+      'text-positive'
+    )
+    expect(screen.getByTestId('sponsored-operation-success-icon'))
+      .toHaveClass('sponsored-activity-success-icon-enter')
+    expect(
+      confirmationButton.querySelector('.sponsored-activity-success-ring')
+    ).toBeInTheDocument()
+
+    fireEvent.click(confirmationButton)
+    expect(screen.getByRole('link', {
+      name: 'Track operation on Blockscout',
+    })).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/op/${USER_OPERATION_HASH}`
+    )
+    fireEvent.keyDown(document, { key: 'Escape' })
+
+    act(() => {
+      vi.advanceTimersByTime(4_000)
+      useSponsoredOperationStore
+        .getState()
+        .recordTransactionHash('deposit', TRANSACTION_HASH)
+      vi.advanceTimersByTime(999)
+    })
+    expect(screen.getByRole('button', {
+      name: 'Transaction confirmed. Open Trading Account activity.',
+    })).toContainElement(screen.getByTestId('sponsored-operation-success-icon'))
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+
+    expect(screen.getByTestId('sponsored-operation-success-icon'))
+      .toHaveClass('sponsored-activity-success-icon-exit')
+    expect(within(confirmationButton).getByText('history'))
+      .toHaveClass('sponsored-activity-base-icon-return')
+
+    act(() => {
+      vi.advanceTimersByTime(240)
+    })
+
+    const historyButton = screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })
+    expect(historyButton).toHaveAttribute('title', 'Trading Account activity')
+    expect(historyButton).toHaveTextContent('history')
+  })
+
+  it('restarts the five-second confirmation window for the next success', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:00:00.000Z'))
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'deposit',
+          action: 'deposit',
+          status: 'confirming',
+          updatedAt: Date.now() - 2_000,
+        }),
+        operation({
+          id: 'order',
+          action: 'place-order',
+          status: 'confirming',
+          updatedAt: Date.now() - 1_000,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+
+    act(() => {
+      useSponsoredOperationStore.getState().transition('deposit', 'confirmed')
+    })
+    act(() => {
+      vi.advanceTimersByTime(4_000)
+    })
+    act(() => {
+      useSponsoredOperationStore.getState().transition('order', 'confirmed')
+    })
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    expect(screen.getByRole('button', {
+      name: 'Transaction confirmed. Open Trading Account activity.',
+    })).toContainElement(screen.getByTestId('sponsored-operation-success-icon'))
+
+    act(() => {
+      vi.advanceTimersByTime(4_000)
+    })
+    expect(screen.getByTestId('sponsored-operation-success-icon'))
+      .toHaveClass('sponsored-activity-success-icon-exit')
+
+    act(() => {
+      vi.advanceTimersByTime(240)
+    })
+    expect(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    })).toHaveTextContent('history')
   })
 })

@@ -128,6 +128,16 @@ const pendingOperations = [
   }),
 ]
 
+const successFeedbackOperations = [
+  operation({
+    id: 'deposit-success-feedback',
+    action: 'deposit',
+    status: 'confirming',
+    minutesAgo: 0,
+    userOperationHash: hash('6'),
+  }),
+]
+
 const failedOperations = [
   operation({
     id: 'withdraw-failed',
@@ -147,8 +157,10 @@ const mixedOperations = [
 
 function WalletHeaderPreview({
   operations,
+  confirmOperationId,
 }: {
   operations: SponsoredOperation[]
+  confirmOperationId?: string
 }) {
   useLayoutEffect(() => {
     const previousOperations =
@@ -161,13 +173,24 @@ function WalletHeaderPreview({
       activeLanes: {},
     })
 
+    const confirmationTimeoutId = confirmOperationId
+      ? window.setTimeout(() => {
+          useSponsoredOperationStore
+            .getState()
+            .transition(confirmOperationId, 'confirmed')
+        }, 900)
+      : null
+
     return () => {
+      if (confirmationTimeoutId !== null) {
+        window.clearTimeout(confirmationTimeoutId)
+      }
       useSponsoredOperationStore.setState({
         operations: previousOperations,
         activeLanes: previousActiveLanes,
       })
     }
-  }, [operations])
+  }, [confirmOperationId, operations])
 
   return (
     <PerpsIdentityContext.Provider value={IDENTITY}>
@@ -191,7 +214,7 @@ function WalletHeaderPreview({
 }
 
 const meta: Meta<typeof SponsoredOperationHistoryButton> = {
-  title: 'Perps/Sponsored Transaction History',
+  title: 'Perps/Trading Account Activity',
   component: SponsoredOperationHistoryButton,
   parameters: {
     layout: 'fullscreen',
@@ -209,6 +232,29 @@ export const Confirmed: Story = {
   render: () => (
     <WalletHeaderPreview operations={confirmedOperations} />
   ),
+}
+
+export const SuccessFeedback: Story = {
+  name: 'Success feedback (5 seconds)',
+  render: () => (
+    <WalletHeaderPreview
+      operations={successFeedbackOperations}
+      confirmOperationId="deposit-success-feedback"
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const confirmationButton = await canvas.findByRole('button', {
+      name: 'Transaction confirmed. Open Trading Account activity.',
+    }, { timeout: 2_500 })
+
+    expect(confirmationButton).toHaveClass('rounded-full')
+    expect(
+      within(confirmationButton).getByTestId(
+        'sponsored-operation-success-icon'
+      )
+    ).toBeVisible()
+  },
 }
 
 export const Pending: Story = {
@@ -237,7 +283,7 @@ export const ModalOpen: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(
       await canvas.findByRole('button', {
-        name: /2 completed sponsored transactions; 1 pending; 1 failed/i,
+        name: /open trading account activity\. 1 action needs attention; 1 action in progress/i,
       })
     )
 

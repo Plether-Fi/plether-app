@@ -37,6 +37,8 @@ export interface SponsoredOperation {
   createdAt: number
   updatedAt: number
   statusTimestamps: Partial<Record<SponsoredOperationStatus, number>>
+  attentionRevision?: number
+  acknowledgedAttentionRevision?: number
 }
 
 export class SponsoredOperationLockedError extends Error {
@@ -70,6 +72,10 @@ interface SponsoredOperationState {
   recordUserOperationHash: (id: string, hash: Hex) => void
   recordTransactionHash: (id: string, hash: Hex) => void
   incrementRetry: (id: string) => void
+  acknowledgeOperations: (operations: {
+    id: string
+    attentionRevision: number
+  }[]) => void
   failOperation: (input: {
     id: string
     status?: 'failed' | UserOperationTerminalStatus
@@ -114,6 +120,48 @@ export function isSponsoredOperationTerminal(
     'replaced',
     'expired',
   ].includes(status)
+}
+
+export function isSponsoredOperationAttentionStatus(
+  status: SponsoredOperationStatus
+): boolean {
+  return [
+    'receipt-timeout',
+    'failed',
+    'execution-reverted',
+    'dropped',
+    'expired',
+  ].includes(status)
+}
+
+export function getSponsoredOperationAttentionRevision(
+  operation: SponsoredOperation
+): number {
+  return operation.attentionRevision ??
+    (isSponsoredOperationAttentionStatus(operation.status) ? 1 : 0)
+}
+
+function transitionAttentionRevision(
+  operation: SponsoredOperation,
+  nextStatus: SponsoredOperationStatus
+): number {
+  const currentRevision = getSponsoredOperationAttentionRevision(operation)
+  const enteredNewAttentionStatus =
+    isSponsoredOperationAttentionStatus(nextStatus) &&
+    (!isSponsoredOperationAttentionStatus(operation.status) ||
+      operation.status !== nextStatus)
+
+  return enteredNewAttentionStatus ? currentRevision + 1 : currentRevision
+}
+
+function failureAttentionRevision(
+  operation: SponsoredOperation,
+  nextStatus: SponsoredOperationStatus
+): number {
+  const currentRevision = getSponsoredOperationAttentionRevision(operation)
+  return isSponsoredOperationAttentionStatus(nextStatus)
+    ? currentRevision + 1
+    : currentRevision
 }
 
 export function canCancelSponsoredOperationLocally(
@@ -167,6 +215,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             retryCount: 0,
             createdAt: now,
             updatedAt: now,
+            attentionRevision: 0,
             statusTimestamps: {
               building: now,
             },
@@ -196,6 +245,10 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                 status === 'confirming' ||
                 status === 'confirmed',
               updatedAt: now,
+              attentionRevision: transitionAttentionRevision(
+                operation,
+                status
+              ),
               statusTimestamps: {
                 ...operation.statusTimestamps,
                 [status]: now,
@@ -237,6 +290,37 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           }))
         },
 
+        acknowledgeOperations: (operations) => {
+          if (operations.length === 0) return
+
+          const acknowledgements = new Map(
+            operations.map((operation) => [
+              operation.id,
+              operation.attentionRevision,
+            ])
+          )
+          set((state) => ({
+            operations: state.operations.map((operation) => {
+              const acknowledgedRevision = acknowledgements.get(operation.id)
+              const currentRevision =
+                getSponsoredOperationAttentionRevision(operation)
+              if (
+                acknowledgedRevision === undefined ||
+                acknowledgedRevision !== currentRevision ||
+                !isSponsoredOperationAttentionStatus(operation.status)
+              ) {
+                return operation
+              }
+
+              return {
+                ...operation,
+                attentionRevision: currentRevision,
+                acknowledgedAttentionRevision: currentRevision,
+              }
+            }),
+          }))
+        },
+
         failOperation: ({
           id,
           status = 'failed',
@@ -253,6 +337,10 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
               retryable,
               replacementUserOperationHash,
               updatedAt: now,
+              attentionRevision: failureAttentionRevision(
+                operation,
+                status
+              ),
               statusTimestamps: {
                 ...operation.statusTimestamps,
                 [status]: now,

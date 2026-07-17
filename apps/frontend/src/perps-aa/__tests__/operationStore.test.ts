@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
 import {
   cancelSponsoredOperationRequest,
@@ -27,6 +27,10 @@ describe('sponsored operation store', () => {
       operations: [],
       activeLanes: {},
     })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
   })
 
   it('accepts sponsorship when managed preparation begins', () => {
@@ -65,6 +69,93 @@ describe('sponsored operation store', () => {
       userOperationHash: '0x1234',
       transactionHash: '0xabcd',
     })
+  })
+
+  it('acknowledges attention without changing operation recency', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-17T08:00:00.000Z'))
+    begin('operation-1')
+
+    vi.advanceTimersByTime(1_000)
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      reason: 'POLICY_DENIED',
+      retryable: false,
+    })
+    const failedAt = useSponsoredOperationStore.getState().operations[0]
+      ?.updatedAt
+    const failedRevision = useSponsoredOperationStore.getState().operations[0]
+      ?.attentionRevision
+
+    vi.advanceTimersByTime(1_000)
+    useSponsoredOperationStore.getState().acknowledgeOperations([{
+      id: 'operation-1',
+      attentionRevision: failedRevision ?? 0,
+    }])
+    const acknowledgedOperation = useSponsoredOperationStore.getState()
+      .operations[0]
+
+    expect(acknowledgedOperation?.acknowledgedAttentionRevision).toBe(1)
+    expect(acknowledgedOperation?.updatedAt).toBe(failedAt)
+
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      '0x1234'
+    )
+    useSponsoredOperationStore.getState().recordTransactionHash(
+      'operation-1',
+      '0xabcd'
+    )
+    useSponsoredOperationStore.getState().incrementRetry('operation-1')
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        attentionRevision: 1,
+        acknowledgedAttentionRevision: 1,
+      })
+
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      reason: 'POLICY_DENIED',
+      retryable: false,
+    })
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        attentionRevision: 2,
+        acknowledgedAttentionRevision: 1,
+        updatedAt: Date.now(),
+      })
+
+    useSponsoredOperationStore.getState().acknowledgeOperations([{
+      id: 'operation-1',
+      attentionRevision: 1,
+    }])
+    expect(
+      useSponsoredOperationStore.getState().operations[0]
+        ?.acknowledgedAttentionRevision
+    ).toBe(1)
+  })
+
+  it('surfaces a new attention outcome after an acknowledged timeout', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: true,
+    })
+    useSponsoredOperationStore.getState().acknowledgeOperations([{
+      id: 'operation-1',
+      attentionRevision: 1,
+    }])
+
+    useSponsoredOperationStore.getState().transition('operation-1', 'dropped')
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'dropped',
+        attentionRevision: 2,
+        acknowledgedAttentionRevision: 1,
+      })
   })
 
   it('does not locally cancel an operation once submission has started', () => {
