@@ -187,13 +187,13 @@ export function Tooltip({
             {docsLink ? (
               <a
                 href={docsLink.href}
-                aria-label={`Read: "${docsLink.title}"`}
+                aria-label={`Read: ${docsLink.title}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-2 inline-block cursor-pointer font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
               >
                 <span>Read: </span>
-                <span className="italic">{`"${docsLink.title}"`}</span>
+                <span className="italic">{docsLink.title}</span>
               </a>
             ) : null}
           </div>,

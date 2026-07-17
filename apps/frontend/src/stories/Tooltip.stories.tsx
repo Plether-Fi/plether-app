@@ -95,7 +95,7 @@ export const InfoTooltipExample: Story = {
     const trigger = canvas.getByLabelText('More information')
 
     await userEvent.hover(trigger)
-    const docsLink = await page.findByRole('link', { name: `Read: "${EXAMPLE_DOCS_LINK.title}"` })
+    const docsLink = await page.findByRole('link', { name: `Read: ${EXAMPLE_DOCS_LINK.title}` })
 
     expect(docsLink).toBeVisible()
     expect(docsLink).toHaveAttribute('href', EXAMPLE_DOCS_LINK.href)

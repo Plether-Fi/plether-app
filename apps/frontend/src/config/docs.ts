@@ -6,8 +6,8 @@ export const DOCS_LINKS = {
     title: '“Pool liquidity” is not total LP capital',
   },
   marketCostOfCarry: {
-    href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#two-meanings-of-cost-of-carry`,
-    title: 'Two meanings of “Cost of carry”',
+    href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#cost-of-carry`,
+    title: 'Cost of carry',
   },
   entryNotional: {
     href: `${DOCS_BASE_URL}/trading-on-plether-perps/read-your-position-and-account-health#exposure-and-entry-notional`,
