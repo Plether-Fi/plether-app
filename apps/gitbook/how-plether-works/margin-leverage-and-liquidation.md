@@ -2,7 +2,7 @@
 
 Margin is assigned to a position. Risk is assessed across the account.
 
-That distinction is fundamental. The USDC shown as **Position margin** is not an isolated loss limit. Free USDC held in the same Plether account can protect the position—and losses can consume that free USDC before becoming bad debt.
+That distinction is fundamental. The USDC[^usdc] shown as **Position margin** is not an isolated loss limit. Free USDC held in the same Plether account can protect the position—and losses can consume that free USDC before becoming bad debt.
 
 The practical model is:
 
@@ -44,7 +44,7 @@ Where:
 * `D` is the displayed Plether Dollar Index price.
 * `B` is the raw foreign-currency basket price.
 
-The risk engine calculates current contract notional from the raw basket:
+The risk engine calculates current contract notional[^notional] from the raw basket:
 
 ```
 N = S × B
@@ -55,7 +55,7 @@ Where `S` is the protocol position size.
 
 This means the notional used for leverage and margin is not simply position size multiplied by the displayed index price.
 
-Directional PnL is still calculated from changes in `D`. The distinction above applies to margin and risk accounting.
+Directional PnL[^pnl] is still calculated from changes in `D`. The distinction above applies to margin and risk accounting.
 
 ### Initial margin
 
@@ -76,7 +76,7 @@ Initial requirement
   )
 ```
 
-The post-trade check includes the applicable execution fee, VPI adjustment and accrued carry. An order that appears sufficiently collateralized before costs may fail after those costs are applied.
+The post-trade check includes the applicable execution fee, VPI[^vpi] adjustment and accrued carry[^carry]. An order that appears sufficiently collateralized before costs may fail after those costs are applied.
 
 The protocol also verifies that:
 
@@ -152,7 +152,7 @@ Free USDC can therefore reduce effective account leverage without changing the l
 
 Leverage is also a snapshot. It can change because:
 
-* the oracle price changes current notional;
+* the oracle[^oracle] price changes current notional;
 * unrealized PnL changes equity;
 * carry accrues;
 * fees or VPI consume collateral;
@@ -187,7 +187,7 @@ Adding position margin can still:
 
 * lower the displayed position leverage;
 * satisfy position-level requirements for a later increase;
-* reduce the part of the position economically financed by LP capital;
+* reduce the part of the position economically financed by LP[^lp] capital;
 * reduce future carry.
 
 Plether realizes accrued carry before locking the added margin. If carry consumes part of the account’s existing position margin, the resulting increase may be smaller than a simple `current margin + added amount` estimate.
@@ -317,7 +317,7 @@ Traders should not wait until the close-only window begins to evaluate whether t
 
 ### What happens during liquidation
 
-Liquidation is permissionless. Once an account satisfies the liquidation condition, a keeper may submit a liquidation transaction.
+Liquidation is permissionless. Once an account satisfies the liquidation condition, a keeper[^keeper] may submit a liquidation transaction.
 
 There is no separate onchain margin-call state and no guaranteed grace period.
 
@@ -346,7 +346,7 @@ Once liquidation succeeds, the complete position is closed. The protocol does no
 
 Crossing the maintenance threshold therefore puts the entire position at risk.
 
-Liquidation also does not force-sell the position through an AMM or order book. It settles against the protocol oracle. One liquidation does not mechanically move the execution price for the next account, although the same oracle move may make many accounts liquidatable at once.
+Liquidation also does not force-sell the position through an AMM[^amm] or order book. It settles against the protocol oracle. One liquidation does not mechanically move the execution price for the next account, although the same oracle move may make many accounts liquidatable at once.
 
 ### A pending close does not protect the position
 
@@ -439,3 +439,13 @@ In practice:
 * **Maintenance margin** determines when full liquidation is permitted.
 
 The fixed `0.00–2.00` range makes directional liability measurable. It does not bound carry, fees or liquidation bounties, and it does not prevent liquidation before either boundary is reached.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.

@@ -2,7 +2,7 @@
 
 The **Current Position** panel shows executed exposure and price performance. The **Margin Account** shows the collateral supporting that position.
 
-Plether evaluates liquidation with account-wide collateral. Free USDC and eligible margin committed to pending orders can support an open position alongside its assigned position margin.
+Plether evaluates liquidation with account-wide collateral. Free USDC[^usdc] and eligible margin committed to pending orders can support an open position alongside its assigned position margin.
 
 A useful reading order is:
 
@@ -14,11 +14,11 @@ Before relying on a position estimate, check:
 
 * Current Plether Dollar Index mark
 * Mark timestamp
-* Live, FAD or `oracleFrozen` state
+* Live, FAD[^fad] or `oracleFrozen` state
 * Protocol degraded-mode status
 * Pending orders on the account
 
-Current PnL and health use Plether’s latest stored mark. The health calculation can still display a result when that mark is stale, so the timestamp and oracle state matter.
+Current PnL[^pnl] and health use Plether’s latest stored mark. The health calculation can still display a result when that mark is stale, so the timestamp and oracle[^oracle] state matter.
 
 A new eligible observation may change PnL, maintenance margin and liquidation status.
 
@@ -94,7 +94,7 @@ Entry notional
 = q × Bentry
 ```
 
-Displayed exposure follows the public LONG USD and SHORT USD view. Contract notional is used for maintenance margin, leverage, execution fees and liquidation-bounty calculations.
+Displayed exposure follows the public LONG USD and SHORT USD view. Contract notional[^notional] is used for maintenance margin, leverage, execution fees and liquidation-bounty calculations.
 
 Entry notional stays unchanged between size-changing executions. An increase recalculates the average entry price. A partial reduction lowers the remaining entry notional proportionally while leaving the average entry price unchanged.
 
@@ -129,7 +129,7 @@ It is used to estimate:
 * Current liquidation status
 * Withdrawal headroom
 
-The displayed mark is a valuation reference. Order execution occurs later through the FIFO queue and uses the eligible execution-time oracle observation.
+The displayed mark is a valuation reference. Order execution occurs later through the FIFO[^fifo] queue and uses the eligible execution-time oracle observation.
 
 Live and FAD-only executions may include the adverse Pyth confidence adjustment. Voluntary closes during `oracleFrozen` use the validated unshifted price and charge the separate frozen-close spread.
 
@@ -139,9 +139,9 @@ Unrealized PnL reflects price movement between entry and the current mark.
 
 It excludes:
 
-* Pending carry
+* Pending carry[^carry]
 * A future close execution fee
-* Future close VPI
+* Future close VPI[^vpi]
 * The frozen-close spread
 * The execution reward
 * A potential liquidation bounty
@@ -200,7 +200,7 @@ Adding position margin:
 
 * Leaves position size unchanged
 * Reduces displayed position leverage
-* Reduces the LP-backed carry base
+* Reduces the LP-backed[^lp] carry base
 * Can lower future carry accrual
 
 This action reclassifies USDC already held in the account. Free USDC already contributes to account-wide liquidation health, so reclassification generally leaves immediate reachable collateral unchanged. Carry may be checkpointed during the transaction.
@@ -429,7 +429,7 @@ Liquidatable when
 net account equity ≤ maintenance margin
 ```
 
-There is no grace period after the condition is reached. An eligible keeper can submit a liquidation.
+There is no grace period after the condition is reached. An eligible keeper[^keeper] can submit a liquidation.
 
 The absolute buffer is:
 
@@ -627,3 +627,14 @@ The separate `250 USDC` trader claim does not enter these calculations. Once set
 8. Account for continued exposure while a close is pending.
 9. Deposit additional USDC or reduce exposure before reaching the maintenance boundary.
 10. Recheck the account after every order reaches a terminal state.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

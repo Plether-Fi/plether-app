@@ -1,8 +1,8 @@
 # How Plether works in 5 minutes
 
-> **Traders take a view on the dollar. LPs underwrite it. Plether keeps the obligation measurable and accounts for everything in USDC.**
+> **Traders take a view on the dollar. LPs[^lp] underwrite it. Plether keeps the obligation measurable and accounts for everything in USDC[^usdc].**
 
-Plether is an oracle-priced perpetual market, not an order book.
+Plether is an oracle-priced[^oracle] perpetual market, not an order book.
 
 Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against a USDC liquidity pool called the **HousePool**.
 
@@ -24,7 +24,7 @@ Plether derives dollar exposure from six major currencies:
 * Swedish krona
 * Swiss franc
 
-Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired weights to produce a transparent basket-derived market.
+Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired[^dxy] weights to produce a transparent basket-derived market.
 
 It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
 
@@ -64,9 +64,9 @@ Instead:
 1. The owner wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
 2. Required margin and an execution reward are reserved.
 3. The order enters a global first-in, first-out queue.
-4. A permissionless keeper supplies the required Pyth data.
-5. While the FX market is live, execution uses the first eligible oracle update published after the order was committed.
-6. The protocol applies the active confidence policy, VPI and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
+4. A permissionless keeper[^keeper] supplies the required Pyth data.
+5. While the FX[^fx] market is live, execution uses the first eligible oracle update published after the order was committed.
+6. The protocol applies the active confidence policy, VPI[^vpi] and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
 7. The position executes or the order fails according to protocol rules.
 
 The trader cannot cancel an order after commitment.
@@ -100,7 +100,7 @@ VPI changes the trade’s USDC economics. It does not change the oracle executio
 
 Plether does not transfer funding payments between LONG and SHORT traders.
 
-Carry is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
+Carry[^carry] is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
 
 Both LONG USD and SHORT USD positions can pay carry simultaneously. Carry can also continue accruing while the FX oracle is stale or frozen.
 
@@ -114,7 +114,7 @@ Available collateral pays the trading loss and liquidation bounty. Any positive 
 
 ### 5. LPs provide the counterparty capital
 
-The HousePool holds the USDC that backs trader payouts. LPs enter through two tranches with different positions in the loss waterfall.
+The HousePool holds the USDC that backs trader payouts. LPs enter through two tranches[^tranche] with different positions in the loss waterfall.
 
 | Tranche    | Return profile                                      | Loss position                                 |
 | ---------- | --------------------------------------------------- | --------------------------------------------- |
@@ -181,3 +181,13 @@ Frozen-market execution prioritizes risk reduction over normal live-price guaran
 * [**Margin and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md)
 * [**Market states and closures**](../how-plether-works/market-states-and-oracle-closures.md)
 * [**Risk and security**](risks-you-should-understand-first.md)
+
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.

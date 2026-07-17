@@ -4,7 +4,7 @@ An action can fail before an order exists or after a confirmed order commitment.
 
 ![Two-lane flowchart separating sponsored submission states from delayed-order execution and failure outcomes.](../.gitbook/assets/diagrams/sponsorship-vs-order-failure-lifecycles.svg)
 
-The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
+The sponsored operation is **Confirmed** when the commitment call succeeds onchain and creates an order ID. The order then enters Plether’s global FIFO[^fifo] queue with its own **Pending** status. Margin and execution-reward reservations become active while the requested position change waits for execution.
 
 A **Failed** order has reached a terminal state. The same order cannot execute later.
 
@@ -27,7 +27,7 @@ Committed orders cannot be cancelled, resized or given a new acceptable price.
 | **Expired / Cleaned up** in Order History | No longer active            | The expired order has been terminally removed                            |
 | **Executed**                              | No longer active            | The requested position change completed                                  |
 
-A confirmed UserOperation or transaction does not always mean the trade executed. A commitment only creates the order, and a later finalization transaction can confirm while emitting `OrderFailed`.
+A confirmed UserOperation[^useroperation] or transaction does not always mean the trade executed. A commitment only creates the order, and a later finalization transaction can confirm while emitting `OrderFailed`.
 
 Check **Order History** for the terminal result.
 
@@ -42,7 +42,7 @@ A sponsored smart-account action can expose two different identifiers:
 | **UserOperation hash** | The signed smart-account operation sent to the bundler; it can exist before any onchain transaction includes it     |
 | **Transaction hash**   | The onchain transaction submitted by the bundler; it can contain one or more UserOperations                         |
 
-Use the UserOperation hash to check sponsorship and bundler status. Once included, its receipt should identify the transaction hash. Use the transaction hash to inspect the block, EntryPoint events and Plether contract events.
+Use the UserOperation hash to check sponsorship and bundler[^bundler] status. Once included, its receipt should identify the transaction hash. Use the transaction hash to inspect the block, EntryPoint events and Plether contract events.
 
 A UserOperation hash is not interchangeable with a transaction hash. A dropped UserOperation may never receive a transaction hash. Conversely, a confirmed bundler transaction does not by itself prove that the specific UserOperation’s inner Plether call succeeded.
 
@@ -58,9 +58,9 @@ For an order commitment, the strongest confirmation is:
 2. If included, open the linked transaction hash and check whether the commitment call succeeded.
 3. Find the order ID under **Open Orders**.
 4. Check its expiry countdown.
-5. Check whether the market is live, FAD-only or `oracleFrozen`.
-6. Read the latest finalization or oracle message.
-7. Wait for automatic keeper processing.
+5. Check whether the market is live, FAD-only[^fad] or `oracleFrozen`.
+6. Read the latest finalization or oracle[^oracle] message.
+7. Wait for automatic keeper[^keeper] processing.
 8. Use **Finalize Trade** when manual finalization becomes available.
 9. If the order has expired, use **Clean Up**.
 10. If Order History shows a terminal failure, request a new preview and create a new order.
@@ -196,7 +196,7 @@ It can execute if risk-increasing trading resumes before expiry. Otherwise, it m
 | `oracleFrozen`                     | Blocked and remains Pending               | Eligible under frozen-market rules        |
 | Frozen data beyond its allowed age | Blocked                                   | Waits for eligible data                   |
 
-A voluntary frozen close uses the validated unshifted oracle price, retains slippage and normal signed VPI, and pays the separate frozen-close spread.
+A voluntary frozen close uses the validated unshifted oracle price, retains slippage and normal signed VPI[^vpi], and pays the separate frozen-close spread.
 
 #### A finalization attempt was too early
 
@@ -214,7 +214,7 @@ Retry with a higher gas limit. The order and its reservations remain unchanged.
 
 A confirmed commitment still requires a keeper or another account to submit the finalization transaction.
 
-RPC interruptions, congestion, keeper downtime and delayed Pyth caching can extend the wait.
+RPC[^rpc] interruptions, congestion, keeper downtime and delayed Pyth caching can extend the wait.
 
 The trade modal gives automatic finalization a short grace period. It then exposes **Finalize Trade**.
 
@@ -231,9 +231,9 @@ The finalizer pays:
 * Network gas
 * The required Pyth update fee in native ETH
 
-The reserved USDC execution reward is credited to the finalizing address’s Margin Account when the order reaches a terminal state.
+The reserved USDC[^usdc] execution reward is credited to the finalizing address’s Margin Account when the order reaches a terminal state.
 
-If the finalizing address is the same Trading Account that owns the order, the reward is credited back to that Trading Account’s Margin Account. A separate owner EOA is a different address and therefore a different Plether account. A trader who explicitly chooses an unsponsored manual-finalization route pays that route’s network gas and Pyth update fee; normal sponsored order commitment does not require owner-wallet ETH.
+If the finalizing address is the same Trading Account that owns the order, the reward is credited back to that Trading Account’s Margin Account. A separate owner EOA[^eoa] is a different address and therefore a different Plether account. A trader who explicitly chooses an unsponsored manual-finalization route pays that route’s network gas and Pyth update fee; normal sponsored order commitment does not require owner-wallet ETH.
 
 The current Open Orders panel provides monitoring and expired-order cleanup. Manual finalization is available through the active trade modal. Closing or reloading that modal may leave keeper processing as the remaining path until expiry.
 
@@ -281,7 +281,7 @@ The execution reward:
 * Stops contributing to account health
 * Remains reserved for terminal processing
 
-An existing position keeps its current size, entry price, PnL and carry exposure until the increase executes.
+An existing position keeps its current size, entry price, PnL[^pnl] and carry[^carry] exposure until the increase executes.
 
 #### Reduce or close
 
@@ -381,7 +381,7 @@ An open or increase can be rejected because:
 * The resulting position is below minimum size.
 * Fees, VPI or accrued carry drain the usable margin.
 * Initial margin is insufficient.
-* Current skew exceeds the admitted limit.
+* Current skew[^skew] exceeds the admitted limit.
 * HousePool solvency capacity is insufficient.
 * The protocol entered degraded mode.
 * Earlier terminal settlement consumed margin reserved for the order.
@@ -508,3 +508,17 @@ Open Orders are read from onchain state, while Order History is indexed separate
 8. Set a new acceptable price.
 9. Confirm the new execution reward.
 10. Monitor the replacement until it reaches a terminal state.
+
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^eoa]: Externally owned account, a conventional blockchain account controlled by a private key.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.

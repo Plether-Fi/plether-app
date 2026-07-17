@@ -25,7 +25,7 @@ A same-direction increase updates the position’s:
 * Leverage
 * Liquidation price
 * Maximum modeled payout
-* Future carry basis
+* Future carry[^carry] basis
 
 Changing direction requires a complete close. Wait for that close to execute before submitting an order in the opposite direction.
 
@@ -42,7 +42,7 @@ Check that:
 
 New opening and increase commitments are blocked during:
 
-* FAD close-only operation
+* FAD[^fad] close-only operation
 * `oracleFrozen`
 * Degraded mode
 * Router pause
@@ -71,7 +71,7 @@ D = 2.00 − B
 
 Where:
 
-* `D` is the displayed dollar-oriented perps price.
+* `D` is the displayed dollar-oriented perps[^perps] price.
 * `B` is the raw foreign-currency basket used by protocol accounting.
 
 The application handles this conversion when building the order.
@@ -92,7 +92,7 @@ Resulting exposure
 
 The entered increase is an additional amount, rather than the intended final position size. Review **Resulting exposure** before committing.
 
-The execution price determines the added contract notional:
+The execution price determines the added contract notional[^notional]:
 
 ```
 Added contract notional
@@ -112,7 +112,7 @@ The trade ticket calculates an estimate using current market data. Execution rec
 
 ### 3. Set leverage and margin
 
-The leverage control determines how much USDC the order assigns as position margin.
+The leverage control determines how much USDC[^usdc] the order assigns as position margin.
 
 For the same exposure:
 
@@ -141,7 +141,7 @@ Resulting position margin
 − signed VPI
 ```
 
-A positive VPI is a charge. A negative VPI is a provisional rebate, so subtracting it increases resulting margin.
+A positive VPI[^vpi] is a charge. A negative VPI is a provisional rebate, so subtracting it increases resulting margin.
 
 A provisional VPI rebate remains subject to the position’s lifetime VPI rules and does not provide additional risk equity by itself.
 
@@ -182,7 +182,7 @@ The application converts this boundary into the equivalent raw-basket target use
 
 Plether checks the boundary against the execution price after:
 
-1. Selecting the eligible post-commit oracle observation
+1. Selecting the eligible post-commit oracle[^oracle] observation
 2. Applying the adverse oracle confidence adjustment
 3. Bounding the result within the `0.00–2.00` settlement range
 
@@ -226,9 +226,9 @@ Review:
 
 An invalid preview may show incomplete or zero values when validation stops before the full calculation. Follow the displayed failure reason before changing the order.
 
-The preview uses the current state. Execution runs the calculation again after earlier FIFO orders have been processed and the order’s own oracle price has been resolved.
+The preview uses the current state. Execution runs the calculation again after earlier FIFO[^fifo] orders have been processed and the order’s own oracle price has been resolved.
 
-Price, pool depth, market skew, carry and account balances can all change during that interval.
+Price, pool depth, market skew[^skew], carry and account balances can all change during that interval.
 
 ![Opening preview with complete exposure, risk, execution-limit and cost information](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--opening-preview.png)
 
@@ -320,7 +320,7 @@ The interface reports:
 
 ![Open-or-increase sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/open-increase-sponsored-submission.svg)
 
-If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no order is created. Check the operation status before retrying.
+If the wallet signature, sponsorship request or UserOperation[^useroperation] submission fails before confirmation, no order is created. Check the operation status before retrying.
 
 After the sponsored commitment confirms:
 
@@ -409,7 +409,7 @@ After execution, open the **Position** panel and review:
 * Position margin
 * Leverage
 * Liquidation price
-* Unrealized PnL
+* Unrealized PnL[^pnl]
 * Accrued VPI
 * Cost of carry
 * Remaining Available to Trade
@@ -429,7 +429,7 @@ This can produce an immediate unrealized loss after execution:
 
 The difference reflects the adverse oracle confidence adjustment shown in the trade preview.
 
-Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed borrow base.
+Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed[^lp] borrow base.
 
 ![Executed position paired with its matching Order History record](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--executed-position-and-order-history.png)
 
@@ -461,3 +461,16 @@ Carry begins on a new position after execution. An increased position starts its
 * Check the liquidation price.
 * Account for the binding FIFO commitment.
 * Monitor the order until it executes, fails or expires.
+
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
