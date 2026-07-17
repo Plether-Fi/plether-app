@@ -257,12 +257,12 @@ processLog pool cfg blockInfo txFrom logEntry =
           when (reason == 0) $
             insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
         ParsedPositionActivity kind account' side' price sizeDelta amountUsdc pnl payload ->
-          insertPerpsActivity conn (picChainId cfg) releaseRouter (activityKey logEntry kind Nothing) account'
+          insertPerpsActivity conn (picChainId cfg) releaseRouter (rlAddress logEntry) (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing (Just side') price sizeDelta amountUsdc pnl (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
         ParsedMarginActivity kind account' amount payload ->
-          insertPerpsActivity conn (picChainId cfg) releaseRouter (activityKey logEntry kind Nothing) account'
+          insertPerpsActivity conn (picChainId cfg) releaseRouter (rlAddress logEntry) (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
@@ -363,9 +363,16 @@ parseMarginAdded logEntry = do
 parseDepositWithdraw :: Text -> RpcLog -> Maybe ParsedPerpsLog
 parseDepositWithdraw kind logEntry = do
   account <- indexedAddress (rlTopics logEntry) 1
+  asset <- indexedAddress (rlTopics logEntry) 2
   let amount = wordAt (rlData logEntry) 0
+      contractAddress = normalizeHex $ rlAddress logEntry
   pure $ ParsedMarginActivity kind account amount $
-    object ["account" .= account, "amountUsdc" .= show amount]
+    object
+      [ "account" .= account
+      , "asset" .= asset
+      , "contractAddress" .= contractAddress
+      , "amountUsdc" .= show amount
+      ]
 
 parsedEventName :: ParsedPerpsLog -> Text
 parsedEventName = \case

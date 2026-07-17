@@ -8,6 +8,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
@@ -45,6 +46,13 @@ main = do
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureTestnetFaucetSchema
+          withDb pool $ \conn ->
+            ensureInsightsSchema
+              conn
+              (cfgPerpsChainId cfg)
+              (cfgPerpsOrderRouter cfg)
+              (cfgPerpsUsdc cfg)
+              (cfgPerpsMarginClearinghouse cfg)
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
                 , icDeployments = cfgDeployments cfg
@@ -102,6 +110,10 @@ main = do
           putStrLn "  GET /api/perps/pyth/cached-latest"
         Nothing -> pure ()
       putStrLn "  GET /api/perps/pyth/update?publishTime="
+      putStrLn "  GET /api/insights/v1/competitions/current"
+      putStrLn "  GET /api/insights/v1/competitions/:slug/leaderboard"
+      putStrLn "  GET /api/insights/v1/competitions/:slug/wallets/:address"
+      putStrLn "  GET /api/insights/v1/status"
       putStrLn ""
 
       client <- newClient (cfgRpcUrl cfg)

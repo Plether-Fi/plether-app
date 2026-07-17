@@ -74,7 +74,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-workers"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-workers"}]') }}
+        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_family":"plether-mainnet","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_family":"plether-mainnet-workers","service_name":"plether-workers","container_name":"plether-workers"},{"environment":"mainnet","task_family":"plether-mainnet-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_family":"plether-sepolia","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_family":"plether-sepolia-workers","service_name":"plether-workers","container_name":"plether-workers"},{"environment":"sepolia","task_family":"plether-sepolia-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials
@@ -84,14 +84,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get current task definition
+      - name: Resolve deploy target
+        id: target
+        run: |
+          SERVICE_ARN=$(
+            aws ecs describe-services \
+              --cluster plether-${{ matrix.environment }} \
+              --services ${{ matrix.service_name }} \
+              --query 'services[?status!=`INACTIVE`].serviceArn | [0]' \
+              --output text
+          )
+
+          if [ -z "$SERVICE_ARN" ] || [ "$SERVICE_ARN" = "None" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${{ matrix.service_name }} because it is not provisioned in ${{ matrix.environment }}."
+          else
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get latest active Terraform task definition
+        if: steps.target.outputs.exists == 'true'
         run: |
           aws ecs describe-task-definition \
-            --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
+            --task-definition "${{ matrix.task_family }}" \
             --query taskDefinition > task-def.json
 
       - name: Patch Sepolia task definition network
-        if: matrix.environment == 'sepolia'
+        if: steps.target.outputs.exists == 'true' && matrix.environment == 'sepolia'
         run: |
           jq \
             --arg container "${{ matrix.container_name }}" \
@@ -122,6 +141,7 @@ jobs:
           mv task-def.patched.json task-def.json
 
       - name: Update task definition image
+        if: steps.target.outputs.exists == 'true'
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
@@ -130,6 +150,7 @@ jobs:
           image: ${{ needs.build.outputs.image }}
 
       - name: Deploy to ECS
+        if: steps.target.outputs.exists == 'true'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}

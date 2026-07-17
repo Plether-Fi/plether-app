@@ -8,7 +8,7 @@ import qualified Data.ByteString
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400, status429, status500, status503)
+import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
@@ -51,6 +51,12 @@ import Plether.Handlers.History
   ( getHistory
   , getLeverageHistory
   , getLendingHistory
+  )
+import Plether.Handlers.Insights
+  ( getCompetitionLeaderboardResponse
+  , getCompetitionWalletResponse
+  , getCurrentCompetitionResponse
+  , getInsightsDataStatusResponse
   )
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
@@ -190,6 +196,59 @@ app cache client perpsClient cfg mPool manager = do
       (_, Nothing, _) -> handleError $ E.invalidAmount "principal must be a positive integer"
       (_, _, Nothing) -> handleError $ E.invalidAmount "leverage must be a positive integer"
       _ -> handleError $ E.invalidAmount "invalid parameters"
+
+  get "/api/insights/v1/competitions/current" $
+    case mPool of
+      Just pool -> liftIO (getCurrentCompetitionResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/competitions/:slug/leaderboard" $ do
+    slug <- pathParam "slug"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    mSearch <- queryParamMaybe "search"
+    case (traverse parseNonNegativeInt mLimit, traverse parseNonNegativeInt mCursor) of
+      (Just parsedLimit, Just parsedCursor) ->
+        case mPool of
+          Just pool -> do
+            result <-
+              liftIO $
+                getCompetitionLeaderboardResponse
+                  pool
+                  cfg
+                  slug
+                  mSearch
+                  (maybe 50 id parsedLimit)
+                  (maybe 0 id parsedCursor)
+            handleResult result
+          Nothing -> insightsUnavailable
+      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, Nothing) -> handleError $ E.invalidAmount "cursor must be a non-negative integer"
+
+  get "/api/insights/v1/competitions/:slug/wallets/:address" $ do
+    slug <- pathParam "slug"
+    addr <- pathParam "address"
+    mActivityLimit <- queryParamMaybe "activityLimit"
+    case traverse parseNonNegativeInt mActivityLimit of
+      Nothing -> handleError $ E.invalidAmount "activityLimit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> do
+            result <-
+              liftIO $
+                getCompetitionWalletResponse
+                  pool
+                  cfg
+                  slug
+                  addr
+                  (maybe 100 id parsedLimit)
+            handleResult result
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/status" $
+    case mPool of
+      Just pool -> liftIO (getInsightsDataStatusResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do
@@ -439,6 +498,7 @@ handleError err = do
       E.RateLimited -> status429
       E.RpcError -> status503
       E.NetworkError -> status503
+      E.NotFound -> status404
       E.InternalError -> status500
       _ -> status400
   json err
@@ -467,6 +527,18 @@ parsePositiveInt txt = do
   if value <= fromIntegral (maxBound :: Int)
     then Just $ fromInteger value
     else Nothing
+
+parseNonNegativeInt :: Text -> Maybe Int
+parseNonNegativeInt txt = do
+  value <- parseAmount txt
+  if value <= fromIntegral (maxBound :: Int)
+    then Just $ fromInteger value
+    else Nothing
+
+insightsUnavailable :: ActionM ()
+insightsUnavailable =
+  handleServiceUnavailable $
+    E.internalError "DATABASE_URL is not configured; Plether Insights is unavailable"
 
 parseHistoryCursor :: Text -> Maybe (Integer, Integer)
 parseHistoryCursor txt =

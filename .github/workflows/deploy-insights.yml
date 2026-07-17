@@ -1,0 +1,182 @@
+name: Deploy Insights
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - apps/insights/**
+      - .github/workflows/deploy-insights.yml
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-insights-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 25.2.1
+          cache: npm
+          cache-dependency-path: apps/insights/package-lock.json
+
+      - name: Pin npm
+        run: npm install -g npm@11.6.2
+
+      - name: Validate backend origin
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          node --input-type=module --eval '
+            const configuredOrigin = process.env.SEPOLIA_BACKEND_URL ?? "";
+            let origin;
+            try {
+              origin = new URL(configuredOrigin);
+            } catch {
+              origin = null;
+            }
+
+            const isHttpsOrigin =
+              configuredOrigin === configuredOrigin.trim() &&
+              origin?.protocol === "https:" &&
+              origin.username === "" &&
+              origin.password === "" &&
+              origin.pathname === "/" &&
+              origin.search === "" &&
+              origin.hash === "";
+
+            if (!isHttpsOrigin) {
+              console.error("::error title=Invalid Insights backend origin::SEPOLIA_BACKEND_URL must be an HTTPS origin without credentials, a path, query parameters, or a fragment (for example, https://api.example.com).");
+              process.exit(1);
+            }
+          '
+
+      - name: Verify Insights backend is ready
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          RESPONSE=$(curl --fail --silent --show-error \
+            --retry 3 \
+            --retry-all-errors \
+            --max-time 15 \
+            "$SEPOLIA_BACKEND_URL/api/insights/v1/status")
+
+          echo "$RESPONSE" | jq --exit-status \
+            '.data.competition.scoringVersion and .data.status' >/dev/null
+
+      - name: Install dependencies
+        working-directory: apps/insights
+        run: npm ci
+
+      - name: Lint
+        working-directory: apps/insights
+        run: npm run lint
+
+      - name: Test
+        working-directory: apps/insights
+        run: npm test
+
+      - name: Build
+        working-directory: apps/insights
+        run: npm run build
+
+      - name: Configure Pages bindings
+        working-directory: apps/insights
+        env:
+          SEPOLIA_BACKEND_URL: ${{ vars.SEPOLIA_BACKEND_URL }}
+        run: |
+          cat > wrangler.toml <<EOF
+          name = "plether-insights"
+          pages_build_output_dir = "dist"
+          compatibility_date = "2026-07-17"
+
+          [vars]
+          SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          INSIGHTS_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          EOF
+
+      - name: Ensure Pages project
+        uses: cloudflare/wrangler-action@v3
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: 4.103.0
+          command: pages project create plether-insights --production-branch=master --compatibility-date=2026-07-17
+
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          wranglerVersion: 4.103.0
+          workingDirectory: apps/insights
+          command: pages deploy dist --project-name=plether-insights --branch=master
+
+      - name: Attach custom domain
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          DOMAIN="insights.plether.com"
+          PROJECT="plether-insights"
+          API_BASE="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/pages/projects/$PROJECT/domains"
+
+          if curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/$DOMAIN" >/dev/null; then
+            echo "$DOMAIN is already attached to $PROJECT"
+            exit 0
+          fi
+
+          curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "{\"name\":\"$DOMAIN\"}" \
+            "$API_BASE"
+
+      - name: Configure DNS record
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          ZONE="plether.com"
+          DOMAIN="insights.plether.com"
+          TARGET="plether-insights.pages.dev"
+          API_BASE="https://api.cloudflare.com/client/v4"
+
+          ZONE_ID=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones?name=$ZONE" | jq -r '.result[0].id // empty')
+          test -n "$ZONE_ID"
+
+          RECORDS=$(curl --fail --silent --show-error \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "$API_BASE/zones/$ZONE_ID/dns_records?name=$DOMAIN")
+          RECORD_ID=$(echo "$RECORDS" | jq -r '.result[0].id // empty')
+          BODY=$(jq -nc --arg name "$DOMAIN" --arg content "$TARGET" \
+            '{type:"CNAME", name:$name, content:$content, ttl:1, proxied:true}')
+
+          if [ -n "$RECORD_ID" ]; then
+            curl --fail --silent --show-error \
+              --request PUT \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records/$RECORD_ID"
+          else
+            curl --fail --silent --show-error \
+              --request POST \
+              --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              --header "Content-Type: application/json" \
+              --data "$BODY" \
+              "$API_BASE/zones/$ZONE_ID/dns_records"
+          fi

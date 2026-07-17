@@ -1,7 +1,10 @@
 module Plether.Ethereum.Rpc
   ( RpcLog (..)
+  , RpcBlock (..)
   , TxReceipt (..)
   , ethGetLogs
+  , ethGetBlockByNumber
+  , ethLatestBlock
   , ethBlockTimestamp
   , ethLatestBlockTimestamp
   , ethGetTransactionCount
@@ -30,6 +33,13 @@ data RpcLog = RpcLog
   , rpcLogAddress :: Text
   , rpcLogTopics :: [ByteString]
   , rpcLogData :: ByteString
+  }
+  deriving stock (Show, Eq)
+
+data RpcBlock = RpcBlock
+  { rpcBlockNumber :: Integer
+  , rpcBlockHash :: Text
+  , rpcBlockTimestamp :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -66,11 +76,19 @@ ethGetLogs client address topics fromBlock toBlock = do
 
 ethBlockTimestamp :: EthClient -> Integer -> IO (Either RpcError Integer)
 ethBlockTimestamp client blockNum =
-  getBlockTimestamp client ("0x" <> intToHex blockNum)
+  fmap rpcBlockTimestamp <$> ethGetBlockByNumber client blockNum
 
 ethLatestBlockTimestamp :: EthClient -> IO (Either RpcError Integer)
 ethLatestBlockTimestamp client =
-  getBlockTimestamp client "latest"
+  fmap rpcBlockTimestamp <$> ethLatestBlock client
+
+ethGetBlockByNumber :: EthClient -> Integer -> IO (Either RpcError RpcBlock)
+ethGetBlockByNumber client blockNum
+  | blockNum < 0 = pure $ Left $ RpcJsonError "Block number cannot be negative"
+  | otherwise = getBlock client ("0x" <> intToHex blockNum)
+
+ethLatestBlock :: EthClient -> IO (Either RpcError RpcBlock)
+ethLatestBlock client = getBlock client "latest"
 
 ethGetTransactionCount :: EthClient -> Text -> IO (Either RpcError Integer)
 ethGetTransactionCount client address = do
@@ -123,16 +141,26 @@ ethGetTransactionReceipt client txHash = do
     Right (Object obj) -> Right $ Just $ parseReceipt obj
     Right _ -> Left $ RpcJsonError "Expected receipt object or null from eth_getTransactionReceipt"
 
-getBlockTimestamp :: EthClient -> Text -> IO (Either RpcError Integer)
-getBlockTimestamp client blockTag = do
+getBlock :: EthClient -> Text -> IO (Either RpcError RpcBlock)
+getBlock client blockTag = do
   result <- rpcCall client "eth_getBlockByNumber" (toJsonArray [String blockTag, Bool False])
   pure $ case result of
     Left err -> Left err
-    Right (Object obj) ->
-      case lookupString "timestamp" obj of
-        Just hex -> Right $ hexToInteger $ strip0x hex
-        Nothing -> Left $ RpcJsonError "Block did not include timestamp"
+    Right (Object obj) -> do
+      numberHex <- maybeToEither "Block did not include number" $ lookupString "number" obj
+      blockHash <- maybeToEither "Block did not include hash" $ lookupString "hash" obj
+      timestampHex <- maybeToEither "Block did not include timestamp" $ lookupString "timestamp" obj
+      Right $
+        RpcBlock
+          { rpcBlockNumber = hexToInteger $ strip0x numberHex
+          , rpcBlockHash = blockHash
+          , rpcBlockTimestamp = hexToInteger $ strip0x timestampHex
+          }
+    Right Null -> Left $ RpcJsonError "Block was not found"
     Right _ -> Left $ RpcJsonError "Expected block object"
+
+maybeToEither :: Text -> Maybe a -> Either RpcError a
+maybeToEither message = maybe (Left $ RpcJsonError message) Right
 
 parseReceipt :: KM.KeyMap Value -> TxReceipt
 parseReceipt obj =

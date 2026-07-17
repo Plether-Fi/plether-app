@@ -11,6 +11,7 @@ module Plether.Types.Error
   , rateLimitedWithDetails
   , internalError
   , networkError
+  , notFound
   ) where
 
 import Data.Aeson (ToJSON (..), Value, object, (.=))
@@ -28,6 +29,7 @@ data ApiErrorCode
   | RateLimited
   | InternalError
   | NetworkError
+  | NotFound
   deriving stock (Show, Eq, Generic)
 
 instance ToJSON ApiErrorCode where
@@ -39,6 +41,7 @@ instance ToJSON ApiErrorCode where
     RateLimited -> "RATE_LIMITED"
     InternalError -> "INTERNAL_ERROR"
     NetworkError -> "NETWORK_ERROR"
+    NotFound -> "NOT_FOUND"
 
 data ApiError = ApiError
   { errCode :: ApiErrorCode
@@ -94,6 +97,9 @@ internalError msg = mkError InternalError $ "Internal error: " <> msg
 
 networkError :: Text -> ApiError
 networkError msg = mkError NetworkError $ "Network error: " <> msg
+
+notFound :: Text -> ApiError
+notFound = mkError NotFound
 
 rpcErrorToApiError :: RpcError -> ApiError
 rpcErrorToApiError = \case

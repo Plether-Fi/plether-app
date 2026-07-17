@@ -42,26 +42,31 @@ main :: IO ()
 main = do
   cliArgs <- getArgs
   envArgs <- loadEnvArgs
-  let args = parseWorkerArgs envArgs cliArgs
   eConfig <- loadConfig
   case eConfig of
     Left err -> do
       putStrLn $ "Configuration error: " <> err
       putStrLn "Required: RPC_URL and DATABASE_URL. Optional: PERPS_INDEXER_RPC_URLS, PERPS_INDEXER_START_BLOCK, PERPS_INDEXER_CONFIRMATIONS."
     Right cfg ->
-      case cfgDatabaseUrl cfg of
+      let configuredAddresses =
+            defaultPerpsAddresses
+              { paOrderRouter = cfgPerpsOrderRouter cfg
+              , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
+              }
+          args = parseWorkerArgs configuredAddresses envArgs cliArgs
+       in case cfgDatabaseUrl cfg of
         Nothing ->
           putStrLn "DATABASE_URL is required for plether-perps-indexer"
         Just dbUrl -> do
           manager <- newManager tlsManagerSettings
           pool <- newDbPool dbUrl
           withDb pool ensurePerpsHistorySchema
-          let rpcUrls = fromMaybe [cfgRpcUrl cfg] (waRpcUrls args)
+          let rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
               startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
               indexerCfg =
                 PerpsIndexerConfig
                   { picRpcUrls = rpcUrls
-                  , picChainId = cfgChainId cfg
+                  , picChainId = cfgPerpsChainId cfg
                   , picAddresses = waAddresses args
                   , picStartBlock = startBlock
                   , picConfirmations = waConfirmations args
@@ -96,8 +101,8 @@ loadEnvArgs = do
   where
     readEnv name = fmap (\value -> (name, value)) <$> lookupEnv name
 
-parseWorkerArgs :: [(String, String)] -> [String] -> WorkerArgs
-parseWorkerArgs env args =
+parseWorkerArgs :: PerpsAddresses -> [(String, String)] -> [String] -> WorkerArgs
+parseWorkerArgs addressDefaults env args =
   WorkerArgs
     { waMode = parseMode args
     , waConfirmations = readFlag "--confirmations" (readEnv "PERPS_INDEXER_CONFIRMATIONS" defaultConfirmations) args
@@ -112,10 +117,10 @@ parseWorkerArgs env args =
           Just value -> Just $ splitRpcUrls $ T.pack value
           Nothing -> Nothing
     , waAddresses =
-        defaultPerpsAddresses
-          { paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter defaultPerpsAddresses) (lookup "PERPS_ORDER_ROUTER" env)
-          , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine defaultPerpsAddresses) (lookup "PERPS_CFD_ENGINE" env)
-          , paMarginClearinghouse = T.pack $ fromMaybe (T.unpack $ paMarginClearinghouse defaultPerpsAddresses) (lookup "PERPS_MARGIN_CLEARINGHOUSE" env)
+        addressDefaults
+          { paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
+          , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
+          , paMarginClearinghouse = T.pack $ fromMaybe (T.unpack $ paMarginClearinghouse addressDefaults) (lookup "PERPS_MARGIN_CLEARINGHOUSE" env)
           }
     }
   where

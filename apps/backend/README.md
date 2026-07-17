@@ -171,6 +171,9 @@ Notes:
 - The indexer only writes finalized/safe history. Default finality delay is `120` blocks.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
+- Every activity row retains the normalized emitting contract address. Re-indexing
+  safely fills this provenance for matching legacy rows; rows whose emitter cannot
+  be proven remain untrusted for competition cash-flow scoring.
 - Expired-order cleanup appears in Order History as `Expired / Cleaned up` and in Transaction History as `Cleaned up expired order`.
 
 Useful checks:
@@ -181,7 +184,86 @@ curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/orders?limit=10"
 curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/activity?limit=10"
 ```
 
-### 5. Optional: Start The On-Chain Oracle Updater
+### 5. Start The Insights Snapshot Worker
+
+`plether-insights-worker` reads every registered trading account at the same
+confirmation-delayed block. It persists the baseline, live, and final account
+ledger snapshots used by the public leaderboard.
+
+```bash
+cd apps/backend
+
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+PERPS_CHAIN_ID=421614 \
+PERPS_USDC=0xf1e1B188b87525C51ECe4bae8627ae621D769651 \
+PERPS_ORDER_ROUTER=0x4A0a6c028164A1254e10C3e39cc89Af45090069e \
+PERPS_MARGIN_CLEARINGHOUSE=0x731bb0939CE531728459394A277B28Cbff8df049 \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-insights-worker
+```
+
+Insights persists these configured contract addresses with the competition.
+Deposit and withdrawal adjustments count only events emitted by that exact
+MarginClearinghouse for that exact mock-USDC asset.
+
+Register the scored Plether Trading Account (which may differ from the
+controlling wallet) and manage the post-competition review with the audited
+admin CLI. `TRADER_REFERENCE` must be a stable, opaque identifier from the
+private registration system; it enforces one entry per beneficial trader and is
+never returned by the public API or the `list` command.
+
+```bash
+# In a second terminal with the same RPC, chain, and database variables set:
+cabal run plether-insights-admin -- register TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
+cabal run plether-insights-admin -- list
+cabal run plether-insights-admin -- review 0xTRADING_ACCOUNT eligible reviewer-name
+cabal run plether-insights-admin -- finalize reviewer-name
+```
+
+The optional review reason is public leaderboard copy, so keep it generic (for
+example, `competition rules violation`). Store private investigation evidence
+in the restricted review system, not in this CLI field. Legacy development rows
+without a trader reference must be re-registered before finalization.
+
+`finalize` is a one-way, audited transition. It fails closed until the scoring
+cutoff has passed, the canonical boundary blocks and complete baseline/final
+snapshot batches exist (with one common final hash), every participant has a
+private trader reference, and every review is resolved to `eligible` or
+`ineligible`. Only reviewed, mechanically qualified
+participants receive prize places. Exact final-P&L ties share the combined paid
+places equally.
+
+Keep the Perps history indexer running first. The Insights worker deliberately
+uses its finalized cursor so account snapshots and event-derived statistics
+share one canonical upper bound.
+
+Production registration, review, finalization, deployment order, and payout
+checks are documented in `../../specs/insights-operations-runbook.md`.
+
+#### Competition metadata safety
+
+The first Insights process to use a database inserts the competition's network,
+contract addresses, UTC schedule, scoring versions, eligibility thresholds, and
+prizes. Later API, worker, and admin starts validate that immutable seed instead
+of rewriting it. Startup fails with the exact mismatched fields if deployed
+configuration or code would reinterpret an existing leaderboard.
+
+Treat that failure as a release/configuration error: restore the configuration
+and code that originally seeded the competition, or introduce a deliberately
+versioned competition under a new slug. Never edit or delete a live competition
+row to bypass the check. A disposable pre-launch database can be reset
+explicitly only when its competition data is no longer needed.
+
+The one known development seed correction—from the old
+`2026-08-09T23:59:59Z` payout timestamp to the published
+`2026-08-07T22:00:00Z` deadline—is migrated automatically only while the row is
+unfinalized and has neither resolved boundary blocks nor account snapshots. If
+any of those exist, startup fails for manual review rather than changing
+historical meaning.
+
+### 6. Optional: Start The On-Chain Oracle Updater
 
 The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions. This is the only service in this local stack that sends transactions.
 
@@ -207,7 +289,7 @@ npm run perps:oracle-worker -- --once
 
 Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
 
-### 6. Companion Frontend Services
+### 7. Companion Frontend Services
 
 The API and workers can run without UI servers, but the usual local perps development stack is:
 
@@ -260,7 +342,9 @@ Local URLs:
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Authoritative emitter for scored mock-USDC deposits and withdrawals |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights equity snapshots |
 | `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
@@ -271,6 +355,7 @@ Local URLs:
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
+| `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `PYTH_HERMES_URL` | No | `https://hermes.pyth.network` | Hermes endpoint used by the basket worker |
 | `PYTH_API_KEY` | No | - | Optional bearer token for API-key backed Hermes providers |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
@@ -320,6 +405,18 @@ Local URLs:
 Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
 
 Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
+
+### Insights (requires PostgreSQL)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/insights/v1/competitions/current` | Current competition rules and schedule |
+| `GET /api/insights/v1/competitions/:slug/leaderboard` | Finalized P&L standings and eligibility state |
+| `GET /api/insights/v1/competitions/:slug/wallets/:address` | Participant score and competition activity |
+| `GET /api/insights/v1/status` | Snapshot and Perps indexer coverage |
+
+Leaderboard query params: `limit` and integer offset `cursor`. Wallet detail
+accepts `activityLimit`.
 
 ## Response Format
 

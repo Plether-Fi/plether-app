@@ -4,8 +4,12 @@ module Plether.Ethereum.Client
   , newClient
   , rpcCall
   , ethCall
+  , ethCallAt
+  , ethCallAtBlock
   , ethBlockNumber
   , CallParams (..)
+  , BlockTag (..)
+  , renderBlockTag
   ) where
 
 import Control.Exception (SomeException, try)
@@ -21,7 +25,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import Plether.Utils.Hex (hexToInteger)
+import Plether.Utils.Hex (hexToInteger, intToHex)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -43,7 +47,7 @@ data RpcError
   = RpcHttpError Text
   | RpcJsonError Text
   | RpcNodeError Int Text (Maybe Text)
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data RpcRequest = RpcRequest
   { rpcMethod :: Text
@@ -149,21 +153,54 @@ data CallParams = CallParams
   }
   deriving stock (Show)
 
+-- | The block context in which an Ethereum RPC read should be evaluated.
+-- A concrete 'BlockNumber' is encoded as a canonical JSON-RPC quantity.
+data BlockTag
+  = Latest
+  | Earliest
+  | Pending
+  | Safe
+  | Finalized
+  | BlockNumber Integer
+  deriving stock (Show, Eq)
+
+renderBlockTag :: BlockTag -> Either RpcError Text
+renderBlockTag = \case
+  Latest -> Right "latest"
+  Earliest -> Right "earliest"
+  Pending -> Right "pending"
+  Safe -> Right "safe"
+  Finalized -> Right "finalized"
+  BlockNumber number
+    | number < 0 -> Left $ RpcJsonError "Block number cannot be negative"
+    | otherwise -> Right $ "0x" <> intToHex number
+
 ethCall :: EthClient -> CallParams -> IO (Either RpcError ByteString)
-ethCall client CallParams {..} = do
-  let params =
-        Aeson.toJSON
-          [ object
-              [ "to" .= callTo
-              , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+ethCall client params = ethCallAt client params Latest
+
+-- | Evaluate an @eth_call@ using an explicit JSON-RPC block tag.
+ethCallAt :: EthClient -> CallParams -> BlockTag -> IO (Either RpcError ByteString)
+ethCallAt client CallParams {..} blockTag =
+  case renderBlockTag blockTag of
+    Left err -> pure $ Left err
+    Right renderedBlockTag -> do
+      let params =
+            Aeson.toJSON
+              [ object
+                  [ "to" .= callTo
+                  , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+                  ]
+              , String renderedBlockTag
               ]
-          , String "latest"
-          ]
-  result <- rpcCall client "eth_call" params
-  pure $ case result of
-    Left err -> Left err
-    Right (String hex) -> Right $ decodeHex $ T.drop 2 hex
-    Right _ -> Left $ RpcJsonError "Expected hex string result"
+      result <- rpcCall client "eth_call" params
+      pure $ case result of
+        Left err -> Left err
+        Right (String hex) -> Right $ decodeHex $ T.drop 2 hex
+        Right _ -> Left $ RpcJsonError "Expected hex string result"
+
+-- | Evaluate an @eth_call@ against the state at an exact block number.
+ethCallAtBlock :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
+ethCallAtBlock client params = ethCallAt client params . BlockNumber
 
 ethBlockNumber :: EthClient -> IO (Either RpcError Integer)
 ethBlockNumber client = do

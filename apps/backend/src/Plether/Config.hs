@@ -35,7 +35,9 @@ data Config = Config
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
+  , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
+  , cfgPerpsAccountLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
@@ -136,7 +138,9 @@ loadConfig = do
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsUsdc <- fromMaybe "0xf1e1B188b87525C51ECe4bae8627ae621D769651" <$> lookupEnv "PERPS_USDC"
       perpsOrderRouter <- fromMaybe "0x4A0a6c028164A1254e10C3e39cc89Af45090069e" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsMarginClearinghouse <- fromMaybe "0x731bb0939CE531728459394A277B28Cbff8df049" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       perpsPletherOracle <- fromMaybe "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsAccountLens <- fromMaybe "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29" <$> lookupEnv "PERPS_ACCOUNT_LENS"
       perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
       mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
@@ -191,7 +195,9 @@ loadConfig = do
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
+                , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
+                , cfgPerpsAccountLens = T.pack perpsAccountLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
