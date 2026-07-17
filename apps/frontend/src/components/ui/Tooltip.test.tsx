@@ -4,9 +4,9 @@ import { Tooltip } from './Tooltip'
 
 const DOCS_LINK = {
   href: 'https://docs.plether.com/example',
-  title: 'Helpful context',
+  title: '“Helpful” context',
 }
-const DOCS_LINK_TEXT = `Read: "${DOCS_LINK.title}"`
+const DOCS_LINK_TEXT = `Read: ${DOCS_LINK.title}`
 
 function renderTooltip() {
   render(
@@ -32,7 +32,7 @@ describe('Tooltip', () => {
     expect(screen.getByRole('link', { name: DOCS_LINK_TEXT })).toHaveAttribute('target', '_blank')
     expect(screen.getByRole('link', { name: DOCS_LINK_TEXT })).toHaveAttribute('rel', 'noopener noreferrer')
     expect(screen.queryByRole('link', { name: 'Learn more...' })).not.toBeInTheDocument()
-    expect(screen.getByText(`"${DOCS_LINK.title}"`)).toHaveClass('italic')
+    expect(screen.getByText(DOCS_LINK.title)).toHaveClass('italic')
   })
 
   it('stays open while the pointer moves from the trigger into the tooltip', () => {
