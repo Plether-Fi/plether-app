@@ -1,5 +1,5 @@
 {
-  "version": "perps-aa-arbitrum-sepolia-v2",
+  "version": "perps-aa-arbitrum-sepolia-20260717-v1",
   "chainId": 421614,
   "entryPoint": "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108",
   "entryPointVersion": "0.8",

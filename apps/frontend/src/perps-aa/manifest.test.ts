@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import publicManifest from '../../public/perps-aa-manifest.json'
 import {
   PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
   PERPS_ENTRY_POINT_V08,
@@ -34,6 +35,13 @@ function validManifest(): Record<string, unknown> {
 }
 
 describe('parsePerpsAaManifest', () => {
+  it('validates the manifest served by the app', () => {
+    const manifest = parsePerpsAaManifest(publicManifest)
+
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260717-v1')
+    expect(manifest.chainId).toBe(421614)
+  })
+
   it('parses the reviewed v1 shape and normalizes addresses', () => {
     const manifest = parsePerpsAaManifest(validManifest())
 

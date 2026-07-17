@@ -10,6 +10,11 @@ import {
   PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
   PERPS_ENTRY_POINT_V08,
 } from './manifest'
+import {
+  createPersistedPerpsIdentity,
+  readPersistedPerpsIdentity,
+  writePersistedPerpsIdentity,
+} from './identityPersistence'
 import { usePerpsIdentity } from './usePerpsIdentity'
 
 const ownerAddress =
@@ -98,7 +103,7 @@ describe('PerpsIdentityProvider', () => {
     })
   })
 
-  it('keeps a newly derived account blocked until identity selection is persisted', async () => {
+  it('automatically persists a newly derived account', async () => {
     const fetchManifest = vi.fn(async () => new Response(
       JSON.stringify(validManifest()),
       {
@@ -134,25 +139,82 @@ describe('PerpsIdentityProvider', () => {
     const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
 
     await waitFor(() => {
-      expect(result.current.status).toBe('selection-required')
+      expect(result.current.status).toBe('ready')
     })
     expect(result.current).toMatchObject({
-      accountAddress: undefined,
+      accountAddress,
       isAaManifestConfigured: true,
       sponsorshipEnabled: true,
-      proposedIdentity: { accountAddress },
+      proposedIdentity: null,
     })
+    expect(
+      readPersistedPerpsIdentity(
+        globalThis.localStorage,
+        421614,
+        ownerAddress
+      ).status
+    ).toBe('found')
+  })
 
-    act(() => {
-      expect(result.current.confirmIdentityAfterContinuityCheck()).toBe(true)
-    })
-
-    expect(result.current).toMatchObject({
-      status: 'ready',
+  it('automatically replaces a valid identity from an earlier testnet deployment', async () => {
+    const previousIdentity = createPersistedPerpsIdentity({
+      chainId: 421614,
       ownerAddress,
       accountAddress,
-      sponsorshipEnabled: true,
+      accountMode: 'simple',
+      entryPoint: PERPS_ENTRY_POINT_V08,
+      entryPointVersion: '0.8',
+      factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      accountVersion: 'permissionless-simple-v0.8',
+      accountIndex: '0',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
     })
+    expect(
+      writePersistedPerpsIdentity(globalThis.localStorage, previousIdentity).ok
+    ).toBe(true)
+
+    const nextManifest = validManifest()
+    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260717-v1'
+    const fetchManifest = vi.fn(async () => new Response(
+      JSON.stringify(nextManifest),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    ))
+    const accountAddressResolver: PerpsAccountAddressResolver = vi.fn(
+      async () => ({
+        accountAddress,
+        accountVersion: 'permissionless-simple-v0.8',
+        accountIndex: '0',
+        entryPoint: PERPS_ENTRY_POINT_V08,
+        entryPointVersion: '0.8',
+        factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      })
+    )
+
+    function wrapper({ children }: { children: ReactNode }) {
+      return (
+        <PerpsIdentityProvider
+          ownerAddress={ownerAddress}
+          chainId={421614}
+          manifestUrl="/perps-aa-manifest.json"
+          accountAddressResolver={accountAddressResolver}
+          fetch={fetchManifest}
+        >
+          {children}
+        </PerpsIdentityProvider>
+      )
+    }
+
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+    expect(result.current.identity?.manifestVersion).toBe(
+      'perps-aa-arbitrum-sepolia-20260717-v1'
+    )
   })
 
   it('retains the verified identity while a background refresh is in flight', async () => {
@@ -199,10 +261,7 @@ describe('PerpsIdentityProvider', () => {
     const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
 
     await waitFor(() => {
-      expect(result.current.status).toBe('selection-required')
-    })
-    act(() => {
-      expect(result.current.confirmIdentityAfterContinuityCheck()).toBe(true)
+      expect(result.current.status).toBe('ready')
     })
 
     act(() => {

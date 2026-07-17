@@ -209,9 +209,11 @@ export function Perps() {
             {perpsIdentity.error?.message ??
               (perpsIdentity.status === 'selection-required'
                 ? 'Your connected wallet will remain the owner and signature surface for a Plether Trading Account. Positions, margin, orders, and claims will belong to that Trading Account.'
-                : 'Plether must complete the account continuity check before any perps action can be sent. The app will not fall back to the owner wallet.')}
+                : 'Plether updated its testnet deployment. Confirm the updated Trading Account configuration before continuing. The app will not fall back to the owner wallet.')}
           </p>
-          {perpsIdentity.status === 'selection-required' && perpsIdentity.proposedIdentity ? (
+          {(perpsIdentity.status === 'selection-required' ||
+            perpsIdentity.status === 'continuity-required') &&
+          perpsIdentity.proposedIdentity ? (
             <button
               type="button"
               className="mt-3 border border-[#FFAB96] bg-[#FFAB96] px-4 py-2 text-sm font-semibold text-[#250917] hover:bg-[#FF572D] hover:text-[#FFF5F9]"
@@ -219,7 +221,9 @@ export function Perps() {
                 perpsIdentity.confirmIdentityAfterContinuityCheck()
               }}
             >
-              Use Plether Trading Account
+              {perpsIdentity.status === 'selection-required'
+                ? 'Use Plether Trading Account'
+                : 'Confirm updated Trading Account'}
             </button>
           ) : null}
         </div>

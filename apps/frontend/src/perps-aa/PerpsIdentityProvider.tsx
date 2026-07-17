@@ -235,11 +235,22 @@ async function resolveConfiguredIdentity(input: {
     )
   }
   if (persisted.status === 'missing') {
+    const writeResult = writePersistedPerpsIdentity(
+      input.storage,
+      proposedIdentity
+    )
+    if (!writeResult.ok) {
+      return blockedResolution(
+        'IDENTITY_PERSIST_FAILED',
+        'The derived trading account identity could not be saved.',
+        manifest
+      )
+    }
     return {
-      status: 'selection-required',
+      status: 'ready',
       manifest,
-      identity: null,
-      proposedIdentity,
+      identity: proposedIdentity,
+      proposedIdentity: null,
       changedIdentityFields: [],
       error: null,
     }
@@ -250,12 +261,23 @@ async function resolveConfiguredIdentity(input: {
     proposedIdentity
   )
   if (!continuity.matches) {
+    const writeResult = writePersistedPerpsIdentity(
+      input.storage,
+      proposedIdentity
+    )
+    if (!writeResult.ok) {
+      return blockedResolution(
+        'IDENTITY_PERSIST_FAILED',
+        'The updated trading account identity could not be saved.',
+        manifest
+      )
+    }
     return {
-      status: 'continuity-required',
+      status: 'ready',
       manifest,
-      identity: persisted.identity,
-      proposedIdentity,
-      changedIdentityFields: continuity.changedFields,
+      identity: proposedIdentity,
+      proposedIdentity: null,
+      changedIdentityFields: [],
       error: null,
     }
   }
