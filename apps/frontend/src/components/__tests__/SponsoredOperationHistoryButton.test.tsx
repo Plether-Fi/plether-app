@@ -329,7 +329,9 @@ describe('SponsoredOperationHistoryButton', () => {
     }))
     expect(screen.queryByText('1 action needs attention'))
       .not.toBeInTheDocument()
-    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    expect(screen.queryByText('Needs attention')).not.toBeInTheDocument()
+    expect(screen.getByText('Recent activity')).toBeInTheDocument()
+    expect(screen.getByText('Withdraw margin')).toBeInTheDocument()
 
     act(() => {
       useSponsoredOperationStore.getState().recordTransactionHash(

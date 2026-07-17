@@ -165,12 +165,12 @@ loadConfig = do
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
-      perpsUsdc <- fromMaybe "0xf1e1B188b87525C51ECe4bae8627ae621D769651" <$> lookupEnv "PERPS_USDC"
-      perpsOrderRouter <- fromMaybe "0x4A0a6c028164A1254e10C3e39cc89Af45090069e" <$> lookupEnv "PERPS_ORDER_ROUTER"
-      perpsCfdEngine <- fromMaybe "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224" <$> lookupEnv "PERPS_CFD_ENGINE"
-      perpsMarginClearinghouse <- fromMaybe "0x731bb0939CE531728459394A277B28Cbff8df049" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
-      perpsPletherOracle <- fromMaybe "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA" <$> lookupEnv "PERPS_PLETHER_ORACLE"
-      perpsIndexerStartBlockStr <- fromMaybe "273137426" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
+      perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
+      perpsMarginClearinghouse <- fromMaybe "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
+      perpsPletherOracle <- fromMaybe "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsIndexerStartBlockStr <- fromMaybe "288439939" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
@@ -328,10 +328,10 @@ parseBoolStrict value =
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc "0xf1e1b188b87525c51ece4bae8627ae621d769651"
-    , reviewed router "0x4a0a6c028164a1254e10c3e39cc89af45090069e"
-    , reviewed engine "0xa1ebfb8ad9c90367ea30a29592419d447e3f8224"
-    , reviewed clearinghouse "0x731bb0939ce531728459394a277b28cbff8df049"
+    [ reviewed usdc "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
+    , reviewed router "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
+    , reviewed engine "0x6a25ea1015b5f032d8a2d95d57aefcb99219bf0a"
+    , reviewed clearinghouse "0x19c2f60f6312eaf9acde4c2b04551a05ca9be76e"
     ]
   where
     reviewed raw expected =

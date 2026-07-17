@@ -61,9 +61,9 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paOrderRouter = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
-    , paCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
-    , paMarginClearinghouse = "0x731bb0939CE531728459394A277B28Cbff8df049"
+    { paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+    , paCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , paMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     }
 
 data PerpsIndexerMode

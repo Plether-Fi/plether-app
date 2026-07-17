@@ -160,32 +160,32 @@ variable "perps_chain_id" {
 
 variable "perps_usdc" {
   type    = string
-  default = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
+  default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
+  default = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA"
+  default = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
+  default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x731bb0939CE531728459394A277B28Cbff8df049"
+  default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "280884700"
+  default = "288439939"
 }
 
 variable "perps_indexer_confirmations" {

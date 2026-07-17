@@ -108,7 +108,7 @@ export function PerpsTradingAccountPanel({
 
       <dl className="px-5">
         <DetailRow
-          label="Connected wallet"
+          label="Owner Wallet"
           value={<span title={ownerWalletAddress}>{truncateAddress(ownerWalletAddress)}</span>}
         />
         <DetailRow
@@ -122,20 +122,22 @@ export function PerpsTradingAccountPanel({
         <DetailRow label="Margin Account" value={<TokenAmount amount={marginAccountUsdc} />} />
       </dl>
 
-      <div className="p-5 pt-2">
-        <div className={`border px-4 py-3 ${sponsorship.tone}`}>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-semibold">{sponsorship.label}</span>
-            {retryAt ? <span className="text-xs font-medium">Retry {retryAt}</span> : null}
+      {sponsorshipStatus !== 'available' ? (
+        <div className="p-5 pt-2">
+          <div className={`border px-4 py-3 ${sponsorship.tone}`}>
+            <div className="flex items-center justify-between gap-3">
+              <span className="font-semibold">{sponsorship.label}</span>
+              {retryAt ? <span className="text-xs font-medium">Retry {retryAt}</span> : null}
+            </div>
+            <p className="mt-1 text-sm leading-5 text-content-secondary">{sponsorship.message}</p>
+            {supportedAlternative ? (
+              <p className="mt-2 border-t border-current/20 pt-2 text-xs leading-5 text-content-primary">
+                Supported alternative: {supportedAlternative}
+              </p>
+            ) : null}
           </div>
-          <p className="mt-1 text-sm leading-5 text-content-secondary">{sponsorship.message}</p>
-          {supportedAlternative ? (
-            <p className="mt-2 border-t border-current/20 pt-2 text-xs leading-5 text-content-primary">
-              Supported alternative: {supportedAlternative}
-            </p>
-          ) : null}
         </div>
-      </div>
+      ) : null}
     </section>
   )
 }

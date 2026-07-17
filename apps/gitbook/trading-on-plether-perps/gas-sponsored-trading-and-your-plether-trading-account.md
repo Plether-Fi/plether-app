@@ -260,6 +260,10 @@ Possible statuses include:
 | **Order Pending**           | The order commitment succeeded and is waiting for execution |
 | **Failed**                  | The operation or underlying contract call did not complete  |
 
+The round activity button beside your wallet shows when an action is pending or needs attention. Open it to review operation and transaction details. A failed action is highlighted the first time you review it; after that, it remains available chronologically in **Recent activity**.
+
+![Trading Account activity history](../.gitbook/assets/screenshots/storybook-perps-trading-account-activity--modal-open.png)
+
 ### Retrying a failed sponsored action
 
 If sponsorship is rejected before submission, no onchain action has occurred. The interface will show the reason and, where possible, when to retry.

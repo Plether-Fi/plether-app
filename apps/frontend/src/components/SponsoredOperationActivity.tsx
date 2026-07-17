@@ -350,7 +350,7 @@ export function SponsoredOperationHistoryButton() {
   const operations = useSponsoredOperationStore((state) => state.operations)
   const [openedActivity, setOpenedActivity] = useState<{
     identityKey: string
-    attentionCount: number
+    attentionOperationIds: string[]
   } | null>(null)
   const identityKey = identity.accountAddress && identity.chainId !== undefined
     ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
@@ -367,18 +367,31 @@ export function SponsoredOperationHistoryButton() {
         )
         .sort((a, b) => b.updatedAt - a.updatedAt)
     : []
-  const needsAttentionOperations = accountOperations.filter(
+  const attentionOperations = accountOperations.filter(
     (operation) => isSponsoredOperationAttentionStatus(operation.status)
   )
-  const unreviewedAttentionOperations = needsAttentionOperations.filter(
+  const unreviewedAttentionOperations = attentionOperations.filter(
     isUnreviewedAttentionOperation
   )
   const inProgressOperations = accountOperations.filter(
     (operation) => isInProgressStatus(operation.status)
   )
+  const openedAttentionOperationIds = new Set(
+    openedActivity?.identityKey === identityKey
+      ? openedActivity.attentionOperationIds
+      : []
+  )
+  const needsAttentionOperations = attentionOperations.filter(
+    (operation) =>
+      openedAttentionOperationIds.has(operation.id) ||
+      isUnreviewedAttentionOperation(operation)
+  )
+  const needsAttentionOperationIds = new Set(
+    needsAttentionOperations.map((operation) => operation.id)
+  )
   const recentOperations = accountOperations.filter(
     (operation) =>
-      !isSponsoredOperationAttentionStatus(operation.status) &&
+      !needsAttentionOperationIds.has(operation.id) &&
       !isInProgressStatus(operation.status)
   )
   const [confirmationFeedback, setConfirmationFeedback] = useState<{
@@ -501,7 +514,7 @@ export function SponsoredOperationHistoryButton() {
   const unreviewedAttentionCount = unreviewedAttentionOperations.length
   const inProgressCount = inProgressOperations.length
   const attentionSummaryCount = openedActivity?.identityKey === identityKey
-    ? openedActivity.attentionCount
+    ? needsAttentionOperations.length
     : 0
   const buttonTone = isConfirmationFeedbackVisible
     ? 'border-positive text-positive hover:bg-positive/15'
@@ -575,7 +588,9 @@ export function SponsoredOperationHistoryButton() {
           )
           setOpenedActivity({
             identityKey,
-            attentionCount: unreviewedAttentionCount,
+            attentionOperationIds: unreviewedAttentionOperations.map(
+              (operation) => operation.id
+            ),
           })
         }}
       >

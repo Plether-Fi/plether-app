@@ -381,8 +381,8 @@ async function syncDocumentation(records) {
 async function main() {
   const manifest = await fs.readFile(manifestPath, 'utf8')
   const records = parseManifest(manifest)
-  if (records.length !== 79) {
-    throw new Error(`Expected 79 screenshot mappings, found ${records.length.toString()}`)
+  if (records.length !== 80) {
+    throw new Error(`Expected 80 screenshot mappings, found ${records.length.toString()}`)
   }
   const manifestSyncResult = await syncManifestLineNumbers(manifest, records)
   if (process.argv.includes('--sync-manifest-only')) {
@@ -392,10 +392,26 @@ async function main() {
     return
   }
 
+  const requestedStoryIds = new Set(
+    process.argv
+      .filter((argument) => argument.startsWith('--story='))
+      .map((argument) => argument.slice('--story='.length))
+  )
+  const availableStoryIds = new Set(records.map((record) => record.storyId))
+  const missingStoryIds = [...requestedStoryIds].filter(
+    (storyId) => !availableStoryIds.has(storyId)
+  )
+  if (missingStoryIds.length > 0) {
+    throw new Error(`Unknown mapped story IDs: ${missingStoryIds.join(', ')}`)
+  }
+  const captureRecords = requestedStoryIds.size > 0
+    ? records.filter((record) => requestedStoryIds.has(record.storyId))
+    : records
+
   await fs.access(path.join(storybookDirectory, 'index.json'))
   await fs.mkdir(outputDirectory, { recursive: true })
 
-  const uniqueStoryIds = [...new Set(records.map((record) => record.storyId))].sort()
+  const uniqueStoryIds = [...new Set(captureRecords.map((record) => record.storyId))].sort()
   const server = await startStaticServer()
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({
@@ -424,20 +440,52 @@ async function main() {
     await server.close()
   }
 
-  const syncResult = await syncDocumentation(records)
-  const outputIndex = {
-    manifest: path.relative(gitbookDirectory, manifestPath),
-    mappedReferences: records.length,
-    uniqueStories: uniqueStoryIds.length,
-    manifestReferencesUpdated: manifestSyncResult.updatedReferences,
-    ...syncResult,
-    captures,
-  }
+  const syncResult = await syncDocumentation(captureRecords)
+  const outputIndex = requestedStoryIds.size > 0
+    ? await mergeSelectiveCaptureIndex(
+        records,
+        captures,
+        manifestSyncResult
+      )
+    : {
+        manifest: path.relative(gitbookDirectory, manifestPath),
+        mappedReferences: records.length,
+        uniqueStories: uniqueStoryIds.length,
+        manifestReferencesUpdated: manifestSyncResult.updatedReferences,
+        ...syncResult,
+        captures,
+      }
   await fs.writeFile(outputIndexPath, `${JSON.stringify(outputIndex, null, 2)}\n`)
 
   process.stdout.write(
     `Generated ${captures.length.toString()} PNGs; replaced ${syncResult.replacements.toString()} placeholders; retained ${syncResult.retainedSupportInstructions.toString()} support instructions.\n`
   )
+}
+
+async function mergeSelectiveCaptureIndex(
+  records,
+  captures,
+  manifestSyncResult
+) {
+  const existingIndex = JSON.parse(await fs.readFile(outputIndexPath, 'utf8'))
+  const capturesByStoryId = new Map(
+    existingIndex.captures.map((capture) => [capture.storyId, capture])
+  )
+  for (const capture of captures) capturesByStoryId.set(capture.storyId, capture)
+
+  return {
+    ...existingIndex,
+    manifest: path.relative(gitbookDirectory, manifestPath),
+    mappedReferences: records.length,
+    uniqueStories: new Set(records.map((record) => record.storyId)).size,
+    manifestReferencesUpdated: manifestSyncResult.updatedReferences,
+    replacements:
+      records.length - existingIndex.retainedSupportInstructions,
+    retainedSupportInstructions: existingIndex.retainedSupportInstructions,
+    captures: [...capturesByStoryId.values()].sort((a, b) =>
+      a.storyId.localeCompare(b.storyId)
+    ),
+  }
 }
 
 await main()
