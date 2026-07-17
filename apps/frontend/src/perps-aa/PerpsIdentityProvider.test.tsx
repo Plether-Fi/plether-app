@@ -154,4 +154,76 @@ describe('PerpsIdentityProvider', () => {
       sponsorshipEnabled: true,
     })
   })
+
+  it('retains the verified identity while a background refresh is in flight', async () => {
+    let resolveRefresh: ((response: Response) => void) | undefined
+    const refreshResponse = new Promise<Response>((resolve) => {
+      resolveRefresh = resolve
+    })
+    const manifestResponse = () => new Response(
+      JSON.stringify(validManifest()),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+    const fetchManifest = vi.fn()
+      .mockResolvedValueOnce(manifestResponse())
+      .mockImplementationOnce(() => refreshResponse)
+    const accountAddressResolver: PerpsAccountAddressResolver = vi.fn(
+      async () => ({
+        accountAddress,
+        accountVersion: 'permissionless-simple-v0.8',
+        accountIndex: '0',
+        entryPoint: PERPS_ENTRY_POINT_V08,
+        entryPointVersion: '0.8',
+        factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      })
+    )
+
+    function wrapper({ children }: { children: ReactNode }) {
+      return (
+        <PerpsIdentityProvider
+          ownerAddress={ownerAddress}
+          chainId={421614}
+          manifestUrl="/perps-aa-manifest.json"
+          accountAddressResolver={accountAddressResolver}
+          fetch={fetchManifest}
+          refreshIntervalMs={false}
+        >
+          {children}
+        </PerpsIdentityProvider>
+      )
+    }
+
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('selection-required')
+    })
+    act(() => {
+      expect(result.current.confirmIdentityAfterContinuityCheck()).toBe(true)
+    })
+
+    act(() => {
+      result.current.reloadIdentity()
+    })
+    await waitFor(() => {
+      expect(fetchManifest).toHaveBeenCalledTimes(2)
+    })
+
+    expect(result.current).toMatchObject({
+      status: 'ready',
+      ownerAddress,
+      accountAddress,
+      sponsorshipEnabled: true,
+    })
+
+    act(() => {
+      resolveRefresh?.(manifestResponse())
+    })
+    await waitFor(() => {
+      expect(result.current.status).toBe('ready')
+    })
+  })
 })

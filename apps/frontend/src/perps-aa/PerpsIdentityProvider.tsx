@@ -284,16 +284,17 @@ export function PerpsIdentityProvider({
   const isAaManifestConfigured = normalizedManifestUrl !== ''
   const storage = getBrowserStorage(configuredStorage)
   const [reloadCount, setReloadCount] = useState(0)
-  const requestKey = [
+  const identityKey = [
     normalizedManifestUrl,
     chainId ?? 'no-chain',
     ownerAddress?.toLowerCase() ?? 'no-owner',
     asyncInputIdentity(accountAddressResolver),
     asyncInputIdentity(storage),
     asyncInputIdentity(fetch),
-    reloadCount,
   ].join(':')
+  const requestKey = `${identityKey}:${reloadCount.toString()}`
   const [asyncResolution, setAsyncResolution] = useState<{
+    identityKey: string
     requestKey: string
     value: AsyncIdentityResolution
   } | null>(null)
@@ -319,7 +320,7 @@ export function PerpsIdentityProvider({
       signal: abortController.signal,
     }).then((value) => {
       if (!abortController.signal.aborted) {
-        setAsyncResolution({ requestKey, value })
+        setAsyncResolution({ identityKey, requestKey, value })
       }
     })
 
@@ -330,6 +331,7 @@ export function PerpsIdentityProvider({
     accountAddressResolver,
     chainId,
     fetch,
+    identityKey,
     isAaManifestConfigured,
     normalizedManifestUrl,
     ownerAddress,
@@ -356,7 +358,7 @@ export function PerpsIdentityProvider({
     }
   }, [isAaManifestConfigured, refreshIntervalMs, reloadIdentity])
 
-  const currentResolution = asyncResolution?.requestKey === requestKey
+  const currentResolution = asyncResolution?.identityKey === identityKey
     ? asyncResolution.value
     : null
 
@@ -375,6 +377,7 @@ export function PerpsIdentityProvider({
     )
     if (!result.ok) {
       setAsyncResolution({
+        identityKey,
         requestKey,
         value: blockedResolution(
           'IDENTITY_PERSIST_FAILED',
@@ -386,6 +389,7 @@ export function PerpsIdentityProvider({
     }
 
     setAsyncResolution({
+      identityKey,
       requestKey,
       value: {
         status: 'ready',
@@ -397,7 +401,7 @@ export function PerpsIdentityProvider({
       },
     })
     return true
-  }, [currentResolution, requestKey, storage])
+  }, [currentResolution, identityKey, requestKey, storage])
 
   const contextValue = useMemo<PerpsIdentityContextValue>(() => {
     if (!isAaManifestConfigured) {
@@ -522,7 +526,6 @@ export function PerpsIdentityProvider({
     isAaManifestConfigured,
     ownerAddress,
     reloadIdentity,
-    storage,
   ])
 
   return (

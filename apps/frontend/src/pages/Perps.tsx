@@ -198,16 +198,18 @@ export function Perps() {
 
   return (
     <div className="space-y-4">
-      {perpsIdentity.isAaManifestConfigured && perpsIdentity.status !== 'ready' && perpsIdentity.status !== 'disconnected' ? (
+      {perpsIdentity.isAaManifestConfigured && (
+        perpsIdentity.status === 'selection-required' ||
+        perpsIdentity.status === 'continuity-required' ||
+        perpsIdentity.status === 'blocked'
+      ) ? (
         <div className="border border-brand-orange/40 bg-brand-orange/10 p-4 text-sm leading-5 text-content-primary">
           <div className="font-semibold text-brand-orange">Trading Account action required</div>
           <p className="mt-1 text-content-secondary">
             {perpsIdentity.error?.message ??
-              (perpsIdentity.status === 'loading'
-                ? 'Loading and validating the reviewed gas-sponsorship deployment.'
-                : perpsIdentity.status === 'selection-required'
-                  ? 'Your connected wallet will remain the owner and signature surface for a Plether Trading Account. Positions, margin, orders, and claims will belong to that Trading Account.'
-                  : 'Plether must complete the account continuity check before any perps action can be sent. The app will not fall back to the owner wallet.')}
+              (perpsIdentity.status === 'selection-required'
+                ? 'Your connected wallet will remain the owner and signature surface for a Plether Trading Account. Positions, margin, orders, and claims will belong to that Trading Account.'
+                : 'Plether must complete the account continuity check before any perps action can be sent. The app will not fall back to the owner wallet.')}
           </p>
           {perpsIdentity.status === 'selection-required' && perpsIdentity.proposedIdentity ? (
             <button
