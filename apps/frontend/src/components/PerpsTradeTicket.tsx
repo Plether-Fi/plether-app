@@ -200,10 +200,9 @@ const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
-const LIVE_SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
-const ORACLE_FROZEN_SLIPPAGE_OPTIONS = [0.5, 0.55, 0.75, 1, Infinity]
+const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
 const DEFAULT_LIVE_SLIPPAGE = 0.1
-const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0.55
+const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0
 const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
@@ -1410,7 +1409,7 @@ export function PerpsTradeTicket({
   const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
-  const slippageOptions = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
+  const slippageOptions = SLIPPAGE_OPTIONS
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
@@ -1593,15 +1592,6 @@ export function PerpsTradeTicket({
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
   }, [maxLeverage])
-
-  useEffect(() => {
-    const options = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
-    const fallback = oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
-
-    setSlippage((currentSlippage) => (
-      options.includes(currentSlippage) ? currentSlippage : fallback
-    ))
-  }, [oracleFrozen])
 
   useEffect(() => {
     if (!canEnableMarginCallSimulator) {
