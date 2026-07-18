@@ -193,6 +193,76 @@ describe('perps ticket oracle regime matrix', () => {
       .toHaveAttribute('href', DOCS_LINKS.oracleConfidence.href)
   })
 
+  it('explains the dollar-oriented direction controls', () => {
+    renderCloseTicket({
+      marketPhase: 'open',
+      oracleFrozen: false,
+    })
+
+    fireEvent.focus(screen.getByLabelText('Direction info'))
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls.'
+    )
+    expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.direction.title}` }))
+      .toHaveAttribute('href', DOCS_LINKS.direction.href)
+  })
+
+  it.each([
+    {
+      label: 'Contract notional',
+      message: "The protocol's accounting size, calculated using the raw basket price.",
+      docsLink: DOCS_LINKS.contractNotional,
+    },
+    {
+      label: 'Maintenance margin',
+      message: 'At or below this amount, the entire position can be liquidated.',
+      docsLink: DOCS_LINKS.maintenanceMargin,
+    },
+    {
+      label: 'Execution limit',
+      message: 'It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.',
+      docsLink: DOCS_LINKS.executionLimit,
+    },
+    {
+      label: 'Estimated execution reward',
+      message: 'It can still be paid if the order fails or expires.',
+      docsLink: DOCS_LINKS.executionReward,
+    },
+  ])('explains $label in the commit preview', ({ label, message, docsLink }) => {
+    renderCloseTicket({
+      marketPhase: 'open',
+      oracleFrozen: false,
+    })
+
+    const preview = commitPreviewQueries()
+    fireEvent.focus(preview.getByLabelText(`${label} info`))
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(message)
+    expect(screen.getByRole('link', { name: `Read: ${docsLink.title}` }))
+      .toHaveAttribute('href', docsLink.href)
+  })
+
+  it('explains the cost of manual finalization when that action becomes available', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="selfExecuteAvailable"
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="1 000"
+        initialOrderId={42n}
+      />
+    )
+
+    fireEvent.focus(screen.getByLabelText('Manual finalization info'))
+
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'Unless marked Sponsored, manual finalization requires ETH for network gas and the Pyth update fee.'
+    )
+    expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.manualFinalization.title}` }))
+      .toHaveAttribute('href', DOCS_LINKS.manualFinalization.href)
+  })
+
   it('waives adverse confidence and shows the lens frozen spread for an oracle-frozen close', () => {
     mockReadContractsData = [{
       status: 'success',
@@ -214,15 +284,15 @@ describe('perps ticket oracle regime matrix', () => {
     expect(preview.queryByText('~0.0100%')).not.toBeInTheDocument()
     expect(preview.getByText('Estimated frozen close spread')).toBeInTheDocument()
     expect(preview.getByText('12.3')).toBeInTheDocument()
-    expect(preview.getByText('0.55%')).toBeInTheDocument()
+    expect(preview.getByText('Exact')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: /Max slippage/ }))
-    expect(screen.getByRole('button', { name: '0.5%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '0.55%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '0.75%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '1%' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Exact' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '0.05%' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '0.1%' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '0.25%' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Infinity' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Exact' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '0.5%' })).not.toBeInTheDocument()
 
     fireEvent.focus(preview.getByLabelText('Estimated frozen close spread info'))
     const tooltip = screen.getByRole('tooltip')

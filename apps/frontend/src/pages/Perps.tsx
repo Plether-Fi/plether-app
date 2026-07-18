@@ -135,6 +135,10 @@ export function Perps() {
           value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
           freshness: perpsMarket.oracleFreshness,
           freshnessTooltip: dxyFreshnessTooltip,
+          tooltip: 'The oracle-derived dollar-oriented mark, not a guaranteed execution price. Final execution may differ because of oracle confidence; VPI, fees, and execution rewards are separate adjustments.',
+          tooltipDocsLink: DOCS_LINKS.perpsPrice,
+          tooltipClassName: 'w-[360px] whitespace-normal p-3 text-left leading-5',
+          tooltipPosition: 'bottom',
         },
         {
           label: '24h change',
