@@ -27,6 +27,46 @@ cabal run plether-api
 
 Server starts at `http://localhost:3001`.
 
+## ECS OpenTelemetry Logs
+
+The ECS task definitions route application `stdout` and `stderr` through an
+AWS for Fluent Bit FireLens container. The router enriches every record with
+OpenTelemetry resource attributes, sends OTLP/HTTP logs to PostHog, and keeps a
+second copy in the existing CloudWatch log group.
+
+| ECS container | OpenTelemetry `service.name` |
+|---------------|------------------------------|
+| `plether-api` | `plether-api` |
+| `plether-keeper` | `plether-keeper` |
+| `plether-perps-indexer` | `plether-indexer` |
+| `plether-basket-worker` | `plether-basket-worker` |
+| `plether-oracle-worker` | `plether-oracle-worker` |
+
+The router also sets `service.version` to the deployed Git commit and
+`deployment.environment.name` to the Terraform environment. Consolidated
+workers remain in one Fargate task, but run as separate containers so their
+service identities do not get mixed together.
+
+Set these Terraform variables before applying the ECS changes:
+
+```hcl
+posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
+posthog_otlp_host     = "eu.i.posthog.com"
+```
+
+Use `us.i.posthog.com` for a US-hosted PostHog project. Terraform stores the
+complete authorization header in SSM Parameter Store as a `SecureString`; ECS
+injects it into the FireLens output through `secretOptions`, so it is not part
+of the image or task definition JSON. Keep Terraform state encrypted and never
+commit a populated tfvars file.
+
+The backend deployment workflow builds and pushes both the application image
+and `otel-log-router` image. Apply Terraform first so the ECR repository, SSM
+parameter, IAM permissions, and FireLens-enabled task definition revisions
+exist before running the workflow. For a brand-new environment, bootstrap the
+ECR repositories and images before creating the ECS services, as both service
+images must exist for the first task to start.
+
 ## Database Setup (Optional)
 
 PostgreSQL is required for transaction history. Without it, history endpoints return 503.

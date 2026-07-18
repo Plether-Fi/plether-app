@@ -6,6 +6,10 @@ output "ecr_repository_url" {
   value = aws_ecr_repository.api.repository_url
 }
 
+output "otel_log_router_ecr_repository_url" {
+  value = aws_ecr_repository.otel_log_router.repository_url
+}
+
 output "rds_endpoint" {
   value = aws_db_instance.postgres.endpoint
 }

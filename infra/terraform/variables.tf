@@ -8,6 +8,39 @@ variable "environment" {
   default = "sepolia"
 }
 
+variable "posthog_project_token" {
+  type        = string
+  sensitive   = true
+  description = "PostHog project token (phc_*) used only by the ECS OTLP log driver."
+
+  validation {
+    condition     = startswith(var.posthog_project_token, "phc_")
+    error_message = "posthog_project_token must be a PostHog project token beginning with phc_."
+  }
+}
+
+variable "posthog_otlp_host" {
+  type        = string
+  default     = "eu.i.posthog.com"
+  description = "PostHog OTLP/HTTP ingestion hostname without a scheme or path."
+
+  validation {
+    condition     = !strcontains(var.posthog_otlp_host, "://") && !strcontains(var.posthog_otlp_host, "/")
+    error_message = "posthog_otlp_host must contain only a hostname, for example eu.i.posthog.com."
+  }
+}
+
+variable "posthog_otlp_logs_uri" {
+  type        = string
+  default     = "/i/v1/logs"
+  description = "PostHog OTLP/HTTP logs ingestion path."
+
+  validation {
+    condition     = startswith(var.posthog_otlp_logs_uri, "/")
+    error_message = "posthog_otlp_logs_uri must begin with /."
+  }
+}
+
 variable "rpc_url" {
   type      = string
   sensitive = true
@@ -194,7 +227,7 @@ variable "container_cpu" {
 
 variable "container_memory" {
   type    = number
-  default = 512
+  default = 1024
 }
 
 variable "workers_container_cpu" {
@@ -204,7 +237,7 @@ variable "workers_container_cpu" {
 
 variable "workers_container_memory" {
   type    = number
-  default = 512
+  default = 1024
 }
 
 variable "db_instance_class" {

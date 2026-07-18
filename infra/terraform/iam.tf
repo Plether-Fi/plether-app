@@ -47,3 +47,21 @@ resource "aws_iam_role" "ecs_task" {
     }]
   })
 }
+
+resource "aws_iam_role_policy" "ecs_task_firelens_cloudwatch" {
+  name = "firelens-cloudwatch-logs"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogStream",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents"
+      ]
+      Resource = "${aws_cloudwatch_log_group.ecs.arn}:*"
+    }]
+  })
+}
