@@ -577,6 +577,8 @@ Plether’s execution model separates five decisions:
 
 Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and settled only when the HousePool can support the result.
 
+Next: [Keepers and permissionless execution](keepers-and-permissionless-execution.md)
+
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
