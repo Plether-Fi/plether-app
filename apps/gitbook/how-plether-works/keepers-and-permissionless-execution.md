@@ -52,8 +52,6 @@ For queued orders, the contracts enforce:
 
 A keeper can choose when to submit a valid transaction and what gas fee to offer. It cannot choose an arbitrary execution price, reorder valid orders or force the contracts to accept invalid data. This separation preserves open participation without trusting keepers to price trades.
 
-Read [How orders execute](how-orders-execute.md) for the complete pricing and queue rules.
-
 ### Keeper incentives and costs
 
 An order reserves an execution reward in USDC[^usdc] when it is committed. After successful finalization, the reward is credited to the finalizer's Plether Margin Account. A successful liquidator receives the applicable liquidation bounty instead.

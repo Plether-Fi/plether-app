@@ -329,15 +329,6 @@ Before selecting `Confirm Commit`:
 * Monitor the order until it executes, fails or expires.
 * Verify the final position after execution.
 
-### Continue reading
-
-* [**How delayed orders execute**](how-plether-works/how-orders-execute.md)
-* [**Margin and liquidation**](how-plether-works/margin-leverage-and-liquidation.md)
-* [**Fees, VPI and cost of carry**](how-plether-works/trading-costs-fees-carry-and-vpi.md)
-* [**Managing and closing a position**](trading-on-plether-perps/reduce-or-close-a-position.md)
-* [**Trader claims**](trading-on-plether-perps/check-and-settle-a-trader-claim.md)
-* [**Market hours and closures**](how-plether-works/market-states-and-oracle-closures.md)
-
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.

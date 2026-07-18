@@ -353,10 +353,6 @@ When the position settles, value moves between the Trading Account’s Margin Ac
 
 That is the Plether market model: **oracle-priced, margin-backed and bounded by design.**
 
-### Continue reading
-
-Next: [How orders execute](how-orders-execute.md)
-
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
