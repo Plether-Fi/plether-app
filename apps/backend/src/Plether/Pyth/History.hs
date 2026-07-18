@@ -37,6 +37,7 @@ import Plether.Pyth.Basket
   , basketComponents
   , computeBasketSnapshot
   )
+import Plether.Logging (field, logErrorEvery, logInfo, logWarnEvery)
 import Text.Read (readMaybe)
 
 data BasketIngestorConfig = BasketIngestorConfig
@@ -148,21 +149,34 @@ runBasketBackfill manager pool cfg = do
       missing = filter (`Set.notMember` existing) [earliestTs, earliestTs + interval .. endTs]
 
   when (not (null missing)) $ do
-    putStrLn $
-      "Backfilling "
-        <> show (length missing)
-        <> " missing Pyth basket snapshots from "
-        <> show earliestTs
-        <> " to "
-        <> show endTs
+    logInfo
+      "pyth_history_backfill_started"
+      "Pyth basket history backfill started"
+      [ field "missing_snapshot_count" $ length missing
+      , field "from_timestamp" earliestTs
+      , field "to_timestamp" endTs
+      , field "sample_interval_seconds" interval
+      ]
     forM_ missing $ \ts -> do
       result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) interval ts
       case result of
         Left err ->
-          putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> displayException err
+          logWarnEvery
+            60
+            "pyth_history_snapshot_fetch_failed"
+            "Pyth basket history snapshot fetch failed"
+            [ field "snapshot_timestamp" ts
+            , field "error" $ displayException err
+            ]
         Right (Left err) ->
           do
-            putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> T.unpack err
+            logWarnEvery
+              60
+              "pyth_history_snapshot_fetch_failed"
+              "Pyth basket history snapshot fetch failed"
+              [ field "snapshot_timestamp" ts
+              , field "error" err
+              ]
             when ("429" `T.isInfixOf` err) $ threadDelay 60_000_000
         Right (Right (basketPrice, components)) ->
           withDb pool $ \conn ->
@@ -191,4 +205,8 @@ stripTrailingSlash = T.dropWhileEnd (== '/')
 
 logException :: SomeException -> IO ()
 logException err =
-  putStrLn $ "Pyth basket ingestor failed: " <> displayException err
+  logErrorEvery
+    60
+    "pyth_history_ingestor_failed"
+    "Pyth basket history ingestor failed"
+    [field "error" $ displayException err]

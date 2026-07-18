@@ -8,6 +8,7 @@ import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Schema (ensurePerpsHistorySchema)
+import Plether.Logging (field, logError, logInfo)
 import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
@@ -45,13 +46,18 @@ main = do
   let args = parseWorkerArgs envArgs cliArgs
   eConfig <- loadConfig
   case eConfig of
-    Left err -> do
-      putStrLn $ "Configuration error: " <> err
-      putStrLn "Required: RPC_URL and DATABASE_URL. Optional: PERPS_INDEXER_RPC_URLS, PERPS_INDEXER_START_BLOCK, PERPS_INDEXER_CONFIRMATIONS."
+    Left err ->
+      logError
+        "perps_indexer_configuration_invalid"
+        "Perps indexer configuration is invalid"
+        [field "error" err]
     Right cfg ->
       case cfgDatabaseUrl cfg of
         Nothing ->
-          putStrLn "DATABASE_URL is required for plether-perps-indexer"
+          logError
+            "perps_indexer_database_missing"
+            "Perps indexer requires a database"
+            []
         Just dbUrl -> do
           manager <- newManager tlsManagerSettings
           pool <- newDbPool dbUrl
@@ -70,14 +76,16 @@ main = do
                   , picIndexerName = "perps-history"
                   , picMode = waMode args
                   }
-          putStrLn $
-            "Starting plether-perps-indexer in mode "
-              <> show (waMode args)
-              <> " from block "
-              <> show startBlock
-              <> " with "
-              <> show (waConfirmations args)
-              <> " confirmations"
+          logInfo
+            "perps_indexer_started"
+            "Perps history indexer started"
+            [ field "mode" $ show $ waMode args
+            , field "start_block" startBlock
+            , field "confirmations" $ waConfirmations args
+            , field "batch_size" $ waBatchSize args
+            , field "poll_seconds" $ waPollSeconds args
+            , field "rpc_provider_count" $ maybe 1 length $ waRpcUrls args
+            ]
           runPerpsIndexer manager pool indexerCfg
 
 loadEnvArgs :: IO [(String, String)]

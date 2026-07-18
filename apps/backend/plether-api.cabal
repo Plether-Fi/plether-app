@@ -20,6 +20,8 @@ library
         Plether.Api
         Plether.Cache
         Plether.Config
+        Plether.Logging
+        Plether.RequestLogging
         Plether.Types
         Plether.Types.Api
         Plether.Types.Protocol
@@ -182,6 +184,7 @@ test-suite plether-api-test
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
+        Plether.LoggingSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Types.ProtocolSpec
@@ -194,6 +197,7 @@ test-suite plether-api-test
         QuickCheck >= 2.14,
         aeson >= 2.1,
         bytestring >= 0.11,
+        directory >= 1.3,
         text >= 2.0,
         base16-bytestring >= 1.0
     build-tool-depends:

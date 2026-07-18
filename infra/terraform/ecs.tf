@@ -36,13 +36,14 @@ locals {
       Host                     = var.posthog_otlp_host
       Port                     = "443"
       logs_uri                 = var.posthog_otlp_logs_uri
-      logs_body_key            = "$log"
+      logs_body_key            = "$message"
       logs_body_key_attributes = "true"
       batch_size               = "100"
       compress                 = "gzip"
       grpc                     = "off"
       http2                    = "off"
       log_response_payload     = "false"
+      log_suppress_interval    = "60"
       tls                      = "on"
       "tls.verify"             = "on"
       "tls.verify_hostname"    = "on"

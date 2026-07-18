@@ -47,6 +47,34 @@ The router also sets `service.version` to the deployed Git commit and
 workers remain in one Fargate task, but run as separate containers so their
 service identities do not get mixed together.
 
+Application records use a shared JSON-line schema with `event`, `message`,
+`level`, and typed context fields such as block ranges, order IDs, HTTP status,
+durations, and transaction hashes. Messages are capped at 4 KiB, string
+attributes at 2 KiB, arrays at 20 items, and URL paths are redacted so RPC API
+keys cannot leak through exception text. Reserved envelope fields cannot be
+overridden by call-site attributes.
+
+The steady-state volume controls are:
+
+- API success traffic is aggregated into at most one request summary per
+  minute. Individual 5xx responses are limited to one every 10 seconds, and
+  slow-request warnings to one per minute.
+- Indexer and basket-cache success progress emits at most once every five
+  minutes per event type.
+- Recurring worker warnings and errors emit at most once per minute per event
+  type. The next emitted record includes `suppressed_count` so repeated failures
+  remain visible without producing one log per poll.
+- Important state changes such as startup, reorg detection, keeper order
+  failures, and mined keeper transactions emit immediately. Repetitive oracle
+  success/no-op states emit at most once every five minutes.
+- FireLens suppresses repeated delivery diagnostics from each output for one
+  minute, while unlimited OTLP retries avoid discarding a batch solely because
+  a temporary PostHog outage exhausted a retry count.
+
+The FireLens parser keeps plaintext output from third-party libraries as a
+fallback, but first-party services should use the structured logger instead of
+writing directly to `stdout` or `stderr`.
+
 Set these Terraform variables before applying the ECS changes:
 
 ```hcl
@@ -125,7 +153,7 @@ DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-api
 ```
 
-The API should print the route list and start on:
+The API emits an `api_started` record and listens on:
 
 ```text
 http://localhost:3001
