@@ -2,9 +2,9 @@
 
 > **The price comes from the market. The liability sits onchain.**
 
-Plether is an oracle-priced, cash-settled market for leveraged **LONG USD** and **SHORT USD** exposure.
+Plether is an oracle-priced[^oracle], cash-settled market for leveraged **LONG USD** and **SHORT USD** exposure.
 
-Traders do not buy currencies, receive a position token or borrow a notional amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. Only the resulting difference is settled in USDC.
+Traders do not buy currencies, receive a position token or borrow a notional[^notional] amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. Only the resulting difference is settled in USDC[^usdc].
 
 Plether separates the functions that many trading venues combine:
 
@@ -59,15 +59,15 @@ That means Plether has:
 * No peer-to-peer position matching
 * No local trade price produced by the last matched order
 
-The Plether chart does not move because someone opens, closes or liquidates a position. It moves because the external FX feeds move.
+The Plether chart does not move because someone opens, closes or liquidates a position. It moves because the external FX[^fx] feeds move.
 
 A large oracle move can still liquidate many positions at once. But those liquidations do not mechanically sell into a Plether order book and push the next execution price farther.
 
 ### Not an AMM
 
-The HousePool holds liquidity, but it is not an AMM.
+The HousePool holds liquidity, but it is not an AMM[^amm].
 
-Traders do not swap one asset for another through a reserve curve. LPs do not quote the index price, and opening a position does not remove a LONG or SHORT token from pool inventory.
+Traders do not swap one asset for another through a reserve curve. LPs[^lp] do not quote the index price, and opening a position does not remove a LONG or SHORT token from pool inventory.
 
 The HousePool provides **settlement capacity**. It does not provide price discovery.
 
@@ -77,12 +77,12 @@ Trading can still change:
 * Available LONG USD and SHORT USD capacity
 * Pool liability
 * Virtual price impact
-* Carry
+* Carry[^carry]
 * LP withdrawal availability
 
 Plether separates price discovery from risk pricing:
 
-> The oracle supplies the market price. VPI, carry and capacity limits price the burden a position places on the pool.
+> The oracle supplies the market price. VPI[^vpi], carry and capacity limits price the burden a position places on the pool.
 
 ### How an order becomes a position
 
@@ -91,13 +91,13 @@ A Plether order follows a commit-now, price-later process:
 1. The trader deposits USDC into the Trading Account’s Margin Account.
 2. The owner wallet authorizes a LONG USD or SHORT USD commitment, and Plether submits the eligible sponsored operation.
 3. Margin and an execution reward are reserved.
-4. The order enters the global FIFO queue.
+4. The order enters the global FIFO[^fifo] queue.
 5. Plether resolves the first eligible Pyth observation strictly after commitment.
-6. During live or FAD-only execution, the protocol applies an adverse oracle-confidence adjustment. Frozen voluntary closes use the validated unshifted price and the separate frozen-close spread.
+6. During live or FAD-only[^fad] execution, the protocol applies an adverse oracle-confidence adjustment. Frozen voluntary closes use the validated unshifted price and the separate frozen-close spread.
 7. The order’s execution limit and risk checks are evaluated.
 8. If valid, the engine records the position and locks its margin.
 
-The order is binding once committed. The trader cannot cancel because the market moved, and the keeper cannot choose a later, more favourable oracle observation.
+The order is binding once committed. The trader cannot cancel because the market moved, and the keeper[^keeper] cannot choose a later, more favourable oracle observation.
 
 Virtual price impact is applied separately to the trade’s economics. It does not replace the oracle or become the new market price.
 
@@ -115,7 +115,7 @@ The **HousePool** is the economic counterparty to every position:
 * When a trader receives a VPI rebate, the pool funds it.
 * When a trader pays positive VPI, the non-protocol portion strengthens the pool.
 
-The HousePool is funded through the Senior and Junior LP vaults. Both tranches back the same market. One tranche does not back LONG USD while the other backs SHORT USD.
+The HousePool is funded through the Senior and Junior LP vaults. Both tranches[^tranche] back the same market. One tranche does not back LONG USD while the other backs SHORT USD.
 
 Their role is to decide how pool returns and losses are allocated:
 
@@ -126,7 +126,7 @@ The HousePool is not an emergency insurance fund added behind another counterpar
 
 ### Why the settlement range is fixed
 
-For execution and PnL accounting, Plether uses a fixed settlement range:
+For execution and PnL[^pnl] accounting, Plether uses a fixed settlement range:
 
 ```
 0.00 ≤ raw basket ≤ 2.00
@@ -173,7 +173,7 @@ The 2.00 settlement ceiling is not:
 * A guarantee that LP principal cannot decline
 * A guarantee that no bad debt can occur
 
-If the external basket moves beyond the settlement range, Plether PnL stops extending beyond the boundary. This creates basis risk relative to the unrestricted external FX market.
+If the external basket moves beyond the settlement range, Plether PnL stops extending beyond the boundary. This creates basis risk[^basis-risk] relative to the unrestricted external FX market.
 
 The boundary makes liability measurable. It does not make risk disappear.
 
@@ -307,7 +307,7 @@ The protocol limits how much additional liability the HousePool may accept in ea
 VPI is a one-time charge or rebate based on factors including:
 
 * Trade direction
-* Current market skew
+* Current market skew[^skew]
 * Trade size
 * Available pool depth
 * The protocol’s VPI factor
@@ -353,6 +353,18 @@ When the position settles, value moves between the Trading Account’s Margin Ac
 
 That is the Plether market model: **oracle-priced, margin-backed and bounded by design.**
 
-### Continue reading
-
-Next: [How orders execute](how-orders-execute.md)
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.

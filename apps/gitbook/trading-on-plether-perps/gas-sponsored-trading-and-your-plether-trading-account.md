@@ -1,10 +1,10 @@
 # Gas-sponsored trading and your Plether trading account
 
-Plether sponsors network gas for eligible perps actions, subject to availability and policy limits. You continue using your existing wallet and approve every action.
+Plether sponsors network gas for eligible perps[^perps] actions, subject to availability and policy limits. You continue using your existing wallet and approve every action.
 
 Your connected wallet controls your Plether Trading Account through its signature rules. The Trading Account submits authorized operations to Plether’s contracts, while Plether pays the eligible network gas.
 
-Gas sponsorship covers network gas only. Protocol execution fees, VPI, carry, execution rewards and frozen-close spreads remain USDC costs.
+Gas sponsorship covers network gas only. Protocol execution fees, VPI[^vpi], carry[^carry], execution rewards and frozen-close spreads remain USDC[^usdc] costs.
 
 ### Your wallet, Trading Account and Margin Account
 
@@ -39,7 +39,7 @@ Eligible actions include:
 
 Reduce, close and add-margin actions receive protective priority under the sponsorship policy. This helps preserve sponsorship capacity for risk-reducing actions when ordinary usage is high. It does not guarantee availability during a service outage or when protective limits have also been reached.
 
-The sponsored trading action commits the order. Plether’s normal execution process then places it in FIFO and waits for keeper execution. The execution reward remains a USDC cost reserved from your Margin Account.
+The sponsored trading action commits the order. Plether’s normal execution process then places it in FIFO[^fifo] and waits for keeper[^keeper] execution. The execution reward remains a USDC cost reserved from your Margin Account.
 
 Keeper finalization follows its existing execution path. Manual finalization, expired-order cleanup, arbitrary contract calls and unrelated token transfers remain outside the sponsored path unless the interface explicitly marks them as **Sponsored**.
 
@@ -54,12 +54,12 @@ The following amounts remain part of the trade or account operation:
 * VPI charges or credits
 * Carry charges or credits
 * The order execution reward
-* The fixed 50 bps frozen-close spread, when applicable
+* The fixed 50 bps[^bps] frozen-close spread, when applicable
 * The USDC being deposited
 
 Gas sponsorship does not change execution price, FIFO priority, slippage protection, margin requirements, liquidation rules or the solvency checks applied to an order.
 
-It also does not guarantee that a committed order will execute. Oracle availability, market state, margin checks and FIFO execution still apply.
+It also does not guarantee that a committed order will execute. Oracle[^oracle] availability, market state, margin checks and FIFO execution still apply.
 
 ### What you sign
 
@@ -67,7 +67,7 @@ Your wallet signs an authorization for the action you reviewed. Depending on the
 
 * A Trading Account operation
 * A one-time USDC transfer authorization
-* An EIP-7702 delegation authorization
+* An EIP-7702[^eip7702] delegation authorization
 * An explicitly selected self-funded transaction
 
 Before signing, check:
@@ -241,7 +241,7 @@ Gas sponsorship is evaluated for each action. Availability can be affected by:
 * Per-account rate limits
 * Daily or protocol-wide budgets
 * Current network fees
-* Sponsor, bundler or RPC availability
+* Sponsor, bundler[^bundler] or RPC[^rpc] availability
 * Transaction simulation
 * Expired signatures or invalid nonces
 * Changes to smart-account code or EIP-7702 delegation
@@ -288,7 +288,7 @@ During a sponsorship outage, positions remain active, carry continues to accrue,
 
 With a separate smart account, the owner wallet and Trading Account are different onchain addresses.
 
-Submitting the action directly from the owner EOA would change the caller. Plether could then read a different Margin Account, fail an ownership check, or create an order under the wrong address. It could also charge native gas to the Connected wallet without clear approval.
+Submitting the action directly from the owner EOA[^eoa] would change the caller. Plether could then read a different Margin Account, fail an ownership check, or create an order under the wrong address. It could also charge native gas to the Connected wallet without clear approval.
 
 When sponsorship is unavailable, Plether keeps the selected Trading Account and shows the available options. These may include:
 
@@ -341,3 +341,16 @@ After the commitment is confirmed, the order enters Plether’s FIFO queue and w
 #### Does sponsorship cover my trading costs?
 
 It covers eligible network gas. Execution fees, VPI, carry, execution rewards and frozen-close spreads continue to be accounted for in USDC.
+
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^bps]: Basis points; 100 bps equals 1%.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^eip7702]: Ethereum Improvement Proposal 7702, which lets an existing wallet address use delegated smart-account execution.
+[^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^eoa]: Externally owned account, a conventional blockchain account controlled by a private key.

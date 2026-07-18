@@ -1,6 +1,6 @@
 # How PnL is calculated
 
-> Price PnL tells you what the market movement did. It does not tell you how much cash is available to withdraw.
+> Price PnL[^pnl] tells you what the market movement did. It does not tell you how much cash is available to withdraw.
 
 Plether’s directional PnL is linear:
 
@@ -15,7 +15,7 @@ Gross PnL, account equity, released margin, net settlement, trader claims and wa
 
 ### Start with the displayed price
 
-Plether’s oracle calculates the raw foreign-currency basket, represented here as `B`.
+Plether’s oracle[^oracle] calculates the raw foreign-currency basket, represented here as `B`.
 
 The interface converts it into the dollar-oriented price:
 
@@ -66,7 +66,7 @@ The current interface derives several different values from it:
 | **Position margin**     | USDC collateral assigned to the position                           |
 | **Unrealized PnL**      | Gross price PnL from entry to the current mark                     |
 
-The distinction matters because **plDXY Perp exposure** and **Entry notional** use different price bases.
+The distinction matters because **plDXY Perp exposure** and **Entry notional[^notional]** use different price bases.
 
 > Do not calculate PnL by subtracting Entry notional from current plDXY Perp exposure.
 
@@ -157,9 +157,9 @@ These results include only directional price movement.
 
 They do not include:
 
-* VPI
+* VPI[^vpi]
 * Protocol execution fees
-* Carry
+* Carry[^carry]
 * Execution rewards
 * Sponsored network gas or any explicitly self-funded network and oracle-update costs
 * Released margin
@@ -180,7 +180,7 @@ Two positions with the same quantity, entry and current mark have the same gross
 
 Their liquidation risk will be different.
 
-The current Plether interface does not display an ROI or PnL-percentage field. **Unrealized PnL** is shown directly in USDC.
+The current Plether interface does not display an ROI[^roi] or PnL-percentage field. **Unrealized PnL** is shown directly in USDC[^usdc].
 
 ### Which price is used?
 
@@ -237,7 +237,7 @@ Positive unrealized PnL is not yet:
 Negative unrealized PnL is not yet:
 
 * Collected as HousePool cash
-* Realized LP revenue
+* Realized LP[^lp] revenue
 * Final bad debt
 
 Plether treats the two sides conservatively:
@@ -380,7 +380,7 @@ The order execution reward is separate from this formula. It pays for resolving 
 
 #### Example net settlement
 
-Assume a LONG USD close executes during a live or FAD-only market state, so no frozen-close spread applies:
+Assume a LONG USD close executes during a live or FAD-only[^fad] market state, so no frozen-close spread applies:
 
 ```
 Gross realized PnL:       +390 USDC
@@ -455,7 +455,7 @@ A full close can use all collateral defined as terminally reachable inside the a
 
 If an existing trader claim belongs to the same account, it can be reduced against a terminal shortfall before loss is socialized.
 
-Any remaining uncovered economic loss becomes bad debt and is absorbed through the LP tranche waterfall.
+Any remaining uncovered economic loss becomes bad debt and is absorbed through the LP tranche[^tranche] waterfall.
 
 ### Position equity is broader than PnL
 
@@ -561,7 +561,7 @@ These are mathematical price boundaries, not promised outcomes.
 
 A position can be liquidated before reaching either endpoint. VPI, fees, carry and execution rewards also sit outside gross price PnL, so maximum gross price loss is not the same as maximum total account cost.
 
-If the external FX market moves beyond Plether’s settlement range, Plether PnL stops extending beyond the applicable boundary. That creates basis risk relative to an unbounded external market.
+If the external FX[^fx] market moves beyond Plether’s settlement range, Plether PnL stops extending beyond the applicable boundary. That creates basis risk[^basis-risk] relative to an unbounded external market.
 
 ### Rounding
 
@@ -601,3 +601,16 @@ To understand a Plether position, read the numbers in this order:
 The central distinction is simple:
 
 > PnL measures price performance. Settlement determines who owes cash. Custody determines whether that cash can be withdrawn.
+
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^roi]: Return on investment, gain or loss expressed relative to the capital invested.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.

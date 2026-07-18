@@ -271,7 +271,7 @@ export const OracleFrozenClose: Story = {
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
     await expect(canvas.getByText('Estimated frozen close spread')).toBeInTheDocument()
     await expect(canvas.getByText('2.5')).toBeInTheDocument()
-    await expect(canvas.getByText('0.55%')).toBeInTheDocument()
+    await expect(canvas.getByText('Exact')).toBeInTheDocument()
   },
 }
 

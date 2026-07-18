@@ -9,7 +9,7 @@ When a position closes, Plether answers two separate questions:
 
 Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately to the Trading Account’s Margin Account or, when sufficient settlement liquidity is unavailable, recorded in full as a trader claim. Plether never splits one fresh payout between an immediate credit and a new claim.
 
-This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC.
+This separation prevents a temporary cash shortage from trapping traders in open positions. It also means that realized profit can be final before it becomes liquid USDC[^usdc].
 
 > Bounded liability determines how much the protocol can owe. It does not guarantee that every amount owed can be withdrawn in the same transaction.
 
@@ -44,7 +44,7 @@ Net close settlement
 − frozen-close spread, when applicable
 ```
 
-The VPI adjustment is signed:
+The VPI[^vpi] adjustment is signed:
 
 * A positive VPI is a charge.
 * A negative VPI is a rebate.
@@ -63,12 +63,12 @@ The current rate is:
 The spread is zero for:
 
 * Open-market closes
-* FAD-only closes while the live-oracle policy remains active
+* FAD-only[^fad] closes while the live-oracle[^oracle] policy remains active
 * Liquidations
 
 The execution-time market state determines whether it applies. A close committed before `oracleFrozen` but executed after the boundary is assessed the spread.
 
-The rate is part of the protocol’s timelocked risk configuration. It must remain nonzero and cannot exceed `1,000 bps`, or `10.00%`. The live onchain value is authoritative.
+The rate is part of the protocol’s timelocked risk configuration. It must remain nonzero and cannot exceed `1,000 bps`[^bps], or `10.00%`. The live onchain value is authoritative.
 
 A positive net result is a fresh payout owed by the HousePool. A negative result is an amount owed by the trader’s account.
 
@@ -105,7 +105,7 @@ If any part remains unpaid:
 * No partial spread collection is finalized.
 * The original position remains open.
 
-This prevents a trader from reducing exposure while leaving LPs with an uncovered obligation and a protected residual position.
+This prevents a trader from reducing exposure while leaving LPs[^lp] with an uncovered obligation and a protected residual position.
 
 #### Terminal full closes preserve exit liveness
 
@@ -214,7 +214,7 @@ For example, if a trader is owed `250 USDC` but only `200 USDC` is available abo
 
 Existing claims therefore cannot be bypassed by newer profitable closes.
 
-Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. When that complete payout cannot be funded immediately, a trader claim records the full net positive settlement—not gross PnL before costs.
+Any applicable frozen-close spread has already been deducted before Plether determines the fresh trader payout. When that complete payout cannot be funded immediately, a trader claim records the full net positive settlement—not gross PnL[^pnl] before costs.
 
 For example:
 
@@ -238,7 +238,7 @@ The trader must still use the normal withdrawal flow. The amount that can leave 
 
 * margin supporting a remaining position;
 * pending orders and reserved execution rewards;
-* accrued carry;
+* accrued carry[^carry];
 * mark freshness;
 * post-withdrawal margin requirements.
 
@@ -301,7 +301,7 @@ When aggregate claims are fully covered:
 6. The Margin Account receives the settlement credit.
 7. The trader can withdraw through the normal sponsored Margin Account withdrawal flow.
 
-Claim settlement requires authorization from the Trading Account’s owner wallet and is all-or-nothing. The sponsor and bundler can relay the authorized operation, but they cannot create the owner signature. The protocol does not support entering a smaller settlement amount.
+Claim settlement requires authorization from the Trading Account’s owner wallet and is all-or-nothing. The sponsor and bundler[^bundler] can relay the authorized operation, but they cannot create the owner signature. The protocol does not support entering a smaller settlement amount.
 
 If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
 
@@ -401,7 +401,7 @@ Free LP liquidity
   )
 ```
 
-Tranche-specific limits, cooldowns and protocol-state checks are applied afterwards.
+Tranche-specific[^tranche] limits, cooldowns and protocol-state checks are applied afterwards.
 
 Trader claims rank ahead of both LP tranches. A Senior LP is senior relative to Junior LP capital—not relative to trader claims.
 
@@ -482,7 +482,7 @@ An unfunded positive trader payout is recorded in full as a trader claim.
 
 This does not apply to an uncollectible frozen-close spread on a terminal full close. That spread is a trader-owed charge, not a trader payout. Its uncollectible portion is waived rather than recorded.
 
-That removes winner ADL and socialized trader haircuts. It does not remove liquidity risk.
+That removes winner ADL[^adl] and socialized trader haircuts. It does not remove liquidity risk.
 
 A trader claim:
 
@@ -564,7 +564,7 @@ Result:
 
 #### Example 5: an underfunded frozen-close spread
 
-A trader voluntarily reduces `10,000 USDC` of notional during `oracleFrozen`.
+A trader voluntarily reduces `10,000 USDC` of notional[^notional] during `oracleFrozen`.
 
 At the current rate:
 
@@ -609,3 +609,16 @@ The full-close result satisfies:
 **Frozen-close spread** is a separate trader charge. The paid amount belongs to LPs; an uncollectible terminal amount is waived rather than becoming a claim, bad debt or LP receivable.
 
 They are related values. They are not the same value.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^bps]: Basis points; 100 bps equals 1%.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^adl]: Auto-deleveraging, the forced reduction of profitable positions to manage counterparty insolvency.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

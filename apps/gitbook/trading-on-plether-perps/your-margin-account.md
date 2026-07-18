@@ -1,8 +1,8 @@
 # Your Margin Account
 
-Every Plether trade settles through a USDC Margin Account associated with the **Trading Account**.
+Every Plether trade settles through a USDC[^usdc] Margin Account associated with the **Trading Account**.
 
-The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI, carry and realized PnL update it. Eligible USDC can then be withdrawn to the owner wallet.
+The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI[^vpi], carry[^carry] and realized PnL[^pnl] update it. Eligible USDC can then be withdrawn to the owner wallet.
 
 ![USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
 
@@ -14,7 +14,7 @@ The connected owner wallet signs for the Trading Account, but the Trading Accoun
 | **Trading Account USDC** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
 | **Margin Account USDC**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
 
-With a same-address EIP-7702 account, owner-wallet USDC and Trading Account USDC are the same token balance because both roles use one address. With a separate smart account, they are balances at two different addresses.
+With a same-address EIP-7702[^eip7702] account, owner-wallet USDC and Trading Account USDC are the same token balance because both roles use one address. With a separate smart account, they are balances at two different addresses.
 
 The Margin Account has no separate wallet address. Sending USDC to a Plether contract does not credit it; use the deposit flow.
 
@@ -120,7 +120,7 @@ Net account increase:            460 USDC
 
 The complete `500 USDC` entered Plether. The account used `40 USDC` to settle carry that had already accrued.
 
-Deposits have no market-state, oracle-freshness or degraded-mode restriction. They remain available as a protective account action.
+Deposits have no market-state, oracle-freshness[^oracle] or degraded-mode restriction. They remain available as a protective account action.
 
 ![First deposit showing owner-wallet, Trading Account and sponsored operation states](../.gitbook/assets/screenshots/storybook-documentation-margin-account--deposit.png)
 
@@ -200,7 +200,7 @@ Additional position margin can:
 
 * Lower displayed leverage
 * Increase distance from liquidation
-* Reduce the position’s LP-backed borrow base
+* Reduce the position’s LP-backed[^lp] borrow base
 * Reduce future carry accrual
 
 Adding margin is immediate and bypasses the delayed order queue. It remains available during stale, frozen and degraded market conditions and requires no current oracle mark.
@@ -240,7 +240,7 @@ An open-position withdrawal requires:
 * A position above the applicable liquidation threshold
 * Preservation of all pending reservations
 
-The post-withdrawal requirement is stricter than the ordinary liquidation threshold. Equity must remain above the effective margin requirement, normally at least initial margin. During the FAD window, the higher applicable FAD requirement can control.
+The post-withdrawal requirement is stricter than the ordinary liquidation threshold. Equity must remain above the effective margin requirement, normally at least initial margin. During the FAD[^fad] window, the higher applicable FAD requirement can control.
 
 During a scheduled oracle closure, Plether may use the stored mark within the frozen-market validity window. Once that mark exceeds the permitted age, Withdrawable falls to zero until an eligible mark becomes available.
 
@@ -370,3 +370,12 @@ When the position closes, its remaining margin is released separately. The compl
 | A failed order still affects the account                                 | Terminal processing or cleanup may still be required                         |
 | A trader claim appears without increasing Available to Trade             | The claim awaits settlement into the Margin Account                          |
 | A pending close exists while health continues to decline                 | Exposure and carry remain active until the close executes                    |
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^eip7702]: Ethereum Improvement Proposal 7702, which lets an existing wallet address use delegated smart-account execution.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.

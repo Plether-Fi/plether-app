@@ -2,7 +2,7 @@
 
 > **Plether can bound a modeled obligation. It cannot remove risk.**
 >
-> Traders can lose their collateral. Liquidity providers can lose principal. Either may be unable to access USDC when expected.
+> Traders can lose their collateral. Liquidity providers can lose principal. Either may be unable to access USDC[^usdc] when expected.
 
 Plether is designed to measure counterparty liabilities before accepting them. That is different from making capital safe.
 
@@ -39,15 +39,15 @@ Before accepting a trade that increases risk, Plether checks whether physically 
 This is an admission rule. It does not guarantee that:
 
 * Every trader profit will be immediately withdrawable
-* LP principal cannot be impaired
+* LP[^lp] principal cannot be impaired
 * Bad debt cannot occur
 * USDC will remain worth one dollar
 * Pyth prices will always be correct or available
-* Keepers will always execute promptly
+* Keepers[^keeper] will always execute promptly
 * The contracts contain no defects
 * Governance will always make good decisions
 
-The solvency check depends on correct code, correct accounting, valid oracle data and functioning external infrastructure.
+The solvency check depends on correct code, correct accounting, valid oracle[^oracle] data and functioning external infrastructure.
 
 A profitable close can complete even when its complete fresh HousePool-funded payout cannot be credited immediately. Released position margin follows separately; the complete fresh payout is recorded in full as a trader claim and is never split between an immediate credit and a new claim. The liability remains recorded, but settlement may be delayed until sufficient HousePool cash is available.
 
@@ -59,7 +59,7 @@ There is no counterparty auto-deleveraging between traders.
 
 Your own position can still be fully liquidated if its equity falls below the applicable maintenance requirement.
 
-That requirement rises around FX-market closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
+That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
 
 The distinction is simple:
 
@@ -89,7 +89,7 @@ If the market moves in the opposite direction, the position loses value. Leverag
 High leverage leaves less room for:
 
 * Adverse price movement
-* Carry accrual
+* Carry[^carry] accrual
 * Execution fees
 * Virtual price impact
 * Oracle-confidence adjustments
@@ -164,9 +164,9 @@ Actual trade economics can include:
 
 Virtual price impact depends on HousePool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
 
-During an oracle-frozen voluntary close, normal signed VPI remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies.
+During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies.
 
-Plether’s execution model reduces specific forms of price-selection MEV. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
+Plether’s execution model reduces specific forms of price-selection MEV[^mev]. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
 
 ### Oracle and market-closure risk
 
@@ -218,7 +218,7 @@ It is not:
 
 ### Basis risk
 
-Plether’s index is DXY-inspired, not raw DXY.
+Plether’s index is DXY-inspired[^dxy], not raw DXY.
 
 It uses:
 
@@ -232,7 +232,7 @@ Its returns can diverge from DXY futures, another dollar index, or a user’s pe
 
 A SHORT USD position may reduce broad dollar exposure without perfectly hedging rent, payroll or expenses in one particular currency.
 
-The fixed 2.00 ceiling creates additional basis risk if the external currency basket rises beyond 2.00. Plether stops recognizing further price movement even if the external market continues moving.
+The fixed 2.00 ceiling creates additional basis risk[^basis-risk] if the external currency basket rises beyond 2.00. Plether stops recognizing further price movement even if the external market continues moving.
 
 ## Risks for liquidity providers
 
@@ -248,7 +248,7 @@ LP economics are affected by:
 * Bad debt
 * Realized carry
 * Virtual price impact
-* Directional skew
+* Directional skew[^skew]
 * Pool utilization
 * Senior coupon transfers
 * Outstanding trader claims
@@ -269,7 +269,7 @@ Junior can be impaired or wiped out by:
 
 Junior receives residual upside because it occupies the first-loss position.
 
-A wiped Junior tranche cannot be silently restored through ordinary deposits. Recovery requires explicit recapitalization or realized protocol revenue.
+A wiped Junior tranche[^tranche] cannot be silently restored through ordinary deposits. Recovery requires explicit recapitalization or realized protocol revenue.
 
 ### Senior tranche risk
 
@@ -279,7 +279,7 @@ The Senior target coupon is funded from available Junior value and capped by ava
 
 It is not:
 
-* A guaranteed APY
+* A guaranteed APY[^apy]
 * Fixed income in the legal sense
 * Principal protection
 * A claim on revenue that does not exist
@@ -339,7 +339,7 @@ Plether deliberately does not treat unrealized trader losses as immediately with
 
 This reduces the risk of LPs withdrawing against assets the pool has not yet received. It can also temporarily understate LP value, particularly in Junior.
 
-Value can change materially when trader PnL becomes realized.
+Value can change materially when trader PnL[^pnl] becomes realized.
 
 Deposit pricing, withdrawal pricing and conservative liability accounting answer different questions. They should not be expected to produce identical values at all times.
 
@@ -358,7 +358,7 @@ A defect in the contracts, integrations or economic assumptions can cause:
 * Incorrect liquidation
 * Permanent protocol disruption
 
-The perps contracts are non-upgradeable. This limits the owner’s ability to replace deployed logic, but it also means a discovered defect cannot be patched in place.
+The perps[^perps] contracts are non-upgradeable. This limits the owner’s ability to replace deployed logic, but it also means a discovered defect cannot be patched in place.
 
 A material fix can require a new deployment and user migration.
 
@@ -374,7 +374,7 @@ Depending on the account model, this can include:
 * EntryPoint compatibility
 * Nonce and replay protection
 * Owner-wallet recovery and key security
-* EIP-7702 delegation state
+* EIP-7702[^eip7702] delegation state
 * Correct account initialization and ownership checks
 
 A defect or incompatible account state can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. Changing or removing an EIP-7702 delegation can invalidate an outstanding sponsored operation that has not yet been submitted.
@@ -383,7 +383,7 @@ The Trading Account owns the positions, orders, Margin Account and trader claims
 
 ### Sponsor-service and bundler availability risk
 
-Eligible trader actions depend on a sponsor approving network-gas funding and a bundler accepting and submitting the signed UserOperation.
+Eligible trader actions depend on a sponsor approving network-gas funding and a bundler[^bundler] accepting and submitting the signed UserOperation[^useroperation].
 
 An action can be delayed or rejected because of:
 
@@ -392,11 +392,11 @@ An action can be delayed or rejected because of:
 * Gas-price or action-policy limits
 * Failed operation simulation
 * Bundler policy rejection
-* Bundler, RPC or EntryPoint outages
+* Bundler, RPC[^rpc] or EntryPoint outages
 * A UserOperation being dropped before inclusion
 * An expired signature, invalid nonce or changed account delegation
 
-Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO execution rules even if sponsorship later becomes unavailable.
+Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO[^fifo] execution rules even if sponsorship later becomes unavailable.
 
 A sponsorship outage can be especially consequential for a position that needs margin, reduction or closure. The position remains active, carry continues to accrue and liquidation rules continue to apply while the action is delayed.
 
@@ -569,7 +569,7 @@ Before interacting:
 ## The short version
 
 1. The fixed 0.00–2.00 settlement range makes maximum directional liability measurable. It does not guarantee immediate payment.
-2. No counterparty ADL protects positions from other traders’ failures. It does not prevent liquidation of your own position.
+2. No counterparty ADL[^adl] protects positions from other traders’ failures. It does not prevent liquidation of your own position.
 3. Delayed oracle execution reduces price-selection risk. It does not remove delay, slippage or infrastructure risk.
 4. Junior absorbs LP losses first. Senior can still be impaired.
 5. Trader claims are senior obligations, but they may not be settled immediately.
@@ -586,3 +586,25 @@ Before interacting:
 * [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
 * [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
 * [**Security, audits and governance**](#risks-shared-by-everyone)
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^mev]: Maximal extractable value, value obtained by controlling transaction inclusion or ordering.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^apy]: Annual percentage yield, an annualized return measure that includes compounding.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^eip7702]: Ethereum Improvement Proposal 7702, which lets an existing wallet address use delegated smart-account execution.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^adl]: Auto-deleveraging, the forced reduction of profitable positions to manage counterparty insolvency.

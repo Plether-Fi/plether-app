@@ -53,7 +53,7 @@ import {
 } from '../utils/perpsErrors'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { Button, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -203,10 +203,9 @@ const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
-const LIVE_SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
-const ORACLE_FROZEN_SLIPPAGE_OPTIONS = [0.5, 0.55, 0.75, 1, Infinity]
+const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
 const DEFAULT_LIVE_SLIPPAGE = 0.1
-const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0.55
+const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0
 const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
@@ -228,6 +227,18 @@ const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
   'Execution uses the adverse side of the Pyth confidence range for opens and for live or FAD-only closes. Oracle-frozen voluntary closes/reductions waive that price shift and use the separate frozen close spread instead; confidence-width validation still applies.'
 const FROZEN_CLOSE_SPREAD_TOOLTIP =
   'Oracle-frozen closes/reductions use this fixed LP-owned spread instead of the adverse-confidence price shift to protect LPs from price uncertainty. Wait until the market reopens to avoid this spread.'
+const DIRECTION_TOOLTIP =
+  'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls. The underlying FX basket moves in the opposite direction.'
+const CONTRACT_NOTIONAL_TOOLTIP =
+  'The protocol\'s accounting size, calculated using the raw basket price. It is different from your displayed plDXY Perp exposure and determines margin and fees.'
+const EXECUTION_LIMIT_TOOLTIP =
+  'The worst oracle execution price you accept. It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.'
+const MAINTENANCE_MARGIN_TOOLTIP =
+  'The minimum account equity required to avoid liquidation. At or below this amount, the entire position can be liquidated.'
+const EXECUTION_REWARD_TOOLTIP =
+  'USDC reserved for whoever finalizes or clears the order. It can still be paid if the order fails or expires.'
+const MANUAL_FINALIZATION_TOOLTIP =
+  'Unless marked Sponsored, manual finalization requires ETH for network gas and the Pyth update fee.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
@@ -1456,7 +1467,7 @@ export function PerpsTradeTicket({
   const sponsoredOperations = useSponsoredOperationStore((state) => state.operations)
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
-  const slippageOptions = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
+  const slippageOptions = SLIPPAGE_OPTIONS
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
@@ -1668,15 +1679,6 @@ export function PerpsTradeTicket({
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
   }, [maxLeverage])
-
-  useEffect(() => {
-    const options = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
-    const fallback = oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
-
-    setSlippage((currentSlippage) => (
-      options.includes(currentSlippage) ? currentSlippage : fallback
-    ))
-  }, [oracleFrozen])
 
   useEffect(() => {
     if (!canEnableMarginCallSimulator) {
@@ -2153,12 +2155,28 @@ export function PerpsTradeTicket({
         ),
       },
       { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
-      { label: 'Contract notional', value: formatUsdcRaw(previewContractNotionalUsdc) },
+      {
+        label: 'Contract notional',
+        value: formatUsdcRaw(previewContractNotionalUsdc),
+        tooltip: CONTRACT_NOTIONAL_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.contractNotional,
+      },
       { label: 'Initial margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
-      { label: 'Maintenance margin', value: previewMaintenanceMarginValue, tone: previewMaintenanceMarginUsdc === undefined ? previewLensFallbackTone : undefined },
+      {
+        label: 'Maintenance margin',
+        value: previewMaintenanceMarginValue,
+        tone: previewMaintenanceMarginUsdc === undefined ? previewLensFallbackTone : undefined,
+        tooltip: MAINTENANCE_MARGIN_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.maintenanceMargin,
+      },
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
-      { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+      {
+        label: 'Execution limit',
+        value: formatOptionalPrice(executionLimit),
+        tooltip: EXECUTION_LIMIT_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.executionLimit,
+      },
       isOracleFrozenClose
         ? {
             label: 'Estimated frozen close spread',
@@ -2182,7 +2200,12 @@ export function PerpsTradeTicket({
         tooltip: VPI_PRICE_IMPACT_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
       },
-      { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+      {
+        label: 'Estimated execution reward',
+        value: formatUsdc(keeperBounty),
+        tooltip: EXECUTION_REWARD_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.executionReward,
+      },
       {
         label: 'Contract side capacity',
         value: selectedOpenCapacityUsdc === undefined
@@ -2638,7 +2661,14 @@ export function PerpsTradeTicket({
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-5 px-5 py-4">
         <div>
-          <div className="mb-2 text-xs font-medium uppercase text-content-secondary">Direction</div>
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
+            <span>Direction</span>
+            <InfoTooltip
+              ariaLabel="Direction info"
+              content={DIRECTION_TOOLTIP}
+              docsLink={DOCS_LINKS.direction}
+            />
+          </div>
           <div className="grid grid-cols-2 border border-brand-border/30 bg-app-bg">
             {(['long', 'short'] as Direction[]).map((item) => (
               <button
@@ -3226,6 +3256,8 @@ export function PerpsTradeTicket({
                           ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
                           : 'Available after 04:38',
                       tone: shouldShowFinalizationProgress ? 'muted' : undefined,
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />
@@ -3309,6 +3341,8 @@ export function PerpsTradeTicket({
                           ? 'Retry with price data'
                           : 'Available now',
                       tone: flowError && isRetryableSelfExecuteMessage(flowError) ? 'warning' : 'positive',
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />
@@ -3402,6 +3436,8 @@ export function PerpsTradeTicket({
                       label: 'Manual finalization',
                       value: isTerminalRevealError ? 'Unavailable' : 'Retry available',
                       tone: 'warning',
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />

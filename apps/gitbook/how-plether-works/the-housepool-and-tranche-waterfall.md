@@ -1,18 +1,18 @@
 # The HousePool and tranche waterfall
 
-The HousePool is the USDC capital base behind Plether Perps.
+The HousePool is the USDC[^usdc] capital base behind Plether Perps[^perps].
 
-It does not set the market price. It does not operate an AMM or match traders against one another. The oracle determines price.
+It does not set the market price. It does not operate an AMM[^amm] or match traders against one another. The oracle[^oracle] determines price.
 
 The HousePool has a narrower role:
 
 * underwrite bounded trader payouts;
-* receive collected trader losses, positive VPI and carry;
+* receive collected trader losses, positive VPI[^vpi] and carry[^carry];
 * fund profitable trader settlements and VPI rebates;
 * absorb bad debt;
 * determine how much additional exposure Plether can safely accept.
 
-LPs provide this capital through two ERC-4626 vaults: **Senior** and **Junior**.
+LPs[^lp] provide this capital through two ERC-4626[^erc4626] vaults: **Senior** and **Junior**.
 
 ### Capital before yield
 
@@ -179,7 +179,7 @@ Senior impairment is defined as:
 Senior principal < Senior high-water mark
 ```
 
-During impairment, ordinary deposits into both tranches are blocked. Recovery must come from realized revenue or an explicit recapitalization path.
+During impairment, ordinary deposits into both tranches[^tranche] are blocked. Recovery must come from realized revenue or an explicit recapitalization path.
 
 ### Waterfall example
 
@@ -244,7 +244,7 @@ Potential outflows or losses include:
 * trader residuals following liquidation;
 * uncollectible trader losses and bad debt.
 
-The protocol execution fee is designated for the protocol treasury. Order execution rewards and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
+The protocol execution fee is designated for the protocol treasury. Order execution rewards and liquidation bounties belong to keepers[^keeper]. Neither should be presented as direct LP yield.
 
 Recapitalization is also not trading revenue. It is new capital explicitly introduced to repair the waterfall.
 
@@ -319,7 +319,7 @@ This view is conservative:
 
 Plether avoids minting discounted shares merely because conservative aggregate accounting temporarily over-reserves unrealized trader gains.
 
-Realized losses still reduce deposit NAV. But an inexact conservative mark-to-market reserve is not offered to new LPs as a discount.
+Realized losses still reduce deposit NAV[^nav]. But an inexact conservative mark-to-market reserve is not offered to new LPs as a discount.
 
 Because the protocol cannot safely calculate exact per-position loser receivables from its constant-time market aggregates, immediate deposits are disabled whenever trader positions are open.
 
@@ -845,3 +845,15 @@ Senior and Junior divide the residual economic claim on the HousePool. They do n
 Senior receives a Junior-funded target coupon and relative loss priority.
 
 Junior receives residual upside and absorbs first loss.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

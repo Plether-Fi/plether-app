@@ -1,8 +1,8 @@
 # Trader quickstart
 
-> **Deposit USDC. Choose your dollar view. Commit now; price later.**
+> **Deposit USDC[^usdc]. Choose your dollar view. Commit now; price later.**
 
-Plether Perps lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket. Eligible trader actions use USDC-first, gas-sponsored execution.
+Plether Perps[^perps] lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket. Eligible trader actions use USDC-first, gas-sponsored execution.
 
 This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. Your connected wallet authorizes a Plether **Trading Account**, which owns your positions, orders, Margin Account and trader claims.
 
@@ -73,7 +73,7 @@ The interface separates several balances:
 | **Withdrawable**         | Free Margin Account USDC that can currently reach the owner wallet  |
 | **Portfolio value**      | Current Trading Account equity, including position PnL              |
 
-These values do not need to be equal. Open positions, pending orders, carry and margin requirements can make your withdrawable balance lower than your portfolio value.
+These values do not need to be equal. Open positions, pending orders, carry[^carry] and margin requirements can make your withdrawable balance lower than your portfolio value.
 
 Keep some USDC free rather than committing the entire account to one position.
 
@@ -140,15 +140,15 @@ The preview is the most important part of the ticket. Review at least:
 
 * Direction
 * plDXY Perp exposure
-* Contract notional
+* Contract notional[^notional]
 * Initial margin
 * Maintenance margin
 * Resulting leverage
 * Execution limit
 * Liquidation price
 * Estimated protocol execution fee
-* VPI or price impact
-* Adverse oracle confidence spread
+* VPI[^vpi] or price impact
+* Adverse oracle[^oracle] confidence spread
 * Estimated execution reward
 
 These costs are different:
@@ -185,7 +185,7 @@ You can close the review window before committing. Once the commitment confirms 
 * It enters the global first-in, first-out queue.
 * It is not yet an open position.
 
-Plether does not let the trader or keeper choose a favorable future price. Live execution uses the first eligible Pyth observation strictly after commitment and applies the active confidence policy and your execution limit. VPI is calculated separately in USDC. An oracle-frozen voluntary close instead uses the validated unshifted price and the separate frozen-close spread.
+Plether does not let the trader or keeper[^keeper] choose a favorable future price. Live execution uses the first eligible Pyth observation strictly after commitment and applies the active confidence policy and your execution limit. VPI is calculated separately in USDC. An oracle-frozen voluntary close instead uses the validated unshifted price and the separate frozen-close spread.
 
 If that price exceeds your slippage limit, the order fails rather than executing outside it.
 
@@ -208,7 +208,7 @@ Monitor the order until it reaches a terminal state:
 
 The **Open Orders** tab shows the current countdown and explicitly displays `Cancel unavailable`.
 
-Do not submit a duplicate order simply because the first remains pending. Global FIFO ordering means earlier orders must be resolved first.
+Do not submit a duplicate order simply because the first remains pending. Global FIFO[^fifo] ordering means earlier orders must be resolved first.
 
 If an order expires, use `Clean Up` when the action becomes available. If it fails, check **Order History** for the reason before submitting another order. Failed and expired orders are not retried automatically.
 
@@ -222,7 +222,7 @@ After execution, open the **Position** tab and verify:
 * Entry price
 * Leverage
 * Liquidation price
-* Unrealized PnL
+* Unrealized PnL[^pnl]
 * Cost of carry
 
 The preview and final result can differ. Use the executed position—not the original preview—as the record of what you own.
@@ -329,11 +329,12 @@ Before selecting `Confirm Commit`:
 * Monitor the order until it executes, fails or expires.
 * Verify the final position after execution.
 
-### Continue reading
-
-* [**How delayed orders execute**](how-plether-works/how-orders-execute.md)
-* [**Margin and liquidation**](how-plether-works/margin-leverage-and-liquidation.md)
-* [**Fees, VPI and cost of carry**](how-plether-works/trading-costs-fees-carry-and-vpi.md)
-* [**Managing and closing a position**](trading-on-plether-perps/reduce-or-close-a-position.md)
-* [**Trader claims**](trading-on-plether-perps/check-and-settle-a-trader-claim.md)
-* [**Market hours and closures**](how-plether-works/market-states-and-oracle-closures.md)
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.

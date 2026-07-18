@@ -6,12 +6,12 @@
 
 The Plether Dollar Index measures the dollar against a basket of major currencies.
 
-Instead of trading six FX pairs separately, traders can express one position:
+Instead of trading six FX[^fx] pairs separately, traders can express one position:
 
 * **LONG USD** when they expect the dollar to strengthen.
 * **SHORT USD** when they expect the dollar to weaken.
 
-The index is DXY-inspired, but it is not raw DXY. Plether uses the familiar six-currency composition and starting coefficients, then calculates its own normalized basket from Pyth price feeds.
+The index is DXY-inspired[^dxy], but it is not raw DXY. Plether uses the familiar six-currency composition and starting coefficients, then calculates its own normalized basket from Pyth price feeds.
 
 Same currencies. Different math.
 
@@ -51,7 +51,7 @@ Plether differs in several ways:
 
 Plether and external dollar indices can move in the same general direction while producing different percentage returns.
 
-That difference is **basis risk**. Anyone using Plether as a hedge should account for it.
+That difference is **basis risk[^basis-risk]**. Anyone using Plether as a hedge should account for it.
 
 ### Same currencies. Different math.
 
@@ -104,7 +104,7 @@ The two calculations remain close when currency moves are small. They can diverg
 
 ### Why effective weights drift
 
-The configured coefficients remain fixed inside the deployed oracle. EUR remains configured at 57.6%, JPY at 13.6%, and so on.
+The configured coefficients remain fixed inside the deployed oracle[^oracle]. EUR remains configured at 57.6%, JPY at 13.6%, and so on.
 
 Their **effective weights**, however, can change.
 
@@ -183,7 +183,7 @@ Foreign currencies have lost 4% against USD on a weighted basis.
 * **LONG USD** profits.
 * **SHORT USD** loses.
 
-For a position of 10,000 index units—approximately 10,000 USDC of market exposure at a 1.00 entry—the directional PnL is approximately **400 USDC** before fees, carry, virtual price impact and oracle adjustments.
+For a position of 10,000 index units—approximately 10,000 USDC[^usdc] of market exposure at a 1.00 entry—the directional PnL[^pnl] is approximately **400 USDC** before fees, carry[^carry], virtual price impact and oracle adjustments.
 
 #### The dollar weakens
 
@@ -226,7 +226,7 @@ Confidence is not an additional fee. It is a risk control.
 
 If uncertainty exceeds the configured limit, the protocol rejects the price instead of pretending it is precise.
 
-During live markets, delayed orders use the first eligible basket update published after commitment. The keeper cannot choose a later, more favorable update.
+During live markets, delayed orders use the first eligible basket update published after commitment. The keeper[^keeper] cannot choose a later, more favorable update.
 
 ### The mark and execution economics can differ
 
@@ -283,7 +283,7 @@ The 2.00 cap is not:
 * A trader stop-loss
 * Protection from liquidation
 * A guarantee of immediate profit settlement
-* A guarantee that LP capital cannot be impaired
+* A guarantee that LP[^lp] capital cannot be impaired
 
 It is a settlement and solvency boundary.
 
@@ -367,3 +367,13 @@ Users should rely on the active oracle configuration and deployment reference ra
 * [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
 * [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
 * [**Oracle and execution pricing**](../how-plether-works/how-orders-execute.md#from-index-observation-to-execution-price)
+
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.

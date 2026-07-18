@@ -17,11 +17,11 @@ The sponsored operation is **Confirmed** when the close commitment reaches the c
 
 A successful partial reduction:
 
-* Realizes PnL on the reduced exposure
+* Realizes PnL[^pnl] on the reduced exposure
 * Releases a proportional share of position margin
 * Leaves the remaining entry price unchanged
 * Updates leverage and liquidation information
-* Continues carry accrual on the remaining position
+* Continues carry[^carry] accrual on the remaining position
 
 A successful full close:
 
@@ -47,7 +47,7 @@ Check:
 
 Exposure that exists only as a pending opening order cannot be reduced yet. Wait for the opening order to execute first.
 
-Risk-reducing close orders remain available during normal trading, FAD-only close windows, `oracleFrozen`, degraded mode and router pause. Usable oracle data, execution-reward backing and the ordinary close validations are still required.
+Risk-reducing close orders remain available during normal trading, FAD-only[^fad] close windows, `oracleFrozen`, degraded mode and router pause. Usable oracle[^oracle] data, execution-reward backing and the ordinary close validations are still required.
 
 ![Open position and close context](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
@@ -110,7 +110,7 @@ During live and FAD-only execution, the price includes the adverse Pyth confiden
 
 During `oracleFrozen`, the close uses the validated oracle price without that confidence-based shift. The separate frozen-close spread described below applies instead.
 
-Slippage remains active in every market state. It applies to the execution price; fees, carry, VPI and the frozen-close spread are reviewed separately.
+Slippage remains active in every market state. It applies to the execution price; fees, carry, VPI[^vpi] and the frozen-close spread are reviewed separately.
 
 If the interface offers an **Unlimited** setting, it removes the execution-price boundary. The other close requirements continue to apply.
 
@@ -118,7 +118,7 @@ If the interface offers an **Unlimited** setting, it removes the execution-price
 
 ### 3. Review the close preview
 
-The preview estimates the result using the current account, oracle and HousePool state. Execution recalculates the result after all earlier FIFO orders have been processed.
+The preview estimates the result using the current account, oracle and HousePool state. Execution recalculates the result after all earlier FIFO[^fifo] orders have been processed.
 
 Review:
 
@@ -159,7 +159,7 @@ The interface reports:
 
 ![Reduce-or-close sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/reduce-close-sponsored-submission.svg)
 
-If the wallet signature, sponsorship request or UserOperation submission fails before confirmation, no close order is created. Check the operation status before retrying.
+If the wallet signature, sponsorship request or UserOperation[^useroperation] submission fails before confirmation, no close order is created. Check the operation status before retrying.
 
 After the sponsored commitment confirms:
 
@@ -172,7 +172,7 @@ After the sponsored commitment confirms:
 
 The execution reward pays the account that performs terminal order processing. It is separate from the trading execution fee.
 
-Plether funds the reward from free Margin Account USDC first. When necessary, it may reserve a bounded amount from position margin after running the close-path risk checks.
+Plether funds the reward from free Margin Account USDC[^usdc] first. When necessary, it may reserve a bounded amount from position margin after running the close-path risk checks.
 
 If position margin funds part of the reward:
 
@@ -255,7 +255,7 @@ Account movement at execution
 
 Losses and costs can consume some or all of the released margin. The execution reward was already reserved at commitment and is therefore outside this execution formula.
 
-Any reduction checkpoints carry accrued by the complete position through execution. After a partial reduction, the remaining position begins a new carry period using its reduced margin and LP-backed borrow base.
+Any reduction checkpoints carry accrued by the complete position through execution. After a partial reduction, the remaining position begins a new carry period using its reduced margin and LP-backed[^lp] borrow base.
 
 For the underlying calculations, see [**How PnL is calculated**](../how-plether-works/how-pnl-is-calculated.md) and [**Fees, VPI and cost of carry**](../how-plether-works/trading-costs-fees-carry-and-vpi.md).
 
@@ -314,7 +314,7 @@ Consuming margin committed to other orders can cause those orders to fail when t
 
 A voluntary reduction or full close executed during `oracleFrozen` is assessed the frozen-close spread.
 
-The current setting is **50 bps**, or **0.50%**, of the reduced contract notional:
+The current setting is **50 bps[^bps]**, or **0.50%**, of the reduced contract notional[^notional]:
 
 ```
 Frozen-close spread
@@ -500,3 +500,15 @@ After a full close, confirm:
 * Review remaining leverage and liquidation risk.
 * Allow for continued exposure while the order waits.
 * Monitor the order until it executes, fails or expires.
+
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^bps]: Basis points; 100 bps equals 1%.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.

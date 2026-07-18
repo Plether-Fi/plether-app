@@ -29,6 +29,7 @@
 
 * [The Plether Perps market model](how-plether-works/the-plether-perps-market-model.md)
 * [How orders execute](how-plether-works/how-orders-execute.md)
+* [Keepers and permissionless execution](how-plether-works/keepers-and-permissionless-execution.md)
 * [How PnL is calculated](how-plether-works/how-pnl-is-calculated.md)
 * [Margin, leverage and liquidation](how-plether-works/margin-leverage-and-liquidation.md)
 * [Trading costs: fees, carry and VPI](how-plether-works/trading-costs-fees-carry-and-vpi.md)
