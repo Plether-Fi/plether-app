@@ -378,16 +378,6 @@ Before approving the vault:
 * Keep enough Arbitrum Sepolia ETH for approval, request, finalization and claim transactions.
 * Accept that share value and withdrawal availability can both change.
 
-### Continue reading
-
-* [**Senior and Junior liquidity**](how-plether-works/the-housepool-and-tranche-waterfall.md#senior-and-junior-at-a-glance)
-* [**How the tranche waterfall works**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-waterfall)
-* [**Where LP returns come from**](how-plether-works/the-housepool-and-tranche-waterfall.md#what-creates-lp-revenue)
-* [**Pending deposit epochs**](how-plether-works/the-housepool-and-tranche-waterfall.md#delayed-deposit-epochs)
-* [**The LP withdrawal firewall**](how-plether-works/the-housepool-and-tranche-waterfall.md#the-withdrawal-firewall)
-* [**LP fees during market closures**](how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps)
-* [**LP risks and loss scenarios**](welcome/risks-you-should-understand-first.md#risks-for-liquidity-providers)
-
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
