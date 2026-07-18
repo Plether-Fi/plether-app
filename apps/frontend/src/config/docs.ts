@@ -1,6 +1,14 @@
 const DOCS_BASE_URL = 'https://docs.plether.com'
 
 export const DOCS_LINKS = {
+  perpsPrice: {
+    href: `${DOCS_BASE_URL}/welcome/understanding-the-plether-dollar-index#the-mark-and-execution-economics-can-differ`,
+    title: 'The mark and execution economics can differ',
+  },
+  direction: {
+    href: `${DOCS_BASE_URL}/welcome/understanding-the-plether-dollar-index#why-the-raw-basket-moves-opposite-to-the-dollar`,
+    title: 'Why the raw basket moves opposite to the dollar',
+  },
   poolLiquidity: {
     href: `${DOCS_BASE_URL}/how-plether-works/the-housepool-and-tranche-waterfall#pool-liquidity-is-not-total-lp-capital`,
     title: '“Pool liquidity” is not total LP capital',
@@ -48,6 +56,26 @@ export const DOCS_LINKS = {
   marginCallSimulator: {
     href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#margin-call-simulator`,
     title: 'Margin Call Simulator',
+  },
+  contractNotional: {
+    href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#the-notional-used-for-margin`,
+    title: 'The notional used for margin',
+  },
+  executionLimit: {
+    href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#acceptable-price-protection`,
+    title: 'Acceptable-price protection',
+  },
+  maintenanceMargin: {
+    href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#maintenance-margin`,
+    title: 'Maintenance margin',
+  },
+  executionReward: {
+    href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#the-order-execution-reward`,
+    title: 'The order execution reward',
+  },
+  manualFinalization: {
+    href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#who-finalizes-the-order`,
+    title: 'Who finalizes the order?',
   },
   withdrawable: {
     href: `${DOCS_BASE_URL}/trading-on-plether-perps/your-margin-account#available-to-trade-and-withdrawable`,
