@@ -38,6 +38,7 @@ second copy in the existing CloudWatch log group.
 |---------------|------------------------------|
 | `plether-api` | `plether-api` |
 | `plether-keeper` | `plether-keeper` |
+| `plether-liquidation-worker` | `plether-liquidation-worker` |
 | `plether-perps-indexer` | `plether-indexer` |
 | `plether-basket-worker` | `plether-basket-worker` |
 | `plether-oracle-worker` | `plether-oracle-worker` |
@@ -67,9 +68,20 @@ The steady-state volume controls are:
 - Important state changes such as startup, reorg detection, keeper order
   failures, and mined keeper transactions emit immediately. Repetitive oracle
   success/no-op states emit at most once every five minutes.
+- The liquidation worker emits structured discovery, opportunity, submission,
+  replacement, confirmation, and circuit-breaker events. A successful-iteration
+  heartbeat is emitted at most once every five minutes so missing-log alerts can
+  detect a stalled or crash-looping worker; recurring RPC and candidate errors
+  are limited to one per minute with a `suppressed_count` on recovery.
 - FireLens suppresses repeated delivery diagnostics from each output for one
   minute, while unlimited OTLP retries avoid discarding a batch solely because
   a temporary PostHog outage exhausted a retry count.
+
+The FireLens handoff explicitly maps structured severity fields, caps each
+container's Docker-side queue at 4,096 records, reserves 128 MiB for the router,
+and allows up to 120 seconds for router shutdown. PostHog delivery retries
+without a fixed attempt limit, while the independent CloudWatch copy retries 15
+times and provides a second place to recover logs during a PostHog outage.
 
 The FireLens parser keeps plaintext output from third-party libraries as a
 fallback, but first-party services should use the structured logger instead of

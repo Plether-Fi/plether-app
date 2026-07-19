@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Control.Exception (SomeException, catch, displayException, fromException, throwIO)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -17,8 +18,9 @@ import Plether.LiquidationWorker
   , LiquidationWorkerMode (..)
   , runLiquidationWorker
   )
+import Plether.Logging (field, logError, logInfo)
 import System.Environment (getArgs, lookupEnv)
-import System.Exit (exitFailure)
+import System.Exit (ExitCode, exitFailure)
 import Text.Read (readMaybe)
 
 data LiquidationWorkerArgs = LiquidationWorkerArgs
@@ -31,7 +33,10 @@ defaultCfdEngine :: Text
 defaultCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
 
 main :: IO ()
-main = do
+main = runMain `catch` handleUnexpectedFailure
+
+runMain :: IO ()
+runMain = do
   args <- parseArgs <$> getArgs
   eConfig <- loadConfig
   case eConfig of
@@ -40,13 +45,24 @@ main = do
       dbUrl <- require "DATABASE_URL is required for plether-liquidation-worker" (cfgDatabaseUrl cfg)
       privateKey <- requireEnv "LIQUIDATION_KEEPER_PRIVATE_KEY is required for plether-liquidation-worker" "LIQUIDATION_KEEPER_PRIVATE_KEY"
       addressResult <- deriveAddress privateKey
-      case addressResult of
+      workerAddress <- case addressResult of
         Left err -> fatal $ "Invalid LIQUIDATION_KEEPER_PRIVATE_KEY: " <> T.unpack err
-        Right workerAddress ->
-          putStrLn $ "Starting plether-liquidation-worker from " <> T.unpack workerAddress
+        Right derivedAddress -> pure derivedAddress
 
       cfdEngine <- T.pack . fromMaybe (T.unpack defaultCfdEngine) <$> lookupEnv "PERPS_CFD_ENGINE"
       workerCfg <- loadWorkerConfig cfg cfdEngine privateKey
+      logInfo
+        "liquidation_worker_started"
+        "Liquidation worker started"
+        [ field "worker_address" workerAddress
+        , field "mode" $ show $ lwaMode args
+        , field "dry_run" $ lwaDryRun args
+        , field "chain_id" $ lwcChainId workerCfg
+        , field "order_router" $ lwcOrderRouter workerCfg
+        , field "cfd_engine" $ lwcCfdEngine workerCfg
+        , field "poll_seconds" $ lwcPollSeconds workerCfg
+        , field "confirmations" $ lwcIndexerConfirmations workerCfg
+        ]
       pool <- newDbPool dbUrl
       withDb pool $ \conn -> do
         ensureBasketSnapshotSchema conn
@@ -113,5 +129,19 @@ require message value =
 
 fatal :: String -> IO a
 fatal message = do
-  putStrLn message
+  logError
+    "liquidation_worker_fatal"
+    "Liquidation worker cannot start"
+    [field "error" message]
   exitFailure
+
+handleUnexpectedFailure :: SomeException -> IO ()
+handleUnexpectedFailure err =
+  case fromException err :: Maybe ExitCode of
+    Just _ -> throwIO err
+    Nothing -> do
+      logError
+        "liquidation_worker_crashed"
+        "Liquidation worker terminated after an unexpected exception"
+        [field "error" $ displayException err]
+      throwIO err

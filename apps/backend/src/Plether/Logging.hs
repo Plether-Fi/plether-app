@@ -126,9 +126,14 @@ sanitizeText limit = Text.take limit . Text.unwords . map redactWord . Text.word
       let (scheme, withSeparator) = Text.breakOn "://" word
           remainder = Text.drop 3 withSeparator
           authority = Text.takeWhile (`notElem` ['/', '?', '#']) remainder
-       in if Text.null scheme || Text.null authority
+          (credentialsPrefix, authorityWithoutCredentials) = Text.breakOnEnd "@" authority
+          safeAuthority =
+            if Text.null credentialsPrefix
+              then authority
+              else authorityWithoutCredentials
+       in if Text.null scheme || Text.null safeAuthority
             then "<redacted-url>"
-            else scheme <> "://" <> authority <> "/<redacted>"
+            else scheme <> "://" <> safeAuthority <> "/<redacted>"
 
 {-# NOINLINE rateStates #-}
 rateStates :: IORef (Map.Map (LogLevel, Text) RateState)
