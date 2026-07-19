@@ -6,8 +6,15 @@ module Plether.Ethereum.Contracts.Perps
   , orderExecutedTopic
   , orderFailedTopic
   , perpsOrderTopics
+  , positionOpenedTopic
+  , positionLiquidatedTopic
   , decodePerpsOrderEvent
+  , decodePositionOpenedAccount
+  , decodePositionLiquidatedAccount
   , getPendingOrderView
+  , getPositionSize
+  , getPositionSizeAtBlock
+  , decodePositionSize
   , maxOrderAge
   , orderSettlementWindow
   , orderExecutionStalenessLimit
@@ -17,6 +24,8 @@ module Plether.Ethereum.Contracts.Perps
   , getUpdateFee
   , executeOrderCall
   , executeOrderBatchCall
+  , executeLiquidationCall
+  , positionsCall
   , getUpdateFeeCall
   , adverseConfidenceMultiplierBpsCall
   , orderFailureReasonText
@@ -31,12 +40,19 @@ import Plether.Ethereum.Abi
   ( decodeAddress
   , decodeBool
   , decodeUint256
+  , encodeAddress
   , encodeBool
   , encodeCall
   , encodeUint256
   , keccak256
   )
-import Plether.Ethereum.Client (CallParams (..), EthClient, RpcError, ethCall)
+import Plether.Ethereum.Client
+  ( CallParams (..)
+  , EthClient
+  , RpcError (..)
+  , ethCall
+  , ethCallAtBlock
+  )
 import Plether.Ethereum.Rpc (RpcLog (..))
 
 data PerpsOrderEvent
@@ -102,6 +118,12 @@ perpsOrderTopics =
   , orderFailedTopic
   ]
 
+positionOpenedTopic :: ByteString
+positionOpenedTopic = keccak256 $ TE.encodeUtf8 "PositionOpened(address,uint8,uint256,uint256,uint256)"
+
+positionLiquidatedTopic :: ByteString
+positionLiquidatedTopic = keccak256 $ TE.encodeUtf8 "PositionLiquidated(address,uint8,uint256,uint256,uint256)"
+
 decodePerpsOrderEvent :: RpcLog -> Maybe PerpsOrderEvent
 decodePerpsOrderEvent RpcLog {..} =
   case rpcLogTopics of
@@ -134,10 +156,37 @@ decodePerpsOrderEvent RpcLog {..} =
               }
     _ -> Nothing
 
+decodePositionOpenedAccount :: RpcLog -> Maybe Text
+decodePositionOpenedAccount = decodeIndexedPositionAccount positionOpenedTopic
+
+decodePositionLiquidatedAccount :: RpcLog -> Maybe Text
+decodePositionLiquidatedAccount = decodeIndexedPositionAccount positionLiquidatedTopic
+
+decodeIndexedPositionAccount :: ByteString -> RpcLog -> Maybe Text
+decodeIndexedPositionAccount eventTopic RpcLog {rpcLogTopics = topic : accountTopic : _}
+  | topic == eventTopic && BS.length accountTopic == 32 = Just $ decodeAddress accountTopic
+decodeIndexedPositionAccount _ _ = Nothing
+
 getPendingOrderView :: EthClient -> Text -> Integer -> IO (Either RpcError PendingOrderView)
 getPendingOrderView client orderRouter orderId = do
   result <- ethCall client (CallParams orderRouter (getPendingOrderViewCall orderId))
   pure $ fmap decodePendingOrderView result
+
+getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
+getPositionSize client cfdEngine account = do
+  result <- ethCall client (CallParams cfdEngine (positionsCall account))
+  pure $ result >>= decodePositionSize
+
+getPositionSizeAtBlock :: EthClient -> Text -> Text -> Integer -> IO (Either RpcError Integer)
+getPositionSizeAtBlock client cfdEngine account blockNumber = do
+  result <- ethCallAtBlock client (CallParams cfdEngine (positionsCall account)) blockNumber
+  pure $ result >>= decodePositionSize
+
+decodePositionSize :: ByteString -> Either RpcError Integer
+decodePositionSize bytes
+  | BS.length bytes < 7 * 32 =
+      Left $ RpcJsonError "positions(address) returned fewer than seven ABI words"
+  | otherwise = Right $ wordAt 0 bytes
 
 maxOrderAge :: EthClient -> Text -> IO (Either RpcError Integer)
 maxOrderAge client orderRouter = do
@@ -172,7 +221,11 @@ getOrderExecutionPolicy client oracle isClose = do
 getUpdateFee :: EthClient -> Text -> [ByteString] -> IO (Either RpcError Integer)
 getUpdateFee client oracle updateData = do
   result <- ethCall client (CallParams oracle (getUpdateFeeCall updateData))
-  pure $ fmap decodeUint256 result
+  pure $ do
+    bytes <- result
+    if BS.length bytes < 32
+      then Left $ RpcJsonError "getUpdateFee(bytes[]) returned less than one ABI word"
+      else Right $ decodeUint256 bytes
 
 orderFailureReasonText :: Integer -> Text
 orderFailureReasonText = \case
@@ -217,6 +270,19 @@ executeOrderBatchCall maxOrderId updateData =
     , encodeUint256 64
     , encodeBytesArray updateData
     ]
+
+executeLiquidationCall :: Text -> [ByteString] -> ByteString
+executeLiquidationCall account updateData =
+  encodeCall
+    "executeLiquidation(address,bytes[])"
+    [ encodeAddress account
+    , encodeUint256 64
+    , encodeBytesArray updateData
+    ]
+
+positionsCall :: Text -> ByteString
+positionsCall account =
+  encodeCall "positions(address)" [encodeAddress account]
 
 decodePendingOrderView :: ByteString -> PendingOrderView
 decodePendingOrderView bytes =

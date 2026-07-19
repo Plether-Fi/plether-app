@@ -26,6 +26,7 @@ jobs:
       id-token: write
     outputs:
       image: ${{ steps.build.outputs.image }}
+      log_router_image: ${{ steps.build.outputs.log_router_image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -44,7 +45,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
+      - name: Build and push application and log router images
         id: build
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -52,11 +53,14 @@ jobs:
         run: |
           if [ "$TARGET_ENV" = "mainnet" ]; then
             ECR_REPOSITORY=plether-api
+            LOG_ROUTER_REPOSITORY=plether-otel-log-router
           else
             ECR_REPOSITORY=plether-api-$TARGET_ENV
+            LOG_ROUTER_REPOSITORY=plether-otel-log-router-$TARGET_ENV
           fi
 
           IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          LOG_ROUTER_IMAGE=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG
           docker buildx build \
             --platform linux/arm64 \
             -f apps/backend/Dockerfile \
@@ -64,7 +68,17 @@ jobs:
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push \
             .
+
+          docker buildx build \
+            --platform linux/arm64 \
+            -f apps/backend/otel-log-router/Dockerfile \
+            -t $LOG_ROUTER_IMAGE \
+            -t $ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest \
+            --push \
+            .
+
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+          echo "log_router_image=$LOG_ROUTER_IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
     needs: build
@@ -74,7 +88,7 @@ jobs:
       id-token: write
     strategy:
       matrix:
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-workers"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-workers"}]') }}
+        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials
@@ -85,13 +99,19 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Get current task definition
+        id: task-definition-status
         run: |
-          aws ecs describe-task-definition \
-            --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
-            --query taskDefinition > task-def.json
+          if aws ecs describe-task-definition \
+              --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
+              --query taskDefinition > task-def.json; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
+          fi
 
       - name: Patch Sepolia task definition network
-        if: matrix.environment == 'sepolia'
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
           jq \
             --arg container "${{ matrix.container_name }}" \
@@ -121,15 +141,43 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
-      - name: Update task definition image
+      - name: Update application images and service version
+        if: steps.task-definition-status.outputs.exists == 'true'
+        env:
+          APPLICATION_IMAGE: ${{ needs.build.outputs.image }}
+          SERVICE_VERSION: ${{ github.sha }}
+        run: |
+          jq \
+            --arg applicationImage "$APPLICATION_IMAGE" \
+            --arg serviceVersion "$SERVICE_VERSION" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == "otel-log-router" then
+                upsert_env("SERVICE_VERSION"; $serviceVersion)
+              else
+                .image = $applicationImage
+              end
+            )
+            ' task-def.json > task-def.updated.json
+          mv task-def.updated.json task-def.json
+
+      - name: Update log router image
+        if: steps.task-definition-status.outputs.exists == 'true'
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-def.json
-          container-name: ${{ matrix.container_name }}
-          image: ${{ needs.build.outputs.image }}
+          container-name: otel-log-router
+          image: ${{ needs.build.outputs.log_router_image }}
 
       - name: Deploy to ECS
+        if: steps.task-definition-status.outputs.exists == 'true'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}

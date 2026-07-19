@@ -24,6 +24,12 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   value = var.keeper_private_key
 }
 
+resource "aws_ssm_parameter" "liquidation_keeper_private_key" {
+  name  = "/plether/${var.environment}/liquidation-keeper-private-key"
+  type  = "SecureString"
+  value = var.liquidation_keeper_private_key
+}
+
 resource "aws_ssm_parameter" "faucet_private_key" {
   count = var.faucet_private_key != "" ? 1 : 0
 
@@ -60,4 +66,10 @@ resource "aws_ssm_parameter" "database_url" {
   name  = "/plether/${var.environment}/database-url"
   type  = "SecureString"
   value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/plether"
+}
+
+resource "aws_ssm_parameter" "posthog_otlp_authorization_header" {
+  name  = "/plether/${var.environment}/posthog-otlp-authorization-header"
+  type  = "SecureString"
+  value = "Authorization Bearer ${var.posthog_project_token}"
 }

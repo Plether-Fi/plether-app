@@ -6,6 +6,7 @@
  */
 
 import { Result } from 'better-result';
+import { captureFrontendLog } from '../analytics/client';
 import { isSepoliaDeployment } from '../utils/deployment';
 import type {
   ApiResponse,
@@ -229,6 +230,16 @@ async function parseErrorResponse(response: Response, url: string): Promise<Plet
 // HTTP Client
 // =============================================================================
 
+function logApiFailure(apiError: PlethApiError): void {
+  captureFrontendLog('error', 'frontend api request failed', {
+    component: 'api_client',
+    operation: 'request',
+    outcome: 'failure',
+    error_category: apiError.code.toLowerCase(),
+    http_status: apiError.status,
+  });
+}
+
 async function fetchApi<T>(
   config: PlethApiConfig,
   path: string,
@@ -261,6 +272,7 @@ async function fetchApi<T>(
     if (!response.ok) {
       const apiError = await parseErrorResponse(response, url);
 
+      logApiFailure(apiError);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
@@ -268,6 +280,7 @@ async function fetchApi<T>(
     if (!isJsonResponse(response)) {
       const apiError = createNonJsonApiError(response, url, await readResponsePreview(response));
 
+      logApiFailure(apiError);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
@@ -284,6 +297,7 @@ async function fetchApi<T>(
       err
     );
 
+    logApiFailure(apiError);
     config.onError?.(apiError);
     return Result.err(apiError);
   }

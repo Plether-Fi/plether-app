@@ -22,10 +22,11 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-perps-indexer && \
+RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
     cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
     cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin && \
+    cp "$(cabal list-bin plether-liquidation-worker)" /build/plether-liquidation-worker-bin && \
     cp "$(cabal list-bin plether-perps-indexer)" /build/plether-perps-indexer-bin
 
 FROM node:22-bookworm-slim AS oracle-worker
@@ -44,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
 COPY --from=builder /build/plether-basket-worker-bin /usr/local/bin/plether-basket-worker
 COPY --from=builder /build/plether-keeper-bin /usr/local/bin/plether-keeper
+COPY --from=builder /build/plether-liquidation-worker-bin /usr/local/bin/plether-liquidation-worker
 COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perps-indexer
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle

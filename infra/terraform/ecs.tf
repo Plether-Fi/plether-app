@@ -8,48 +8,6 @@ resource "aws_cloudwatch_log_group" "ecs" {
 }
 
 locals {
-  workers_command = <<-EOT
-    set -eu
-    pids=""
-
-    stop_all() {
-      status="$${1:-143}"
-      for pid in $pids; do
-        kill -TERM "$pid" 2>/dev/null || true
-      done
-      for pid in $pids; do
-        wait "$pid" 2>/dev/null || true
-      done
-      exit "$status"
-    }
-
-    trap 'stop_all 143' INT TERM
-
-    RPC_URL="$PERPS_RPC_URL" CHAIN_ID="$PERPS_CHAIN_ID" plether-keeper &
-    pids="$pids $!"
-
-    RPC_URL="$ETH_RPC_URL" CHAIN_ID="$ETH_CHAIN_ID" plether-basket-worker --latest-loop --poll-seconds "$BASKET_WORKER_POLL_SECONDS" &
-    pids="$pids $!"
-
-    ARBITRUM_SEPOLIA_RPC_URL="$PERPS_RPC_URL" PERPS_ORACLE_UPDATER_PRIVATE_KEY="$KEEPER_PRIVATE_KEY" node /app/oracle/scripts/perps-oracle-worker.mjs --loop &
-    pids="$pids $!"
-
-    RPC_URL="$PERPS_RPC_URL" CHAIN_ID="$PERPS_CHAIN_ID" plether-perps-indexer --loop &
-    pids="$pids $!"
-
-    while :; do
-      for pid in $pids; do
-        if ! kill -0 "$pid" 2>/dev/null; then
-          status=1
-          wait "$pid" || status=$?
-          echo "worker process $pid exited with status $status"
-          stop_all "$status"
-        fi
-      done
-      sleep 5
-    done
-  EOT
-
   pyth_environment = [
     { name = "PYTH_HERMES_URL", value = var.pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
@@ -85,6 +43,69 @@ locals {
       valueFrom = aws_ssm_parameter.aa_proxy_origin_token[0].arn
     }
   ] : []
+
+  posthog_log_configuration = {
+    logDriver = "awsfirelens"
+    options = {
+      Name                             = "opentelemetry"
+      Host                             = var.posthog_otlp_host
+      Port                             = "443"
+      logs_uri                         = var.posthog_otlp_logs_uri
+      logs_body_key                    = "$message"
+      logs_body_key_attributes         = "true"
+      logs_severity_text_message_key   = "$SeverityText"
+      logs_severity_number_message_key = "$SeverityNumber"
+      "log-driver-buffer-limit"        = "4096"
+      batch_size                       = "100"
+      compress                         = "gzip"
+      grpc                             = "off"
+      http2                            = "off"
+      log_response_payload             = "false"
+      log_suppress_interval            = "60"
+      tls                              = "on"
+      "tls.verify"                     = "on"
+      "tls.verify_hostname"            = "on"
+      Retry_Limit                      = "no_limits"
+    }
+    secretOptions = [{
+      name      = "Header"
+      valueFrom = aws_ssm_parameter.posthog_otlp_authorization_header.arn
+    }]
+  }
+
+  otel_log_router_container = {
+    name              = "otel-log-router"
+    image             = "${aws_ecr_repository.otel_log_router.repository_url}:latest"
+    essential         = true
+    memoryReservation = 128
+    stopTimeout       = 120
+
+    firelensConfiguration = {
+      type = "fluentbit"
+      options = {
+        "enable-ecs-log-metadata" = "true"
+        "config-file-type"        = "file"
+        "config-file-value"       = "/fluent-bit/etc/otel-enrichment.conf"
+      }
+    }
+
+    environment = [
+      { name = "AWS_REGION", value = var.aws_region },
+      { name = "CLOUDWATCH_LOG_GROUP", value = aws_cloudwatch_log_group.ecs.name },
+      { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
+      { name = "ECS_CLUSTER_NAME", value = aws_ecs_cluster.main.name },
+      { name = "SERVICE_VERSION", value = "unknown" },
+    ]
+
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ecs.name
+        awslogs-region        = var.aws_region
+        awslogs-stream-prefix = "router"
+      }
+    }
+  }
 }
 
 resource "aws_ecs_task_definition" "api" {
@@ -106,14 +127,7 @@ resource "aws_ecs_task_definition" "api" {
       protocol      = "tcp"
     }]
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.ecs.name
-        awslogs-region        = var.aws_region
-        awslogs-stream-prefix = "ecs"
-      }
-    }
+    logConfiguration = local.posthog_log_configuration
 
     secrets = concat([
       {
@@ -148,7 +162,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment)
-  }])
+  }, local.otel_log_router_container])
 
   lifecycle {
     precondition {
@@ -210,14 +224,7 @@ resource "aws_ecs_task_definition" "keeper" {
     essential = true
     command   = ["plether-keeper"]
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.ecs.name
-        awslogs-region        = var.aws_region
-        awslogs-stream-prefix = "ecs"
-      }
-    }
+    logConfiguration = local.posthog_log_configuration
 
     secrets = [
       {
@@ -245,7 +252,7 @@ resource "aws_ecs_task_definition" "keeper" {
       { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
       { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
     ]
-  }])
+  }, local.otel_log_router_container])
 }
 
 resource "aws_ecs_service" "keeper" {
@@ -253,6 +260,77 @@ resource "aws_ecs_service" "keeper" {
   cluster                            = aws_ecs_cluster.main.id
   task_definition                    = aws_ecs_task_definition.keeper.arn
   desired_count                      = var.consolidate_workers ? 0 : 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
+
+resource "aws_ecs_task_definition" "liquidation_worker" {
+  family                   = "plether-${var.environment}-liquidation-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name      = "plether-liquidation-worker"
+    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    essential = true
+    command   = ["plether-liquidation-worker"]
+
+    logConfiguration = local.posthog_log_configuration
+
+    secrets = [
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_ssm_parameter.database_url.arn
+      },
+      {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
+        name      = "LIQUIDATION_KEEPER_PRIVATE_KEY"
+        valueFrom = aws_ssm_parameter.liquidation_keeper_private_key.arn
+      }
+    ]
+
+    environment = [
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
+      { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "LIQUIDATION_WORKER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "LIQUIDATION_WORKER_POLL_SECONDS", value = var.liquidation_worker_poll_seconds },
+      { name = "LIQUIDATION_WORKER_SCAN_BATCH_SIZE", value = var.liquidation_worker_scan_batch_size },
+      { name = "LIQUIDATION_WORKER_CONFIRMATIONS", value = var.liquidation_worker_confirmations },
+      { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },
+      { name = "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS", value = var.liquidation_worker_reorg_overlap_blocks },
+      { name = "LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS", value = var.liquidation_worker_pending_replacement_seconds },
+      { name = "LIQUIDATION_WORKER_GAS_BUFFER_BPS", value = var.liquidation_worker_gas_buffer_bps },
+      { name = "LIQUIDATION_WORKER_FEE_BUFFER_BPS", value = var.liquidation_worker_fee_buffer_bps },
+    ]
+  }, local.otel_log_router_container])
+}
+
+resource "aws_ecs_service" "liquidation_worker" {
+  name                               = "plether-liquidation-worker"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.liquidation_worker.arn
+  desired_count                      = var.liquidation_worker_desired_count
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
@@ -283,14 +361,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
     essential = true
     command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.ecs.name
-        awslogs-region        = var.aws_region
-        awslogs-stream-prefix = "ecs"
-      }
-    }
+    logConfiguration = local.posthog_log_configuration
 
     secrets = concat([
       {
@@ -306,7 +377,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
     environment = concat([
       { name = "CHAIN_ID", value = var.chain_id },
     ], local.pyth_environment)
-  }])
+  }, local.otel_log_router_container])
 }
 
 resource "aws_ecs_service" "basket_worker" {
@@ -344,14 +415,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     essential = true
     command   = ["plether-perps-indexer", "--loop"]
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.ecs.name
-        awslogs-region        = var.aws_region
-        awslogs-stream-prefix = "ecs"
-      }
-    }
+    logConfiguration = local.posthog_log_configuration
 
     secrets = [
       {
@@ -375,7 +439,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
       { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
     ]
-  }])
+  }, local.otel_log_router_container])
 }
 
 resource "aws_ecs_service" "perps_indexer" {
@@ -409,62 +473,119 @@ resource "aws_ecs_task_definition" "workers" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
-  container_definitions = jsonencode([{
-    name      = "plether-workers"
-    image     = "${aws_ecr_repository.api.repository_url}:latest"
-    essential = true
-    command   = ["sh", "-c", local.workers_command]
+  container_definitions = jsonencode([
+    {
+      name             = "plether-keeper"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["plether-keeper"]
+      logConfiguration = local.posthog_log_configuration
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.ecs.name
-        awslogs-region        = var.aws_region
-        awslogs-stream-prefix = "ecs"
-      }
-    }
+      secrets = [
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_ssm_parameter.database_url.arn
+        },
+        {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
+          name      = "KEEPER_PRIVATE_KEY"
+          valueFrom = aws_ssm_parameter.keeper_private_key.arn
+        }
+      ]
 
-    secrets = concat([
-      {
-        name      = "ETH_RPC_URL"
-        valueFrom = aws_ssm_parameter.rpc_url.arn
-      },
-      {
-        name      = "PERPS_RPC_URL"
-        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
-      },
-      {
-        name      = "DATABASE_URL"
-        valueFrom = aws_ssm_parameter.database_url.arn
-      },
-      {
-        name      = "KEEPER_PRIVATE_KEY"
-        valueFrom = aws_ssm_parameter.keeper_private_key.arn
-      }
-    ], local.pyth_api_key_secret)
+      environment = [
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
+        { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+        { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
+        { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
+        { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
+        { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
+        { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
+      ]
+    },
+    {
+      name             = "plether-basket-worker"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
+      logConfiguration = local.posthog_log_configuration
 
-    environment = concat([
-      { name = "ETH_CHAIN_ID", value = var.chain_id },
-      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
-      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
-      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-      { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
-      { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
-      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
-      { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
-      { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
-      { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
-      { name = "PERPS_ORACLE_UPDATER_BACKEND_URL", value = "http://${aws_lb.api.dns_name}" },
-      { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
-      { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
-      { name = "BASKET_WORKER_POLL_SECONDS", value = var.basket_worker_poll_seconds },
-      { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
-      { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
-      { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
-      { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
-      { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
-    ], local.pyth_environment)
-  }])
+      secrets = concat([
+        {
+          name      = "RPC_URL"
+          valueFrom = aws_ssm_parameter.rpc_url.arn
+        },
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_ssm_parameter.database_url.arn
+        }
+      ], local.pyth_api_key_secret)
+
+      environment = concat([
+        { name = "CHAIN_ID", value = var.chain_id },
+      ], local.pyth_environment)
+    },
+    {
+      name             = "plether-oracle-worker"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["node", "/app/oracle/scripts/perps-oracle-worker.mjs", "--loop"]
+      logConfiguration = local.posthog_log_configuration
+
+      secrets = [
+        {
+          name      = "ARBITRUM_SEPOLIA_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
+          name      = "PERPS_ORACLE_UPDATER_PRIVATE_KEY"
+          valueFrom = aws_ssm_parameter.keeper_private_key.arn
+        }
+      ]
+
+      environment = [
+        { name = "PERPS_ORACLE_UPDATER_BACKEND_URL", value = "http://${aws_lb.api.dns_name}" },
+        { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
+        { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
+      ]
+    },
+    {
+      name             = "plether-perps-indexer"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["plether-perps-indexer", "--loop"]
+      logConfiguration = local.posthog_log_configuration
+
+      secrets = [
+        {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_ssm_parameter.database_url.arn
+        }
+      ]
+
+      environment = [
+        { name = "CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+        { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+        { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+        { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
+        { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
+        { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
+      ]
+    },
+    local.otel_log_router_container,
+  ])
 }
 
 resource "aws_ecs_service" "workers" {

@@ -34,6 +34,7 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema (getLastIndexedBlock, insertTransaction, setLastIndexedBlock)
 import Plether.Indexer.Contracts (allEventSignatures, esTopic)
 import Plether.Indexer.Events (EventLog (..), MorphoMarkets (..), ParsedEvent (..), parseEventLog)
+import Plether.Logging (field, logErrorEvery, logInfo, logInfoEvery, logWarnEvery)
 
 data IndexerConfig = IndexerConfig
   { icRpcUrl :: Text
@@ -45,13 +46,23 @@ data IndexerConfig = IndexerConfig
 
 startIndexer :: Manager -> DbPool -> IndexerConfig -> IO ()
 startIndexer manager pool cfg = do
-  putStrLn "Starting event indexer..."
+  logInfo
+    "ethereum_indexer_started"
+    "Ethereum event indexer started"
+    [ field "start_block" $ icStartBlock cfg
+    , field "batch_size" $ icBatchSize cfg
+    , field "poll_interval_ms" $ icPollInterval cfg `div` 1000
+    ]
   reqIdRef <- newIORef 1
   forever $ do
     result <- try @SomeException $ runIndexerLoop manager pool cfg reqIdRef
     case result of
       Left err -> do
-        putStrLn $ "Indexer error: " <> show err
+        logErrorEvery
+          60
+          "ethereum_indexer_iteration_failed"
+          "Ethereum indexer iteration failed"
+          [field "error" $ show err]
         threadDelay (icPollInterval cfg * 2)
       Right () -> pure ()
 
@@ -63,21 +74,31 @@ runIndexerLoop manager pool cfg reqIdRef = do
   eCurrentBlock <- getCurrentBlockNumber manager (icRpcUrl cfg) reqIdRef
   case eCurrentBlock of
     Left err -> do
-      putStrLn $ "Failed to get current block: " <> T.unpack err
+      logWarnEvery
+        60
+        "ethereum_indexer_head_fetch_failed"
+        "Ethereum indexer could not fetch the current block"
+        [field "error" err]
       threadDelay (icPollInterval cfg)
     Right currentBlock -> do
       if startBlock > currentBlock
         then threadDelay (icPollInterval cfg)
         else do
           let endBlock = min (startBlock + icBatchSize cfg - 1) currentBlock
-          putStrLn $ "Indexing blocks " <> show startBlock <> " to " <> show endBlock
 
           let allAddrs = map deployAddresses (icDeployments cfg)
               contracts = nub $ concatMap getContractAddresses allAddrs
           eLogs <- getLogs manager (icRpcUrl cfg) reqIdRef contracts startBlock endBlock
           case eLogs of
             Left err -> do
-              putStrLn $ "Failed to get logs: " <> T.unpack err
+              logWarnEvery
+                60
+                "ethereum_indexer_logs_fetch_failed"
+                "Ethereum indexer could not fetch event logs"
+                [ field "from_block" startBlock
+                , field "to_block" endBlock
+                , field "error" err
+                ]
               threadDelay (icPollInterval cfg)
             Right logs -> do
               let bearContracts = nub $ concatMap (\a -> [addrStakingBear a, addrLeverageRouter a]) allAddrs
@@ -105,7 +126,15 @@ runIndexerLoop manager pool cfg reqIdRef = do
                         (peData parsed)
 
               withDb pool $ \conn -> setLastIndexedBlock conn endBlock
-              putStrLn $ "Indexed " <> show (length logs) <> " events through block " <> show endBlock
+              logInfoEvery
+                300
+                "ethereum_indexer_progress"
+                "Ethereum event indexer advanced"
+                [ field "from_block" startBlock
+                , field "to_block" endBlock
+                , field "chain_head_block" currentBlock
+                , field "event_count" $ length logs
+                ]
 
               when (endBlock < currentBlock) $
                 runIndexerLoop manager pool cfg reqIdRef
@@ -237,4 +266,3 @@ rpcCall manager rpcUrl payload = do
 
 nextId :: IORef Integer -> IO Integer
 nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)
-

@@ -1,5 +1,6 @@
 import {
   captureAnalyticsEvent,
+  captureFrontendLog,
   type AnalyticsProperties,
   type AnalyticsPropertyValue,
 } from './client'
@@ -52,6 +53,23 @@ function compactProperties(properties: PerpsAnalyticsProperties = {}): PerpsAnal
   ) as PerpsAnalyticsProperties
 }
 
+function failureLogLevel(properties?: PerpsAnalyticsProperties): 'warn' | 'error' {
+  return properties?.error_category === 'user_rejected' ? 'warn' : 'error'
+}
+
+function failedOrderOperation(event: PerpsOrderLifecycleEvent): string | undefined {
+  if (event === 'commit_failed') return 'order_commit'
+  if (event === 'reveal_failed') return 'order_reveal'
+  if (event === 'failed') return 'order_lifecycle'
+  return undefined
+}
+
+function failedMarginOperation(event: PerpsMarginLifecycleEvent): string | undefined {
+  if (event === 'deposit_failed') return 'margin_deposit'
+  if (event === 'withdraw_failed') return 'margin_withdraw'
+  return undefined
+}
+
 export function trackPerpsPageViewed(properties?: PerpsAnalyticsProperties): void {
   captureAnalyticsEvent('perps page viewed', compactProperties({
     surface: 'perps',
@@ -96,20 +114,42 @@ export function trackPerpsOrderLifecycle(
   event: PerpsOrderLifecycleEvent,
   properties?: PerpsAnalyticsProperties
 ): void {
-  captureAnalyticsEvent(`perps order ${event}`, compactProperties({
+  const compacted = compactProperties({
     surface: 'perps',
     ...properties,
-  }))
+  })
+  captureAnalyticsEvent(`perps order ${event}`, compacted)
+
+  const operation = failedOrderOperation(event)
+  if (operation) {
+    captureFrontendLog(failureLogLevel(properties), 'perps order lifecycle failed', {
+      ...compacted,
+      component: 'perps_trade_ticket',
+      operation,
+      outcome: 'failure',
+    })
+  }
 }
 
 export function trackPerpsMarginLifecycle(
   event: PerpsMarginLifecycleEvent,
   properties?: PerpsAnalyticsProperties
 ): void {
-  captureAnalyticsEvent(`perps margin ${event}`, compactProperties({
+  const compacted = compactProperties({
     surface: 'perps',
     ...properties,
-  }))
+  })
+  captureAnalyticsEvent(`perps margin ${event}`, compacted)
+
+  const operation = failedMarginOperation(event)
+  if (operation) {
+    captureFrontendLog(failureLogLevel(properties), 'perps margin lifecycle failed', {
+      ...compacted,
+      component: 'perps_trade_ticket',
+      operation,
+      outcome: 'failure',
+    })
+  }
 }
 
 export function trackPerpsValidationBlocked(

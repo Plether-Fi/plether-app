@@ -8,6 +8,39 @@ variable "environment" {
   default = "sepolia"
 }
 
+variable "posthog_project_token" {
+  type        = string
+  sensitive   = true
+  description = "PostHog project token (phc_*) used only by the ECS OTLP log driver."
+
+  validation {
+    condition     = startswith(var.posthog_project_token, "phc_")
+    error_message = "posthog_project_token must be a PostHog project token beginning with phc_."
+  }
+}
+
+variable "posthog_otlp_host" {
+  type        = string
+  default     = "eu.i.posthog.com"
+  description = "PostHog OTLP/HTTP ingestion hostname without a scheme or path."
+
+  validation {
+    condition     = !strcontains(var.posthog_otlp_host, "://") && !strcontains(var.posthog_otlp_host, "/")
+    error_message = "posthog_otlp_host must contain only a hostname, for example eu.i.posthog.com."
+  }
+}
+
+variable "posthog_otlp_logs_uri" {
+  type        = string
+  default     = "/i/v1/logs"
+  description = "PostHog OTLP/HTTP logs ingestion path."
+
+  validation {
+    condition     = startswith(var.posthog_otlp_logs_uri, "/")
+    error_message = "posthog_otlp_logs_uri must begin with /."
+  }
+}
+
 variable "rpc_url" {
   type      = string
   sensitive = true
@@ -50,6 +83,11 @@ variable "perps_rpc_url" {
 }
 
 variable "keeper_private_key" {
+  type      = string
+  sensitive = true
+}
+
+variable "liquidation_keeper_private_key" {
   type      = string
   sensitive = true
 }
@@ -243,10 +281,56 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "liquidation_worker_poll_seconds" {
+  type    = string
+  default = "1"
+}
+
+variable "liquidation_worker_scan_batch_size" {
+  type    = string
+  default = "100"
+}
+
+variable "liquidation_worker_confirmations" {
+  type    = string
+  default = "1"
+}
+
+variable "liquidation_worker_index_batch_size" {
+  type    = string
+  default = "5000"
+}
+
+variable "liquidation_worker_reorg_overlap_blocks" {
+  type    = string
+  default = "12"
+}
+
+variable "liquidation_worker_pending_replacement_seconds" {
+  type    = string
+  default = "120"
+}
+
+variable "liquidation_worker_gas_buffer_bps" {
+  type    = string
+  default = "2000"
+}
+
+variable "liquidation_worker_fee_buffer_bps" {
+  type    = string
+  default = "2500"
+}
+
+variable "liquidation_worker_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired task count for the dedicated liquidation worker service."
+}
+
 variable "consolidate_workers" {
   type        = bool
   default     = false
-  description = "Run keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
+  description = "Run the order keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. The liquidation worker remains a dedicated service."
 }
 
 variable "workers_desired_count" {
@@ -262,7 +346,7 @@ variable "container_cpu" {
 
 variable "container_memory" {
   type    = number
-  default = 512
+  default = 1024
 }
 
 variable "workers_container_cpu" {
@@ -272,7 +356,7 @@ variable "workers_container_cpu" {
 
 variable "workers_container_memory" {
   type    = number
-  default = 512
+  default = 1024
 }
 
 variable "db_instance_class" {

@@ -6,6 +6,7 @@ import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsKeeperSch
 import Plether.Ethereum.Client (newClient)
 import Plether.Ethereum.Transaction (deriveAddress)
 import Plether.Keeper (KeeperMode (..), runKeeper)
+import Plether.Logging (field, logError, logInfo)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
@@ -28,7 +29,14 @@ main = do
       case addressResult of
         Left err -> fatal $ "Invalid KEEPER_PRIVATE_KEY: " <> show err
         Right keeperAddress ->
-          putStrLn $ "Starting plether-keeper from " <> show keeperAddress
+          logInfo
+            "keeper_started"
+            "Perps keeper started"
+            [ field "keeper_address" $ show keeperAddress
+            , field "mode" $ show $ kaMode args
+            , field "dry_run" $ kaDryRun args
+            , field "poll_seconds" $ cfgKeeperPollSeconds cfg
+            ]
       pool <- newDbPool dbUrl
       withDb pool $ \conn -> do
         ensureBasketSnapshotSchema conn
@@ -51,5 +59,5 @@ require message value =
 
 fatal :: String -> IO a
 fatal message = do
-  putStrLn message
+  logError "keeper_fatal" "Keeper cannot start" [field "error" message]
   exitFailure
