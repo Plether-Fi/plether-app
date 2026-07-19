@@ -66,6 +66,7 @@ library
         Plether.Indexer.Events
         Plether.Handlers.History
         Plether.Keeper
+        Plether.LiquidationWorker
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
     build-depends:
@@ -153,6 +154,19 @@ executable plether-keeper
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-liquidation-worker
+    import:           warnings
+    main-is:          LiquidationWorker.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 executable plether-perps-indexer
     import:           warnings
     main-is:          PerpsIndexer.hs
@@ -185,6 +199,7 @@ test-suite plether-api-test
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
+        Plether.LiquidationWorkerSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Types.ProtocolSpec

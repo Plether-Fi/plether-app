@@ -24,6 +24,12 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   value = var.keeper_private_key
 }
 
+resource "aws_ssm_parameter" "liquidation_keeper_private_key" {
+  name  = "/plether/${var.environment}/liquidation-keeper-private-key"
+  type  = "SecureString"
+  value = var.liquidation_keeper_private_key
+}
+
 resource "aws_ssm_parameter" "faucet_private_key" {
   count = var.faucet_private_key != "" ? 1 : 0
 

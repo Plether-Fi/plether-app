@@ -4,6 +4,7 @@ module Plether.Ethereum.Client
   , newClient
   , rpcCall
   , ethCall
+  , ethCallAtBlock
   , ethBlockNumber
   , CallParams (..)
   ) where
@@ -21,7 +22,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import Plether.Utils.Hex (hexToInteger)
+import Plether.Utils.Hex (hexToInteger, intToHex)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -150,14 +151,21 @@ data CallParams = CallParams
   deriving stock (Show)
 
 ethCall :: EthClient -> CallParams -> IO (Either RpcError ByteString)
-ethCall client CallParams {..} = do
+ethCall client params = ethCallAtTag client params "latest"
+
+ethCallAtBlock :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
+ethCallAtBlock client params blockNumber =
+  ethCallAtTag client params ("0x" <> intToHex (max 0 blockNumber))
+
+ethCallAtTag :: EthClient -> CallParams -> Text -> IO (Either RpcError ByteString)
+ethCallAtTag client CallParams {..} blockTag = do
   let params =
         Aeson.toJSON
           [ object
               [ "to" .= callTo
               , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
               ]
-          , String "latest"
+          , String blockTag
           ]
   result <- rpcCall client "eth_call" params
   pure $ case result of

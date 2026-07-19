@@ -26,6 +26,10 @@ output "ecs_keeper_service_name" {
   value = aws_ecs_service.keeper.name
 }
 
+output "ecs_liquidation_worker_service_name" {
+  value = aws_ecs_service.liquidation_worker.name
+}
+
 output "ecs_basket_worker_service_name" {
   value = aws_ecs_service.basket_worker.name
 }

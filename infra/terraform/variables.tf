@@ -87,6 +87,11 @@ variable "keeper_private_key" {
   sensitive = true
 }
 
+variable "liquidation_keeper_private_key" {
+  type      = string
+  sensitive = true
+}
+
 variable "faucet_private_key" {
   type      = string
   default   = ""
@@ -208,10 +213,56 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "liquidation_worker_poll_seconds" {
+  type    = string
+  default = "1"
+}
+
+variable "liquidation_worker_scan_batch_size" {
+  type    = string
+  default = "100"
+}
+
+variable "liquidation_worker_confirmations" {
+  type    = string
+  default = "1"
+}
+
+variable "liquidation_worker_index_batch_size" {
+  type    = string
+  default = "5000"
+}
+
+variable "liquidation_worker_reorg_overlap_blocks" {
+  type    = string
+  default = "12"
+}
+
+variable "liquidation_worker_pending_replacement_seconds" {
+  type    = string
+  default = "120"
+}
+
+variable "liquidation_worker_gas_buffer_bps" {
+  type    = string
+  default = "2000"
+}
+
+variable "liquidation_worker_fee_buffer_bps" {
+  type    = string
+  default = "2500"
+}
+
+variable "liquidation_worker_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired task count for the dedicated liquidation worker service."
+}
+
 variable "consolidate_workers" {
   type        = bool
   default     = false
-  description = "Run keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. Intended for cost-sensitive testnet environments."
+  description = "Run the order keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. The liquidation worker remains a dedicated service."
 }
 
 variable "workers_desired_count" {
