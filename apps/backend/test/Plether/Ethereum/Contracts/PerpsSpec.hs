@@ -34,6 +34,31 @@ spec = do
       executeOrderBatchCall 7 [BS.pack [0x99]]
         `shouldEncodeTo` "0x8c3679bc000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000019900000000000000000000000000000000000000000000000000000000000000"
 
+    it "encodes executeLiquidation(address,bytes[]) with one dynamic bytes value" $ do
+      expectedSelector <- parseHex "0x4882af85"
+      let account = "0x1111111111111111111111111111111111111111"
+          call = executeLiquidationCall account [BS.pack [0x99]]
+      BS.take 4 call `shouldBe` expectedSelector
+      wordBytes call 0 `shouldBe` encodeAddress account
+      word call 1 `shouldBe` 64
+      word call 2 `shouldBe` 1
+      word call 3 `shouldBe` 32
+      word call 4 `shouldBe` 1
+      BS.take 1 (bytesAtWord call 5) `shouldBe` BS.pack [0x99]
+
+    it "encodes positions(address)" $ do
+      positionsCall "0x1111111111111111111111111111111111111111"
+        `shouldEncodeTo` "0x55f575100000000000000000000000001111111111111111111111111111111111111111"
+
+    it "rejects truncated positions(address) return data" $ do
+      decodePositionSize BS.empty `shouldSatisfy` isDecodeError
+
+    it "decodes position size only after all seven ABI words are present" $ do
+      let encodedPosition = encodeUint256 42 <> BS.replicate (6 * 32) 0
+      case decodePositionSize encodedPosition of
+        Right 42 -> pure ()
+        result -> expectationFailure $ "unexpected decode result: " <> show result
+
     it "keeps an order-56-style reveal payload on the canonical bytes[] layout" $ do
       payload <-
         parseHex
@@ -112,6 +137,21 @@ spec = do
             , poeBlockNumber = 125
             }
 
+  describe "position event account decoding" $ do
+    it "decodes PositionOpened and PositionLiquidated indexed accounts" $ do
+      let account = "0x1111111111111111111111111111111111111111"
+          positionLog topic =
+            RpcLog
+              { rpcLogTxHash = "0xabc"
+              , rpcLogBlockNumber = 123
+              , rpcLogAddress = "0xengine"
+              , rpcLogTopics = [topic, encodeAddress account]
+              , rpcLogData = ""
+              }
+      decodePositionOpenedAccount (positionLog positionOpenedTopic) `shouldBe` Just account
+      decodePositionLiquidatedAccount (positionLog positionLiquidatedTopic) `shouldBe` Just account
+      decodePositionOpenedAccount (positionLog positionLiquidatedTopic) `shouldBe` Nothing
+
   describe "orderFailureReasonText" $ do
     it "decodes current router failure reason enum values" $ do
       map orderFailureReasonText [0 .. 5]
@@ -152,3 +192,9 @@ strip0x :: BS.ByteString -> BS.ByteString
 strip0x value
   | "0x" `BS.isPrefixOf` value = BS.drop 2 value
   | otherwise = value
+
+isDecodeError :: Either a b -> Bool
+isDecodeError value =
+  case value of
+    Left _ -> True
+    Right _ -> False

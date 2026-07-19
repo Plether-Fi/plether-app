@@ -39,6 +39,21 @@ module Plether.Database.Schema
   , PerpsKeeperOrderRow (..)
   , PerpsKeeperTerminalOrderRow (..)
   , getPerpsKeeperOrderById
+  , ensurePerpsLiquidationSchema
+  , tryPerpsLiquidationLock
+  , unlockPerpsLiquidationLock
+  , getPerpsLiquidationLastIndexedBlock
+  , setPerpsLiquidationLastIndexedBlock
+  , upsertPerpsLiquidationCandidate
+  , seedPerpsLiquidationCandidatesFromHistory
+  , getPerpsLiquidationCandidates
+  , getPendingPerpsLiquidationCandidate
+  , markPerpsLiquidationCandidateChecked
+  , recordPerpsLiquidationCandidatePending
+  , clearPerpsLiquidationCandidatePending
+  , recordPerpsLiquidationCandidateError
+  , deletePerpsLiquidationCandidate
+  , PerpsLiquidationCandidateRow (..)
   , ensurePerpsHistorySchema
   , ensureTestnetFaucetSchema
   , TestnetFaucetClaimRow (..)
@@ -1028,6 +1043,288 @@ getPerpsKeeperOrderById conn orderRouter orderId mAccount = do
     accountQuery =
       baseSelect <> " AND account = ? LIMIT 1"
 
+data PerpsLiquidationCandidateRow = PerpsLiquidationCandidateRow
+  { plcrAccount :: Text
+  , plcrAttemptCount :: Int
+  , plcrLastError :: Maybe Text
+  , plcrPendingTxHash :: Maybe Text
+  , plcrPendingNonce :: Maybe Integer
+  , plcrPendingSender :: Maybe Text
+  , plcrPendingRawTx :: Maybe Text
+  , plcrPendingCallData :: Maybe Text
+  , plcrPendingValue :: Maybe Integer
+  , plcrPendingGasLimit :: Maybe Integer
+  , plcrPendingMaxPriorityFeePerGas :: Maybe Integer
+  , plcrPendingMaxFeePerGas :: Maybe Integer
+  , plcrPendingStale :: Bool
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow PerpsLiquidationCandidateRow where
+  fromRow =
+    PerpsLiquidationCandidateRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> numericIntegerField
+      <*> field
+      <*> numericIntegerField
+      <*> numericIntegerField
+      <*> field
+
+ensurePerpsLiquidationSchema :: Connection -> IO ()
+ensurePerpsLiquidationSchema conn = do
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_liquidation_state (\
+    \chain_id BIGINT NOT NULL,\
+    \cfd_engine TEXT NOT NULL,\
+    \last_indexed_block BIGINT NOT NULL DEFAULT 0,\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \PRIMARY KEY (chain_id, cfd_engine)\
+    \)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_liquidation_candidates (\
+    \chain_id BIGINT NOT NULL,\
+    \cfd_engine TEXT NOT NULL,\
+    \account TEXT NOT NULL,\
+    \first_seen_block BIGINT NOT NULL,\
+    \last_seen_block BIGINT NOT NULL,\
+    \attempt_count INTEGER NOT NULL DEFAULT 0,\
+    \last_checked_at TIMESTAMP,\
+    \last_error TEXT,\
+    \pending_tx_hash TEXT,\
+    \pending_nonce BIGINT,\
+    \pending_sender TEXT,\
+    \pending_raw_tx TEXT,\
+    \pending_call_data TEXT,\
+    \pending_value NUMERIC(78,0),\
+    \pending_gas_limit BIGINT,\
+    \pending_max_priority_fee_per_gas NUMERIC(78,0),\
+    \pending_max_fee_per_gas NUMERIC(78,0),\
+    \pending_since TIMESTAMP,\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \PRIMARY KEY (chain_id, cfd_engine, account)\
+    \)"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_tx_hash TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_nonce BIGINT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_sender TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_raw_tx TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_call_data TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_value NUMERIC(78,0)"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_gas_limit BIGINT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_max_priority_fee_per_gas NUMERIC(78,0)"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_max_fee_per_gas NUMERIC(78,0)"
+  _ <- execute_ conn
+    "ALTER TABLE perps_liquidation_candidates ADD COLUMN IF NOT EXISTS pending_since TIMESTAMP"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_scan \
+    \ON perps_liquidation_candidates(chain_id, cfd_engine, last_checked_at ASC NULLS FIRST)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending \
+    \ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC) \
+    \WHERE pending_tx_hash IS NOT NULL"
+  pure ()
+
+perpsLiquidationLockNamespace :: Int
+perpsLiquidationLockNamespace = 421614486
+
+tryPerpsLiquidationLock :: Connection -> Integer -> Text -> IO Bool
+tryPerpsLiquidationLock conn chainId cfdEngine = do
+  rows <-
+    query
+      conn
+      "SELECT pg_try_advisory_lock(?, hashtext(?))"
+      (perpsLiquidationLockNamespace, liquidationLockKey chainId cfdEngine) :: IO [Only Bool]
+  pure $ case rows of
+    [Only acquired] -> acquired
+    _ -> False
+
+unlockPerpsLiquidationLock :: Connection -> Integer -> Text -> IO ()
+unlockPerpsLiquidationLock conn chainId cfdEngine = do
+  _ <-
+    query
+      conn
+      "SELECT pg_advisory_unlock(?, hashtext(?))"
+      (perpsLiquidationLockNamespace, liquidationLockKey chainId cfdEngine) :: IO [Only Bool]
+  pure ()
+
+liquidationLockKey :: Integer -> Text -> Text
+liquidationLockKey chainId cfdEngine =
+  T.pack (show chainId) <> ":" <> normalizeRouter cfdEngine
+
+getPerpsLiquidationLastIndexedBlock :: Connection -> Integer -> Text -> IO Integer
+getPerpsLiquidationLastIndexedBlock conn chainId cfdEngine = do
+  rows <- query conn
+    "SELECT last_indexed_block FROM perps_liquidation_state WHERE chain_id = ? AND cfd_engine = ?"
+    (chainId, normalizeRouter cfdEngine) :: IO [Only Integer]
+  pure $ case rows of
+    [Only blockNumber] -> blockNumber
+    _ -> 0
+
+setPerpsLiquidationLastIndexedBlock :: Connection -> Integer -> Text -> Integer -> IO ()
+setPerpsLiquidationLastIndexedBlock conn chainId cfdEngine blockNumber = do
+  _ <- execute conn
+    "INSERT INTO perps_liquidation_state (chain_id, cfd_engine, last_indexed_block, updated_at) \
+    \VALUES (?, ?, ?, NOW()) \
+    \ON CONFLICT (chain_id, cfd_engine) DO UPDATE SET \
+    \last_indexed_block = EXCLUDED.last_indexed_block, updated_at = NOW()"
+    (chainId, normalizeRouter cfdEngine, blockNumber)
+  pure ()
+
+upsertPerpsLiquidationCandidate :: Connection -> Integer -> Text -> Text -> Integer -> IO ()
+upsertPerpsLiquidationCandidate conn chainId cfdEngine account blockNumber = do
+  _ <- execute conn
+    "INSERT INTO perps_liquidation_candidates \
+    \(chain_id, cfd_engine, account, first_seen_block, last_seen_block) \
+    \VALUES (?, ?, ?, ?, ?) \
+    \ON CONFLICT (chain_id, cfd_engine, account) DO UPDATE SET \
+    \last_seen_block = GREATEST(perps_liquidation_candidates.last_seen_block, EXCLUDED.last_seen_block), \
+    \last_checked_at = CASE \
+    \  WHEN EXCLUDED.last_seen_block > perps_liquidation_candidates.last_seen_block THEN NULL \
+    \  ELSE perps_liquidation_candidates.last_checked_at \
+    \END, updated_at = NOW()"
+    (chainId, normalizeRouter cfdEngine, T.toLower account, blockNumber, blockNumber)
+  pure ()
+
+seedPerpsLiquidationCandidatesFromHistory :: Connection -> Integer -> Text -> Text -> IO ()
+seedPerpsLiquidationCandidatesFromHistory conn chainId orderRouter cfdEngine = do
+  tableRows <- query_ conn
+    "SELECT to_regclass('perps_account_activity') IS NOT NULL" :: IO [Only Bool]
+  case tableRows of
+    [Only True] -> do
+      _ <- execute conn
+        "INSERT INTO perps_liquidation_candidates \
+        \(chain_id, cfd_engine, account, first_seen_block, last_seen_block) \
+        \SELECT chain_id, ?, account, MIN(block_number), MAX(block_number) \
+        \FROM perps_account_activity \
+        \WHERE chain_id = ? AND release_router = ? AND activity_type = 'Open' \
+        \GROUP BY chain_id, account \
+        \ON CONFLICT (chain_id, cfd_engine, account) DO UPDATE SET \
+        \first_seen_block = LEAST(perps_liquidation_candidates.first_seen_block, EXCLUDED.first_seen_block), \
+        \last_seen_block = GREATEST(perps_liquidation_candidates.last_seen_block, EXCLUDED.last_seen_block), \
+        \last_checked_at = NULL, updated_at = NOW()"
+        (normalizeRouter cfdEngine, chainId, normalizeRouter orderRouter)
+      pure ()
+    _ -> pure ()
+
+getPerpsLiquidationCandidates :: Connection -> Integer -> Text -> Int -> IO [PerpsLiquidationCandidateRow]
+getPerpsLiquidationCandidates conn chainId cfdEngine limitRows =
+  query conn
+    "SELECT account, attempt_count, last_error, pending_tx_hash, pending_nonce, pending_sender, pending_raw_tx, \
+    \pending_call_data, pending_value, pending_gas_limit, pending_max_priority_fee_per_gas, \
+    \pending_max_fee_per_gas, FALSE \
+    \FROM perps_liquidation_candidates \
+    \WHERE chain_id = ? AND cfd_engine = ? \
+    \ORDER BY last_checked_at ASC NULLS FIRST, first_seen_block ASC, account ASC \
+    \LIMIT ?"
+    (chainId, normalizeRouter cfdEngine, limitRows)
+
+getPendingPerpsLiquidationCandidate :: Connection -> Integer -> Text -> Int -> IO (Maybe PerpsLiquidationCandidateRow)
+getPendingPerpsLiquidationCandidate conn chainId cfdEngine replacementSeconds = do
+  rows <-
+    query
+      conn
+      "SELECT account, attempt_count, last_error, pending_tx_hash, pending_nonce, pending_sender, pending_raw_tx, \
+      \pending_call_data, pending_value, pending_gas_limit, pending_max_priority_fee_per_gas, \
+      \pending_max_fee_per_gas, \
+      \COALESCE(pending_since <= NOW() - (? * INTERVAL '1 second'), FALSE) \
+      \FROM perps_liquidation_candidates \
+      \WHERE chain_id = ? AND cfd_engine = ? AND pending_tx_hash IS NOT NULL \
+      \ORDER BY pending_since ASC, account ASC LIMIT 1"
+      (max 1 replacementSeconds, chainId, normalizeRouter cfdEngine)
+  pure $ case rows of
+    candidate : _ -> Just candidate
+    [] -> Nothing
+
+markPerpsLiquidationCandidateChecked :: Connection -> Integer -> Text -> Text -> IO ()
+markPerpsLiquidationCandidateChecked conn chainId cfdEngine account = do
+  _ <- execute conn
+    "UPDATE perps_liquidation_candidates SET \
+    \last_checked_at = NOW(), last_error = NULL, updated_at = NOW() \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    (chainId, normalizeRouter cfdEngine, T.toLower account)
+  pure ()
+
+recordPerpsLiquidationCandidatePending
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+recordPerpsLiquidationCandidatePending conn chainId cfdEngine account nonce sender txHash rawTx callData value gasLimit maxPriorityFee maxFee = do
+  _ <- execute conn
+    "UPDATE perps_liquidation_candidates SET \
+    \attempt_count = attempt_count + 1, last_checked_at = NOW(), last_error = NULL, \
+    \pending_nonce = ?, pending_sender = ?, pending_tx_hash = ?, pending_raw_tx = ?, pending_call_data = ?, \
+    \pending_value = ?, pending_gas_limit = ?, pending_max_priority_fee_per_gas = ?, \
+    \pending_max_fee_per_gas = ?, pending_since = NOW(), updated_at = NOW() \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    ( nonce
+    , normalizeRouter sender
+    , T.toLower txHash
+    , T.toLower rawTx
+    , T.toLower callData
+    , value
+    , gasLimit
+    , maxPriorityFee
+    , maxFee
+    , chainId
+    , normalizeRouter cfdEngine
+    , T.toLower account
+    )
+  pure ()
+
+clearPerpsLiquidationCandidatePending :: Connection -> Integer -> Text -> Text -> IO ()
+clearPerpsLiquidationCandidatePending conn chainId cfdEngine account = do
+  _ <- execute conn
+    "UPDATE perps_liquidation_candidates SET \
+    \pending_nonce = NULL, pending_sender = NULL, pending_tx_hash = NULL, pending_raw_tx = NULL, pending_call_data = NULL, \
+    \pending_value = NULL, pending_gas_limit = NULL, pending_max_priority_fee_per_gas = NULL, \
+    \pending_max_fee_per_gas = NULL, pending_since = NULL, updated_at = NOW() \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    (chainId, normalizeRouter cfdEngine, T.toLower account)
+  pure ()
+
+recordPerpsLiquidationCandidateError :: Connection -> Integer -> Text -> Text -> Text -> IO ()
+recordPerpsLiquidationCandidateError conn chainId cfdEngine account err = do
+  _ <- execute conn
+    "UPDATE perps_liquidation_candidates SET \
+    \last_checked_at = NOW(), last_error = ?, updated_at = NOW() \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    (err, chainId, normalizeRouter cfdEngine, T.toLower account)
+  pure ()
+
+deletePerpsLiquidationCandidate :: Connection -> Integer -> Text -> Text -> IO ()
+deletePerpsLiquidationCandidate conn chainId cfdEngine account = do
+  _ <- execute conn
+    "DELETE FROM perps_liquidation_candidates \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    (chainId, normalizeRouter cfdEngine, T.toLower account)
+  pure ()
+
 data PerpsOrderRow = PerpsOrderRow
   { porOrderId :: Integer
   , porOrderRouter :: Text
@@ -1271,6 +1568,10 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_chain_timestamp \
     \ON perps_account_activity(chain_id, release_router, timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_open_accounts \
+    \ON perps_account_activity(chain_id, release_router, account, block_number) \
+    \WHERE activity_type = 'Open'"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_indexer_state (\
     \indexer_name TEXT NOT NULL,\

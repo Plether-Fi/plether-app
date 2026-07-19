@@ -32,22 +32,25 @@ locals {
   posthog_log_configuration = {
     logDriver = "awsfirelens"
     options = {
-      Name                     = "opentelemetry"
-      Host                     = var.posthog_otlp_host
-      Port                     = "443"
-      logs_uri                 = var.posthog_otlp_logs_uri
-      logs_body_key            = "$message"
-      logs_body_key_attributes = "true"
-      batch_size               = "100"
-      compress                 = "gzip"
-      grpc                     = "off"
-      http2                    = "off"
-      log_response_payload     = "false"
-      log_suppress_interval    = "60"
-      tls                      = "on"
-      "tls.verify"             = "on"
-      "tls.verify_hostname"    = "on"
-      Retry_Limit              = "no_limits"
+      Name                             = "opentelemetry"
+      Host                             = var.posthog_otlp_host
+      Port                             = "443"
+      logs_uri                         = var.posthog_otlp_logs_uri
+      logs_body_key                    = "$message"
+      logs_body_key_attributes         = "true"
+      logs_severity_text_message_key   = "$SeverityText"
+      logs_severity_number_message_key = "$SeverityNumber"
+      "log-driver-buffer-limit"        = "4096"
+      batch_size                       = "100"
+      compress                         = "gzip"
+      grpc                             = "off"
+      http2                            = "off"
+      log_response_payload             = "false"
+      log_suppress_interval            = "60"
+      tls                              = "on"
+      "tls.verify"                     = "on"
+      "tls.verify_hostname"            = "on"
+      Retry_Limit                      = "no_limits"
     }
     secretOptions = [{
       name      = "Header"
@@ -59,7 +62,8 @@ locals {
     name              = "otel-log-router"
     image             = "${aws_ecr_repository.otel_log_router.repository_url}:latest"
     essential         = true
-    memoryReservation = 64
+    memoryReservation = 128
+    stopTimeout       = 120
 
     firelensConfiguration = {
       type = "fluentbit"
@@ -218,6 +222,77 @@ resource "aws_ecs_service" "keeper" {
   cluster                            = aws_ecs_cluster.main.id
   task_definition                    = aws_ecs_task_definition.keeper.arn
   desired_count                      = var.consolidate_workers ? 0 : 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
+
+resource "aws_ecs_task_definition" "liquidation_worker" {
+  family                   = "plether-${var.environment}-liquidation-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  container_definitions = jsonencode([{
+    name      = "plether-liquidation-worker"
+    image     = "${aws_ecr_repository.api.repository_url}:latest"
+    essential = true
+    command   = ["plether-liquidation-worker"]
+
+    logConfiguration = local.posthog_log_configuration
+
+    secrets = [
+      {
+        name      = "DATABASE_URL"
+        valueFrom = aws_ssm_parameter.database_url.arn
+      },
+      {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
+        name      = "LIQUIDATION_KEEPER_PRIVATE_KEY"
+        valueFrom = aws_ssm_parameter.liquidation_keeper_private_key.arn
+      }
+    ]
+
+    environment = [
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
+      { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "LIQUIDATION_WORKER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "LIQUIDATION_WORKER_POLL_SECONDS", value = var.liquidation_worker_poll_seconds },
+      { name = "LIQUIDATION_WORKER_SCAN_BATCH_SIZE", value = var.liquidation_worker_scan_batch_size },
+      { name = "LIQUIDATION_WORKER_CONFIRMATIONS", value = var.liquidation_worker_confirmations },
+      { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },
+      { name = "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS", value = var.liquidation_worker_reorg_overlap_blocks },
+      { name = "LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS", value = var.liquidation_worker_pending_replacement_seconds },
+      { name = "LIQUIDATION_WORKER_GAS_BUFFER_BPS", value = var.liquidation_worker_gas_buffer_bps },
+      { name = "LIQUIDATION_WORKER_FEE_BUFFER_BPS", value = var.liquidation_worker_fee_buffer_bps },
+    ]
+  }, local.otel_log_router_container])
+}
+
+resource "aws_ecs_service" "liquidation_worker" {
+  name                               = "plether-liquidation-worker"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.liquidation_worker.arn
+  desired_count                      = var.liquidation_worker_desired_count
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100

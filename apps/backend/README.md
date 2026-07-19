@@ -38,6 +38,7 @@ second copy in the existing CloudWatch log group.
 |---------------|------------------------------|
 | `plether-api` | `plether-api` |
 | `plether-keeper` | `plether-keeper` |
+| `plether-liquidation-worker` | `plether-liquidation-worker` |
 | `plether-perps-indexer` | `plether-indexer` |
 | `plether-basket-worker` | `plether-basket-worker` |
 | `plether-oracle-worker` | `plether-oracle-worker` |
@@ -67,9 +68,20 @@ The steady-state volume controls are:
 - Important state changes such as startup, reorg detection, keeper order
   failures, and mined keeper transactions emit immediately. Repetitive oracle
   success/no-op states emit at most once every five minutes.
+- The liquidation worker emits structured discovery, opportunity, submission,
+  replacement, confirmation, and circuit-breaker events. A successful-iteration
+  heartbeat is emitted at most once every five minutes so missing-log alerts can
+  detect a stalled or crash-looping worker; recurring RPC and candidate errors
+  are limited to one per minute with a `suppressed_count` on recovery.
 - FireLens suppresses repeated delivery diagnostics from each output for one
   minute, while unlimited OTLP retries avoid discarding a batch solely because
   a temporary PostHog outage exhausted a retry count.
+
+The FireLens handoff explicitly maps structured severity fields, caps each
+container's Docker-side queue at 4,096 records, reserves 128 MiB for the router,
+and allows up to 120 seconds for router shutdown. PostHog delivery retries
+without a fixed attempt limit, while the independent CloudWatch copy retries 15
+times and provides a second place to recover logs during a PostHog outage.
 
 The FireLens parser keeps plaintext output from third-party libraries as a
 fallback, but first-party services should use the structured logger instead of
@@ -114,7 +126,7 @@ The indexer runs automatically on startup and polls for new blocks every 12 seco
 
 ## Local Perps Stack
 
-For local perps work, run the API, the basket cache worker, and any UI servers as separate foreground processes in separate terminals. This keeps logs visible and makes it obvious which service failed.
+For local perps work, run the API, basket cache, and relevant keeper workers as separate foreground processes in separate terminals. This keeps logs visible and makes it obvious which service failed.
 
 ### 1. Start PostgreSQL
 
@@ -249,9 +261,35 @@ curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/orders?limit=10"
 curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/activity?limit=10"
 ```
 
-### 5. Optional: Start The On-Chain Oracle Updater
+### 5. Start The Liquidation Worker
 
-The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions. This is the only service in this local stack that sends transactions.
+`plether-liquidation-worker` independently discovers accounts from CFD engine `PositionOpened` events, verifies current position state onchain, and simulates the canonical liquidation call with the latest cached Pyth payload. It submits only when that simulation succeeds.
+
+Keep the basket worker running so a current six-feed payload is available. Use a separately funded signer to avoid nonce contention with the order keeper:
+
+```bash
+cd apps/backend
+
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker
+```
+
+For one discovery and scan iteration without submitting a transaction:
+
+```bash
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker -- --once --dry-run
+```
+
+The worker keeps its own low-confirmation discovery cursor and monotonic candidate registry. It verifies zero-size positions at a confirmed block, persists each signed transaction and signer before broadcast, and uses same-nonce fee bumps for stale transactions. Closed or already-liquidated candidates are removed only after confirmed CFD-engine state reports that no position remains. Do not rotate `LIQUIDATION_KEEPER_PRIVATE_KEY` while a transaction is pending; if that happens, the worker keeps the pending transaction as a circuit breaker and requires manual reconciliation instead of crossing signer nonce lanes.
+
+### 6. Optional: Start The On-Chain Oracle Updater
+
+The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions independently of the keeper workers.
 
 ```bash
 cd apps/frontend
@@ -275,7 +313,7 @@ npm run perps:oracle-worker -- --once
 
 Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
 
-### 6. Companion Frontend Services
+### 7. Companion Frontend Services
 
 The API and workers can run without UI servers, but the usual local perps development stack is:
 
@@ -311,6 +349,7 @@ Local URLs:
 | Currency cards are stale | Keep `plether-basket-worker -- --latest-loop` running. |
 | On-chain DXY price is stale | Run the optional oracle updater with `PERPS_ORACLE_UPDATER_PRIVATE_KEY`; the basket worker only updates the database cache. |
 | Order or transaction history is stale | Keep `plether-perps-indexer -- --loop` running and check `/api/perps/indexer/status`. |
+| Liquidatable positions are not being processed | Keep both `plether-basket-worker -- --latest-loop` and `plether-liquidation-worker` running; verify that the liquidation signer has native ETH. |
 | Browser CORS error from `127.0.0.1:5173` | Include `http://127.0.0.1:5173` in `CORS_ORIGINS`. |
 
 ## Configuration
@@ -325,16 +364,27 @@ Local URLs:
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
 | `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
+| `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine address used for candidate discovery and position checks |
 | `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
+| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `1` | Delay between liquidation discovery and scan iterations |
+| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `100` | Maximum candidate accounts checked per iteration |
+| `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
+| `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
+| `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |
+| `LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS` | No | `12` | Recently indexed blocks rescanned to heal short L2 reorgs |
+| `LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS` | No | `120` | Age at which an unconfirmed transaction is fee-bumped at the same nonce |
+| `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
+| `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
@@ -428,6 +478,9 @@ cabal test
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
+# Discover and simulate liquidations once without submitting transactions
+cabal run plether-liquidation-worker -- --once --dry-run
+
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
@@ -437,7 +490,9 @@ ghcid --command="cabal repl plether-api" --test=":main"
 ```
 apps/backend/
 ├── app/
-│   └── Main.hs           # Entry point
+│   ├── Main.hs           # API entry point
+│   ├── Keeper.hs         # FIFO order keeper entry point
+│   └── LiquidationWorker.hs # Liquidation worker entry point
 ├── src/Plether/
 │   ├── Api.hs            # Scotty routes
 │   ├── Cache.hs          # STM caching
@@ -449,6 +504,7 @@ apps/backend/
 │   ├── Types/            # API types
 │   ├── Handlers/         # Route handlers
 │   ├── Ethereum/         # RPC client & contracts
+│   ├── LiquidationWorker.hs # Liquidation discovery and execution
 │   └── Utils/            # Helpers
 ├── config/
 │   ├── addresses.arbitrum-sepolia.json
