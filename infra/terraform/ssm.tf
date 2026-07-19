@@ -37,3 +37,9 @@ resource "aws_ssm_parameter" "database_url" {
   type  = "SecureString"
   value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/plether"
 }
+
+resource "aws_ssm_parameter" "posthog_otlp_authorization_header" {
+  name  = "/plether/${var.environment}/posthog-otlp-authorization-header"
+  type  = "SecureString"
+  value = "Authorization Bearer ${var.posthog_project_token}"
+}

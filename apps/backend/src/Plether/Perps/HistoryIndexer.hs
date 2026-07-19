@@ -49,6 +49,7 @@ import Plether.Database.Schema
   , upsertPerpsOrderTerminal
   )
 import Plether.Indexer.Contracts (keccak256Text)
+import Plether.Logging (field, logErrorEvery, logInfoEvery, logWarn, logWarnEvery)
 import Plether.Utils.Hex (hexToInteger, intToHex)
 
 data PerpsAddresses = PerpsAddresses
@@ -159,7 +160,11 @@ runPerpsIndexer manager pool cfg =
       result <- try @SomeException $ runOneRange manager pool cfg Nothing Nothing
       case result of
         Left err -> do
-          putStrLn $ "Perps indexer error: " <> show err
+          logErrorEvery
+            60
+            "perps_indexer_iteration_failed"
+            "Perps indexer iteration failed"
+            [field "error" $ show err]
           threadDelay (picPollIntervalMicros cfg * 2)
         Right indexed ->
           when (not indexed) $ threadDelay (picPollIntervalMicros cfg)
@@ -192,7 +197,6 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
   if startBlock > endBlock
     then pure False
     else do
-      putStrLn $ "Perps indexer: indexing blocks " <> show startBlock <> " to " <> show endBlock
       logs <- requireRpc "eth_getLogs" $
         getLogs manager (picRpcUrls cfg) reqIdRef (perpsAddresses cfg) startBlock endBlock
       let orderedLogs = sortOn (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry)) logs
@@ -207,7 +211,15 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
         when (endBlock >= currentCursor) $
           setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) endBlock (Just $ biHash endInfo)
-      putStrLn $ "Perps indexer: indexed " <> show (length orderedLogs) <> " logs through block " <> show endBlock
+      logInfoEvery
+        300
+        "perps_indexer_progress"
+        "Perps history indexer advanced"
+        [ field "from_block" startBlock
+        , field "to_block" endBlock
+        , field "safe_head_block" safeBlock
+        , field "event_count" $ length orderedLogs
+        ]
       pure True
 
 verifyCursor :: Manager -> DbPool -> PerpsIndexerConfig -> IORef Integer -> Integer -> Maybe Text -> IO ()
@@ -218,12 +230,24 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
   case eBlock of
     Right blockInfo | normalizeHex (biHash blockInfo) == normalizeHex storedHash -> pure ()
     Right _ -> rewind
-    Left err -> putStrLn $ "Perps indexer: could not verify cursor block hash: " <> T.unpack err
+    Left err ->
+      logWarnEvery
+        60
+        "perps_indexer_cursor_verification_failed"
+        "Perps indexer could not verify its cursor block hash"
+        [ field "cursor_block" lastBlock
+        , field "error" err
+        ]
   where
     rewind = do
       let rewindBlock = max (picStartBlock cfg) lastBlock
           newCursor = max 0 (rewindBlock - 1)
-      putStrLn $ "Perps indexer: block hash mismatch at " <> show lastBlock <> ", rewinding to " <> show newCursor
+      logWarn
+        "perps_indexer_reorg_detected"
+        "Perps indexer detected a block hash mismatch and rewound its cursor"
+        [ field "mismatch_block" lastBlock
+        , field "rewind_to_block" newCursor
+        ]
       withDb pool $ \conn -> do
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
@@ -517,7 +541,14 @@ rpcCallAny manager rpcUrls reqIdRef method params = tryUrls rpcUrls
       case result of
         Right value -> pure $ Right value
         Left err -> do
-          putStrLn $ "Perps indexer RPC failed, trying fallback: " <> T.unpack err
+          logWarnEvery
+            60
+            "perps_indexer_rpc_fallback"
+            "Perps indexer RPC request failed; trying a fallback provider"
+            [ field "rpc_method" method
+            , field "remaining_provider_count" $ length rest
+            , field "error" err
+            ]
           tryUrls rest
 
 rpcCall :: (Aeson.ToJSON params) => Manager -> Text -> IORef Integer -> Text -> params -> IO (Either Text Value)

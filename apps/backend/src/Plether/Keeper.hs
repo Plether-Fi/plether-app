@@ -59,6 +59,14 @@ import Plether.Ethereum.Transaction
   , deriveAddress
   , signTransaction
   )
+import Plether.Logging
+  ( field
+  , logErrorEvery
+  , logInfo
+  , logInfoEvery
+  , logWarn
+  , logWarnEvery
+  )
 import Plether.Pyth.RevealPayload (validateRevealWindow)
 
 data KeeperMode
@@ -84,9 +92,16 @@ runKeeper cfg pool client mode dryRun =
       (\acquired -> when acquired $ unlockPerpsKeeperLock conn)
       $ \acquired ->
         if not acquired
-          then putStrLn "Another plether-keeper instance already holds the advisory lock"
+          then
+            logWarn
+              "keeper_lock_unavailable"
+              "Another keeper instance already holds the advisory lock"
+              []
           else do
-            putStrLn "plether-keeper acquired advisory lock"
+            logInfo
+              "keeper_lock_acquired"
+              "Keeper acquired the advisory lock"
+              []
             case mode of
               KeeperOnce -> void $ runKeeperIteration cfg conn client dryRun
               KeeperLoop -> loop conn
@@ -104,7 +119,11 @@ runKeeperIteration cfg conn client dryRun = do
     processQueueHead cfg conn client dryRun
   case result of
     Left (err :: SomeException) -> do
-      putStrLn $ "keeper iteration failed: " <> displayException err
+      logErrorEvery
+        60
+        "keeper_iteration_failed"
+        "Keeper iteration failed"
+        [field "error" $ displayException err]
       pure True
     Right () -> pure True
 
@@ -112,7 +131,12 @@ indexNewLogs :: Config -> Connection -> EthClient -> IO ()
 indexNewLogs cfg conn client = do
   latestResult <- ethBlockNumber client
   case latestResult of
-    Left err -> putStrLn $ "perps log indexing skipped: " <> T.unpack (rpcErrorText err)
+    Left err ->
+      logWarnEvery
+        60
+        "keeper_chain_head_fetch_failed"
+        "Keeper could not fetch the chain head"
+        [field "error" $ rpcErrorText err]
     Right latestBlock -> do
       lastIndexed <- getPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg)
       let confirmedLatest = max 0 $ latestBlock - fromIntegral (cfgKeeperConfirmations cfg)
@@ -129,16 +153,27 @@ indexNewLogs cfg conn client = do
               startBlock
               endBlock
           case logsResult of
-            Left err -> putStrLn $ "perps log indexing failed: " <> T.unpack (rpcErrorText err)
+            Left err ->
+              logWarnEvery
+                60
+                "keeper_order_logs_fetch_failed"
+                "Keeper could not fetch order logs"
+                [ field "from_block" startBlock
+                , field "to_block" endBlock
+                , field "error" $ rpcErrorText err
+                ]
             Right logs -> do
               forM_ (mapMaybe Perps.decodePerpsOrderEvent logs) (applyOrderEvent cfg conn client)
               setPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg) endBlock
               unless (null logs) $
-                putStrLn $
-                  "indexed "
-                    <> show (length logs)
-                    <> " perps order logs through block "
-                    <> show endBlock
+                logInfoEvery
+                  300
+                  "keeper_order_index_progress"
+                  "Keeper indexed new order logs"
+                  [ field "from_block" startBlock
+                  , field "to_block" endBlock
+                  , field "event_count" $ length logs
+                  ]
 
 applyOrderEvent :: Config -> Connection -> EthClient -> Perps.PerpsOrderEvent -> IO ()
 applyOrderEvent cfg conn client = \case
@@ -172,11 +207,14 @@ readCommitMetadata cfg client orderId fallbackBlock = do
       timestampResult <- ethBlockTimestamp client fallbackBlock
       case timestampResult of
         Left err -> do
-          putStrLn $
-            "could not fetch commit metadata for order "
-              <> show orderId
-              <> ": "
-              <> T.unpack (rpcErrorText err)
+          logWarnEvery
+            60
+            "keeper_commit_metadata_fetch_failed"
+            "Keeper could not fetch order commit metadata"
+            [ field "order_id" orderId
+            , field "fallback_block" fallbackBlock
+            , field "error" $ rpcErrorText err
+            ]
           pure Nothing
         Right commitTime -> pure $ Just (fallbackBlock, commitTime)
 
@@ -200,9 +238,13 @@ processQueueHead cfg conn client dryRun = do
                 , either (Just . rpcErrorText) (const Nothing) chainNowResult
                 , either (Just . rpcErrorText) (const Nothing) latestBlockResult
                 ]
-          putStrLn $
-            "queue processing skipped: "
-              <> T.unpack (T.intercalate "; " $ catMaybes errors)
+          logWarnEvery
+            60
+            "keeper_queue_context_fetch_failed"
+            "Keeper could not load the chain context required to process its queue"
+            [ field "pending_order_count" $ length pending
+            , field "error" $ T.intercalate "; " $ catMaybes errors
+            ]
 
 decideExecution
   :: Config
@@ -221,20 +263,34 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
   case freshHeadResult of
     Left err -> do
       recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId headOrder) err
-      putStrLn $ "queue head re-read skipped execution: " <> T.unpack err
+      logWarnEvery
+        60
+        "keeper_queue_head_refresh_failed"
+        "Keeper could not refresh the queue head"
+        [ field "order_id" $ pkorOrderId headOrder
+        , field "error" err
+        ]
     Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose}
       | not (isPastCommitBlock latestBlock freshHead) ->
-          putStrLn $
-            "queue head order "
-              <> show (pkorOrderId freshHead)
-              <> " is waiting for the post-commit block"
+          logInfoEvery
+            300
+            "keeper_waiting_for_post_commit_block"
+            "Queue head is waiting for a post-commit block"
+            [ field "order_id" $ pkorOrderId freshHead
+            , field "commit_block" $ pkorCommitBlock freshHead
+            , field "chain_head_block" latestBlock
+            ]
       | isOrderExpired chainNow maxAge freshHead ->
           submitIntent cfg conn client dryRun $ CleanupExpired freshHead
       | chainNow < pkorCommitTime freshHead + 1 ->
-          putStrLn $
-            "queue head order "
-              <> show (pkorOrderId freshHead)
-              <> " is waiting for reveal window"
+          logInfoEvery
+            300
+            "keeper_waiting_for_reveal_window"
+            "Queue head is waiting for its reveal window"
+            [ field "order_id" $ pkorOrderId freshHead
+            , field "commit_time" $ pkorCommitTime freshHead
+            , field "chain_time" chainNow
+            ]
       | otherwise ->
           executeReadyHead (freshHead : drop 1 pending) freshHead freshHeadIsClose
   where
@@ -243,11 +299,13 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
       case frozenCloseResult of
         Left err -> do
           recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead) err
-          putStrLn $
-            "frozen close payload selection failed for order "
-              <> show (pkorOrderId freshHead)
-              <> ": "
-              <> T.unpack err
+          logWarnEvery
+            60
+            "keeper_frozen_close_payload_failed"
+            "Keeper could not select a frozen-close payload"
+            [ field "order_id" $ pkorOrderId freshHead
+            , field "error" err
+            ]
         Right (Just (payload, publishTimes, updateData)) ->
           submitIntent cfg conn client dryRun $
             ExecuteReady [freshHead] payload publishTimes updateData
@@ -262,30 +320,41 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
           (pkorCommitTime freshHead + settlementWindow)
       case mPayload of
         Nothing ->
-          putStrLn $
-            "queue head order "
-              <> show (pkorOrderId freshHead)
-              <> " is waiting for first post-commit cached Pyth payload"
+          logInfoEvery
+            300
+            "keeper_waiting_for_cached_payload"
+            "Queue head is waiting for its first post-commit Pyth payload"
+            [field "order_id" $ pkorOrderId freshHead]
         Just payload
           | not (isHistoricalRevealPayload payload) ->
-              putStrLn $
-                "queue head order "
-                  <> show (pkorOrderId freshHead)
-                  <> " is waiting for exact historical Pyth payload; cached source was "
-                  <> T.unpack (puprSource payload)
+              logInfoEvery
+                300
+                "keeper_waiting_for_historical_payload"
+                "Queue head is waiting for an exact historical Pyth payload"
+                [ field "order_id" $ pkorOrderId freshHead
+                , field "cached_payload_source" $ puprSource payload
+                ]
         Just payload ->
           case decodePayload payload of
             Left err -> do
               recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) (pkorOrderId freshHead) err
-              putStrLn $ "cached Pyth payload could not be decoded: " <> T.unpack err
+              logWarnEvery
+                60
+                "keeper_cached_payload_decode_failed"
+                "Keeper could not decode a cached Pyth payload"
+                [ field "order_id" $ pkorOrderId freshHead
+                , field "error" err
+                ]
             Right (publishTimes, updateData) ->
               case validateRevealWindow (pkorCommitTime freshHead) settlementWindow publishTimes of
                 Left err -> do
-                  putStrLn $
-                    "cached Pyth payload is not valid for order "
-                      <> show (pkorOrderId freshHead)
-                      <> ": "
-                      <> T.unpack err
+                  logWarnEvery
+                    60
+                    "keeper_cached_payload_invalid"
+                    "Cached Pyth payload is invalid for the queue head"
+                    [ field "order_id" $ pkorOrderId freshHead
+                    , field "error" err
+                    ]
                 Right _ -> do
                   let candidates =
                         selectBatchCandidates
@@ -308,9 +377,11 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                           refreshed
                   case selected of
                     [] ->
-                      putStrLn $
-                        "cached Pyth payload is not the first post-commit payload for queue head order "
-                          <> show (pkorOrderId freshHead)
+                      logInfoEvery
+                        300
+                        "keeper_waiting_for_first_payload"
+                        "Cached Pyth payload is not the first post-commit payload for the queue head"
+                        [field "order_id" $ pkorOrderId freshHead]
                     orders ->
                       submitIntent cfg conn client dryRun $
                         ExecuteReady orders payload publishTimes updateData
@@ -327,10 +398,11 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                   mPayload <- getLatestPythUpdatePayload conn
                   case mPayload of
                     Nothing -> do
-                      putStrLn $
-                        "queue head close order "
-                          <> show (pkorOrderId freshHead)
-                          <> " is waiting for latest cached Pyth payload"
+                      logInfoEvery
+                        300
+                        "keeper_frozen_close_waiting_for_payload"
+                        "Frozen close order is waiting for the latest cached Pyth payload"
+                        [field "order_id" $ pkorOrderId freshHead]
                       pure $ Right Nothing
                     Just payload ->
                       case decodePayload payload of
@@ -339,10 +411,11 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                           | isFrozenClosePayloadReady chainNow (Perps.oepMaxStaleness policy) maxDivergence publishTimes ->
                               pure $ Right $ Just (payload, publishTimes, updateData)
                           | otherwise -> do
-                              putStrLn $
-                                "queue head close order "
-                                  <> show (pkorOrderId freshHead)
-                                  <> " is waiting for frozen-policy Pyth payload"
+                              logInfoEvery
+                                300
+                                "keeper_frozen_close_payload_not_ready"
+                                "Frozen close order is waiting for a policy-compliant Pyth payload"
+                                [field "order_id" $ pkorOrderId freshHead]
                               pure $ Right Nothing
             _ ->
               pure $
@@ -388,7 +461,13 @@ refreshContiguousOrders cfg client (order : orders) = do
   result <- refreshPendingOrder cfg client order
   case result of
     Left err -> do
-      putStrLn $ "batch re-read stopped: " <> T.unpack err
+      logWarnEvery
+        60
+        "keeper_batch_refresh_failed"
+        "Keeper stopped refreshing a candidate batch"
+        [ field "order_id" $ pkorOrderId order
+        , field "error" err
+        ]
       pure []
     Right freshOrder -> (fpoOrder freshOrder :) <$> refreshContiguousOrders cfg client orders
 
@@ -408,11 +487,13 @@ submitIntent cfg conn client dryRun intent = do
     Right value ->
       if dryRun
         then
-          putStrLn $
-            "dry-run: would submit "
-              <> describeIntent intent
-              <> " with value "
-              <> show value
+          logInfo
+            "keeper_transaction_dry_run"
+            "Keeper dry-run prepared a transaction"
+            [ field "intent" $ describeIntent intent
+            , field "order_ids" targetIds
+            , field "value_wei" $ show value
+            ]
         else do
           forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
           sent <- submitKeeperTransaction cfg client value callData
@@ -505,6 +586,17 @@ applyReceipt cfg conn targetIds receipt = do
     else
       forM_ targetIds $ \orderId ->
         recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId ("transaction reverted: " <> receiptTxHash receipt)
+  let transactionLogger = if receiptSucceeded receipt then logInfo else logWarn
+  transactionLogger
+    "keeper_transaction_mined"
+    "Keeper transaction was mined"
+    [ field "transaction_hash" $ receiptTxHash receipt
+    , field "block_number" $ receiptBlockNumber receipt
+    , field "transaction_succeeded" $ receiptSucceeded receipt
+    , field "target_order_count" $ length targetIds
+    , field "decoded_order_event_count" $ length seenIds
+    , field "missing_order_event_count" $ length missingIds
+    ]
   where
     applyEvent seen = \case
       Perps.OrderExecuted {..} -> do
@@ -512,21 +604,35 @@ applyReceipt cfg conn targetIds receipt = do
         pure $ poeOrderId : seen
       Perps.OrderFailed {..} -> do
         markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
-        putStrLn $
-          "order "
-            <> show poeOrderId
-            <> " failed with "
-            <> T.unpack (Perps.orderFailureReasonText poeFailureReason)
+        logWarn
+          "keeper_order_failed"
+          "Perps order execution failed"
+          [ field "order_id" poeOrderId
+          , field "transaction_hash" poeTxHash
+          , field "block_number" poeBlockNumber
+          , field "failure_reason" $ Perps.orderFailureReasonText poeFailureReason
+          , field "failure_reason_code" poeFailureReason
+          ]
         pure $ poeOrderId : seen
       Perps.OrderCommitted {} -> pure seen
 
 recordAllErrors :: Config -> Connection -> [Integer] -> Text -> IO ()
 recordAllErrors cfg conn orderIds err = do
+  let retryable = isSameBlockMevGuardError err
   forM_ orderIds $ \orderId ->
-    if isSameBlockMevGuardError err
+    if retryable
       then recordPerpsKeeperOrderImmediateRetryError conn (cfgPerpsOrderRouter cfg) orderId err
       else recordPerpsKeeperOrderError conn (cfgPerpsOrderRouter cfg) orderId err
-  putStrLn $ "keeper transaction skipped/failed: " <> T.unpack err
+  let failureLogger = if retryable then logWarnEvery else logErrorEvery
+  failureLogger
+    60
+    "keeper_transaction_failed"
+    "Keeper transaction was not submitted or confirmed"
+    [ field "order_ids" orderIds
+    , field "order_count" $ length orderIds
+    , field "retryable" retryable
+    , field "error" err
+    ]
 
 decodePayload :: PythUpdatePayloadRow -> Either Text ([Integer], [ByteString])
 decodePayload PythUpdatePayloadRow {puprPublishTimes, puprUpdateData} = do

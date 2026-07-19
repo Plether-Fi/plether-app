@@ -20,6 +20,7 @@ import Plether.Database.Schema
   , insertPythUpdatePayload
   , isHistoricalRevealPayload
   )
+import Plether.Logging (field, logError, logErrorEvery, logInfo, logInfoEvery, logWarnEvery)
 import Plether.Pyth.Hermes (HermesBasketUpdate (..), fetchBasketUpdateAt, fetchLatestBasketUpdate)
 import Plether.Pyth.History (BasketIngestorConfig (..), runBasketBackfill)
 import Plether.Pyth.RevealPayload (validatePublishTimes, validateRevealWindow)
@@ -50,35 +51,44 @@ main = do
   args <- parseWorkerArgs <$> getArgs
   eConfig <- loadConfig
   case eConfig of
-    Left err -> do
-      putStrLn $ "Configuration error: " <> err
-      putStrLn "Required: RPC_URL and DATABASE_URL. Optional: PYTH_HERMES_URL, PYTH_API_KEY."
+    Left err ->
+      logError
+        "basket_worker_configuration_invalid"
+        "Basket worker configuration is invalid"
+        [field "error" err]
     Right cfg ->
       case cfgDatabaseUrl cfg of
         Nothing ->
-          putStrLn "DATABASE_URL is required for plether-basket-worker"
+          logError
+            "basket_worker_database_missing"
+            "Basket worker requires a database"
+            []
         Just dbUrl -> do
           manager <- newManager tlsManagerSettings
           pool <- newDbPool dbUrl
           withDb pool $ \conn -> do
             ensureBasketSnapshotSchema conn
             ensurePerpsKeeperSchema conn
+          logInfo
+            "basket_worker_started"
+            "Pyth basket worker started"
+            [ field "mode" $ show $ waMode args
+            , field "poll_seconds" $ waPollSeconds args
+            ]
           case waMode args of
             RunOnce -> do
-              putStrLn "Fetching one latest six-feed Pyth basket update..."
               result <- runLatestOnce manager pool cfg
               case result of
-                Left err -> putStrLn $ "Latest basket update failed: " <> T.unpack err
+                Left err ->
+                  logError
+                    "basket_update_failed"
+                    "Latest Pyth basket update failed"
+                    [field "error" err]
                 Right () -> pure ()
-            LatestLoop -> do
-              putStrLn $
-                "Starting latest six-feed Pyth basket loop every "
-                  <> show (waPollSeconds args)
-                  <> "s"
+            LatestLoop ->
               latestLoop manager pool cfg (waPollSeconds args)
             BackfillOnce -> do
               let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
-              putStrLn $ "Running historical basket backfill for " <> show backfillDays <> "d"
               runBasketBackfill manager pool BasketIngestorConfig
                 { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
                 , bicBackfillDays = backfillDays
@@ -91,10 +101,20 @@ latestLoop manager pool cfg pollSeconds = do
   result <- try (runLatestCycle manager pool cfg) :: IO (Either SomeException (Either T.Text ()))
   delaySeconds <- case result of
     Left err -> do
-      putStrLn $ "Latest basket worker exception: " <> displayException err
+      logErrorEvery
+        60
+        "basket_worker_iteration_failed"
+        "Basket worker iteration failed"
+        [field "error" $ displayException err]
       pure pollSeconds
     Right (Left err) -> do
-      putStrLn $ "Latest basket update skipped: " <> T.unpack err
+      logWarnEvery
+        60
+        "basket_update_skipped"
+        "Latest Pyth basket update was skipped"
+        [ field "rate_limited" $ "429" `T.isInfixOf` err
+        , field "error" err
+        ]
       pure $ if "429" `T.isInfixOf` err then 60 else pollSeconds
     Right (Right ()) ->
       pure pollSeconds
@@ -129,34 +149,41 @@ backfillPendingOrderRevealPayloads manager pool cfg = do
       result <- fetchBasketUpdateAt manager cfg firstRevealTick
       case result of
         Left err ->
-          putStrLn $
-            "Reveal payload backfill skipped for order "
-              <> show (pkorOrderId order)
-              <> ": "
-              <> T.unpack err
+          logWarnEvery
+            60
+            "reveal_payload_backfill_fetch_failed"
+            "Reveal payload backfill fetch failed"
+            [ field "order_id" $ pkorOrderId order
+            , field "error" err
+            ]
         Right update ->
           case validateRevealWindow (pkorCommitTime order) defaultOrderSettlementWindow (hbuPublishTimes update) of
             Left err ->
-              putStrLn $
-                "Reveal payload backfill returned unusable payload for order "
-                  <> show (pkorOrderId order)
-                  <> ": "
-                  <> T.unpack err
+              logWarnEvery
+                60
+                "reveal_payload_backfill_invalid"
+                "Reveal payload backfill returned an unusable payload"
+                [ field "order_id" $ pkorOrderId order
+                , field "error" err
+                ]
             Right _ -> do
               cacheResult <- cacheBasketUpdate pool update
               case cacheResult of
                 Left err ->
-                  putStrLn $
-                    "Reveal payload backfill cache failed for order "
-                      <> show (pkorOrderId order)
-                      <> ": "
-                      <> T.unpack err
+                  logWarnEvery
+                    60
+                    "reveal_payload_backfill_cache_failed"
+                    "Reveal payload backfill could not be cached"
+                    [ field "order_id" $ pkorOrderId order
+                    , field "error" err
+                    ]
                 Right () ->
-                  putStrLn $
-                    "Backfilled first reveal payload for order "
-                      <> show (pkorOrderId order)
-                      <> " at publish time "
-                      <> show firstRevealTick
+                  logInfo
+                    "reveal_payload_backfilled"
+                    "First reveal payload was backfilled for an order"
+                    [ field "order_id" $ pkorOrderId order
+                    , field "publish_time" firstRevealTick
+                    ]
   pure $ Right ()
 
 cacheBasketUpdate :: DbPool -> HermesBasketUpdate -> IO (Either T.Text ())
@@ -181,13 +208,14 @@ cacheBasketUpdate pool update =
           (toJSON $ hbuUpdateData update)
           (hbuFetchedAt update)
           (hbuSource update)
-      putStrLn $
-        "Cached basket update publish window "
-          <> show minPublishTime
-          <> ".."
-          <> show maxPublishTime
-          <> " into minute bucket "
-          <> show minuteBucket
+      logInfoEvery
+        300
+        "basket_cache_progress"
+        "Latest Pyth basket update was cached"
+        [ field "min_publish_time" minPublishTime
+        , field "max_publish_time" maxPublishTime
+        , field "minute_bucket" minuteBucket
+        ]
       pure $ Right ()
 
 parseWorkerArgs :: [String] -> WorkerArgs

@@ -11,40 +11,33 @@ import Plether.Database (newDbPool, withDb)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
+import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
-import Web.Scotty (scotty)
+import Plether.RequestLogging (newRequestLoggingMiddleware)
+import Web.Scotty (middleware, scotty)
 
 main :: IO ()
 main = do
-  putStrLn "Loading configuration..."
   eConfig <- loadConfig
 
   case eConfig of
-    Left err -> do
-      putStrLn $ "Configuration error: " <> err
-      putStrLn ""
-      putStrLn "Required environment variables:"
-      putStrLn "  RPC_URL      - Ethereum RPC endpoint (e.g., https://eth-sepolia.g.alchemy.com/v2/...)"
-      putStrLn ""
-      putStrLn "Optional environment variables:"
-      putStrLn "  CHAIN_ID           - Chain ID (default: 11155111 for Sepolia)"
-      putStrLn "  PORT               - Server port (default: 3001)"
-      putStrLn "  CORS_ORIGINS       - Space-separated CORS origins (default: http://localhost:5173)"
-      putStrLn "  DATABASE_URL       - PostgreSQL connection string (enables transaction history)"
-      putStrLn "  INDEXER_START_BLOCK - Block to start indexing from (default: 0)"
+    Left err ->
+      logError
+        "api_configuration_invalid"
+        "API configuration is invalid"
+        [field "error" err]
     Right cfg -> do
-      putStrLn $ "Starting Plether API server on port " <> show (cfgPort cfg)
-      putStrLn $ "Chain ID: " <> show (cfgChainId cfg)
-      putStrLn ""
-
       manager <- newManager tlsManagerSettings
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
-          putStrLn "Database configured - enabling transaction history"
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureTestnetFaucetSchema
+          logInfo
+            "api_database_ready"
+            "Database schemas are ready"
+            [field "history_enabled" True]
           let indexerCfg = IndexerConfig
                 { icRpcUrl = cfgRpcUrl cfg
                 , icDeployments = cfgDeployments cfg
@@ -60,51 +53,35 @@ main = do
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 15 * 60
                   }
-            putStrLn $
-              "Pyth basket ingestor enabled - "
-                <> show (bicBackfillDays basketCfg)
-                <> "d backfill every "
-                <> show (bicSampleIntervalSeconds basketCfg)
-                <> "s"
+            logInfo
+              "pyth_history_ingestor_started"
+              "Pyth basket history ingestor started"
+              [ field "backfill_days" $ bicBackfillDays basketCfg
+              , field "sample_interval_seconds" $ bicSampleIntervalSeconds basketCfg
+              , field "poll_seconds" $ bicPollSeconds basketCfg
+              ]
             _ <- forkIO $ startBasketHistoryIngestor manager pool basketCfg
             pure ()
           pure $ Just pool
         Nothing -> do
-          putStrLn "DATABASE_URL not set - transaction history disabled"
+          logWarn
+            "api_database_disabled"
+            "Database is not configured; history endpoints are disabled"
+            [field "history_enabled" False]
           pure Nothing
-
-      putStrLn ""
-      putStrLn "Endpoints:"
-      putStrLn "  POST /api/testnet/faucet"
-      putStrLn "  GET /api/protocol/status"
-      putStrLn "  GET /api/protocol/config"
-      putStrLn "  GET /api/user/:address/dashboard"
-      putStrLn "  GET /api/user/:address/balances"
-      putStrLn "  GET /api/user/:address/positions"
-      putStrLn "  GET /api/user/:address/allowances"
-      putStrLn "  GET /api/quotes/mint?amount="
-      putStrLn "  GET /api/quotes/burn?amount="
-      putStrLn "  GET /api/quotes/zap?direction=&amount="
-      putStrLn "  GET /api/quotes/trade?from=&amount="
-      putStrLn "  GET /api/quotes/leverage?side=&principal=&leverage="
-      case mPool of
-        Just _ -> do
-          putStrLn "  GET /api/user/:address/history"
-          putStrLn "  GET /api/user/:address/history/leverage"
-          putStrLn "  GET /api/user/:address/history/lending"
-          putStrLn "  GET /api/perps/basket/history?range="
-          putStrLn "  GET /api/perps/basket/latest"
-          putStrLn "  GET /api/perps/accounts/:address/orders"
-          putStrLn "  GET /api/perps/accounts/:address/activity"
-          putStrLn "  GET /api/perps/indexer/status"
-          putStrLn "  GET /api/perps/orders/:orderId/wait"
-          putStrLn "  GET /api/perps/orders/:orderId/reveal-payload"
-          putStrLn "  GET /api/perps/pyth/cached-latest"
-        Nothing -> pure ()
-      putStrLn "  GET /api/perps/pyth/update?publishTime="
-      putStrLn ""
 
       client <- newClient (cfgRpcUrl cfg)
       perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
-      scotty (cfgPort cfg) (app cache client perpsClient cfg mPool manager)
+      requestLogging <- newRequestLoggingMiddleware
+      logInfo
+        "api_started"
+        "Plether API is accepting requests"
+        [ field "port" $ cfgPort cfg
+        , field "chain_id" $ cfgChainId cfg
+        , field "perps_chain_id" $ cfgPerpsChainId cfg
+        , field "history_enabled" $ maybe False (const True) mPool
+        ]
+      scotty (cfgPort cfg) $ do
+        middleware requestLogging
+        app cache client perpsClient cfg mPool manager

@@ -6,7 +6,7 @@ import { config } from './config/wagmi'
 import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
-import { initAnalytics } from './analytics/client'
+import { captureFrontendLog, initAnalytics } from './analytics/client'
 
 initAnalytics()
 
@@ -29,7 +29,32 @@ if (!rootElement) {
   throw new Error('Root element not found')
 }
 
-createRoot(rootElement).render(
+createRoot(rootElement, {
+  onCaughtError: () => {
+    captureFrontendLog('error', 'react render error caught', {
+      component: 'react_root',
+      operation: 'render',
+      outcome: 'failure',
+      error_category: 'caught_error',
+    })
+  },
+  onUncaughtError: () => {
+    captureFrontendLog('fatal', 'react render error uncaught', {
+      component: 'react_root',
+      operation: 'render',
+      outcome: 'failure',
+      error_category: 'uncaught_error',
+    })
+  },
+  onRecoverableError: () => {
+    captureFrontendLog('warn', 'react render error recovered', {
+      component: 'react_root',
+      operation: 'render',
+      outcome: 'recovered',
+      error_category: 'recoverable_error',
+    })
+  },
+}).render(
   <StrictMode>
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>

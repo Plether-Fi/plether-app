@@ -27,6 +27,74 @@ cabal run plether-api
 
 Server starts at `http://localhost:3001`.
 
+## ECS OpenTelemetry Logs
+
+The ECS task definitions route application `stdout` and `stderr` through an
+AWS for Fluent Bit FireLens container. The router enriches every record with
+OpenTelemetry resource attributes, sends OTLP/HTTP logs to PostHog, and keeps a
+second copy in the existing CloudWatch log group.
+
+| ECS container | OpenTelemetry `service.name` |
+|---------------|------------------------------|
+| `plether-api` | `plether-api` |
+| `plether-keeper` | `plether-keeper` |
+| `plether-perps-indexer` | `plether-indexer` |
+| `plether-basket-worker` | `plether-basket-worker` |
+| `plether-oracle-worker` | `plether-oracle-worker` |
+
+The router also sets `service.version` to the deployed Git commit and
+`deployment.environment.name` to the Terraform environment. Consolidated
+workers remain in one Fargate task, but run as separate containers so their
+service identities do not get mixed together.
+
+Application records use a shared JSON-line schema with `event`, `message`,
+`level`, and typed context fields such as block ranges, order IDs, HTTP status,
+durations, and transaction hashes. Messages are capped at 4 KiB, string
+attributes at 2 KiB, arrays at 20 items, and URL paths are redacted so RPC API
+keys cannot leak through exception text. Reserved envelope fields cannot be
+overridden by call-site attributes.
+
+The steady-state volume controls are:
+
+- API success traffic is aggregated into at most one request summary per
+  minute. Individual 5xx responses are limited to one every 10 seconds, and
+  slow-request warnings to one per minute.
+- Indexer and basket-cache success progress emits at most once every five
+  minutes per event type.
+- Recurring worker warnings and errors emit at most once per minute per event
+  type. The next emitted record includes `suppressed_count` so repeated failures
+  remain visible without producing one log per poll.
+- Important state changes such as startup, reorg detection, keeper order
+  failures, and mined keeper transactions emit immediately. Repetitive oracle
+  success/no-op states emit at most once every five minutes.
+- FireLens suppresses repeated delivery diagnostics from each output for one
+  minute, while unlimited OTLP retries avoid discarding a batch solely because
+  a temporary PostHog outage exhausted a retry count.
+
+The FireLens parser keeps plaintext output from third-party libraries as a
+fallback, but first-party services should use the structured logger instead of
+writing directly to `stdout` or `stderr`.
+
+Set these Terraform variables before applying the ECS changes:
+
+```hcl
+posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
+posthog_otlp_host     = "eu.i.posthog.com"
+```
+
+Use `us.i.posthog.com` for a US-hosted PostHog project. Terraform stores the
+complete authorization header in SSM Parameter Store as a `SecureString`; ECS
+injects it into the FireLens output through `secretOptions`, so it is not part
+of the image or task definition JSON. Keep Terraform state encrypted and never
+commit a populated tfvars file.
+
+The backend deployment workflow builds and pushes both the application image
+and `otel-log-router` image. Apply Terraform first so the ECR repository, SSM
+parameter, IAM permissions, and FireLens-enabled task definition revisions
+exist before running the workflow. For a brand-new environment, bootstrap the
+ECR repositories and images before creating the ECS services, as both service
+images must exist for the first task to start.
+
 ## Database Setup (Optional)
 
 PostgreSQL is required for transaction history. Without it, history endpoints return 503.
@@ -85,7 +153,7 @@ DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-api
 ```
 
-The API should print the route list and start on:
+The API emits an `api_started` record and listens on:
 
 ```text
 http://localhost:3001
