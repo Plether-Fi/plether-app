@@ -89,6 +89,7 @@ library
         mtl >= 2.3,
         transformers >= 0.6,
         containers >= 0.6,
+        async >= 2.2,
         stm >= 2.5,
         time >= 1.12,
         http-types >= 0.12,

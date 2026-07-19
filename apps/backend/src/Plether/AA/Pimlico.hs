@@ -20,6 +20,7 @@ import Control.Concurrent.STM
   , readTVar
   , writeTVar
   )
+import Control.Concurrent.Async (Concurrently (..), runConcurrently)
 import Control.Exception (try)
 import Control.Monad (unless, when)
 import Control.Monad.IO.Class (liftIO)
@@ -738,24 +739,29 @@ verifyAccountIdentity
   :: EthClient
   -> ParsedUserOperation
   -> IO (Either ProxyFailure Text)
-verifyAccountIdentity client operation = do
-  factoryImplementation <- readContractAddress client simpleAccountFactory selectorAccountImplementation
-  case factoryImplementation of
-    Left failure -> pure $ Left failure
-    Right implementation
-      | implementation /= simpleAccountImplementation ->
-          pure $ Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
-      | otherwise ->
-          case puoFactoryOwner operation of
-            Just owner -> verifyCounterfactual owner
-            Nothing -> verifyDeployed
+verifyAccountIdentity client operation =
+  case puoFactoryOwner operation of
+    Just owner -> verifyCounterfactual owner
+    Nothing -> verifyDeployed
   where
     sender = puoSender operation
 
     verifyCounterfactual owner = do
-      code <- readCode client sender
-      expected <- readFactoryAddress client owner
+      (factoryImplementation, code, expected) <-
+        runConcurrently $
+          (,,)
+            <$> Concurrently
+              ( readContractAddress
+                  client
+                  simpleAccountFactory
+                  selectorAccountImplementation
+              )
+            <*> Concurrently (readCode client sender)
+            <*> Concurrently (readFactoryAddress client owner)
       pure $ do
+        implementation <- factoryImplementation
+        unless (implementation == simpleAccountImplementation) $
+          Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
         accountCode <- code
         expectedSender <- expected
         unless (BS.null accountCode) $
@@ -765,33 +771,57 @@ verifyAccountIdentity client operation = do
         Right owner
 
     verifyDeployed = do
-      code <- readCode client sender
-      ownerResult <- readContractAddress client sender selectorOwner
-      accountEntryPoint <- readContractAddress client sender selectorEntryPoint
-      expected <-
-        case ownerResult of
-          Left failure -> pure $ Left failure
-          Right owner -> readFactoryAddress client owner
-      implementationSlot <- readStorageWord client sender erc1967ImplementationSlot
-      beaconSlot <- readStorageWord client sender erc1967BeaconSlot
-      pure $ do
-        accountCode <- code
-        owner <- ownerResult
-        expectedSender <- expected
-        actualEntryPoint <- accountEntryPoint
-        actualImplementation <- implementationSlot
-        actualBeacon <- beaconSlot
-        when (BS.null accountCode) $
-          Left $ accountNotTrusted "Deployed UserOperation sender has no code"
-        when (owner == zeroAddress || expectedSender /= sender) $
-          Left $ accountNotTrusted "Trading Account owner does not derive the sender"
-        unless (actualEntryPoint == entryPointAddress) $
-          Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
-        unless (T.toLower actualImplementation == implementationWord) $
-          Left $ accountNotTrusted "Trading Account implementation is not approved"
-        unless (T.toLower actualBeacon == zeroWord) $
-          Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
-        Right owner
+      ( factoryImplementation
+        , code
+        , ownerResult
+        , accountEntryPoint
+        , implementationSlot
+        , beaconSlot
+        ) <-
+          runConcurrently $
+            (,,,,,)
+              <$> Concurrently
+                ( readContractAddress
+                    client
+                    simpleAccountFactory
+                    selectorAccountImplementation
+                )
+              <*> Concurrently (readCode client sender)
+              <*> Concurrently
+                (readContractAddress client sender selectorOwner)
+              <*> Concurrently
+                (readContractAddress client sender selectorEntryPoint)
+              <*> Concurrently
+                (readStorageWord client sender erc1967ImplementationSlot)
+              <*> Concurrently
+                (readStorageWord client sender erc1967BeaconSlot)
+      case factoryImplementation of
+        Left failure -> pure $ Left failure
+        Right implementation
+          | implementation /= simpleAccountImplementation ->
+              pure $ Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
+          | otherwise ->
+              case ownerResult of
+                Left failure -> pure $ Left failure
+                Right owner -> do
+                  expected <- readFactoryAddress client owner
+                  pure $ do
+                    accountCode <- code
+                    expectedSender <- expected
+                    actualEntryPoint <- accountEntryPoint
+                    actualImplementation <- implementationSlot
+                    actualBeacon <- beaconSlot
+                    when (BS.null accountCode) $
+                      Left $ accountNotTrusted "Deployed UserOperation sender has no code"
+                    when (owner == zeroAddress || expectedSender /= sender) $
+                      Left $ accountNotTrusted "Trading Account owner does not derive the sender"
+                    unless (actualEntryPoint == entryPointAddress) $
+                      Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
+                    unless (T.toLower actualImplementation == implementationWord) $
+                      Left $ accountNotTrusted "Trading Account implementation is not approved"
+                    unless (T.toLower actualBeacon == zeroWord) $
+                      Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
+                    Right owner
 
 readFactoryAddress :: EthClient -> Text -> IO (Either ProxyFailure Text)
 readFactoryAddress client owner =

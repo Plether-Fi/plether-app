@@ -90,17 +90,20 @@ function formatStatus(status) {
 }
 
 async function fetchPythUpdateData() {
-  const hermesUrl = new URL(process.env.PYTH_HERMES_URL ?? 'https://hermes.pyth.network')
-  hermesUrl.pathname = '/v2/updates/price/latest'
-  hermesUrl.search = ''
+  const hermesBaseUrl = (
+    process.env.HERMES_URL
+    ?? process.env.PYTH_HERMES_URL
+    ?? 'https://pyth.dourolabs.app/hermes'
+  ).replace(/\/$/, '')
+  const hermesUrl = new URL(`${hermesBaseUrl}/v2/updates/price/latest`)
+  hermesUrl.searchParams.set('encoding', 'hex')
+  hermesUrl.searchParams.set('parsed', 'true')
   for (const id of PYTH_FEED_IDS) {
     hermesUrl.searchParams.append('ids[]', id)
   }
 
-  const headers = {}
-  if (process.env.PYTH_API_KEY) {
-    headers.Authorization = `Bearer ${process.env.PYTH_API_KEY}`
-  }
+  const pythApiKey = requiredEnv('PYTH_API_KEY')
+  const headers = { Authorization: `Bearer ${pythApiKey}` }
 
   const response = await fetch(hermesUrl, { headers })
   if (!response.ok) {
@@ -108,6 +111,16 @@ async function fetchPythUpdateData() {
   }
 
   const payload = await response.json()
+  const returnedFeedIds = new Set(
+    Array.isArray(payload?.parsed)
+      ? payload.parsed.map((feed) => `0x${String(feed?.id ?? '').replace(/^0x/, '').toLowerCase()}`)
+      : []
+  )
+  const missingFeedIds = PYTH_FEED_IDS.filter((feedId) => !returnedFeedIds.has(feedId.toLowerCase()))
+  if (missingFeedIds.length > 0) {
+    throw new Error(`Hermes response omitted ${missingFeedIds.length} required feed(s)`)
+  }
+
   const updates = payload?.binary?.data
   if (!Array.isArray(updates) || updates.length === 0) {
     throw new Error('Hermes response did not include binary update data')

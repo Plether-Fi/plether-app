@@ -232,6 +232,14 @@ function OperationHistoryItem({
     operation.transactionHash ??
     operation.replacementUserOperationHash
   )
+  const wasSubmitted = hasTechnicalDetails
+  const sponsorshipSummary = wasSubmitted && operation.sponsorshipAccepted
+    ? 'Sponsored by Plether · 0 ETH network gas'
+    : isSponsoredOperationTerminal(operation.status) && !wasSubmitted
+      ? 'Not submitted · No network gas used'
+      : operation.sponsorshipAccepted
+        ? 'Gas sponsorship approved'
+        : undefined
   const itemTone = isSponsoredOperationAttentionStatus(operation.status)
     ? 'border-brand-orange/50'
     : isInProgressStatus(operation.status)
@@ -259,9 +267,9 @@ function OperationHistoryItem({
           <Badge variant={statusBadgeVariant(operation.status)}>
             {sponsoredOperationStatusLabel(operation.status)}
           </Badge>
-          {operation.sponsorshipAccepted ? (
-            <span className="text-xs text-positive">
-              Sponsored by Plether · 0 ETH network gas
+          {sponsorshipSummary ? (
+            <span className={`text-xs ${wasSubmitted ? 'text-positive' : 'text-content-secondary'}`}>
+              {sponsorshipSummary}
             </span>
           ) : null}
         </div>

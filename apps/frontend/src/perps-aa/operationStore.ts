@@ -238,8 +238,6 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
               status,
               sponsorshipAccepted:
                 operation.sponsorshipAccepted ||
-                status === 'estimating' ||
-                status === 'requesting-sponsorship' ||
                 status === 'awaiting-signature' ||
                 status === 'submitting' ||
                 status === 'confirming' ||

@@ -2,6 +2,9 @@ export type PerpsMarketPhase = 'open' | 'close-only' | 'closed' | 'degraded' | '
 
 const FRIDAY = 5
 const SUNDAY = 0
+// Keep these UTC boundaries aligned with plether-core's MarketCalendarLib.
+const FRIDAY_FAD_START = { hour: 21, minute: 30 } as const
+const SUNDAY_FAD_END = { hour: 21, minute: 15 } as const
 
 export function formatPerpsMarketDuration(ms: number): string {
   const totalMinutes = Math.max(0, Math.floor(ms / 60_000))
@@ -17,13 +20,13 @@ export function formatPerpsMarketDuration(ms: number): string {
   return parts.join(' ')
 }
 
-function utcBoundary(date: Date, targetDay: number, hour: number): Date {
+function utcBoundary(date: Date, targetDay: number, hour: number, minute: number): Date {
   const boundary = new Date(Date.UTC(
     date.getUTCFullYear(),
     date.getUTCMonth(),
     date.getUTCDate(),
     hour,
-    0,
+    minute,
     0,
     0
   ))
@@ -37,43 +40,55 @@ function utcBoundary(date: Date, targetDay: number, hour: number): Date {
   return boundary
 }
 
-function previousUtcBoundary(date: Date, targetDay: number, hour: number): Date {
-  const boundary = utcBoundary(date, targetDay, hour)
+function previousUtcBoundary(date: Date, targetDay: number, hour: number, minute: number): Date {
+  const boundary = utcBoundary(date, targetDay, hour, minute)
   boundary.setUTCDate(boundary.getUTCDate() - 7)
   return boundary
 }
 
 export function getPerpsMarketSchedule(now: Date, currentPhase: PerpsMarketPhase) {
   if (currentPhase === 'open') {
-    const endsAt = utcBoundary(now, FRIDAY, 19)
+    const endsAt = utcBoundary(now, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute)
     return {
       currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'close-only' as const,
-      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, SUNDAY, 22).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(
+        utcBoundary(endsAt, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute).getTime()
+          - endsAt.getTime()
+      ),
     }
   }
 
   if (currentPhase === 'close-only') {
-    const endsAt = utcBoundary(now, SUNDAY, 22)
+    const endsAt = utcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute)
     return {
       currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'open' as const,
-      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(
+        utcBoundary(endsAt, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
+          - endsAt.getTime()
+      ),
     }
   }
 
   if (currentPhase === 'closed') {
-    const endsAt = utcBoundary(now, SUNDAY, 22)
+    const endsAt = utcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute)
     return {
       currentDuration: formatPerpsMarketDuration(endsAt.getTime() - now.getTime()),
       nextPhase: 'open' as const,
-      nextDuration: formatPerpsMarketDuration(utcBoundary(endsAt, FRIDAY, 19).getTime() - endsAt.getTime()),
+      nextDuration: formatPerpsMarketDuration(
+        utcBoundary(endsAt, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
+          - endsAt.getTime()
+      ),
     }
   }
 
   return {
     currentDuration: undefined,
     nextPhase: 'open' as const,
-    nextDuration: formatPerpsMarketDuration(utcBoundary(now, FRIDAY, 19).getTime() - previousUtcBoundary(now, SUNDAY, 22).getTime()),
+    nextDuration: formatPerpsMarketDuration(
+      utcBoundary(now, FRIDAY, FRIDAY_FAD_START.hour, FRIDAY_FAD_START.minute).getTime()
+        - previousUtcBoundary(now, SUNDAY, SUNDAY_FAD_END.hour, SUNDAY_FAD_END.minute).getTime()
+    ),
   }
 }

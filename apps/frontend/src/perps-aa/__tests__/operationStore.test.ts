@@ -33,12 +33,20 @@ describe('sponsored operation store', () => {
     vi.useRealTimers()
   })
 
-  it('accepts sponsorship when managed preparation begins', () => {
+  it('accepts sponsorship only after managed preparation succeeds', () => {
     begin('operation-1')
 
     useSponsoredOperationStore.getState().transition(
       'operation-1',
       'requesting-sponsorship'
+    )
+    expect(
+      useSponsoredOperationStore.getState().operations[0]?.sponsorshipAccepted
+    ).toBe(false)
+
+    useSponsoredOperationStore.getState().transition(
+      'operation-1',
+      'awaiting-signature'
     )
     expect(
       useSponsoredOperationStore.getState().operations[0]?.sponsorshipAccepted

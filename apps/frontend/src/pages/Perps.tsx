@@ -5,7 +5,7 @@ import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/Pe
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
-import { TokenAmount } from '../components/ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
@@ -139,7 +139,7 @@ export function Perps() {
           freshnessTooltip: dxyFreshnessTooltip,
           tooltip: 'The oracle-derived dollar-oriented mark, not a guaranteed execution price. Final execution may differ because of oracle confidence; VPI, fees, and execution rewards are separate adjustments.',
           tooltipDocsLink: DOCS_LINKS.perpsPrice,
-          tooltipClassName: 'w-[360px] whitespace-normal p-3 text-left leading-5',
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'bottom',
         },
         {
@@ -166,7 +166,7 @@ export function Perps() {
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           tooltip: poolLiquidityTooltip,
           tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-          tooltipClassName: 'w-[400px] whitespace-normal p-4',
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'left',
         },
         {
@@ -174,7 +174,7 @@ export function Perps() {
           value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
           tooltip: costOfCarryTooltip,
           tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-          tooltipClassName: 'w-[520px] whitespace-normal p-4',
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'left',
         },
       ]

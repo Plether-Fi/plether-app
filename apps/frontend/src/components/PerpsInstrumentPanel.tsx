@@ -1,6 +1,6 @@
 import { type ReactNode } from 'react'
 import type { PerpsOracleFreshness } from '../utils/perps'
-import { TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
 
 interface PerpsInstrumentStatBase {
   label: string
@@ -129,7 +129,7 @@ export function PerpsInstrumentPanel({
                   <Tooltip
                     content={stat.tooltip}
                     position={stat.tooltipPosition ?? 'bottom'}
-                    className={stat.tooltipClassName ?? 'max-w-80 whitespace-normal'}
+                    className={stat.tooltipClassName ?? INFO_TOOLTIP_PANEL_CLASS_NAME}
                     docsLink={stat.tooltipDocsLink}
                   >
                     <span

@@ -54,6 +54,7 @@ function operation(input: {
   userOperationHash?: Hex
   transactionHash?: Hex
   reason?: SponsoredOperation['reason']
+  sponsorshipAccepted?: boolean
 }): SponsoredOperation {
   return {
     id: input.id,
@@ -66,7 +67,8 @@ function operation(input: {
     action: input.action,
     lane: 'default',
     status: input.status,
-    sponsorshipAccepted: input.status !== 'failed',
+    sponsorshipAccepted:
+      input.sponsorshipAccepted ?? input.status !== 'failed',
     userOperationHash: input.userOperationHash,
     transactionHash: input.transactionHash,
     reason: input.reason,
@@ -90,6 +92,34 @@ describe('SponsoredOperationHistoryButton', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+  })
+
+  it('does not claim sponsorship for a failure before submission', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'unavailable',
+          action: 'deposit',
+          status: 'failed',
+          updatedAt: Date.now(),
+          reason: 'SPONSOR_UNAVAILABLE',
+          // Cover records persisted before sponsorship acceptance was tracked
+          // at the correct transition.
+          sponsorshipAccepted: true,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(screen.getByText('Not submitted · No network gas used'))
+      .toBeInTheDocument()
+    expect(screen.queryByText('Sponsored by Plether · 0 ETH network gas'))
+      .not.toBeInTheDocument()
   })
 
   it('prioritizes actions that need attention over in-progress and recent activity', () => {

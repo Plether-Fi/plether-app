@@ -6,7 +6,7 @@ import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { DOCS_LINKS } from '../config/docs'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -268,7 +268,7 @@ function AccountMetric({
           <Tooltip
             content={tooltip}
             position="left"
-            className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
+            className={INFO_TOOLTIP_PANEL_CLASS_NAME}
             docsLink={tooltipDocsLink}
           >
             <span

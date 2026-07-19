@@ -53,7 +53,7 @@ import {
 } from '../utils/perpsErrors'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
-import { Button, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -681,7 +681,7 @@ function DxyPricePreviewValue({
   return (
     <span className="inline-flex min-h-6 items-center justify-end gap-2 whitespace-nowrap">
       {freshness && freshnessTooltip ? (
-        <Tooltip content={freshnessTooltip} position="top">
+        <Tooltip content={freshnessTooltip} position="top" className={INFO_TOOLTIP_PANEL_CLASS_NAME}>
           <span
             aria-label={`plDXY Perp price ${freshness}`}
             className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`}
@@ -860,7 +860,7 @@ function PreviewRows({
                 <Tooltip
                   content={row.tooltip}
                   position="bottom-end"
-                  className="w-[340px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+                  className={INFO_TOOLTIP_PANEL_CLASS_NAME}
                   docsLink={row.tooltipDocsLink}
                 >
                   <span
@@ -1357,7 +1357,7 @@ function AccountSummaryRow({
           <Tooltip
             content={tooltip}
             position="bottom-end"
-            className="w-[320px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+            className={INFO_TOOLTIP_PANEL_CLASS_NAME}
             docsLink={tooltipDocsLink}
           >
             <span
@@ -1487,7 +1487,6 @@ export function PerpsTradeTicket({
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>()
-  const [isFinalVpiEstimated, setIsFinalVpiEstimated] = useState(false)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
@@ -1609,9 +1608,6 @@ export function PerpsTradeTicket({
       const indexedVpiUsdc = order.vpiUsdcRaw ?? order.activityVpiUsdcRaw
       if (indexedVpiUsdc !== undefined) {
         setFinalVpiUsdc(indexedVpiUsdc)
-        setIsFinalVpiEstimated(false)
-      } else {
-        setIsFinalVpiEstimated(finalVpiUsdc !== undefined)
       }
       setLifecycleState('executed')
     } else {
@@ -1621,7 +1617,7 @@ export function PerpsTradeTicket({
 
     onAccountRefreshRef.current?.()
     return true
-  }, [finalVpiUsdc])
+  }, [])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -1830,7 +1826,9 @@ export function PerpsTradeTicket({
   const keeperBounty = usdcRawToNumber(estimatedKeeperBountyUsdc)
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
   const protocolExecutionFeeRaw = executionFeeUsdcRaw(contractNotionalUsdc, executionFeeBpsRaw)
-  const slippageNumber = Math.max(slippage, 0)
+  const slippageNumber = isOracleFrozenClose
+    ? DEFAULT_ORACLE_FROZEN_SLIPPAGE
+    : Math.max(slippage, 0)
   const previewPrice = oraclePriceRaw
     ? displayDxyPriceNumber(oraclePriceRaw)
     : enableLiveTrading
@@ -2299,7 +2297,6 @@ export function PerpsTradeTicket({
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, oraclePriceToDisplayDxyPrice(finalExecutionPrice))
     : undefined
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
-  const finalVpiLabel = isFinalVpiEstimated ? 'Estimated VPI / Price impact' : 'VPI / Price impact'
   const finalVpiValue = finalVpiUsdc === undefined ? 'Unavailable' : formatSignedUsdcNoPlus(finalVpiUsdc)
   const finalUsesFrozenCloseSpread =
     committedOracleFrozenClose ?? isOracleFrozenClose
@@ -2311,9 +2308,6 @@ export function PerpsTradeTicket({
   const finalOracleConfidenceSpreadRaw = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
     ? absBigInt(finalExecutionPrice - oraclePriceRaw)
     : previewOracleConfidenceSpreadRaw
-  const finalOracleConfidenceSpreadLabel = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
-    ? 'Oracle confidence spread'
-    : 'Estimated oracle confidence spread'
   const finalOracleConfidenceSpreadValue = formatConfidenceSpread(finalOracleConfidenceSpreadRaw, oraclePriceRaw)
   const finalPriceDisplay = finalExecutionPrice
     ? formatDisplayDxyPrice(finalExecutionPrice)
@@ -2535,7 +2529,6 @@ export function PerpsTradeTicket({
         isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
       )
       setFinalVpiUsdc(previewVpiUsdc)
-      setIsFinalVpiEstimated(previewVpiUsdc !== undefined)
       const result = await commitOrder({
         direction: effectiveOrderDirection,
         notionalUsdc: contractNotionalUsdc,
@@ -2637,7 +2630,6 @@ export function PerpsTradeTicket({
     setExecuteTxHash(undefined)
     setFinalExecutionPrice(undefined)
     setFinalVpiUsdc(undefined)
-    setIsFinalVpiEstimated(false)
     setCommittedSizeDelta(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
@@ -2773,6 +2765,7 @@ export function PerpsTradeTicket({
               <Tooltip
                 content="Only reduces or closes your current position. It will not open a new position or increase exposure."
                 position="top"
+                className={INFO_TOOLTIP_PANEL_CLASS_NAME}
                 docsLink={DOCS_LINKS.reduceOnly}
               >
                 <span
@@ -2812,6 +2805,7 @@ export function PerpsTradeTicket({
               <Tooltip
                 content="Maximum leverage mode"
                 position="top"
+                className={INFO_TOOLTIP_PANEL_CLASS_NAME}
                 docsLink={DOCS_LINKS.marginCallSimulator}
               >
                 <span
@@ -2861,12 +2855,14 @@ export function PerpsTradeTicket({
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>
           <PreviewRows
             rows={sidePanelPreviewRows.slice(0, 11)}
-            onSlippageClick={() => {
-              trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
-              setIsSlippageConfigOpen((isOpen) => !isOpen)
-            }}
+            onSlippageClick={isOracleFrozenClose
+              ? undefined
+              : () => {
+                  trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
+                  setIsSlippageConfigOpen((isOpen) => !isOpen)
+                }}
             slippageConfig={
-              isSlippageConfigOpen ? (
+              isSlippageConfigOpen && !isOracleFrozenClose ? (
                 <div className="mt-3 py-3">
                   <div className="grid grid-cols-5 gap-2">
                     {slippageOptions.map((option) => (
@@ -3504,19 +3500,19 @@ export function PerpsTradeTicket({
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
                     finalUsesFrozenCloseSpread
                       ? {
-                          label: 'Estimated frozen close spread',
+                          label: 'Frozen close spread',
                           value: finalFrozenCloseSpreadValue,
                           tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
                           tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
                         }
                       : {
-                          label: finalOracleConfidenceSpreadLabel,
+                          label: 'Oracle confidence spread',
                           value: finalOracleConfidenceSpreadValue,
                           tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
                           tooltipDocsLink: DOCS_LINKS.oracleConfidence,
                         },
                     {
-                      label: finalVpiLabel,
+                      label: 'VPI / Price impact',
                       value: finalVpiValue,
                       tooltip: VPI_PRICE_IMPACT_TOOLTIP,
                       tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,

@@ -245,6 +245,11 @@ describe('perps ticket oracle regime matrix', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls.'
     )
+    expect(screen.getByRole('tooltip')).toHaveClass(
+      'w-[320px]',
+      'max-w-[calc(100vw-2rem)]',
+      'whitespace-normal'
+    )
     expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.direction.title}` }))
       .toHaveAttribute('href', DOCS_LINKS.direction.href)
   })
@@ -326,14 +331,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(preview.getByText('Estimated frozen close spread')).toBeInTheDocument()
     expect(preview.getByText('12.3')).toBeInTheDocument()
     expect(preview.getByText('Exact')).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: /Max slippage/ }))
-    expect(screen.getByRole('button', { name: 'Exact' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '0.05%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '0.1%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '0.25%' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Infinity' })).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '0.5%' })).not.toBeInTheDocument()
+    expect(preview.queryByRole('button', { name: /Max slippage/ })).not.toBeInTheDocument()
 
     fireEvent.focus(preview.getByLabelText('Estimated frozen close spread info'))
     const tooltip = screen.getByRole('tooltip')
@@ -347,6 +345,35 @@ describe('perps ticket oracle regime matrix', () => {
     expect(tooltip).not.toHaveTextContent('12.3')
     expect(tooltip).not.toHaveTextContent('10.0')
     expect(tooltip).not.toHaveTextContent('2.3')
+  })
+
+  it('switches an already-mounted close to Exact when the oracle becomes frozen', () => {
+    const liveInput = {
+      marketPhase: 'close-only' as const,
+      oracleFrozen: false,
+    }
+    const { rerender } = renderCloseTicket(liveInput)
+    let preview = commitPreviewQueries()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max slippage/ }))
+    fireEvent.click(screen.getByRole('button', { name: '0.25%' }))
+    expect(preview.getByText('0.25%')).toBeInTheDocument()
+
+    rerender(closeTicket({
+      ...liveInput,
+      oracleFrozen: true,
+    }))
+    preview = commitPreviewQueries()
+
+    expect(preview.getByText('Exact')).toBeInTheDocument()
+    expect(preview.queryByText('0.25%')).not.toBeInTheDocument()
+    expect(preview.queryByRole('button', { name: /Max slippage/ })).not.toBeInTheDocument()
+
+    rerender(closeTicket(liveInput))
+    preview = commitPreviewQueries()
+
+    expect(preview.getByText('0.25%')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Max slippage/ })).toBeInTheDocument()
   })
 
   it('shows the frozen spread instead of an oracle confidence spread after execution', () => {
@@ -369,8 +396,9 @@ describe('perps ticket oracle regime matrix', () => {
     expect(finalResult).not.toBeNull()
     expect(within(finalResult!).queryByText(/Oracle confidence spread/i))
       .not.toBeInTheDocument()
-    expect(within(finalResult!).getByText('Estimated frozen close spread'))
+    expect(within(finalResult!).getByText('Frozen close spread'))
       .toBeInTheDocument()
+    expect(within(finalResult!).queryByText(/Estimated/i)).not.toBeInTheDocument()
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
   })
 
@@ -387,7 +415,7 @@ describe('perps ticket oracle regime matrix', () => {
 
     const dialog = screen.getByRole('dialog')
     expect(within(dialog).getByText('Waiting for wallet confirmation')).toBeInTheDocument()
-    expect(within(dialog).getByText('0.55%')).toBeInTheDocument()
+    expect(within(dialog).getByText('Exact')).toBeInTheDocument()
     const committedLimit = within(dialog).getByText('Execution limit')
       .parentElement?.querySelector('dd')?.textContent
     expect(committedLimit).toBeTruthy()
@@ -399,7 +427,7 @@ describe('perps ticket oracle regime matrix', () => {
       oraclePriceRaw: 110_000_000n,
     }))
 
-    expect(within(dialog).getByText('0.55%')).toBeInTheDocument()
+    expect(within(dialog).getByText('Exact')).toBeInTheDocument()
     expect(within(dialog).queryByText('0.1%')).not.toBeInTheDocument()
     expect(
       within(dialog).getByText('Execution limit')
