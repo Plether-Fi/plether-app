@@ -50,22 +50,42 @@ variable "pyth_api_key" {
   type        = string
   default     = ""
   sensitive   = true
-  description = "Server-side Pyth API key with entitlement to every configured basket feed, including FX feeds."
+  description = "Pyth API key managed by Terraform. It must be entitled to every configured basket feed, including FX feeds; prefer pyth_api_key_ssm_parameter_name for an existing SecureString."
 }
 
 variable "enable_pyth_api_key" {
   type        = bool
-  default     = true
-  description = "Inject the Pyth API key into API and basket-worker tasks. Keep enabled for the upgraded hosted Hermes endpoint."
+  default     = false
+  description = "Create and manage the Pyth API key SecureString from pyth_api_key."
+}
+
+variable "pyth_api_key_ssm_parameter_name" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Existing Pyth API key SecureString parameter name. Sepolia defaults to /plether/sepolia/pyth-api-key. Set to an empty string to disable the external reference."
+
+  validation {
+    condition = (
+      var.pyth_api_key_ssm_parameter_name == null
+      || trimspace(var.pyth_api_key_ssm_parameter_name) == ""
+      || startswith(trimspace(var.pyth_api_key_ssm_parameter_name), "/")
+    )
+    error_message = "pyth_api_key_ssm_parameter_name must be null, empty, or an absolute SSM parameter name beginning with /."
+  }
 }
 
 variable "pyth_hermes_url" {
-  type    = string
-  default = "https://pyth.dourolabs.app/hermes"
+  type        = string
+  default     = "https://pyth.dourolabs.app/hermes"
+  description = "Upgraded Hermes base URL used by backend payload consumers."
 
   validation {
-    condition     = replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") != "https://hermes.pyth.network"
-    error_message = "pyth_hermes_url cannot use the legacy Hermes endpoint because its payloads are incompatible with the deployed upgraded Pyth contract."
+    condition = (
+      trimspace(var.pyth_hermes_url) != ""
+      && replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") != "https://hermes.pyth.network"
+    )
+    error_message = "pyth_hermes_url must be non-empty and cannot use the legacy Hermes endpoint because its payloads are incompatible with the deployed upgraded Pyth contract."
   }
 }
 

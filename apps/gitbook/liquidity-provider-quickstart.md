@@ -14,7 +14,7 @@ LP[^lp] capital is not idle collateral. It can be used to pay winning traders. I
 >
 > Control names in square brackets below are placeholders for the forthcoming LP interface.
 >
-> The `Deposit` button in the existing welcome window and trader ticket funds a trader’s **Margin Account**. It does not provide liquidity to the HousePool.
+> The `Deposit` button in the existing welcome window opens the trader margin-deposit flow; the ticket’s deposit action funds a trader’s **Margin Account**. Neither provides liquidity to the HousePool.
 >
 > **Gas sponsorship scope:** the trader sponsorship promise does not currently include LP approvals, deposits, pending-epoch actions, share claims or withdrawals. LP users must keep enough Arbitrum Sepolia ETH for those transactions. Treat an LP method as sponsored only if a later interface explicitly marks that specific action as **Sponsored**.
 
@@ -29,7 +29,7 @@ In return, you receive vault shares representing a proportional claim on that tr
 
 Shares are not fixed at one USDC. Their value can rise or fall as the pool earns revenue, pays traders and moves losses through the waterfall.
 
-Never send USDC directly to the HousePool. Use the verified Senior or Junior Vault listed on the current deployment page.
+Never send USDC directly to the HousePool. Use the verified Senior or Junior Vault address from the active deployment’s official contract metadata.
 
 ### 1. Choose your tranche
 
@@ -111,9 +111,9 @@ To test liquidity provision, you need:
 * MockUSDC to deposit
 * Enough ETH for multiple transactions if the deposit uses a pending epoch
 
-You can request MockUSDC through the testnet welcome window or `Get mock USDC` notice.
+LP deposits require MockUSDC in the connected **owner wallet**, because the future LP flow is not gas-sponsored. The current welcome faucet instead pre-fills and locks the separate **Trading Account** address; tokens minted there cannot be used directly for an owner-wallet LP approval. Obtain test MockUSDC at the owner-wallet address from the deployment operator or by a direct transfer, and verify the recipient before proceeding.
 
-After receiving MockUSDC, close the welcome window. Do not select its `Deposit` action for LP purposes—it opens the trader margin-deposit flow.
+Do not use the welcome window’s `Deposit` action for LP purposes—it opens the trader margin-deposit flow.
 
 ### 4. Review the pool before depositing
 
@@ -136,8 +136,6 @@ At minimum, the interface should show:
 
 Do not choose a tranche based only on the highest displayed return. Understand where it sits in the loss and withdrawal waterfall.
 
-![Prototype LP overview comparing Senior and Junior alongside pool-level liquidity](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
-
 ### 5. Enter the deposit
 
 Select the Senior or Junior tranche, enter the amount of MockUSDC and review the expected vault shares.
@@ -159,8 +157,6 @@ The number of shares determines your proportional ownership. The USDC value show
 If the vault allowance is insufficient, the first step is approving the selected tranche vault to use your MockUSDC. The approval and deposit or request are separate transactions.
 
 Verify that the spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
-
-![Prototype tranche deposit preview with pricing, routing, fee, approval and verified vault context](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--deposit-preview.png)
 
 ### 6. Immediate versus pending deposits
 
@@ -246,8 +242,6 @@ After the epoch is finalized:
 4. Confirm that the pending request has cleared.
 
 If Senior impairment prevents the epoch from finalizing, cancellation becomes available again so depositors can recover their escrowed USDC.
-
-![Prototype pending-deposit request with epoch timing, lifecycle state and available actions](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--pending-deposit.png)
 
 ### 9. Monitor your LP position
 

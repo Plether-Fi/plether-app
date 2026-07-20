@@ -8,21 +8,36 @@ resource "aws_cloudwatch_log_group" "ecs" {
 }
 
 locals {
-  uses_upgraded_pyth_hermes = replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") == "https://pyth.dourolabs.app/hermes"
-  pyth_api_key_configured   = var.enable_pyth_api_key && trimspace(var.pyth_api_key) != ""
+  effective_pyth_hermes_url = trimspace(var.pyth_hermes_url)
+
+  effective_pyth_api_key_ssm_parameter_name = var.pyth_api_key_ssm_parameter_name != null ? trimspace(var.pyth_api_key_ssm_parameter_name) : (
+    var.environment == "sepolia" ? "/plether/sepolia/pyth-api-key" : ""
+  )
+
+  external_pyth_api_key_parameter_arn = local.effective_pyth_api_key_ssm_parameter_name != "" ? "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter${local.effective_pyth_api_key_ssm_parameter_name}" : null
+
+  effective_pyth_api_key_parameter_arn = local.external_pyth_api_key_parameter_arn != null ? local.external_pyth_api_key_parameter_arn : (
+    var.enable_pyth_api_key ? aws_ssm_parameter.pyth_api_key[0].arn : null
+  )
+
+  uses_upgraded_pyth_hermes = replace(lower(local.effective_pyth_hermes_url), "/\\/+$/", "") == "https://pyth.dourolabs.app/hermes"
+  pyth_api_key_configured = (
+    local.external_pyth_api_key_parameter_arn != null
+    || (var.enable_pyth_api_key && trimspace(var.pyth_api_key) != "")
+  )
 
   pyth_environment = [
-    { name = "PYTH_HERMES_URL", value = var.pyth_hermes_url },
+    { name = "PYTH_HERMES_URL", value = local.effective_pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
     { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
     { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
     { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
   ]
 
-  pyth_api_key_secret = var.enable_pyth_api_key ? [
+  pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
     {
       name      = "PYTH_API_KEY"
-      valueFrom = aws_ssm_parameter.pyth_api_key[0].arn
+      valueFrom = local.effective_pyth_api_key_parameter_arn
     }
   ] : []
 
@@ -121,6 +136,11 @@ resource "aws_ecs_task_definition" "api" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
   container_definitions = jsonencode([{
     name      = "plether-api"
     image     = "${aws_ecr_repository.api.repository_url}:latest"
@@ -187,7 +207,7 @@ resource "aws_ecs_task_definition" "api" {
 
     precondition {
       condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
-      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
     }
   }
 }
@@ -226,6 +246,11 @@ resource "aws_ecs_task_definition" "keeper" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
 
   container_definitions = jsonencode([{
     name      = "plether-keeper"
@@ -292,6 +317,11 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
 
   container_definitions = jsonencode([{
     name      = "plether-liquidation-worker"
@@ -364,6 +394,11 @@ resource "aws_ecs_task_definition" "basket_worker" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
   container_definitions = jsonencode([{
     name      = "plether-basket-worker"
     image     = "${aws_ecr_repository.api.repository_url}:latest"
@@ -398,7 +433,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
   lifecycle {
     precondition {
       condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
-      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
     }
   }
 }
@@ -431,6 +466,11 @@ resource "aws_ecs_task_definition" "perps_indexer" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
 
   container_definitions = jsonencode([{
     name      = "plether-perps-indexer"
@@ -495,6 +535,11 @@ resource "aws_ecs_task_definition" "workers" {
   memory                   = var.workers_container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
 
   container_definitions = jsonencode([
     {
@@ -579,7 +624,10 @@ resource "aws_ecs_task_definition" "workers" {
       ]
 
       environment = [
-        { name = "PERPS_ORACLE_UPDATER_BACKEND_URL", value = "http://${aws_lb.api.dns_name}" },
+        {
+          name  = "PERPS_ORACLE_UPDATER_BACKEND_URL"
+          value = var.api_hostname != "" ? "https://${var.api_hostname}" : "http://${aws_lb.api.dns_name}"
+        },
         { name = "PERPS_ORACLE_UPDATER_POLL_SECONDS", value = var.perps_oracle_updater_poll_seconds },
         { name = "PERPS_ORACLE_UPDATER_MAX_PAYLOAD_AGE_SECONDS", value = var.perps_oracle_updater_max_payload_age_seconds },
       ]
@@ -620,7 +668,7 @@ resource "aws_ecs_task_definition" "workers" {
   lifecycle {
     precondition {
       condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
-      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
     }
   }
 }

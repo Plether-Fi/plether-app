@@ -4,7 +4,7 @@
 
 Plether is an oracle-priced[^oracle], cash-settled market for leveraged **LONG USD** and **SHORT USD** exposure.
 
-Traders do not buy currencies, receive a position token or borrow a notional[^notional] amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. Only the resulting difference is settled in USDC[^usdc].
+Traders do not buy currencies, receive a position token or borrow a notional[^notional] amount of dollars. They enter a contract whose value changes with the Plether Dollar Index. No notional principal changes hands; realized PnL, VPI, fees, carry and any frozen-close spread are settled in USDC[^usdc].
 
 Plether separates the functions that many trading venues combine:
 
@@ -12,7 +12,7 @@ Plether separates the functions that many trading venues combine:
 | ------------------------- | ------------------------------------------ |
 | **Reference price**       | External FX oracle data                    |
 | **Order sequencing**      | Binding, delayed FIFO queue                |
-| **Trade-cost adjustment** | Oracle confidence and virtual price impact |
+| **Trade-cost adjustment** | Oracle confidence, virtual price impact and frozen-close spread |
 | **Trader collateral**     | Trading Account’s USDC Margin Account      |
 | **Settlement capital**    | USDC-funded HousePool                      |
 | **LP risk allocation**    | Senior and Junior tranches                 |
@@ -90,14 +90,14 @@ A Plether order follows a commit-now, price-later process:
 
 1. The trader deposits USDC into the Trading Account’s Margin Account.
 2. The owner wallet authorizes a LONG USD or SHORT USD commitment, and Plether submits the eligible sponsored operation.
-3. Margin and an execution reward are reserved.
+3. For an open, committed margin is reserved. Every order reserves its execution reward; a close can source that reward from active position margin.
 4. The order enters the global FIFO[^fifo] queue.
-5. Plether resolves the first eligible Pyth observation strictly after commitment.
+5. During live or FAD-only execution, Plether resolves the first eligible Pyth observation strictly after commitment. An `oracleFrozen` voluntary close instead uses a validated frozen-policy Pyth basket without the normal post-commit ordering requirement.
 6. During live or FAD-only[^fad] execution, the protocol applies an adverse oracle-confidence adjustment. Frozen voluntary closes use the validated unshifted price and the separate frozen-close spread.
 7. The order’s execution limit and risk checks are evaluated.
-8. If valid, the engine records the position and locks its margin.
+8. If valid, an open or increase locks margin and updates the position; a reduction or close releases proportional margin and reduces or removes the position.
 
-The order is binding once committed. The trader cannot cancel because the market moved, and the keeper[^keeper] cannot choose a later, more favourable oracle observation.
+The order is binding once committed. The trader cannot cancel because the market moved. During live or FAD-only execution, the keeper[^keeper] cannot choose a later, more favourable oracle observation; a frozen voluntary close is constrained to the validated frozen-policy basket.
 
 Virtual price impact is applied separately to the trade’s economics. It does not replace the oracle or become the new market price.
 
@@ -113,7 +113,7 @@ The **HousePool** is the economic counterparty to every position:
 * When traders realize profits, the pool funds those profits.
 * When traders pay carry, realized carry becomes LP revenue.
 * When a trader receives a VPI rebate, the pool funds it.
-* When a trader pays positive VPI, the non-protocol portion strengthens the pool.
+* When a trader pays positive VPI, it strengthens the pool.
 
 The HousePool is funded through the Senior and Junior LP vaults. Both tranches[^tranche] back the same market. One tranche does not back LONG USD while the other backs SHORT USD.
 
@@ -207,10 +207,10 @@ The simplified value flow is:
 | Event                 | Trader side                                      | HousePool side                                    |
 | --------------------- | ------------------------------------------------ | ------------------------------------------------- |
 | **Deposit margin**    | USDC enters the Trading Account’s Margin Account | No change                                         |
-| **Commit order**      | Margin and execution reward are reserved         | No change                                         |
+| **Commit order**      | An open reserves margin; every order reserves its execution reward | No change                                         |
 | **Open position**     | Position margin is locked and trade costs settle | Pool assumes a bounded payout liability           |
 | **Price movement**    | Unrealized PnL changes                           | Liability views change; no cash necessarily moves |
-| **Losing close**      | Reachable trader USDC is collected               | Realized value enters pool economics              |
+| **Losing close**      | Reachable trader USDC is collected               | The LP-owned portion becomes HousePool value; the execution fee belongs to the treasury |
 | **Profitable close**  | Margin is released separately; the complete fresh payout is credited or claimed in full | Pool funds the complete fresh payout or records it in full as a trader claim |
 | **Carry realization** | Carry is collected from reachable collateral     | Realized carry becomes LP revenue                 |
 | **LP deposit**        | No change to trader margin                       | USDC enters through a tranche vault               |
@@ -227,7 +227,7 @@ For conservative pool accounting:
 * Unrealized trader losses are not treated as spendable LP assets.
 * A trader loss becomes pool value only when it is physically collected.
 * Released margin follows separately; the complete fresh trader payout becomes either a full Margin Account credit or a trader claim recorded in full.
-* An uncovered realized loss becomes bad debt.
+* After reachable collateral and same-account claim netting, an uncovered base trading loss becomes bad debt; a waived frozen-close spread does not.
 
 This avoids treating money owed by a losing trader as if the pool already possessed it.
 
@@ -241,6 +241,7 @@ A profitable close accounts for:
 * VPI
 * Execution fee
 * Accrued carry
+* Frozen-close spread, when applicable
 * Released position margin
 
 Released position margin follows separately. If sufficient unreserved HousePool cash is available, the complete fresh HousePool-funded payout is credited to the Trading Account’s Margin Account.
@@ -266,7 +267,7 @@ Plether collects the loss from physically reachable collateral inside the trader
 
 A partial close cannot externalize an uncovered loss to LPs while leaving the remainder of the position protected. If the partial close cannot leave the account valid, it is rejected.
 
-A full close can consume the terminally reachable collateral defined by the protocol. Any remaining shortfall becomes explicit bad debt and is absorbed by LP capital through the tranche waterfall.
+A full close can consume the terminally reachable collateral defined by the protocol and then net any existing trader claim belonging to the same account. Any remaining base trading-loss shortfall becomes explicit bad debt and is absorbed by LP capital through the tranche waterfall. An uncollectible frozen-close spread is waived instead of becoming bad debt.
 
 ### Liquidation and counterparty auto-deleveraging
 

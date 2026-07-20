@@ -414,14 +414,22 @@ Local URLs:
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
 
-For Terraform deployments, leave `enable_pyth_api_key = true`, set the sensitive
-`pyth_api_key`, and apply Terraform before rolling the API and worker services.
-The image-only backend deployment workflow reuses existing task-definition
-environment and secret settings, so it does not apply this endpoint migration
-by itself. Its preflight refuses a normal rollout until the API and a basket
-worker have the upgraded RPC/contract wiring and the referenced key successfully
-fetches the exact six configured feeds; use the manual bootstrap override only
-for first-time task-definition provisioning.
+For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
+an existing SecureString. To let Terraform manage the key instead, set
+`enable_pyth_api_key = true` and provide the sensitive `pyth_api_key`. Apply
+Terraform before rolling the API and worker services. The image-only backend
+deployment workflow reuses existing task-definition environment and secret
+settings, so it does not apply this endpoint migration by itself. Its preflight
+refuses a normal rollout until the API and a basket worker have the upgraded
+RPC/contract wiring and the referenced key successfully fetches the exact six
+configured feeds; use the manual bootstrap override only for first-time
+task-definition provisioning.
+
+Review the Terraform plan before changing an existing environment from a
+Terraform-managed Pyth parameter to `pyth_api_key_ssm_parameter_name`. If the
+managed resource already owns the same SSM name, migrate or detach its state
+without destroying the SecureString first; `prevent_destroy` intentionally
+blocks accidental key deletion.
 
 For the Sepolia managed proxy, keep `provision_aa_proxy = true` even when
 `enable_aa_sponsorship = false`; this preserves Pimlico receipt/status access

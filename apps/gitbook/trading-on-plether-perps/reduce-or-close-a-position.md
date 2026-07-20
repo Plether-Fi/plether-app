@@ -57,22 +57,20 @@ Use the Position panel to review the exposure you currently hold, then create th
 
 In the trade ticket, enable `Reduce only`. This ensures the order can only reduce or close the current position; it cannot increase exposure or open a position in the opposite direction.
 
-For a partial reduction, enter the amount of exposure to remove. The action becomes `Review Reduce`:
+For a partial reduction, enter the target `plDXY Perp exposure` to remove. The application converts that current-price amount into a contract quantity, and the action becomes `Review Reduce`:
 
 ```
-Remaining exposure
-= current exposure − reduction amount
+Remaining contract quantity
+= current contract quantity − reduction contract quantity
 ```
 
-For a full close, select `Current Position` or `Max` to fill the complete amount currently available. The action becomes `Review Close`.
+Because displayed exposure is `contract quantity × current displayed price`, both the selected exposure and the remaining displayed exposure can be revalued by the time the order executes.
+
+For a full close, select `Current Position` or `Max` to fill the complete contract quantity currently available. The action becomes `Review Close`.
 
 Earlier pending reductions count against the amount available to later orders. If the live position is 10,000 units and an earlier order is already reducing 3,000, only the projected remaining 7,000 units are available to a later close.
 
-Review:
-
-* Current exposure
-* Amount being reduced
-* Projected remaining exposure
+Review the current exposure, the target amount being reduced and the projected remaining amount in the order summary. Treat those USDC exposure amounts as current-price estimates until execution.
 
 #### Minimum-size rules
 
@@ -112,44 +110,33 @@ During `oracleFrozen`, the close uses the validated oracle price without that co
 
 Slippage remains active in every market state. It applies to the execution price; fees, carry, VPI[^vpi] and the frozen-close spread are reviewed separately.
 
-If the interface offers an **Unlimited** setting, it removes the execution-price boundary. The other close requirements continue to apply.
-
-![Reduce ticket](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--reduce-long-preview.png)
+When the selector is available, choosing `Infinity` for Max slippage shows `Market` as the execution limit and removes the execution-price boundary. During `oracleFrozen`, the current ticket instead fixes Max slippage to `Exact` and disables the selector. The other close requirements continue to apply.
 
 ### 3. Review the close preview
 
-The preview estimates the result using the current account, oracle and HousePool state. Execution recalculates the result after all earlier FIFO[^fifo] orders have been processed.
+The preview estimates the order using the current account, oracle and HousePool state. Execution recalculates it after all earlier FIFO[^fifo] orders have been processed.
 
-Review:
+The current `Commit Preview` lets you review:
 
-* Position direction
-* Amount being reduced
-* Remaining exposure
-* Estimated execution price
-* Acceptable price
-* Released position margin
-* Remaining position margin
-* Realized PnL
-* Execution fee
-* Signed VPI
-* Estimated carry
-* Execution reward
-* Immediate payout
-* Trader claim created or consumed
-* Collateral used to settle a loss
-* Potential bad debt on a terminal full close
-* Resulting leverage and liquidation price
-* Frozen spread assessed, paid and waived, when applicable
+* Position direction and whether the order reduces or closes
+* Selected plDXY Perp exposure
+* Estimated plDXY Perp price and contract notional
+* Resulting leverage, or `Closed` for a complete close
+* Max slippage and execution limit
+* Adverse oracle confidence spread, or estimated frozen-close spread
+* Estimated protocol execution fee
+* VPI / Price impact
+* Estimated execution reward
+
+The current ticket does not show realized PnL, carry, released or remaining position margin, immediate payout, trader-claim changes, collateral seizure, bad debt, or the paid and waived portions of a frozen-close spread. Those values are calculated by the contract preview and final execution, but should not be treated as visible ticket fields.
+
+The shared preview component also renders open-position rows such as `Initial margin`, `Maintenance margin`, `Liquidation price` and `Contract side capacity`. On a close these can be `0`, `Unavailable` or otherwise not decision-relevant; do not interpret them as a complete post-close account projection.
 
 A positive VPI value is a charge. A negative value is a rebate. The lifetime VPI clamp prevents the closed portion from receiving more cumulative VPI rebates than it previously paid.
 
-Carry forms part of the final close economics. Depending on the interface, it may be shown separately or reflected in the projected net settlement.
+Carry forms part of the final close economics, but it is not included as a separate row in the current close preview. Read `Cost of carry` in the Position panel and allow for continued accrual while the order waits.
 
 An invalid preview may contain partial or zero economic values. Read the invalid reason before relying on the remaining fields.
-
-![Partial-reduction preview](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--reduce-long-preview.png)
-
-![Full-close review](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--close-long-preview.png)
 
 ### 4. Commit the order
 
@@ -173,6 +160,8 @@ After the sponsored commitment confirms:
 The execution reward pays the account that performs terminal order processing. It is separate from the trading execution fee.
 
 Plether funds the reward from free Margin Account USDC[^usdc] first. When necessary, it may reserve a bounded amount from position margin after running the close-path risk checks.
+
+The current ticket performs a client-side check against `Available to Trade` before enabling review, so traders should normally keep enough free USDC for the quoted reward. Position-margin sourcing is an underlying protocol fallback, not a selectable ticket option.
 
 If position margin funds part of the reward:
 
@@ -206,30 +195,28 @@ A voluntary full close also does not clear unrelated queued orders. Review the a
 
 If liquidation occurs first, Plether clears the account’s pending orders and transfers their reserved execution rewards to the protocol treasury.
 
-![Pending close](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending.png)
-
 ### How settlement is calculated
 
-Position margin is released in proportion to the exposure being reduced:
+Position margin is released in proportion to the contract quantity being reduced:
 
 ```
 Released position margin
 =
 position margin at execution
-× reduction amount
-÷ current position size
+× reduction contract quantity
+÷ current contract quantity
 ```
 
 PnL is realized only on the reduced exposure:
 
 ```
 LONG USD realized PnL
-= reduced exposure × (exit price − entry price)
+= reduced contract quantity × (exit price − entry price)
 ```
 
 ```
 SHORT USD realized PnL
-= reduced exposure × (entry price − exit price)
+= reduced contract quantity × (entry price − exit price)
 ```
 
 The close economics can be summarized as:
@@ -352,13 +339,13 @@ A partial reduction must fund the complete spread.
 
 A terminal full close may waive only the uncollectible part of the frozen spread. Waived spread does not become bad debt, a trader claim or an LP receivable.
 
-Paid frozen spread belongs entirely to LPs. The preview and the `FrozenCloseSpreadSettled` event expose the assessed, paid and waived amounts.
+Paid frozen spread belongs entirely to LPs. The onchain `FrozenCloseSpreadSettled` event records the assessed, paid and waived amounts. The current ticket shows only the estimated assessed spread.
 
 The active parameter is timelocked, must remain nonzero and cannot exceed `1,000 bps`. The value shown by the current onchain preview is authoritative.
 
 ### Immediate payout or trader claim
 
-When a close produces a fresh payment from the HousePool, Plether checks physical settlement liquidity after reserving cash for older trader claims.
+When a close produces a fresh payment from the HousePool, Plether checks physical settlement liquidity after reserving cash for existing trader claims.
 
 The fresh payment follows one complete path:
 
@@ -377,7 +364,7 @@ See [**Settlement liquidity and trader claims**](../how-plether-works/settlement
 
 ### If the close does not execute
 
-Some conditions leave the order pending for another attempt. These include temporarily unavailable oracle data and a blocked FIFO head.
+Some conditions leave the order pending for another attempt. These include temporarily unavailable oracle data and a blocked FIFO head. Under the current configuration, an order expires after `60 seconds` if it has not reached a terminal result; sponsored keeper cleanup then removes it from Open Orders.
 
 Terminal outcomes include:
 
@@ -400,19 +387,29 @@ After a terminal failure:
 Assume:
 
 ```
-Current exposure:        10,000
-Entry price:             1.0000
-Position margin:     2,000 USDC
-Reduction amount:         2,500
-Exit price:              1.0400
+Current contract quantity:     10,000
+Current displayed price:       1.0000
+Current displayed exposure:    10,000 USDC
+Entry price:                    1.0000
+Position margin:            2,000 USDC
+Reduction contract quantity:    2,500
+Exit price:                     1.0400
 ```
 
 The trader reduces 25% of the position.
 
 ```
-Remaining exposure
+Remaining contract quantity
 = 10,000 − 2,500
 = 7,500
+```
+
+At the `1.0400` exit mark, the remaining displayed exposure is:
+
+```
+Remaining displayed exposure
+= 7,500 × 1.0400
+= 7,800 USDC
 ```
 
 ```
@@ -430,7 +427,7 @@ Realized PnL
 Assume:
 
 ```
-Execution fee:      5 USDC
+Execution fee:   0.96 USDC
 VPI charge:         8 USDC
 Accrued carry:     12 USDC
 ```
@@ -439,55 +436,44 @@ The execution settlement is:
 
 ```
 Net close settlement
-= 100 − 5 − 8 − 12
-= +75 USDC
+= 100 − 0.96 − 8 − 12
+= +79.04 USDC
 ```
 
 ```
 Account movement at execution
-= 500 + 75
-= +575 USDC
+= 500 + 79.04
+= +579.04 USDC
 ```
 
 The remaining position is approximately:
 
 ```
-Exposure:          7,500
-Entry price:      1.0000
-Position margin:   1,500 USDC
+Contract quantity:             7,500
+Displayed exposure at 1.0400:  7,800 USDC
+Entry price:                   1.0000
+Position margin:               1,500 USDC
 ```
 
 The execution reward reserved at commitment is separate from these figures.
 
-If HousePool liquidity cannot cover the fresh `75 USDC` payment, the released `500 USDC` returns to the Margin Account and `75 USDC` becomes a trader claim.
+If HousePool liquidity cannot cover the fresh `79.04 USDC` payment, the released `500 USDC` returns to the Margin Account and `79.04 USDC` becomes a trader claim.
 
 ### Check the result
 
-After a partial reduction, confirm:
+After a partial reduction, use the **Position** panel to confirm remaining plDXY Perp exposure, unchanged entry price, updated leverage, liquidation price, unrealized PnL and cost of carry. Open `Edit Position Margin` if you need to inspect the remaining assigned position margin.
 
-* Remaining exposure
-* Unchanged entry price
-* Remaining position margin
-* Updated leverage
-* Updated liquidation price
-* Realized PnL
-* VPI and carry applied
-* Available to Trade
-* Any trader claim created
+The lifecycle window’s **Final Result** records final price, target and execution exposure, contract notional, the execution fee, VPI, confidence or estimated frozen-close spread, execution reward and transaction links. For a frozen close, treat the UI spread amount as an estimate: the executed transaction and onchain `FrozenCloseSpreadSettled` event are authoritative for the assessed, paid and waived amounts. **Transaction History** shows the realized close result. `Available to Trade` and any **Trader claim** are separate account views.
 
 After a full close, confirm:
 
 * The account has no active position.
 * All remaining position margin has been released.
-* Final PnL and costs appear in history.
-* Any frozen spread is itemized.
+* The realized close result appears in **Transaction History**.
+* Final execution costs are recorded in the lifecycle window’s **Final Result** and onchain transaction. Any frozen-spread amount in **Final Result** is an estimate; use the executed transaction and `FrozenCloseSpreadSettled` event for the authoritative assessed, paid and waived amounts.
 * The Margin Account reflects released margin and any complete fresh payout funded immediately.
 * If HousePool liquidity cannot fund that complete fresh payout, it appears in full as a trader claim instead.
 * Remaining pending orders still match your intended exposure.
-
-![Partial reduction and remaining position](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--executed-partial-reduction.png)
-
-![Full-close final costs and claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
 
 ### Before confirming
 
@@ -495,7 +481,7 @@ After a full close, confirm:
 * Check the projected remaining exposure.
 * Review earlier pending orders.
 * Set the intended exit-price boundary.
-* Review PnL, VPI, execution fee, carry and execution reward.
+* Estimate PnL and carry, and review the ticket’s VPI, execution fee and execution reward.
 * Check whether the frozen-close spread applies.
 * Review remaining leverage and liquidation risk.
 * Allow for continued exposure while the order waits.

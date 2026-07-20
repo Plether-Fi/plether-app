@@ -1,7 +1,6 @@
 module Main (main) where
 
 import Control.Exception (SomeException, catch, displayException, fromException, throwIO)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Plether.Config (Config (..), loadConfig)
@@ -18,12 +17,12 @@ import Plether.LiquidationWorker
   ( LiquidationWorkerConfig (..)
   , LiquidationWorkerMode (..)
   , checkLiveSignerBalance
+  , loadLiquidationWorkerConfig
   , runLiquidationWorker
   )
 import Plether.Logging (field, logError, logInfo)
 import System.Environment (getArgs, lookupEnv)
 import System.Exit (ExitCode, exitFailure)
-import Text.Read (readMaybe)
 
 data LiquidationWorkerArgs = LiquidationWorkerArgs
   { lwaMode :: LiquidationWorkerMode
@@ -48,7 +47,7 @@ runMain = do
         Left err -> fatal $ "Invalid LIQUIDATION_KEEPER_PRIVATE_KEY: " <> T.unpack err
         Right derivedAddress -> pure derivedAddress
 
-      workerCfg <- loadWorkerConfig cfg (cfgPerpsCfdEngine cfg) privateKey
+      workerCfg <- loadLiquidationWorkerConfig cfg privateKey
       client <- newClient (cfgPerpsRpcUrl cfg)
       balanceResult <-
         checkLiveSignerBalance
@@ -87,46 +86,12 @@ runMain = do
           (lwcCfdEngine workerCfg)
       runLiquidationWorker workerCfg pool client (lwaMode args) (lwaDryRun args)
 
-loadWorkerConfig :: Config -> Text -> Text -> IO LiquidationWorkerConfig
-loadWorkerConfig cfg cfdEngine privateKey = do
-  pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 1
-  scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 100
-  indexerStartBlock <- readEnv "LIQUIDATION_WORKER_START_BLOCK" (cfgPerpsIndexerStartBlock cfg)
-  indexerConfirmations <- readEnv "LIQUIDATION_WORKER_CONFIRMATIONS" 1
-  indexerBatchSize <- readEnv "LIQUIDATION_WORKER_INDEX_BATCH_SIZE" 5_000
-  indexerOverlapBlocks <- readEnv "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS" 12
-  pendingReplacementSeconds <- readEnv "LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS" 120
-  gasBufferBps <- readEnv "LIQUIDATION_WORKER_GAS_BUFFER_BPS" (cfgKeeperGasBufferBps cfg)
-  feeBufferBps <- readEnv "LIQUIDATION_WORKER_FEE_BUFFER_BPS" (cfgKeeperFeeBufferBps cfg)
-  pure
-    LiquidationWorkerConfig
-      { lwcChainId = cfgPerpsChainId cfg
-      , lwcOrderRouter = cfgPerpsOrderRouter cfg
-      , lwcPletherOracle = cfgPerpsPletherOracle cfg
-      , lwcCfdEngine = cfdEngine
-      , lwcPrivateKey = privateKey
-      , lwcPollSeconds = max 1 pollSeconds
-      , lwcScanBatchSize = max 1 scanBatchSize
-      , lwcIndexerStartBlock = max 0 indexerStartBlock
-      , lwcIndexerConfirmations = max 0 indexerConfirmations
-      , lwcIndexerBatchSize = max 1 indexerBatchSize
-      , lwcIndexerOverlapBlocks = max 0 indexerOverlapBlocks
-      , lwcPendingReplacementSeconds = max 1 pendingReplacementSeconds
-      , lwcGasBufferBps = max 0 gasBufferBps
-      , lwcFeeBufferBps = max 0 feeBufferBps
-      }
-
 parseArgs :: [String] -> LiquidationWorkerArgs
 parseArgs args =
   LiquidationWorkerArgs
     { lwaMode = if "--once" `elem` args then LiquidationWorkerOnce else LiquidationWorkerLoop
     , lwaDryRun = "--dry-run" `elem` args
     }
-
-readEnv :: (Read a) => String -> a -> IO a
-readEnv name fallback = do
-  value <- lookupEnv name
-  pure $ fromMaybe fallback (value >>= readMaybe)
 
 requireEnv :: String -> String -> IO Text
 requireEnv message name = do

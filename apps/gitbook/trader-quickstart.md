@@ -6,7 +6,7 @@ Plether Perps[^perps] lets you take a leveraged **LONG USD** or **SHORT USD** po
 
 This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. Your connected wallet authorizes a Plether **Trading Account**, which owns your positions, orders, Margin Account and trader claims.
 
-Depending on the supported account model, the connected wallet and Trading Account may have the same address or two different addresses. Confirm the active Trading Account before funding or trading. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for details.
+On the current Arbitrum Sepolia deployment, the connected owner wallet and its Plether Trading Account have different addresses. Confirm the derived Trading Account before funding or trading. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for details.
 
 ### The flow in one line
 
@@ -29,36 +29,23 @@ Use only the official Plether application. Never send tokens directly to a Pleth
 
 Open [Plether Perps DEX](https://app.sepolia.plether.com) and select `Connect Wallet`.
 
-Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**. The account panel then shows:
-
-* Your connected owner wallet
-* Your active Trading Account address
-* Whether the two addresses are the same or different
+Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**. Plether then derives a separate Trading Account controlled by your connected owner wallet.
 
 MockUSDC acts as testnet collateral. Eligible trader operations are gas-sponsored, subject to sponsorship availability and policy limits, so native ETH is not a prerequisite for this quickstart.
 
-The welcome window lets you enter an address and select `Get 100,000 mock USDC`. Enter the **Trading Account address shown in the account panel**, not a different owner-wallet address. With a same-address account, these are naturally the same.
+The welcome window pre-fills and locks the **Trading Account address** when gas sponsorship is configured. Check that address, then select `Get 100,000 mock USDC`. The faucet sends the tokens to the Trading Account, not the owner wallet.
 
 If you previously closed the welcome window, select `Get mock USDC` in the testnet notice bar to open it again.
 
 MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed for real dollars.
 
-![Testnet welcome window asking for the Trading Account address before minting 100,000 MockUSDC.](.gitbook/assets/screenshots/storybook-testnet-welcome-modal--request-funds.png)
-
-_Enter the active Trading Account address—not a separate owner-wallet address—before requesting MockUSDC._
-
 ### 2. Deposit USDC into your Margin Account
 
-First confirm that the faucet-funded MockUSDC appears as **Trading Account USDC**. This is token balance held at the Trading Account address, outside Plether’s internal Margin Account.
+First confirm that the faucet-funded MockUSDC appears as **Available to deposit**. This is the token balance held at the Trading Account address, outside Plether’s internal Margin Account.
 
 Find the **Margin Account** section in the trade ticket and select `Deposit`.
 
-Enter the amount of MockUSDC you want to deposit and review the active Trading Account. The normal flow uses a wallet authorization and sponsored operation.
-
-Depending on the account model and token capabilities, the wallet may request:
-
-1. A USDC transfer or approval authorization.
-2. Authorization for the sponsored deposit operation.
+Enter the amount of MockUSDC you want to deposit and review the active Trading Account. On the current deployment, your owner wallet signs one sponsored Trading Account operation that approves the exact MockUSDC amount and deposits it into the Margin Account.
 
 Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Margin Account, where it becomes available for trading.
 
@@ -76,10 +63,6 @@ The interface separates several balances:
 These values do not need to be equal. Open positions, pending orders, carry[^carry] and margin requirements can make your withdrawable balance lower than your portfolio value.
 
 Keep some USDC free rather than committing the entire account to one position.
-
-![First deposit flow showing a limited owner-wallet USDC authorization and the sponsored Trading Account deposit operation.](.gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png)
-
-_A first deposit can require wallet authorization followed by one atomic sponsored Trading Account operation._
 
 ### 3. Check the market state
 
@@ -132,7 +115,7 @@ The interface’s maximum leverage is a limit, not a recommendation.
 
 Next, review `Max slippage`. Plether uses it to calculate your execution limit—the worst price at which the order may execute.
 
-A tighter limit provides stronger price protection but makes failure more likely if the market moves before execution. An unlimited setting removes that protection and is not appropriate for a first trade.
+A tighter limit provides stronger price protection but makes failure more likely if the market moves before execution. The interface’s **Infinity** setting removes that protection and is not appropriate for a first trade.
 
 ### 6. Read the preview
 
@@ -156,7 +139,7 @@ These costs are different:
 * The **protocol execution fee** is charged when the trade executes.
 * **VPI** adjusts for trade size, available pool depth and directional imbalance. It can be a cost or a rebate.
 * The **oracle confidence spread** adjusts the execution price for oracle uncertainty. It is not a separate USDC fee.
-* The **execution reward** is reserved for whoever finalizes the order.
+* The **execution reward** is reserved for whoever executes the order or clears it after terminal failure or expiry.
 * **Carry** accrues after the position is open. Either direction can pay it.
 
 A preview is an estimate, not an executable quote. The final price comes from eligible oracle data published after commitment.
@@ -193,9 +176,7 @@ If that price exceeds your slippage limit, the order fails rather than executing
 
 After commitment, the application displays `Finalizing execution price`.
 
-A keeper gets the first opportunity to finalize the order. If automatic finalization does not happen during the initial grace period, the interface exposes `Finalize Trade`.
-
-Manual finalization requires a separate wallet authorization and onchain operation. It does not let you choose a different price; it submits the data needed to settle the already committed order. Manual finalization remains outside sponsorship unless the interface explicitly marks it as **Sponsored**.
+A keeper finalizes orders for the current sponsored Trading Account flow. Owner-wallet manual finalization is not available on this deployment, so keep the application open long enough to observe the result or return to **Open Orders** later.
 
 Monitor the order until it reaches a terminal state:
 
@@ -204,13 +185,13 @@ Monitor the order until it reaches a terminal state:
 | **Pending reveal** | Waiting for an eligible oracle update or finalization     |
 | **Executed**       | The position was opened, increased or reduced             |
 | **Failed**         | The order will not execute                                |
-| **Expired**        | Its execution window ended before successful finalization |
+| **Expired**        | Its execution window ended and keeper cleanup is pending   |
 
 The **Open Orders** tab shows the current countdown and explicitly displays `Cancel unavailable`.
 
 Do not submit a duplicate order simply because the first remains pending. Global FIFO[^fifo] ordering means earlier orders must be resolved first.
 
-If an order expires, use `Clean Up` when the action becomes available. If it fails, check **Order History** for the reason before submitting another order. Failed and expired orders are not retried automatically.
+If an order expires, wait for keeper cleanup; the sponsored Trading Account interface shows `Keeper processing` rather than an owner-wallet cleanup action. If it fails, check **Order History** for the reason before submitting another order. Failed and expired orders are not retried automatically.
 
 ### 9. Check and manage the position
 
@@ -299,7 +280,7 @@ Withdrawable USDC excludes collateral or funds required for:
 
 You can withdraw free USDC while a position remains open, but doing so can reduce the account buffer protecting that position. Review the position’s health and liquidation price before confirming.
 
-For a separate smart account, the sponsored withdrawal atomically moves MockUSDC from the Margin Account through the Trading Account to its verified owner wallet. For a same-address Trading Account, the withdrawn MockUSDC reaches that shared address directly.
+On the current deployment, the sponsored withdrawal atomically moves MockUSDC from the Margin Account through the separate Trading Account to its verified owner wallet.
 
 ### Common problems
 
@@ -309,7 +290,7 @@ For a separate smart account, the sponsored withdrawal atomically moves MockUSDC
 | Deposit does not proceed                             | Trading Account address, MockUSDC balance, authorization and sponsorship status   |
 | Order preview is invalid                             | Minimum size, deposited margin, side capacity, market state and fresh oracle data |
 | Order remains pending                                | Open Orders countdown, earlier FIFO orders and oracle availability                |
-| Order expired                                        | Use `Clean Up`, then submit a new order                                           |
+| Order expired                                        | Wait for keeper cleanup before submitting a new order                             |
 | Order failed                                         | Check Order History before changing slippage or resubmitting                      |
 | Opposite direction is unavailable                    | Close the current position and wait for execution first                           |
 | Withdrawal is below portfolio value                  | Position margin, pending reservations, carry and maintenance requirements         |
@@ -322,7 +303,7 @@ Before selecting `Confirm Commit`:
 * Start with a small test position.
 * Confirm whether you are **LONG USD** or **SHORT USD**.
 * Keep free USDC outside the position.
-* Read the execution limit and avoid unlimited slippage.
+* Read the execution limit and avoid **Infinity** slippage.
 * Review the liquidation price.
 * Review the execution fee, VPI, confidence spread and execution reward.
 * Accept that the committed order cannot be cancelled.

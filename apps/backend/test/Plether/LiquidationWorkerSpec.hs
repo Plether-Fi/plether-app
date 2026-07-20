@@ -1,9 +1,11 @@
 module Plether.LiquidationWorkerSpec (spec) where
 
+import Control.Exception (bracket)
 import Data.Aeson (toJSON)
 import qualified Data.ByteString as BS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
+import Plether.Config (Config (..))
 import Plether.Database.Schema (PythUpdatePayloadRow (..))
 import Plether.Ethereum.Abi (encodeAddress, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
@@ -14,6 +16,7 @@ import Plether.LiquidationWorker
   ( LiquidationPayloadCircuitDecision (..)
   , LiquidationPendingSignerAction (..)
   , LiquidationSignerCircuitDecision (..)
+  , LiquidationWorkerConfig (..)
   , canAffordTransaction
   , checkLiveSignerBalance
   , decodeCachedPythPayload
@@ -26,13 +29,22 @@ import Plether.LiquidationWorker
   , liquidationPendingSignerAction
   , liquidationSignerCircuitDecision
   , payloadGlobalSimulationRevertSelector
+  , loadLiquidationWorkerConfig
   , sameNonceReplacementFees
   , transactionMaximumCost
   )
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "loadLiquidationWorkerConfig" $
+    it "uses the CFD engine already resolved by shared backend configuration" $ do
+      withUnsetEnv "PERPS_CFD_ENGINE" $ do
+        workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+        lwcCfdEngine workerCfg `shouldBe` configuredCfdEngine
+        lwcCfdEngine workerCfg `shouldNotBe` retiredCfdEngine
+
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
       decodeCachedPythPayload payload
@@ -216,6 +228,58 @@ cfdEngine = "0x3333333333333333333333333333333333333333"
 
 otherEngine :: Text
 otherEngine = "0x4444444444444444444444444444444444444444"
+
+configuredCfdEngine :: Text
+configuredCfdEngine = "0x5555555555555555555555555555555555555555"
+
+retiredCfdEngine :: Text
+retiredCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
+
+testConfig :: Config
+testConfig =
+  Config
+    { cfgRpcUrl = "https://eth-sepolia.example"
+    , cfgChainId = 11155111
+    , cfgPort = 3001
+    , cfgCorsOrigins = []
+    , cfgDeployments = []
+    , cfgDatabaseUrl = Nothing
+    , cfgIndexerStartBlock = 0
+    , cfgPythBenchmarksUrl = "https://benchmarks.pyth.network"
+    , cfgPythHermesUrl = "https://hermes.pyth.network"
+    , cfgPythApiKey = Nothing
+    , cfgPythBackfillDays = 7
+    , cfgPythSampleIntervalSeconds = 60
+    , cfgPythLatestMaxAgeSeconds = 10
+    , cfgPythIngestionEnabled = False
+    , cfgPerpsRpcUrl = "https://arb-sepolia.example"
+    , cfgPerpsChainId = 421614
+    , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"
+    , cfgPerpsOrderRouter = "0x2222222222222222222222222222222222222222"
+    , cfgPerpsCfdEngine = configuredCfdEngine
+    , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
+    , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
+    , cfgPerpsIndexerStartBlock = 288439939
+    , cfgAaConfig = Nothing
+    , cfgFaucetPrivateKey = Nothing
+    , cfgKeeperPrivateKey = Nothing
+    , cfgKeeperPollSeconds = 1
+    , cfgKeeperMaxBatchSize = 20
+    , cfgKeeperConfirmations = 1
+    , cfgKeeperGasBufferBps = 2000
+    , cfgKeeperFeeBufferBps = 2500
+    }
+
+withUnsetEnv :: String -> IO a -> IO a
+withUnsetEnv name action =
+  bracket
+    (do
+        previous <- lookupEnv name
+        unsetEnv name
+        pure previous
+    )
+    (maybe (unsetEnv name) (setEnv name))
+    (const action)
 
 receipt :: Bool -> Text -> Text -> TxReceipt
 receipt succeeded emitter eventAccount =
