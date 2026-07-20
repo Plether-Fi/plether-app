@@ -47,19 +47,30 @@ variable "rpc_url" {
 }
 
 variable "pyth_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Pyth API key managed by Terraform. Prefer pyth_api_key_ssm_parameter_name for an existing SecureString."
 }
 
 variable "enable_pyth_api_key" {
-  type    = bool
-  default = false
+  type        = bool
+  default     = false
+  description = "Create and manage the Pyth API key SecureString from pyth_api_key."
+}
+
+variable "pyth_api_key_ssm_parameter_name" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Existing Pyth API key SecureString parameter name. Sepolia defaults to /plether/sepolia/pyth-api-key. Set to an empty string to disable the external reference."
 }
 
 variable "pyth_hermes_url" {
-  type    = string
-  default = "https://hermes.pyth.network"
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Hermes base URL. Sepolia defaults to the upgraded endpoint; other environments default to legacy Hermes."
 }
 
 variable "pyth_benchmarks_url" {

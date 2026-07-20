@@ -5,7 +5,7 @@ resource "aws_ssm_parameter" "rpc_url" {
 }
 
 resource "aws_ssm_parameter" "pyth_api_key" {
-  count = var.enable_pyth_api_key ? 1 : 0
+  count = var.enable_pyth_api_key && local.effective_pyth_api_key_ssm_parameter_name == "" ? 1 : 0
 
   name  = "/plether/${var.environment}/pyth-api-key"
   type  = "SecureString"
