@@ -7,7 +7,11 @@ import { mainnet as appKitMainnet, sepolia as appKitSepolia } from '@reown/appki
 import type { AppKitNetwork } from '@reown/appkit/networks'
 import { transactionManager } from '../services/transactionManager'
 
-const WALLETCONNECT_PROJECT_ID = '1ac6ecffb101d037c113363688a6ef8e'
+const envWalletConnectProjectId: unknown = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID
+const WALLETCONNECT_PROJECT_ID =
+  typeof envWalletConnectProjectId === 'string' && envWalletConnectProjectId.length > 0
+    ? envWalletConnectProjectId
+    : 'ac255192981643094de1bdfd0f501d55'
 const envArbitrumSepoliaRpcUrl: unknown = import.meta.env.VITE_ARBITRUM_SEPOLIA_RPC_URL
 const ARBITRUM_SEPOLIA_RPC_URL =
   typeof envArbitrumSepoliaRpcUrl === 'string' && envArbitrumSepoliaRpcUrl.length > 0
