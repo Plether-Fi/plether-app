@@ -215,6 +215,8 @@ cabal run plether-basket-worker -- --backfill-once --backfill-days 7
 Notes:
 
 - `--latest-loop` defaults to one batched six-feed Hermes request every `5s`.
+- Hermes and Pyth Benchmarks requests use `PYTH_API_KEY`; the key must be entitled to all six basket feeds, including FX feeds.
+- The known legacy `https://hermes.pyth.network` endpoint is rejected because its payloads cannot be verified by the deployed upgraded Pyth contract.
 - On Hermes `429`, the worker backs off before polling again.
 - The worker writes to `perps_basket_snapshots` and `perps_pyth_update_payloads`.
 - The worker does not update the on-chain oracle by itself.
@@ -288,7 +290,7 @@ LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
 cabal run plether-liquidation-worker -- --once --dry-run
 ```
 
-The worker keeps its own low-confirmation discovery cursor and monotonic candidate registry. It verifies zero-size positions at a confirmed block, persists each signed transaction and signer before broadcast, and uses same-nonce fee bumps for stale transactions. Closed or already-liquidated candidates are removed only after confirmed CFD-engine state reports that no position remains. Do not rotate `LIQUIDATION_KEEPER_PRIVATE_KEY` while a transaction is pending; if that happens, the worker keeps the pending transaction as a circuit breaker and requires manual reconciliation instead of crossing signer nonce lanes.
+The worker keeps its own low-confirmation discovery cursor and monotonic candidate registry. It verifies zero-size positions at a confirmed block, persists each signed transaction and signer before broadcast, and uses same-nonce fee bumps for stale transactions. Deterministically rejected Pyth payloads and unaffordable signer transactions open persistent retry circuits; raw pending broadcasts and fresh signer repricing are bounded to one attempt per minute. Closed or already-liquidated candidates are removed only after confirmed CFD-engine state reports that no position remains. Do not rotate `LIQUIDATION_KEEPER_PRIVATE_KEY` while a transaction is pending; if that happens, the worker keeps the pending transaction as a circuit breaker and requires manual reconciliation instead of crossing signer nonce lanes.
 
 ### 6. Optional: Start The On-Chain Oracle Updater
 
@@ -404,12 +406,22 @@ Local URLs:
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
-| `PYTH_HERMES_URL` | No | `https://hermes.pyth.network` | Hermes endpoint used by the basket worker |
-| `PYTH_API_KEY` | No | - | Optional bearer token for API-key backed Hermes providers |
+| `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
+| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
 | `PYTH_BACKFILL_DAYS` | No | `7` | Default historical backfill window |
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
+| `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
+
+For Terraform deployments, leave `enable_pyth_api_key = true`, set the sensitive
+`pyth_api_key`, and apply Terraform before rolling the API and worker services.
+The image-only backend deployment workflow reuses existing task-definition
+environment and secret settings, so it does not apply this endpoint migration
+by itself. Its preflight refuses a normal rollout until the API and a basket
+worker have the upgraded RPC/contract wiring and the referenced key successfully
+fetches the exact six configured feeds; use the manual bootstrap override only
+for first-time task-definition provisioning.
 
 For the Sepolia managed proxy, keep `provision_aa_proxy = true` even when
 `enable_aa_sponsorship = false`; this preserves Pimlico receipt/status access

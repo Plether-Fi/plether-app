@@ -134,6 +134,7 @@ executable plether-basket-worker
         base >= 4.17 && < 5,
         plether-api,
         aeson >= 2.1,
+        bytestring >= 0.11,
         text >= 2.0,
         http-client >= 0.7,
         http-client-tls >= 0.3
@@ -198,11 +199,13 @@ test-suite plether-api-test
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.PerpsSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
         Plether.LiquidationWorkerSpec
+        Plether.Pyth.HermesSpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Types.ProtocolSpec

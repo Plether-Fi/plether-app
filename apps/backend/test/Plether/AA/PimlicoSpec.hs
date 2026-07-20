@@ -294,6 +294,7 @@ testConfig =
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
     , cfgPythSampleIntervalSeconds = 60
+    , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614

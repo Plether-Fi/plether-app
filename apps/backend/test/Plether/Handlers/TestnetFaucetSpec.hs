@@ -48,6 +48,7 @@ testConfig chainId perpsChainId =
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
     , cfgPythSampleIntervalSeconds = 60
+    , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = perpsChainId

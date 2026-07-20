@@ -8,11 +8,15 @@ resource "aws_cloudwatch_log_group" "ecs" {
 }
 
 locals {
+  uses_upgraded_pyth_hermes = replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") == "https://pyth.dourolabs.app/hermes"
+  pyth_api_key_configured   = var.enable_pyth_api_key && trimspace(var.pyth_api_key) != ""
+
   pyth_environment = [
     { name = "PYTH_HERMES_URL", value = var.pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
     { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
     { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
+    { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
   ]
 
   pyth_api_key_secret = var.enable_pyth_api_key ? [
@@ -179,6 +183,11 @@ resource "aws_ecs_task_definition" "api" {
     precondition {
       condition     = !var.enable_aa_sponsorship || var.provision_aa_proxy
       error_message = "AA sponsorship cannot be enabled unless the proxy credentials are provisioned."
+    }
+
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
     }
   }
 }
@@ -369,6 +378,10 @@ resource "aws_ecs_task_definition" "basket_worker" {
         valueFrom = aws_ssm_parameter.rpc_url.arn
       },
       {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
@@ -376,8 +389,18 @@ resource "aws_ecs_task_definition" "basket_worker" {
 
     environment = concat([
       { name = "CHAIN_ID", value = var.chain_id },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
     ], local.pyth_environment)
   }, local.otel_log_router_container])
+
+  lifecycle {
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
+    }
+  }
 }
 
 resource "aws_ecs_service" "basket_worker" {
@@ -521,6 +544,10 @@ resource "aws_ecs_task_definition" "workers" {
           valueFrom = aws_ssm_parameter.rpc_url.arn
         },
         {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
@@ -528,6 +555,9 @@ resource "aws_ecs_task_definition" "workers" {
 
       environment = concat([
         { name = "CHAIN_ID", value = var.chain_id },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       ], local.pyth_environment)
     },
     {
@@ -586,6 +616,13 @@ resource "aws_ecs_task_definition" "workers" {
     },
     local.otel_log_router_container,
   ])
+
+  lifecycle {
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires enable_pyth_api_key=true and a non-empty pyth_api_key with FX-feed access."
+    }
+  }
 }
 
 resource "aws_ecs_service" "workers" {

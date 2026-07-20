@@ -13,17 +13,338 @@ on:
         options:
           - sepolia
           - mainnet
+      bootstrap:
+        description: Allow the first image push before API and basket task definitions exist
+        required: false
+        default: false
+        type: boolean
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
 
 jobs:
+  pyth-config-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    permissions:
+      contents: read
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate deployed Pyth configuration
+        env:
+          ALLOW_MISSING_TASK_DEFINITIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && 'true' || 'false' }}
+          AWS_MAX_ATTEMPTS: '3'
+          AWS_PAGER: ''
+          AWS_RETRY_MODE: standard
+          UPGRADED_PYTH_HERMES_URL: https://pyth.dourolabs.app/hermes
+        run: |
+          set -euo pipefail
+          umask 077
+
+          task_def_dir=$(mktemp -d)
+          trap 'rm -rf "$task_def_dir"' EXIT
+          validation_failed=false
+          api_definition_validated=false
+          basket_definition_validated=false
+          pyth_api_key_secret_refs=()
+          pyth_feed_ids=(
+            "0xa995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b"
+            "0xef2c98c804ba503c6a707e38be4dfbb16683775f195b091252bf24693042fd52"
+            "0x84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1"
+            "0x3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca"
+            "0x8ccb376aa871517e807358d4e3cf0bc7fe4950474dbe6c9ffc21ef64e43fc676"
+            "0x0b1e3297e69f162877b577b0d6a47a0d63b2392bc8499e6540da4187a63e28f8"
+          )
+
+          report_failure() {
+            local task_family=$1
+            local container_name=$2
+            local reason=$3
+            echo "::error title=Pyth ECS preflight failed::${task_family}/${container_name}: ${reason} Apply infra/terraform for ${TARGET_ENV}, then rerun this workflow."
+            validation_failed=true
+          }
+
+          validate_pyth_container() {
+            local task_family=$1
+            local container_name=$2
+            local requires_perps_admission=$3
+            local definition_role=$4
+            local task_def_file="${task_def_dir}/${container_name}.json"
+            local aws_error_file="${task_def_dir}/${task_family}.error"
+
+            if ! aws ecs describe-task-definition \
+                --task-definition "$task_family" \
+                --query taskDefinition.containerDefinitions \
+                --output json \
+                --cli-connect-timeout 5 \
+                --cli-read-timeout 10 \
+                > "$task_def_file" 2> "$aws_error_file"; then
+              if grep -Fq "Unable to describe task definition" "$aws_error_file"; then
+                echo "::warning::Skipping ${task_family}/${container_name} until Terraform creates its task definition"
+              else
+                report_failure "$task_family" "$container_name" \
+                  "AWS did not return the task definition, so its Pyth configuration could not be verified."
+              fi
+              return
+            fi
+
+            local container_count
+            container_count=$(jq --arg container "$container_name" \
+              '[.[] | select(.name == $container)] | length' "$task_def_file")
+            if [ "$container_count" -ne 1 ]; then
+              report_failure "$task_family" "$container_name" \
+                "expected exactly one matching container definition."
+              return
+            fi
+
+            local hermes_count
+            hermes_count=$(jq --arg container "$container_name" \
+              '[.[] | select(.name == $container) | .environment[]? | select(.name == "PYTH_HERMES_URL")] | length' \
+              "$task_def_file")
+            if [ "$hermes_count" -ne 1 ]; then
+              report_failure "$task_family" "$container_name" \
+                "PYTH_HERMES_URL must be configured exactly once."
+              return
+            fi
+
+            local normalized_hermes_url
+            normalized_hermes_url=$(jq -r --arg container "$container_name" \
+              '.[]
+               | select(.name == $container)
+               | .environment[]
+               | select(.name == "PYTH_HERMES_URL")
+               | .value
+               | if type == "string" then
+                   sub("/+$"; "")
+                 else
+                   ""
+                 end' \
+              "$task_def_file")
+            if [ "$normalized_hermes_url" != "$UPGRADED_PYTH_HERMES_URL" ]; then
+              report_failure "$task_family" "$container_name" \
+                "PYTH_HERMES_URL must use the upgraded hosted Hermes endpoint."
+              return
+            fi
+
+            local api_key_secret_count
+            api_key_secret_count=$(jq --arg container "$container_name" \
+              '[.[] | select(.name == $container) | .secrets[]? | select(.name == "PYTH_API_KEY")] | length' \
+              "$task_def_file")
+            if [ "$api_key_secret_count" -ne 1 ]; then
+              report_failure "$task_family" "$container_name" \
+                "PYTH_API_KEY must have exactly one ECS secret reference."
+              return
+            fi
+
+            if ! jq -e --arg container "$container_name" \
+                '.[]
+                 | select(.name == $container)
+                 | .secrets[]
+                 | select(.name == "PYTH_API_KEY")
+                 | (.valueFrom // "")
+                 | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0)' \
+                "$task_def_file" > /dev/null; then
+              report_failure "$task_family" "$container_name" \
+                "PYTH_API_KEY has an empty ECS secret reference."
+              return
+            fi
+
+            if [ "$requires_perps_admission" = true ] && \
+                ! jq -e --arg container "$container_name" \
+                  '(.[] | select(.name == $container)) as $definition
+                   | ["PERPS_CHAIN_ID", "PERPS_ORDER_ROUTER", "PERPS_PLETHER_ORACLE"] as $requiredEnvironment
+                   | ($definition.secrets // [] | map(select(.name == "PERPS_RPC_URL"))) as $rpcSecrets
+                   | ($definition.environment // [] | map(select(.name as $name | $requiredEnvironment | index($name)))) as $perpsEnvironment
+                   | ($rpcSecrets | length) == 1
+                   and (($rpcSecrets[0].valueFrom // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0))
+                   and ($perpsEnvironment | length) == ($requiredEnvironment | length)
+                   and (([$perpsEnvironment[].name] | sort) == ($requiredEnvironment | sort))
+                   and all($perpsEnvironment[]; ((.value // "") | type == "string" and (gsub("^\\s+|\\s+$"; "") | length > 0)))' \
+                  "$task_def_file" > /dev/null; then
+              report_failure "$task_family" "$container_name" \
+                "on-chain payload admission requires non-empty PERPS_RPC_URL, PERPS_CHAIN_ID, PERPS_ORDER_ROUTER, and PERPS_PLETHER_ORACLE references."
+              return
+            fi
+
+            local api_key_secret_ref
+            api_key_secret_ref=$(jq -r --arg container "$container_name" \
+              '.[]
+               | select(.name == $container)
+               | .secrets[]
+               | select(.name == "PYTH_API_KEY")
+               | .valueFrom' \
+              "$task_def_file")
+
+            local secret_ref_seen=false
+            local existing_secret_ref
+            if [ "${#pyth_api_key_secret_refs[@]}" -gt 0 ]; then
+              for existing_secret_ref in "${pyth_api_key_secret_refs[@]}"; do
+                if [ "$existing_secret_ref" = "$api_key_secret_ref" ]; then
+                  secret_ref_seen=true
+                  break
+                fi
+              done
+            fi
+            if [ "$secret_ref_seen" = false ]; then
+              pyth_api_key_secret_refs+=("$api_key_secret_ref")
+            fi
+
+            case "$definition_role" in
+              api) api_definition_validated=true ;;
+              basket) basket_definition_validated=true ;;
+              *)
+                report_failure "$task_family" "$container_name" \
+                  "workflow configuration supplied an unknown task-definition role."
+                return
+                ;;
+            esac
+
+            echo "Pyth ECS configuration is ready for ${task_family}/${container_name}"
+          }
+
+          probe_pyth_api_key() {
+            local secret_ref=$1
+            local probe_number=$2
+            local ssm_error_file="${task_def_dir}/ssm-${probe_number}.error"
+            local key_header_file="${task_def_dir}/pyth-key-${probe_number}.header"
+            local response_file="${task_def_dir}/pyth-response-${probe_number}.json"
+            local curl_error_file="${task_def_dir}/pyth-curl-${probe_number}.error"
+            local pyth_api_key
+
+            if ! pyth_api_key=$(aws ssm get-parameter \
+                --name "$secret_ref" \
+                --with-decryption \
+                --query Parameter.Value \
+                --output text \
+                --cli-connect-timeout 5 \
+                --cli-read-timeout 10 \
+                2> "$ssm_error_file"); then
+              echo "::error title=Pyth entitlement preflight failed::Could not resolve PYTH_API_KEY reference ${probe_number} from SSM. Apply infra/terraform for ${TARGET_ENV} with a valid FX-entitled key, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+
+            if [[ "$pyth_api_key" == *$'\n'* || "$pyth_api_key" == *$'\r'* ]]; then
+              unset pyth_api_key
+              echo "::error title=Pyth entitlement preflight failed::PYTH_API_KEY reference ${probe_number} contains an invalid line break. Replace the SSM value, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+            pyth_api_key="${pyth_api_key#"${pyth_api_key%%[![:space:]]*}"}"
+            pyth_api_key="${pyth_api_key%"${pyth_api_key##*[![:space:]]}"}"
+            if [ -z "$pyth_api_key" ] || [ "$pyth_api_key" = "None" ]; then
+              unset pyth_api_key
+              echo "::error title=Pyth entitlement preflight failed::PYTH_API_KEY reference ${probe_number} resolves to an empty value. Apply infra/terraform for ${TARGET_ENV} with a valid FX-entitled key, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+
+            printf 'Authorization: Bearer %s\n' "$pyth_api_key" > "$key_header_file"
+            unset pyth_api_key
+
+            local curl_args=(
+              --silent
+              --fail
+              --get
+              --proto '=https'
+              --tlsv1.2
+              --connect-timeout 5
+              --max-time 12
+              --retry 2
+              --retry-delay 1
+              --retry-max-time 30
+              --retry-all-errors
+              --header "@${key_header_file}"
+              --output "$response_file"
+              --write-out '%{http_code}'
+              --data-urlencode 'parsed=true'
+            )
+            local feed_id
+            for feed_id in "${pyth_feed_ids[@]}"; do
+              curl_args+=(--data-urlencode "ids[]=${feed_id}")
+            done
+
+            local http_status
+            if ! http_status=$(curl "${curl_args[@]}" \
+                "${UPGRADED_PYTH_HERMES_URL}/v2/updates/price/latest" \
+                2> "$curl_error_file"); then
+              rm -f "$key_header_file"
+              echo "::error title=Pyth entitlement preflight failed::PYTH_API_KEY reference ${probe_number} could not fetch all six basket feeds from upgraded Hermes. Confirm the key has FX-feed access, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+            rm -f "$key_header_file"
+
+            if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
+              echo "::error title=Pyth entitlement preflight failed::Upgraded Hermes returned a non-2xx status for PYTH_API_KEY reference ${probe_number}. Confirm the key has FX-feed access, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+
+            local expected_feed_ids_json
+            expected_feed_ids_json=$(printf '%s\n' "${pyth_feed_ids[@]}" \
+              | jq -Rsc 'split("\n") | map(select(length > 0))')
+            if ! jq -e --argjson expected "$expected_feed_ids_json" \
+                'def normalizeFeedId:
+                   if type == "string" then ascii_downcase | sub("^0x"; "") else null end;
+                 (.parsed | type == "array")
+                 and (.binary.data
+                   | type == "array"
+                   and length > 0
+                   and all(.[]; type == "string" and length > 0))
+                 and (([.parsed[]?.id | normalizeFeedId] | sort)
+                   == ($expected | map(normalizeFeedId) | sort))' \
+                "$response_file" > /dev/null; then
+              echo "::error title=Pyth entitlement preflight failed::Upgraded Hermes did not return the exact six configured basket feeds for PYTH_API_KEY reference ${probe_number}. Confirm the key's FX entitlements, then rerun this workflow."
+              validation_failed=true
+              return
+            fi
+
+            echo "Pyth API key reference ${probe_number} can fetch all six configured basket feeds"
+          }
+
+          validate_pyth_container "plether-${TARGET_ENV}" "plether-api" true api
+          validate_pyth_container "plether-${TARGET_ENV}-workers" "plether-basket-worker" true basket
+          validate_pyth_container "plether-${TARGET_ENV}-basket-worker" "plether-basket-worker" true basket
+
+          if [ "$api_definition_validated" != true ] || [ "$basket_definition_validated" != true ]; then
+            if [ "$ALLOW_MISSING_TASK_DEFINITIONS" = true ]; then
+              echo "::warning title=Pyth ECS bootstrap override::Proceeding without both required task-definition topologies because the manual bootstrap override was explicitly enabled."
+            else
+              echo "::error title=Pyth ECS topology preflight failed::A backend rollout requires the API task definition and at least one consolidated or standalone basket-worker task definition. Apply infra/terraform for ${TARGET_ENV}; use the manual bootstrap override only for first-time provisioning."
+              validation_failed=true
+            fi
+          fi
+
+          if [ "$validation_failed" = true ]; then
+            exit 1
+          fi
+
+          if [ "${#pyth_api_key_secret_refs[@]}" -gt 0 ]; then
+            probe_number=0
+            for secret_ref in "${pyth_api_key_secret_refs[@]}"; do
+              probe_number=$((probe_number + 1))
+              probe_pyth_api_key "$secret_ref" "$probe_number"
+            done
+          fi
+
+          if [ "$validation_failed" = true ]; then
+            exit 1
+          fi
+
   build:
+    needs: pyth-config-preflight
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
-      id-token: write
     outputs:
       image: ${{ steps.build.outputs.image }}
       log_router_image: ${{ steps.build.outputs.log_router_image }}
@@ -82,13 +403,13 @@ jobs:
 
   deploy:
     needs: build
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
     strategy:
       matrix:
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
+        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials

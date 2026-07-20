@@ -318,7 +318,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
     case (parsePositiveInteger rawOrderId, mMinPublishTime >>= parsePositiveInteger, mMaxPublishTime >>= parsePositiveInteger, mPool) of
       (Just orderId, Just minPublishTime, Just maxPublishTime, Just pool)
         | minPublishTime <= maxPublishTime -> do
-            result <- liftIO $ getRevealPayload pool cfg orderId minPublishTime maxPublishTime
+            result <- liftIO $ getRevealPayload pool perpsClient cfg orderId minPublishTime maxPublishTime
             handleResult result
       (Nothing, _, _, _) ->
         handleError $ E.invalidAmount "orderId must be a positive integer"
@@ -336,7 +336,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
     mPublishTime <- queryParamMaybe "publishTime"
     case traverse parsePositiveInteger mPublishTime of
       Just mTs -> do
-        result <- liftIO $ getPythUpdate cache manager cfg mTs
+        result <- liftIO $ getPythUpdate cache manager perpsClient cfg mTs
         handleResult result
       Nothing ->
         handleError $ E.invalidAmount "publishTime must be a positive integer"
@@ -344,7 +344,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   get "/api/perps/pyth/cached-latest" $ do
     case mPool of
       Just pool -> do
-        result <- liftIO $ getCachedLatestPythUpdate pool cfg
+        result <- liftIO $ getCachedLatestPythUpdate pool perpsClient cfg
         handleResult result
       Nothing ->
         handleServiceUnavailable $

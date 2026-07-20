@@ -12,10 +12,12 @@ import Plether.Database.Schema
   , seedPerpsLiquidationCandidatesFromHistory
   )
 import Plether.Ethereum.Client (newClient)
+import Plether.Ethereum.Rpc (ethGetBalance)
 import Plether.Ethereum.Transaction (deriveAddress)
 import Plether.LiquidationWorker
   ( LiquidationWorkerConfig (..)
   , LiquidationWorkerMode (..)
+  , checkLiveSignerBalance
   , runLiquidationWorker
   )
 import Plether.Logging (field, logError, logInfo)
@@ -28,9 +30,6 @@ data LiquidationWorkerArgs = LiquidationWorkerArgs
   , lwaDryRun :: Bool
   }
   deriving (Show)
-
-defaultCfdEngine :: Text
-defaultCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
 
 main :: IO ()
 main = runMain `catch` handleUnexpectedFailure
@@ -49,20 +48,34 @@ runMain = do
         Left err -> fatal $ "Invalid LIQUIDATION_KEEPER_PRIVATE_KEY: " <> T.unpack err
         Right derivedAddress -> pure derivedAddress
 
-      cfdEngine <- T.pack . fromMaybe (T.unpack defaultCfdEngine) <$> lookupEnv "PERPS_CFD_ENGINE"
-      workerCfg <- loadWorkerConfig cfg cfdEngine privateKey
+      workerCfg <- loadWorkerConfig cfg (cfgPerpsCfdEngine cfg) privateKey
+      client <- newClient (cfgPerpsRpcUrl cfg)
+      balanceResult <-
+        checkLiveSignerBalance
+          (lwaDryRun args)
+          (ethGetBalance client workerAddress)
+      signerBalance <- case balanceResult of
+        Left err ->
+          fatal $
+            "Liquidation signer "
+              <> T.unpack workerAddress
+              <> " is not ready: "
+              <> T.unpack err
+        Right balance -> pure balance
       logInfo
         "liquidation_worker_started"
         "Liquidation worker started"
-        [ field "worker_address" workerAddress
-        , field "mode" $ show $ lwaMode args
-        , field "dry_run" $ lwaDryRun args
-        , field "chain_id" $ lwcChainId workerCfg
-        , field "order_router" $ lwcOrderRouter workerCfg
-        , field "cfd_engine" $ lwcCfdEngine workerCfg
-        , field "poll_seconds" $ lwcPollSeconds workerCfg
-        , field "confirmations" $ lwcIndexerConfirmations workerCfg
-        ]
+        ( [ field "worker_address" workerAddress
+          , field "mode" $ show $ lwaMode args
+          , field "dry_run" $ lwaDryRun args
+          , field "chain_id" $ lwcChainId workerCfg
+          , field "order_router" $ lwcOrderRouter workerCfg
+          , field "cfd_engine" $ lwcCfdEngine workerCfg
+          , field "poll_seconds" $ lwcPollSeconds workerCfg
+          , field "confirmations" $ lwcIndexerConfirmations workerCfg
+          ]
+            <> maybe [] (\balance -> [field "signer_balance_wei" $ show balance]) signerBalance
+        )
       pool <- newDbPool dbUrl
       withDb pool $ \conn -> do
         ensureBasketSnapshotSchema conn
@@ -72,7 +85,6 @@ runMain = do
           (lwcChainId workerCfg)
           (lwcOrderRouter workerCfg)
           (lwcCfdEngine workerCfg)
-      client <- newClient (cfgPerpsRpcUrl cfg)
       runLiquidationWorker workerCfg pool client (lwaMode args) (lwaDryRun args)
 
 loadWorkerConfig :: Config -> Text -> Text -> IO LiquidationWorkerConfig

@@ -47,19 +47,26 @@ variable "rpc_url" {
 }
 
 variable "pyth_api_key" {
-  type      = string
-  default   = ""
-  sensitive = true
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Server-side Pyth API key with entitlement to every configured basket feed, including FX feeds."
 }
 
 variable "enable_pyth_api_key" {
-  type    = bool
-  default = false
+  type        = bool
+  default     = true
+  description = "Inject the Pyth API key into API and basket-worker tasks. Keep enabled for the upgraded hosted Hermes endpoint."
 }
 
 variable "pyth_hermes_url" {
   type    = string
-  default = "https://hermes.pyth.network"
+  default = "https://pyth.dourolabs.app/hermes"
+
+  validation {
+    condition     = replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") != "https://hermes.pyth.network"
+    error_message = "pyth_hermes_url cannot use the legacy Hermes endpoint because its payloads are incompatible with the deployed upgraded Pyth contract."
+  }
 }
 
 variable "pyth_benchmarks_url" {
@@ -75,6 +82,17 @@ variable "pyth_backfill_days" {
 variable "pyth_sample_interval_seconds" {
   type    = string
   default = "60"
+}
+
+variable "pyth_latest_max_age_seconds" {
+  type        = string
+  default     = "10"
+  description = "Maximum accepted age of a latest Hermes payload before it may be promoted to the cache. Capped at 10 seconds to preserve headroom below the oracle's 15-second staleness limit."
+
+  validation {
+    condition     = can(regex("^([1-9]|10)$", trimspace(var.pyth_latest_max_age_seconds)))
+    error_message = "pyth_latest_max_age_seconds must be a whole number from 1 through 10 to preserve headroom below the oracle's 15-second staleness limit."
+  }
 }
 
 variable "perps_rpc_url" {

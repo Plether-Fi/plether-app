@@ -1,6 +1,10 @@
 module Plether.Pyth.RevealPayloadSpec (spec) where
 
-import Plether.Pyth.RevealPayload (validatePublishTimes, validateRevealWindow)
+import Plether.Pyth.RevealPayload
+  ( validateLatestPublishTimes
+  , validatePublishTimes
+  , validateRevealWindow
+  )
 import Test.Hspec
 
 spec :: Spec
@@ -11,6 +15,21 @@ spec = do
 
     it "rejects component publish-time divergence over policy" $ do
       validatePublishTimes [101, 102, 103, 104, 105, 107]
+        `shouldSatisfy` isLeft
+
+  describe "validateLatestPublishTimes" $ do
+    it "accepts a fresh payload inside the configured age" $ do
+      validateLatestPublishTimes 116 15 [101, 102, 103, 104, 105, 106]
+        `shouldBe` Right (101, 106)
+
+    it "rejects a payload whose oldest component is stale" $ do
+      validateLatestPublishTimes 117 15 [101, 102, 103, 104, 105, 106]
+        `shouldSatisfy` isLeft
+
+    it "permits only bounded upstream clock skew" $ do
+      validateLatestPublishTimes 100 15 (replicate 6 105)
+        `shouldBe` Right (105, 105)
+      validateLatestPublishTimes 100 15 (replicate 6 106)
         `shouldSatisfy` isLeft
 
   describe "validateRevealWindow" $ do

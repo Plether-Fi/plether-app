@@ -10,6 +10,13 @@ resource "aws_ssm_parameter" "pyth_api_key" {
   name  = "/plether/${var.environment}/pyth-api-key"
   type  = "SecureString"
   value = var.pyth_api_key
+
+  lifecycle {
+    precondition {
+      condition     = trimspace(var.pyth_api_key) != ""
+      error_message = "enable_pyth_api_key=true requires a non-empty pyth_api_key with access to every configured basket feed, including FX feeds."
+    }
+  }
 }
 
 resource "aws_ssm_parameter" "perps_rpc_url" {

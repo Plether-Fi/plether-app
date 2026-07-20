@@ -1,6 +1,11 @@
 module Plether.KeeperSpec (spec) where
 
-import Plether.Database.Schema (PerpsKeeperOrderRow (..), isHistoricalRevealPayloadSource)
+import Plether.Database.Schema
+  ( PerpsKeeperOrderRow (..)
+  , isAdmittedPythPayloadSource
+  , isHistoricalRevealPayloadSource
+  , promotePythPayloadSource
+  )
 import Plether.Keeper
   ( isFrozenClosePayloadReady
   , isOrderExpired
@@ -54,13 +59,31 @@ spec = do
         `shouldBe` False
 
   describe "isHistoricalRevealPayloadSource" $ do
-    it "accepts exact historical reveal payload sources" $ do
-      isHistoricalRevealPayloadSource "backend_hermes_historical" `shouldBe` True
-      isHistoricalRevealPayloadSource "backend_hermes_reveal_backfill" `shouldBe` True
+    it "accepts only on-chain-admitted historical reveal payload sources" $ do
+      isHistoricalRevealPayloadSource "backend_hermes_historical_v2" `shouldBe` True
+      isHistoricalRevealPayloadSource "backend_hermes_reveal_v2" `shouldBe` True
 
-    it "rejects latest-loop payload sources for normal historical reveal" $ do
+    it "rejects pre-admission legacy rows and latest-loop payload sources" $ do
+      isHistoricalRevealPayloadSource "backend_hermes_historical" `shouldBe` False
+      isHistoricalRevealPayloadSource "backend_hermes_reveal_backfill" `shouldBe` False
       isHistoricalRevealPayloadSource "backend_hermes_latest" `shouldBe` False
+      isHistoricalRevealPayloadSource "backend_hermes_latest_v2" `shouldBe` False
       isHistoricalRevealPayloadSource "backend_hermes" `shouldBe` False
+
+  describe "Pyth payload source admission" $ do
+    it "versions a source only after the caller has completed on-chain admission" $ do
+      promotePythPayloadSource "backend_hermes_latest"
+        `shouldBe` Just "backend_hermes_latest_v2"
+      promotePythPayloadSource "backend_hermes_historical"
+        `shouldBe` Just "backend_hermes_historical_v2"
+      promotePythPayloadSource "backend_hermes_reveal_backfill"
+        `shouldBe` Just "backend_hermes_reveal_v2"
+
+    it "does not admit unknown or pre-deployment source labels" $ do
+      promotePythPayloadSource "backend_hermes" `shouldBe` Nothing
+      isAdmittedPythPayloadSource "backend_hermes_latest" `shouldBe` False
+      isAdmittedPythPayloadSource "backend_hermes_historical" `shouldBe` False
+      isAdmittedPythPayloadSource "backend_hermes_latest_v2" `shouldBe` True
 
   describe "isSameBlockMevGuardError" $ do
     it "detects router same-block MEV guard reverts by selector" $ do

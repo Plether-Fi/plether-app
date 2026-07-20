@@ -22,11 +22,20 @@ module Plether.Ethereum.Contracts.Perps
   , isOracleFrozen
   , getOrderExecutionPolicy
   , getUpdateFee
+  , getPythContract
+  , decodePythContract
+  , validatePythUpdateData
+  , validateUniquePythUpdateData
   , executeOrderCall
   , executeOrderBatchCall
   , executeLiquidationCall
   , positionsCall
+  , pythCall
   , getUpdateFeeCall
+  , updatePriceFeedsCall
+  , parsePriceFeedUpdatesCall
+  , parsePriceFeedUpdatesUniqueCall
+  , decodeParsedPriceFeedIds
   , adverseConfidenceMultiplierBpsCall
   , orderFailureReasonText
   ) where
@@ -52,6 +61,7 @@ import Plether.Ethereum.Client
   , RpcError (..)
   , ethCall
   , ethCallAtBlock
+  , ethCallWithValue
   )
 import Plether.Ethereum.Rpc (RpcLog (..))
 
@@ -227,6 +237,77 @@ getUpdateFee client oracle updateData = do
       then Left $ RpcJsonError "getUpdateFee(bytes[]) returned less than one ABI word"
       else Right $ decodeUint256 bytes
 
+getPythContract :: EthClient -> Text -> IO (Either RpcError Text)
+getPythContract client oracle = do
+  result <- ethCall client (CallParams oracle pythCall)
+  pure $ result >>= decodePythContract
+
+decodePythContract :: ByteString -> Either RpcError Text
+decodePythContract bytes
+  | BS.length bytes < 32 =
+      Left $ RpcJsonError "pyth() returned less than one ABI word"
+  | address == "0x0000000000000000000000000000000000000000" =
+      Left $ RpcJsonError "pyth() returned the zero address"
+  | otherwise = Right address
+  where
+    address = decodeAddress bytes
+
+validatePythUpdateData
+  :: EthClient
+  -> Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError ())
+validatePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime =
+  case parsePriceFeedUpdatesCall updateData feedIds minPublishTime maxPublishTime of
+    Left err -> pure $ Left err
+    Right calldata -> do
+      pythResult <- getPythContract client oracle
+      case pythResult of
+        Left err -> pure $ Left err
+        Right pyth -> do
+          feeResult <- getUpdateFee client pyth updateData
+          case feeResult of
+            Left err -> pure $ Left err
+            Right fee -> do
+              result <-
+                ethCallWithValue
+                  client
+                  (CallParams pyth calldata)
+                  fee
+              pure $ do
+                bytes <- result
+                _ <- decodeParsedPriceFeedIds feedIds bytes
+                Right ()
+
+validateUniquePythUpdateData
+  :: EthClient
+  -> Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError ())
+validateUniquePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime =
+  case parsePriceFeedUpdatesUniqueCall updateData feedIds minPublishTime maxPublishTime of
+    Left err -> pure $ Left err
+    Right calldata -> do
+      pythResult <- getPythContract client oracle
+      case pythResult of
+        Left err -> pure $ Left err
+        Right pyth -> do
+          feeResult <- getUpdateFee client pyth updateData
+          case feeResult of
+            Left err -> pure $ Left err
+            Right fee -> do
+              result <- ethCallWithValue client (CallParams pyth calldata) fee
+              pure $ do
+                bytes <- result
+                _ <- decodeParsedPriceFeedIds feedIds bytes
+                Right ()
+
 orderFailureReasonText :: Integer -> Text
 orderFailureReasonText = \case
   0 -> "Expired"
@@ -241,9 +322,108 @@ getPendingOrderViewCall :: Integer -> ByteString
 getPendingOrderViewCall orderId =
   encodeCall "getPendingOrderView(uint64)" [encodeUint256 orderId]
 
+pythCall :: ByteString
+pythCall = encodeCall "pyth()" []
+
 getUpdateFeeCall :: [ByteString] -> ByteString
 getUpdateFeeCall updateData =
   encodeCall "getUpdateFee(bytes[])" [encodeUint256 32, encodeBytesArray updateData]
+
+updatePriceFeedsCall :: [ByteString] -> ByteString
+updatePriceFeedsCall updateData =
+  encodeCall "updatePriceFeeds(bytes[])" [encodeUint256 32, encodeBytesArray updateData]
+
+parsePriceFeedUpdatesCall
+  :: [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> Either RpcError ByteString
+parsePriceFeedUpdatesCall =
+  parsePriceFeedUpdatesCallWith "parsePriceFeedUpdates(bytes[],bytes32[],uint64,uint64)"
+
+parsePriceFeedUpdatesUniqueCall
+  :: [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> Either RpcError ByteString
+parsePriceFeedUpdatesUniqueCall =
+  parsePriceFeedUpdatesCallWith "parsePriceFeedUpdatesUnique(bytes[],bytes32[],uint64,uint64)"
+
+parsePriceFeedUpdatesCallWith
+  :: Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> Either RpcError ByteString
+parsePriceFeedUpdatesCallWith signature updateData feedIds minPublishTime maxPublishTime = do
+  if null updateData
+    then Left $ RpcJsonError "Pyth update data cannot be empty"
+    else Right ()
+  if null feedIds
+    then Left $ RpcJsonError "Pyth feed IDs cannot be empty"
+    else Right ()
+  if any ((/= 32) . BS.length) feedIds
+    then Left $ RpcJsonError "Pyth feed IDs must each be exactly 32 bytes"
+    else Right ()
+  if minPublishTime < 0 || maxPublishTime < minPublishTime || maxPublishTime > maxUint64
+    then Left $ RpcJsonError "Pyth publish-time bounds must form a valid uint64 range"
+    else Right ()
+  let encodedUpdateData = encodeBytesArray updateData
+      encodedFeedIds = encodeBytes32Array feedIds
+      updateDataOffset = 4 * 32
+      feedIdsOffset = updateDataOffset + BS.length encodedUpdateData
+  Right $
+    encodeCall
+      signature
+      [ encodeUint256 $ fromIntegral updateDataOffset
+      , encodeUint256 $ fromIntegral feedIdsOffset
+      , encodeUint256 minPublishTime
+      , encodeUint256 maxPublishTime
+      , encodedUpdateData
+      , encodedFeedIds
+      ]
+
+decodeParsedPriceFeedIds :: [ByteString] -> ByteString -> Either RpcError [ByteString]
+decodeParsedPriceFeedIds expectedFeedIds bytes = do
+  actualFeedIds <- decodePriceFeedIds bytes
+  if null actualFeedIds
+    then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned no price feeds"
+    else if length actualFeedIds /= length expectedFeedIds
+      then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned an unexpected price-feed count"
+      else if actualFeedIds /= expectedFeedIds
+        then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned mismatched price-feed IDs"
+        else Right actualFeedIds
+
+decodePriceFeedIds :: ByteString -> Either RpcError [ByteString]
+decodePriceFeedIds bytes
+  | BS.length bytes < 32 =
+      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned truncated ABI data"
+  | arrayOffsetWord /= 32 =
+      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned an invalid ABI array offset"
+  | BS.length bytes < arrayOffset + 32 =
+      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned a truncated ABI array"
+  | priceFeedCount > fromIntegral maximumCompletePriceFeeds =
+      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned truncated price-feed data"
+  | otherwise =
+      Right
+        [ BS.take 32 $ BS.drop (arrayOffset + 32 + index * encodedPriceFeedSize) bytes
+        | index <- [0 .. fromIntegral priceFeedCount - 1]
+        ]
+  where
+    arrayOffsetWord = decodeUint256 $ BS.take 32 bytes
+    arrayOffset = 32
+    priceFeedCount = decodeUint256 $ BS.take 32 $ BS.drop arrayOffset bytes
+    maximumCompletePriceFeeds =
+      max 0 (BS.length bytes - arrayOffset - 32) `div` encodedPriceFeedSize
+
+encodedPriceFeedSize :: Int
+encodedPriceFeedSize = 9 * 32
+
+maxUint64 :: Integer
+maxUint64 = 2 ^ (64 :: Integer) - 1
 
 getOrderExecutionPolicyCall :: Bool -> ByteString
 getOrderExecutionPolicyCall isClose =
@@ -322,6 +502,10 @@ encodeBytesArray values =
           encodedValues
       offsetWords = map encodeUint256 $ take (length values) offsets
    in encodeUint256 (fromIntegral $ length values) <> mconcat offsetWords <> mconcat encodedValues
+
+encodeBytes32Array :: [ByteString] -> ByteString
+encodeBytes32Array values =
+  encodeUint256 (fromIntegral $ length values) <> mconcat values
 
 encodeDynamicBytes :: ByteString -> ByteString
 encodeDynamicBytes value =
