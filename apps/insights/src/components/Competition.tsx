@@ -118,7 +118,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
 
 function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
   return (
-    <div className="hidden overflow-x-auto md:block">
+    <div className="hidden overflow-x-auto lg:block">
       <table className="w-full min-w-[920px] border-collapse text-left">
         <thead>
           <tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary">
@@ -153,7 +153,7 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
 
 function MobileList({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
   return (
-    <div className="divide-y divide-brand-border/15 md:hidden">
+    <div className="divide-y divide-brand-border/15 lg:hidden">
       {standings.map((standing) => (
         <div key={standing.address} className={`px-4 py-4 transition-colors hover:bg-brand-peach/5 ${standing.prizePlace !== null ? 'bg-brand-yellow/5' : ''}`}>
           <div className="flex items-start gap-3">
