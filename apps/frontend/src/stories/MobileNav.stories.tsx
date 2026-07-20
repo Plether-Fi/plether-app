@@ -10,20 +10,10 @@ export default meta
 type Story = StoryObj
 
 const navLinks = [
-  { path: '/', label: 'Trade', icon: 'swap_horiz', color: 'brand-peach' },
-  { path: '/stake', label: 'Stake', icon: 'paid', color: 'brand-orange' },
-  { path: '/mint', label: 'Mint', icon: 'add', color: 'positive' },
+  { path: '/', label: 'Perps', icon: 'trending_up', color: 'positive' },
 ]
 
 const colorStyles: Record<string, { active: string; hover: string }> = {
-  'brand-peach': {
-    active: 'text-brand-peach bg-brand-peach/10',
-    hover: 'hover:text-[#FFAB96]',
-  },
-  'brand-orange': {
-    active: 'text-brand-orange bg-brand-orange/10',
-    hover: 'hover:text-brand-orange',
-  },
   'positive': {
     active: 'text-positive bg-positive/10',
     hover: 'hover:text-positive',
@@ -37,8 +27,7 @@ function MockMobileNav() {
     <nav className="bg-surface-panel border-t border-brand-border/30">
       <div className="flex items-center justify-around h-16">
         {navLinks.map(({ path, label, icon, color }) => {
-          const isActive = location.pathname === path ||
-            (path === '/' && ['/', '/leverage', '/lending'].includes(location.pathname))
+          const isActive = location.pathname === path
           const styles = colorStyles[color]
           return (
             <Link
@@ -62,25 +51,9 @@ function MockMobileNav() {
   )
 }
 
-export const OnTradePage: Story = {
+export const OnPerpsPage: Story = {
   render: () => (
     <MemoryRouter initialEntries={['/']}>
-      <MockMobileNav />
-    </MemoryRouter>
-  ),
-}
-
-export const OnStakePage: Story = {
-  render: () => (
-    <MemoryRouter initialEntries={['/stake']}>
-      <MockMobileNav />
-    </MemoryRouter>
-  ),
-}
-
-export const OnMintPage: Story = {
-  render: () => (
-    <MemoryRouter initialEntries={['/mint']}>
       <MockMobileNav />
     </MemoryRouter>
   ),
