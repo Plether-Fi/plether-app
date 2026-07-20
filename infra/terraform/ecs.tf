@@ -544,7 +544,7 @@ resource "aws_ecs_task_definition" "workers" {
         },
         {
           name      = "PERPS_ORACLE_UPDATER_PRIVATE_KEY"
-          valueFrom = aws_ssm_parameter.keeper_private_key.arn
+          valueFrom = aws_ssm_parameter.oracle_updater_private_key.arn
         }
       ]
 

@@ -303,6 +303,9 @@ PERPS_ORACLE_UPDATER_PRIVATE_KEY=0xYOUR_UPDATER_PRIVATE_KEY \
 npm run perps:oracle-worker -- --loop
 ```
 
+Use a dedicated funded updater key. Sharing this key with the order keeper or
+liquidation worker creates a cross-process nonce race.
+
 For a no-transaction check:
 
 ```bash

@@ -24,6 +24,23 @@ resource "aws_ssm_parameter" "keeper_private_key" {
   value = var.keeper_private_key
 }
 
+resource "aws_ssm_parameter" "oracle_updater_private_key" {
+  name  = "/plether/${var.environment}/oracle-updater-private-key"
+  type  = "SecureString"
+  value = var.oracle_updater_private_key
+
+  lifecycle {
+    precondition {
+      condition = (
+        var.keeper_private_key != var.liquidation_keeper_private_key
+        && var.oracle_updater_private_key != var.keeper_private_key
+        && var.oracle_updater_private_key != var.liquidation_keeper_private_key
+      )
+      error_message = "keeper_private_key, oracle_updater_private_key, and liquidation_keeper_private_key must all be different."
+    }
+  }
+}
+
 resource "aws_ssm_parameter" "liquidation_keeper_private_key" {
   name  = "/plether/${var.environment}/liquidation-keeper-private-key"
   type  = "SecureString"

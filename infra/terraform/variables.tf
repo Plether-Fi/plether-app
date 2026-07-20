@@ -87,6 +87,12 @@ variable "keeper_private_key" {
   sensitive = true
 }
 
+variable "oracle_updater_private_key" {
+  type        = string
+  sensitive   = true
+  description = "Dedicated private key for the on-chain perps oracle updater. Must not be shared with another transaction worker."
+}
+
 variable "liquidation_keeper_private_key" {
   type      = string
   sensitive = true
