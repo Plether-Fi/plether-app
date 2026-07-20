@@ -296,8 +296,8 @@ The same gross PnL remains embedded in the larger position, subject to contract 
 
 The increase can still change account balances because:
 
-* Opening VPI and the execution fee are settled.
-* Accrued carry is checkpointed.
+* The increase’s VPI and execution fee are settled.
+* Accrued carry is realized when collectible or otherwise checkpointed.
 * Additional margin may be locked.
 * A new execution reward is paid.
 
@@ -426,6 +426,7 @@ Gross realized loss
 + positive VPI
 + execution fee
 + accrued carry
++ frozen-close spread, when applicable
 − applicable rebates
 ```
 
@@ -455,7 +456,7 @@ A full close can use all collateral defined as terminally reachable inside the a
 
 If an existing trader claim belongs to the same account, it can be reduced against a terminal shortfall before loss is socialized.
 
-Any remaining uncovered economic loss becomes bad debt and is absorbed through the LP tranche[^tranche] waterfall.
+Not every uncollectible charge becomes LP bad debt. Any uncollectible frozen-close spread is waived, and any execution fee that cannot be cash-credited is not recorded as an LP loss or protocol receivable. Only the remaining uncovered base trading obligation becomes bad debt and is absorbed through the LP tranche[^tranche] waterfall.
 
 ### Position equity is broader than PnL
 
@@ -493,8 +494,6 @@ The interface reflects these distinctions:
 | **Withdrawable**       | Amount that can currently leave the protocol |
 
 Portfolio value is not the same as position margin, and Unrealized PnL does not automatically become free buying power.
-
-![Margin Account summary](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-account-summary.png)
 
 ### Profitable closes: cash or trader claim
 
@@ -536,17 +535,13 @@ In particular:
 * It is before close VPI, execution fee and carry.
 * The Final Result view shows fee and VPI lines but not complete net settlement.
 * Released margin is not presented separately.
-* Trader claim balance and settlement status appear separately in the Margin Account.
+* Trader claim balance and **Settle Claim** appear in a separate **Trader claim** card under **Position**; the live card does not preflight aggregate coverage or show a separate settlement-status field.
 * **Settle Claim** credits the complete claim to the Trading Account’s Margin Account after owner-wallet authorization.
 * Portfolio value does not include a separate outstanding trader claim.
 
 A profitable close that creates a claim can therefore appear under-credited in the current interface even though the liability exists onchain.
 
 ![Close row and gross Result](../.gitbook/assets/screenshots/storybook-perps-account-panel--transaction-history-close-result.png)
-
-![Complete close receipt reconciliation](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
-
-![Claim balance, status and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 
 ### The fixed range bounds gross PnL
 

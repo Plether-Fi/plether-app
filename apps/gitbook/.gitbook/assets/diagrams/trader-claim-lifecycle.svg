@@ -53,10 +53,10 @@
 <!-- n4 -->
 <g id="node4" class="node">
 <title>n4</title>
-<g id="a_node4"><a xlink:title="HousePool cash coverage returns">
-<polygon fill="#12372c" stroke="#00ff99" stroke-width="1.6" points="220.05,-488.8 17.25,-488.8 17.25,-432.64 220.05,-432.64 220.05,-488.8"/>
-<text xml:space="preserve" text-anchor="middle" x="118.65" y="-464.47" font-family="Arial" font-size="15.00" fill="#fff5f9">HousePool cash coverage</text>
-<text xml:space="preserve" text-anchor="middle" x="118.65" y="-446.47" font-family="Arial" font-size="15.00" fill="#fff5f9">returns</text>
+<g id="a_node4"><a xlink:title="Aggregate HousePool cash coverage returns">
+<polygon fill="#12372c" stroke="#00ff99" stroke-width="1.6" points="223.8,-488.8 13.5,-488.8 13.5,-432.64 223.8,-432.64 223.8,-488.8"/>
+<text xml:space="preserve" text-anchor="middle" x="118.65" y="-464.47" font-family="Arial" font-size="15.00" fill="#fff5f9">Aggregate HousePool cash</text>
+<text xml:space="preserve" text-anchor="middle" x="118.65" y="-446.47" font-family="Arial" font-size="15.00" fill="#fff5f9">coverage returns</text>
 </a>
 </g>
 </g>

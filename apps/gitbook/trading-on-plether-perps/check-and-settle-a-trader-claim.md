@@ -37,24 +37,16 @@ The `2,000 USDC` of position margin follows the normal account path. The complet
 
 Additional complete fresh payouts that cannot be funded immediately are recorded in full and added to the account’s existing claim balance.
 
-![Close created a claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--close-created-claim.png)
-
 ### Check your claim
 
-Open the **Margin Account** and find **Trader claim**.
+Open the **Position** tab in the account panel and find the **Trader claim** card. The card appears only while the active Trading Account has a nonzero claim.
 
-The claim panel shows:
+The current card shows:
 
 * Claim balance
-* Settlement status
-* Settlement action, when available
+* **Settle Claim**
 
-The settlement statuses are:
-
-| Status                               | Meaning                                                         |
-| ------------------------------------ | --------------------------------------------------------------- |
-| **Waiting for settlement liquidity** | HousePool assets do not yet cover all outstanding trader claims |
-| **Available to settle**              | Aggregate trader claims are fully covered                       |
+The current interface does not display aggregate claim coverage or a separate availability status. The contract performs the coverage check when the sponsored operation is simulated and executed. If coverage is insufficient, settlement fails and the complete claim remains recorded.
 
 Before settlement, the claim remains separate from your usable account collateral.
 
@@ -70,8 +62,6 @@ Before settlement, the claim remains separate from your usable account collatera
 The claim remains denominated in USDC. It does not accrue interest or yield and has no expiry.
 
 Claims are included in the protocol’s liability and LP-withdrawal[^lp] accounting while they remain outstanding.
-
-![Claim balance and status](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--waiting-for-liquidity.png)
 
 ### When a claim becomes available to settle
 
@@ -130,24 +120,15 @@ Connect the owner wallet that controls the claim-owning Trading Account, then co
 
 A different wallet cannot authorize settlement for that Trading Account. The sponsor and bundler[^bundler] can relay the authorized operation, but they cannot create the owner signature.
 
-#### 2. Check the settlement status
+#### 2. Review the claim card
 
-Confirm that the status is **Available to settle**.
+Confirm the active Trading Account and the complete claim balance shown on the card.
 
-Liquidity can change between loading the page and operation confirmation. The contract performs the final coverage check when the operation executes.
+The card does not pre-approve settlement or show aggregate HousePool coverage. Liquidity can change between loading the page and operation confirmation, and the contract performs the final check when the operation executes.
 
 #### 3. Select Settle Claim
 
-Review:
-
-* Connected owner wallet
-* Claim-owning Trading Account
-* Full claim balance
-* Settlement destination: **Margin Account**
-
-The confirmation should make clear that the entire balance will be settled and that transferring the USDC to your wallet requires a separate withdrawal.
-
-![Settlement confirmation](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--settlement-confirmation.png)
+The current card submits the complete claim balance; there is no amount field or separate settlement-review modal. The destination is the Trading Account’s Margin Account. Transferring the credited USDC to the owner wallet requires a separate withdrawal.
 
 #### 4. Authorize the sponsored operation
 
@@ -176,8 +157,6 @@ After confirmation:
 ![Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
 The sponsored settlement operation does not transfer USDC directly to the owner wallet.
-
-![Zero claim and account credit](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--successfully-settled.png)
 
 ### Carry when you have an open position
 
@@ -248,7 +227,7 @@ If your claim balance falls without a claim-settlement transaction, review the a
 
 ### Why settlement may be unavailable
 
-#### Waiting for settlement liquidity
+#### Settlement liquidity is insufficient
 
 Recognized HousePool assets remain below aggregate trader claims. Your complete claim stays recorded until coverage returns.
 
@@ -309,7 +288,7 @@ Recognized HousePool assets:        45,000 USDC
 
 Settlement remains unavailable because claims exceed recognized assets by `300 USDC`.
 
-Later, recognized assets rise to `45,300 USDC`. The claim becomes available.
+Later, recognized assets rise to `45,300 USDC`. The claim becomes serviceable, although the current claim card does not show that coverage status in advance.
 
 After the trader selects **Settle Claim**:
 

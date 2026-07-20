@@ -123,7 +123,7 @@ A close or reduction uses the latest validated Pyth basket available within the 
 The protocol no longer requires:
 
 * Publication strictly after the order commitment
-* A new observation in the commitment block’s settlement window
+* A new observation within the order’s post-commit settlement window
 * A different block from the commitment block
 
 Those requirements would make weekend execution impossible when no new FX observation exists.
@@ -291,8 +291,6 @@ Before the close-only window, traders should consider:
 
 The current protocol setting uses a **3.00% market-close margin requirement**. This is a timelocked risk parameter, not part of the fixed index formula.
 
-![Margin Call Simulator warning](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--margin-call-simulator-confirmation.png)
-
 ### Carry does not pause
 
 Carry accrues according to elapsed time.
@@ -317,16 +315,11 @@ Plether’s global FIFO[^fifo] queue does not reorder itself when the market sta
 
 An opening committed before close-only begins cannot execute after the boundary.
 
-It remains pending at the queue head until it:
-
-* Becomes eligible again
-* Expires and is cleared
-* Fails another terminal check
-* Is removed after account liquidation
+It remains pending at the queue head until it expires and is cleared, fails another terminal check or is removed after account liquidation. The router requires `maxOrderAge` to be no more than one hour, which is shorter than the scheduled close-only period, so a blocked opening cannot wait through the weekend and execute after reopening.
 
 Later orders cannot jump ahead, including risk-reducing orders.
 
-The configured maximum order age bounds how long an old order can occupy the queue.
+The current deployment expires an order once its age exceeds **60 seconds**. Expiry still requires a keeper or another direct contract caller to process the queue head before the queue advances.
 
 #### Queued reduction or close
 
@@ -334,8 +327,8 @@ A pending close uses the policy active when it is finalized.
 
 For example:
 
-* A close committed at Friday 21:59 may use live historical execution and pay no frozen-close spread if finalized before 22:00.
-* The same close uses frozen-market execution and is assessed the frozen-close spread if finalized after 22:00.
+* A close committed on Friday at 21:59:30 UTC may use live historical execution and pay no frozen-close spread if finalized before 22:00.
+* The same close, if finalized at 22:00:10 while still unexpired, uses frozen-market execution and is assessed the frozen-close spread.
 
 The spread is determined by the state at execution, not the state at commitment.
 
@@ -526,13 +519,7 @@ Check the oracle freshness indicator as well:
 
 ![Open-market countdown](../.gitbook/assets/screenshots/storybook-perps-market-state-panel--open-then-close-only.png)
 
-![Close-only and Reduce-only ticket](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--close-only-reduce-only.png)
-
-![Stale oracle freshness](../.gitbook/assets/screenshots/storybook-perps-instrument-panel--stale-oracle.png)
-
-![Frozen close VPI and fixed spread](../.gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png)
-
-The current weekly countdown follows the regular Friday-to-Sunday schedule. Around configured holiday closures, the onchain state is authoritative even if the displayed duration still reflects the ordinary week.
+The weekly countdown is an interface estimate, not a protocol state transition. The onchain `fadWindow` and `oracleFrozen` flags are authoritative, including around configured holiday closures or if an interface countdown does not match the deployed calendar.
 
 The interface may also allow an opening to reach the review screen during close-only. The contract will reject the commitment. A successful preview is not permission to open new risk.
 
@@ -544,7 +531,7 @@ Unlike the fixed `2.00` index boundary, the following values are timelocked risk
 | ------------------------------- | ------------------------- |
 | Market-close margin requirement | 3.00%                     |
 | Maximum frozen oracle age       | 3 days                    |
-| Additional closure-day runway   | Configured calendar value |
+| Additional closure-day runway   | 1 hour                    |
 | Frozen-close spread             | 0.50% of reduced notional |
 | Senior frozen LP surcharge      | 0.25%                     |
 | Junior frozen LP surcharge      | 0.75%                     |

@@ -20,12 +20,12 @@ This page is a summary, not an exhaustive list. Smart contracts and financial sy
 | **Delayed oracle execution**         | Reduces front-running and keeper price-selection risk             | Guaranteed execution, no slippage, or freedom from all MEV         |
 | **Gas-sponsored Trading Account**    | Eligible actions without owner-wallet native gas                       | Guaranteed sponsor or bundler availability, or permission to act without a wallet signature |
 | **Withdrawal firewall**              | Prevents encumbered LP capital from leaving the pool              | Immediate or unconditional LP withdrawals                          |
-| **Non-upgradeable logic**            | Prevents the owner from replacing deployed code                   | Proof that the deployed code is correct or free of vulnerabilities |
+| **Non-upgradeable perps logic**      | Prevents the owner from replacing deployed perps code             | Proof that the deployed code or the separate Trading Account stack is correct or immutable |
 | **Senior tranche priority**          | Junior absorbs losses before Senior                               | Principal protection or guaranteed yield                           |
 
 ### Bounded liability is not guaranteed payment
 
-Plether’s raw basket settlement mark is permanently bounded between **0.00 and 2.00**.
+Plether clamps the raw basket to a settlement mark between **0.00 and 2.00**.
 
 The 2.00 ceiling is a protocol constant. It cannot be changed through governance.
 
@@ -34,7 +34,7 @@ This lets Plether calculate the maximum gross directional payout of every positi
 * LONG USD cannot accrue directional profit below a raw basket mark of 0.00.
 * SHORT USD cannot accrue directional profit above a raw basket mark of 2.00.
 
-Before accepting a trade that increases risk, Plether checks whether physically backed HousePool assets can cover the resulting worst-case aggregate directional liability.
+Before accepting a trade that increases risk, Plether checks whether physically backed HousePool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability.
 
 This is an admission rule. It does not guarantee that:
 
@@ -57,7 +57,7 @@ Plether does not reduce or close an unrelated profitable position to cover anoth
 
 There is no counterparty auto-deleveraging between traders.
 
-Your own position can still be fully liquidated if its equity falls below the applicable maintenance requirement.
+Your own position can still be fully liquidated if the account’s carry-adjusted equity, based on eligible liquidation-reachable collateral, falls to or below the applicable maintenance requirement.
 
 That requirement rises around FX-market[^fx] closures. A position that satisfies normal margin rules can become liquidatable under the stricter market-close requirement.
 
@@ -70,7 +70,7 @@ The distinction is simple:
 
 | Event                                    | First affected                         | What happens next                                                                      |
 | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------- |
-| A trader loses                           | The trader’s reachable USDC collateral | Any remaining deficit becomes bad debt absorbed by HousePool capital                   |
+| A trader loses                           | The trader’s reachable USDC collateral | An existing same-account trader claim can be netted next; any remaining deficit becomes bad debt absorbed by HousePool capital |
 | A trader profits                         | Available HousePool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
 | The HousePool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
@@ -101,7 +101,7 @@ A directionally correct position can still lose money if its gain does not excee
 
 Plether uses full liquidation rather than partial liquidation.
 
-Once a position becomes liquidatable, the entire position can be closed. Reachable collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader.
+Once a position becomes liquidatable, the entire position can be closed. Reachable collateral pays the trading loss and liquidation bounty. An existing claim belonging to the same Trading Account can then be netted against a terminal shortfall before any remainder becomes HousePool bad debt. Any positive residual remains attributable to the trader.
 
 There is no partial-liquidation process that reduces an oversized position and leaves the remainder open.
 
@@ -109,9 +109,9 @@ There is no partial-liquidation process that reduces an oversized position and l
 
 Do not assume that the margin figure displayed beside a position is always the maximum USDC that can be reached during terminal settlement.
 
-Plether uses account-level USDC accounting. Position health is calculated from its assigned margin, but full-close and liquidation paths can reach additional eligible balances or reservations belonging to the same account before passing a deficit to the HousePool.
+Plether uses account-level USDC accounting. Health is not calculated from assigned position margin alone: generic health and withdrawal checks include active position margin plus eligible free USDC belonging to the same account, while excluding other locked buckets. Terminal full-close and liquidation paths can reach additional eligible locked balances under explicit reservation rules before passing a deficit to the HousePool.
 
-A trader claim is not generic collateral and cannot normally be reused as immediately spendable margin.
+A trader claim is not generic collateral and cannot normally be reused as immediately spendable margin, although it can be netted under terminal settlement rules.
 
 The detailed rules for free balance, locked position margin, committed-order reservations and terminally reachable collateral should be understood before using leverage.
 
@@ -153,18 +153,18 @@ Do not commit an order unless you accept its delayed and non-cancellable lifecyc
 
 The price visible when an order is committed is not a guaranteed execution price.
 
-Actual trade economics can include:
+Execution and final trade economics depend on:
 
 * The eligible Pyth observation under the active market-state policy
 * The oracle-confidence policy active for that market state
 * Virtual price impact
-* The acceptable-price limit chosen by the trader
+* Whether the eligible oracle price satisfies the acceptable-price limit chosen by the trader
 * The protocol execution fee
 * The execution reward
 
 Virtual price impact depends on HousePool depth and directional imbalance. It can add a USDC charge or a bounded rebate without changing the oracle execution price.
 
-During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies.
+During an oracle-frozen voluntary close, normal signed VPI[^vpi] remains active. The adverse confidence price shift is waived, and a separate fixed frozen-close spread applies. A partial close must settle the full spread; any uncollectible portion on a terminal full close is waived rather than converted into bad debt.
 
 Plether’s execution model reduces specific forms of price-selection MEV[^mev]. It does not eliminate congestion, censorship, transaction-ordering effects or information leakage after an order is committed.
 
@@ -206,7 +206,7 @@ A trader claim is:
 
 * A senior liability recorded by the protocol
 * Owned by a specific Trading Account
-* Settled only when aggregate claims are sufficiently cash-covered
+* Settled only when aggregate claims are fully cash-covered
 * Credited into the Trading Account’s Margin Account rather than directly to the owner wallet
 
 It is not:
@@ -358,7 +358,7 @@ A defect in the contracts, integrations or economic assumptions can cause:
 * Incorrect liquidation
 * Permanent protocol disruption
 
-The perps[^perps] contracts are non-upgradeable. This limits the owner’s ability to replace deployed logic, but it also means a discovered defect cannot be patched in place.
+The perps[^perps] contracts are non-upgradeable. This prevents the owner from replacing their deployed logic, but it also means a discovered defect cannot be patched in place. The separate smart-account stack used for sponsored trading has its own upgradeability and dependency risks.
 
 A material fix can require a new deployment and user migration.
 
@@ -366,18 +366,18 @@ Immutability makes behavior harder to change. It does not make behavior correct.
 
 ### Smart-account risk
 
-Sponsored trading depends on the Trading Account’s smart-account execution path in addition to Plether’s perps contracts.
+The current Arbitrum Sepolia sponsorship integration uses a deterministic permissionless.js SimpleAccount v0.8 at an address separate from the connected owner wallet. The owner wallet signs for that Trading Account, and there is no direct owner-wallet transaction fallback.
 
-Depending on the account model, this can include:
+This path depends on:
 
 * Smart-account code and signature validation
 * EntryPoint compatibility
 * Nonce and replay protection
 * Owner-wallet recovery and key security
-* EIP-7702[^eip7702] delegation state
+* The configured SimpleAccount factory, account index and deterministic address derivation
 * Correct account initialization and ownership checks
 
-A defect or incompatible account state can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. Changing or removing an EIP-7702 delegation can invalidate an outstanding sponsored operation that has not yet been submitted.
+The current testnet SimpleAccount implementation uses an upgradeable proxy (the UUPS pattern). It does not satisfy Plether’s stated production requirement for immutable execution semantics and is intended only for managed testnet testing. A defect, incompatible account state, account upgrade or replacement factory can reject an otherwise valid Plether action, lock the account out of the sponsored path or require a deliberate migration. A replacement factory derives a different Trading Account address, and the current test profile has no automatic state-migration path.
 
 The Trading Account owns the positions, orders, Margin Account and trader claims. Losing control of its owner wallet can therefore affect the ability to manage that complete protocol state.
 
@@ -394,7 +394,7 @@ An action can be delayed or rejected because of:
 * Bundler policy rejection
 * Bundler, RPC[^rpc] or EntryPoint outages
 * A UserOperation being dropped before inclusion
-* An expired signature, invalid nonce or changed account delegation
+* An expired signature, invalid nonce or changed account state or ownership
 
 Before the sponsored commitment confirms, these failures normally mean no order exists. After a commitment confirms, the order remains governed by the delayed FIFO[^fifo] execution rules even if sponsorship later becomes unavailable.
 
@@ -441,7 +441,7 @@ Frozen-oracle rules deliberately prioritize close and liquidation liveness over 
 
 ### Keeper and queue risk
 
-Keepers are permissionless, but execution still requires someone to submit the correct transaction and oracle data.
+Keepers are permissionless, but execution still requires someone to submit the correct transaction and any oracle data required by the active market state.
 
 If keeper infrastructure is unavailable:
 
@@ -477,11 +477,11 @@ Sequencer interruption, congestion, transaction-ordering effects, RPC failure or
 
 Interfaces, APIs and indexers can display stale or incorrect information. The deployed contracts remain authoritative, but direct interaction still depends on the chain, oracle data, smart-account services and correct operation construction.
 
-Wallet approvals, signed authorizations and confirmed operations are generally irreversible. Users are responsible for verifying the network, owner wallet, Trading Account, contract addresses and action details.
+Confirmed operations are generally irreversible, and a confirmed Plether order commitment cannot be cancelled. Wallet approvals and signed authorizations remain security-sensitive even when they can later expire, be superseded or be revoked. Users are responsible for verifying the network, owner wallet, Trading Account, contract addresses and action details.
 
 ### Governance and pause risk
 
-Core runtime logic is non-upgradeable, and the **2.00 settlement ceiling is immutable**. Governance cannot alter either through parameter changes.
+Core perps runtime logic is non-upgradeable, and the **2.00 settlement ceiling is immutable**. Governance cannot alter either through parameter changes. This does not make the current testnet SimpleAccount implementation immutable.
 
 Governance still controls important economic and operational parameters, including:
 
@@ -553,7 +553,7 @@ Do not deposit unless you can answer yes to each question:
 * Do I understand that trader claims rank ahead of LP withdrawals?
 * Do I understand pending-deposit activation, cancellation and finalization?
 * Have I reviewed current directional skew, open liability, free cash and tranche impairment?
-* Am I relying on a target coupon or projected return as if it were guaranteed?
+* Do I understand that a target coupon or projected return is not guaranteed?
 * Can I hold the LP position through an extended period of reduced liquidity?
 
 ### Everyone
@@ -578,15 +578,6 @@ Before interacting:
 8. Testnet operation and a pre-audit consultation are not substitutes for a formal production audit.
 9. Gas sponsorship can fail or be delayed, but it never gives Plether authority to act without the owner wallet’s authorization.
 
-## Where to go next
-
-* [**Trader quickstart**](../trader-quickstart.md)
-* [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md)
-* [**Margin and liquidation**](../how-plether-works/margin-leverage-and-liquidation.md)
-* [**Fees, carry and virtual price impact**](../how-plether-works/trading-costs-fees-carry-and-vpi.md)
-* [**Market hours and closures**](../how-plether-works/market-states-and-oracle-closures.md)
-* [**Security, audits and governance**](#risks-shared-by-everyone)
-
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
@@ -602,7 +593,6 @@ Before interacting:
 [^apy]: Annual percentage yield, an annualized return measure that includes compounding.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^perps]: Perpetual contracts, derivatives with no scheduled expiry.
-[^eip7702]: Ethereum Improvement Proposal 7702, which lets an existing wallet address use delegated smart-account execution.
 [^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
 [^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
 [^rpc]: Remote Procedure Call, an interface used to communicate with a blockchain node.

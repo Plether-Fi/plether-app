@@ -197,7 +197,7 @@ Before paying a new positive settlement, Plether reserves HousePool cash for all
 ```
 Fresh payout capacity
 = max(
-    canonical HousePool assets
+    physical HousePool assets
     − aggregate trader claims,
     0
   )
@@ -226,7 +226,7 @@ Fresh trader payout:                250 USDC
 
 If immediate settlement liquidity is insufficient, the resulting claim is `250 USDC`, not `300 USDC`.
 
-![Full close reconciliation separating released margin, trading economics, immediate credit and the complete trader claim](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--completed-full-close.png)
+The current live final-close summary does not show the complete immediate-payout-versus-claim split; the onchain settlement result is authoritative.
 
 ### Immediate settlement does not mean wallet settlement
 
@@ -279,7 +279,7 @@ Plether does not maintain a first-claim, first-paid queue.
 All trader claims are considered together. Claim settlement is available only when:
 
 ```
-canonical HousePool assets
+physical HousePool assets
 ≥ aggregate trader claims
 ```
 
@@ -287,7 +287,7 @@ If aggregate claims are under-covered, settlement is unavailable to every claima
 
 This prevents settlement from becoming a race in which the first caller extracts cash while other claims remain under-covered.
 
-Once aggregate coverage is restored, each Trading Account can settle its complete claim after its owner wallet authorizes the action. Paying one claim reduces HousePool assets and aggregate claims by the same amount, preserving coverage for the remaining claimants.
+Once aggregate coverage is restored, each Trading Account can settle its complete claim after its owner wallet authorizes the action. Paying one claim reduces physical HousePool assets and aggregate claims by the same amount, preserving coverage for the remaining claimants.
 
 ### How to settle a trader claim
 
@@ -306,6 +306,8 @@ Claim settlement requires authorization from the Trading Account’s owner walle
 If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
 
 ![Trader claim with aggregate coverage, settlement availability, Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
+
+Aggregate coverage is enforced onchain. The screenshot is an illustrative documentation prototype; the current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
 
 ### A claim is not position collateral
 
@@ -359,7 +361,7 @@ Settlement liquidity, claim serviceability and LP withdrawal liquidity answer di
 | Question                              | Protocol rule                                                                                   |
 | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Can a new positive close be paid now? | The full payout must fit after reserving all existing trader claims                             |
-| Can an existing claim be settled?     | HousePool assets must cover all aggregate trader claims                                        |
+| Can an existing claim be settled?     | Physical HousePool assets must cover all aggregate trader claims                               |
 | Can an LP withdraw?                   | Assets must remain after live trader liability, claims and other explicit reserves are deducted |
 
 A generic “Pool liquidity” number should therefore not be treated as a guarantee that a particular payout or claim can be settled.
@@ -393,7 +395,7 @@ At the HousePool level:
 ```
 Free LP liquidity
 = max(
-    canonical HousePool assets
+    physical HousePool assets
     − maximum modeled live liability
     − aggregate trader claims
     − other explicit reserves,
@@ -413,7 +415,7 @@ Within the LP stack:
 
 When a claim is recorded, the closed portion’s live-position liability also disappears. The obligation changes from a contingent position liability into a realized claim; it is not meant to be counted twice.
 
-When the claim is eventually settled, HousePool assets and claim liabilities fall by the same amount. The economic effect was already recognized when the claim was created.
+When the claim is eventually settled, physical HousePool assets and claim liabilities fall by the same amount. The economic effect was already recognized when the claim was created.
 
 A paid frozen-close spread follows different accounting. Any amount retained, collected in cash or recovered from the same account’s trader claim is recorded as LP-owned HousePool revenue.
 
@@ -428,8 +430,6 @@ A waived spread is not recorded as:
 
 LP accounting recognizes only the amount actually paid.
 
-![HousePool liquidity breakdown showing the obligations protected before LP withdrawals](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--overview.png)
-
 ### Trader claims and bad debt are opposites
 
 | Trader claim                                                 | Bad debt                                                                                         |
@@ -437,7 +437,7 @@ LP accounting recognizes only the amount actually paid.
 | The HousePool owes the trader                               | The trader account could not pay the protocol                                                    |
 | Created by a positive net settlement                         | Created by an uncovered terminal base trading-loss obligation                                    |
 | Reserved ahead of LP withdrawals                             | Absorbed economically by LP capital                                                              |
-| Settles when aggregate claims are cash-covered               | Repaired through future revenue or recapitalization                                              |
+| Settles when aggregate claims are cash-covered               | Economic backing can recover through revenue or recapitalization; the telemetry counter clears only through recapitalization |
 | Can be netted against the same account’s later terminal loss | Represents uncovered base trading loss after reachable collateral and same-account claim netting |
 
 A waived frozen-close spread belongs to neither column.
@@ -451,7 +451,7 @@ For remaining open positions, Plether measures effective backing after existing 
 ```
 Effective assets
 = max(
-    canonical HousePool assets
+    physical HousePool assets
     − aggregate trader claims,
     0
   )
@@ -504,7 +504,7 @@ A trader closes a position with:
 
 * Released margin: `1,000 USDC`
 * Net positive settlement: `250 USDC`
-* HousePool assets: `5,000 USDC`
+* Physical HousePool assets: `5,000 USDC`
 * Existing aggregate claims: `1,000 USDC`
 
 Fresh payout capacity is `4,000 USDC`, so the entire payout fits.
@@ -522,7 +522,7 @@ Assume instead:
 
 * Released margin: `1,000 USDC`
 * Net positive settlement: `250 USDC`
-* HousePool assets: `1,200 USDC`
+* Physical HousePool assets: `1,200 USDC`
 * Existing aggregate claims: `1,000 USDC`
 
 Only `200 USDC` is available above existing claims.
@@ -538,14 +538,14 @@ Result:
 
 #### Example 3: claim coverage is restored
 
-HousePool assets later reach `1,250 USDC`, matching aggregate claims of `1,250 USDC`.
+Physical HousePool assets later reach `1,250 USDC`, matching aggregate claims of `1,250 USDC`.
 
 The trader settles their `250 USDC` claim.
 
 Result:
 
 * `250 USDC` moves to the Trading Account’s Margin Account.
-* HousePool assets fall to `1,000 USDC`.
+* Physical HousePool assets fall to `1,000 USDC`.
 * Aggregate claims fall to `1,000 USDC`.
 * The remaining claims stay fully covered.
 

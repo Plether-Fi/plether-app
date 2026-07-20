@@ -16,26 +16,24 @@ Start by checking the operation and onchain state before submitting another acti
 
 Do not commit a replacement order until the original is absent from **Open Orders**. A second commitment creates another binding order with its own margin and execution-reward reservations.
 
-![Complete market, account and order context](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
-
 ### Identify the current state
 
 | What you see                       | Onchain result                         | Next step                                                     |
 | ---------------------------------- | -------------------------------------- | ------------------------------------------------------------- |
 | Wallet-signature rejected          | Nothing was authorized or submitted    | Review the request and sign again only if it matches your intent |
-| Sponsor unavailable                | No sponsored operation was accepted    | Wait for recovery or use an explicitly supported alternative  |
-| Sponsor rate-limited               | No sponsored operation was accepted    | Wait until the displayed retry time                            |
+| Sponsor unavailable                | No sponsored operation was accepted    | Wait for recovery or contact support if it persists            |
+| Sponsor rate-limited               | No sponsored operation was accepted    | Wait a moment, then request a fresh operation                  |
 | Bundler rejected                   | UserOperation was not submitted onchain | Read the simulation or policy error and request a fresh operation |
-| UserOperation Pending              | Inclusion is not yet known             | Check its hash; do not submit a duplicate                      |
-| UserOperation dropped              | Usually nothing was submitted onchain  | Check for a transaction hash, then request a fresh operation   |
-| Sponsored commitment reverted      | No order was created                   | Read the contract error and adjust the order                   |
+| Pending onchain                    | Inclusion is not yet known             | Check the UserOperation hash; do not submit a duplicate        |
+| Dropped by bundler                 | Usually nothing was submitted onchain  | Check for a transaction hash, then request a fresh operation   |
+| Failed onchain (commit)             | No order was created                   | Read the contract error and adjust the order                   |
 | Order appears in Open Orders       | Order is Pending                       | Wait for execution conditions or expiry                       |
-| Finalization transaction reverted  | Order usually remains Pending          | Refresh its status before retrying                             |
+| Keeper execution attempt reverted  | Order usually remains Pending          | Refresh and continue monitoring keeper processing             |
 | Order appears as Failed            | Order is terminal                      | Create a new order after addressing the cause                 |
 | Order appears as Executed          | Position settlement is final           | Refresh account and position data                             |
 | App timed out after submission     | Result may still be pending             | Check the UserOperation and transaction hashes before retrying |
 
-A successful commitment only creates an order. Position size and entry price change after that order executes.
+A successful commitment only creates an order. The position changes only after that order executes; depending on the action, its size, entry price or both may change.
 
 ![Sequence from sponsored operation confirmation through pending order execution to a changed position.](../.gitbook/assets/diagrams/confirmed-order-execution-path.svg)
 
@@ -51,17 +49,17 @@ These failures occur before the delayed order lifecycle:
 
 The owner wallet rejected or did not complete the authorization. Nothing was submitted, and Plether cannot create the signature on the user’s behalf.
 
-Check the network, Trading Account, action, USDC[^usdc] amount, recipient and authorization expiry before trying again.
+Check the network, Trading Account, action, USDC[^usdc] amount and recipient before trying again.
 
 #### Sponsor unavailable
 
 The sponsor service did not approve gas funding. No sponsored operation or order was accepted.
 
-Existing positions, carry[^carry], pending orders and liquidation rules continue while sponsorship is unavailable. Wait for service recovery or use only an alternative that the interface explicitly supports for the same Trading Account.
+Existing positions, carry[^carry], pending orders and liquidation rules continue while sponsorship is unavailable. The current application has no owner-wallet or self-funded fallback, so wait for service recovery or contact support if the problem persists.
 
 #### Sponsor rate-limited
 
-The action exceeded an account, action or protocol-wide sponsorship limit. Wait until the displayed retry time and request a fresh operation. Repeated submissions do not bypass the limit.
+The request reached a sponsorship rate limit. Wait a moment and request a fresh operation. Repeated submissions do not bypass account or service limits.
 
 #### Bundler rejected
 
@@ -69,7 +67,7 @@ The bundler[^bundler] refused the UserOperation because simulation, nonce, accou
 
 Refresh the Trading Account and request a newly prepared operation. A stale signed operation should not be resubmitted after account state changes.
 
-#### UserOperation dropped
+#### Dropped by bundler
 
 The bundler accepted the UserOperation but stopped tracking it before confirmed inclusion.
 
@@ -93,7 +91,7 @@ Common causes include:
 * The requested direction exceeds the current skew[^skew] limit.
 * The HousePool cannot admit the additional maximum liability.
 * The market is close-only.
-* The protocol is in degraded mode.
+* The account has an open position and the protocol is in degraded mode.
 * New risk commitments are paused.
 
 The interface may show messages such as:
@@ -131,7 +129,7 @@ Exposure from a pending open cannot be reduced yet. Wait for the open order to e
 
 Pending close orders reserve their requested position size. If existing orders already cover the full position, the interface blocks another reduction.
 
-Execute the earlier order or wait until it expires and becomes eligible for **Clean Up**.
+Wait for the keeper to execute the earlier order or clean it up after expiry.
 
 #### The remaining position would be too small
 
@@ -173,7 +171,7 @@ An order can remain pending because:
 * The execution attempt supplied insufficient gas.
 * The order has not yet crossed its expiry time.
 
-A close-only block on a previously committed open leaves the order pending under the current contracts. It may execute after the market reopens or expire first.
+A close-only block on a previously committed open leaves the order pending under the current contracts. The current maximum order age is 60 seconds, while scheduled close-only periods last much longer, so the blocked opening expires before the market reopens and then waits for keeper cleanup.
 
 While an order is pending:
 
@@ -186,15 +184,13 @@ While an order is pending:
 
 Pending orders cannot be cancelled or repriced. They end through execution, terminal failure or expiry cleanup.
 
-Use **Finalize Trade** when the active order modal makes it available. Once an order expires, use **Clean Up** to release eligible reservations and remove it from the queue.
-
-![Finalization and expired cleanup](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--pending-finalization-and-cleanup.png)
+The current sponsored interface leaves finalization and expired-order cleanup to the keeper. Keep monitoring **Open Orders**; the owner wallet is not asked to select **Finalize Trade** or **Clean Up** and does not pay native gas for either step.
 
 See [**How orders execute**](../how-plether-works/how-orders-execute.md) and [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md).
 
-### My finalization transaction failed
+### The keeper has not finalized my order
 
-A reverted finalization transaction usually leaves the order pending.
+A reverted keeper transaction usually leaves the order Pending.
 
 Possible causes include:
 
@@ -210,11 +206,11 @@ Possible causes include:
 
 Open **Open Orders** and check whether the order is still present.
 
-If it remains pending and has not expired, retry after the transient condition changes. The app will fetch new eligible price data where available.
+If it remains Pending and has not expired, no trader action is required. The keeper can retry after the transient condition changes.
 
-If the finalization transaction confirmed, also check **Order History**. A confirmed transaction can produce either `OrderExecuted` or a terminal `OrderFailed` result.
+If a keeper transaction confirmed, also check **Order History**. A confirmed transaction can produce either `OrderExecuted` or a terminal `OrderFailed` result.
 
-After reloading the current application, manual finalization may no longer be available from the Open Orders table. The order can still be executed by a keeper. If it expires, use **Clean Up**.
+If the row becomes **Expired**, the interface shows **Keeper cleanup in progress** and **Keeper processing** until cleanup removes it. The app does not expose manual finalization or owner-wallet cleanup for the current sponsored Trading Account.
 
 ### My order Failed
 
@@ -232,7 +228,7 @@ After an ordinary failure:
 
 * The requested position change is not applied.
 * Any remaining committed opening margin is released.
-* The reserved execution reward is paid to the account that finalized or cleaned up the order.
+* The reserved execution reward is paid to the keeper or other account that processed the terminal result.
 * The account’s pending-order count decreases.
 
 The execution reward is spent even though the position change failed.
@@ -245,9 +241,9 @@ Use a new preview. Increase slippage only after reviewing how much execution-pri
 
 #### Order expired
 
-Expiry is terminal. Use **Clean Up** if the expired order remains visible.
+An **Expired** row can remain under **Open Orders** until keeper cleanup makes it terminal.
 
-Cleanup releases committed opening margin and pays the reserved execution reward to the cleanup caller. A new order is required.
+Cleanup releases committed opening margin and pays the reserved execution reward to the cleanup keeper. After **Order History** shows **Expired / Cleaned up**, a new order is required.
 
 #### Account liquidated
 
@@ -255,13 +251,11 @@ Liquidation removes the position and marks all of that account’s pending order
 
 See [**Why is my order pending or failed?**](why-is-my-order-pending-or-failed.md) for the detailed failure lifecycle.
 
-![Failed Order History](../.gitbook/assets/screenshots/storybook-perps-account-panel--order-history-failures.png)
-
 ### My operation succeeded, but the position did not change
 
 Check which operation or transaction succeeded.
 
-A successful deposit changes the Margin Account. A successful sponsored commit creates a pending order. A successful cleanup removes an expired order. Only successful order execution changes the position.
+A successful deposit changes the Margin Account. A successful sponsored commit creates a pending order. A successful keeper cleanup removes an expired order. Only successful order execution changes the position.
 
 Review:
 
@@ -278,22 +272,20 @@ If the order reached a terminal failure, the position remains unchanged.
 
 Check:
 
-* Owner-wallet USDC balance
 * Trading Account USDC balance
 * Deposit amount
 * Active Trading Account
 * Network
 * Sponsorship status
-* USDC allowance
 
-The first deposit may require two wallet authorizations:
+On the current deployment, deposit funds must already be held at the Trading Account address. MockUSDC sent to the owner wallet is a separate balance and is not available to the deposit modal. The testnet welcome flow funds the derived Trading Account directly.
 
-1. Authorize the required USDC movement.
-2. Authorize the sponsored deposit operation.
+The owner wallet authorizes one sponsored Trading Account operation. It batches:
 
-The USDC authorization alone does not move USDC into the Margin Account.
+1. An exact approval to the Margin Clearinghouse.
+2. A deposit for the same amount.
 
-A failed deposit batch leaves the Margin Account unchanged.
+There is no separate owner-wallet transfer authorization on the current deployment. A failed atomic batch leaves the Margin Account unchanged and the USDC at the Trading Account.
 
 #### The deposit succeeded, but Available to Trade increased by less
 
@@ -345,7 +337,7 @@ A flat account can still have funds reserved by pending orders and execution rew
 Try:
 
 * Reducing the withdrawal amount
-* Finalizing or cleaning up pending orders
+* Waiting for keeper execution or cleanup of pending orders
 * Waiting for a fresh mark
 * Adding collateral
 * Reducing or closing the position
@@ -353,8 +345,6 @@ Try:
 Trader withdrawals are paid from the Margin Clearinghouse. HousePool payout liquidity and trader-claim coverage do not determine ordinary Margin Account withdrawals.
 
 A reverted withdrawal leaves the account balance unchanged.
-
-![Withdraw exceeds limit](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--withdraw-exceeds-available.png)
 
 See [**Your Margin Account**](your-margin-account.md) and [**Read your position and account health**](read-your-position-and-account-health.md).
 
@@ -502,7 +492,7 @@ See [**Check and settle a trader claim**](check-and-settle-a-trader-claim.md) an
 
 If an order disappears from Open Orders:
 
-1. Check its commit or finalization receipt.
+1. Check its commit or keeper transaction receipt.
 2. Look for `OrderExecuted` or `OrderFailed`.
 3. Refresh Order History.
 4. Check the current position and Margin Account.
@@ -516,12 +506,12 @@ Avoid submitting a replacement while the result remains unclear.
 Include:
 
 * Owner-wallet address
-* Trading Account address and account model
+* Trading Account address
 * Network
 * UserOperation hash
 * Order ID
 * Commit transaction hash
-* Finalization or cleanup transaction hash
+* Keeper finalization or cleanup transaction hash, when shown in Order History
 * Approximate time
 * Market state
 * Exact error message

@@ -19,7 +19,7 @@ Traders use USDC margin to take either side:
 | **LONG USD**  | The dollar will strengthen | The dollar gains against the basket |
 | **SHORT USD** | The dollar will weaken     | The dollar loses against the basket |
 
-Positions have no scheduled expiry. They remain open until you close them or their margin is no longer sufficient.
+Positions have no scheduled expiry. They remain open until you close them or a keeper liquidates them after the account no longer satisfies its maintenance requirement.
 
 The market is basket-derived. It is not a wrapped futures contract or a tokenized claim on an offchain index.
 
@@ -39,7 +39,7 @@ During live execution, the price comes from a post-commit oracle update—not a 
 
 Plether uses a bounded market price. This makes the maximum modeled payout of every position calculable before the protocol accepts it.
 
-Before a trade can increase risk, the protocol checks whether the HousePool has enough physically backed assets to cover the resulting worst-case aggregate trader payout. If it does not, the trade is rejected.
+Before a trade can increase risk, the protocol checks whether the HousePool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout. If it does not, the trade is rejected.
 
 Plether does not forcibly reduce an unrelated profitable position to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
@@ -64,7 +64,7 @@ LP withdrawals are subject to cooldowns, reserved obligations, available pool li
 
 The underlying FX[^fx] market does not operate like crypto markets.
 
-Plether remains onchain during weekends and market closures, but new positions are restricted and risk-reducing actions follow special frozen-oracle rules. Positions can continue accruing carry during these periods.
+Plether remains onchain during weekends and market closures, but new risk is blocked during the configured market-close runway and frozen-oracle period. Once the oracle is frozen, eligible closes and liquidations follow special frozen-market rules. Positions can continue accruing carry throughout these periods.
 
 Before using Plether, understand that:
 
@@ -77,15 +77,6 @@ Before using Plether, understand that:
 ### Onchain macro starts here
 
 Onchain finance already runs on dollars. Plether makes the dollar itself a market.
-
-#### Where to go next
-
-* [**How Plether works in five minutes**](welcome/how-plether-works-in-5-minutes.md)
-* [**Start trading**](trader-quickstart.md)
-* [**Provide liquidity**](liquidity-provider-quickstart.md)
-* [**Understand fees, carry and VPI**](how-plether-works/trading-costs-fees-carry-and-vpi.md)
-* [**Understand margin and liquidation**](how-plether-works/margin-leverage-and-liquidation.md)
-* [**Read the risk and security disclosures**](welcome/risks-you-should-understand-first.md)
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
