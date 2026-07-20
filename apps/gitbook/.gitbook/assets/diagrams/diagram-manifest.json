@@ -174,7 +174,7 @@
       "title": "USDC flow across trader accounts",
       "source": "trading-on-plether-perps/your-margin-account.md",
       "asset": ".gitbook/assets/diagrams/usdc-account-flow.svg",
-      "alt": "USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal."
+      "alt": "USDC lifecycle from the funded Trading Account through Margin Account balances, settlement and withdrawal to the owner wallet."
     },
     {
       "title": "From trader claim to owner wallet",

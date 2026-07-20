@@ -381,8 +381,8 @@ async function syncDocumentation(records) {
 async function main() {
   const manifest = await fs.readFile(manifestPath, 'utf8')
   const records = parseManifest(manifest)
-  if (records.length !== 80) {
-    throw new Error(`Expected 80 screenshot mappings, found ${records.length.toString()}`)
+  if (records.length === 0) {
+    throw new Error('No screenshot mappings found in the GitBook screenshot map')
   }
   const manifestSyncResult = await syncManifestLineNumbers(manifest, records)
   if (process.argv.includes('--sync-manifest-only')) {

@@ -174,18 +174,19 @@ const diagrams = [
     B --> C["Account equity and liquidation health"]
 
     D["Entry price + close execution price + closed quantity"] --> E["Realized price PnL"]
-    E --> F["Apply VPI, execution fee and accrued carry"]
+    E --> F["Apply VPI, execution fee, accrued carry and any frozen-close spread"]
     F --> G["Net close settlement"]
     G --> H{"Positive or negative?"}
-    H -->|"Positive"| I{"Free HousePool cash?"}
+    H -->|"Positive"| I{"Full payout cash available after existing claims?"}
     I -->|"Available"| J["Credit Margin Account"]
     I -->|"Unavailable"| K["Record trader claim"]
     H -->|"Negative"| L["Collect reachable account collateral"]
-    L --> M["Record bad debt if a shortfall remains"]`,
+    L --> M["For a terminal full-close shortfall, net the same account's trader claim"]
+    M --> N["Then record only base-obligation bad debt; waive uncollectible frozen spread"]`,
     filename: 'pnl-and-close-settlement-outcomes.svg',
     title: 'PnL and close-settlement outcomes',
     alt: 'Flowchart separating unrealized PnL and liquidation health from realized PnL and close-settlement outcomes.',
-    description: 'Unrealized PnL affects account health. A close realizes PnL, applies trading costs, and routes the result to Margin Account credit, a trader claim, collateral collection or bad debt.',
+    description: 'Unrealized PnL affects account health. A close realizes PnL, applies trading costs, and routes the result to Margin Account credit, a trader claim, collateral and same-account-claim collection, or base-obligation bad debt.',
     rankdir: 'TB',
     nodes: [
       node('openInputs', 'Entry price + current mark + position quantity', 'start'),
@@ -193,14 +194,15 @@ const diagrams = [
       node('health', 'Account equity and liquidation health', 'warning'),
       node('closeInputs', 'Entry price + close execution price + closed quantity', 'start'),
       node('realized', 'Realized price PnL'),
-      node('costs', 'Apply VPI, execution fee and accrued carry'),
+      node('costs', 'Apply VPI, execution fee, accrued carry and any frozen-close spread'),
       node('net', 'Net close settlement'),
       node('sign', 'Positive or negative?', 'decision'),
-      node('cash', 'Free HousePool cash?', 'decision'),
+      node('cash', 'Full payout cash available after existing claims?', 'decision'),
       node('credit', 'Credit Margin Account', 'success'),
       node('claim', 'Record trader claim', 'warning'),
       node('collateral', 'Collect reachable account collateral', 'danger'),
-      node('badDebt', 'Record bad debt if a shortfall remains', 'danger'),
+      node('claimNetting', "For a terminal full-close shortfall, net the same account's trader claim", 'warning'),
+      node('badDebt', 'Then record only base-obligation bad debt; waive uncollectible frozen spread', 'danger'),
     ],
     edges: [
       edge('openInputs', 'unrealized'),
@@ -213,12 +215,13 @@ const diagrams = [
       edge('cash', 'credit', { label: 'Available', tone: 'positive' }),
       edge('cash', 'claim', { label: 'Unavailable', tone: 'warning' }),
       edge('sign', 'collateral', { label: 'Negative', tone: 'danger' }),
-      edge('collateral', 'badDebt', { label: 'Shortfall remains', tone: 'danger' }),
+      edge('collateral', 'claimNetting', { label: 'Terminal shortfall', tone: 'danger' }),
+      edge('claimNetting', 'badDebt', { label: 'Shortfall remains', tone: 'danger' }),
       edge('health', 'closeInputs', { style: 'invis' }),
     ],
     clusters: [
       { id: 'open', label: 'OPEN POSITION', nodes: ['openInputs', 'unrealized', 'health'] },
-      { id: 'close', label: 'CLOSE SETTLEMENT', nodes: ['closeInputs', 'realized', 'costs', 'net', 'sign', 'cash', 'credit', 'claim', 'collateral', 'badDebt'] },
+      { id: 'close', label: 'CLOSE SETTLEMENT', nodes: ['closeInputs', 'realized', 'costs', 'net', 'sign', 'cash', 'credit', 'claim', 'collateral', 'claimNetting', 'badDebt'] },
     ],
   },
   linearDiagram({
@@ -276,22 +279,26 @@ OPEN
     G --> E
     E --> H[Withdraw subject to normal account checks]
 
-    C -->|Zero or negative| I[Collect execution fee, base obligation and any frozen spread in priority order]`,
+    C -->|Zero or negative| I[Collect reachable collateral in priority order]
+    I --> J[For a terminal full-close shortfall, net any same-account trader claim]
+    J --> K[Then record only base-obligation bad debt and waive uncollectible frozen spread]`,
     filename: 'settlement-liquidity-flow.svg',
     title: 'Close settlement and liquidity flow',
     alt: 'Flowchart showing margin release, positive close settlement, HousePool funding, trader claims and zero-or-negative settlement.',
-    description: 'A close releases assigned margin and calculates settlement. Positive settlement becomes Margin Account credit or a trader claim depending on HousePool cash; zero or negative settlement collects obligations in priority order.',
+    description: 'A close releases assigned margin and calculates settlement. Positive settlement becomes Margin Account credit or a trader claim depending on HousePool cash after existing claims; zero or negative settlement collects reachable collateral, nets a same-account claim, and records only genuine base-obligation bad debt.',
     rankdir: 'TB',
     nodes: [
       node('close', 'Close executes', 'start'),
       node('release', 'Release margin assigned to the closed portion', 'success'),
       node('calculate', 'Calculate net close settlement'),
-      node('funding', 'Can the HousePool fund the full amount?', 'decision'),
+      node('funding', 'Can the HousePool fund the full amount after existing claims?', 'decision'),
       node('credit', 'Credit the full amount to the Margin Account', 'success'),
       node('claim', 'Record the full amount as a trader claim', 'warning'),
       node('later', 'Settle later when aggregate claims are fully covered', 'sponsored'),
       node('withdraw', 'Withdraw subject to normal account checks', 'success'),
-      node('collect', 'Collect execution fee, base obligation and any frozen spread in priority order', 'danger'),
+      node('collect', 'Collect reachable collateral in priority order', 'danger'),
+      node('claimNetting', 'For a terminal full-close shortfall, net any same-account trader claim', 'warning'),
+      node('shortfall', 'Then record only base-obligation bad debt and waive uncollectible frozen spread', 'danger'),
     ],
     edges: [
       edge('close', 'release'),
@@ -303,6 +310,8 @@ OPEN
       edge('later', 'credit', { tone: 'positive' }),
       edge('credit', 'withdraw', { tone: 'positive' }),
       edge('calculate', 'collect', { label: 'Zero or negative', tone: 'danger' }),
+      edge('collect', 'claimNetting', { label: 'Terminal shortfall', tone: 'danger' }),
+      edge('claimNetting', 'shortfall', { label: 'Shortfall remains', tone: 'danger' }),
     ],
     sameRanks: [['release', 'calculate']],
   },
@@ -445,7 +454,7 @@ Coupon:       Junior NAV → Senior`,
     source: `Position settles
 → Fresh payout cannot be funded in full
 → Trader claim is recorded
-→ HousePool cash coverage returns
+→ Aggregate HousePool cash coverage returns
 → Owner wallet authorizes settlement
 → Sponsored Trading Account operation confirms
 → USDC is credited to the Margin Account
@@ -458,7 +467,7 @@ Coupon:       Junior NAV → Senior`,
       'Position settles',
       'Fresh payout cannot be funded in full',
       'Trader claim is recorded',
-      'HousePool cash coverage returns',
+      'Aggregate HousePool cash coverage returns',
       'Owner wallet authorizes settlement',
       'Sponsored Trading Account operation confirms',
       'USDC is credited to the Margin Account',
@@ -557,8 +566,7 @@ Plether pays the eligible network gas`,
 → Sponsored operation submitted
 → Pending
 → Confirmed
-→ Order Pending in FIFO
-→ Funds reserved
+→ Order Pending in FIFO with funds reserved
 → Executed or failed
 → Position updated`,
     filename: 'open-increase-position-lifecycle.svg',
@@ -573,12 +581,11 @@ Plether pays the eligible network gas`,
       'Sponsored operation submitted',
       'Pending',
       'Sponsored operation confirmed',
-      'Order Pending in FIFO',
-      'Funds reserved',
+      'Order Pending in FIFO with funds reserved',
       'Executed or failed',
       'Position updated',
     ],
-    kinds: ['start', 'neutral', 'warning', 'sponsored', 'sponsored', 'warning', 'success', 'warning', 'warning', 'neutral', 'success'],
+    kinds: ['start', 'neutral', 'warning', 'sponsored', 'sponsored', 'warning', 'success', 'warning', 'neutral', 'success'],
     rankdir: 'TB',
     clusters: [
       { id: 'setup', label: 'ORDER SETUP', nodes: ['n1', 'n2'], sameRanks: [['n1', 'n2']] },
@@ -591,8 +598,8 @@ Plether pays the eligible network gas`,
       {
         id: 'execution',
         label: 'DELAYED EXECUTION',
-        nodes: ['n8', 'n9', 'n10', 'n11'],
-        sameRanks: [['n8', 'n9'], ['n10', 'n11']],
+        nodes: ['n8', 'n9', 'n10'],
+        sameRanks: [['n8', 'n9']],
       },
     ],
   }),
@@ -780,8 +787,7 @@ Confirmed commitment
   },
   {
     sourcePath: 'trading-on-plether-perps/your-margin-account.md',
-    source: `Owner-wallet USDC, when used
-→ Trading Account USDC
+    source: `Trading Account USDC, funded by the testnet faucet or a direct token transfer
 → Margin Account USDC
 → available, assigned or reserved USDC
 → trade settlement
@@ -789,19 +795,18 @@ Confirmed commitment
 → owner wallet`,
     filename: 'usdc-account-flow.svg',
     title: 'USDC flow across trader accounts',
-    alt: 'USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal.',
-    description: 'USDC may move from the owner wallet to the Trading Account, into Plether’s Margin Account buckets, through trade settlement and back to the owner wallet when withdrawable.',
+    alt: 'USDC lifecycle from the funded Trading Account through Margin Account balances, settlement and withdrawal to the owner wallet.',
+    description: 'On the current deployment, funded Trading Account USDC moves into Plether’s Margin Account buckets, through trade settlement and to the verified owner wallet when withdrawable.',
     rankdir: 'TB',
     nodes: [
-      node('ownerStart', 'Owner-wallet USDC, when used', 'start'),
-      node('trading', 'Trading Account USDC', 'account'),
+      node('trading', 'Trading Account USDC\nTestnet faucet or direct token transfer', 'start'),
       node('margin', 'Margin Account USDC', 'account'),
       node('buckets', 'Available, assigned or reserved USDC'),
       node('settlement', 'Trade settlement', 'warning'),
       node('withdrawable', 'Withdrawable USDC', 'success'),
       node('ownerEnd', 'Owner wallet', 'success'),
     ],
-    edges: chainEdges(['ownerStart', 'trading', 'margin', 'buckets', 'settlement', 'withdrawable', 'ownerEnd']),
+    edges: chainEdges(['trading', 'margin', 'buckets', 'settlement', 'withdrawable', 'ownerEnd']),
   },
   linearDiagram({
     sourcePath: 'trading-on-plether-perps/your-margin-account.md',

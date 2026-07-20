@@ -5,7 +5,7 @@ A Plether trade has one oracle-derived[^oracle] execution price, but several sep
 The distinction matters:
 
 * The oracle price determines entry, exit and directional PnL[^pnl].
-* The execution fee pays the protocol for completed trades.
+* The execution fee is the protocol-designated charge for completed trades.
 * VPI[^vpi] prices the change in HousePool imbalance.
 * The frozen-close spread compensates LPs[^lp] when a voluntary close settles during `oracleFrozen`.
 * Carry[^carry] pays LPs for capital committed through time.
@@ -24,14 +24,16 @@ That sponsorship is separate from the trade’s USDC economics:
 | Category                         | Denomination          | Who pays or receives it                                                        |
 | -------------------------------- | --------------------- | -------------------------------------------------------------------------------- |
 | **Sponsored network gas**        | Network native token  | Plether pays for an eligible sponsored operation                               |
-| **Execution fee**                | USDC                  | Trader pays the protocol treasury after successful execution                    |
+| **Execution fee**                | USDC                  | Trader is assessed the protocol-designated fee after successful execution       |
 | **VPI**                          | USDC                  | Trader pays or receives value against the HousePool                             |
 | **Carry**                        | USDC                  | Trader pays the HousePool over time                                             |
 | **Order execution reward**       | USDC                  | Trading Account reserves it for the order executor or clearer                   |
 | **Frozen-close spread**          | USDC                  | Trader pays the HousePool when applicable                                       |
-| **Manual oracle-update costs**   | Native token          | The manual finalizer pays unless that exact operation is explicitly sponsored   |
+| **Direct oracle-update costs**   | Native token          | A permissionless contract caller pays unless that exact operation is sponsored  |
 
 Gas sponsorship does not make trading free. It removes the owner wallet’s native-gas prerequisite for eligible actions; it does not remove margin requirements, trading costs, losses or settlement obligations.
+
+The contracts expose permissionless execution and liquidation paths whose direct callers supply any required native-token oracle-update fee. The current trader interface does not expose owner-driven manual finalization; it relies on keepers to process the queue. A user interacting with those contract paths outside the interface must fund the required update fee unless that specific call is sponsored separately.
 
 See [Gas-sponsored trading and your Plether Trading Account](../trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for eligible actions and availability limits.
 
@@ -39,13 +41,13 @@ See [Gas-sponsored trading and your Plether Trading Account](../trading-on-pleth
 
 | Item                         | When it applies                                             | Economic destination                        |
 | ---------------------------- | ----------------------------------------------------------- | ------------------------------------------- |
-| Protocol execution fee       | Successful open, increase, reduction or voluntary close     | Protocol treasury                           |
+| Protocol execution fee       | Successful open, increase, reduction or voluntary close     | Protocol treasury when cash-credited        |
 | VPI                          | Successful position-size change                             | Trader ↔ HousePool                          |
 | Frozen-close spread          | Voluntary reduction or close executed during `oracleFrozen` | HousePool; entirely LP-owned                |
 | Carry                        | Continuously while LP capital supports a position           | HousePool                                   |
 | Order execution reward       | Reserved in USDC when an order is committed                 | Order executor or clearer                   |
 | Liquidation bounty           | Successful liquidation                                      | Liquidation keeper                          |
-| Oracle confidence adjustment | Opens and live/FAD voluntary closes                         | Changes execution price; not a separate fee |
+| Oracle confidence adjustment | Opens, live/FAD voluntary closes and liquidations           | Changes execution or liquidation price; not a separate fee |
 
 These USDC costs and price adjustments should not be combined with sponsored network gas or into one unexplained “price impact” number. They perform different jobs and behave differently.
 
@@ -87,7 +89,9 @@ Opening and closing are separate executions, so a round trip normally pays the f
 
 Adding position margin without changing size does not incur an execution fee or VPI.
 
-The fee is based on the actual executed amount and price—not the number shown when the order was first committed. Current rates belong on the live parameters page rather than in a static article.
+The fee is based on the actual executed amount and price—not the number shown when the order was first committed. Use the live onchain rate surfaced by the interface rather than a rate from a static example.
+
+The fee is protocol-designated, but terminal settlement remains physical-cash-first. Only a fee collected from trader collateral or funded from available HousePool cash is credited to treasury margin. Any amount that cannot be cash-credited under trader-payout and claim seniority is not recorded as a protocol receivable or as LP bad debt.
 
 ### Virtual Price Impact
 
@@ -171,7 +175,7 @@ In practice, other orders and LP actions can change skew or depth between execut
 
 The interface currently labels this value **VPI / Price impact**. “Price impact” is an economic analogy; VPI does not alter the oracle execution price stored on the position.
 
-The order’s acceptable-price setting controls the confidence-adjusted oracle price. It does not directly cap:
+The order’s acceptable-price setting controls the oracle-derived execution price under the active confidence policy. It does not directly cap:
 
 * VPI;
 * the execution fee;
@@ -223,7 +227,7 @@ In practice:
 * a provisional rebate received while opening may be reclaimed when that exposure closes;
 * a partial close reconciles a proportional share of the VPI history.
 
-#### Example
+#### VPI clamp example
 
 Suppose a position previously paid `$60` of VPI.
 
@@ -304,7 +308,7 @@ Genuine base trading-loss shortfall continues through the ordinary bad-debt rule
 The onchain close preview exposes:
 
 * `frozenSpreadUsdc` — total spread assessed
-* `frozenSpreadPaidUsdc` — amount collected for LPs
+* `frozenSpreadPaidUsdc` — amount retained or collected for LPs
 * `frozenSpreadWaivedUsdc` — terminally uncollectible amount waived
 
 For a valid close:
@@ -565,7 +569,7 @@ Final account movement
 
 Released margin is the return of the trader’s own collateral. It should not be described as trading profit.
 
-#### Example
+#### Close-economics example
 
 The following example assumes live or FAD-only execution, so no frozen-close spread applies.
 
@@ -621,7 +625,7 @@ It does include:
 
 Previously paid positive VPI is not charged again.
 
-Any remaining positive value is preserved for the trader. Any uncovered trading-loss shortfall becomes bad debt borne by the LP waterfall.
+Any remaining positive value is preserved for the trader. Any remaining uncovered terminal obligation becomes bad debt borne by the LP waterfall.
 
 ### The order execution reward
 
@@ -655,7 +659,6 @@ It changes the execution price itself and can therefore indirectly affect:
 * executed contract notional;
 * execution fee;
 * VPI;
-* the USDC amount of the frozen-close spread, when applicable;
 * entry price and PnL.
 
 During an `oracleFrozen` voluntary reduction or close, confidence-width validation remains active but the adverse price shift is waived. The validated unshifted price is used, and the separate frozen-close spread applies instead. Liquidations continue using their own adverse confidence policy.
@@ -692,16 +695,12 @@ If indexed execution data has not arrived, VPI remains labelled **Estimated VPI 
 At contract level, close previews expose frozen-market settlement separately:
 
 * `frozenSpreadUsdc` — assessed
-* `frozenSpreadPaidUsdc` — paid to LPs
+* `frozenSpreadPaidUsdc` — amount retained or collected for LPs
 * `frozenSpreadWaivedUsdc` — waived
 
 A successful close with a nonzero assessment emits `FrozenCloseSpreadSettled`, preserving the assessed, paid and waived amounts in the execution record.
 
 If the active frontend does not yet display these fields, the onchain preview and event remain the authoritative breakdown.
-
-![Commit Preview cost lines](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
-
-![Frozen close preview costs](../.gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png)
 
 #### Two meanings of “Cost of carry”
 
@@ -711,8 +710,6 @@ The current interface uses **Cost of carry** in two places:
 * In **Current Position**, it shows accrued unpaid carry in USDC.
 
 The header does not currently show the position’s live side-utilization-adjusted annualized rate.
-
-![Market header and accrued position carry](../.gitbook/assets/screenshots/storybook-documentation-trader-workspace--market-and-account-readiness.png)
 
 #### Current preview limitations
 
@@ -727,17 +724,15 @@ The execution-reward preview is also derived from frontend defaults rather than 
 
 Treat the commit preview as an estimate. The onchain result and updated clearinghouse balance are authoritative.
 
-![Estimated-to-final result](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
-
 ### What LPs receive
 
-Positive VPI, realized carry and every collected dollar of frozen-close spread are HousePool trading revenue owned by LPs.
+Positive VPI, realized carry and every retained or collected dollar of frozen-close spread are HousePool trading revenue owned by LPs.
 
 Negative VPI is a HousePool outflow. A waived frozen-close spread is uncollected revenue—not LP revenue, protocol revenue or bad debt.
 
 Trader profits, claims and bad debt can also offset or exceed VPI, spread and carry income.
 
-The protocol execution fee belongs to the protocol treasury. The order execution reward belongs to the keeper[^keeper]. Neither should be presented as direct LP yield.
+A cash-credited protocol execution fee belongs to the protocol treasury. An uncredited amount is not a treasury receivable or LP revenue. The order execution reward normally belongs to its executor or clearer[^keeper]; if liquidation clears the pending order first, the reserved reward is forfeited to the protocol treasury. Neither should be presented as direct LP yield.
 
 Once revenue enters the HousePool, tranche[^tranche] accounting determines its allocation:
 
@@ -776,7 +771,7 @@ Before closing, distinguish:
 
 ### The central distinction
 
-* **Execution fees** pay the protocol for completed trades.
+* **Execution fees** are protocol-designated charges for completed trades; only cash-credited amounts reach the treasury.
 * **VPI** prices the trade’s change in HousePool imbalance.
 * **Carry** pays LPs for bounded payout capacity committed through time.
 * **Frozen-close spreads** compensate LPs for voluntary exits executed against bounded stale oracle data.

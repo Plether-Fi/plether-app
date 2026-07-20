@@ -4,41 +4,38 @@ Every Plether trade settles through a USDC[^usdc] Margin Account associated with
 
 The connected owner wallet signs for the Trading Account, but the Trading Account owns the positions, orders, Margin Account and trader claims. Deposits credit the Margin Account. Orders reserve parts of it. Position margin supports open exposure. Fees, VPI[^vpi], carry[^carry] and realized PnL[^pnl] update it. Eligible USDC can then be withdrawn to the owner wallet.
 
-![USDC lifecycle from the owner wallet through Trading Account and Margin Account balances, settlement and withdrawal.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
+![USDC lifecycle from the funded Trading Account through Margin Account balances, settlement and withdrawal to the owner wallet.](../.gitbook/assets/diagrams/usdc-account-flow.svg)
 
 ### Three places USDC can appear
 
 | Balance                  | Where it exists                                                                        | What it can do                                                        |
 | ------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Can be held normally or authorized for transfer into a Trading Account |
+| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Remains ordinary wallet funds; it is not the current in-app deposit source |
 | **Trading Account USDC** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
 | **Margin Account USDC**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
 
-With a same-address EIP-7702[^eip7702] account, owner-wallet USDC and Trading Account USDC are the same token balance because both roles use one address. With a separate smart account, they are balances at two different addresses.
+The current application uses a separate smart Trading Account, so the owner-wallet and Trading Account token balances are at two different addresses. Current deposits source USDC already held by the Trading Account.
 
 The Margin Account has no separate wallet address. Sending USDC to a Plether contract does not credit it; use the deposit flow.
 
 ### Reading your account
 
-The interface presents several values drawn from the same account:
+The current interface places related values in several locations:
 
-| Value                         | Meaning                                                                |
-| ----------------------------- | ---------------------------------------------------------------------- |
-| **Owner-wallet balance**      | USDC held by the connected owner wallet outside Plether                |
-| **Trading Account balance**   | USDC held by the Trading Account outside its Margin Account            |
-| **Available to Trade**        | Free, unreserved USDC inside Plether                                   |
-| **Position margin**           | USDC assigned to the open position                                     |
-| **Pending order margin**      | USDC committed to an opening or increase order                         |
-| **Reserved execution reward** | USDC set aside for the account that processes an order                 |
-| **Unrealized PnL**            | Directional profit or loss under the latest usable mark                |
-| **Portfolio value**           | Current account equity after PnL, carry and applicable VPI treatment   |
-| **Maintenance margin**        | The account-equity threshold used to determine liquidation eligibility |
-| **Withdrawable**              | The maximum amount that can currently reach the verified owner wallet  |
-| **Trader claim**              | A separately recorded USDC amount owed to the Trading Account          |
+| Value                       | Where it appears                    | Meaning                                                                |
+| --------------------------- | ----------------------------------- | ---------------------------------------------------------------------- |
+| **Available to Trade**      | Trade-ticket context row            | Free, unreserved USDC inside Plether                                   |
+| **Portfolio value**         | Margin Account card                 | Current account equity after PnL, carry and applicable VPI treatment   |
+| **Unrealized PnL**          | Margin Account and Position panels  | Directional profit or loss under the latest usable mark                |
+| **Maintenance margin**      | Margin Account card                 | The account-equity threshold used to determine liquidation eligibility |
+| **Withdrawable**            | Margin Account card                 | The maximum amount that can currently reach the owner wallet           |
+| **Position margin**         | `Edit Position Margin`              | USDC assigned to the open position                                     |
+| **Owner/Trading balances**  | Deposit or withdrawal modal         | USDC held outside the Margin Account                                   |
+| **Trader claim**            | Separate card, when a claim exists  | A HousePool obligation owed to the Trading Account                     |
+
+Pending-order margin and reserved execution rewards are internal account buckets, but the current Margin Account card does not show their aggregate values. **Open Orders** shows which commitments are active.
 
 These values answer different account questions. Portfolio value measures current risk equity, while Withdrawable measures the amount eligible to leave Plether now.
-
-![Margin Account and Position overview with collateral, health and withdrawal values](../.gitbook/assets/screenshots/storybook-documentation-margin-account--overview.png)
 
 ### How account USDC is allocated
 
@@ -92,14 +89,10 @@ To deposit:
 
 1. Open the **Margin Account** section.
 2. Select `Deposit`.
-3. Enter the amount.
-4. Review the owner wallet, Trading Account and USDC source.
-5. Complete any requested USDC authorization.
-6. Authorize the sponsored deposit operation.
+3. In `Deposit Margin`, enter an `Amount` no greater than `Available to deposit`.
+4. Select `Deposit` and authorize the sponsored Trading Account operation in the owner wallet.
 
-When USDC is already held by the Trading Account, the sponsored operation grants the exact approval needed and deposits it into the Margin Account.
-
-When USDC starts in a separate owner wallet and the token supports signed transfers, the wallet first signs a limited USDC transfer authorization. The sponsored Trading Account operation then receives the USDC, approves the clearinghouse and deposits the amount as one batch. If the batch reverts, the Margin Account is not credited.
+The current deployment sources this amount from USDC already held by the separate Trading Account. The sponsored operation approves the clearinghouse and deposits it into the Margin Account. Owner-wallet USDC is not moved into the Trading Account by this deposit action; fund the Trading Account first when necessary. If the sponsored batch reverts, the Margin Account is not credited.
 
 After confirmation, the deposited amount enters **Available to Trade**, subject to any carry collected during the same sponsored operation.
 
@@ -121,8 +114,6 @@ Net account increase:            460 USDC
 The complete `500 USDC` entered Plether. The account used `40 USDC` to settle carry that had already accrued.
 
 Deposits have no market-state, oracle-freshness[^oracle] or degraded-mode restriction. They remain available as a protective account action.
-
-![First deposit showing owner-wallet, Trading Account and sponsored operation states](../.gitbook/assets/screenshots/storybook-documentation-margin-account--deposit.png)
 
 ### What happens when you commit an order
 
@@ -147,6 +138,8 @@ A reduction or close reserves its execution reward without reserving new order m
 
 Plether uses free account USDC for this reward first. When free USDC is insufficient, a bounded amount can be moved from position margin after the relevant risk checks pass. This allows a risk-reducing close to be committed during stale-market conditions.
 
+The current ticket checks the quoted reward against **Available to Trade** before enabling review. Treat position-margin sourcing as a protocol fallback, not as an option you can select in the interface.
+
 #### When the order reaches a final state
 
 The reservation outcome depends on how the order finishes:
@@ -154,16 +147,14 @@ The reservation outcome depends on how the order finishes:
 | Result                                  | Account effect                                                                                                                     |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Executed open or increase**           | Committed margin is applied to the position; the execution reward is paid                                                          |
-| **Executed reduction or close**         | Released margin and net settlement return to the account; the execution reward is paid                                             |
+| **Executed reduction or close**         | Proportional margin is released, net settlement is applied and the execution reward is paid                                        |
 | **Failed, expired or outside slippage** | Remaining committed margin normally returns to Available to Trade; the execution reward is paid for terminal processing            |
 | **Still pending**                       | Margin and reward remain reserved                                                                                                  |
 | **Liquidation**                         | Pending execution rewards are forfeited to the protocol treasury; remaining order reservations are resolved during account cleanup |
 
-Pending orders are binding and have no trader cancellation action. Failed or expired orders may require onchain cleanup before their margin becomes available again.
+Pending orders are binding and have no trader cancellation action. For the current sponsored Trading Account, keepers finalize orders and clean up expired orders before their margin becomes available again.
 
 Terminal account settlement has wider reach than an ordinary partial reduction. A full close or liquidation may consume committed margin from other orders when free USDC and position margin cannot cover the account obligation. Partial reductions leave committed order margin protected.
-
-![Margin Account and Open Orders paired to explain pending reservations](../.gitbook/assets/screenshots/storybook-documentation-margin-account--pending-reservations.png)
 
 ### Position margin
 
@@ -199,15 +190,16 @@ Total account USDC stays unchanged apart from carry collected during the transac
 Additional position margin can:
 
 * Lower displayed leverage
-* Increase distance from liquidation
 * Reduce the position’s LP-backed[^lp] borrow base
 * Reduce future carry accrual
 
+It normally does not increase immediate account-wide liquidation headroom: the same USDC already contributed while it was free collateral. Depositing new USDC adds collateral. Carry collected during the margin action can reduce equity.
+
 Adding margin is immediate and bypasses the delayed order queue. It remains available during stale, frozen and degraded market conditions and requires no current oracle mark.
 
-Position margin returns to the free account bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remaining amount.
+Position margin leaves the assigned bucket as exposure is reduced. A partial reduction releases a proportional share, while a complete close releases the remainder. Close settlement can then consume some or all of that released amount before any balance remains free.
 
-![Add-position-margin form with current and resulting collateral and leverage](../.gitbook/assets/screenshots/storybook-documentation-margin-account--add-position-margin.png)
+![Current Edit Position Margin form](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to Trade and Withdrawable
 
@@ -254,9 +246,9 @@ To withdraw:
 
 1. Open the **Margin Account** section.
 2. Select `Withdraw`.
-3. Enter an amount no greater than **Withdrawable**.
-4. Review the Trading Account, verified owner-wallet recipient and remaining account buffer.
-5. Authorize the sponsored withdrawal operation.
+3. In `Withdraw Margin`, enter an `Amount` no greater than **Withdrawable**.
+4. Review the displayed owner-wallet, Trading Account and position-margin context.
+5. Select `Withdraw` and authorize the sponsored operation.
 
 For a separate smart account, the operation atomically:
 
@@ -264,10 +256,6 @@ For a separate smart account, the operation atomically:
 2. Transfers the same USDC from the Trading Account to its verified owner wallet.
 
 If either step fails, neither step is applied. The USDC is not left behind in the separate Trading Account.
-
-For a same-address Trading Account, the owner wallet and Trading Account use one address, so the withdrawn USDC reaches that address directly.
-
-![Withdrawal preview with current limit, requested amount and resulting balance](../.gitbook/assets/screenshots/storybook-documentation-margin-account--withdrawal.png)
 
 ### Reductions, closes and account settlement
 
@@ -292,7 +280,7 @@ Account movement
 + net close economics
 ```
 
-Released position margin follows separately. The complete fresh HousePool-funded payout is credited immediately when the HousePool has enough unreserved cash. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
+Released position margin follows separately. The complete fresh HousePool-funded payout is credited immediately when physical HousePool cash can cover it after protecting existing trader claims. When full payment is unavailable, the complete fresh payout is recorded in full as a trader claim; it is never split between an immediate credit and a new claim.
 
 ### Trader claims
 
@@ -316,8 +304,6 @@ Claim settlement and wallet withdrawal are separate sponsored operations.
 
 An existing claim can also offset a later uncovered loss from the same account during a close or liquidation. The remaining claim balance reflects any such netting.
 
-![Trader claim with settlement state, action and Margin Account destination](../.gitbook/assets/screenshots/storybook-documentation-margin-account--trader-claim.png)
-
 ### Example: how account USDC moves
 
 Assume a flat account deposits `5,000 USDC`.
@@ -328,20 +314,20 @@ Available to Trade:     5,000.00
 Withdrawable:           5,000.00
 ```
 
-The trader commits an opening order with:
+The trader commits a `1,200 USDC` contract-notional opening at `1x`, so the submitted margin is `1,200 USDC`. At the current `1 bp` execution-reward rate, the order reserves:
 
 ```
 Order margin:           1,200.00
-Execution reward:           0.20
+Execution reward:           0.12
 ```
 
 While the order is pending:
 
 ```
 Margin Account USDC:    5,000.00
-Available to Trade:     3,799.80
+Available to Trade:     3,799.88
 Pending order margin:   1,200.00
-Reserved reward:            0.20
+Reserved reward:            0.12
 ```
 
 When the order executes, pending order margin is replaced by the resulting position margin. The execution reward leaves the account, and the execution fee and VPI are applied.
@@ -363,7 +349,7 @@ When the position closes, its remaining margin is released separately. The compl
 | Situation                                                                | Likely explanation                                                           |
 | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | Deposit increased Available to Trade by less than the transferred amount | Accrued carry was collected during the deposit                               |
-| Available to Trade fell after committing an order                        | Order margin and the execution reward were reserved                          |
+| Available to Trade fell after committing an order                        | The execution reward—and, for an open or increase, order margin—was reserved  |
 | Portfolio value exceeds Withdrawable                                     | Part of the value comes from unrealized PnL or supports the open position    |
 | Free USDC is visible but Withdrawable is zero                            | Check mark freshness, degraded mode, carry and post-withdraw margin headroom |
 | Adding margin left Portfolio value nearly unchanged                      | Existing account USDC moved into the position-margin bucket                  |
@@ -375,7 +361,6 @@ When the position closes, its remaining margin is released separately. The compl
 [^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
 [^pnl]: Profit and loss, the financial result of market-price movement on a position.
 [^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^eip7702]: Ethereum Improvement Proposal 7702, which lets an existing wallet address use delegated smart-account execution.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.

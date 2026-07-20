@@ -29,9 +29,9 @@ The delayed order then follows the protocol stages:
 
 ![Three-stage order lifecycle: Preview, Commit and Finalize.](../.gitbook/assets/diagrams/preview-commit-finalize.svg)
 
-The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper[^keeper] normally submits the separate finalization transaction.
+The owner wallet normally authorizes the Trading Account commitment, and Plether submits the eligible sponsored operation. A keeper[^keeper] submits the separate finalization transaction.
 
-If keeper finalization is delayed, the trader may be able to finalize the order manually.
+Execution and expired-order cleanup are permissionless at the contract level, but the current Plether interface does not submit either action from the owner wallet. It leaves both actions to keepers.
 
 ### 1. Preview the order
 
@@ -51,8 +51,6 @@ This includes:
 * Estimated execution reward
 * Liquidation price
 * Available side capacity
-
-![Commit Preview costs and limits](../.gitbook/assets/screenshots/storybook-perps-trade-ticket--open-long-preview.png)
 
 For a voluntary reduction or close, the onchain preview also exposes:
 
@@ -142,7 +140,7 @@ Plether therefore keeps the order binding until it:
 * Expires and is cleared
 * Is removed following liquidation
 
-Before expiry, the interface shows **Cancel unavailable**. After expiry, it shows **Clean Up**.
+There is no trader-cancellation phase. After expiry, the order becomes eligible for permissionless cleanup; the current interface leaves that cleanup to a keeper.
 
 ### 3. Enter the global FIFO queue
 
@@ -176,7 +174,9 @@ The observation must:
 
 The historical proof prevents the finalizer from ignoring the first eligible observation and submitting a more favourable later one.
 
-The settlement window determines **which observation may price the order**. It does not necessarily determine when the finalization transaction must arrive. A keeper can submit the transaction later while proving the eligible historical observation.
+The settlement window determines **which observation may price the order**. It does not necessarily determine when the finalization transaction must arrive. A keeper can submit the transaction later, while the order is still unexpired, and prove the eligible historical observation.
+
+On the current deployment, the historical settlement window is **15 seconds** after commitment and an order expires once its age exceeds **60 seconds**. These are separate, timelocked router and oracle parameters; the live onchain values are authoritative.
 
 If no valid observation exists inside the window, Plether does not substitute a later market price.
 
@@ -188,19 +188,17 @@ The dedicated frozen-market exception is explained under **Execution during prot
 
 ### Who finalizes the order?
 
-A keeper normally supplies the historical Pyth data, pays the oracle update fee and submits the finalization transaction.
+A keeper supplies the historical Pyth data, pays the oracle update fee and submits the finalization transaction.
 
 The reserved USDC execution reward is then credited to the finalizer.
 
-If automatic finalization does not arrive during the interface’s keeper grace period, the modal exposes **Finalize Trade**. Order-commitment sponsorship does not automatically cover manual finalization. Unless the interface explicitly marks this action as **Sponsored**, manual finalization requires:
+At the protocol level, any address can call the permissionless execution endpoint. Doing so outside the Plether interface requires:
 
 * A wallet transaction
 * ETH for network gas
 * ETH for the Pyth update fee
 
-The finalizing address receives the reserved execution reward through its Margin Account. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts.
-
-![Finalization countdown and manual action](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--manual-finalization-ready.png)
+The caller receives the reserved execution reward through its Margin Account. If the owner EOA[^eoa] and Trading Account use different addresses, they are different Plether accounts. The current Plether interface does not provide this direct owner-wallet path.
 
 ### From index observation to execution price
 
@@ -421,10 +419,6 @@ Every paid dollar belongs to LPs. None is credited to the protocol treasury.
 
 A terminal full close remains an **Executed** order when part of the spread is waived. The position closes successfully, and the event records the paid and waived amounts.
 
-![Final Result values](../.gitbook/assets/screenshots/storybook-perps-final-reveal-modal--automatically-finalized-success.png)
-
-![Frozen close final result](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--frozen-close-result.png)
-
 #### Failed
 
 Terminal failures include:
@@ -438,7 +432,7 @@ Terminal failures include:
 
 A terminally failed order is removed from the live queue. It is not retried or requeued.
 
-Committed opening margin is released, but the execution reward is paid to the finalizer or clearer. Clearing a failed order still consumes oracle data, gas and queue-processing work.
+Committed opening margin is released, but the execution reward is paid to the finalizer or clearer. Every clearing transaction consumes gas and queue-processing work; failures discovered during priced execution also consume the submitted oracle data and its update fee. Expired-head cleanup can use the stored mark without a fresh Pyth payload.
 
 No protocol execution fee, VPI or frozen-close spread is charged for a trade that never executes. An existing position can, however, continue accruing carry while its close order is pending.
 
@@ -465,16 +459,14 @@ Orders have a maximum lifetime.
 
 Reaching the expiry time does not automatically change onchain state. Someone must process the expired order so the queue and reservations can be updated.
 
-After cleanup:
+On the current deployment, cleanup becomes available once the order is more than **60 seconds** old. Reaching that age does not itself change onchain state. After a keeper or another direct contract caller processes the expired head:
 
 * The order is marked failed
 * Committed opening margin is released
 * The execution reward is paid to the clearer
 * The global queue advances
 
-The interface changes the action from **Cancel unavailable** to **Clean Up** when cleanup becomes available.
-
-![Pending and expired Open Orders](../.gitbook/assets/screenshots/storybook-perps-account-panel--open-orders-pending-and-expired.png)
+The current Plether interface does not submit this cleanup transaction from the owner wallet.
 
 ### Execution during protective market states
 
@@ -575,7 +567,7 @@ Plether’s execution model separates five decisions:
 * **Execution regime:** the market state at execution determines which oracle rules apply and whether the frozen-close spread is charged.
 * **Final validity:** the engine verifies that the resulting position and settlement satisfy the protocol’s risk and accounting rules.
 
-Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and settled only when the HousePool can support the result.
+Plether does not promise instant execution. It provides rule-bound execution: globally ordered, tied to the applicable oracle regime and subject to the protocol’s solvency checks, trader-claim accounting and terminal bad-debt rules.
 
 [^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.

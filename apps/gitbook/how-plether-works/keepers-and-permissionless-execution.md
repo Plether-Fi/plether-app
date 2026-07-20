@@ -21,7 +21,9 @@ For normal order execution, a keeper:
 
 Keepers can also perform other permissionless protocol actions. The most important protective example is liquidation: when an account is at or below the applicable maintenance requirement, any address may submit a valid liquidation with the required oracle data.
 
-The current Plether reference keeper automates the perps order queue. It indexes order events, re-reads pending orders from the contracts, selects eligible historical Pyth payloads, batches consecutive executable orders and clears expired queue heads. Liquidation and other permissionless maintenance may be operated separately; they are not currently automated by this keeper binary.
+The current Plether order keeper automates the perps order queue. It indexes order events, re-reads pending orders from the contracts, selects eligible historical Pyth payloads, batches consecutive executable orders and clears expired queue heads.
+
+Liquidation is automated by a separate `plether-liquidation-worker`. It discovers accounts from `PositionOpened` events, verifies their current position state onchain, uses the latest cached Pyth payload and simulates the canonical liquidation call before submitting it. Onchain mark updates can also be automated by the separate, optional `plether-oracle-worker`. These programs are reference operators, not privileged protocol roles.
 
 ### Why keepers matter
 
@@ -54,9 +56,11 @@ A keeper can choose when to submit a valid transaction and what gas fee to offer
 
 Read [How orders execute](how-orders-execute.md) for the complete pricing and queue rules.
 
+The current Plether interface leaves order finalization and expired-order cleanup to the keeper service. This is an interface policy, not a contract restriction: direct callers may still use the permissionless contract entrypoints with their own transaction tooling.
+
 ### Keeper incentives and costs
 
-An order reserves an execution reward in USDC[^usdc] when it is committed. After successful finalization, the reward is credited to the finalizer's Plether Margin Account. A successful liquidator receives the applicable liquidation bounty instead.
+An order reserves an execution reward in USDC[^usdc] when it is committed. When an order executes, or when a terminally failed or expired order is cleared, the reward is credited to that caller's Plether Margin Account. A successful liquidator receives the applicable liquidation bounty instead.
 
 The operator pays the transaction costs required to attempt the action, including network gas and, where applicable, the Pyth update fee. A reward is not guaranteed profit. Costs can exceed rewards, and transactions can revert or lose a race to another keeper. Operators should model fees, failure rates, competition and infrastructure costs before running a live service.
 
@@ -91,10 +95,12 @@ You may build your own keeper against the public contracts or run Plether's open
 
 * [`apps/backend/app/Keeper.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/app/Keeper.hs) is the executable entry point.
 * [`apps/backend/src/Plether/Keeper.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/src/Plether/Keeper.hs) contains the queue, payload-selection, batching and transaction-submission logic.
+* [`apps/backend/app/LiquidationWorker.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/app/LiquidationWorker.hs) is the separate liquidation executable entry point.
+* [`apps/backend/src/Plether/LiquidationWorker.hs`](https://github.com/Plether-Fi/plether-app/blob/master/apps/backend/src/Plether/LiquidationWorker.hs) contains liquidation discovery, simulation and submission logic.
 
 The reference service requires GHC 9.4+, Cabal 3.0+, PostgreSQL and an RPC endpoint. It also depends on the Plether basket worker to cache the Pyth payloads used for execution.
 
-From `apps/backend`, configure at least:
+From `apps/backend`, configure the shared deployment, order-keeper and basket-worker values. Add `PYTH_API_KEY` only if the selected Hermes provider requires one:
 
 ```bash
 export DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
@@ -104,9 +110,10 @@ export CHAIN_ID=YOUR_CHAIN_ID
 export PERPS_CHAIN_ID=YOUR_CHAIN_ID
 export PERPS_ORDER_ROUTER=0xYOUR_ORDER_ROUTER
 export PERPS_PLETHER_ORACLE=0xYOUR_PLETHER_ORACLE
+export PERPS_CFD_ENGINE=0xYOUR_CFD_ENGINE
 export PERPS_INDEXER_START_BLOCK=YOUR_DEPLOYMENT_START_BLOCK
 export PYTH_HERMES_URL=https://YOUR_HERMES_ENDPOINT
-export PYTH_API_KEY=YOUR_SERVER_SIDE_API_KEY
+# export PYTH_API_KEY=YOUR_SERVER_SIDE_API_KEY
 ```
 
 Use the current deployment addresses for the network you intend to serve. Never assume that example or testnet addresses are valid for another deployment.
@@ -132,7 +139,21 @@ After checking the selected network, contract addresses, wallet and logs, start 
 cabal run plether-keeper
 ```
 
-Use a dedicated key with only the funds needed for operation, protect it as production infrastructure and monitor its native-token balance. Multiple operators may compete to execute the same action; the first valid transaction included onchain wins the execution opportunity.
+To operate liquidations, fund and configure a separate signer so it does not contend with the order keeper's nonce sequence. Test the dedicated worker before starting its continuous loop:
+
+```bash
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker -- --once --dry-run
+```
+
+After reviewing the dry-run output, start its continuous loop:
+
+```bash
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker
+```
+
+Use separately funded dedicated keys with only the funds needed for each worker, protect them as production infrastructure and monitor their native-token balances. Multiple operators may compete to execute the same action; the first valid transaction included onchain wins the execution opportunity.
 
 ### Keepers are executors, not administrators
 
@@ -141,6 +162,6 @@ A keeper's authority begins and ends with submitting calls that anyone may submi
 That is the core design: **open execution, constrained by onchain verification.**
 
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
-[^fifo]: First in, first out; the oldest unresolved order must be handled before later orders.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
 [^pyth]: Plether's external price-data provider for the six currency feeds used to calculate its index.
-[^usdc]: A US dollar-denominated stablecoin Plether uses for margin, rewards and settlement.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
