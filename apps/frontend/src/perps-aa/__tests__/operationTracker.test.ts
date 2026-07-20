@@ -28,7 +28,7 @@ describe('sponsored operation tracker', () => {
     })
   })
 
-  it('marks sponsorship accepted when managed preparation begins', () => {
+  it('marks sponsorship accepted after managed preparation succeeds', () => {
     const tracker = beginSponsoredOperationTracking({
       id: 'operation-1',
       ownerAddress: OWNER,
@@ -44,6 +44,14 @@ describe('sponsored operation tracker', () => {
     expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenNthCalledWith(
       2,
       'requesting-sponsorship',
+      expect.objectContaining({ sponsorship_accepted: false })
+    )
+
+    tracker.onStatus('awaiting-signature')
+
+    expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenNthCalledWith(
+      3,
+      'awaiting-signature',
       expect.objectContaining({ sponsorship_accepted: true })
     )
   })
