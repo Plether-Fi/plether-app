@@ -2,6 +2,7 @@ module Plether.Ethereum.Contracts.PerpsSpec (spec) where
 
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.Text (Text)
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeUint256)
 import Plether.Ethereum.Contracts.Perps
 import Plether.Ethereum.Rpc (RpcLog (..))
@@ -21,6 +22,43 @@ spec = do
     it "encodes getUpdateFee(bytes[]) with two dynamic bytes values" $ do
       getUpdateFeeCall [BS.pack [0x01, 0x02, 0x03], BS.pack [0x04]]
         `shouldEncodeTo` "0xd47eed4500000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000003010203000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010400000000000000000000000000000000000000000000000000000000000000"
+
+    it "encodes updatePriceFeeds(bytes[]) for latest-payload admission" $ do
+      updatePriceFeedsCall [BS.pack [0x01, 0x02, 0x03]]
+        `shouldEncodeTo` "0xef9e5e2800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000030102030000000000000000000000000000000000000000000000000000000000"
+
+    it "encodes payable parsePriceFeedUpdatesUnique calldata" $ do
+      let feedId = BS.replicate 32 0x11
+      call <-
+        expectRight $
+          parsePriceFeedUpdatesUniqueCall
+            [BS.pack [0x01, 0x02, 0x03]]
+            [feedId]
+            10
+            20
+      call
+        `shouldEncodeTo` "0xaccca7f900000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003010203000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011111111111111111111111111111111111111111111111111111111111111111"
+
+    it "encodes payable non-unique parsePriceFeedUpdates calldata" $ do
+      let feedId = BS.replicate 32 0x11
+      call <-
+        expectRight $
+          parsePriceFeedUpdatesCall
+            [BS.pack [0x01, 0x02, 0x03]]
+            [feedId]
+            10
+            20
+      call
+        `shouldEncodeTo` "0x4716e9c500000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000014000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000003010203000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000011111111111111111111111111111111111111111111111111111111111111111"
+
+    it "rejects invalid parsePriceFeedUpdatesUnique inputs before RPC" $ do
+      let feedId = BS.replicate 32 0x11
+          payload = [BS.singleton 0x01]
+      parsePriceFeedUpdatesUniqueCall [] [feedId] 10 20 `shouldSatisfy` isDecodeError
+      parsePriceFeedUpdatesUniqueCall payload [] 10 20 `shouldSatisfy` isDecodeError
+      parsePriceFeedUpdatesUniqueCall payload [BS.replicate 31 0x11] 10 20
+        `shouldSatisfy` isDecodeError
+      parsePriceFeedUpdatesUniqueCall payload [feedId] 20 10 `shouldSatisfy` isDecodeError
 
     it "encodes executeOrder(uint64,bytes[]) with an empty array" $ do
       executeOrderCall 7 []
@@ -76,6 +114,38 @@ spec = do
   describe "PletherOracle config calldata" $ do
     it "encodes adverseConfidenceMultiplierBps()" $ do
       adverseConfidenceMultiplierBpsCall `shouldEncodeTo` "0x6c6def16"
+
+    it "encodes pyth()" $ do
+      pythCall `shouldEncodeTo` "0xf98d06f0"
+
+    it "strictly decodes a nonzero pyth() address" $ do
+      let address = "0x1111111111111111111111111111111111111111"
+      decodePythContract (encodeAddress address) `shouldSatisfy` isRightAddress address
+      decodePythContract BS.empty `shouldSatisfy` isDecodeError
+      decodePythContract (BS.replicate 32 0) `shouldSatisfy` isDecodeError
+
+  describe "parsePriceFeedUpdatesUnique return decoding" $ do
+    it "accepts the requested feed IDs in order" $ do
+      let feedIds = [BS.replicate 32 0x11, BS.replicate 32 0x22]
+      case decodeParsedPriceFeedIds feedIds (encodePriceFeeds feedIds) of
+        Right actual -> actual `shouldBe` feedIds
+        Left err -> expectationFailure $ "unexpected decode error: " <> show err
+
+    it "rejects empty and truncated returns" $ do
+      let feedId = BS.replicate 32 0x11
+          emptyReturn = encodeUint256 32 <> encodeUint256 0
+          truncatedReturn = encodeUint256 32 <> encodeUint256 1 <> feedId
+      decodeParsedPriceFeedIds [feedId] BS.empty `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeedIds [feedId] emptyReturn `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeedIds [feedId] truncatedReturn `shouldSatisfy` isDecodeError
+
+    it "rejects a wrong count or mismatched feed ID" $ do
+      let requested = BS.replicate 32 0x11
+          other = BS.replicate 32 0x22
+      decodeParsedPriceFeedIds [requested] (encodePriceFeeds [requested, other])
+        `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeedIds [requested] (encodePriceFeeds [other])
+        `shouldSatisfy` isDecodeError
 
   describe "decodePerpsOrderEvent" $ do
     it "decodes OrderCommitted" $ do
@@ -198,3 +268,21 @@ isDecodeError value =
   case value of
     Left _ -> True
     Right _ -> False
+
+expectRight :: Show a => Either a b -> IO b
+expectRight value =
+  case value of
+    Left err -> expectationFailure ("unexpected Left: " <> show err) >> fail "unreachable"
+    Right result -> pure result
+
+encodePriceFeeds :: [BS.ByteString] -> BS.ByteString
+encodePriceFeeds feedIds =
+  encodeUint256 32
+    <> encodeUint256 (fromIntegral $ length feedIds)
+    <> mconcat [feedId <> BS.replicate (8 * 32) 0 | feedId <- feedIds]
+
+isRightAddress :: Text -> Either a Text -> Bool
+isRightAddress expected value =
+  case value of
+    Left _ -> False
+    Right actual -> actual == expected

@@ -8,11 +8,9 @@ resource "aws_cloudwatch_log_group" "ecs" {
 }
 
 locals {
-  effective_pyth_hermes_url = var.pyth_hermes_url != null && var.pyth_hermes_url != "" ? var.pyth_hermes_url : (
-    var.environment == "sepolia" ? "https://pyth.dourolabs.app/hermes" : "https://hermes.pyth.network"
-  )
+  effective_pyth_hermes_url = trimspace(var.pyth_hermes_url)
 
-  effective_pyth_api_key_ssm_parameter_name = var.pyth_api_key_ssm_parameter_name != null ? var.pyth_api_key_ssm_parameter_name : (
+  effective_pyth_api_key_ssm_parameter_name = var.pyth_api_key_ssm_parameter_name != null ? trimspace(var.pyth_api_key_ssm_parameter_name) : (
     var.environment == "sepolia" ? "/plether/sepolia/pyth-api-key" : ""
   )
 
@@ -22,11 +20,18 @@ locals {
     var.enable_pyth_api_key ? aws_ssm_parameter.pyth_api_key[0].arn : null
   )
 
+  uses_upgraded_pyth_hermes = replace(lower(local.effective_pyth_hermes_url), "/\\/+$/", "") == "https://pyth.dourolabs.app/hermes"
+  pyth_api_key_configured = (
+    local.external_pyth_api_key_parameter_arn != null
+    || (var.enable_pyth_api_key && trimspace(var.pyth_api_key) != "")
+  )
+
   pyth_environment = [
     { name = "PYTH_HERMES_URL", value = local.effective_pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
     { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
     { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
+    { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
   ]
 
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
@@ -198,6 +203,11 @@ resource "aws_ecs_task_definition" "api" {
     precondition {
       condition     = !var.enable_aa_sponsorship || var.provision_aa_proxy
       error_message = "AA sponsorship cannot be enabled unless the proxy credentials are provisioned."
+    }
+
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
     }
   }
 }
@@ -403,6 +413,10 @@ resource "aws_ecs_task_definition" "basket_worker" {
         valueFrom = aws_ssm_parameter.rpc_url.arn
       },
       {
+        name      = "PERPS_RPC_URL"
+        valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+      },
+      {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
@@ -410,8 +424,18 @@ resource "aws_ecs_task_definition" "basket_worker" {
 
     environment = concat([
       { name = "CHAIN_ID", value = var.chain_id },
+      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
     ], local.pyth_environment)
   }, local.otel_log_router_container])
+
+  lifecycle {
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
+    }
+  }
 }
 
 resource "aws_ecs_service" "basket_worker" {
@@ -565,6 +589,10 @@ resource "aws_ecs_task_definition" "workers" {
           valueFrom = aws_ssm_parameter.rpc_url.arn
         },
         {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
           name      = "DATABASE_URL"
           valueFrom = aws_ssm_parameter.database_url.arn
         }
@@ -572,6 +600,9 @@ resource "aws_ecs_task_definition" "workers" {
 
       environment = concat([
         { name = "CHAIN_ID", value = var.chain_id },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       ], local.pyth_environment)
     },
     {
@@ -633,6 +664,13 @@ resource "aws_ecs_task_definition" "workers" {
     },
     local.otel_log_router_container,
   ])
+
+  lifecycle {
+    precondition {
+      condition     = !local.uses_upgraded_pyth_hermes || local.pyth_api_key_configured
+      error_message = "The upgraded hosted Pyth Hermes endpoint requires an existing pyth_api_key_ssm_parameter_name or enable_pyth_api_key=true with a non-empty pyth_api_key, entitled to all configured FX feeds."
+    }
+  }
 }
 
 resource "aws_ecs_service" "workers" {

@@ -6,6 +6,10 @@ module Plether.Config
   , loadConfig
   , loadDeployments
   , currentAddresses
+  , defaultPythHermesUrl
+  , defaultPythLatestMaxAgeSeconds
+  , maxPythLatestMaxAgeSeconds
+  , validatePythLatestMaxAgeSeconds
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
@@ -32,6 +36,7 @@ data Config = Config
   , cfgPythApiKey :: Maybe Text
   , cfgPythBackfillDays :: Int
   , cfgPythSampleIntervalSeconds :: Integer
+  , cfgPythLatestMaxAgeSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
@@ -146,6 +151,29 @@ currentAddresses = deployAddresses . head . sortBy (comparing (Down . deployDate
 loadDeployments :: FilePath -> IO (Either String [Deployment])
 loadDeployments = eitherDecodeFileStrict
 
+defaultPythHermesUrl :: Text
+defaultPythHermesUrl = "https://pyth.dourolabs.app/hermes"
+
+defaultPythLatestMaxAgeSeconds :: Integer
+defaultPythLatestMaxAgeSeconds = 10
+
+maxPythLatestMaxAgeSeconds :: Integer
+maxPythLatestMaxAgeSeconds = 10
+
+validatePythLatestMaxAgeSeconds :: String -> Either String Integer
+validatePythLatestMaxAgeSeconds rawValue =
+  case readMaybe normalizedValue of
+    Just seconds
+      | show seconds == normalizedValue
+      , seconds >= 1 && seconds <= maxPythLatestMaxAgeSeconds -> Right seconds
+    _ ->
+      Left $
+        "PYTH_LATEST_MAX_AGE_SECONDS must be a whole number between 1 and "
+          <> show maxPythLatestMaxAgeSeconds
+          <> "; the upper bound preserves headroom below the oracle's 15-second staleness limit"
+ where
+  normalizedValue = T.unpack $ T.strip $ T.pack rawValue
+
 loadConfig :: IO (Either String Config)
 loadConfig = do
   mRpcUrl <- firstEnv ["RPC_URL", "PERPS_RPC_URL"]
@@ -158,10 +186,11 @@ loadConfig = do
       mDatabaseUrl <- lookupEnv "DATABASE_URL"
       indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
       pythBenchmarksUrl <- fromMaybe "https://benchmarks.pyth.network" <$> lookupEnv "PYTH_BENCHMARKS_URL"
-      pythHermesUrl <- fromMaybe "https://hermes.pyth.network" <$> lookupEnv "PYTH_HERMES_URL"
+      pythHermesUrl <- fromMaybe (T.unpack defaultPythHermesUrl) <$> lookupEnv "PYTH_HERMES_URL"
       mPythApiKey <- lookupEnv "PYTH_API_KEY"
       pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
+      pythLatestMaxAgeStr <- fromMaybe (show defaultPythLatestMaxAgeSeconds) <$> lookupEnv "PYTH_LATEST_MAX_AGE_SECONDS"
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
@@ -254,9 +283,10 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-      case aaConfig of
-        Left err -> pure $ Left err
-        Right resolvedAaConfig -> do
+      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig) of
+        (Left err, _) -> pure $ Left err
+        (_, Left err) -> pure $ Left err
+        (Right pythLatestMaxAgeSeconds, Right resolvedAaConfig) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
             Left err -> pure $ Left $ "Failed to load addresses: " <> err
@@ -273,9 +303,10 @@ loadConfig = do
                 , cfgIndexerStartBlock = indexerStartBlock
                 , cfgPythBenchmarksUrl = T.pack pythBenchmarksUrl
                 , cfgPythHermesUrl = T.pack pythHermesUrl
-                , cfgPythApiKey = fmap T.pack mPythApiKey
+                , cfgPythApiKey = nonBlankText mPythApiKey
                 , cfgPythBackfillDays = max 1 pythBackfillDays
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
+                , cfgPythLatestMaxAgeSeconds = pythLatestMaxAgeSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
@@ -302,6 +333,13 @@ firstEnv (name : rest) = do
   case value of
     Just found | not (null found) -> pure $ Just found
     _ -> firstEnv rest
+
+nonBlankText :: Maybe String -> Maybe Text
+nonBlankText = \case
+  Just value | not (T.null stripped) -> Just stripped
+   where
+    stripped = T.strip $ T.pack value
+  _ -> Nothing
 
 parseBool :: String -> Bool
 parseBool value =

@@ -21,6 +21,7 @@ import Network.HTTP.Client
   ( Manager
   , httpLbs
   , parseRequest
+  , requestHeaders
   , responseBody
   , responseStatus
   , setQueryString
@@ -42,6 +43,7 @@ import Text.Read (readMaybe)
 
 data BasketIngestorConfig = BasketIngestorConfig
   { bicBenchmarksUrl :: Text
+  , bicApiKey :: Maybe Text
   , bicBackfillDays :: Int
   , bicSampleIntervalSeconds :: Integer
   , bicPollSeconds :: Int
@@ -84,10 +86,19 @@ parsePythPrice feedId = withObject "PythPrice" $ \v -> do
       , pppPublishTime = publishTime
       }
 
-fetchBasketSnapshotAt :: Manager -> Text -> Integer -> Integer -> IO (Either Text (Integer, Value))
-fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
+fetchBasketSnapshotAt
+  :: Manager
+  -> Text
+  -> Maybe Text
+  -> Integer
+  -> Integer
+  -> IO (Either Text (Integer, Value))
+fetchBasketSnapshotAt manager benchmarksUrl apiKey intervalSeconds timestamp = do
   requestBase <- parseRequest $ T.unpack requestUrl
-  let request = setQueryString queryParams requestBase
+  let request =
+        setQueryString queryParams requestBase
+          { requestHeaders = authHeaders <> requestHeaders requestBase
+          }
   response <- httpLbs request manager
   let code = statusCode (responseStatus response)
   if code < 200 || code >= 300
@@ -106,6 +117,12 @@ fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
     queryParams =
       ("parsed", Just "true")
         : [("ids", Just (encodeUtf8 (bcFeedId component))) | component <- basketComponents]
+
+    authHeaders =
+      case apiKey of
+        Just key | not (T.null $ T.strip key) ->
+          [("Authorization", encodeUtf8 $ "Bearer " <> T.strip key)]
+        _ -> []
 
     decodeSnapshot :: LBS.ByteString -> Either Text (Integer, Value)
     decodeSnapshot body = do
@@ -158,7 +175,14 @@ runBasketBackfill manager pool cfg = do
       , field "sample_interval_seconds" interval
       ]
     forM_ missing $ \ts -> do
-      result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) interval ts
+      result <-
+        try @SomeException $
+          fetchBasketSnapshotAt
+            manager
+            (bicBenchmarksUrl cfg)
+            (bicApiKey cfg)
+            interval
+            ts
       case result of
         Left err ->
           logWarnEvery

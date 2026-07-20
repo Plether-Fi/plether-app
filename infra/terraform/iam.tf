@@ -30,7 +30,10 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
         "ssm:GetParameters",
         "ssm:GetParameter"
       ]
-      Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*"
+      Resource = compact([
+        "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*",
+        local.external_pyth_api_key_parameter_arn,
+      ])
     }]
   })
 }

@@ -6,6 +6,7 @@ module Plether.Ethereum.Rpc
   , ethLatestBlockTimestamp
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
+  , ethGetBalance
   , ethGasPrice
   , ethMaxPriorityFeePerGas
   , ethEstimateGas
@@ -86,6 +87,11 @@ ethGetTransactionCountAtBlock client address blockNumber = do
       "eth_getTransactionCount"
       (toJsonArray [String address, String $ "0x" <> intToHex (max 0 blockNumber)])
   pure $ hexIntegerResult result "eth_getTransactionCount"
+
+ethGetBalance :: EthClient -> Text -> IO (Either RpcError Integer)
+ethGetBalance client address = do
+  result <- rpcCall client "eth_getBalance" (toJsonArray [String address, String "latest"])
+  pure $ hexIntegerResult result "eth_getBalance"
 
 ethGasPrice :: EthClient -> IO (Either RpcError Integer)
 ethGasPrice client = do

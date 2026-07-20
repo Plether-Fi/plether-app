@@ -1,6 +1,7 @@
 module Plether.Pyth.RevealPayload
   ( maxComponentPublishTimeDivergence
   , validatePublishTimes
+  , validateLatestPublishTimes
   , validateRevealWindow
   ) where
 
@@ -28,6 +29,31 @@ validatePublishTimes publishTimes =
               <> T.pack (show maxComponentPublishTimeDivergence)
               <> "s policy"
         else Right (minimumTs, maximumTs)
+
+validateLatestPublishTimes
+  :: Integer -- fetch time
+  -> Integer -- maximum permitted age
+  -> [Integer]
+  -> Either Text (Integer, Integer)
+validateLatestPublishTimes fetchedAt maxAge publishTimes = do
+  (minimumTs, maximumTs) <- validatePublishTimes publishTimes
+  let age = fetchedAt - minimumTs
+      futureSkew = maximumTs - fetchedAt
+  if age > max 0 maxAge
+    then
+      Left $
+        "latest payload is "
+          <> T.pack (show age)
+          <> "s old, over "
+          <> T.pack (show (max 0 maxAge))
+          <> "s policy"
+    else if futureSkew > maxComponentPublishTimeDivergence
+      then
+        Left $
+          "latest payload publish time is "
+            <> T.pack (show futureSkew)
+            <> "s in the future"
+      else Right (minimumTs, maximumTs)
 
 validateRevealWindow
   :: Integer -- commit time

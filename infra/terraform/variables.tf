@@ -50,7 +50,7 @@ variable "pyth_api_key" {
   type        = string
   default     = ""
   sensitive   = true
-  description = "Pyth API key managed by Terraform. Prefer pyth_api_key_ssm_parameter_name for an existing SecureString."
+  description = "Pyth API key managed by Terraform. It must be entitled to every configured basket feed, including FX feeds; prefer pyth_api_key_ssm_parameter_name for an existing SecureString."
 }
 
 variable "enable_pyth_api_key" {
@@ -64,13 +64,29 @@ variable "pyth_api_key_ssm_parameter_name" {
   default     = null
   nullable    = true
   description = "Existing Pyth API key SecureString parameter name. Sepolia defaults to /plether/sepolia/pyth-api-key. Set to an empty string to disable the external reference."
+
+  validation {
+    condition = (
+      var.pyth_api_key_ssm_parameter_name == null
+      || trimspace(var.pyth_api_key_ssm_parameter_name) == ""
+      || startswith(trimspace(var.pyth_api_key_ssm_parameter_name), "/")
+    )
+    error_message = "pyth_api_key_ssm_parameter_name must be null, empty, or an absolute SSM parameter name beginning with /."
+  }
 }
 
 variable "pyth_hermes_url" {
   type        = string
-  default     = null
-  nullable    = true
-  description = "Hermes base URL. Sepolia defaults to the upgraded endpoint; other environments default to legacy Hermes."
+  default     = "https://pyth.dourolabs.app/hermes"
+  description = "Upgraded Hermes base URL used by backend payload consumers."
+
+  validation {
+    condition = (
+      trimspace(var.pyth_hermes_url) != ""
+      && replace(lower(trimspace(var.pyth_hermes_url)), "/\\/+$/", "") != "https://hermes.pyth.network"
+    )
+    error_message = "pyth_hermes_url must be non-empty and cannot use the legacy Hermes endpoint because its payloads are incompatible with the deployed upgraded Pyth contract."
+  }
 }
 
 variable "pyth_benchmarks_url" {
@@ -86,6 +102,17 @@ variable "pyth_backfill_days" {
 variable "pyth_sample_interval_seconds" {
   type    = string
   default = "60"
+}
+
+variable "pyth_latest_max_age_seconds" {
+  type        = string
+  default     = "10"
+  description = "Maximum accepted age of a latest Hermes payload before it may be promoted to the cache. Capped at 10 seconds to preserve headroom below the oracle's 15-second staleness limit."
+
+  validation {
+    condition     = can(regex("^([1-9]|10)$", trimspace(var.pyth_latest_max_age_seconds)))
+    error_message = "pyth_latest_max_age_seconds must be a whole number from 1 through 10 to preserve headroom below the oracle's 15-second staleness limit."
+  }
 }
 
 variable "perps_rpc_url" {

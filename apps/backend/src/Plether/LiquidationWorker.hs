@@ -4,10 +4,22 @@ module Plether.LiquidationWorker
   , loadLiquidationWorkerConfig
   , runLiquidationWorker
   , decodeCachedPythPayload
+  , LiquidationPayloadCircuitDecision (..)
+  , liquidationPayloadCircuitDecision
+  , LiquidationSignerCircuitDecision (..)
+  , liquidationSignerCircuitDecision
+  , LiquidationPendingSignerAction (..)
+  , liquidationPendingSignerAction
+  , isInsufficientFundsRpcError
+  , liquidationPayloadFingerprint
+  , payloadGlobalSimulationRevertSelector
   , isLiquidationReceiptFor
   , isExpectedLiquidationSimulationRevert
   , liquidationIndexRange
   , sameNonceReplacementFees
+  , checkLiveSignerBalance
+  , transactionMaximumCost
+  , canAffordTransaction
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -15,6 +27,7 @@ import Control.Exception (bracket)
 import Control.Monad (forM_, unless, when)
 import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -25,21 +38,31 @@ import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( PerpsLiquidationCandidateRow (..)
+  , PerpsLiquidationRejectedPayloadRow (..)
+  , PerpsLiquidationSignerRetryRow (..)
   , PythUpdatePayloadRow (..)
   , clearPerpsLiquidationCandidatePending
+  , clearPerpsLiquidationRejectedPayload
+  , clearPerpsLiquidationSignerRetry
   , deletePerpsLiquidationCandidate
   , getLatestPythUpdatePayload
   , getPerpsLiquidationCandidates
   , getPerpsLiquidationLastIndexedBlock
+  , getPerpsLiquidationRejectedPayload
+  , getPerpsLiquidationSignerRetry
   , getPendingPerpsLiquidationCandidate
   , markPerpsLiquidationCandidateChecked
   , recordPerpsLiquidationCandidateError
+  , recordPerpsLiquidationCandidateBroadcastAttempt
   , recordPerpsLiquidationCandidatePending
+  , recordPerpsLiquidationRejectedPayload
+  , recordPerpsLiquidationSignerRetry
   , setPerpsLiquidationLastIndexedBlock
   , tryPerpsLiquidationLock
   , unlockPerpsLiquidationLock
   , upsertPerpsLiquidationCandidate
   )
+import Plether.Ethereum.Abi (encodeUint256, keccak256)
 import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
 import qualified Plether.Ethereum.Contracts.Perps as Perps
 import Plether.Ethereum.Rpc
@@ -48,6 +71,7 @@ import Plether.Ethereum.Rpc
   , ethEstimateGas
   , ethGasPrice
   , ethGetLogs
+  , ethGetBalance
   , ethGetTransactionCount
   , ethGetTransactionCountAtBlock
   , ethGetTransactionReceipt
@@ -76,6 +100,24 @@ import Text.Read (readMaybe)
 data LiquidationWorkerMode
   = LiquidationWorkerLoop
   | LiquidationWorkerOnce
+  deriving stock (Show, Eq)
+
+data LiquidationPayloadCircuitDecision
+  = ProcessLiquidationPayload
+  | ClearRejectedLiquidationPayload
+  | SuppressRejectedLiquidationPayload
+  deriving stock (Show, Eq)
+
+data LiquidationSignerCircuitDecision
+  = SignerTransactionReady
+  | RecheckSignerTransaction
+  | SuppressSignerTransaction
+  deriving stock (Show, Eq)
+
+data LiquidationPendingSignerAction
+  = ReplacePendingSignerTransaction
+  | RebroadcastPendingSignerTransaction
+  | WaitForPendingSignerTransaction
   deriving stock (Show, Eq)
 
 data LiquidationWorkerConfig = LiquidationWorkerConfig
@@ -276,9 +318,17 @@ processCandidates cfg conn client workerAddress dryRun = do
       (lwcChainId cfg)
       (lwcCfdEngine cfg)
       (lwcPendingReplacementSeconds cfg)
+      pendingBroadcastRetrySeconds
   case pending of
     Just candidate -> reconcilePendingCandidate cfg conn client workerAddress candidate
     Nothing -> do
+      signerReady <-
+        if dryRun
+          then pure True
+          else checkSignerTransactionReadiness cfg conn
+      when signerReady processAvailableCandidates
+  where
+    processAvailableCandidates = do
       candidates <-
         getPerpsLiquidationCandidates
           conn
@@ -303,26 +353,72 @@ processCandidates cfg conn client workerAddress dryRun = do
                   "Latest cached Pyth payload could not be decoded"
                   (workerLogFields cfg <> [field "error" err])
               Right (_, updateData) -> do
-                feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
-                case feeResult of
-                  Left err ->
-                    logWarnEvery
-                      60
-                      "liquidation_update_fee_fetch_failed"
-                      "Liquidation worker could not fetch the Pyth update fee"
-                      ( workerLogFields cfg
-                          <> [ field "candidate_count" $ length candidates
-                             , field "error" $ rpcErrorText err
-                             ]
-                      )
-                  Right updateFee ->
-                    processCandidateBatch candidates updateData updateFee
-  where
-    processCandidateBatch [] _ _ = pure ()
-    processCandidateBatch (candidate : rest) updateData updateFee = do
+                let payloadKey =
+                      liquidationPayloadFingerprint
+                        (lwcPletherOracle cfg)
+                        (lwcOrderRouter cfg)
+                        updateData
+                rejectedPayload <-
+                  getPerpsLiquidationRejectedPayload
+                    conn
+                    (lwcChainId cfg)
+                    (lwcCfdEngine cfg)
+                case
+                    liquidationPayloadCircuitDecision
+                      (plrprPayloadKey <$> rejectedPayload)
+                      payloadKey
+                  of
+                  SuppressRejectedLiquidationPayload ->
+                    case rejectedPayload of
+                      Just rejected ->
+                        logWarnEvery
+                          60
+                          "liquidation_pyth_payload_suppressed"
+                          "Liquidation scan is waiting for a new Pyth payload after a deterministic oracle rejection"
+                          ( workerLogFields cfg
+                              <> [ field "candidate_count" $ length candidates
+                                 , field "payload_key" payloadKey
+                                 , field "revert_selector" $ plrprSelector rejected
+                                 , field "rejected_at" $ plrprRejectedAt rejected
+                                 , field "error" $ plrprError rejected
+                                 ]
+                          )
+                      Nothing -> processPayload candidates payloadKey updateData
+                  ClearRejectedLiquidationPayload -> do
+                    clearPerpsLiquidationRejectedPayload
+                      conn
+                      (lwcChainId cfg)
+                      (lwcCfdEngine cfg)
+                    logInfo
+                      "liquidation_pyth_payload_changed"
+                      "Liquidation scan resumed with a new Pyth payload"
+                      (workerLogFields cfg <> [field "payload_key" payloadKey])
+                    processPayload candidates payloadKey updateData
+                  ProcessLiquidationPayload ->
+                    processPayload candidates payloadKey updateData
+
+    processPayload candidates payloadKey updateData = do
+      feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
+      case feeResult of
+        Left err ->
+          logWarnEvery
+            60
+            "liquidation_update_fee_fetch_failed"
+            "Liquidation worker could not fetch the Pyth update fee"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "payload_key" payloadKey
+                   , field "error" $ rpcErrorText err
+                   ]
+            )
+        Right updateFee ->
+          processCandidateBatch candidates payloadKey updateData updateFee
+
+    processCandidateBatch [] _ _ _ = pure ()
+    processCandidateBatch (candidate : rest) payloadKey updateData updateFee = do
       canContinue <-
-        processCandidate cfg conn client workerAddress dryRun updateData updateFee candidate
-      when canContinue $ processCandidateBatch rest updateData updateFee
+        processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate
+      when canContinue $ processCandidateBatch rest payloadKey updateData updateFee
 
 processCandidate
   :: LiquidationWorkerConfig
@@ -330,11 +426,12 @@ processCandidate
   -> EthClient
   -> Text
   -> Bool
+  -> Text
   -> [ByteString]
   -> Integer
   -> PerpsLiquidationCandidateRow
   -> IO Bool
-processCandidate cfg conn client workerAddress dryRun updateData updateFee candidate = do
+processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate = do
   let account = plcrAccount candidate
   positionResult <- Perps.getPositionSize client (lwcCfdEngine cfg) account
   case positionResult of
@@ -366,6 +463,26 @@ processCandidate cfg conn client workerAddress dryRun updateData updateFee candi
               -- The next sweep re-reads authoritative on-chain position state.
               markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
               pure True
+          | Just selectorText <- payloadGlobalSimulationRevertSelector err -> do
+              let failure = "liquidation simulation rejected Pyth payload: " <> rpcErrorText err
+              recordPerpsLiquidationRejectedPayload
+                conn
+                (lwcChainId cfg)
+                (lwcCfdEngine cfg)
+                payloadKey
+                selectorText
+                failure
+              recordCandidateError cfg conn candidate "simulation" failure
+              logError
+                "liquidation_pyth_payload_rejected"
+                "Liquidation worker suppressed a deterministic Pyth payload until the cache changes"
+                ( candidateLogFields cfg candidate
+                    <> [ field "payload_key" payloadKey
+                       , field "revert_selector" selectorText
+                       , field "error" failure
+                       ]
+                )
+              pure False
           | otherwise -> do
               recordCandidateError cfg conn candidate "simulation" $ "liquidation simulation failed: " <> rpcErrorText err
               pure False
@@ -391,53 +508,63 @@ processCandidate cfg conn client workerAddress dryRun updateData updateFee candi
                   recordCandidateError cfg conn candidate "transaction_prepare" err
                   pure False
                 Right (tx, signed) -> do
-                  let rawTx = signedRawTransaction signed
-                      txHash = signedTransactionHash signed
-                      pendingCandidate =
-                        candidate
-                          { plcrAttemptCount = plcrAttemptCount candidate + 1
-                          , plcrPendingTxHash = Just txHash
-                          , plcrPendingNonce = Just $ txNonce tx
-                          }
-                  -- Persist the deterministic signed hash before broadcast. If the
-                  -- RPC response is lost, the next iteration reconciles this nonce
-                  -- instead of creating a transaction behind it.
-                  persistPendingTransaction cfg conn workerAddress account tx signed
-                  sendResult <- ethSendRawTransaction client rawTx
-                  case sendResult of
+                  affordabilityResult <- checkTransactionAffordability client workerAddress tx
+                  case affordabilityResult of
                     Left err -> do
-                      recordCandidateError cfg conn pendingCandidate "transaction_broadcast" $
-                        "broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
+                      recordSignerTransactionRetry cfg conn tx err
+                      recordCandidateError cfg conn candidate "transaction_affordability" err
                       pure False
-                    Right returnedHash
-                      | normalizeAddress returnedHash /= normalizeAddress txHash -> do
-                          recordCandidateErrorWith
-                            cfg
-                            conn
-                            pendingCandidate
-                            "broadcast_hash_mismatch"
-                            [field "returned_transaction_hash" returnedHash]
-                            "RPC returned a transaction hash that did not match the signed transaction hash"
+                    Right _ -> do
+                      let rawTx = signedRawTransaction signed
+                          txHash = signedTransactionHash signed
+                          pendingCandidate =
+                            candidate
+                              { plcrAttemptCount = plcrAttemptCount candidate + 1
+                              , plcrPendingTxHash = Just txHash
+                              , plcrPendingNonce = Just $ txNonce tx
+                              }
+                      -- Persist the deterministic signed hash before broadcast. If the
+                      -- RPC response is lost, the next iteration reconciles this nonce
+                      -- instead of creating a transaction behind it.
+                      persistPendingTransaction cfg conn workerAddress account tx signed
+                      recordPendingBroadcastAttempt cfg conn account
+                      sendResult <- ethSendRawTransaction client rawTx
+                      case sendResult of
+                        Left err -> do
+                          when (isInsufficientFundsRpcError err) $
+                            recordSignerTransactionRetry cfg conn tx (rpcErrorText err)
+                          recordCandidateError cfg conn pendingCandidate "transaction_broadcast" $
+                            "broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
                           pure False
-                      | otherwise -> do
-                          logInfo
-                            "liquidation_transaction_submitted"
-                            "Liquidation transaction was submitted"
-                            ( candidateLogFields cfg pendingCandidate
-                                <> [ field "transaction_hash" txHash
-                                   , field "nonce" $ txNonce tx
-                                   , field "gas_limit" $ txGasLimit tx
-                                   , field "value_wei" $ show $ txValue tx
-                                   , field "max_priority_fee_per_gas_wei" $ show $ txMaxPriorityFeePerGas tx
-                                   , field "max_fee_per_gas_wei" $ show $ txMaxFeePerGas tx
-                                   ]
-                            )
-                          receiptResult <- waitForReceipt client txHash 60
-                          case receiptResult of
-                            Left err -> do
-                              recordCandidateError cfg conn pendingCandidate "receipt_wait" err
+                        Right returnedHash
+                          | normalizeAddress returnedHash /= normalizeAddress txHash -> do
+                              recordCandidateErrorWith
+                                cfg
+                                conn
+                                pendingCandidate
+                                "broadcast_hash_mismatch"
+                                [field "returned_transaction_hash" returnedHash]
+                                "RPC returned a transaction hash that did not match the signed transaction hash"
                               pure False
-                            Right receipt -> handleLiquidationReceipt cfg conn client pendingCandidate receipt
+                          | otherwise -> do
+                              logInfo
+                                "liquidation_transaction_submitted"
+                                "Liquidation transaction was submitted"
+                                ( candidateLogFields cfg pendingCandidate
+                                    <> [ field "transaction_hash" txHash
+                                       , field "nonce" $ txNonce tx
+                                       , field "gas_limit" $ txGasLimit tx
+                                       , field "value_wei" $ show $ txValue tx
+                                       , field "max_priority_fee_per_gas_wei" $ show $ txMaxPriorityFeePerGas tx
+                                       , field "max_fee_per_gas_wei" $ show $ txMaxFeePerGas tx
+                                       ]
+                                )
+                              receiptResult <- waitForReceipt client txHash 60
+                              case receiptResult of
+                                Left err -> do
+                                  recordCandidateError cfg conn pendingCandidate "receipt_wait" err
+                                  pure False
+                                Right receipt -> handleLiquidationReceipt cfg conn client pendingCandidate receipt
 
 prepareLiquidationTransaction
   :: LiquidationWorkerConfig
@@ -504,6 +631,14 @@ persistPendingTransaction cfg conn sender account tx signed =
     (txMaxPriorityFeePerGas tx)
     (txMaxFeePerGas tx)
 
+recordPendingBroadcastAttempt :: LiquidationWorkerConfig -> Connection -> Text -> IO ()
+recordPendingBroadcastAttempt cfg conn account =
+  recordPerpsLiquidationCandidateBroadcastAttempt
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    account
+
 reconcilePendingCandidate
   :: LiquidationWorkerConfig
   -> Connection
@@ -569,10 +704,17 @@ reconcileMissingReceipt cfg conn client pendingSender candidate nonce txHash raw
       | confirmedNonce > nonce ->
           resolveConsumedPendingNonce cfg conn client candidate txHash nonce
     _
-      | plcrPendingStale candidate ->
-          replacePendingTransaction cfg conn client pendingSender candidate nonce
+      | plcrPendingStale candidate -> do
+          signerReady <- checkSignerTransactionReadiness cfg conn
+          case liquidationPendingSignerAction signerReady (plcrPendingBroadcastDue candidate) of
+            ReplacePendingSignerTransaction ->
+              replacePendingTransaction cfg conn client pendingSender candidate nonce txHash rawTxHex
+            RebroadcastPendingSignerTransaction ->
+              rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+            WaitForPendingSignerTransaction -> pure ()
       | otherwise ->
-          rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+          when (plcrPendingBroadcastDue candidate) $
+            rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
 
 rebroadcastPendingTransaction
   :: LiquidationWorkerConfig
@@ -589,9 +731,13 @@ rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex =
       recordCandidateCritical cfg conn candidate "liquidation_pending_transaction_invalid" $
         "pending raw transaction could not be decoded for " <> txHash <> ": " <> err
     Right rawTx -> do
+      recordPendingBroadcastAttempt cfg conn (plcrAccount candidate)
       rebroadcastResult <- ethSendRawTransaction client rawTx
       case rebroadcastResult of
-        Left err ->
+        Left err -> do
+          when (isInsufficientFundsRpcError err) $
+            forM_ (pendingCandidateMaximumCost candidate) $ \requiredBalance ->
+              recordSignerReadinessFailure cfg conn requiredBalance (rpcErrorText err)
           recordCandidateError cfg conn candidate "transaction_rebroadcast" $
             "waiting for pending transaction " <> txHash <> " after rebroadcast: " <> rpcErrorText err
         Right returnedHash
@@ -621,8 +767,10 @@ replacePendingTransaction
   -> Text
   -> PerpsLiquidationCandidateRow
   -> Integer
+  -> Text
+  -> Text
   -> IO ()
-replacePendingTransaction cfg conn client pendingSender candidate nonce =
+replacePendingTransaction cfg conn client pendingSender candidate nonce txHash rawTxHex =
   case
       ( plcrPendingCallData candidate
       , plcrPendingValue candidate
@@ -667,52 +815,63 @@ replacePendingTransaction cfg conn client pendingSender candidate nonce =
               case signResult of
                 Left err -> recordCandidateError cfg conn candidate "replacement_sign" err
                 Right signed -> do
-                  let replacementHash = signedTransactionHash signed
-                      replacementCandidate =
-                        candidate
-                          { plcrAttemptCount = plcrAttemptCount candidate + 1
-                          , plcrPendingTxHash = Just replacementHash
-                          , plcrPendingNonce = Just nonce
-                          }
-                  persistPendingTransaction
-                    cfg
-                    conn
-                    pendingSender
-                    (plcrAccount candidate)
-                    replacementTx
-                    signed
-                  sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
-                  case sendResult of
-                    Left err ->
-                      recordCandidateError cfg conn replacementCandidate "replacement_broadcast" $
-                        "same-nonce replacement broadcast is uncertain for "
-                          <> replacementHash
-                          <> ": "
-                          <> rpcErrorText err
-                    Right returnedHash
-                      | normalizeAddress returnedHash == normalizeAddress replacementHash ->
-                          logWarn
-                            "liquidation_transaction_replaced"
-                            "Liquidation worker replaced a stale transaction at the same nonce"
-                            ( candidateLogFields cfg replacementCandidate
-                                <> maybe
-                                  []
-                                  (\previousHash -> [field "previous_transaction_hash" previousHash])
-                                  (plcrPendingTxHash candidate)
-                                <> [ field "transaction_hash" returnedHash
-                                   , field "nonce" nonce
-                                   , field "max_priority_fee_per_gas_wei" $ show replacementPriorityFee
-                                   , field "max_fee_per_gas_wei" $ show replacementMaxFee
-                                   ]
-                            )
-                      | otherwise ->
-                          recordCandidateErrorWith
-                            cfg
-                            conn
-                            replacementCandidate
-                            "replacement_hash_mismatch"
-                            [field "returned_transaction_hash" returnedHash]
-                            "Replacement RPC hash did not match the signed transaction hash"
+                  affordabilityResult <- checkTransactionAffordability client pendingSender replacementTx
+                  case affordabilityResult of
+                    Left err -> do
+                      recordSignerTransactionRetry cfg conn replacementTx err
+                      recordCandidateError cfg conn candidate "replacement_affordability" err
+                      when (plcrPendingBroadcastDue candidate) $
+                        rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+                    Right _ -> do
+                      let replacementHash = signedTransactionHash signed
+                          replacementCandidate =
+                            candidate
+                              { plcrAttemptCount = plcrAttemptCount candidate + 1
+                              , plcrPendingTxHash = Just replacementHash
+                              , plcrPendingNonce = Just nonce
+                              }
+                      persistPendingTransaction
+                        cfg
+                        conn
+                        pendingSender
+                        (plcrAccount candidate)
+                        replacementTx
+                        signed
+                      recordPendingBroadcastAttempt cfg conn (plcrAccount candidate)
+                      sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
+                      case sendResult of
+                        Left err -> do
+                          when (isInsufficientFundsRpcError err) $
+                            recordSignerTransactionRetry cfg conn replacementTx (rpcErrorText err)
+                          recordCandidateError cfg conn replacementCandidate "replacement_broadcast" $
+                            "same-nonce replacement broadcast is uncertain for "
+                              <> replacementHash
+                              <> ": "
+                              <> rpcErrorText err
+                        Right returnedHash
+                          | normalizeAddress returnedHash == normalizeAddress replacementHash ->
+                              logWarn
+                                "liquidation_transaction_replaced"
+                                "Liquidation worker replaced a stale transaction at the same nonce"
+                                ( candidateLogFields cfg replacementCandidate
+                                    <> maybe
+                                      []
+                                      (\previousHash -> [field "previous_transaction_hash" previousHash])
+                                      (plcrPendingTxHash candidate)
+                                    <> [ field "transaction_hash" returnedHash
+                                       , field "nonce" nonce
+                                       , field "max_priority_fee_per_gas_wei" $ show replacementPriorityFee
+                                       , field "max_fee_per_gas_wei" $ show replacementMaxFee
+                                       ]
+                                )
+                          | otherwise ->
+                              recordCandidateErrorWith
+                                cfg
+                                conn
+                                replacementCandidate
+                                "replacement_hash_mismatch"
+                                [field "returned_transaction_hash" returnedHash]
+                                "Replacement RPC hash did not match the signed transaction hash"
     _ ->
       recordCandidateCritical cfg conn candidate "liquidation_replacement_state_incomplete" $
         "pending liquidation lacks fee or calldata fields required for same-nonce replacement"
@@ -1051,14 +1210,66 @@ isLiquidationReceiptFor cfdEngine account receipt =
 
 isExpectedLiquidationSimulationRevert :: RpcError -> Bool
 isExpectedLiquidationSimulationRevert = \case
-  RpcNodeError _ _ (Just revertData) ->
-    let normalizedData = T.toLower revertData
+  RpcNodeError _ message revertData ->
+    let normalizedError = normalizedNodeError message revertData
      in any
-          (`T.isInfixOf` normalizedData)
+          (`T.isInfixOf` normalizedError)
           [ "0x451cebb2" -- CfdEngine__PositionIsSolvent()
           , "0x4565ea0c" -- CfdEngine__NoPositionToLiquidate()
           ]
   _ -> False
+
+payloadGlobalSimulationRevertSelector :: RpcError -> Maybe Text
+payloadGlobalSimulationRevertSelector = \case
+  RpcNodeError _ message revertData ->
+    findKnownSelector $ normalizedNodeError message revertData
+  _ -> Nothing
+  where
+    findKnownSelector revertData =
+      case filter (`T.isInfixOf` revertData) payloadGlobalRevertSelectors of
+        selectorText : _ -> Just selectorText
+        [] -> Nothing
+
+    payloadGlobalRevertSelectors =
+      [ "0x2acbe915" -- InvalidWormholeVaa()
+      , "0xf4a25e0f" -- PletherOracle__StalePrice()
+      ]
+
+normalizedNodeError :: Text -> Maybe Text -> Text
+normalizedNodeError message revertData =
+  T.toLower $ message <> maybe "" (" " <>) revertData
+
+isInsufficientFundsRpcError :: RpcError -> Bool
+isInsufficientFundsRpcError = \case
+  RpcNodeError _ message errData ->
+    let normalizedError = normalizedNodeError message errData
+     in any
+          (`T.isInfixOf` normalizedError)
+          [ "insufficient funds"
+          , "insufficient balance for transfer"
+          ]
+  _ -> False
+
+liquidationPayloadFingerprint :: Text -> Text -> [ByteString] -> Text
+liquidationPayloadFingerprint pletherOracle orderRouter updateData =
+  encodeHex $
+    keccak256 $
+      framed "plether:liquidation-pyth-payload:v1"
+        <> labelled "plether-oracle" (TE.encodeUtf8 $ normalizeAddress pletherOracle)
+        <> labelled "order-router" (TE.encodeUtf8 $ normalizeAddress orderRouter)
+        <> encodeUint256 (fromIntegral $ length updateData)
+        <> mconcat (map framed updateData)
+  where
+    labelled label value = framed label <> framed value
+    framed value = encodeUint256 (fromIntegral $ BS.length value) <> value
+
+liquidationPayloadCircuitDecision :: Maybe Text -> Text -> LiquidationPayloadCircuitDecision
+liquidationPayloadCircuitDecision maybeRejectedKey payloadKey =
+  case normalizeAddress <$> maybeRejectedKey of
+    Nothing -> ProcessLiquidationPayload
+    Just rejectedKey
+      | rejectedKey == normalizeAddress payloadKey -> SuppressRejectedLiquidationPayload
+      | otherwise -> ClearRejectedLiquidationPayload
 
 mapMaybePositionOpened :: [RpcLog] -> [(Text, Integer)]
 mapMaybePositionOpened =
@@ -1092,6 +1303,138 @@ sameNonceReplacementFees feeBufferBps gasPrice priorityBase oldPriorityFee oldMa
     replacementMaxFee =
       max replacementPriorityFee $
         max currentMaxFee (applyBuffer oldMaxFee 1_250)
+
+liquidationSignerCircuitDecision :: Maybe Bool -> LiquidationSignerCircuitDecision
+liquidationSignerCircuitDecision = \case
+  Nothing -> SignerTransactionReady
+  Just True -> RecheckSignerTransaction
+  Just False -> SuppressSignerTransaction
+
+liquidationPendingSignerAction :: Bool -> Bool -> LiquidationPendingSignerAction
+liquidationPendingSignerAction signerReady broadcastDue
+  | signerReady = ReplacePendingSignerTransaction
+  | broadcastDue = RebroadcastPendingSignerTransaction
+  | otherwise = WaitForPendingSignerTransaction
+
+-- Keep the cooldown in PostgreSQL so restarts and repeated --once invocations
+-- cannot turn an unfunded signer into a simulation/replacement RPC storm.
+signerTransactionRetrySeconds :: Int
+signerTransactionRetrySeconds = 60
+
+pendingBroadcastRetrySeconds :: Int
+pendingBroadcastRetrySeconds = 60
+
+checkSignerTransactionReadiness
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> IO Bool
+checkSignerTransactionReadiness cfg conn = do
+  retry <-
+    getPerpsLiquidationSignerRetry
+      conn
+      (lwcChainId cfg)
+      (lwcCfdEngine cfg)
+      signerTransactionRetrySeconds
+  case liquidationSignerCircuitDecision (plrsrRetryDue <$> retry) of
+    SignerTransactionReady -> pure True
+    SuppressSignerTransaction -> do
+      forM_ retry $ \blocked ->
+        logWarnEvery
+          signerTransactionRetrySeconds
+          "liquidation_signer_transaction_suppressed"
+          "Liquidation worker is waiting before rechecking signer transaction affordability"
+          ( signerRetryLogFields cfg blocked
+              <> [field "retry_seconds" signerTransactionRetrySeconds]
+          )
+      pure False
+    RecheckSignerTransaction -> do
+      clearPerpsLiquidationSignerRetry
+        conn
+        (lwcChainId cfg)
+        (lwcCfdEngine cfg)
+      forM_ retry $ \blocked ->
+        logInfo
+          "liquidation_signer_transaction_retrying"
+          "Liquidation worker is allowing one freshly priced signer transaction attempt"
+          (signerRetryLogFields cfg blocked)
+      pure True
+
+recordSignerTransactionRetry :: LiquidationWorkerConfig -> Connection -> Tx1559 -> Text -> IO ()
+recordSignerTransactionRetry cfg conn tx =
+  recordSignerReadinessFailure cfg conn (transactionMaximumCost tx)
+
+recordSignerReadinessFailure :: LiquidationWorkerConfig -> Connection -> Integer -> Text -> IO ()
+recordSignerReadinessFailure cfg conn requiredBalance err = do
+  recordPerpsLiquidationSignerRetry
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    requiredBalance
+    err
+  logErrorEvery
+    signerTransactionRetrySeconds
+    "liquidation_signer_transaction_unready"
+    "Liquidation worker paused new signer transaction attempts"
+    ( workerLogFields cfg
+        <> [ field "required_balance_wei" $ show requiredBalance
+           , field "retry_seconds" signerTransactionRetrySeconds
+           , field "error" err
+           ]
+    )
+
+signerRetryLogFields :: LiquidationWorkerConfig -> PerpsLiquidationSignerRetryRow -> [LogField]
+signerRetryLogFields cfg retry =
+  workerLogFields cfg
+    <> [ field "required_balance_wei" $ maybe "unknown" (T.pack . show) $ plrsrRequiredBalance retry
+       , field "retry_recorded_at" $ plrsrRecordedAt retry
+       , field "error" $ plrsrError retry
+       ]
+
+-- | Skip live-balance readiness entirely in dry-run mode. In live mode, make
+-- startup fail closed when the signer balance cannot be read or is zero.
+checkLiveSignerBalance
+  :: Bool
+  -> IO (Either RpcError Integer)
+  -> IO (Either Text (Maybe Integer))
+checkLiveSignerBalance dryRun fetchBalance
+  | dryRun = pure $ Right Nothing
+  | otherwise =
+      fetchBalance >>= \case
+        Left err ->
+          pure $ Left $ "could not read liquidation signer balance: " <> rpcErrorText err
+        Right balance
+          | balance <= 0 -> pure $ Left "liquidation signer has zero ETH balance"
+          | otherwise -> pure $ Right $ Just balance
+
+transactionMaximumCost :: Tx1559 -> Integer
+transactionMaximumCost tx =
+  txValue tx + txGasLimit tx * txMaxFeePerGas tx
+
+pendingCandidateMaximumCost :: PerpsLiquidationCandidateRow -> Maybe Integer
+pendingCandidateMaximumCost candidate = do
+  value <- plcrPendingValue candidate
+  gasLimit <- plcrPendingGasLimit candidate
+  maxFee <- plcrPendingMaxFeePerGas candidate
+  pure $ value + gasLimit * maxFee
+
+canAffordTransaction :: Integer -> Tx1559 -> Bool
+canAffordTransaction balance tx = balance >= transactionMaximumCost tx
+
+checkTransactionAffordability :: EthClient -> Text -> Tx1559 -> IO (Either Text Integer)
+checkTransactionAffordability client signer tx =
+  ethGetBalance client signer >>= \case
+    Left err ->
+      pure $ Left $ "could not recheck liquidation signer balance: " <> rpcErrorText err
+    Right balance
+      | canAffordTransaction balance tx -> pure $ Right balance
+      | otherwise ->
+          pure $
+            Left $
+              "liquidation signer balance "
+                <> T.pack (show balance)
+                <> " wei is below the transaction maximum cost "
+                <> T.pack (show $ transactionMaximumCost tx)
+                <> " wei"
 
 rpcErrorText :: RpcError -> Text
 rpcErrorText = \case

@@ -50,6 +50,7 @@ main = do
           when (cfgPythIngestionEnabled cfg) $ do
             let basketCfg = BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicApiKey = cfgPythApiKey cfg
                   , bicBackfillDays = cfgPythBackfillDays cfg
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 15 * 60
