@@ -1,11 +1,12 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
+import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { DOCS_LINKS } from '../config/docs'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -60,6 +61,7 @@ interface PerpsAccountPanelProps {
   tradeHistory?: PerpsTradeHistoryRow[]
   equityUsdc?: bigint
   freeBuyingPowerUsdc?: bigint
+  traderClaimBalanceUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
@@ -266,7 +268,7 @@ function AccountMetric({
           <Tooltip
             content={tooltip}
             position="left"
-            className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
+            className={INFO_TOOLTIP_PANEL_CLASS_NAME}
             docsLink={tooltipDocsLink}
           >
             <span
@@ -302,6 +304,7 @@ function formatDuration(seconds: number): string {
 }
 
 function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
+  const { isAaManifestConfigured } = usePerpsIdentity()
   if (secondsToExpiry === undefined) {
     return (
       <div>
@@ -315,7 +318,11 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
     return (
       <div>
         <div className="font-semibold text-brand-orange">Expired</div>
-        <div className="mt-1 text-xs text-content-secondary">Clean up to release reserved margin</div>
+        <div className="mt-1 text-xs text-content-secondary">
+          {isAaManifestConfigured
+            ? 'Keeper cleanup in progress'
+            : 'Clean up to release reserved margin'}
+        </div>
       </div>
     )
   }
@@ -635,6 +642,7 @@ function OrdersView({
   cleanupError?: string
   onCleanupExpiredOrder?: (orderId: bigint) => void
 }) {
+  const { isAaManifestConfigured } = usePerpsIdentity()
   if (rows.length === 0) return <EmptyState label={includeStatus ? 'order history' : 'open orders'} />
 
   return (
@@ -663,7 +671,12 @@ function OrdersView({
                 ? undefined
                 : Number(row.expiryTime) - nowSeconds
               const isExpired = secondsToExpiry !== undefined && secondsToExpiry <= 0
-              const canCleanup = Boolean(row.orderId && isExpired && onCleanupExpiredOrder)
+              const canCleanup = Boolean(
+                !isAaManifestConfigured &&
+                row.orderId &&
+                isExpired &&
+                onCleanupExpiredOrder
+              )
 
               return (
                 <tr key={`${row.market}-${row.side}-${row.type}-${row.price}-${row.orderId?.toString() ?? 'mock'}`}>
@@ -697,7 +710,9 @@ function OrdersView({
                         </Button>
                       ) : (
                         <span className="text-xs text-content-secondary">
-                          Cancel unavailable
+                          {isAaManifestConfigured && isExpired
+                            ? 'Keeper processing'
+                            : 'Cancel unavailable'}
                         </span>
                       )}
                     </td>
@@ -752,11 +767,68 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   )
 }
 
+function TraderClaimCard({
+  amount,
+  onAccountRefresh,
+}: {
+  amount?: bigint
+  onAccountRefresh?: () => void
+}) {
+  const { settleTraderClaim } = usePerpsTrading()
+  const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
+  const [error, setError] = useState<string | undefined>()
+
+  if (amount === undefined || amount <= 0n) return null
+
+  async function handleSettleClaim() {
+    setStatus('pending')
+    setError(undefined)
+    try {
+      await settleTraderClaim()
+      setStatus('idle')
+      onAccountRefresh?.()
+    } catch (cause) {
+      setStatus('failed')
+      setError(cause instanceof Error ? cause.message : 'Claim settlement failed')
+    }
+  }
+
+  return (
+    <div className="border border-positive/30 bg-positive/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="text-xs font-medium uppercase text-content-secondary">Trader claim</div>
+          <div className="mt-1 text-lg font-semibold text-content-primary">
+            <TokenAmount amount={formatPerpsUsdc(amount)} /> USDC
+          </div>
+          <p className="mt-1 text-xs text-content-secondary">
+            Settle the claim into the Trading Account before withdrawing it.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+          isLoading={status === 'pending'}
+          onClick={() => {
+            void handleSettleClaim()
+          }}
+        >
+          Settle Claim
+        </Button>
+      </div>
+      {error ? (
+        <p className="mt-3 text-sm text-brand-orange">{error}</p>
+      ) : null}
+    </div>
+  )
+}
+
 function AccountTabContent({
   activeTab,
   position,
   equityUsdc,
   freeBuyingPowerUsdc,
+  traderClaimBalanceUsdc,
   pendingOrders,
   orderHistory,
   tradeHistory,
@@ -825,15 +897,21 @@ function AccountTabContent({
 
   if (activeTab === 'position') {
     return (
-      <PositionView
-        position={position ?? (isConnected === undefined ? mockPosition : undefined)}
-        equityUsdc={equityUsdc}
-        freeBuyingPowerUsdc={freeBuyingPowerUsdc}
-        isConnected={isConnected}
-        isLoading={isLoading}
-        initialPositionMarginModalOpen={initialPositionMarginModalOpen}
-        onAccountRefresh={onAccountRefresh}
-      />
+      <div className="space-y-4">
+        <TraderClaimCard
+          amount={traderClaimBalanceUsdc}
+          onAccountRefresh={onAccountRefresh}
+        />
+        <PositionView
+          position={position ?? (isConnected === undefined ? mockPosition : undefined)}
+          equityUsdc={equityUsdc}
+          freeBuyingPowerUsdc={freeBuyingPowerUsdc}
+          isConnected={isConnected}
+          isLoading={isLoading}
+          initialPositionMarginModalOpen={initialPositionMarginModalOpen}
+          onAccountRefresh={onAccountRefresh}
+        />
+      </div>
     )
   }
   if (activeTab === 'openOrders') {
@@ -858,6 +936,7 @@ function AccountTabContent({
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
+  const { isAaManifestConfigured } = usePerpsIdentity()
   const [activeTab, setActiveTab] = useState<PerpsAccountTab>(props.initialTab ?? 'position')
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [cleanupOrderId, setCleanupOrderId] = useState<bigint | undefined>()
@@ -918,9 +997,11 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
           nowSeconds={nowSeconds}
           cleanupOrderId={cleanupOrderId}
           cleanupError={cleanupError}
-          onCleanupExpiredOrder={(orderId) => {
-            void handleCleanupExpiredOrder(orderId)
-          }}
+          onCleanupExpiredOrder={isAaManifestConfigured
+            ? undefined
+            : (orderId) => {
+                void handleCleanupExpiredOrder(orderId)
+              }}
           {...props}
         />
       </div>

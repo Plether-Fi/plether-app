@@ -135,7 +135,7 @@ export const FirstDepositAuthorization: Story = {
           <OperationStateCard
             title="USDC transfer authorization"
             stage="Wallet authorization"
-            message="Authorize exactly 10 000 MockUSDC for transfer from the owner wallet to the Trading Account."
+            message="Authorize exactly 10 000 USDC for transfer from the Owner Wallet to the Trading Account."
             tone="success"
             identifierLabel="Destination"
             identifier={ACCOUNT}
@@ -146,7 +146,7 @@ export const FirstDepositAuthorization: Story = {
             message="Receive the authorized USDC, approve the clearinghouse and deposit the complete amount into the Margin Account as one atomic batch."
             tone="pending"
             identifierLabel="Amount"
-            identifier="10 000 MockUSDC"
+            identifier="10 000 USDC"
           />
         </div>
       </div>

@@ -17,6 +17,7 @@ common warnings
 library
     import:           warnings
     exposed-modules:
+        Plether.AA.Pimlico
         Plether.Api
         Plether.Cache
         Plether.Config
@@ -88,6 +89,7 @@ library
         mtl >= 2.3,
         transformers >= 0.6,
         containers >= 0.6,
+        async >= 2.2,
         stm >= 2.5,
         time >= 1.12,
         http-types >= 0.12,
@@ -187,6 +189,7 @@ test-suite plether-api-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.AA.PimlicoSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec

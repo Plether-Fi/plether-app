@@ -98,6 +98,74 @@ variable "faucet_private_key" {
   sensitive = true
 }
 
+variable "provision_aa_proxy" {
+  type        = bool
+  default     = false
+  description = "Provision managed Pimlico proxy credentials on the API task, including while issuance is disabled for recovery."
+}
+
+variable "enable_aa_sponsorship" {
+  type        = bool
+  default     = false
+  description = "Authoritative managed sponsorship issuance/submission kill switch."
+}
+
+variable "pimlico_api_key" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "pimlico_sponsorship_policy_id" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "aa_proxy_origin_token" {
+  type      = string
+  default   = ""
+  sensitive = true
+}
+
+variable "aa_ip_rate_limit_per_minute" {
+  type    = string
+  default = "120"
+}
+
+variable "aa_account_rate_limit_per_minute" {
+  type    = string
+  default = "30"
+}
+
+variable "aa_max_request_bytes" {
+  type    = string
+  default = "262144"
+}
+
+variable "aa_sponsored_gas_alert_wei_per_hour" {
+  type    = string
+  default = "0"
+}
+
+variable "alb_certificate_arn" {
+  type        = string
+  default     = ""
+  description = "ACM certificate ARN for the public API ALB. Required when the AA proxy is provisioned."
+}
+
+variable "api_hostname" {
+  type        = string
+  default     = ""
+  description = "Public DNS hostname covered by alb_certificate_arn and pointed at the API ALB."
+}
+
+variable "operations_alarm_sns_topic_arn" {
+  type        = string
+  default     = ""
+  description = "Optional SNS topic ARN for AA gas-usage and keeper-health CloudWatch alarms."
+}
+
 variable "db_password" {
   type      = string
   sensitive = true
@@ -130,32 +198,32 @@ variable "perps_chain_id" {
 
 variable "perps_usdc" {
   type    = string
-  default = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
+  default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
+  default = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA"
+  default = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
+  default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x731bb0939CE531728459394A277B28Cbff8df049"
+  default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "280884700"
+  default = "288439939"
 }
 
 variable "perps_indexer_confirmations" {

@@ -13,7 +13,7 @@ spec = do
   describe "perpsHistoryRouter" $ do
     it "defaults to the configured current router" $
       perpsHistoryRouter testConfig Nothing
-        `shouldBe` "0x4a0a6c028164a1254e10c3e39cc89af45090069e"
+        `shouldBe` "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
 
     it "normalizes an explicit release router" $
       perpsHistoryRouter testConfig (Just "  0x485703D16FE36369C134DEe2A61C057733E7830F  ")
@@ -37,10 +37,13 @@ testConfig =
     , cfgPythIngestionEnabled = False
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0xf1e1B188b87525C51ECe4bae8627ae621D769651"
-    , cfgPerpsOrderRouter = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
+    , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , cfgPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+    , cfgPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , cfgPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

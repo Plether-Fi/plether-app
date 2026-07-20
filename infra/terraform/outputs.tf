@@ -1,5 +1,5 @@
 output "alb_url" {
-  value = "http://${aws_lb.api.dns_name}"
+  value = var.alb_certificate_arn == "" ? "http://${aws_lb.api.dns_name}" : "https://${var.api_hostname}"
 }
 
 output "ecr_repository_url" {

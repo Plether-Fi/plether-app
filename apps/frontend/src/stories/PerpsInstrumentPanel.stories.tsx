@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { userEvent, within } from 'storybook/test'
 import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
-import { TokenAmount } from '../components/ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 
 function PoolLiquidityTooltip() {
@@ -64,7 +64,7 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
         value: <TokenAmount amount="6.3M" />,
         tooltip: <PoolLiquidityTooltip />,
         tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: 'w-[400px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
       {
@@ -72,7 +72,7 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
         value: '5.24%',
         tooltip: <CostOfCarryTooltip />,
         tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: 'w-[520px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
     ],
@@ -105,7 +105,7 @@ export const PositiveSession: Story = {
         value: <TokenAmount amount="8.7M" />,
         tooltip: <PoolLiquidityTooltip />,
         tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: 'w-[400px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
       {
@@ -113,7 +113,7 @@ export const PositiveSession: Story = {
         value: '4.87%',
         tooltip: <CostOfCarryTooltip />,
         tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: 'w-[520px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
     ],
@@ -134,7 +134,7 @@ export const StaleOracle: Story = {
         value: <TokenAmount amount="6.3M" />,
         tooltip: <PoolLiquidityTooltip />,
         tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: 'w-[400px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
       {
@@ -142,7 +142,7 @@ export const StaleOracle: Story = {
         value: '5.24%',
         tooltip: <CostOfCarryTooltip />,
         tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: 'w-[520px] whitespace-normal p-4',
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
     ],

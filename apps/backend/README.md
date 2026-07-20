@@ -21,7 +21,10 @@ vim .env
 # Build
 cabal build
 
-# Run
+# Export the file, then run (the backend does not load dotenv files itself)
+set -a
+source .env
+set +a
 cabal run plether-api
 ```
 
@@ -226,7 +229,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=273137426 \
+PERPS_INDEXER_START_BLOCK=288439939 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -368,9 +371,18 @@ Local URLs:
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by the managed sponsorship policy |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
-| `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine address used for candidate discovery and position checks |
-| `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `288439939` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
+| `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
+| `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
+| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; recovery reads remain available |
+| `AA_IP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-IP issuance limit; recovery reads receive four times this budget |
+| `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
+| `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
+| `AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR` | No | `0` | Actual sponsored gas-cost threshold logged once per hour; `0` disables it |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
@@ -396,7 +408,34 @@ Local URLs:
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
 
+For the Sepolia managed proxy, keep `provision_aa_proxy = true` even when
+`enable_aa_sponsorship = false`; this preserves Pimlico receipt/status access
+while the issuance kill switch is active. The public API origin must use the
+certificate-backed `https://` hostname configured by `api_hostname` and
+`alb_certificate_arn`.
+
+After changing the Terraform AA variables:
+
+1. Point the certificate-backed API hostname at the ALB.
+2. Apply Terraform so the SSM parameters and latest task-definition revision
+   exist.
+3. Run the `Deploy Backend` workflow for `sepolia` so ECS activates that
+   revision.
+4. Set Pages `SEPOLIA_BACKEND_URL` to the HTTPS API hostname and use the same
+   `AA_PROXY_ORIGIN_TOKEN` in Pages and the backend.
+
+Set `operations_alarm_sns_topic_arn` to route the Terraform-managed sponsored
+gas and keeper-task CloudWatch alarms to an operations channel. Keep Pimlico's
+policy-level budget alerts enabled as the authoritative view of sponsored gas;
+the backend alert is a receipt-based secondary signal.
+
 ## API Endpoints
+
+### Managed account abstraction
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/aa/pimlico` | Authenticated, fail-closed Pimlico JSON-RPC proxy for the approved Arbitrum Sepolia SimpleAccount and Plether action surface |
 
 ### Protocol
 

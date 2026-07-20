@@ -1,9 +1,9 @@
 {
   "manifest": "STORYBOOK_SCREENSHOT_MAP.md",
-  "mappedReferences": 79,
-  "uniqueStories": 54,
+  "mappedReferences": 80,
+  "uniqueStories": 55,
   "manifestReferencesUpdated": 0,
-  "replacements": 76,
+  "replacements": 77,
   "retainedSupportInstructions": 3,
   "captures": [
     {
@@ -289,7 +289,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--account-identity.png",
       "storyId": "documentation-trading-account-and-sponsorship--account-identity",
       "dimensions": {
-        "height": 412,
+        "height": 310,
         "width": 720
       },
       "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--account-identity"
@@ -307,7 +307,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--first-deposit-authorization.png",
       "storyId": "documentation-trading-account-and-sponsorship--first-deposit-authorization",
       "dimensions": {
-        "height": 623,
+        "height": 521,
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--first-deposit-authorization"
@@ -325,7 +325,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-trading-account-and-sponsorship--withdrawal-confirmation.png",
       "storyId": "documentation-trading-account-and-sponsorship--withdrawal-confirmation",
       "dimensions": {
-        "height": 681,
+        "height": 579,
         "width": 1072
       },
       "storyPath": "/?path=/story/documentation-trading-account-and-sponsorship--withdrawal-confirmation"
@@ -473,6 +473,15 @@
         "width": 496
       },
       "storyPath": "/?path=/story/perps-trade-ticket--withdraw-exceeds-available"
+    },
+    {
+      "asset": ".gitbook/assets/screenshots/storybook-perps-trading-account-activity--modal-open.png",
+      "storyId": "perps-trading-account-activity--modal-open",
+      "dimensions": {
+        "height": 1194,
+        "width": 816
+      },
+      "storyPath": "/?path=/story/perps-trading-account-activity--modal-open"
     },
     {
       "asset": ".gitbook/assets/screenshots/storybook-perps-trading-regime-comparison--oracle-frozen-close.png",

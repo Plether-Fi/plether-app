@@ -46,20 +46,35 @@ jobs:
           if [ "$TARGET_ENV" = "sepolia" ]; then
             echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=421614" >> "$GITHUB_OUTPUT"
+            echo "perps_aa_manifest_url=/perps-aa-manifest.json" >> "$GITHUB_OUTPUT"
           else
             echo "project=plether" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=1" >> "$GITHUB_OUTPUT"
+            echo "perps_aa_manifest_url=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build
         working-directory: apps/frontend
         env:
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
+          VITE_PERPS_AA_MANIFEST_URL: ${{ steps.target.outputs.perps_aa_manifest_url }}
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
           VITE_DEPLOYMENT_ENV: ${{ env.TARGET_ENV }}
         run: npm run build
+
+      - name: Validate testnet AA manifest
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        run: |
+          test -s dist/perps-aa-manifest.json
+          jq -e '
+            .chainId == 421614 and
+            .entryPointVersion == "0.8" and
+            .pimlicoRpcUrl == "/api/perps/v1/aa/pimlico" and
+            .sponsorshipEnabled == true
+          ' dist/perps-aa-manifest.json >/dev/null
 
       - name: Configure testnet Pages bindings
         if: env.TARGET_ENV == 'sepolia'
@@ -87,6 +102,19 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: 4.103.0
           command: pages project create plether-testnet --production-branch=master --compatibility-date=2026-06-22
+
+      - name: Configure testnet AA proxy secret
+        if: env.TARGET_ENV == 'sepolia'
+        working-directory: apps/frontend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          AA_PROXY_ORIGIN_TOKEN: ${{ secrets.AA_PROXY_ORIGIN_TOKEN }}
+        run: |
+          test -n "$AA_PROXY_ORIGIN_TOKEN"
+          printf '%s\n' "$AA_PROXY_ORIGIN_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put AA_PROXY_ORIGIN_TOKEN \
+              --project-name=plether-testnet
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3

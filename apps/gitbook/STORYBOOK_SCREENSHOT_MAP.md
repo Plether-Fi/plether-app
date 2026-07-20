@@ -128,7 +128,8 @@ The links below assume Storybook is available at `http://localhost:6006`.
 | `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:132` | Trading Account setup | [Account Identity](http://localhost:6006/?path=/story/documentation-trading-account-and-sponsorship--account-identity) | New |
 | `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:165` | First deposit authorization and batch | [First Deposit Authorization](http://localhost:6006/?path=/story/documentation-trading-account-and-sponsorship--first-deposit-authorization) | New |
 | `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:190` | Sponsored withdrawal destination | [Withdrawal Confirmation](http://localhost:6006/?path=/story/documentation-trading-account-and-sponsorship--withdrawal-confirmation) | New |
-| `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:281` | Sponsor unavailable | [Sponsor Unavailable](http://localhost:6006/?path=/story/documentation-trading-account-and-sponsorship--sponsor-unavailable) | New |
+| `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:265` | Trading Account activity history | [Modal Open](http://localhost:6006/?path=/story/perps-trading-account-activity--modal-open) | Current activity modal |
+| `trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md:285` | Sponsor unavailable | [Sponsor Unavailable](http://localhost:6006/?path=/story/documentation-trading-account-and-sponsorship--sponsor-unavailable) | New |
 
 ## Open or increase a position
 

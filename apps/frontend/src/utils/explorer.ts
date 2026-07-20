@@ -6,7 +6,7 @@ export function getExplorerTxUrl(chainId: number | undefined, hash: string): str
     : chainId === sepolia.id
       ? 'https://sepolia.etherscan.io'
       : chainId === arbitrumSepolia.id
-        ? 'https://sepolia.arbiscan.io'
+        ? 'https://arbitrum-sepolia.blockscout.com'
         : 'https://sepolia.etherscan.io'
 
   return `${baseUrl}/tx/${hash}`

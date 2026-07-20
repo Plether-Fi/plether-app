@@ -17,6 +17,7 @@ import Network.Wai.Middleware.Cors
   , simpleCorsResourcePolicy
   )
 import Plether.Cache (AppCache)
+import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
@@ -79,8 +80,8 @@ instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v ->
     TestnetFaucetRequest <$> v .: "address"
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
-app cache client perpsClient cfg mPool manager = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -98,6 +99,9 @@ app cache client perpsClient cfg mPool manager = do
           handleServiceUnavailable $
             E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
       else handleError $ E.invalidAddress addr
+
+  post "/api/aa/pimlico" $
+    handlePimlicoProxy pimlicoProxyState cfg perpsClient manager
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool

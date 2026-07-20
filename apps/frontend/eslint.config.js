@@ -10,7 +10,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage', 'storybook-static', 'opensrc', 'e2e']),
+  globalIgnores(['dist', 'coverage', 'storybook-static', 'opensrc', 'e2e', 'vendor']),
   {
     files: ['**/*.{ts,tsx}'],
     ignores: [

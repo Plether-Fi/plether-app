@@ -29,6 +29,21 @@ locals {
     }
   ] : []
 
+  aa_proxy_secrets = var.provision_aa_proxy ? [
+    {
+      name      = "PIMLICO_API_KEY"
+      valueFrom = aws_ssm_parameter.pimlico_api_key[0].arn
+    },
+    {
+      name      = "PIMLICO_SPONSORSHIP_POLICY_ID"
+      valueFrom = aws_ssm_parameter.pimlico_sponsorship_policy_id[0].arn
+    },
+    {
+      name      = "AA_PROXY_ORIGIN_TOKEN"
+      valueFrom = aws_ssm_parameter.aa_proxy_origin_token[0].arn
+    }
+  ] : []
+
   posthog_log_configuration = {
     logDriver = "awsfirelens"
     options = {
@@ -127,7 +142,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -139,10 +154,33 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+      { name = "AA_SPONSORSHIP_ENABLED", value = tostring(var.enable_aa_sponsorship) },
+      { name = "AA_IP_RATE_LIMIT_PER_MINUTE", value = var.aa_ip_rate_limit_per_minute },
+      { name = "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", value = var.aa_account_rate_limit_per_minute },
+      { name = "AA_MAX_REQUEST_BYTES", value = var.aa_max_request_bytes },
+      { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment)
   }, local.otel_log_router_container])
+
+  lifecycle {
+    precondition {
+      condition = !var.provision_aa_proxy || (
+        trimspace(var.pimlico_api_key) != ""
+        && trimspace(var.pimlico_sponsorship_policy_id) != ""
+        && trimspace(var.aa_proxy_origin_token) != ""
+        && trimspace(var.alb_certificate_arn) != ""
+        && trimspace(var.api_hostname) != ""
+      )
+      error_message = "Provisioning the managed AA proxy requires its three credentials, an HTTPS ALB certificate, and the certificate-backed API hostname."
+    }
+
+    precondition {
+      condition     = !var.enable_aa_sponsorship || var.provision_aa_proxy
+      error_message = "AA sponsorship cannot be enabled unless the proxy credentials are provisioned."
+    }
+  }
 }
 
 resource "aws_ecs_service" "api" {

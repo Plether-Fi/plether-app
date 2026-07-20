@@ -4,6 +4,7 @@ import Control.Concurrent (forkIO)
 import Control.Monad (when)
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
@@ -73,6 +74,7 @@ main = do
       client <- newClient (cfgRpcUrl cfg)
       perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
+      pimlicoProxyState <- newPimlicoProxyState
       requestLogging <- newRequestLoggingMiddleware
       logInfo
         "api_started"
@@ -84,4 +86,4 @@ main = do
         ]
       scotty (cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager
+        app cache client perpsClient cfg mPool manager pimlicoProxyState
