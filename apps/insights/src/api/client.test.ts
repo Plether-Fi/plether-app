@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getCurrentCompetition, getLeaderboard, getWallet, InsightsApiError } from './client'
+import { getCurrentCompetition, getLeaderboard, getStatus, getWallet, InsightsApiError } from './client'
 import type { Competition } from './types'
 
 const competition: Competition = {
@@ -24,6 +24,55 @@ describe('Insights API client', () => {
   it('normalizes the current competition envelope', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition }), { status: 200 })))
     await expect(getCurrentCompetition()).resolves.toEqual(competition)
+  })
+
+  it('does not fetch status when competition metrics are absent', async () => {
+    const competitionWithoutMetrics = {
+      id: competition.id,
+      slug: competition.slug,
+      name: competition.name,
+      status: competition.status,
+      startsAt: competition.startsAt,
+      tradingCutoffAt: competition.tradingCutoffAt,
+      resultsAt: competition.resultsAt,
+      startingBalance: competition.startingBalance,
+      pnlEligibilityThreshold: competition.pnlEligibilityThreshold,
+      minActiveDays: competition.minActiveDays,
+      prizes: competition.prizes,
+    }
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ competition: competitionWithoutMetrics }), { status: 200 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getCurrentCompetition()).resolves.toEqual({
+      ...competitionWithoutMetrics,
+      latestIndexedBlock: null,
+      latestIndexedAt: null,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('normalizes participant metrics from status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      chainId: 421614,
+      status: {
+        healthy: true,
+        participantCount: 358,
+        eligibleCount: 42,
+        indexedThroughBlock: '123',
+        indexerUpdatedAt: '2026-07-20T12:00:00Z',
+      },
+    }), { status: 200 })))
+
+    await expect(getStatus()).resolves.toEqual({
+      healthy: true,
+      latestIndexedBlock: 123,
+      latestIndexedAt: '2026-07-20T12:00:00Z',
+      chainId: 421614,
+      participantCount: 358,
+      eligibleCount: 42,
+    })
   })
 
   it('encodes leaderboard pagination and search', async () => {

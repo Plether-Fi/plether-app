@@ -2,10 +2,17 @@ module Plether.Insights.SnapshotWorker
   ( runInsightsSnapshotCycle
   , findLastBlockBeforeTimestamp
   , snapshotToJson
+  , defaultSnapshotMulticallSize
+  , maxSnapshotMulticallSize
+  , parseSnapshotMulticallSize
+  , chunkInOrder
+  , accountSnapshotMulticallCalls
+  , decodeSnapshotResults
   ) where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Aeson (Value, object, (.=))
+import Data.Text (Text)
 import qualified Data.Text as T
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
@@ -22,22 +29,52 @@ import Plether.Database.Insights
   , publishAccountSnapshotBatch
   , setCompetitionBoundaryBlocks
   )
-import Plether.Ethereum.Client (EthClient, RpcError)
+import Plether.Ethereum.Client (EthClient, RpcError (..))
 import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
+  , decodeAccountLedgerSnapshot
   , getAccountLedgerSnapshotAtBlock
+  , getAccountLedgerSnapshotCall
   )
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc
   ( RpcBlock (..)
   , ethGetBlockByNumber
   )
 import Plether.Insights.Competition (EquitySnapshot (..))
+import Text.Read (readMaybe)
+
+defaultSnapshotMulticallSize :: Int
+defaultSnapshotMulticallSize = 10
+
+-- A chunk of 100 account snapshots already returns roughly 72 KiB before ABI
+-- framing. Keep an explicit ceiling so a typo cannot create an oversized RPC
+-- response while still leaving ample room to tune above the conservative
+-- default.
+maxSnapshotMulticallSize :: Int
+maxSnapshotMulticallSize = 100
+
+parseSnapshotMulticallSize :: Maybe String -> Either String Int
+parseSnapshotMulticallSize Nothing = Right defaultSnapshotMulticallSize
+parseSnapshotMulticallSize (Just rawValue) =
+  case readMaybe rawValue of
+    Nothing -> Left "INSIGHTS_SNAPSHOT_MULTICALL_SIZE must be an integer between 0 and 100"
+    Just value -> validateSnapshotMulticallSize value
+
+validateSnapshotMulticallSize :: Int -> Either String Int
+validateSnapshotMulticallSize value
+  | value < 0 = Left "INSIGHTS_SNAPSHOT_MULTICALL_SIZE cannot be negative"
+  | value > maxSnapshotMulticallSize =
+      Left $
+        "INSIGHTS_SNAPSHOT_MULTICALL_SIZE cannot exceed "
+          <> show maxSnapshotMulticallSize
+  | otherwise = Right value
 
 -- | Capture one internally consistent Insights update. The perps history
 -- indexer's cursor is already confirmation-delayed, so it is the canonical
 -- upper bound for both account state and event-derived statistics.
-runInsightsSnapshotCycle :: EthClient -> DbPool -> Config -> IO ()
-runInsightsSnapshotCycle client pool cfg = do
+runInsightsSnapshotCycle :: EthClient -> DbPool -> Config -> Int -> IO ()
+runInsightsSnapshotCycle client pool cfg multicallSize = do
   mCompetition <- withDb pool getCurrentCompetition
   case mCompetition of
     Nothing -> putStrLn "Insights snapshot skipped: no competition is configured"
@@ -69,16 +106,17 @@ runInsightsSnapshotCycle client pool cfg = do
                       conn
                       (icrSlug competition)
                       (rpcBlockNumber safeBlock)
-                  updateCompetition client pool cfg competition safeBlock
+                  updateCompetition client pool cfg multicallSize competition safeBlock
 
 updateCompetition
   :: EthClient
   -> DbPool
   -> Config
+  -> Int
   -> CompetitionRow
   -> RpcBlock
   -> IO ()
-updateCompetition client pool cfg competition safeBlock = do
+updateCompetition client pool cfg multicallSize competition safeBlock = do
   mStartBlocks <-
     resolveStartBlocks
       client
@@ -108,6 +146,7 @@ updateCompetition client pool cfg competition safeBlock = do
       client
       pool
       cfg
+      multicallSize
       competition
       participants
       SnapshotStart
@@ -119,6 +158,7 @@ updateCompetition client pool cfg competition safeBlock = do
         client
         pool
         cfg
+        multicallSize
         competition
         participants
         SnapshotFinal
@@ -128,7 +168,7 @@ updateCompetition client pool cfg competition safeBlock = do
         ( rpcBlockTimestamp safeBlock >= icrStartTimestamp competition
             && rpcBlockTimestamp safeBlock < icrScoreCutoffTimestamp competition
         )
-        (captureUnlessComplete client pool cfg competition participants SnapshotLive safeBlock)
+        (captureUnlessComplete client pool cfg multicallSize competition participants SnapshotLive safeBlock)
 
 -- The stored start block is the first block in the competition window, while
 -- the account baseline is read from the immediately preceding block.
@@ -198,12 +238,13 @@ captureUnlessComplete
   :: EthClient
   -> DbPool
   -> Config
+  -> Int
   -> CompetitionRow
   -> [ParticipantRow]
   -> SnapshotKind
   -> RpcBlock
   -> IO ()
-captureUnlessComplete client pool cfg competition participants kind block = do
+captureUnlessComplete client pool cfg multicallSize competition participants kind block = do
   complete <-
     withDb pool $ \conn ->
       hasCompleteAccountSnapshotBatch
@@ -213,18 +254,19 @@ captureUnlessComplete client pool cfg competition participants kind block = do
         (rpcBlockNumber block)
         (rpcBlockHash block)
   unless complete $
-    captureBatch client pool cfg competition participants kind block
+    captureBatch client pool cfg multicallSize competition participants kind block
 
 captureBatch
   :: EthClient
   -> DbPool
   -> Config
+  -> Int
   -> CompetitionRow
   -> [ParticipantRow]
   -> SnapshotKind
   -> RpcBlock
   -> IO ()
-captureBatch client pool cfg competition participants kind block
+captureBatch client pool cfg multicallSize competition participants kind block
   | null participants = pure ()
   | not $ sameHash (cfgPerpsAccountLens cfg) (icrAccountLensAddress competition) =
       putStrLn $
@@ -233,20 +275,19 @@ captureBatch client pool cfg competition participants kind block
           <> " does not match competition account lens "
           <> T.unpack (icrAccountLensAddress competition)
   | otherwise = do
-      results <- forM participants $ \participant -> do
-        result <-
-          getAccountLedgerSnapshotAtBlock
-            client
-            (icrAccountLensAddress competition)
-            (iprWallet participant)
-            (rpcBlockNumber block)
-        pure (participant, result)
-      let failures = [(participant, err) | (participant, Left err) <- results]
-      if null failures
-        then do
+      captureResult <-
+        captureAccountSnapshots
+          client
+          (icrAccountLensAddress competition)
+          multicallSize
+          (rpcBlockNumber block)
+          participants
+      case captureResult of
+        Right results -> do
           -- A numeric eth_call block tag is resolved independently by the RPC
-          -- provider. Re-read the hash after every wallet read so a mid-cycle
-          -- reorg cannot publish a mixed-fork batch under the original hash.
+          -- provider. Re-read the hash after all direct or Multicall reads so
+          -- a mid-cycle reorg cannot publish a mixed-fork batch under the
+          -- original hash.
           verification <- ethGetBlockByNumber client (rpcBlockNumber block)
           case verification of
             Left err -> logRpcFailure "re-verify snapshot batch block" err
@@ -263,17 +304,21 @@ captureBatch client pool cfg competition participants kind block
                   withDb pool $ \conn ->
                     publishAccountSnapshotBatch conn $
                       [ snapshotInput participant ledger
-                      | (participant, Right ledger) <- results
+                      | (participant, ledger) <- results
                       ]
-        else
-          forM_ failures $ \(participant, err) ->
-            logRpcFailure
-              ( "snapshot "
-                  <> T.unpack (iprWallet participant)
-                  <> " at block "
-                  <> show (rpcBlockNumber block)
-              )
-              err
+        Left failures ->
+          forM_ failures $ \(mParticipant, err) ->
+            let subject =
+                  maybe
+                    "snapshot batch"
+                    (\participant -> "snapshot " <> T.unpack (iprWallet participant))
+                    mParticipant
+             in logRpcFailure
+                  ( subject
+                      <> " at block "
+                      <> show (rpcBlockNumber block)
+                  )
+                  err
   where
     snapshotInput participant ledger =
       AccountSnapshotInput
@@ -289,6 +334,122 @@ captureBatch client pool cfg competition participants kind block
         , asiEquity = ledgerToEquity ledger
         , asiRawData = snapshotToJson ledger
         }
+
+captureAccountSnapshots
+  :: EthClient
+  -> Text
+  -> Int
+  -> Integer
+  -> [ParticipantRow]
+  -> IO
+      ( Either
+          [(Maybe ParticipantRow, RpcError)]
+          [(ParticipantRow, AccountLedgerSnapshot)]
+      )
+captureAccountSnapshots client accountLens multicallSize blockNumber participants
+  | multicallSize == 0 = do
+      results <- forM participants $ \participant -> do
+        result <-
+          getAccountLedgerSnapshotAtBlock
+            client
+            accountLens
+            (iprWallet participant)
+            blockNumber
+        pure (participant, result)
+      let failures =
+            [(Just participant, err) | (participant, Left err) <- results]
+      pure $
+        if null failures
+          then
+            Right
+              [ (participant, ledger)
+              | (participant, Right ledger) <- results
+              ]
+          else Left failures
+  | otherwise =
+      case chunkInOrder multicallSize participants of
+        Left err -> pure $ Left [(Nothing, RpcJsonError $ T.pack err)]
+        Right chunks -> captureChunks [] chunks
+  where
+    captureChunks completed [] = pure $ Right completed
+    captureChunks completed (participantChunk : remainingChunks) = do
+      result <-
+        Multicall.multicallAtBlock
+          client
+          ( accountSnapshotMulticallCalls
+              accountLens
+              (map iprWallet participantChunk)
+          )
+          blockNumber
+      case result of
+        Left err -> pure $ Left [(Nothing, err)]
+        Right callResults ->
+          case decodeSnapshotResults (length participantChunk) callResults of
+            Left err -> pure $ Left [(Nothing, RpcJsonError err)]
+            Right snapshots ->
+              captureChunks
+                (completed <> zip participantChunk snapshots)
+                remainingChunks
+
+-- | Split a list into consecutive chunks without reordering it. Size zero is
+-- reserved for the direct-call rollback mode and is rejected here.
+chunkInOrder :: Int -> [a] -> Either String [[a]]
+chunkInOrder size values
+  | size <= 0 = Left "Multicall chunk size must be positive"
+  | size > maxSnapshotMulticallSize =
+      Left $
+        "Multicall chunk size cannot exceed "
+          <> show maxSnapshotMulticallSize
+  | otherwise = Right $ go values
+  where
+    go [] = []
+    go remaining =
+      let (current, rest) = splitAt size remaining
+       in current : go rest
+
+accountSnapshotMulticallCalls :: Text -> [Text] -> [Multicall.Call]
+accountSnapshotMulticallCalls accountLens =
+  map $ \wallet ->
+    Multicall.Call
+      { Multicall.callTarget = accountLens
+      , Multicall.callAllowFailure = True
+      , Multicall.callCalldata = getAccountLedgerSnapshotCall wallet
+      }
+
+-- | Validate one Multicall chunk and decode account snapshots in subcall
+-- order. Even though aggregate3 is invoked with @allowFailure = true@, any
+-- failed, missing, extra, or malformed subcall aborts the entire DB batch.
+decodeSnapshotResults
+  :: Int
+  -> [Multicall.CallResult]
+  -> Either Text [AccountLedgerSnapshot]
+decodeSnapshotResults expectedCount results
+  | expectedCount < 0 = Left "Expected Multicall result count cannot be negative"
+  | length results /= expectedCount =
+      Left $
+        "Multicall returned "
+          <> T.pack (show $ length results)
+          <> " results for "
+          <> T.pack (show expectedCount)
+          <> " account snapshot calls"
+  | otherwise =
+      traverse decodeResult $ zip [0 :: Int ..] results
+  where
+    decodeResult (index, result)
+      | not $ Multicall.resultSuccess result =
+          Left $
+            "Multicall account snapshot subcall "
+              <> T.pack (show index)
+              <> " failed"
+      | otherwise =
+          case decodeAccountLedgerSnapshot $ Multicall.resultData result of
+            Left err ->
+              Left $
+                "Multicall account snapshot subcall "
+                  <> T.pack (show index)
+                  <> " returned malformed data: "
+                  <> err
+            Right snapshot -> Right snapshot
 
 ledgerToEquity :: AccountLedgerSnapshot -> EquitySnapshot
 ledgerToEquity AccountLedgerSnapshot {..} =

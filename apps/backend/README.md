@@ -285,9 +285,16 @@ PERPS_CHAIN_ID=421614 \
 PERPS_USDC=0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3 \
 PERPS_ORDER_ROUTER=0x04E3103752f623fBcDcD01f588590Af4c53E4c1E \
 PERPS_MARGIN_CLEARINGHOUSE=0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e \
+INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker
 ```
+
+By default the worker groups ten account-lens reads into each exact-block
+Multicall3 request and processes those chunks sequentially. A failed subcall or
+malformed response discards the whole snapshot batch. Set
+`INSIGHTS_SNAPSHOT_MULTICALL_SIZE=0` to restore one direct `eth_call` per
+participant; values above `100` are rejected at startup.
 
 Insights persists these configured contract addresses with the competition.
 Deposit and withdrawal adjustments count only events emitted by that exact
@@ -490,6 +497,7 @@ Local URLs:
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
+| `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
 | `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |

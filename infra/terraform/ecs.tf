@@ -569,6 +569,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
+        { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
       ]
     },
     local.otel_log_router_container,
@@ -758,6 +759,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
+        { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
       ]
     },
     local.otel_log_router_container,

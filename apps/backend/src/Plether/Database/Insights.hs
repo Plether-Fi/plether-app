@@ -20,7 +20,6 @@ module Plether.Database.Insights
   , setParticipantEligibility
   , finalizeCompetition
   , listCompetitionParticipants
-  , upsertAccountSnapshot
   , publishAccountSnapshotBatch
   , hasCompleteAccountSnapshotBatch
   , invalidateSnapshotBatchesAfter
@@ -35,12 +34,15 @@ module Plether.Database.Insights
   , getLatestIndexedSafeBlock
   , leaderboardSearchPattern
   , leaderboardQuerySql
+  , insightsDataStatusQuerySql
+  , snapshotBatchAccessIndexSql
   , walletActivityQuerySql
   , snapshotKindText
   ) where
 
-import Control.Monad (forM_, unless, when)
+import Control.Monad (unless, when)
 import Data.Aeson (Value, encode)
+import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
 import Data.List (nub, sort)
 import Data.Scientific (Scientific, base10Exponent, coefficient)
@@ -53,6 +55,7 @@ import Database.PostgreSQL.Simple
   , Only (..)
   , Query
   , execute
+  , executeMany
   , execute_
   , query
   , query_
@@ -388,6 +391,11 @@ instance FromRow FinalizationDatabaseRow where
     <*> field
     <*> field
 
+snapshotBatchAccessIndexSql :: Query
+snapshotBatchAccessIndexSql =
+  "CREATE INDEX IF NOT EXISTS idx_insights_snapshots_batch_wallet \
+  \ ON insights_account_snapshots(competition_slug, snapshot_kind, block_number, wallet)"
+
 ensureInsightsSchema :: Connection -> Integer -> Text -> Text -> Text -> Text -> IO ()
 ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress = do
   validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
@@ -511,6 +519,7 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_insights_snapshots_kind \
     \ ON insights_account_snapshots(competition_slug, snapshot_kind, wallet)"
+  _ <- execute_ conn snapshotBatchAccessIndexSql
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_snapshot_batches (\
     \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
@@ -1119,45 +1128,60 @@ listCompetitionParticipants :: Connection -> Text -> IO [ParticipantRow]
 listCompetitionParticipants conn slug =
   query conn participantSelect (Only slug)
 
-upsertAccountSnapshot :: Connection -> AccountSnapshotInput -> IO ()
-upsertAccountSnapshot conn snapshot =
-  withTransaction conn $ do
-    mutable <- competitionIsMutableForUpdate conn (asiCompetitionSlug snapshot)
-    unless mutable $
-      fail "Cannot write an account snapshot: the competition is missing or finalized"
-    upsertAccountSnapshotUnchecked conn snapshot
+type AccountSnapshotParameters =
+  ( Text
+  , Text
+  , Text
+  , Integer
+  , Text
+  , Integer
+  , Text
+  , Integer
+  , Bool
+  , Integer
+  , Integer
+  , Integer
+  , LBS.ByteString
+  )
 
-upsertAccountSnapshotUnchecked :: Connection -> AccountSnapshotInput -> IO ()
-upsertAccountSnapshotUnchecked conn AccountSnapshotInput {..} = do
+accountSnapshotParameters :: AccountSnapshotInput -> AccountSnapshotParameters
+accountSnapshotParameters AccountSnapshotInput {..} =
   let EquitySnapshot {..} = asiEquity
-  _ <- execute conn
-    "INSERT INTO insights_account_snapshots (\
-    \ competition_slug, wallet, snapshot_kind, chain_id, release_router, block_number,\
-    \ block_hash, timestamp, has_open_position, signed_net_equity_usdc,\
-    \ terminal_reachable_usdc, trader_claims_usdc, raw_data)\
-    \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
-    \ ON CONFLICT (competition_slug, wallet, snapshot_kind, block_number) DO UPDATE SET\
-    \ chain_id = EXCLUDED.chain_id,\
-    \ release_router = EXCLUDED.release_router, block_hash = EXCLUDED.block_hash,\
-    \ timestamp = EXCLUDED.timestamp, has_open_position = EXCLUDED.has_open_position,\
-    \ signed_net_equity_usdc = EXCLUDED.signed_net_equity_usdc,\
-    \ terminal_reachable_usdc = EXCLUDED.terminal_reachable_usdc,\
-    \ trader_claims_usdc = EXCLUDED.trader_claims_usdc, raw_data = EXCLUDED.raw_data,\
-    \ updated_at = NOW()"
-    ( asiCompetitionSlug
-    , normalizeAddress asiWallet
-    , snapshotKindText asiKind
-    , asiChainId
-    , normalizeAddress asiReleaseRouter
-    , asiBlockNumber
-    , normalizeAddress asiBlockHash
-    , asiTimestamp
-    , esHasOpenPosition
-    , esSignedNetEquityUsdc
-    , esTerminalReachableUsdc
-    , esTraderClaimsUsdc
-    , encode asiRawData
-    )
+   in ( asiCompetitionSlug
+      , normalizeAddress asiWallet
+      , snapshotKindText asiKind
+      , asiChainId
+      , normalizeAddress asiReleaseRouter
+      , asiBlockNumber
+      , normalizeAddress asiBlockHash
+      , asiTimestamp
+      , esHasOpenPosition
+      , esSignedNetEquityUsdc
+      , esTerminalReachableUsdc
+      , esTraderClaimsUsdc
+      , encode asiRawData
+      )
+
+accountSnapshotUpsertQuery :: Query
+accountSnapshotUpsertQuery =
+  "INSERT INTO insights_account_snapshots (\
+  \ competition_slug, wallet, snapshot_kind, chain_id, release_router, block_number,\
+  \ block_hash, timestamp, has_open_position, signed_net_equity_usdc,\
+  \ terminal_reachable_usdc, trader_claims_usdc, raw_data)\
+  \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+  \ ON CONFLICT (competition_slug, wallet, snapshot_kind, block_number) DO UPDATE SET\
+  \ chain_id = EXCLUDED.chain_id,\
+  \ release_router = EXCLUDED.release_router, block_hash = EXCLUDED.block_hash,\
+  \ timestamp = EXCLUDED.timestamp, has_open_position = EXCLUDED.has_open_position,\
+  \ signed_net_equity_usdc = EXCLUDED.signed_net_equity_usdc,\
+  \ terminal_reachable_usdc = EXCLUDED.terminal_reachable_usdc,\
+  \ trader_claims_usdc = EXCLUDED.trader_claims_usdc, raw_data = EXCLUDED.raw_data,\
+  \ updated_at = NOW()"
+
+upsertAccountSnapshotsUnchecked :: Connection -> [AccountSnapshotInput] -> IO ()
+upsertAccountSnapshotsUnchecked _ [] = pure ()
+upsertAccountSnapshotsUnchecked conn snapshots = do
+  _ <- executeMany conn accountSnapshotUpsertQuery $ map accountSnapshotParameters snapshots
   pure ()
 
 publishAccountSnapshotBatch :: Connection -> [AccountSnapshotInput] -> IO ()
@@ -1217,7 +1241,7 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
       "DELETE FROM insights_account_snapshots\
       \ WHERE competition_slug = ? AND snapshot_kind = ? AND block_number = ?"
       (slug, snapshotKindText kind, blockNumber)
-    forM_ snapshots $ upsertAccountSnapshotUnchecked conn
+    upsertAccountSnapshotsUnchecked conn snapshots
     _ <- execute conn
       "INSERT INTO insights_snapshot_batches\
       \ (competition_slug, snapshot_kind, chain_id, release_router, account_lens_address, block_number, block_hash, timestamp, participant_count, account_state_count)\
@@ -1413,50 +1437,51 @@ getCompetitionWalletActivity conn slug wallet limitRows =
 
 getInsightsDataStatus :: Connection -> Text -> IO (Maybe InsightsDataStatusRow)
 getInsightsDataStatus conn slug = do
-  rows <- query conn
-    "WITH target AS (SELECT * FROM insights_competitions WHERE slug = ?),\
-    \ participant_stats AS (\
-    \ SELECT COUNT(*) AS participant_count FROM insights_competition_participants p JOIN target t ON t.slug = p.competition_slug\
-    \ ), snapshot_stats AS (\
-    \ SELECT COUNT(DISTINCT s.wallet) AS wallet_count,\
-    \ COUNT(DISTINCT s.wallet) FILTER (WHERE s.snapshot_kind = 'start'\
-    \   AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1) AS start_count,\
-    \ COUNT(DISTINCT s.wallet) FILTER (WHERE s.snapshot_kind = 'final'\
-    \   AND t.score_cutoff_block IS NOT NULL AND b.block_number = t.score_cutoff_block\
-    \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)) AS final_count,\
-    \ MAX(s.block_number) AS latest_block, MAX(s.timestamp) AS latest_timestamp\
-    \ FROM insights_account_snapshots s JOIN target t ON t.slug = s.competition_slug\
-    \ JOIN insights_snapshot_batches b ON b.competition_slug = s.competition_slug\
-    \   AND b.snapshot_kind = s.snapshot_kind AND b.block_number = s.block_number\
-    \   AND LOWER(b.block_hash) = LOWER(s.block_hash) AND b.chain_id = s.chain_id AND b.release_router = s.release_router\
-    \ WHERE LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-    \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
-    \   SELECT 1 FROM insights_snapshot_batches prior\
-    \   WHERE prior.competition_slug = b.competition_slug\
-    \   AND prior.snapshot_kind IN ('live', 'final')\
-    \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
-    \   AND prior.account_state_count > 0))\
-    \ ), indexer AS (\
-    \ SELECT i.last_indexed_block, i.last_indexed_block_hash, EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
-    \ FROM perps_indexer_state i JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
-    \ WHERE i.indexer_name = ('perps-history:' || t.release_router) LIMIT 1\
-    \ ), snapshot_worker AS (\
-    \ SELECT EXTRACT(EPOCH FROM MAX(b.published_at))::bigint AS updated_timestamp\
-    \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
-    \ WHERE LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-    \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
-    \   SELECT 1 FROM insights_snapshot_batches prior\
-    \   WHERE prior.competition_slug = b.competition_slug\
-    \   AND prior.snapshot_kind IN ('live', 'final')\
-    \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
-    \   AND prior.account_state_count > 0))\
-    \ )\
-    \ SELECT COALESCE(p.participant_count, 0), COALESCE(s.wallet_count, 0),\
-    \ COALESCE(s.start_count, 0), COALESCE(s.final_count, 0), s.latest_block, s.latest_timestamp,\
-    \ i.last_indexed_block, i.last_indexed_block_hash, i.updated_timestamp, w.updated_timestamp\
-    \ FROM participant_stats p CROSS JOIN snapshot_stats s CROSS JOIN snapshot_worker w LEFT JOIN indexer i ON TRUE"
-    (Only slug)
+  rows <- query conn insightsDataStatusQuerySql (Only slug)
   pure $ firstRow rows
+
+-- A published batch is the completeness marker for its participant set. The
+-- maximum published count also preserves the old across-history wallet-count
+-- behavior when the roster grows, without revisiting every account row.
+-- Snapshot rows have no independent mutation path: publication writes every
+-- registered wallet and its batch metadata in one transaction, while each
+-- invalidation path deletes both. Status can therefore use the small batch
+-- table as the durable completeness summary instead of rescanning history.
+insightsDataStatusQuerySql :: Query
+insightsDataStatusQuerySql =
+  "WITH target AS (SELECT * FROM insights_competitions WHERE slug = ?),\
+  \ participant_stats AS (\
+  \ SELECT COUNT(*) AS participant_count FROM insights_competition_participants p\
+  \ JOIN target t ON t.slug = p.competition_slug\
+  \ ), snapshot_stats AS (\
+  \ SELECT COALESCE(MAX(b.participant_count), 0) AS wallet_count,\
+  \ COALESCE(MAX(b.participant_count) FILTER (WHERE b.snapshot_kind = 'start'\
+  \   AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1), 0) AS start_count,\
+  \ COALESCE(MAX(b.participant_count) FILTER (WHERE b.snapshot_kind = 'final'\
+  \   AND t.score_cutoff_block IS NOT NULL AND b.block_number = t.score_cutoff_block\
+  \   AND LOWER(b.block_hash) = LOWER(t.score_cutoff_block_hash)), 0) AS final_count,\
+  \ MAX(b.block_number) AS latest_block, MAX(b.timestamp) AS latest_timestamp,\
+  \ EXTRACT(EPOCH FROM MAX(b.published_at))::bigint AS updated_timestamp\
+  \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
+  \   AND b.chain_id = t.chain_id AND b.release_router = t.release_router\
+  \ WHERE LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+  \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
+  \   SELECT 1 FROM insights_snapshot_batches prior\
+  \   WHERE prior.competition_slug = b.competition_slug\
+  \   AND prior.snapshot_kind IN ('live', 'final')\
+  \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
+  \   AND prior.account_state_count > 0))\
+  \ ), indexer AS (\
+  \ SELECT i.last_indexed_block, i.last_indexed_block_hash,\
+  \   EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
+  \ FROM perps_indexer_state i\
+  \ JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
+  \ WHERE i.indexer_name = ('perps-history:' || t.release_router) LIMIT 1\
+  \ )\
+  \ SELECT COALESCE(p.participant_count, 0), s.wallet_count, s.start_count, s.final_count,\
+  \ s.latest_block, s.latest_timestamp, i.last_indexed_block, i.last_indexed_block_hash,\
+  \ i.updated_timestamp, s.updated_timestamp\
+  \ FROM participant_stats p CROSS JOIN snapshot_stats s LEFT JOIN indexer i ON TRUE"
 
 getLatestIndexedSafeBlock
   :: Connection

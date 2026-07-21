@@ -92,6 +92,8 @@ export interface InsightsStatus {
   latestIndexedBlock: number | null
   latestIndexedAt: string | null
   chainId?: number
+  participantCount?: number
+  eligibleCount?: number
 }
 
 export interface ApiErrorBody {
