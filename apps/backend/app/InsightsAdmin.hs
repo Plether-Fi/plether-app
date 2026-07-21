@@ -1,22 +1,27 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Plether.AA.Pimlico (resolveTradingAccountAddress)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
   ( ParticipantRow (..)
+  , applyCompetitionParticipantWalletRemaps
   , ensureInsightsSchema
   , finalizeCompetition
   , listCompetitionParticipants
   , setParticipantEligibility
+  , stageCompetitionParticipantWalletRemap
   , upsertCompetitionParticipant
   )
 import Plether.Insights.Competition
   ( july2026CompetitionSlug
   , participantEligibilityFromText
   )
+import Plether.Ethereum.Client (EthClient, newClient)
 import Plether.Utils.Address (isValidAddress)
 import System.Environment (getArgs)
+import Text.Read (readMaybe)
 
 main :: IO ()
 main = do
@@ -29,6 +34,7 @@ main = do
         Nothing -> failWith "DATABASE_URL is required for plether-insights-admin"
         Just databaseUrl -> do
           pool <- newDbPool databaseUrl
+          perpsClient <- newClient $ cfgPerpsRpcUrl cfg
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
@@ -36,14 +42,20 @@ main = do
               (cfgPerpsOrderRouter cfg)
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
-          runCommand pool args
+          runCommand pool perpsClient args
 
-runCommand :: DbPool -> [String] -> IO ()
-runCommand pool = \case
+runCommand :: DbPool -> EthClient -> [String] -> IO ()
+runCommand pool perpsClient = \case
   ["register", rawTraderReference, rawWallet] ->
     register pool rawTraderReference rawWallet Nothing
   ["register", rawTraderReference, rawWallet, rawAlias] ->
     register pool rawTraderReference rawWallet $ Just rawAlias
+  ["stage-wallet-remap", rawTraderReference, rawOldWallet, rawNewWallet] ->
+    stageWalletRemap pool rawTraderReference rawOldWallet rawNewWallet
+  ["stage-trading-account-remap", rawTraderReference, rawOldWallet] ->
+    stageTradingAccountRemap pool perpsClient rawTraderReference rawOldWallet
+  ["apply-wallet-remaps", rawExpectedCount, rawAppliedBy] ->
+    applyWalletRemaps pool rawExpectedCount rawAppliedBy
   ["review", rawWallet, rawStatus, rawReviewer] ->
     review pool rawWallet rawStatus rawReviewer Nothing
   ["review", rawWallet, rawStatus, rawReviewer, rawReason] ->
@@ -75,6 +87,77 @@ register pool rawTraderReference rawWallet rawAlias = do
       case result of
         Left err -> failWith $ T.unpack err
         Right () -> putStrLn $ "Registered " <> T.unpack (canonicalAddress wallet)
+
+stageWalletRemap :: DbPool -> String -> String -> String -> IO ()
+stageWalletRemap pool rawTraderReference rawOldWallet rawNewWallet = do
+  let traderReference = T.strip $ T.pack rawTraderReference
+      oldWallet = T.pack rawOldWallet
+      newWallet = T.pack rawNewWallet
+  if T.null traderReference
+    then failWith "TRADER_REFERENCE must be a non-empty opaque registration identifier"
+    else if not $ isValidAddress oldWallet
+      then failWith "OLD_WALLET must be a valid Ethereum address"
+      else if not $ isValidAddress newWallet
+        then failWith "NEW_WALLET must be a valid Ethereum address"
+        else do
+          result <- withDb pool $ \conn ->
+            stageCompetitionParticipantWalletRemap
+              conn
+              july2026CompetitionSlug
+              traderReference
+              oldWallet
+              newWallet
+          case result of
+            Left err -> failWith $ T.unpack err
+            Right () -> putStrLn "Staged participant wallet remap"
+
+stageTradingAccountRemap :: DbPool -> EthClient -> String -> String -> IO ()
+stageTradingAccountRemap pool perpsClient rawTraderReference rawOldWallet = do
+  let traderReference = T.strip $ T.pack rawTraderReference
+      oldWallet = T.pack rawOldWallet
+  if T.null traderReference
+    then failWith "TRADER_REFERENCE must be a non-empty opaque registration identifier"
+    else if not $ isValidAddress oldWallet
+      then failWith "OLD_WALLET must be a valid Ethereum address"
+      else do
+        resolved <- resolveTradingAccountAddress perpsClient oldWallet
+        case resolved of
+          Left err -> failWith $ "Trading Account resolution failed: " <> T.unpack err
+          Right newWallet -> do
+            result <- withDb pool $ \conn ->
+              stageCompetitionParticipantWalletRemap
+                conn
+                july2026CompetitionSlug
+                traderReference
+                oldWallet
+                newWallet
+            case result of
+              Left err -> failWith $ T.unpack err
+              Right () ->
+                putStrLn $
+                  "Staged Trading Account remap "
+                    <> T.unpack (canonicalAddress oldWallet)
+                    <> " -> "
+                    <> T.unpack (canonicalAddress newWallet)
+
+applyWalletRemaps :: DbPool -> String -> String -> IO ()
+applyWalletRemaps pool rawExpectedCount rawAppliedBy = do
+  let appliedBy = T.strip $ T.pack rawAppliedBy
+  case readMaybe rawExpectedCount of
+    Nothing -> failWith "EXPECTED_COUNT must be a positive integer"
+    Just expectedCount
+      | expectedCount <= 0 -> failWith "EXPECTED_COUNT must be a positive integer"
+      | T.null appliedBy -> failWith "APPLIED_BY must not be empty"
+      | otherwise -> do
+          result <- withDb pool $ \conn ->
+            applyCompetitionParticipantWalletRemaps
+              conn
+              july2026CompetitionSlug
+              expectedCount
+              appliedBy
+          case result of
+            Left err -> failWith $ T.unpack err
+            Right () -> putStrLn $ "Applied " <> show expectedCount <> " participant wallet remaps"
 
 review
   :: DbPool
@@ -148,6 +231,9 @@ usage =
   unlines
     [ "Usage:"
     , "  plether-insights-admin register TRADER_REFERENCE WALLET [ALIAS]"
+    , "  plether-insights-admin stage-wallet-remap TRADER_REFERENCE OLD_WALLET NEW_WALLET"
+    , "  plether-insights-admin stage-trading-account-remap TRADER_REFERENCE OLD_WALLET"
+    , "  plether-insights-admin apply-wallet-remaps EXPECTED_COUNT APPLIED_BY"
     , "  plether-insights-admin review WALLET STATUS REVIEWER [PUBLIC_REASON]"
     , "  plether-insights-admin finalize REVIEWER"
     , "  plether-insights-admin list"
