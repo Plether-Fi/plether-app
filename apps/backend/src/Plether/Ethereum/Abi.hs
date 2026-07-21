@@ -1,6 +1,7 @@
 module Plether.Ethereum.Abi
   ( encodeCall
   , encodeUint256
+  , encodeInt256
   , encodeAddress
   , encodeBytes32
   , encodeBool
@@ -22,7 +23,6 @@ import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Word (Word8)
 
 keccak256 :: ByteString -> ByteString
 keccak256 bs = convert (hash bs :: Digest Keccak_256)

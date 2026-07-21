@@ -463,6 +463,36 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
+      - name: Patch liquidation worker cost controls
+        if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          LIQUIDATION_WORKER_POLL_SECONDS: "600"
+          LIQUIDATION_WORKER_SCAN_BATCH_SIZE: "1000"
+          LIQUIDATION_WORKER_MULTICALL_SIZE: "10"
+        run: |
+          jq \
+            --arg liquidationPollSeconds "$LIQUIDATION_WORKER_POLL_SECONDS" \
+            --arg liquidationScanBatchSize "$LIQUIDATION_WORKER_SCAN_BATCH_SIZE" \
+            --arg liquidationMulticallSize "$LIQUIDATION_WORKER_MULTICALL_SIZE" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == "plether-liquidation-worker" then
+                upsert_env("LIQUIDATION_WORKER_POLL_SECONDS"; $liquidationPollSeconds)
+                | upsert_env("LIQUIDATION_WORKER_SCAN_BATCH_SIZE"; $liquidationScanBatchSize)
+                | upsert_env("LIQUIDATION_WORKER_MULTICALL_SIZE"; $liquidationMulticallSize)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
+
       - name: Patch Sepolia Insights configuration
         if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
         env:
@@ -480,7 +510,7 @@ jobs:
               );
 
             .containerDefinitions |= map(
-              if .name == "plether-api" or .name == "plether-insights-worker" then
+              if .name == "plether-api" or .name == "plether-insights-worker" or .name == "plether-liquidation-worker" then
                 upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
               elif .name == "plether-perps-indexer" then
                 upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)

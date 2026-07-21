@@ -4,7 +4,9 @@ module Plether.Pyth.Basket
   , PythPricePoint (..)
   , basketComponents
   , computeBasketSnapshot
+  , invertPythPrice
   , normalizeFeedId
+  , normalizePythPrice
   ) where
 
 import Data.Aeson (ToJSON (..), object, (.=))
