@@ -26,6 +26,7 @@ export function MethodologyPage() {
           <p>Traders are ranked by final net P&amp;L at the closing snapshot. Open positions are marked using the protocol’s official final mark.</p>
           <div className="mt-3 border-l-2 border-brand-orange bg-app-bg/60 px-4 py-3 font-mono text-xs leading-6 text-content-primary sm:text-sm">final P&amp;L = closing account value − starting account value − deposits + withdrawals</div>
           <p>Account value includes collateral, marked open-position P&amp;L, incurred fees, carry, and outstanding trader claims. Pending orders that have not executed do not count.</p>
+          <p>Trade-history “realized P&amp;L” and open-position “unrealized P&amp;L” are directional price results before execution fees, VPI, carry, and execution rewards. They can be positive while final net P&amp;L is negative.</p>
         </Rule>
         <Rule number="03" title="Prize eligibility">
           <p>A trader must finish with at least <strong className="text-positive">+1,000.00 USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>

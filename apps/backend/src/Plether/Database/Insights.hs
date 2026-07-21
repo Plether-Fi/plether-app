@@ -135,6 +135,7 @@ data CompetitionRow = CompetitionRow
   , icrReleaseRouter :: Text
   , icrUsdcAddress :: Text
   , icrMarginClearinghouseAddress :: Text
+  , icrAccountLensAddress :: Text
   , icrStartTimestamp :: Integer
   , icrNewRiskCutoffTimestamp :: Integer
   , icrScoreCutoffTimestamp :: Integer
@@ -160,6 +161,7 @@ data CompetitionRow = CompetitionRow
 instance FromRow CompetitionRow where
   fromRow = CompetitionRow
     <$> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -226,6 +228,7 @@ data AccountSnapshotInput = AccountSnapshotInput
   , asiKind :: SnapshotKind
   , asiChainId :: Integer
   , asiReleaseRouter :: Text
+  , asiAccountLensAddress :: Text
   , asiBlockNumber :: Integer
   , asiBlockHash :: Text
   , asiTimestamp :: Integer
@@ -253,6 +256,7 @@ data LeaderboardRow = LeaderboardRow
   , ilrVolumeUsdc :: Integer
   , ilrExecutedTrades :: Integer
   , ilrLiquidations :: Integer
+  , ilrRealizedPnlUsdc :: Integer
   , ilrLatestSnapshotBlock :: Maybe Integer
   , ilrLatestSnapshotTimestamp :: Maybe Integer
   , ilrHasOpenPosition :: Maybe Bool
@@ -286,6 +290,7 @@ instance FromRow LeaderboardRow where
     <*> numericIntegerFieldRequired
     <*> field
     <*> field
+    <*> numericIntegerFieldRequired
     <*> field
     <*> field
     <*> field
@@ -512,10 +517,12 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ snapshot_kind TEXT NOT NULL,\
     \ chain_id BIGINT NOT NULL,\
     \ release_router TEXT NOT NULL,\
+    \ account_lens_address TEXT,\
     \ block_number BIGINT NOT NULL,\
     \ block_hash TEXT NOT NULL,\
     \ timestamp BIGINT NOT NULL,\
     \ participant_count INTEGER NOT NULL,\
+    \ account_state_count INTEGER,\
     \ published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \ PRIMARY KEY (competition_slug, snapshot_kind, block_number),\
     \ CHECK (snapshot_kind IN ('start', 'live', 'final')),\
@@ -567,6 +574,26 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
   reconcileCompetitionAccountLens conn july2026CompetitionSlug accountLensAddress
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ALTER COLUMN account_lens_address SET NOT NULL"
+  _ <- execute_ conn
+    "ALTER TABLE insights_snapshot_batches ADD COLUMN IF NOT EXISTS account_lens_address TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE insights_snapshot_batches ADD COLUMN IF NOT EXISTS account_state_count INTEGER"
+  _ <- execute_ conn
+    "UPDATE insights_snapshot_batches b SET account_lens_address = c.account_lens_address\
+    \ FROM insights_competitions c WHERE c.slug = b.competition_slug\
+    \ AND b.account_lens_address IS NULL"
+  _ <- execute_ conn
+    "UPDATE insights_snapshot_batches b SET account_state_count = (\
+    \ SELECT COUNT(*)::integer FROM insights_account_snapshots s\
+    \ WHERE s.competition_slug = b.competition_slug AND s.snapshot_kind = b.snapshot_kind\
+    \ AND s.block_number = b.block_number AND LOWER(s.block_hash) = LOWER(b.block_hash)\
+    \ AND (s.has_open_position OR s.signed_net_equity_usdc <> 0\
+    \   OR s.terminal_reachable_usdc <> 0 OR s.trader_claims_usdc <> 0))\
+    \ WHERE b.account_state_count IS NULL"
+  _ <- execute_ conn
+    "ALTER TABLE insights_snapshot_batches ALTER COLUMN account_lens_address SET NOT NULL"
+  _ <- execute_ conn
+    "ALTER TABLE insights_snapshot_batches ALTER COLUMN account_state_count SET NOT NULL"
   pure ()
 
 -- Snapshot values are only meaningful for the exact lens implementation that
@@ -1141,14 +1168,17 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
         kind = asiKind firstSnapshot
         chainId = asiChainId firstSnapshot
         releaseRouter = normalizeAddress $ asiReleaseRouter firstSnapshot
+        accountLensAddress = normalizeAddress $ asiAccountLensAddress firstSnapshot
         blockNumber = asiBlockNumber firstSnapshot
         blockHash = normalizeAddress $ asiBlockHash firstSnapshot
         timestamp = asiTimestamp firstSnapshot
+        accountStateCount = length $ filter (equityHasAccountState . asiEquity) snapshots
         sameIdentity snapshot =
           asiCompetitionSlug snapshot == slug
             && asiKind snapshot == kind
             && asiChainId snapshot == chainId
             && normalizeAddress (asiReleaseRouter snapshot) == releaseRouter
+            && normalizeAddress (asiAccountLensAddress snapshot) == accountLensAddress
             && asiBlockNumber snapshot == blockNumber
             && normalizeAddress (asiBlockHash snapshot) == blockHash
             && asiTimestamp snapshot == timestamp
@@ -1160,6 +1190,22 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
     mutable <- competitionIsMutableForUpdate conn slug
     unless mutable $
       fail "Cannot publish an account snapshot batch: the competition is missing or finalized"
+    configuredLens <- query conn
+      "SELECT account_lens_address FROM insights_competitions WHERE slug = ?"
+      (Only slug)
+    unless (configuredLens == [Only accountLensAddress]) $
+      fail "Cannot publish an Insights snapshot batch from a stale account lens"
+    previousStatefulBatches <- query conn
+      "SELECT EXISTS (SELECT 1 FROM insights_snapshot_batches\
+      \ WHERE competition_slug = ? AND snapshot_kind IN ('live', 'final')\
+      \ AND LOWER(account_lens_address) = LOWER(?) AND account_state_count > 0)"
+      (slug, accountLensAddress)
+    when
+      ( kind /= SnapshotStart
+          && accountStateCount == 0
+          && previousStatefulBatches == [Only True]
+      ) $
+      fail "Cannot publish an all-zero Insights snapshot after a stateful live batch"
     registered <- query conn
       "SELECT wallet FROM insights_competition_participants\
       \ WHERE competition_slug = ? ORDER BY wallet ASC"
@@ -1174,22 +1220,33 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
     forM_ snapshots $ upsertAccountSnapshotUnchecked conn
     _ <- execute conn
       "INSERT INTO insights_snapshot_batches\
-      \ (competition_slug, snapshot_kind, chain_id, release_router, block_number, block_hash, timestamp, participant_count)\
-      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?)\
+      \ (competition_slug, snapshot_kind, chain_id, release_router, account_lens_address, block_number, block_hash, timestamp, participant_count, account_state_count)\
+      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
       \ ON CONFLICT (competition_slug, snapshot_kind, block_number) DO UPDATE SET\
       \ chain_id = EXCLUDED.chain_id, release_router = EXCLUDED.release_router,\
+      \ account_lens_address = EXCLUDED.account_lens_address,\
       \ block_hash = EXCLUDED.block_hash, timestamp = EXCLUDED.timestamp,\
-      \ participant_count = EXCLUDED.participant_count, published_at = NOW()"
+      \ participant_count = EXCLUDED.participant_count,\
+      \ account_state_count = EXCLUDED.account_state_count, published_at = NOW()"
       ( slug
       , snapshotKindText kind
       , chainId
       , releaseRouter
+      , accountLensAddress
       , blockNumber
       , blockHash
       , timestamp
       , length snapshots
+      , accountStateCount
       )
     pure ()
+
+equityHasAccountState :: EquitySnapshot -> Bool
+equityHasAccountState EquitySnapshot {..} =
+  esHasOpenPosition
+    || esSignedNetEquityUsdc /= 0
+    || esTerminalReachableUsdc /= 0
+    || esTraderClaimsUsdc /= 0
 
 hasCompleteAccountSnapshotBatch
   :: Connection
@@ -1206,6 +1263,13 @@ hasCompleteAccountSnapshotBatch conn slug kind blockNumber blockHash = do
     \ WHERE b.competition_slug = ? AND b.snapshot_kind = ? AND b.block_number = ?\
     \ AND LOWER(b.block_hash) = LOWER(?) AND b.participant_count > 0\
     \ AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
+    \ AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
+    \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
+    \   SELECT 1 FROM insights_snapshot_batches prior\
+    \   WHERE prior.competition_slug = b.competition_slug\
+    \   AND prior.snapshot_kind IN ('live', 'final')\
+    \   AND LOWER(prior.account_lens_address) = LOWER(c.account_lens_address)\
+    \   AND prior.account_state_count > 0))\
     \ AND b.participant_count = (\
     \   SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = b.competition_slug\
     \ )\
@@ -1365,6 +1429,13 @@ getInsightsDataStatus conn slug = do
     \ JOIN insights_snapshot_batches b ON b.competition_slug = s.competition_slug\
     \   AND b.snapshot_kind = s.snapshot_kind AND b.block_number = s.block_number\
     \   AND LOWER(b.block_hash) = LOWER(s.block_hash) AND b.chain_id = s.chain_id AND b.release_router = s.release_router\
+    \ WHERE LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+    \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
+    \   SELECT 1 FROM insights_snapshot_batches prior\
+    \   WHERE prior.competition_slug = b.competition_slug\
+    \   AND prior.snapshot_kind IN ('live', 'final')\
+    \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
+    \   AND prior.account_state_count > 0))\
     \ ), indexer AS (\
     \ SELECT i.last_indexed_block, i.last_indexed_block_hash, EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
     \ FROM perps_indexer_state i JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
@@ -1372,6 +1443,13 @@ getInsightsDataStatus conn slug = do
     \ ), snapshot_worker AS (\
     \ SELECT EXTRACT(EPOCH FROM MAX(b.published_at))::bigint AS updated_timestamp\
     \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
+    \ WHERE LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+    \ AND (b.snapshot_kind = 'start' OR b.account_state_count > 0 OR NOT EXISTS (\
+    \   SELECT 1 FROM insights_snapshot_batches prior\
+    \   WHERE prior.competition_slug = b.competition_slug\
+    \   AND prior.snapshot_kind IN ('live', 'final')\
+    \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
+    \   AND prior.account_state_count > 0))\
     \ )\
     \ SELECT COALESCE(p.participant_count, 0), COALESCE(s.wallet_count, 0),\
     \ COALESCE(s.start_count, 0), COALESCE(s.final_count, 0), s.latest_block, s.latest_timestamp,\
@@ -1409,7 +1487,7 @@ competitionSeedMetadataSelect =
 
 competitionSelect :: Query
 competitionSelect =
-  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
+  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
   \ results_timestamp, payment_deadline_timestamp, start_block, start_block_hash, score_cutoff_block, score_cutoff_block_hash,\
   \ starting_balance_usdc, minimum_profit_bps, minimum_active_days, scoring_version, rules_version,\
   \ first_prize_usdc, second_prize_usdc, third_prize_usdc, finalized,\
@@ -1426,11 +1504,19 @@ leaderboardQuery =
   \ ), start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ WHERE b.snapshot_kind = 'start' AND (t.start_block IS NULL OR b.block_number = t.start_block - 1)\
+  \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
   \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
   \ ORDER BY b.block_number DESC, b.published_at DESC LIMIT 1\
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
+  \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+  \ AND (b.account_state_count > 0 OR NOT EXISTS (\
+  \   SELECT 1 FROM insights_snapshot_batches prior\
+  \   WHERE prior.competition_slug = b.competition_slug\
+  \   AND prior.snapshot_kind IN ('live', 'final')\
+  \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
+  \   AND prior.account_state_count > 0))\
   \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
   \ AND (t.score_cutoff_block IS NULL OR b.block_number <= t.score_cutoff_block)\
   \ AND (NOT t.finalized OR (b.snapshot_kind = 'final' AND b.block_number = t.score_cutoff_block\
@@ -1471,7 +1557,8 @@ leaderboardQuery =
   \   AND a.size_delta IS NOT NULL AND a.price IS NOT NULL\
   \   THEN ABS(a.size_delta) * a.price / 100000000000000000000 ELSE 0 END), 0)) AS volume_usdc,\
   \ COUNT(*) FILTER (WHERE a.activity_type IN ('Open', 'Close') AND COALESCE(a.size_delta, 0) <> 0) AS executed_trades,\
-  \ COUNT(*) FILTER (WHERE a.activity_type = 'Liquidated') AS liquidations\
+  \ COUNT(*) FILTER (WHERE a.activity_type = 'Liquidated') AS liquidations,\
+  \ COALESCE(SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated')), 0) AS realized_pnl_usdc\
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
@@ -1494,7 +1581,8 @@ leaderboardQuery =
   \ COALESCE(f.deposits_usdc, 0) AS deposits_usdc, COALESCE(f.withdrawals_usdc, 0) AS withdrawals_usdc,\
   \ COALESCE(adj.amount_usdc, 0) AS adjustment_usdc, COALESCE(ast.active_days, 0) AS active_days,\
   \ COALESCE(ast.volume_usdc, 0) AS volume_usdc, COALESCE(ast.executed_trades, 0) AS executed_trades,\
-  \ COALESCE(ast.liquidations, 0) AS liquidations, cs.block_number, cs.timestamp, cs.has_open_position, cs.snapshot_kind,\
+  \ COALESCE(ast.liquidations, 0) AS liquidations, COALESCE(ast.realized_pnl_usdc, 0) AS realized_pnl_usdc,\
+  \ cs.block_number, cs.timestamp, cs.has_open_position, cs.snapshot_kind,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'side' ELSE NULL END AS position_side,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'size' ELSE NULL END AS position_size_delta,\
   \ CASE WHEN cs.has_open_position THEN cs.raw_data->>'margin' ELSE NULL END AS position_margin_usdc,\
@@ -1527,7 +1615,7 @@ leaderboardQuery =
   \ CASE WHEN final_pnl_usdc IS NULL OR competition_starting_balance_usdc = 0 THEN NULL\
   \ ELSE TRUNC(final_pnl_usdc * 10000 / competition_starting_balance_usdc)::bigint END AS roi_bps,\
   \ starting_value_usdc, current_value_usdc, deposits_usdc, withdrawals_usdc, adjustment_usdc,\
-  \ active_days, volume_usdc, executed_trades, liquidations, block_number, timestamp, has_open_position, snapshot_kind,\
+  \ active_days, volume_usdc, executed_trades, liquidations, realized_pnl_usdc, block_number, timestamp, has_open_position, snapshot_kind,\
   \ position_side, position_size_delta, position_margin_usdc, position_entry_price,\
   \ position_unrealized_pnl_usdc, position_liquidatable\
   \ FROM with_prizes"
@@ -1542,6 +1630,13 @@ walletActivityQuery =
   \ ), current_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
+  \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+  \ AND (b.account_state_count > 0 OR NOT EXISTS (\
+  \   SELECT 1 FROM insights_snapshot_batches prior\
+  \   WHERE prior.competition_slug = b.competition_slug\
+  \   AND prior.snapshot_kind IN ('live', 'final')\
+  \   AND LOWER(prior.account_lens_address) = LOWER(t.account_lens_address)\
+  \   AND prior.account_state_count > 0))\
   \ AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = t.slug)\
   \ AND (t.score_cutoff_block IS NULL OR b.block_number <= t.score_cutoff_block)\
   \ AND (NOT t.finalized OR (b.snapshot_kind = 'final' AND b.block_number = t.score_cutoff_block\
@@ -1577,6 +1672,7 @@ finalizationReadinessQuery =
   \   WHERE p.competition_slug = c.slug AND b.snapshot_kind = 'start'\
   \     AND c.start_block IS NOT NULL AND b.block_number = c.start_block - 1\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
+  \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
   \     AND s.chain_id = b.chain_id AND s.release_router = b.release_router\
   \     AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p0 WHERE p0.competition_slug = c.slug)),\
   \ (SELECT COUNT(DISTINCT s.wallet) FROM insights_competition_participants p\
@@ -1587,14 +1683,32 @@ finalizationReadinessQuery =
   \   WHERE p.competition_slug = c.slug AND b.snapshot_kind = 'final'\
   \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
+  \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
+  \     AND (b.account_state_count > 0 OR NOT EXISTS (\
+  \       SELECT 1 FROM insights_snapshot_batches prior\
+  \       WHERE prior.competition_slug = c.slug AND prior.snapshot_kind IN ('live', 'final')\
+  \       AND LOWER(prior.account_lens_address) = LOWER(c.account_lens_address)\
+  \       AND prior.account_state_count > 0))\
   \     AND s.chain_id = b.chain_id AND s.release_router = b.release_router\
   \     AND b.participant_count = (SELECT COUNT(*) FROM insights_competition_participants p0 WHERE p0.competition_slug = c.slug)),\
   \ (SELECT COUNT(DISTINCT b.block_hash) FROM insights_snapshot_batches b\
   \   WHERE b.competition_slug = c.slug AND b.snapshot_kind = 'final'\
-  \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)),\
+  \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
+  \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
+  \     AND (b.account_state_count > 0 OR NOT EXISTS (\
+  \       SELECT 1 FROM insights_snapshot_batches prior\
+  \       WHERE prior.competition_slug = c.slug AND prior.snapshot_kind IN ('live', 'final')\
+  \       AND LOWER(prior.account_lens_address) = LOWER(c.account_lens_address)\
+  \       AND prior.account_state_count > 0))),\
   \ (SELECT MIN(b.block_hash) FROM insights_snapshot_batches b\
   \   WHERE b.competition_slug = c.slug AND b.snapshot_kind = 'final'\
-  \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash))\
+  \     AND b.block_number = c.score_cutoff_block AND LOWER(b.block_hash) = LOWER(c.score_cutoff_block_hash)\
+  \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
+  \     AND (b.account_state_count > 0 OR NOT EXISTS (\
+  \       SELECT 1 FROM insights_snapshot_batches prior\
+  \       WHERE prior.competition_slug = c.slug AND prior.snapshot_kind IN ('live', 'final')\
+  \       AND LOWER(prior.account_lens_address) = LOWER(c.account_lens_address)\
+  \       AND prior.account_state_count > 0)))\
   \ FROM insights_competitions c WHERE c.slug = ? FOR UPDATE OF c"
 
 normalizeLeaderboardSearch :: Maybe Text -> Maybe Text

@@ -63,6 +63,7 @@ describe('Insights API client', () => {
         eligibilityStatus: 'eligible',
         prizeEligible: true,
         currentAccountValueUsdc: '101500000000',
+        realizedPnlUsdc: '375000000',
         position: {
           market: 'plDXY Perp',
           side: 'long',
@@ -89,6 +90,7 @@ describe('Insights API client', () => {
       prizePlace: 1,
       prizePlaces: [1],
       prizeAmountUsdc: '600000000',
+      realizedPnl: '375000000',
       position: {
         side: 'long',
         size: expectedNotional,
@@ -104,5 +106,24 @@ describe('Insights API client', () => {
       sizeDelta,
       price: '1.01234567',
     })
+  })
+
+  it('reconstructs realized P&L from activity during a rolling backend deployment', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      competition,
+      wallet: {
+        wallet: '0x1111111111111111111111111111111111111111',
+        finalPnlUsdc: '-5000000',
+        activeDays: 1,
+        liquidations: 0,
+      },
+      activity: [
+        { activityType: 'Close', occurredAt: '2026-07-20T12:00:00Z', pnlUsdc: '12000000' },
+        { activityType: 'Liquidated', occurredAt: '2026-07-20T13:00:00Z', pnlUsdc: '-3000000' },
+      ],
+    }), { status: 200 })))
+
+    const response = await getWallet(competition.slug, '0x1111111111111111111111111111111111111111')
+    expect(response.wallet.realizedPnl).toBe('9000000')
   })
 })
