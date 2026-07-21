@@ -45,6 +45,7 @@ data Config = Config
   , cfgPerpsCfdEngine :: Text
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
+  , cfgPerpsAccountLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
@@ -194,6 +195,7 @@ loadConfig = do
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
+      perpsAccountLens <- fromMaybe "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29" <$> lookupEnv "PERPS_ACCOUNT_LENS"
       perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
       perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
       perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
@@ -315,6 +317,7 @@ loadConfig = do
                 , cfgPerpsCfdEngine = T.pack perpsCfdEngine
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
+                , cfgPerpsAccountLens = T.pack perpsAccountLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey

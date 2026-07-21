@@ -57,6 +57,7 @@ testConfig chainId perpsChainId =
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
     , cfgPerpsMarginClearinghouse = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsAccountLens = "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29"
     , cfgPerpsIndexerStartBlock = 0
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing

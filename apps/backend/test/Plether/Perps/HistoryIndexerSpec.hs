@@ -4,6 +4,7 @@ module Plether.Perps.HistoryIndexerSpec (spec) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Aeson (object, (.=))
 import Data.Text (Text)
 import Data.Word (Word8)
 import Plether.Indexer.Contracts (keccak256Text)
@@ -64,12 +65,20 @@ spec = do
           ParsedMarginActivity "Add margin" account 5_000_000 _ -> account == testAccount
           _ -> False
 
-      parsePerpsLog (mkLog depositTopic [addressTopic, otherAddressTopic] (word 100_000_000))
+      parsePerpsLog ((mkLog depositTopic [addressTopic, otherAddressTopic] (word 100_000_000)) {rlAddress = marginClearinghouse})
         `shouldBeParsedAs` \case
-          ParsedMarginActivity "Deposit" account 100_000_000 _ -> account == testAccount
+          ParsedMarginActivity "Deposit" account 100_000_000 payload ->
+            account == testAccount
+              && payload
+                == object
+                  [ "account" .= testAccount
+                  , "asset" .= testAsset
+                  , "contractAddress" .= testEmitter
+                  , "amountUsdc" .= ("100000000" :: Text)
+                  ]
           _ -> False
 
-      parsePerpsLog (mkLog withdrawTopic [addressTopic, otherAddressTopic] (word 25_000_000))
+      parsePerpsLog ((mkLog withdrawTopic [addressTopic, otherAddressTopic] (word 25_000_000)) {rlAddress = marginClearinghouse})
         `shouldBeParsedAs` \case
           ParsedMarginActivity "Withdraw" account 25_000_000 _ -> account == testAccount
           _ -> False
@@ -126,6 +135,15 @@ otherAddressTopic = word 0x55e007d79906572ccca8e75b1beb302787348d6e
 
 testAccount :: Text
 testAccount = "0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"
+
+testAsset :: Text
+testAsset = "0x55e007d79906572ccca8e75b1beb302787348d6e"
+
+testEmitter :: Text
+testEmitter = "0x731bb0939ce531728459394a277b28cbff8df049"
+
+marginClearinghouse :: Text
+marginClearinghouse = "0x731bb0939CE531728459394A277B28Cbff8df049"
 
 orderCommittedTopic :: ByteString
 orderCommittedTopic = keccak256Text "OrderCommitted(uint64,address,uint8)"

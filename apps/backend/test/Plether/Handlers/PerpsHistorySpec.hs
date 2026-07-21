@@ -43,6 +43,7 @@ testConfig =
     , cfgPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
     , cfgPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsAccountLens = "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29"
     , cfgPerpsIndexerStartBlock = 0
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing

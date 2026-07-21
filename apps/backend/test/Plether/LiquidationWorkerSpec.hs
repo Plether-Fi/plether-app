@@ -259,6 +259,7 @@ testConfig =
     , cfgPerpsCfdEngine = configuredCfdEngine
     , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
+    , cfgPerpsAccountLens = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 288439939
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing

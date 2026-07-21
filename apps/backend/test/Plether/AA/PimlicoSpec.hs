@@ -303,6 +303,7 @@ testConfig =
     , cfgPerpsCfdEngine = engine
     , cfgPerpsMarginClearinghouse = clearinghouse
     , cfgPerpsPletherOracle = ""
+    , cfgPerpsAccountLens = "0x0000000000000000000000000000000000000000"
     , cfgPerpsIndexerStartBlock = 0
     , cfgAaConfig = Just testAaConfig
     , cfgFaucetPrivateKey = Nothing

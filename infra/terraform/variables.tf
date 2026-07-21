@@ -265,6 +265,11 @@ variable "perps_margin_clearinghouse" {
   default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
 }
 
+variable "perps_account_lens" {
+  type    = string
+  default = "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29"
+}
+
 variable "perps_indexer_start_block" {
   type    = string
   default = "288439939"
@@ -283,6 +288,12 @@ variable "perps_indexer_batch_size" {
 variable "perps_indexer_poll_seconds" {
   type    = string
   default = "12"
+}
+
+variable "insights_snapshot_poll_seconds" {
+  type        = string
+  default     = "60"
+  description = "Interval between Plether Insights account snapshot cycles, in seconds. The worker enforces a minimum of 10 seconds."
 }
 
 variable "perps_oracle_updater_poll_seconds" {
@@ -374,7 +385,7 @@ variable "liquidation_worker_desired_count" {
 variable "consolidate_workers" {
   type        = bool
   default     = false
-  description = "Run the order keeper, basket worker, perps oracle updater, and perps indexer in one ECS service. The liquidation worker remains a dedicated service."
+  description = "Run the order keeper, basket worker, perps oracle updater, perps indexer, and Insights snapshot worker in one ECS service. The liquidation worker remains a dedicated service."
 }
 
 variable "workers_desired_count" {

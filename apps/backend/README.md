@@ -256,6 +256,9 @@ Notes:
 - The indexer only writes finalized/safe history. Default finality delay is `120` blocks.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
+- Every activity row retains the normalized emitting contract address. Re-indexing
+  safely fills this provenance for matching legacy rows; rows whose emitter cannot
+  be proven remain untrusted for competition cash-flow scoring.
 - Expired-order cleanup appears in Order History as `Expired / Cleaned up` and in Transaction History as `Cleaned up expired order`.
 
 Useful checks:
@@ -266,7 +269,86 @@ curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/orders?limit=10"
 curl "http://127.0.0.1:3001/api/perps/accounts/0xYOUR_ADDRESS/activity?limit=10"
 ```
 
-### 5. Start The Liquidation Worker
+### 5. Start The Insights Snapshot Worker
+
+`plether-insights-worker` reads every registered trading account at the same
+confirmation-delayed block. It persists the baseline, live, and final account
+ledger snapshots used by the public leaderboard.
+
+```bash
+cd apps/backend
+
+RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+CHAIN_ID=421614 \
+PERPS_CHAIN_ID=421614 \
+PERPS_USDC=0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3 \
+PERPS_ORDER_ROUTER=0x04E3103752f623fBcDcD01f588590Af4c53E4c1E \
+PERPS_MARGIN_CLEARINGHOUSE=0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+cabal run plether-insights-worker
+```
+
+Insights persists these configured contract addresses with the competition.
+Deposit and withdrawal adjustments count only events emitted by that exact
+MarginClearinghouse for that exact mock-USDC asset.
+
+Register the scored Plether Trading Account (which may differ from the
+controlling wallet) and manage the post-competition review with the audited
+admin CLI. `TRADER_REFERENCE` must be a stable, opaque identifier from the
+private registration system; it enforces one entry per beneficial trader and is
+never returned by the public API or the `list` command.
+
+```bash
+# In a second terminal with the same RPC, chain, and database variables set:
+cabal run plether-insights-admin -- register TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
+cabal run plether-insights-admin -- list
+cabal run plether-insights-admin -- review 0xTRADING_ACCOUNT eligible reviewer-name
+cabal run plether-insights-admin -- finalize reviewer-name
+```
+
+The optional review reason is public leaderboard copy, so keep it generic (for
+example, `competition rules violation`). Store private investigation evidence
+in the restricted review system, not in this CLI field. Legacy development rows
+without a trader reference must be re-registered before finalization.
+
+`finalize` is a one-way, audited transition. It fails closed until the scoring
+cutoff has passed, the canonical boundary blocks and complete baseline/final
+snapshot batches exist (with one common final hash), every participant has a
+private trader reference, and every review is resolved to `eligible` or
+`ineligible`. Only reviewed, mechanically qualified
+participants receive prize places. Exact final-P&L ties share the combined paid
+places equally.
+
+Keep the Perps history indexer running first. The Insights worker deliberately
+uses its finalized cursor so account snapshots and event-derived statistics
+share one canonical upper bound.
+
+Production registration, review, finalization, deployment order, and payout
+checks are documented in `../../specs/insights-operations-runbook.md`.
+
+#### Competition metadata safety
+
+The first Insights process to use a database inserts the competition's network,
+contract addresses, UTC schedule, scoring versions, eligibility thresholds, and
+prizes. Later API, worker, and admin starts validate that immutable seed instead
+of rewriting it. Startup fails with the exact mismatched fields if deployed
+configuration or code would reinterpret an existing leaderboard.
+
+Treat that failure as a release/configuration error: restore the configuration
+and code that originally seeded the competition, or introduce a deliberately
+versioned competition under a new slug. Never edit or delete a live competition
+row to bypass the check. A disposable pre-launch database can be reset
+explicitly only when its competition data is no longer needed.
+
+The one known development seed correction—from the old
+`2026-08-09T23:59:59Z` payout timestamp to the configured published deadline—is
+migrated automatically only while it is the sole mismatch and the row is
+unfinalized with neither resolved boundary blocks nor account snapshots. If any
+of those conditions is not met, startup fails for manual review rather than
+changing historical meaning.
+
+### 6. Start The Liquidation Worker
 
 `plether-liquidation-worker` independently discovers accounts from CFD engine `PositionOpened` events, verifies current position state onchain, and simulates the canonical liquidation call with the latest cached Pyth payload. It submits only when that simulation succeeds.
 
@@ -292,7 +374,7 @@ cabal run plether-liquidation-worker -- --once --dry-run
 
 The worker keeps its own low-confirmation discovery cursor and monotonic candidate registry. It verifies zero-size positions at a confirmed block, persists each signed transaction and signer before broadcast, and uses same-nonce fee bumps for stale transactions. Deterministically rejected Pyth payloads and unaffordable signer transactions open persistent retry circuits; raw pending broadcasts and fresh signer repricing are bounded to one attempt per minute. Closed or already-liquidated candidates are removed only after confirmed CFD-engine state reports that no position remains. Do not rotate `LIQUIDATION_KEEPER_PRIVATE_KEY` while a transaction is pending; if that happens, the worker keeps the pending transaction as a circuit breaker and requires manual reconciliation instead of crossing signer nonce lanes.
 
-### 6. Optional: Start The On-Chain Oracle Updater
+### 7. Optional: Start The On-Chain Oracle Updater
 
 The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions independently of the keeper workers.
 
@@ -321,7 +403,7 @@ npm run perps:oracle-worker -- --once
 
 Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
 
-### 7. Companion Frontend Services
+### 8. Companion Frontend Services
 
 The API and workers can run without UI servers, but the usual local perps development stack is:
 
@@ -377,8 +459,9 @@ Local URLs:
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
-| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by the managed sponsorship policy |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
+| `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights equity snapshots |
 | `PERPS_INDEXER_START_BLOCK` | No | `288439939` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
@@ -406,6 +489,7 @@ Local URLs:
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
+| `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
 | `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
@@ -500,6 +584,18 @@ the backend alert is a receipt-based secondary signal.
 Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
 
 Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
+
+### Insights (requires PostgreSQL)
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/insights/v1/competitions/current` | Current competition rules and schedule |
+| `GET /api/insights/v1/competitions/:slug/leaderboard` | Finalized P&L standings and eligibility state |
+| `GET /api/insights/v1/competitions/:slug/wallets/:address` | Participant score and competition activity |
+| `GET /api/insights/v1/status` | Snapshot and Perps indexer coverage |
+
+Leaderboard query params: `limit` and integer offset `cursor`. Wallet detail
+accepts `activityLimit`.
 
 ## Response Format
 

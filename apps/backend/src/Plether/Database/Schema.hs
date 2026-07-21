@@ -1596,6 +1596,7 @@ instance FromRow PerpsOrderRow where
 data PerpsActivityRow = PerpsActivityRow
   { parActivityType :: Text
   , parOrderRouter :: Text
+  , parContractAddress :: Maybe Text
   , parAccount :: Text
   , parActor :: Maybe Text
   , parOrderId :: Maybe Integer
@@ -1615,6 +1616,7 @@ data PerpsActivityRow = PerpsActivityRow
 instance FromRow PerpsActivityRow where
   fromRow = PerpsActivityRow
     <$> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -1755,6 +1757,7 @@ ensurePerpsHistorySchema conn = do
     \id SERIAL PRIMARY KEY,\
     \chain_id BIGINT NOT NULL,\
     \release_router TEXT,\
+    \contract_address TEXT,\
     \event_key TEXT NOT NULL UNIQUE,\
     \account TEXT NOT NULL,\
     \actor TEXT,\
@@ -1777,6 +1780,8 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_account_activity ADD COLUMN IF NOT EXISTS release_router TEXT"
   _ <- execute_ conn
+    "ALTER TABLE perps_account_activity ADD COLUMN IF NOT EXISTS contract_address TEXT"
+  _ <- execute_ conn
     "UPDATE perps_account_activity SET release_router = '0x0000000000000000000000000000000000000000' WHERE release_router IS NULL"
   _ <- execute_ conn
     "DO $$ \
@@ -1786,11 +1791,26 @@ ensurePerpsHistorySchema conn = do
     \  END IF; \
     \END $$"
   _ <- execute_ conn
+    "UPDATE perps_account_activity SET contract_address = LOWER(TRIM(contract_address)) \
+    \WHERE contract_address IS NOT NULL AND contract_address <> LOWER(TRIM(contract_address))"
+  -- Only exact, already-indexed event matches are safe to migrate. Rows without
+  -- independently retained emitter provenance intentionally remain NULL.
+  _ <- execute_ conn
+    "UPDATE perps_account_activity a SET contract_address = LOWER(e.contract_address) \
+    \FROM perps_events e \
+    \WHERE a.contract_address IS NULL \
+    \AND e.chain_id = a.chain_id AND e.release_router = a.release_router \
+    \AND e.tx_hash = a.tx_hash AND e.log_index = a.log_index \
+    \AND e.block_number = a.block_number AND e.block_hash = a.block_hash"
+  _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_account_block \
     \ON perps_account_activity(chain_id, release_router, account, block_number DESC, log_index DESC)"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_chain_timestamp \
     \ON perps_account_activity(chain_id, release_router, timestamp DESC)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_flow_source \
+    \ON perps_account_activity(chain_id, release_router, contract_address, activity_type, block_number)"
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_account_activity_open_accounts \
     \ON perps_account_activity(chain_id, release_router, account, block_number) \
@@ -1922,6 +1942,7 @@ insertPerpsActivity
   -> Text
   -> Text
   -> Text
+  -> Text
   -> Maybe Text
   -> Maybe Integer
   -> Maybe Int
@@ -1937,14 +1958,20 @@ insertPerpsActivity
   -> Integer
   -> Value
   -> IO ()
-insertPerpsActivity conn chainId releaseRouter eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
+insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
   _ <- execute conn
     "INSERT INTO perps_account_activity \
-    \(chain_id, release_router, event_key, account, actor, activity_type, order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
-    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
-    \ON CONFLICT (event_key) DO NOTHING"
+    \(chain_id, release_router, contract_address, event_key, account, actor, activity_type, order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, tx_index, log_index, timestamp, data) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (event_key) DO UPDATE SET \
+    \contract_address = EXCLUDED.contract_address, data = EXCLUDED.data \
+    \WHERE perps_account_activity.chain_id = EXCLUDED.chain_id \
+    \AND perps_account_activity.release_router = EXCLUDED.release_router \
+    \AND perps_account_activity.tx_hash = EXCLUDED.tx_hash \
+    \AND perps_account_activity.log_index = EXCLUDED.log_index"
     ( chainId
     , normalizeRouter releaseRouter
+    , normalizeRouter contractAddress
     , eventKey
     , T.toLower account
     , fmap T.toLower actor
@@ -2048,7 +2075,7 @@ getPerpsActivityByAccount conn chainId releaseRouter account limit cursor = do
   where
     baseQuery :: Query
     baseQuery =
-      "SELECT activity_type, release_router, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
       \WHERE chain_id = ? AND release_router = ? AND account = ? \
@@ -2056,7 +2083,7 @@ getPerpsActivityByAccount conn chainId releaseRouter account limit cursor = do
 
     cursorQuery :: Query
     cursorQuery =
-      "SELECT activity_type, release_router, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
+      "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
       \WHERE chain_id = ? AND release_router = ? AND account = ? \
@@ -2091,7 +2118,7 @@ getPerpsOrderAccountSide conn chainId orderRouter orderId = do
 insertPerpsExpiredCleanupActivityIfReady :: Connection -> Integer -> Text -> Integer -> IO ()
 insertPerpsExpiredCleanupActivityIfReady conn chainId orderRouter orderId = do
   rows <- query conn
-    "SELECT o.account, o.side, o.cleanup_actor, e.tx_hash, e.block_number, e.block_hash, \
+    "SELECT o.account, o.side, o.cleanup_actor, e.contract_address, e.tx_hash, e.block_number, e.block_hash, \
     \e.tx_index, e.log_index, e.timestamp \
     \FROM perps_orders o \
     \JOIN perps_events e ON e.chain_id = o.chain_id AND e.release_router = o.order_router AND e.order_id = o.order_id AND e.event_name = 'OrderFailed' \
@@ -2100,8 +2127,8 @@ insertPerpsExpiredCleanupActivityIfReady conn chainId orderRouter orderId = do
     \ORDER BY e.block_number DESC, e.log_index DESC LIMIT 1"
     (chainId, normalizeRouter orderRouter, orderId)
   case rows of
-    [(Just account, side, actor, txHash, blockNumber, blockHash, txIndex, logIndex, timestamp)] ->
-      insertPerpsActivity conn chainId orderRouter (cleanupActivityKey txHash logIndex orderId) account
+    [(Just account, side, actor, contractAddress, txHash, blockNumber, blockHash, txIndex, logIndex, timestamp)] ->
+      insertPerpsActivity conn chainId orderRouter contractAddress (cleanupActivityKey txHash logIndex orderId) account
         "Cleaned up expired order" actor (Just orderId) side Nothing Nothing Nothing Nothing
         txHash blockNumber blockHash txIndex logIndex timestamp
         (object ["orderId" .= show orderId, "reason" .= ("Expired" :: Text), "actor" .= actor])

@@ -9,6 +9,7 @@ import Plether.Api (app)
 import Plether.Cache (newAppCache)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
@@ -35,6 +36,13 @@ main = do
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureTestnetFaucetSchema
+          withDb pool $ \conn ->
+            ensureInsightsSchema
+              conn
+              (cfgPerpsChainId cfg)
+              (cfgPerpsOrderRouter cfg)
+              (cfgPerpsUsdc cfg)
+              (cfgPerpsMarginClearinghouse cfg)
           logInfo
             "api_database_ready"
             "Database schemas are ready"

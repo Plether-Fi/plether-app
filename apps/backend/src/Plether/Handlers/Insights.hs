@@ -1,0 +1,331 @@
+module Plether.Handlers.Insights
+  ( getCurrentCompetitionResponse
+  , getCompetitionLeaderboardResponse
+  , getCompetitionWalletResponse
+  , getInsightsDataStatusResponse
+  , competitionRowToJson
+  , leaderboardRowToJson
+  , walletRowToJson
+  , activityRowToJson
+  ) where
+
+import Data.Aeson (Value (..), object, (.=))
+import qualified Data.Aeson.KeyMap as KeyMap
+import Data.Maybe (catMaybes)
+import Data.Text (Text)
+import qualified Data.Text as T
+import Data.Time (defaultTimeLocale, formatTime)
+import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
+import Plether.Config (Config (..))
+import Plether.Database (DbPool, withDb)
+import Plether.Database.Insights
+  ( CompetitionRow (..)
+  , InsightsActivityRow (..)
+  , InsightsDataStatusRow (..)
+  , LeaderboardRow (..)
+  , getCompetitionBySlug
+  , getCompetitionLeaderboard
+  , getCompetitionWallet
+  , getCompetitionWalletActivity
+  , getCurrentCompetition
+  , getInsightsDataStatus
+  )
+import Plether.Insights.Competition
+  ( ParticipantEligibility (..)
+  , PrizeAllocation (..)
+  , participantEligibilityFromText
+  , prizeAllocation
+  )
+import Plether.Types (ApiError, ApiResponse, mkResponse)
+import qualified Plether.Types.Error as E
+import Plether.Utils.Address (isValidAddress)
+
+getCurrentCompetitionResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getCurrentCompetitionResponse pool cfg = do
+  now <- round <$> getPOSIXTime
+  competition <- withDb pool getCurrentCompetition
+  pure $ case competition of
+    Nothing -> Left $ E.internalError "Insights competition metadata has not been initialized"
+    Just row ->
+      Right $
+        mkResponse (maybe 0 id $ icrScoreCutoffBlock row) (cfgPerpsChainId cfg) $
+          object
+            [ "competition" .= competitionRowToJson now row
+            , "generatedAt" .= isoTimestamp now
+            , "scoringVersion" .= icrScoringVersion row
+            , "provisional" .= not (icrFinalized row)
+            ]
+
+getCompetitionLeaderboardResponse
+  :: DbPool
+  -> Config
+  -> Text
+  -> Maybe Text
+  -> Int
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset = do
+  now <- round <$> getPOSIXTime
+  let pageLimit = clampLimit requestedLimit
+      pageOffset = max 0 requestedOffset
+  result <- withDb pool $ \conn -> do
+    competition <- getCompetitionBySlug conn slug
+    rows <- case competition of
+      Nothing -> pure []
+      Just _ -> getCompetitionLeaderboard conn slug search (pageLimit + 1) pageOffset
+    pure (competition, rows)
+  pure $ case result of
+    (Nothing, _) -> Left $ E.notFound $ "Unknown Insights competition: " <> slug
+    (Just competition, rows) ->
+      let visibleRows = take pageLimit rows
+          nextCursor
+            | length rows > pageLimit = Just $ T.pack $ show $ pageOffset + pageLimit
+            | otherwise = Nothing
+          latestBlock = maximum $ maybe 0 id (icrStartBlock competition) : map (maybe 0 id . ilrLatestSnapshotBlock) visibleRows
+       in Right $
+            mkResponse latestBlock (cfgPerpsChainId cfg) $
+              object
+                [ "competition" .= competitionRowToJson now competition
+                , "standings" .= map (leaderboardRowToJson competition) visibleRows
+                , "nextCursor" .= nextCursor
+                , "generatedAt" .= isoTimestamp now
+                , "scoringVersion" .= icrScoringVersion competition
+                , "provisional" .= not (icrFinalized competition)
+                ]
+
+getCompetitionWalletResponse
+  :: DbPool
+  -> Config
+  -> Text
+  -> Text
+  -> Int
+  -> IO (Either ApiError (ApiResponse Value))
+getCompetitionWalletResponse pool cfg slug wallet requestedActivityLimit
+  | not $ isValidAddress wallet = pure $ Left $ E.invalidAddress wallet
+  | otherwise = do
+      now <- round <$> getPOSIXTime
+      result <- withDb pool $ \conn -> do
+        competition <- getCompetitionBySlug conn slug
+        walletRow <- getCompetitionWallet conn slug wallet
+        activity <- getCompetitionWalletActivity conn slug wallet (clampActivityLimit requestedActivityLimit)
+        pure (competition, walletRow, activity)
+      pure $ case result of
+        (Nothing, _, _) -> Left $ E.notFound $ "Unknown Insights competition: " <> slug
+        (Just _, Nothing, _) -> Left $ E.notFound "This wallet is not registered for the competition"
+        (Just competition, Just walletRow, activity) ->
+          let latestBlock =
+                maybe
+                  (maybe 0 id $ icrStartBlock competition)
+                  id
+                  (ilrLatestSnapshotBlock walletRow)
+           in Right $
+                mkResponse latestBlock (cfgPerpsChainId cfg) $
+                  object
+                    [ "competition" .= competitionRowToJson now competition
+                    , "wallet" .= walletRowToJson competition walletRow
+                    , "activity" .= map activityRowToJson activity
+                    , "generatedAt" .= isoTimestamp now
+                    , "scoringVersion" .= icrScoringVersion competition
+                    , "provisional" .= not (icrFinalized competition)
+                    ]
+
+getInsightsDataStatusResponse
+  :: DbPool
+  -> Config
+  -> IO (Either ApiError (ApiResponse Value))
+getInsightsDataStatusResponse pool cfg = do
+  now <- round <$> getPOSIXTime
+  result <- withDb pool $ \conn -> do
+    competition <- getCurrentCompetition conn
+    status <- case competition of
+      Nothing -> pure Nothing
+      Just row -> getInsightsDataStatus conn (icrSlug row)
+    pure (competition, status)
+  pure $ case result of
+    (Nothing, _) -> Left $ E.internalError "Insights competition metadata has not been initialized"
+    (Just _, Nothing) -> Left $ E.internalError "Insights data status is unavailable"
+    (Just competition, Just status) ->
+      let indexedBlock = maybe 0 id $ idsrIndexerBlock status
+       in Right $
+            mkResponse indexedBlock (cfgPerpsChainId cfg) $
+              object
+                [ "competition" .= competitionRowToJson now competition
+                , "status" .= dataStatusRowToJson competition status
+                , "generatedAt" .= isoTimestamp now
+                , "scoringVersion" .= icrScoringVersion competition
+                , "provisional" .= not (icrFinalized competition)
+                ]
+
+competitionRowToJson :: Integer -> CompetitionRow -> Value
+competitionRowToJson now CompetitionRow {..} =
+  object $
+    catMaybes
+      [ Just $ "slug" .= icrSlug
+      , Just $ "name" .= icrName
+      , Just $ "chainId" .= show icrChainId
+      , Just $ "releaseRouter" .= icrReleaseRouter
+      , Just $ "phase" .= competitionPhase
+      , Just $ "startAt" .= isoTimestamp icrStartTimestamp
+      , Just $ "newRiskCutoffAt" .= isoTimestamp icrNewRiskCutoffTimestamp
+      , Just $ "scoreCutoffAt" .= isoTimestamp icrScoreCutoffTimestamp
+      , Just $ "resultsAt" .= isoTimestamp icrResultsTimestamp
+      , Just $ "paymentDeadlineAt" .= isoTimestamp icrPaymentDeadlineTimestamp
+      , ("startBlock" .=) . show <$> icrStartBlock
+      , ("scoreCutoffBlock" .=) . show <$> icrScoreCutoffBlock
+      , Just $ "startingBalanceUsdc" .= show icrStartingBalanceUsdc
+      , Just $ "minimumProfitUsdc" .= show minimumProfit
+      , Just $ "minimumProfitBps" .= icrMinimumProfitBps
+      , Just $ "minimumActiveDays" .= icrMinimumActiveDays
+      , Just $
+          "prizes"
+            .= [ object ["place" .= (1 :: Int), "amountUsdc" .= show icrFirstPrizeUsdc]
+               , object ["place" .= (2 :: Int), "amountUsdc" .= show icrSecondPrizeUsdc]
+               , object ["place" .= (3 :: Int), "amountUsdc" .= show icrThirdPrizeUsdc]
+               ]
+      , Just $ "scoringVersion" .= icrScoringVersion
+      , Just $ "rulesVersion" .= icrRulesVersion
+      , Just $ "finalized" .= icrFinalized
+      , Just $ "updatedAt" .= isoTimestamp icrUpdatedTimestamp
+      ]
+  where
+    minimumProfit = icrStartingBalanceUsdc * icrMinimumProfitBps `div` 10_000
+    competitionPhase
+      | icrFinalized = "final" :: Text
+      | now < icrStartTimestamp = "upcoming"
+      | now < icrScoreCutoffTimestamp = "live"
+      | now < icrResultsTimestamp = "review"
+      | otherwise = "provisional_results"
+
+leaderboardRowToJson :: CompetitionRow -> LeaderboardRow -> Value
+leaderboardRowToJson competition LeaderboardRow {..} =
+  object $
+    catMaybes
+      [ ("rank" .=) <$> ilrRank
+      , ("prizePlace" .=) . paPlace <$> allocation
+      , ("prizePlaces" .=) . paPlaces <$> allocation
+      , ("prizeAmountUsdc" .=) . show . paAmountUsdc <$> allocation
+      , Just $ "wallet" .= ilrWallet
+      , ("alias" .=) <$> ilrAlias
+      , Just $ "eligibilityStatus" .= ilrEligibilityStatus
+      , ("eligibilityReason" .=) <$> ilrEligibilityReason
+      , ("finalPnlUsdc" .=) . show <$> ilrFinalPnlUsdc
+      , ("roiBps" .=) <$> ilrRoiBps
+      , ("startingAccountValueUsdc" .=) . show <$> ilrStartingAccountValueUsdc
+      , ("currentAccountValueUsdc" .=) . show <$> ilrCurrentAccountValueUsdc
+      , Just $ "depositsUsdc" .= show ilrDepositsUsdc
+      , Just $ "withdrawalsUsdc" .= show ilrWithdrawalsUsdc
+      , Just $ "manualAdjustmentsUsdc" .= show ilrManualAdjustmentsUsdc
+      , Just $ "activeDays" .= ilrActiveDays
+      , Just $ "volumeUsdc" .= show ilrVolumeUsdc
+      , Just $ "executedTrades" .= ilrExecutedTrades
+      , Just $ "liquidations" .= ilrLiquidations
+      , ("snapshotBlock" .=) . show <$> ilrLatestSnapshotBlock
+      , ("snapshotAt" .=) . isoTimestamp <$> ilrLatestSnapshotTimestamp
+      , ("hasOpenPosition" .=) <$> ilrHasOpenPosition
+      , ("snapshotKind" .=) <$> ilrLatestSnapshotKind
+      , Just $ "meetsProfitRequirement" .= meetsProfit
+      , Just $ "meetsActiveDaysRequirement" .= meetsDays
+      , Just $ "mechanicallyQualified" .= mechanicallyQualified
+      , Just $ "prizeEligible" .= prizeEligible
+      , Just $ "scoreAvailable" .= scoreAvailable
+      ]
+  where
+    minimumProfit = icrStartingBalanceUsdc competition * icrMinimumProfitBps competition `div` 10_000
+    meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlUsdc
+    meetsDays = ilrActiveDays >= icrMinimumActiveDays competition
+    mechanicallyQualified = meetsProfit && meetsDays
+    scoreAvailable = maybe False (const True) ilrFinalPnlUsdc
+    reviewedEligible =
+      participantEligibilityFromText ilrEligibilityStatus == Just EligibilityEligible
+    prizeEligible = mechanicallyQualified && reviewedEligible
+    allocation =
+      prizeAllocation
+        [ icrFirstPrizeUsdc competition
+        , icrSecondPrizeUsdc competition
+        , icrThirdPrizeUsdc competition
+        ]
+        ilrPrizePlace
+        ilrPrizeTieCount
+
+walletRowToJson :: CompetitionRow -> LeaderboardRow -> Value
+walletRowToJson competition row =
+  case leaderboardRowToJson competition row of
+    Object fields -> Object $ KeyMap.insert "position" (walletPositionToJson row) fields
+    value -> value
+
+walletPositionToJson :: LeaderboardRow -> Value
+walletPositionToJson LeaderboardRow {..}
+  | ilrHasOpenPosition /= Just True = Null
+  | otherwise =
+      object $
+        catMaybes
+          [ Just $ "market" .= ("plDXY Perp" :: Text)
+          , ("side" .=) <$> positionSide ilrPositionSide
+          , ("sideCode" .=) <$> ilrPositionSide
+          , ("sizeDelta" .=) <$> ilrPositionSizeDelta
+          , ("marginUsdc" .=) <$> ilrPositionMarginUsdc
+          , ("entryPrice" .=) <$> ilrPositionEntryPrice
+          , ("unrealizedPnlUsdc" .=) <$> ilrPositionUnrealizedPnlUsdc
+          , ("liquidatable" .=) <$> ilrPositionLiquidatable
+          ]
+  where
+    positionSide = \case
+      Just "0" -> Just ("long" :: Text)
+      Just "1" -> Just "short"
+      _ -> Nothing
+
+activityRowToJson :: InsightsActivityRow -> Value
+activityRowToJson InsightsActivityRow {..} =
+  object $
+    catMaybes
+      [ Just $ "activityType" .= iarActivityType
+      , ("side" .=) <$> iarSide
+      , ("price" .=) . show <$> iarPrice
+      , ("sizeDelta" .=) . show <$> iarSizeDelta
+      , ("amountUsdc" .=) . show <$> iarAmountUsdc
+      , ("pnlUsdc" .=) . show <$> iarPnlUsdc
+      , Just $ "txHash" .= iarTxHash
+      , Just $ "blockNumber" .= show iarBlockNumber
+      , Just $ "timestamp" .= iarTimestamp
+      , Just $ "occurredAt" .= isoTimestamp iarTimestamp
+      , Just $ "logIndex" .= iarLogIndex
+      , ("sessionDay" .=) <$> iarSessionDay
+      ]
+
+dataStatusRowToJson :: CompetitionRow -> InsightsDataStatusRow -> Value
+dataStatusRowToJson competition InsightsDataStatusRow {..} =
+  object $
+    catMaybes
+      [ Just $ "participantCount" .= idsrParticipantCount
+      , Just $ "snapshottedWalletCount" .= idsrSnapshottedWalletCount
+      , Just $ "startSnapshotCount" .= idsrStartSnapshotCount
+      , Just $ "finalSnapshotCount" .= idsrFinalSnapshotCount
+      , ("snapshotThroughBlock" .=) . show <$> idsrLatestSnapshotBlock
+      , ("latestSnapshotAt" .=) . isoTimestamp <$> idsrLatestSnapshotTimestamp
+      , ("indexedThroughBlock" .=) . show <$> idsrIndexerBlock
+      , ("indexedThroughBlockHash" .=) <$> idsrIndexerBlockHash
+      , ("indexerUpdatedAt" .=) . isoTimestamp <$> idsrIndexerUpdatedTimestamp
+      , ("snapshotWorkerUpdatedAt" .=) . isoTimestamp <$> idsrSnapshotWorkerUpdatedTimestamp
+      , Just $ "startSnapshotsComplete" .= startComplete
+      , Just $ "finalSnapshotsComplete" .= finalComplete
+      , Just $ "provisional" .= not (icrFinalized competition)
+      ]
+  where
+    hasParticipants = idsrParticipantCount > 0
+    startComplete = hasParticipants && idsrStartSnapshotCount >= idsrParticipantCount
+    finalComplete = hasParticipants && idsrFinalSnapshotCount >= idsrParticipantCount
+
+isoTimestamp :: Integer -> Text
+isoTimestamp timestamp =
+  T.pack $
+    formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" $
+      posixSecondsToUTCTime $ fromInteger timestamp
+
+clampLimit :: Int -> Int
+clampLimit = min 100 . max 1
+
+clampActivityLimit :: Int -> Int
+clampActivityLimit = min 500 . max 1

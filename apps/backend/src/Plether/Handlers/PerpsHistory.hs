@@ -266,6 +266,7 @@ activityRowToJson PerpsActivityRow {..} =
     catMaybes
       [ Just $ "activityType" .= parActivityType
       , Just $ "orderRouter" .= parOrderRouter
+      , ("contractAddress" .=) <$> parContractAddress
       , Just $ "account" .= parAccount
       , ("actor" .=) <$> parActor
       , ("orderId" .=) . show <$> parOrderId

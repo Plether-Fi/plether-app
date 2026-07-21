@@ -177,6 +177,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+      { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "AA_SPONSORSHIP_ENABLED", value = tostring(var.enable_aa_sponsorship) },
       { name = "AA_IP_RATE_LIMIT_PER_MINUTE", value = var.aa_ip_rate_limit_per_minute },
@@ -277,6 +278,7 @@ resource "aws_ecs_task_definition" "keeper" {
 
     environment = [
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
@@ -497,6 +499,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
       { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+      { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
@@ -509,6 +512,73 @@ resource "aws_ecs_service" "perps_indexer" {
   name                               = "plether-perps-indexer"
   cluster                            = aws_ecs_cluster.main.id
   task_definition                    = aws_ecs_task_definition.perps_indexer.arn
+  desired_count                      = var.consolidate_workers ? 0 : 1
+  launch_type                        = "FARGATE"
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
+
+  network_configuration {
+    subnets          = aws_subnet.public[*].id
+    security_groups  = [aws_security_group.ecs.id]
+    assign_public_ip = true
+  }
+
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
+}
+
+resource "aws_ecs_task_definition" "insights_worker" {
+  family                   = "plether-${var.environment}-insights-worker"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.container_cpu
+  memory                   = var.container_memory
+  execution_role_arn       = aws_iam_role.ecs_execution.arn
+  task_role_arn            = aws_iam_role.ecs_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "ARM64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name             = "plether-insights-worker"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["plether-insights-worker"]
+      logConfiguration = local.posthog_log_configuration
+
+      secrets = [
+        {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_ssm_parameter.database_url.arn
+        }
+      ]
+
+      environment = [
+        { name = "CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_USDC", value = var.perps_usdc },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+        { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+        { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
+      ]
+    },
+    local.otel_log_router_container,
+  ])
+}
+
+resource "aws_ecs_service" "insights_worker" {
+  name                               = "plether-insights-worker"
+  cluster                            = aws_ecs_cluster.main.id
+  task_definition                    = aws_ecs_task_definition.insights_worker.arn
   desired_count                      = var.consolidate_workers ? 0 : 1
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
@@ -660,6 +730,34 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
         { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
         { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
+      ]
+    },
+    {
+      name             = "plether-insights-worker"
+      image            = "${aws_ecr_repository.api.repository_url}:latest"
+      essential        = true
+      command          = ["plether-insights-worker"]
+      logConfiguration = local.posthog_log_configuration
+
+      secrets = [
+        {
+          name      = "PERPS_RPC_URL"
+          valueFrom = aws_ssm_parameter.perps_rpc_url.arn
+        },
+        {
+          name      = "DATABASE_URL"
+          valueFrom = aws_ssm_parameter.database_url.arn
+        }
+      ]
+
+      environment = [
+        { name = "CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+        { name = "PERPS_USDC", value = var.perps_usdc },
+        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+        { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
+        { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
+        { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
       ]
     },
     local.otel_log_router_container,
