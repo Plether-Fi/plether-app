@@ -5,6 +5,9 @@ import '@fontsource/uncut-sans/latin.css'
 import './index.css'
 import App from './App'
 import { InsightsApiError } from './api'
+import { initAnalytics } from './analytics/client'
+
+initAnalytics()
 
 const queryClient = new QueryClient({
   defaultOptions: {

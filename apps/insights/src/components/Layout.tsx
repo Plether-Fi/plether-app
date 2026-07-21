@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import { useInsightsStatus } from '../api'
+import { trackOutboundLinkOpened } from '../analytics/insights'
 import { formatUtc } from '../utils/format'
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -44,7 +45,7 @@ function Footer() {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span>© 2026 Plether</span>
           <Link to="/methodology" className="text-content-secondary hover:text-brand-peach">Scoring methodology</Link>
-          <a href="https://plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether ↗</a>
+          <a href="https://plether.com" onClick={trackOutboundLinkOpened} className="text-content-secondary hover:text-brand-peach">Trade on Plether ↗</a>
         </div>
         <div className="flex items-center gap-2" title={indexedAt ? `Indexed ${formatUtc(indexedAt)}` : undefined}>
           <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-positive' : status.isLoading ? 'bg-brand-yellow' : 'bg-brand-orange'}`} />

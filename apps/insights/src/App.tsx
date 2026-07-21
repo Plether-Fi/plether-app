@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG } from './api'
+import { RouteAnalytics } from './analytics/RouteAnalytics'
 import { Layout } from './components/Layout'
 import { LeaderboardPage } from './pages/LeaderboardPage'
 import { MethodologyPage } from './pages/MethodologyPage'
@@ -13,6 +14,7 @@ function LegacyWalletRedirect() {
 export default function App() {
   return (
     <BrowserRouter>
+      <RouteAnalytics />
       <Layout>
         <Routes>
           <Route path="/" element={<LeaderboardPage />} />

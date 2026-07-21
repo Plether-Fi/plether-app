@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { trackWalletProfileOpened } from '../analytics/insights'
 import { formatSignedUsdc, shortAddress } from '../utils/format'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -38,7 +39,7 @@ export function WalletIdentity({ address, displayName, competitionSlug }: { addr
   return (
     <div className="min-w-0">
       {displayName ? <div className="truncate font-semibold text-content-primary">{displayName}</div> : null}
-      <Link to={`/competitions/${encodeURIComponent(competitionSlug)}/wallets/${address}`} className={`whitespace-nowrap font-mono text-xs text-brand-peach hover:underline ${displayName ? '' : 'text-sm'}`}>
+      <Link onClick={trackWalletProfileOpened} to={`/competitions/${encodeURIComponent(competitionSlug)}/wallets/${address}`} className={`whitespace-nowrap font-mono text-xs text-brand-peach hover:underline ${displayName ? '' : 'text-sm'}`}>
         {shortAddress(address)}
       </Link>
     </div>

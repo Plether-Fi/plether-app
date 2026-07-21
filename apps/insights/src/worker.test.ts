@@ -26,6 +26,9 @@ describe('Cloudflare Pages Worker', () => {
       },
     })
     expect(response.headers.get('content-security-policy')).toContain("default-src 'self'")
+    expect(response.headers.get('content-security-policy')).toContain(
+      "connect-src 'self' https://eu.i.posthog.com https://eu-assets.i.posthog.com",
+    )
     expect(fetchMock).not.toHaveBeenCalled()
   })
 

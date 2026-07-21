@@ -16,6 +16,23 @@ npm run dev
 
 Vite proxies `/api/insights/v1` to `VITE_API_PROXY_TARGET` (default `http://127.0.0.1:3001`) without rewriting the path.
 
+## Product analytics
+
+Set `VITE_POSTHOG_KEY` to enable PostHog. `VITE_POSTHOG_HOST` defaults to the
+EU ingestion endpoint, and `VITE_POSTHOG_REPLAY_SAMPLE_RATE` defaults to `0.05`.
+The deployment workflow reuses the same GitHub secret and variables as the main
+Plether frontend.
+
+Analytics are anonymous and memory-only. Automatic event capture and automatic
+pageviews are disabled. Manual events record only coarse page and interaction
+categories; wallet addresses, public names, search text, P&L, balances, volume,
+transaction hashes, query strings, and referrers are excluded. Sampled session
+replays mask all text, input values, and element attributes.
+
+Tracked events are `insights page viewed`, `insights leaderboard searched`,
+`insights leaderboard page requested`, `insights wallet profile opened`, and
+`insights outbound link opened`.
+
 ## Validation
 
 ```sh

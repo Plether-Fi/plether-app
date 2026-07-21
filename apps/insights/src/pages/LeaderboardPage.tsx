@@ -1,6 +1,10 @@
 import { useDeferredValue, useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useCurrentCompetition, useLeaderboard } from '../api'
+import {
+  trackLeaderboardPageRequested,
+  trackLeaderboardSearchSubmitted,
+} from '../analytics/insights'
 import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, RulesSummary } from '../components/Competition'
 import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
 import { isWalletAddress } from '../utils/format'
@@ -21,7 +25,7 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
       </Panel>
       {query.hasNextPage ? (
         <div className="text-center">
-          <button type="button" onClick={() => void query.fetchNextPage()} disabled={query.isFetchingNextPage} className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold text-content-primary transition-colors hover:border-brand-orange hover:bg-brand-orange/10 disabled:cursor-not-allowed disabled:opacity-60">
+          <button type="button" onClick={() => { trackLeaderboardPageRequested(); void query.fetchNextPage() }} disabled={query.isFetchingNextPage} className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold text-content-primary transition-colors hover:border-brand-orange hover:bg-brand-orange/10 disabled:cursor-not-allowed disabled:opacity-60">
             {query.isFetchingNextPage ? 'Loading…' : 'Load more traders'}
           </button>
         </div>
@@ -39,8 +43,13 @@ export function LeaderboardPage() {
   function submitSearch(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault()
     const slug = competition.data?.slug
-    if (slug && isWalletAddress(search)) {
-      void navigate(`/competitions/${encodeURIComponent(slug)}/wallets/${search.trim()}`)
+    const normalizedSearch = search.trim()
+    const walletSearch = isWalletAddress(normalizedSearch)
+    trackLeaderboardSearchSubmitted(
+      normalizedSearch === '' ? 'empty' : walletSearch ? 'wallet_address' : 'alias',
+    )
+    if (slug && walletSearch) {
+      void navigate(`/competitions/${encodeURIComponent(slug)}/wallets/${normalizedSearch}`)
     }
   }
 
