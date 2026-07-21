@@ -466,7 +466,7 @@ Local URLs:
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
-| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; recovery reads remain available |
+| `AA_SPONSORSHIP_ENABLED` | No | `true` | Authoritative issuance/submission kill switch; set explicitly to `false` to pause issuance while keeping recovery reads available |
 | `AA_IP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-IP issuance limit; recovery reads receive four times this budget |
 | `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
 | `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
