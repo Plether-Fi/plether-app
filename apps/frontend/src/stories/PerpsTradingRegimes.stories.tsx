@@ -3,6 +3,10 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { expect, within } from 'storybook/test'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  PerpsIdentityContext,
+  type PerpsIdentityContextValue,
+} from '../perps-aa'
 
 type TradingRegime = 'fad-only' | 'live' | 'oracle-frozen'
 type TicketProps = ComponentProps<typeof PerpsTradeTicket>
@@ -16,6 +20,23 @@ const USDC = 1_000_000n
 const POSITION_SIZE = 1_000n * 10n ** 18n
 const REDUCE_SIZE = 500n * 10n ** 18n
 const ORACLE_PRICE = 100_000_000n
+const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+
+const STORY_IDENTITY: PerpsIdentityContextValue = {
+  status: 'ready',
+  ownerAddress: STORY_ADDRESS,
+  accountAddress: STORY_ADDRESS,
+  chainId: 421614,
+  isAaManifestConfigured: false,
+  sponsorshipEnabled: false,
+  manifest: null,
+  identity: null,
+  proposedIdentity: null,
+  changedIdentityFields: [],
+  error: null,
+  confirmIdentityAfterContinuityCheck: () => false,
+  reloadIdentity: () => undefined,
+}
 
 const latestBasket = {
   timestamp: 1_700_000_000,
@@ -144,42 +165,44 @@ function RegimePanel({ regime }: TradingRegimeStoryProps) {
   const config = REGIME_CONFIG[regime]
 
   return (
-    <section className="min-w-0">
-      <div className="mb-3 border border-brand-border/30 bg-surface-panel p-4">
-        <h2 className="text-lg font-semibold text-content-primary">{config.title}</h2>
-        <p className="mt-1 text-sm leading-5 text-content-secondary">{config.description}</p>
-      </div>
-      <PerpsMarketStatePanel
-        currentPhase={config.marketPhase}
-        currentDuration={config.marketCurrentDuration}
-        nextPhase={config.nextPhase}
-        nextDuration={config.nextDuration}
-      />
-      <PerpsTradeTicket
-        initialDirection="short"
-        initialSize="500"
-        oraclePriceRaw={ORACLE_PRICE}
-        oraclePriceDisplay="1.0000"
-        latestBasket={latestBasket}
-        adverseConfidenceMultiplierBps="2000"
-        oracleFrozen={config.oracleFrozen}
-        closePreviewFixture={config.closePreviewFixture}
-        oracleFreshness={config.oracleFreshness}
-        oracleFreshnessTooltip={config.oracleFreshnessTooltip}
-        availableToTradeRaw={1_500n * USDC}
-        availableToTradeAmount="1 500"
-        portfolioValueRaw={1_255n * USDC}
-        withdrawableUsdcRaw={1_000n * USDC}
-        walletUsdcRaw={2_000n * USDC}
-        currentPosition={currentPosition}
-        longOpenCapacityUsdc={250_000n * USDC}
-        shortOpenCapacityUsdc={250_000n * USDC}
-        maintenanceMarginBps={100n}
-        executionFeeBps={4n}
-        marketPhase={config.marketPhase}
-        marketCurrentDuration={config.marketCurrentDuration}
-      />
-    </section>
+    <PerpsIdentityContext.Provider value={STORY_IDENTITY}>
+      <section className="min-w-0">
+        <div className="mb-3 border border-brand-border/30 bg-surface-panel p-4">
+          <h2 className="text-lg font-semibold text-content-primary">{config.title}</h2>
+          <p className="mt-1 text-sm leading-5 text-content-secondary">{config.description}</p>
+        </div>
+        <PerpsMarketStatePanel
+          currentPhase={config.marketPhase}
+          currentDuration={config.marketCurrentDuration}
+          nextPhase={config.nextPhase}
+          nextDuration={config.nextDuration}
+        />
+        <PerpsTradeTicket
+          initialDirection="short"
+          initialSize="500"
+          oraclePriceRaw={ORACLE_PRICE}
+          oraclePriceDisplay="1.0000"
+          latestBasket={latestBasket}
+          adverseConfidenceMultiplierBps="2000"
+          oracleFrozen={config.oracleFrozen}
+          closePreviewFixture={config.closePreviewFixture}
+          oracleFreshness={config.oracleFreshness}
+          oracleFreshnessTooltip={config.oracleFreshnessTooltip}
+          availableToTradeRaw={1_500n * USDC}
+          availableToTradeAmount="1 500"
+          portfolioValueRaw={1_255n * USDC}
+          withdrawableUsdcRaw={1_000n * USDC}
+          walletUsdcRaw={2_000n * USDC}
+          currentPosition={currentPosition}
+          longOpenCapacityUsdc={250_000n * USDC}
+          shortOpenCapacityUsdc={250_000n * USDC}
+          maintenanceMarginBps={100n}
+          executionFeeBps={4n}
+          marketPhase={config.marketPhase}
+          marketCurrentDuration={config.marketCurrentDuration}
+        />
+      </section>
+    </PerpsIdentityContext.Provider>
   )
 }
 
@@ -248,7 +271,7 @@ export const OracleFrozenClose: Story = {
     await expect(canvas.queryByText('Waived')).not.toBeInTheDocument()
     await expect(canvas.getByText('Estimated frozen close spread')).toBeInTheDocument()
     await expect(canvas.getByText('2.5')).toBeInTheDocument()
-    await expect(canvas.getByText('0.55%')).toBeInTheDocument()
+    await expect(canvas.getByText('Exact')).toBeInTheDocument()
   },
 }
 

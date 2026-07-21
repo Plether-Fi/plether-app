@@ -2,6 +2,8 @@ module Plether.Pyth.Hermes
   ( HermesBasketUpdate (..)
   , fetchBasketUpdateAt
   , fetchLatestBasketUpdate
+  , resolveHermesApiKey
+  , isPermanentHermesConfigurationError
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecode, toJSON, withObject, (.:), (.:?), (.!=))
@@ -23,7 +25,7 @@ import Network.HTTP.Client
   , setQueryString
   )
 import Network.HTTP.Types.Status (statusCode)
-import Plether.Config (Config (..))
+import Plether.Config (Config (..), defaultPythHermesUrl)
 import Plether.Pyth.Basket
   ( BasketComponent (..)
   , PythPricePoint (..)
@@ -99,22 +101,25 @@ fetchBasketUpdateAt manager cfg publishTime =
   fetchBasketUpdate manager cfg (T.pack $ show publishTime) "backend_hermes_historical"
 
 fetchBasketUpdate :: Manager -> Config -> Text -> Text -> IO (Either Text HermesBasketUpdate)
-fetchBasketUpdate manager cfg pathSegment source = do
-  nowUnix <- round <$> getPOSIXTime
-  requestBase <- parseRequest $ T.unpack requestUrl
-  let request =
-        setQueryString queryParams requestBase
-          { requestHeaders = authHeaders <> requestHeaders requestBase
-          }
-  response <- httpLbs request manager
-  let code = statusCode (responseStatus response)
-      body = responseBody response
-  if code == 429
-    then pure $ Left $ "Hermes returned HTTP 429; retry after " <> retryAfterText response
-    else
-      if code < 200 || code >= 300
-        then pure $ Left $ "Hermes returned HTTP " <> T.pack (show code) <> ": " <> previewBody body
-        else pure $ decodeBasket nowUnix body
+fetchBasketUpdate manager cfg pathSegment source =
+  case resolveHermesApiKey (cfgPythHermesUrl cfg) (cfgPythApiKey cfg) of
+    Left err -> pure $ Left err
+    Right apiKey -> do
+      requestBase <- parseRequest $ T.unpack requestUrl
+      let request =
+            setQueryString queryParams requestBase
+              { requestHeaders = authHeaders apiKey <> requestHeaders requestBase
+              }
+      response <- httpLbs request manager
+      nowUnix <- round <$> getPOSIXTime
+      let code = statusCode (responseStatus response)
+          body = responseBody response
+      if code == 429
+        then pure $ Left $ "Hermes returned HTTP 429; retry after " <> retryAfterText response
+        else
+          if code < 200 || code >= 300
+            then pure $ Left $ "Hermes returned HTTP " <> T.pack (show code) <> ": " <> previewBody body
+            else pure $ decodeBasket nowUnix body
   where
     requestUrl =
       stripTrailingSlash (cfgPythHermesUrl cfg)
@@ -125,11 +130,9 @@ fetchBasketUpdate manager cfg pathSegment source = do
       ("parsed", Just "true")
         : [("ids[]", Just (encodeUtf8 (bcFeedId component))) | component <- basketComponents]
 
-    authHeaders =
-      case cfgPythApiKey cfg of
-        Nothing -> []
-        Just key | T.null (T.strip key) -> []
-        Just key -> [("Authorization", encodeUtf8 ("Bearer " <> T.strip key))]
+    authHeaders = \case
+      Nothing -> []
+      Just key -> [("Authorization", encodeUtf8 $ "Bearer " <> key)]
 
     retryAfterText response =
       maybe "60s" (T.pack . show) (lookup "Retry-After" (responseHeaders response))
@@ -183,3 +186,36 @@ previewBody body =
 
 stripTrailingSlash :: Text -> Text
 stripTrailingSlash = T.dropWhileEnd (== '/')
+
+resolveHermesApiKey :: Text -> Maybe Text -> Either Text (Maybe Text)
+resolveHermesApiKey hermesUrl apiKey
+  | normalizedUrl == knownLegacyHermesUrl =
+      Left
+        "PYTH_HERMES_URL points to the legacy Pyth Hermes endpoint, whose payloads are incompatible with the deployed upgraded Pyth contract; use https://pyth.dourolabs.app/hermes"
+  | otherwise =
+      case apiKey >>= nonBlank of
+        Just key -> Right $ Just key
+        Nothing
+          | normalizedUrl == normalizeUrl defaultPythHermesUrl ->
+              Left
+                "PYTH_API_KEY is required for the upgraded Pyth Hermes endpoint; configure a server-side key with access to all six basket feeds"
+          | otherwise -> Right Nothing
+  where
+    normalizedUrl = normalizeUrl hermesUrl
+    knownLegacyHermesUrl = normalizeUrl "https://hermes.pyth.network"
+
+    nonBlank value =
+      let stripped = T.strip value
+       in if T.null stripped then Nothing else Just stripped
+
+    normalizeUrl = T.toLower . stripTrailingSlash . T.strip
+
+isPermanentHermesConfigurationError :: Text -> Bool
+isPermanentHermesConfigurationError err =
+  any
+    (`T.isPrefixOf` T.strip err)
+    [ "PYTH_API_KEY is required"
+    , "PYTH_HERMES_URL points to the legacy"
+    , "Hermes returned HTTP 401"
+    , "Hermes returned HTTP 403"
+    ]

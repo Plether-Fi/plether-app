@@ -1,6 +1,8 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
+import { userEvent, within } from 'storybook/test'
 import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
-import { TokenAmount } from '../components/ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
+import { DOCS_LINKS } from '../config/docs'
 
 function PoolLiquidityTooltip() {
   return (
@@ -61,14 +63,16 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
         label: 'Pool liquidity',
         value: <TokenAmount amount="6.3M" />,
         tooltip: <PoolLiquidityTooltip />,
-        tooltipClassName: 'w-[400px] whitespace-normal p-4',
+        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
       {
         label: 'Cost of carry',
         value: '5.24%',
         tooltip: <CostOfCarryTooltip />,
-        tooltipClassName: 'w-[520px] whitespace-normal p-4',
+        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
     ],
@@ -100,17 +104,64 @@ export const PositiveSession: Story = {
         label: 'Pool liquidity',
         value: <TokenAmount amount="8.7M" />,
         tooltip: <PoolLiquidityTooltip />,
-        tooltipClassName: 'w-[400px] whitespace-normal p-4',
+        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
       {
         label: 'Cost of carry',
         value: '4.87%',
         tooltip: <CostOfCarryTooltip />,
-        tooltipClassName: 'w-[520px] whitespace-normal p-4',
+        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
         tooltipPosition: 'left',
       },
     ],
   },
   render: Default.render,
+}
+
+export const StaleOracle: Story = {
+  args: {
+    stats: [
+      { label: 'plDXY Perp price', value: '1.0091', freshness: 'stale', freshnessTooltip: 'last validated update 4m 38s ago' },
+      { label: '24h change', value: '-0.16%', tone: 'negative' },
+      { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
+      { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
+      { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
+      {
+        label: 'Pool liquidity',
+        value: <TokenAmount amount="6.3M" />,
+        tooltip: <PoolLiquidityTooltip />,
+        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+        tooltipPosition: 'left',
+      },
+      {
+        label: 'Cost of carry',
+        value: '5.24%',
+        tooltip: <CostOfCarryTooltip />,
+        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+        tooltipPosition: 'left',
+      },
+    ],
+  },
+  render: Default.render,
+}
+
+export const PoolLiquidityTooltipVisible: Story = {
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.hover(canvas.getByLabelText('Pool liquidity details'))
+  },
+}
+
+export const CostOfCarryTooltipVisible: Story = {
+  render: Default.render,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.hover(canvas.getByLabelText('Cost of carry details'))
+  },
 }

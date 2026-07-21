@@ -5,6 +5,7 @@ module Plether.Ethereum.Client
   , rpcCall
   , ethCall
   , ethCallAt
+  , ethCallWithValue
   , ethCallAtBlock
   , ethBlockNumber
   , CallParams (..)
@@ -180,16 +181,27 @@ ethCall client params = ethCallAt client params Latest
 
 -- | Evaluate an @eth_call@ using an explicit JSON-RPC block tag.
 ethCallAt :: EthClient -> CallParams -> BlockTag -> IO (Either RpcError ByteString)
-ethCallAt client CallParams {..} blockTag =
+ethCallAt client params blockTag = ethCallAtTag client params Nothing blockTag
+
+ethCallWithValue :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
+ethCallWithValue client params value
+  | value < 0 = pure $ Left $ RpcJsonError "eth_call value cannot be negative"
+  | otherwise = ethCallAtTag client params (Just value) Latest
+
+ethCallAtTag :: EthClient -> CallParams -> Maybe Integer -> BlockTag -> IO (Either RpcError ByteString)
+ethCallAtTag client CallParams {..} maybeValue blockTag =
   case renderBlockTag blockTag of
     Left err -> pure $ Left err
     Right renderedBlockTag -> do
-      let params =
+      let callObject =
+            object $
+              [ "to" .= callTo
+              , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+              ]
+                <> maybe [] (\value -> ["value" .= ("0x" <> intToHex value)]) maybeValue
+          params =
             Aeson.toJSON
-              [ object
-                  [ "to" .= callTo
-                  , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
-                  ]
+              [ callObject
               , String renderedBlockTag
               ]
       result <- rpcCall client "eth_call" params

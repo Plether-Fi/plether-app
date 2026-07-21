@@ -17,6 +17,7 @@ import Network.Wai.Middleware.Cors
   , simpleCorsResourcePolicy
   )
 import Plether.Cache (AppCache)
+import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
@@ -85,8 +86,8 @@ instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v ->
     TestnetFaucetRequest <$> v .: "address"
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
-app cache client perpsClient cfg mPool manager = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -104,6 +105,9 @@ app cache client perpsClient cfg mPool manager = do
           handleServiceUnavailable $
             E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
       else handleError $ E.invalidAddress addr
+
+  post "/api/aa/pimlico" $
+    handlePimlicoProxy pimlicoProxyState cfg perpsClient manager
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool
@@ -373,7 +377,7 @@ app cache client perpsClient cfg mPool manager = do
     case (parsePositiveInteger rawOrderId, mMinPublishTime >>= parsePositiveInteger, mMaxPublishTime >>= parsePositiveInteger, mPool) of
       (Just orderId, Just minPublishTime, Just maxPublishTime, Just pool)
         | minPublishTime <= maxPublishTime -> do
-            result <- liftIO $ getRevealPayload pool cfg orderId minPublishTime maxPublishTime
+            result <- liftIO $ getRevealPayload pool perpsClient cfg orderId minPublishTime maxPublishTime
             handleResult result
       (Nothing, _, _, _) ->
         handleError $ E.invalidAmount "orderId must be a positive integer"
@@ -391,7 +395,7 @@ app cache client perpsClient cfg mPool manager = do
     mPublishTime <- queryParamMaybe "publishTime"
     case traverse parsePositiveInteger mPublishTime of
       Just mTs -> do
-        result <- liftIO $ getPythUpdate cache manager cfg mTs
+        result <- liftIO $ getPythUpdate cache manager perpsClient cfg mTs
         handleResult result
       Nothing ->
         handleError $ E.invalidAmount "publishTime must be a positive integer"
@@ -399,7 +403,7 @@ app cache client perpsClient cfg mPool manager = do
   get "/api/perps/pyth/cached-latest" $ do
     case mPool of
       Just pool -> do
-        result <- liftIO $ getCachedLatestPythUpdate pool cfg
+        result <- liftIO $ getCachedLatestPythUpdate pool perpsClient cfg
         handleResult result
       Nothing ->
         handleServiceUnavailable $

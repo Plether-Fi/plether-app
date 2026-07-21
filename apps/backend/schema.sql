@@ -93,6 +93,10 @@ CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
 CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_window
     ON perps_pyth_update_payloads(min_publish_time, max_publish_time);
 
+CREATE INDEX IF NOT EXISTS idx_perps_pyth_update_payloads_admitted_latest
+    ON perps_pyth_update_payloads(max_publish_time DESC)
+    WHERE source = 'backend_hermes_latest_v2';
+
 -- Perps keeper indexer state
 CREATE TABLE IF NOT EXISTS perps_keeper_state (
     id INTEGER DEFAULT 1,
@@ -274,3 +278,65 @@ CREATE TABLE IF NOT EXISTS insights_competition_finalization_audit (
     final_snapshot_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Dedicated liquidation worker discovery cursor
+CREATE TABLE IF NOT EXISTS perps_liquidation_state (
+    chain_id BIGINT NOT NULL,
+    cfd_engine TEXT NOT NULL,
+    last_indexed_block BIGINT NOT NULL DEFAULT 0,
+    rejected_payload_key TEXT,
+    rejected_payload_selector TEXT,
+    rejected_payload_error TEXT,
+    rejected_payload_at TIMESTAMP,
+    signer_retry_required_balance NUMERIC(78,0),
+    signer_retry_error TEXT,
+    signer_retry_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (chain_id, cfd_engine)
+);
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS rejected_payload_key TEXT;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS rejected_payload_selector TEXT;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS rejected_payload_error TEXT;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS rejected_payload_at TIMESTAMP;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS signer_retry_required_balance NUMERIC(78,0);
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS signer_retry_error TEXT;
+ALTER TABLE perps_liquidation_state
+    ADD COLUMN IF NOT EXISTS signer_retry_at TIMESTAMP;
+
+-- Monotonic candidate registry. On-chain position state remains authoritative.
+CREATE TABLE IF NOT EXISTS perps_liquidation_candidates (
+    chain_id BIGINT NOT NULL,
+    cfd_engine TEXT NOT NULL,
+    account VARCHAR(42) NOT NULL,
+    first_seen_block BIGINT NOT NULL,
+    last_seen_block BIGINT NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_checked_at TIMESTAMP,
+    last_error TEXT,
+    pending_tx_hash VARCHAR(66),
+    pending_nonce BIGINT,
+    pending_sender VARCHAR(42),
+    pending_raw_tx TEXT,
+    pending_call_data TEXT,
+    pending_value NUMERIC(78,0),
+    pending_gas_limit BIGINT,
+    pending_max_priority_fee_per_gas NUMERIC(78,0),
+    pending_max_fee_per_gas NUMERIC(78,0),
+    pending_since TIMESTAMP,
+    pending_last_broadcast_at TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (chain_id, cfd_engine, account)
+);
+ALTER TABLE perps_liquidation_candidates
+    ADD COLUMN IF NOT EXISTS pending_last_broadcast_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_scan
+    ON perps_liquidation_candidates(chain_id, cfd_engine, last_checked_at ASC NULLS FIRST);
+CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending
+    ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC)
+    WHERE pending_tx_hash IS NOT NULL;

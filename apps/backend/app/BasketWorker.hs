@@ -4,6 +4,8 @@ import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forM_, when)
 import Data.Aeson (toJSON)
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
 import Network.HTTP.Client (Manager, newManager)
@@ -19,11 +21,32 @@ import Plether.Database.Schema
   , insertBasketSnapshotWithSource
   , insertPythUpdatePayload
   , isHistoricalRevealPayload
+  , promotePythPayloadSource
   )
-import Plether.Pyth.Hermes (HermesBasketUpdate (..), fetchBasketUpdateAt, fetchLatestBasketUpdate)
+import Plether.Ethereum.Client (EthClient, RpcError (..), newClient)
+import Plether.Ethereum.Contracts.Perps
+  ( orderSettlementWindow
+  , validatePythUpdateData
+  , validateUniquePythUpdateData
+  )
+import Plether.Logging (field, logError, logErrorEvery, logInfo, logInfoEvery, logWarnEvery)
+import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
+import Plether.Pyth.Hermes
+  ( HermesBasketUpdate (..)
+  , fetchBasketUpdateAt
+  , fetchLatestBasketUpdate
+  , isPermanentHermesConfigurationError
+  , resolveHermesApiKey
+  )
 import Plether.Pyth.History (BasketIngestorConfig (..), runBasketBackfill)
-import Plether.Pyth.RevealPayload (validatePublishTimes, validateRevealWindow)
+import Plether.Pyth.RevealPayload
+  ( validateLatestPublishTimes
+  , validatePublishTimes
+  , validateRevealWindow
+  )
+import Plether.Utils.Hex (hexToByteStringEither)
 import System.Environment (getArgs)
+import System.Exit (exitFailure)
 import Text.Read (readMaybe)
 
 data WorkerMode
@@ -42,153 +65,311 @@ data WorkerArgs = WorkerArgs
 defaultPollSeconds :: Int
 defaultPollSeconds = 5
 
-defaultOrderSettlementWindow :: Integer
-defaultOrderSettlementWindow = 15
-
 main :: IO ()
 main = do
   args <- parseWorkerArgs <$> getArgs
   eConfig <- loadConfig
   case eConfig of
     Left err -> do
-      putStrLn $ "Configuration error: " <> err
-      putStrLn "Required: RPC_URL and DATABASE_URL. Optional: PYTH_HERMES_URL, PYTH_API_KEY."
+      logError
+        "basket_worker_configuration_invalid"
+        "Basket worker configuration is invalid"
+        [field "error" err]
+      exitFailure
     Right cfg ->
-      case cfgDatabaseUrl cfg of
-        Nothing ->
-          putStrLn "DATABASE_URL is required for plether-basket-worker"
-        Just dbUrl -> do
-          manager <- newManager tlsManagerSettings
-          pool <- newDbPool dbUrl
-          withDb pool $ \conn -> do
-            ensureBasketSnapshotSchema conn
-            ensurePerpsKeeperSchema conn
-          case waMode args of
-            RunOnce -> do
-              putStrLn "Fetching one latest six-feed Pyth basket update..."
-              result <- runLatestOnce manager pool cfg
-              case result of
-                Left err -> putStrLn $ "Latest basket update failed: " <> T.unpack err
-                Right () -> pure ()
-            LatestLoop -> do
-              putStrLn $
-                "Starting latest six-feed Pyth basket loop every "
-                  <> show (waPollSeconds args)
-                  <> "s"
-              latestLoop manager pool cfg (waPollSeconds args)
-            BackfillOnce -> do
-              let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
-              putStrLn $ "Running historical basket backfill for " <> show backfillDays <> "d"
-              runBasketBackfill manager pool BasketIngestorConfig
-                { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
-                , bicBackfillDays = backfillDays
-                , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
-                , bicPollSeconds = 0
-                }
+      case resolveHermesApiKey (cfgPythHermesUrl cfg) (cfgPythApiKey cfg) of
+        Left err -> do
+          logError
+            "basket_worker_configuration_invalid"
+            "Basket worker Pyth configuration is invalid"
+            [field "error" err]
+          exitFailure
+        Right _ -> case cfgDatabaseUrl cfg of
+          Nothing -> do
+            logError
+              "basket_worker_database_missing"
+              "Basket worker requires a database"
+              []
+            exitFailure
+          Just dbUrl -> do
+            manager <- newManager tlsManagerSettings
+            ethClient <- newClient (cfgPerpsRpcUrl cfg)
+            pool <- newDbPool dbUrl
+            withDb pool $ \conn -> do
+              ensureBasketSnapshotSchema conn
+              ensurePerpsKeeperSchema conn
+            logInfo
+              "basket_worker_started"
+              "Pyth basket worker started"
+              [ field "mode" $ show $ waMode args
+              , field "poll_seconds" $ waPollSeconds args
+              ]
+            case waMode args of
+              RunOnce -> do
+                result <- runLatestOnce manager ethClient pool cfg
+                case result of
+                  Left err -> do
+                    logError
+                      "basket_update_failed"
+                      "Latest Pyth basket update failed"
+                      [field "error" err]
+                    exitFailure
+                  Right () -> pure ()
+              LatestLoop ->
+                latestLoop manager ethClient pool cfg (waPollSeconds args)
+              BackfillOnce -> do
+                let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
+                runBasketBackfill manager pool BasketIngestorConfig
+                  { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicApiKey = cfgPythApiKey cfg
+                  , bicBackfillDays = backfillDays
+                  , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
+                  , bicPollSeconds = 0
+                  }
 
-latestLoop :: Manager -> DbPool -> Config -> Int -> IO ()
-latestLoop manager pool cfg pollSeconds = do
-  result <- try (runLatestCycle manager pool cfg) :: IO (Either SomeException (Either T.Text ()))
+latestLoop :: Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
+latestLoop manager ethClient pool cfg pollSeconds = do
+  result <- try (runLatestCycle manager ethClient pool cfg) :: IO (Either SomeException (Either T.Text ()))
   delaySeconds <- case result of
     Left err -> do
-      putStrLn $ "Latest basket worker exception: " <> displayException err
+      logErrorEvery
+        60
+        "basket_worker_iteration_failed"
+        "Basket worker iteration failed"
+        [field "error" $ displayException err]
       pure pollSeconds
-    Right (Left err) -> do
-      putStrLn $ "Latest basket update skipped: " <> T.unpack err
-      pure $ if "429" `T.isInfixOf` err then 60 else pollSeconds
+    Right (Left err)
+      | isPermanentHermesConfigurationError err -> do
+          logError
+            "basket_worker_configuration_rejected"
+            "Basket worker stopped because Hermes rejected its credentials or endpoint"
+            [field "error" err]
+          exitFailure
+      | otherwise -> do
+          logWarnEvery
+            60
+            "basket_update_skipped"
+            "Latest Pyth basket update was skipped"
+            [ field "rate_limited" $ "429" `T.isInfixOf` err
+            , field "error" err
+            ]
+          pure $ if "429" `T.isInfixOf` err then 60 else pollSeconds
     Right (Right ()) ->
       pure pollSeconds
   threadDelay (max 1 delaySeconds * 1_000_000)
-  latestLoop manager pool cfg pollSeconds
+  latestLoop manager ethClient pool cfg pollSeconds
 
-runLatestCycle :: Manager -> DbPool -> Config -> IO (Either T.Text ())
-runLatestCycle manager pool cfg = do
-  latestResult <- runLatestOnce manager pool cfg
-  backfillResult <- backfillPendingOrderRevealPayloads manager pool cfg
+runLatestCycle :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
+runLatestCycle manager ethClient pool cfg = do
+  latestResult <- runLatestOnce manager ethClient pool cfg
+  backfillResult <- backfillPendingOrderRevealPayloads manager ethClient pool cfg
   pure $ case (latestResult, backfillResult) of
     (Left err, _) -> Left err
     (_, Left err) -> Left err
     (Right (), Right ()) -> Right ()
 
-runLatestOnce :: Manager -> DbPool -> Config -> IO (Either T.Text ())
-runLatestOnce manager pool cfg = do
+runLatestOnce :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
+runLatestOnce manager ethClient pool cfg = do
   result <- fetchLatestBasketUpdate manager cfg
   case result of
     Left err -> pure $ Left err
-    Right update -> cacheBasketUpdate pool update
+    Right update -> cacheBasketUpdate ethClient pool cfg Nothing update
 
-backfillPendingOrderRevealPayloads :: Manager -> DbPool -> Config -> IO (Either T.Text ())
-backfillPendingOrderRevealPayloads manager pool cfg = do
+backfillPendingOrderRevealPayloads :: Manager -> EthClient -> DbPool -> Config -> IO (Either T.Text ())
+backfillPendingOrderRevealPayloads manager ethClient pool cfg = do
   pending <- withDb pool $ \conn -> getPendingPerpsKeeperOrders conn (cfgPerpsOrderRouter cfg) 20
-  forM_ pending $ \order -> do
-    let firstRevealTick = pkorCommitTime order + 1
-        maxRevealTick = pkorCommitTime order + defaultOrderSettlementWindow
-    mExisting <- withDb pool $ \conn ->
-      getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
-    when (maybe True (not . isHistoricalRevealPayload) mExisting) $ do
-      result <- fetchBasketUpdateAt manager cfg firstRevealTick
-      case result of
+  case pending of
+    [] -> pure $ Right ()
+    _ -> do
+      settlementWindowResult <- orderSettlementWindow ethClient (cfgPerpsPletherOracle cfg)
+      case settlementWindowResult of
         Left err ->
-          putStrLn $
-            "Reveal payload backfill skipped for order "
-              <> show (pkorOrderId order)
-              <> ": "
-              <> T.unpack err
-        Right update ->
-          case validateRevealWindow (pkorCommitTime order) defaultOrderSettlementWindow (hbuPublishTimes update) of
-            Left err ->
-              putStrLn $
-                "Reveal payload backfill returned unusable payload for order "
-                  <> show (pkorOrderId order)
-                  <> ": "
-                  <> T.unpack err
-            Right _ -> do
-              cacheResult <- cacheBasketUpdate pool update
-              case cacheResult of
+          pure $ Left $ "could not read the on-chain order settlement window: " <> T.pack (show err)
+        Right settlementWindow -> do
+          forM_ pending $ \order -> do
+            let firstRevealTick = pkorCommitTime order + 1
+                maxRevealTick = pkorCommitTime order + settlementWindow
+            mExisting <- withDb pool $ \conn ->
+              getPythUpdatePayloadForWindow conn firstRevealTick maxRevealTick
+            when (maybe True (not . isHistoricalRevealPayload) mExisting) $ do
+              result <- fetchBasketUpdateAt manager cfg firstRevealTick
+              case result of
                 Left err ->
-                  putStrLn $
-                    "Reveal payload backfill cache failed for order "
-                      <> show (pkorOrderId order)
-                      <> ": "
-                      <> T.unpack err
-                Right () ->
-                  putStrLn $
-                    "Backfilled first reveal payload for order "
-                      <> show (pkorOrderId order)
-                      <> " at publish time "
-                      <> show firstRevealTick
-  pure $ Right ()
+                  logWarnEvery
+                    60
+                    "reveal_payload_backfill_fetch_failed"
+                    "Reveal payload backfill fetch failed"
+                    [ field "order_id" $ pkorOrderId order
+                    , field "error" err
+                    ]
+                Right update ->
+                  case validateRevealWindow (pkorCommitTime order) settlementWindow (hbuPublishTimes update) of
+                    Left err ->
+                      logWarnEvery
+                        60
+                        "reveal_payload_backfill_invalid"
+                        "Reveal payload backfill returned an unusable payload"
+                        [ field "order_id" $ pkorOrderId order
+                        , field "error" err
+                        ]
+                    Right _ -> do
+                      cacheResult <-
+                        cacheBasketUpdate
+                          ethClient
+                          pool
+                          cfg
+                          (Just (firstRevealTick, maxRevealTick))
+                          update
+                      case cacheResult of
+                        Left err ->
+                          logWarnEvery
+                            60
+                            "reveal_payload_backfill_cache_failed"
+                            "Reveal payload backfill could not be cached"
+                            [ field "order_id" $ pkorOrderId order
+                            , field "error" err
+                            ]
+                        Right () ->
+                          logInfo
+                            "reveal_payload_backfilled"
+                            "First reveal payload was backfilled for an order"
+                            [ field "order_id" $ pkorOrderId order
+                            , field "publish_time" firstRevealTick
+                            ]
+          pure $ Right ()
 
-cacheBasketUpdate :: DbPool -> HermesBasketUpdate -> IO (Either T.Text ())
-cacheBasketUpdate pool update =
-  case validatePublishTimes (hbuPublishTimes update) of
-    Left err -> pure $ Left err
-    Right (minPublishTime, maxPublishTime) -> do
-      let minuteBucket = (minPublishTime `div` 60) * 60
-      withDb pool $ \conn -> do
-        insertBasketSnapshotWithSource
-          conn
-          minuteBucket
-          60
-          (hbuBasketPrice update)
-          (hbuComponents update)
-          "pyth_hermes_latest"
-        insertPythUpdatePayload
-          conn
-          minPublishTime
-          maxPublishTime
-          (toJSON $ hbuPublishTimes update)
-          (toJSON $ hbuUpdateData update)
-          (hbuFetchedAt update)
-          (hbuSource update)
-      putStrLn $
-        "Cached basket update publish window "
-          <> show minPublishTime
-          <> ".."
-          <> show maxPublishTime
-          <> " into minute bucket "
-          <> show minuteBucket
-      pure $ Right ()
+cacheBasketUpdate
+  :: EthClient
+  -> DbPool
+  -> Config
+  -> Maybe (Integer, Integer) -- exact on-chain order bounds for historical updates
+  -> HermesBasketUpdate
+  -> IO (Either T.Text ())
+cacheBasketUpdate ethClient pool cfg historicalBounds update =
+  case promotePythPayloadSource (hbuSource update) of
+    Nothing -> pure $ Left $ "unsupported Hermes payload source: " <> hbuSource update
+    Just admittedSource ->
+      case validateCachePublishTimes cfg update of
+        Left err -> pure $ Left err
+        Right (minPublishTime, maxPublishTime) -> do
+          case decodeAdmissionInputs update of
+            Left err -> pure $ Left err
+            Right (updateData, feedIds) -> do
+              validation <- validateCachePayload
+                ethClient
+                cfg
+                historicalBounds
+                update
+                updateData
+                feedIds
+                minPublishTime
+                maxPublishTime
+              case validation of
+                Left err ->
+                  pure $
+                    Left $
+                      "Pyth rejected Hermes payload before cache promotion: "
+                        <> T.pack (show err)
+                Right () -> do
+                  let minuteBucket = (minPublishTime `div` 60) * 60
+                  withDb pool $ \conn -> do
+                    insertBasketSnapshotWithSource
+                      conn
+                      minuteBucket
+                      60
+                      (hbuBasketPrice update)
+                      (hbuComponents update)
+                      "pyth_hermes_latest"
+                    insertPythUpdatePayload
+                      conn
+                      minPublishTime
+                      maxPublishTime
+                      (toJSON $ hbuPublishTimes update)
+                      (toJSON $ hbuUpdateData update)
+                      (hbuFetchedAt update)
+                      admittedSource
+                  logInfoEvery
+                    300
+                    "basket_cache_progress"
+                    "Pyth basket update was validated on-chain and cached"
+                    [ field "min_publish_time" minPublishTime
+                    , field "max_publish_time" maxPublishTime
+                    , field "minute_bucket" minuteBucket
+                    , field "source" admittedSource
+                    ]
+                  pure $ Right ()
+
+validateCachePayload
+  :: EthClient
+  -> Config
+  -> Maybe (Integer, Integer)
+  -> HermesBasketUpdate
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError ())
+validateCachePayload ethClient cfg historicalBounds update updateData feedIds minPublishTime maxPublishTime
+  | hbuSource update == "backend_hermes_latest" =
+      validatePythUpdateData
+        ethClient
+        (cfgPerpsPletherOracle cfg)
+        updateData
+        feedIds
+        minPublishTime
+        maxPublishTime
+  | otherwise =
+      case historicalBounds of
+        Nothing ->
+          pure $ Left $ RpcJsonError "historical Pyth admission requires the on-chain order reveal bounds"
+        Just (routeMinPublishTime, routeMaxPublishTime) ->
+          validateUniquePythUpdateData
+            ethClient
+            (cfgPerpsPletherOracle cfg)
+            updateData
+            feedIds
+            routeMinPublishTime
+            routeMaxPublishTime
+
+validateCachePublishTimes :: Config -> HermesBasketUpdate -> Either T.Text (Integer, Integer)
+validateCachePublishTimes cfg update
+  | hbuSource update == "backend_hermes_latest" =
+      validateLatestPublishTimes
+        (hbuFetchedAt update)
+        (cfgPythLatestMaxAgeSeconds cfg)
+        (hbuPublishTimes update)
+  | otherwise = validatePublishTimes (hbuPublishTimes update)
+
+decodeAdmissionInputs :: HermesBasketUpdate -> Either T.Text ([ByteString], [ByteString])
+decodeAdmissionInputs update = do
+  updateData <- traverse decodeUpdateData (zip [0 :: Int ..] $ hbuUpdateData update)
+  whenNull updateData "Hermes payload did not include update data"
+  feedIds <- traverse decodeFeedId basketComponents
+  pure (updateData, feedIds)
+  where
+    decodeUpdateData (index, encoded) =
+      mapLeft
+        (\err -> "Hermes update data item " <> T.pack (show index) <> " is invalid: " <> err)
+        (hexToByteStringEither encoded)
+
+    decodeFeedId component = do
+      feedId <-
+        mapLeft
+          (\err -> "configured feed " <> bcFeedId component <> " is invalid: " <> err)
+          (hexToByteStringEither $ bcFeedId component)
+      if BS.length feedId == 32
+        then Right feedId
+        else Left $ "configured feed " <> bcFeedId component <> " is not 32 bytes"
+
+whenNull :: [a] -> T.Text -> Either T.Text ()
+whenNull [] err = Left err
+whenNull _ _ = Right ()
+
+mapLeft :: (a -> b) -> Either a value -> Either b value
+mapLeft f result =
+  case result of
+    Left err -> Left $ f err
+    Right value -> Right value
 
 parseWorkerArgs :: [String] -> WorkerArgs
 parseWorkerArgs args =

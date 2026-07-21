@@ -5,6 +5,7 @@ import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
 import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
+import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
@@ -103,6 +104,8 @@ export function ConnectButton() {
             )}
           </button>
         ) : null}
+
+        {isPerpsRoute ? <SponsoredOperationHistoryButton /> : null}
 
         {/* Account button */}
         <button

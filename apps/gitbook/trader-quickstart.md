@@ -1,16 +1,18 @@
 # Trader quickstart
 
-> **Deposit USDC. Choose your dollar view. Commit now; price later.**
+> **Deposit USDC[^usdc]. Choose your dollar view. Commit now; price later.**
 
-Plether Perps lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket.
+Plether Perps[^perps] lets you take a leveraged **LONG USD** or **SHORT USD** position against the Plether currency basket. Eligible trader actions use USDC-first, gas-sponsored execution.
 
-This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. You open an onchain position backed by USDC in your Plether Perps DEX margin account.
+This is not a spot swap. You do not receive a LONG or SHORT token in your wallet. Your connected wallet authorizes a Plether **Trading Account**, which owns your positions, orders, Margin Account and trader claims.
+
+On the current Arbitrum Sepolia deployment, the connected owner wallet and its Plether Trading Account have different addresses. Confirm the derived Trading Account before funding or trading. See [Gas-sponsored trading and your Plether Trading Account](trading-on-plether-perps/gas-sponsored-trading-and-your-plether-trading-account.md) for details.
 
 ### The flow in one line
 
-`Wallet MockUSDC → Margin account → Committed order → Open position → Closed settlement → Margin account → Wallet`
+`Trading Account MockUSDC → Margin Account → Sponsored order commitment → Open position → Closed settlement → Margin Account credit or trader claim → Owner wallet after withdrawal`
 
-Closing a position does not send funds directly to your wallet. Settlement first returns to your Plether Perps DEX margin account. You withdraw separately.
+Closing a position does not send funds directly to the owner wallet. Released margin and any fully funded fresh payout first credit the Trading Account’s Margin Account. If the HousePool cannot fund the complete fresh payout immediately, that payout is recorded in full as a trader claim and reaches the Margin Account only after claim settlement. You withdraw separately.
 
 ### Before you begin
 
@@ -18,7 +20,6 @@ You need:
 
 * A compatible self-custody wallet
 * Arbitrum Sepolia selected in your wallet
-* Arbitrum Sepolia ETH for transaction fees
 * MockUSDC for collateral
 * Enough time to monitor your order until it executes or fails
 
@@ -26,53 +27,42 @@ Use only the official Plether application. Never send tokens directly to a Pleth
 
 ### 1. Connect your wallet and get test funds
 
-Open Plether Perps DEX and select `Connect Wallet`.
+Open [Plether Perps DEX](https://app.sepolia.plether.com) and select `Connect Wallet`.
 
-Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**.
+Confirm that your wallet is connected to **Arbitrum Sepolia**, chain ID **421614**. Plether then derives a separate Trading Account controlled by your connected owner wallet.
 
-Two assets are required:
+MockUSDC acts as testnet collateral. Eligible trader operations are gas-sponsored, subject to sponsorship availability and policy limits, so native ETH is not a prerequisite for this quickstart.
 
-* **Arbitrum Sepolia ETH** pays network transaction fees.
-* **MockUSDC** acts as testnet collateral.
-
-The welcome window lets you enter your wallet address and select `Get 100,000 mock USDC`. It also links to an Arbitrum Sepolia ETH faucet.
+The welcome window pre-fills and locks the **Trading Account address** when gas sponsorship is configured. Check that address, then select `Get 100,000 mock USDC`. The faucet sends the tokens to the Trading Account, not the owner wallet.
 
 If you previously closed the welcome window, select `Get mock USDC` in the testnet notice bar to open it again.
 
 MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed for real dollars.
 
-<figure><img src=".gitbook/assets/Zrzut ekranu 2026-07-14 o 17.04.41.png" alt="" width="375"><figcaption></figcaption></figure>
+### 2. Deposit USDC into your Margin Account
 
-### 2. Deposit USDC into your margin account
+First confirm that the faucet-funded MockUSDC appears as **Available to deposit**. This is the token balance held at the Trading Account address, outside Plether’s internal Margin Account.
 
 Find the **Margin Account** section in the trade ticket and select `Deposit`.
 
-Enter the amount of MockUSDC you want to deposit and confirm the transaction.
+Enter the amount of MockUSDC you want to deposit and review the active Trading Account. On the current deployment, your owner wallet signs one sponsored Trading Account operation that approves the exact MockUSDC amount and deposits it into the Margin Account.
 
-If your existing token allowance is insufficient, the application will first request approval to use the specified MockUSDC. In that case, depositing requires two wallet confirmations:
-
-1. Approve MockUSDC.
-2. Deposit MockUSDC.
-
-Wait for both transactions to confirm.
-
-Depositing does not open a position. It moves MockUSDC from your wallet into your Plether margin account, where it becomes available for trading.
+Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Margin Account, where it becomes available for trading.
 
 The interface separates several balances:
 
-| Balance                | Meaning                                            |
-| ---------------------- | -------------------------------------------------- |
-| **Wallet balance**     | MockUSDC held outside Plether                      |
-| **Available to Trade** | Account collateral currently available for orders  |
-| **Position margin**    | USDC assigned to an open position                  |
-| **Withdrawable**       | Free USDC that can currently return to your wallet |
-| **Portfolio value**    | Current account equity, including position PnL     |
+| Balance                  | Meaning                                                             |
+| ------------------------ | ------------------------------------------------------------------- |
+| **Owner-wallet USDC**    | MockUSDC held by the connected owner wallet outside Plether         |
+| **Trading Account USDC** | MockUSDC held at the Trading Account address outside Plether        |
+| **Available to Trade**   | Margin Account collateral currently available for orders           |
+| **Position margin**      | Margin Account USDC assigned to an open position                    |
+| **Withdrawable**         | Free Margin Account USDC that can currently reach the owner wallet  |
+| **Portfolio value**      | Current Trading Account equity, including position PnL              |
 
-These values do not need to be equal. Open positions, pending orders, carry and margin requirements can make your withdrawable balance lower than your portfolio value.
+These values do not need to be equal. Open positions, pending orders, carry[^carry] and margin requirements can make your withdrawable balance lower than your portfolio value.
 
 Keep some USDC free rather than committing the entire account to one position.
-
-<figure><img src=".gitbook/assets/Zrzut ekranu 2026-07-14 o 17.06.22.png" alt="" width="375"><figcaption></figcaption></figure>
 
 ### 3. Check the market state
 
@@ -103,7 +93,7 @@ The displayed perps price is dollar-oriented, so the interface behaves conventio
 
 On the current testnet interface, the direction buttons may appear as `Long plDXY Perp` and `Short plDXY Perp`. These correspond to **LONG USD** and **SHORT USD** respectively.
 
-Plether supports one live direction per wallet. You can increase a position in the same direction, but you cannot reverse it in one transaction. To change from LONG USD to SHORT USD—or the other way around—you must close the existing position first and wait for that close to execute.
+Plether supports one live direction per Trading Account. You can increase a position in the same direction, but you cannot reverse it in one order. To change from LONG USD to SHORT USD—or the other way around—you must close the existing position first and wait for that close to execute.
 
 For a new position:
 
@@ -125,7 +115,7 @@ The interface’s maximum leverage is a limit, not a recommendation.
 
 Next, review `Max slippage`. Plether uses it to calculate your execution limit—the worst price at which the order may execute.
 
-A tighter limit provides stronger price protection but makes failure more likely if the market moves before execution. An unlimited setting removes that protection and is not appropriate for a first trade.
+A tighter limit provides stronger price protection but makes failure more likely if the market moves before execution. The interface’s **Infinity** setting removes that protection and is not appropriate for a first trade.
 
 ### 6. Read the preview
 
@@ -133,15 +123,15 @@ The preview is the most important part of the ticket. Review at least:
 
 * Direction
 * plDXY Perp exposure
-* Contract notional
+* Contract notional[^notional]
 * Initial margin
 * Maintenance margin
 * Resulting leverage
 * Execution limit
 * Liquidation price
 * Estimated protocol execution fee
-* VPI or price impact
-* Adverse oracle confidence spread
+* VPI[^vpi] or price impact
+* Adverse oracle[^oracle] confidence spread
 * Estimated execution reward
 
 These costs are different:
@@ -149,7 +139,7 @@ These costs are different:
 * The **protocol execution fee** is charged when the trade executes.
 * **VPI** adjusts for trade size, available pool depth and directional imbalance. It can be a cost or a rebate.
 * The **oracle confidence spread** adjusts the execution price for oracle uncertainty. It is not a separate USDC fee.
-* The **execution reward** is reserved for whoever finalizes the order.
+* The **execution reward** is reserved for whoever executes the order or clears it after terminal failure or expiry.
 * **Carry** accrues after the position is open. Either direction can pay it.
 
 A preview is an estimate, not an executable quote. The final price comes from eligible oracle data published after commitment.
@@ -162,7 +152,13 @@ Select `Review Long` or `Review Short`.
 
 The **Commit Preview** repeats the order terms. Check the direction, exposure, leverage, execution limit, liquidation price and total funding requirement one final time.
 
-If everything matches your intent, select `Confirm Commit` and approve the wallet transaction.
+If everything matches your intent, select `Confirm Commit`. Your wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
+
+The submission lifecycle is:
+
+![Quickstart lifecycle from Preparing and wallet confirmation through sponsored submission to Confirmed.](.gitbook/assets/diagrams/quickstart-sponsored-operation-lifecycle.svg)
+
+**Confirmed** means the order commitment reached the chain. It does not mean the position has changed yet.
 
 You can close the review window before committing. Once the commitment confirms onchain, the rules change:
 
@@ -172,7 +168,7 @@ You can close the review window before committing. Once the commitment confirms 
 * It enters the global first-in, first-out queue.
 * It is not yet an open position.
 
-Plether does not let the trader or keeper choose a favorable future price. Execution uses the first eligible Pyth observation strictly after the order was committed, adjusted for oracle confidence, VPI and your execution limit.
+Plether does not let the trader or keeper[^keeper] choose a favorable future price. Live execution uses the first eligible Pyth observation strictly after commitment and applies the active confidence policy and your execution limit. VPI is calculated separately in USDC. An oracle-frozen voluntary close instead uses the validated unshifted price and the separate frozen-close spread.
 
 If that price exceeds your slippage limit, the order fails rather than executing outside it.
 
@@ -180,9 +176,7 @@ If that price exceeds your slippage limit, the order fails rather than executing
 
 After commitment, the application displays `Finalizing execution price`.
 
-A keeper gets the first opportunity to finalize the order. If automatic finalization does not happen during the initial grace period, the interface exposes `Finalize Trade`.
-
-Manual finalization requires another wallet transaction. It does not let you choose a different price; it submits the data needed to settle the already committed order.
+A keeper finalizes orders for the current sponsored Trading Account flow. Owner-wallet manual finalization is not available on this deployment, so keep the application open long enough to observe the result or return to **Open Orders** later.
 
 Monitor the order until it reaches a terminal state:
 
@@ -191,13 +185,13 @@ Monitor the order until it reaches a terminal state:
 | **Pending reveal** | Waiting for an eligible oracle update or finalization     |
 | **Executed**       | The position was opened, increased or reduced             |
 | **Failed**         | The order will not execute                                |
-| **Expired**        | Its execution window ended before successful finalization |
+| **Expired**        | Its execution window ended and keeper cleanup is pending   |
 
 The **Open Orders** tab shows the current countdown and explicitly displays `Cancel unavailable`.
 
-Do not submit a duplicate order simply because the first remains pending. Global FIFO ordering means earlier orders must be resolved first.
+Do not submit a duplicate order simply because the first remains pending. Global FIFO[^fifo] ordering means earlier orders must be resolved first.
 
-If an order expires, use `Clean Up` when the action becomes available. If it fails, check **Order History** for the reason before submitting another order. Failed and expired orders are not retried automatically.
+If an order expires, wait for keeper cleanup; the sponsored Trading Account interface shows `Keeper processing` rather than an owner-wallet cleanup action. If it fails, check **Order History** for the reason before submitting another order. Failed and expired orders are not retried automatically.
 
 ### 9. Check and manage the position
 
@@ -209,7 +203,7 @@ After execution, open the **Position** tab and verify:
 * Entry price
 * Leverage
 * Liquidation price
-* Unrealized PnL
+* Unrealized PnL[^pnl]
 * Cost of carry
 
 The preview and final result can differ. Use the executed position—not the original preview—as the record of what you own.
@@ -261,19 +255,19 @@ A reduction or close is still:
 
 Partial reductions must satisfy the current minimum-order and remaining-position rules. A complete residual close may be permitted even when the remaining amount is below the ordinary minimum.
 
-When the close executes, released margin and settlement return to your Plether margin account. They do not go directly to your wallet.
+When the close executes, released margin follows the normal Margin Account path. The complete fresh HousePool-funded payout is either credited to the Margin Account immediately in full or recorded in full as a trader claim. Neither outcome sends USDC directly to the owner wallet.
 
 > **Trader claims**
 >
-> In an exceptional cash-shortfall scenario, part of a profitable close can become a **trader claim** instead of immediately withdrawable USDC.
+> In an exceptional cash-shortfall scenario, released position margin follows the normal account path, while the complete fresh HousePool-funded payout is either credited immediately in full or recorded in full as a **trader claim**. Plether never splits one fresh payout between an immediate credit and a new claim.
 >
-> A trader claim is a protocol liability associated with your address. It is not wallet USDC and cannot be treated as available margin until settled. See **Trader claims** for the complete settlement process and liquidity conditions.
+> A trader claim is a protocol liability owned by the Trading Account. It is not wallet USDC and cannot be treated as available margin until settled. See [**Check and settle a trader claim**](trading-on-plether-perps/check-and-settle-a-trader-claim.md) for the complete settlement process and liquidity conditions.
 
 ### 11. Withdraw USDC
 
 In the **Margin Account** section, select `Withdraw`.
 
-Enter an amount no greater than the displayed **Withdrawable** balance and confirm the transaction.
+Enter an amount no greater than the displayed **Withdrawable** balance and authorize the sponsored withdrawal operation.
 
 Withdrawable USDC excludes collateral or funds required for:
 
@@ -286,17 +280,17 @@ Withdrawable USDC excludes collateral or funds required for:
 
 You can withdraw free USDC while a position remains open, but doing so can reduce the account buffer protecting that position. Review the position’s health and liquidation price before confirming.
 
-After a successful withdrawal, MockUSDC moves from your Plether margin account back to the connected wallet.
+On the current deployment, the sponsored withdrawal atomically moves MockUSDC from the Margin Account through the separate Trading Account to its verified owner wallet.
 
 ### Common problems
 
 | Problem                                              | What to check                                                                     |
 | ---------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Wallet is connected but trading is disabled          | Switch to Arbitrum Sepolia                                                        |
-| Deposit does not proceed                             | MockUSDC balance, token approval and ETH for gas                                  |
+| Deposit does not proceed                             | Trading Account address, MockUSDC balance, authorization and sponsorship status   |
 | Order preview is invalid                             | Minimum size, deposited margin, side capacity, market state and fresh oracle data |
 | Order remains pending                                | Open Orders countdown, earlier FIFO orders and oracle availability                |
-| Order expired                                        | Use `Clean Up`, then submit a new order                                           |
+| Order expired                                        | Wait for keeper cleanup before submitting a new order                             |
 | Order failed                                         | Check Order History before changing slippage or resubmitting                      |
 | Opposite direction is unavailable                    | Close the current position and wait for execution first                           |
 | Withdrawal is below portfolio value                  | Position margin, pending reservations, carry and maintenance requirements         |
@@ -309,18 +303,19 @@ Before selecting `Confirm Commit`:
 * Start with a small test position.
 * Confirm whether you are **LONG USD** or **SHORT USD**.
 * Keep free USDC outside the position.
-* Read the execution limit and avoid unlimited slippage.
+* Read the execution limit and avoid **Infinity** slippage.
 * Review the liquidation price.
 * Review the execution fee, VPI, confidence spread and execution reward.
 * Accept that the committed order cannot be cancelled.
 * Monitor the order until it executes, fails or expires.
 * Verify the final position after execution.
 
-### Continue reading
-
-* **How delayed orders execute**
-* **Margin and liquidation**
-* **Fees, VPI and cost of carry**
-* **Managing and closing a position**
-* **Trader claims**
-* **Market hours and closures**
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.

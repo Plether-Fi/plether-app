@@ -5,9 +5,9 @@ import { arbitrumSepolia } from 'viem/chains'
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
 const ADDRESSES = {
-  orderRouter: '0x4A0a6c028164A1254e10C3e39cc89Af45090069e',
-  pletherOracle: '0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA',
-  perpsPublicLens: '0xDdDCfb123569774427802fcA9D19CBF00c14e2Ad',
+  orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+  pletherOracle: '0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c',
+  perpsPublicLens: '0x4E202C06e2C378d1a85577ac631e592AB66f23FB',
 }
 
 const PYTH_FEED_IDS = [
@@ -90,17 +90,20 @@ function formatStatus(status) {
 }
 
 async function fetchPythUpdateData() {
-  const hermesUrl = new URL(process.env.PYTH_HERMES_URL ?? 'https://hermes.pyth.network')
-  hermesUrl.pathname = '/v2/updates/price/latest'
-  hermesUrl.search = ''
+  const hermesBaseUrl = (
+    process.env.HERMES_URL
+    ?? process.env.PYTH_HERMES_URL
+    ?? 'https://pyth.dourolabs.app/hermes'
+  ).replace(/\/$/, '')
+  const hermesUrl = new URL(`${hermesBaseUrl}/v2/updates/price/latest`)
+  hermesUrl.searchParams.set('encoding', 'hex')
+  hermesUrl.searchParams.set('parsed', 'true')
   for (const id of PYTH_FEED_IDS) {
     hermesUrl.searchParams.append('ids[]', id)
   }
 
-  const headers = {}
-  if (process.env.PYTH_API_KEY) {
-    headers.Authorization = `Bearer ${process.env.PYTH_API_KEY}`
-  }
+  const pythApiKey = requiredEnv('PYTH_API_KEY')
+  const headers = { Authorization: `Bearer ${pythApiKey}` }
 
   const response = await fetch(hermesUrl, { headers })
   if (!response.ok) {
@@ -108,6 +111,16 @@ async function fetchPythUpdateData() {
   }
 
   const payload = await response.json()
+  const returnedFeedIds = new Set(
+    Array.isArray(payload?.parsed)
+      ? payload.parsed.map((feed) => `0x${String(feed?.id ?? '').replace(/^0x/, '').toLowerCase()}`)
+      : []
+  )
+  const missingFeedIds = PYTH_FEED_IDS.filter((feedId) => !returnedFeedIds.has(feedId.toLowerCase()))
+  if (missingFeedIds.length > 0) {
+    throw new Error(`Hermes response omitted ${missingFeedIds.length} required feed(s)`)
+  }
+
   const updates = payload?.binary?.data
   if (!Array.isArray(updates) || updates.length === 0) {
     throw new Error('Hermes response did not include binary update data')

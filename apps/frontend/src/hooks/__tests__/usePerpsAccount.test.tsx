@@ -16,12 +16,30 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('wagmi', () => ({
-  useAccount: () => ({
-    address: ACCOUNT,
-    isConnected: true,
-  }),
   useReadContracts: mocks.useReadContracts,
 }))
+
+vi.mock('../../perps-aa', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../perps-aa')>()
+  return {
+    ...actual,
+    usePerpsIdentity: () => ({
+      status: 'ready',
+      ownerAddress: ACCOUNT,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      isAaManifestConfigured: true,
+      sponsorshipEnabled: true,
+      manifest: null,
+      identity: null,
+      proposedIdentity: null,
+      changedIdentityFields: [],
+      error: null,
+      confirmIdentityAfterContinuityCheck: () => false,
+      reloadIdentity: () => undefined,
+    }),
+  }
+})
 
 function success(result: unknown): ContractResult {
   return { status: 'success', result }
@@ -66,6 +84,7 @@ function primaryData({
       isReduceOnly: true,
       status: 0,
     }]),
+    success(5_000_000_000n),
     success(5_000_000_000n),
     success(5_000_000_000n),
     success(1_500_000_000n),

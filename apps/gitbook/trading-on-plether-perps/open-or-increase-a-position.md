@@ -1,20 +1,12 @@
 # Open or increase a position
 
-Use the trade ticket to open a **LONG USD** or **SHORT USD** position, or to add exposure to an existing position in the same direction.
+Use the trade ticket to open a **Long plDXY Perp** (LONG USD) or **Short plDXY Perp** (SHORT USD) position, or to add exposure to an existing position in the same direction.
 
-Both actions follow Plether’s delayed-order process:
+Both actions begin with a sponsored submission and then follow Plether’s delayed-order process:
 
-```
-Configure
-→ Review
-→ Commit
-→ Funds reserved
-→ FIFO queue
-→ Executed or failed
-→ Position updated
-```
+![Complete open-or-increase lifecycle from configuration through sponsored submission, FIFO execution and position update.](../.gitbook/assets/diagrams/open-increase-position-lifecycle.svg)
 
-The position changes when the order executes.
+The sponsored operation is **Confirmed** when the order commitment reaches the chain. The position changes only when that committed order later executes.
 
 ### Opening and increasing
 
@@ -33,7 +25,7 @@ A same-direction increase updates the position’s:
 * Leverage
 * Liquidation price
 * Maximum modeled payout
-* Future carry basis
+* Future carry[^carry] basis
 
 Changing direction requires a complete close. Wait for that close to execute before submitting an order in the opposite direction.
 
@@ -43,32 +35,29 @@ Check that:
 
 * The **Market State** is `Open`.
 * The Margin Account has enough **Available to Trade**.
-* The wallet has enough native gas token for transactions.
+* The correct owner wallet and Trading Account are selected.
+* Sponsorship is shown as available for the prepared action.
 * Any existing position is in the same direction as the intended increase.
 * Existing pending orders do not duplicate or conflict with the instruction.
 
 New opening and increase commitments are blocked during:
 
-* FAD close-only operation
+* FAD[^fad] close-only operation
 * `oracleFrozen`
 * Degraded mode
 * Router pause
 * Protocol setup or inactive trading state
 
-A previously committed order can remain pending if the market becomes close-only while it waits.
+A previously committed order cannot execute while the market is close-only. It remains pending only until the market reopens or the order reaches its maximum age. With the current `60-second` maximum order age, an order blocked by a scheduled close-only interval normally expires before the market reopens and then awaits keeper cleanup.
 
-> **Screenshot placeholder — Market and account readiness**
->
-> Show the `Open` market state, Available to Trade and either an empty Position panel or an existing same-direction position.
-
-### 1. Choose LONG USD or SHORT USD
+### 1. Choose Long plDXY Perp or Short plDXY Perp
 
 Choose the direction that matches your view:
 
-| Position      | Market view                                                | Benefits when                   |
-| ------------- | ---------------------------------------------------------- | ------------------------------- |
-| **LONG USD**  | The dollar strengthens against the Plether currency basket | The displayed perps price rises |
-| **SHORT USD** | The dollar weakens against the Plether currency basket     | The displayed perps price falls |
+| Ticket label          | Market view                                                | Benefits when                   |
+| --------------------- | ---------------------------------------------------------- | ------------------------------- |
+| **Long plDXY Perp**   | The dollar strengthens against the Plether currency basket | The displayed perps price rises |
+| **Short plDXY Perp**  | The dollar weakens against the Plether currency basket     | The displayed perps price falls |
 
 For an increase, select the direction already held by the account.
 
@@ -80,53 +69,57 @@ D = 2.00 − B
 
 Where:
 
-* `D` is the displayed dollar-oriented perps price.
+* `D` is the displayed dollar-oriented perps[^perps] price.
 * `B` is the raw foreign-currency basket used by protocol accounting.
 
 The application handles this conversion when building the order.
 
 ### 2. Enter the exposure
 
-Enter the amount you want to add in the exposure field.
-
-For a new position, this becomes the initial exposure.
-
-For an increase:
+Enter the target amount to add in the `plDXY Perp exposure` field. The amount is valued at the current displayed price. The application converts it into the contract quantity stored in the order:
 
 ```
-Resulting exposure
-= current exposure
-+ added exposure
+Added contract quantity
+≈ selected plDXY Perp exposure ÷ Dpreview
 ```
 
-The entered increase is an additional amount, rather than the intended final position size. Review **Resulting exposure** before committing.
+For a new position, that quantity becomes the initial position. For an increase, it is added to the existing contract quantity:
 
-The execution price determines the added contract notional:
+```
+Resulting contract quantity
+= current contract quantity
++ added contract quantity
+```
+
+The entered amount is an addition, not an intended final position size. Because displayed exposure is `contract quantity × current D`, the final execution exposure can differ from the selected amount when the price changes before execution.
+
+The execution price determines the added contract notional[^notional]:
 
 ```
 Added contract notional
-= added exposure × Bexecution
-= added exposure × (2.00 − Dexecution)
+= added contract quantity × Bexecution
+= added contract quantity × (2.00 − Dexecution)
 ```
 
-Contract notional is used for:
+Execution-time contract notional is used for:
 
 * The execution fee
 * Minimum-order validation
-* The execution reward
 * Margin calculations
 * HousePool capacity and solvency checks
 
-The trade ticket calculates an estimate using current market data. Execution recalculates it using the order’s resolved price.
+The trade ticket calculates an estimate using current market data. That commit-time estimate is also used to quote and reserve the execution reward. Execution recalculates contract notional for the other checks using the order’s resolved price; the already-reserved reward does not change.
 
 ### 3. Set leverage and margin
 
-The leverage control determines how much USDC the order assigns as position margin.
+The leverage control determines how much USDC[^usdc] the order assigns as position margin.
 
-For the same exposure:
+For the same contract quantity:
 
-* More margin produces lower leverage and more liquidation headroom.
-* Less margin produces higher leverage and less liquidation headroom.
+* More assigned margin produces lower displayed position leverage and a smaller LP-backed carry basis.
+* Less assigned margin produces higher displayed position leverage and may fail the position-level initial-margin check.
+
+Assigned margin comes from USDC already in the Margin Account. Moving existing free USDC into position margin does not by itself add account-wide collateral or immediate liquidation headroom. Depositing new USDC does.
 
 For an increase, the resulting leverage applies to the complete combined position.
 
@@ -150,7 +143,7 @@ Resulting position margin
 − signed VPI
 ```
 
-A positive VPI is a charge. A negative VPI is a provisional rebate, so subtracting it increases resulting margin.
+A positive VPI[^vpi] is a charge. A negative VPI is a provisional rebate, so subtracting it increases resulting margin.
 
 A provisional VPI rebate remains subject to the position’s lifetime VPI rules and does not provide additional risk equity by itself.
 
@@ -191,7 +184,7 @@ The application converts this boundary into the equivalent raw-basket target use
 
 Plether checks the boundary against the execution price after:
 
-1. Selecting the eligible post-commit oracle observation
+1. Selecting the eligible post-commit oracle[^oracle] observation
 2. Applying the adverse oracle confidence adjustment
 3. Bounding the result within the `0.00–2.00` settlement range
 
@@ -202,65 +195,52 @@ The confidence adjustment moves entry against the trader:
 
 `Max slippage` governs this confidence-adjusted execution price. The execution fee, VPI, carry and execution reward are calculated separately.
 
-An unlimited setting submits the order without a target-price check. It can execute at any eligible price within the protocol’s settlement range.
+Selecting `Infinity` for Max slippage shows `Market` as the execution limit and submits the order without a target-price check. It can execute at any eligible price within the protocol’s settlement range.
 
 A slippage miss ends the order. Resubmission requires a new commitment.
 
 ### 5. Review the preview
 
-The preview projects the complete post-trade position using current account, oracle and HousePool data.
+The review uses current account, oracle and HousePool data. Its summary identifies the direction and whether the action opens or increases a position.
 
-Review:
+The current `Commit Preview` shows:
 
-* Direction
-* Exposure being added
-* Resulting total exposure
-* Estimated execution price
-* Max slippage and execution limit
-* Added contract notional
-* Submitted margin
-* Resulting position margin
+* plDXY Perp price
+* Selected plDXY Perp exposure
+* Contract notional
+* Initial margin, meaning the margin submitted with this order
+* Maintenance margin
 * Resulting leverage
-* Resulting average entry price
-* Initial margin requirement
-* Maintenance margin requirement
+* Max slippage and execution limit
+* Adverse oracle confidence spread
 * Liquidation price
-* Protocol execution fee
-* Signed VPI
-* Oracle confidence adjustment
-* Pending carry
-* Execution reward
-* Total amount reserved from Available to Trade
-* Projected account equity and health
+* Estimated protocol execution fee
+* VPI / Price impact
+* Estimated execution reward
+* Contract side capacity
+
+It does not show resulting position margin, average entry price, pending carry, projected account equity or a complete post-trade account-health calculation. Those values are still checked during execution and appear in the relevant account views after a successful trade.
 
 An invalid preview may show incomplete or zero values when validation stops before the full calculation. Follow the displayed failure reason before changing the order.
 
-The preview uses the current state. Execution runs the calculation again after earlier FIFO orders have been processed and the order’s own oracle price has been resolved.
+The preview uses the current state. Execution runs the calculation again after earlier FIFO[^fifo] orders have been processed and the order’s own oracle price has been resolved.
 
-Price, pool depth, market skew, carry and account balances can all change during that interval.
-
-> **Screenshot placeholder — Opening preview**
->
-> Show direction, exposure, leverage, margin, execution limit, liquidation price, execution fee, VPI, confidence adjustment and execution reward.
-
-> **Screenshot placeholder — Increase preview**
->
-> Place the current position beside the projected result. Include total exposure, average entry price, resulting margin, leverage and liquidation price.
+Price, pool depth, market skew[^skew], carry and account balances can all change during that interval.
 
 ### How an increase changes entry price
 
 Plether merges same-direction exposure into one position.
 
-The new entry price is weighted by position size:
+The new entry price is weighted by contract quantity, not by the displayed USDC exposure at two different prices:
 
 ```
 Resulting entry price
 =
 (
-  current exposure × current entry price
-  + added exposure × increase execution price
+  current contract quantity × current entry price
+  + added contract quantity × increase execution price
 )
-÷ resulting exposure
+÷ resulting contract quantity
 ```
 
 Position margin has no weight in this calculation.
@@ -270,14 +250,14 @@ Position margin has no weight in this calculation.
 Assume:
 
 ```
-Current exposure:       10,000 at 1.0500
-Added exposure:          5,000 at 1.1000
+Current contract quantity:       10,000 at 1.0500
+Added contract quantity:          5,000 at 1.1000
 ```
 
 The combined position becomes:
 
 ```
-Resulting exposure
+Resulting contract quantity
 = 10,000 + 5,000
 = 15,000
 ```
@@ -295,7 +275,7 @@ Now assume:
 ```
 Current position margin:  3,000 USDC
 Submitted margin:          1,500 USDC
-Execution fee:                15 USDC
+Execution fee:              1.80 USDC
 VPI charge:                   25 USDC
 ```
 
@@ -303,33 +283,27 @@ With accrued carry already paid from free account USDC:
 
 ```
 Resulting position margin
-= 3,000 + 1,500 − 15 − 25
-= 4,460 USDC
+= 3,000 + 1,500 − 1.80 − 25
+= 4,473.20 USDC
 ```
 
-The interface then recalculates leverage and liquidation price for the complete `15,000` exposure position.
+The interface then recalculates displayed exposure, leverage and liquidation price for the complete `15,000` contract-quantity position using the current mark.
 
 ### 6. Review and commit
 
 Select `Review Long` or `Review Short`.
 
-The review window should repeat:
+The review window repeats the complete `Commit Preview` described above. For an increase, its summary also states the selected added exposure and a current-state combined exposure estimate.
 
-* Direction
-* Added exposure
-* Resulting exposure
-* Margin submitted
-* Resulting position margin
-* Execution limit
-* Estimated execution fee
-* Estimated VPI
-* Execution reward
-* Resulting leverage
-* Liquidation price
+Select `Confirm Commit` and approve the wallet authorization. Plether then submits the sponsored Trading Account operation.
 
-Select `Confirm Commit` and approve the wallet transaction.
+The interface reports:
 
-After the commitment confirms:
+![Open-or-increase sponsored submission states from Preparing to Confirmed.](../.gitbook/assets/diagrams/open-increase-sponsored-submission.svg)
+
+If the wallet signature, sponsorship request or UserOperation[^useroperation] submission fails before confirmation, no order is created. Check the operation status before retrying.
+
+After the sponsored commitment confirms:
 
 * Submitted margin enters the pending-order margin bucket.
 * The execution reward enters reserved settlement.
@@ -344,14 +318,15 @@ The protocol checks predictable failures during commitment when a sufficiently f
 
 ### 7. Wait for execution
 
-Track the instruction under **Open Orders**.
+Track the order under **Open Orders**. The order’s Pending state is separate from the earlier Pending state of the sponsored operation.
 
-| Status             | Meaning                                                             |
-| ------------------ | ------------------------------------------------------------------- |
-| **Pending reveal** | Waiting for its turn and an eligible post-commit oracle observation |
-| **Executed**       | The position was opened or increased                                |
-| **Failed**         | Slippage or an execution-time engine check ended the order          |
-| **Expired**        | The maximum order age passed and terminal cleanup is required       |
+| Open Orders status | Meaning                                                               |
+| ------------------ | --------------------------------------------------------------------- |
+| **Pending**        | Waiting for reveal or for expiry data to load                         |
+| **Pending reveal** | Waiting for its turn and an eligible post-commit oracle observation   |
+| **Expired**        | The maximum order age passed; the sponsored keeper is cleaning it up  |
+
+After terminal processing, the order leaves **Open Orders**. **Order History** records whether it was **Executed** or **Failed**, together with its commit and reveal transactions.
 
 The global queue follows FIFO ordering. Earlier orders must resolve before later orders can execute.
 
@@ -364,11 +339,7 @@ During live-market execution, Plether uses a unique Pyth basket observation:
 
 Execution in the commitment block is blocked.
 
-If `Finalize Trade` becomes available in the interface, manual finalization submits the data needed to process the same pending order. It follows the same FIFO, oracle and acceptable-price rules.
-
-> **Screenshot placeholder — Pending order**
->
-> Show `Pending reveal`, the expiry countdown, `Cancel unavailable` and any manual-finalization action.
+For the currently supported sponsored Trading Account, finalization and expired-order cleanup are keeper-operated. The owner wallet is not asked to pay native gas or select `Finalize Trade`. An expired row shows `Keeper processing` until cleanup completes.
 
 ### Waiting and terminal outcomes
 
@@ -377,7 +348,7 @@ Some conditions leave the order pending:
 | Condition                                                     | Result                                                |
 | ------------------------------------------------------------- | ----------------------------------------------------- |
 | An older FIFO order remains unresolved                        | The order waits                                       |
-| The market becomes close-only                                 | The opening or increase waits                         |
+| The market becomes close-only                                 | Execution is blocked; with the current 60-second maximum age, the order normally expires before scheduled reopening |
 | No eligible post-commit oracle observation is available       | The order waits                                       |
 | Oracle update data or the attached oracle fee is insufficient | The execution transaction reverts and the order waits |
 | The execution attempt provides insufficient engine gas        | The order waits                                       |
@@ -409,19 +380,18 @@ A failed or expired order is not retried automatically.
 
 ### 8. Check the executed position
 
-After execution, open the **Position** panel and review:
+After execution, open the **Position** panel and review its current fields:
 
-* Direction
-* Total exposure
-* Executed increase amount
-* Average entry price
-* Position margin
+* Long or Short direction
+* plDXY Perp exposure
+* Entry notional
+* Entry price
 * Leverage
 * Liquidation price
-* Unrealized PnL
-* Accrued VPI
+* Unrealized PnL[^pnl]
 * Cost of carry
-* Remaining Available to Trade
+
+The lifecycle window’s **Final Result** records target and execution exposure, contract notional, the execution fee, VPI, oracle confidence spread, execution reward and transaction links. **Order History** records the terminal order status. `Available to Trade` remains a separate trade-ticket value, and assigned position margin is available in `Edit Position Margin`.
 
 The executed position is the current account record.
 
@@ -438,11 +408,9 @@ This can produce an immediate unrealized loss after execution:
 
 The difference reflects the adverse oracle confidence adjustment shown in the trade preview.
 
-Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed borrow base.
+Carry begins on a new position after execution. An increased position starts its next carry period from the updated size, margin and LP-backed[^lp] borrow base.
 
-> **Screenshot placeholder — Executed position**
->
-> Show the updated Position panel together with the matching entry in Order History.
+![Executed position paired with its matching Order History record](../.gitbook/assets/screenshots/storybook-documentation-open-or-increase-position--executed-position-and-order-history.png)
 
 ### Why an opening or increase may be unavailable
 
@@ -464,11 +432,24 @@ Carry begins on a new position after execution. An increased position starts its
 
 * Confirm the Market State is `Open`.
 * Confirm the selected direction.
-* Distinguish added exposure from resulting exposure.
-* Review the combined position after an increase.
-* Check resulting margin and leverage after costs.
+* Distinguish selected exposure from execution-time displayed exposure.
+* Review the combined position after an increase executes.
+* Check submitted margin and resulting leverage after costs.
 * Read the acceptable-price boundary.
 * Review the execution fee, VPI, carry and execution reward separately.
 * Check the liquidation price.
 * Account for the binding FIFO commitment.
 * Monitor the order until it executes, fails or expires.
+
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^skew]: The imbalance between aggregate LONG USD and SHORT USD exposure.
+[^useroperation]: A signed smart-account instruction sent to a bundler for onchain inclusion.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.

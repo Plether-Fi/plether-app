@@ -1,8 +1,8 @@
 import { type ReactNode } from 'react'
 import type { PerpsOracleFreshness } from '../utils/perps'
-import { TokenAmount, Tooltip } from './ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
 
-export interface PerpsInstrumentStat {
+interface PerpsInstrumentStatBase {
   label: string
   value?: ReactNode
   values?: {
@@ -13,10 +13,22 @@ export interface PerpsInstrumentStat {
   tone?: 'default' | 'positive' | 'negative'
   freshness?: PerpsOracleFreshness
   freshnessTooltip?: string
-  tooltip?: ReactNode
-  tooltipClassName?: string
-  tooltipPosition?: 'top' | 'bottom' | 'left' | 'right'
 }
+
+export type PerpsInstrumentStat = PerpsInstrumentStatBase & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+      tooltipClassName?: never
+      tooltipPosition?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+      tooltipClassName?: string
+      tooltipPosition?: 'top' | 'bottom' | 'left' | 'right'
+    }
+)
 
 export interface PerpsInstrumentPanelProps {
   icon?: string
@@ -117,7 +129,8 @@ export function PerpsInstrumentPanel({
                   <Tooltip
                     content={stat.tooltip}
                     position={stat.tooltipPosition ?? 'bottom'}
-                    className={stat.tooltipClassName ?? 'max-w-80 whitespace-normal'}
+                    className={stat.tooltipClassName ?? INFO_TOOLTIP_PANEL_CLASS_NAME}
+                    docsLink={stat.tooltipDocsLink}
                   >
                     <span
                       className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"

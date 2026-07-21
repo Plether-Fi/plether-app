@@ -1,18 +1,18 @@
 # The HousePool and tranche waterfall
 
-The HousePool is the USDC capital base behind Plether Perps.
+The HousePool is the USDC[^usdc] capital base behind Plether Perps[^perps].
 
-It does not set the market price. It does not operate an AMM or match traders against one another. The oracle determines price.
+It does not set the market price. It does not operate an AMM[^amm] or match traders against one another. The oracle[^oracle] determines price.
 
 The HousePool has a narrower role:
 
 * underwrite bounded trader payouts;
-* receive collected trader losses, positive VPI and carry;
+* receive collected trader losses, positive VPI[^vpi] and carry[^carry];
 * fund profitable trader settlements and VPI rebates;
 * absorb bad debt;
 * determine how much additional exposure Plether can safely accept.
 
-LPs provide this capital through two ERC-4626 vaults: **Senior** and **Junior**.
+LPs[^lp] provide this capital through two ERC-4626[^erc4626] vaults: **Senior** and **Junior**.
 
 ### Capital before yield
 
@@ -25,7 +25,7 @@ LP returns come from Plether’s internal economics:
 * collected carry;
 * positive VPI;
 * realized trader losses;
-* the Senior-to-Junior allocation rules.
+* the tranche waterfall, including the Junior-funded Senior target coupon.
 
 There is no separate yield reserve and no external base yield inside the HousePool.
 
@@ -112,18 +112,7 @@ Plether does not count unrealized trader losses as current LP assets. A trader l
 
 The resulting revenue or loss then passes through the waterfall:
 
-````
-```mermaid
-flowchart TD
-    A["HousePool value after trader liabilities"] --> B{"Revenue or loss?"}
-
-    B -->|"Loss"| C["Junior absorbs first"]
-    C --> D["Senior absorbs only the remainder"]
-
-    B -->|"Revenue"| E["Restore impaired Senior to its high-water mark"]
-    E --> F["Residual revenue goes to Junior"]
-```
-````
+![Flowchart showing losses flowing through Junior before Senior and revenue restoring Senior before reaching Junior.](../.gitbook/assets/diagrams/housepool-tranche-waterfall.svg)
 
 #### When the pool realizes a loss
 
@@ -170,15 +159,9 @@ Paid coupon becomes part of Senior principal and, where applicable, its future c
 
 ### The Senior high-water mark
 
-The Senior high-water mark records the protected Senior claim.
+The Senior high-water mark records the protected Senior claim. It initially rises with Senior deposits.
 
-It includes:
-
-* Senior deposits;
-* coupon actually transferred to Senior;
-* previously restored Senior value.
-
-When paid coupon increases Senior principal, the high-water mark rises with it. That coupon becomes part of Senior’s protected position in the waterfall.
+When Senior is unimpaired, paid coupon increases both Senior principal and the high-water mark. If Senior is impaired, paid coupon first restores principal toward the existing high-water mark without raising that mark. Only the portion remaining after the impairment gap is closed raises both principal and the high-water mark.
 
 If Senior later takes a loss, its principal falls but its high-water mark does not. Future revenue must restore that gap before Junior receives residual upside.
 
@@ -190,7 +173,7 @@ Senior impairment is defined as:
 Senior principal < Senior high-water mark
 ```
 
-During impairment, ordinary deposits into both tranches are blocked. Recovery must come from realized revenue or an explicit recapitalization path.
+During impairment, ordinary deposits into both tranches[^tranche] are blocked. Recovery must come from realized revenue or an explicit recapitalization path.
 
 ### Waterfall example
 
@@ -252,10 +235,10 @@ Potential outflows or losses include:
 
 * profitable trader settlements;
 * VPI rebates;
-* trader residuals following liquidation;
+* fresh liquidation residual payouts that must be funded by the HousePool;
 * uncollectible trader losses and bad debt.
 
-The protocol execution fee is designated for the protocol treasury. Order and liquidation bounties belong to keepers. Neither should be presented as direct LP yield.
+The protocol execution fee is designated for the protocol treasury. Order execution rewards normally belong to the order executor or clearer[^keeper], while liquidation bounties belong to successful liquidators. If liquidation clears pending orders first, their reserved execution rewards are forfeited to the protocol treasury. None of these amounts should be presented as direct LP yield.
 
 Recapitalization is also not trading revenue. It is new capital explicitly introduced to repair the waterfall.
 
@@ -275,7 +258,7 @@ That asymmetry is deliberate. It prevents LPs from withdrawing against money the
 
 ### Trader claims rank ahead of LPs
 
-A profitable close can complete even if the HousePool cannot immediately fund the complete payout. The unpaid amount becomes a trader claim.
+A profitable close can complete even if the HousePool cannot immediately fund the complete fresh payout. Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or recorded in full as a trader claim; Plether never splits it between the two.
 
 Trader claims:
 
@@ -285,7 +268,7 @@ Trader claims:
 * receive cash priority over discretionary LP withdrawals;
 * are not counted as collateral for another trader position.
 
-A trader can settle their claim only when aggregate trader claims are fully cash-covered. Settlement credits USDC into the trader’s MarginClearinghouse account.
+A trader can settle their claim only when aggregate trader claims are fully cash-covered. Settlement credits USDC into the Trading Account’s Margin Account.
 
 Trader seniority comes before the internal Senior-versus-Junior distinction.
 
@@ -330,7 +313,7 @@ This view is conservative:
 
 Plether avoids minting discounted shares merely because conservative aggregate accounting temporarily over-reserves unrealized trader gains.
 
-Realized losses still reduce deposit NAV. But an inexact conservative mark-to-market reserve is not offered to new LPs as a discount.
+Realized losses still reduce deposit NAV[^nav]. But an inexact conservative mark-to-market reserve is not offered to new LPs as a discount.
 
 Because the protocol cannot safely calculate exact per-position loser receivables from its constant-time market aggregates, immediate deposits are disabled whenever trader positions are open.
 
@@ -375,8 +358,6 @@ Before finalization:
 * the final number of shares is not yet fixed.
 
 The current contracts use one-hour epoch identifiers and assign requests two epochs ahead. Depending on when a request is submitted within the current hour, activation occurs roughly one to two hours later.
-
-\[Screenshot placeholder: **Deposit request → activation → finalization → claim** flow—pending LP frontend implementation.]
 
 #### Cancellation during impairment
 
@@ -550,7 +531,7 @@ The retained value:
 
 The extended frozen-market window is not indefinite. Once the accepted oracle data becomes over-stale, entry and exit can be blocked until valid data or protocol recovery becomes available.
 
-Current surcharge rates belong on the live parameters page.
+On the current Arbitrum Sepolia deployment, the frozen-oracle surcharge is `25 bps` for Senior actions and `75 bps` for Junior actions. Live onchain values are authoritative.
 
 ### Pause and degraded mode
 
@@ -564,6 +545,8 @@ During degraded mode:
 * LP withdrawals are blocked;
 * closes and liquidations remain available;
 * recapitalization can move the system back toward solvency.
+
+Degraded mode is latched. Restoring effective solvency makes the protocol eligible for recovery, but the protocol owner must explicitly clear the mode.
 
 Deposit availability continues to follow its separate lifecycle, freshness, pause, impairment and ownership-assignment gates.
 
@@ -581,7 +564,7 @@ If losses exhaust Junior and reduce Senior below its high-water mark:
 
 A tranche is terminally wiped when shares still exist but its accounting assets reach zero.
 
-An ordinary deposit cannot silently revive a wiped tranche. Recovery requires an explicit recapitalization path that preserves existing ownership rights.
+An ordinary deposit cannot silently revive a wiped tranche. Recovery can come from realized protocol revenue allocated through the waterfall or from an explicit recapitalization path that preserves existing ownership rights.
 
 This prevents a new depositor from obtaining the recovery rights of previously wiped holders through a nominal first deposit.
 
@@ -600,11 +583,11 @@ There is currently no interface for:
 * tranche return history;
 * cooldowns or frozen-oracle fees.
 
-The visible **Deposit** and **Withdraw** buttons on the Perps page operate the trader margin account. They are not HousePool LP actions.
+The visible **Deposit** and **Withdraw** buttons on the Perps page operate the Trading Account’s Margin Account. They are not HousePool LP actions.
 
-\[Screenshot placeholder: Senior and Junior tranche overview—pending LP frontend implementation.]
+The LP withdrawal image below is a documentation prototype, not a live control.
 
-\[Screenshot placeholder: LP withdrawal preview showing share balance, tranche NAV, max withdraw, cooldown and active reserves—pending LP frontend implementation.]
+![LP withdrawal preview](../.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
 
 #### “Pool liquidity” is not total LP capital
 
@@ -612,14 +595,13 @@ The current trader interface shows **Pool liquidity**.
 
 That value represents free HousePool USDC after protected reserves—not total HousePool assets, total tranche NAV or the amount every LP can withdraw.
 
-Its tooltip currently focuses on:
+The interface’s supporting detail also shows:
 
-* LONG USD capacity;
-* SHORT USD capacity;
+* estimated LONG USD and SHORT USD opening-capacity headroom based on pool assets, open interest and the skew limit;
 * minimum order size;
 * minimum new position.
 
-\[Screenshot: **Pool liquidity** tooltip—caption: “Free deployable USDC after reserves, not total HousePool NAV.”]
+These figures are not subdivisions of free HousePool USDC, and the capacity estimates do not guarantee that a particular order will pass every execution-time check.
 
 ### Senior risks
 
@@ -657,14 +639,17 @@ Solvency is not the same as liquidity. A protocol can remain solvent while tempo
 
 #### 1. Start with effective backing
 
-Plether begins with the canonical physical USDC held by the HousePool.
+Plether begins with the physical USDC backing recognized by the HousePool.
 
 Trader claims are then deducted because they are senior obligations already owed to traders:
 
 ```
 Effective backing
-= canonical physical HousePool assets
-− aggregate trader claims
+= max(
+    physical HousePool assets
+    − aggregate trader claims,
+    0
+  )
 ```
 
 Trader claims are not LP capital and cannot be used to support new exposure.
@@ -808,15 +793,12 @@ Degraded mode contains the problem. It does not guarantee that trader claims can
 
 ### The distinction to remember
 
-```
-Solvency asks whether remaining liabilities are backed.
-
-Settlement liquidity asks whether a trader can be paid now.
-
-Withdrawal liquidity asks how much cash can safely leave the HousePool.
-
-The tranche waterfall determines which LP capital absorbs loss.
-```
+| Check | Question it answers |
+| --- | --- |
+| **Solvency** | Are the remaining liabilities fully backed? |
+| **Settlement liquidity** | Can a trader be paid now? |
+| **Withdrawal liquidity** | How much cash can safely leave the HousePool? |
+| **Tranche waterfall** | Which LP capital absorbs a realized loss? |
 
 These checks use the same physical backing, but they answer different questions.
 
@@ -850,16 +832,24 @@ After depositing:
 
 The HousePool has three layers of obligation:
 
-```
-First: protect trader settlement liabilities.
-
-Second: apply Senior and Junior accounting priority.
-
-Third: allow LP withdrawals only from physically free USDC.
-```
+1. Protect trader settlement liabilities.
+2. Apply Senior and Junior accounting priority.
+3. Allow LP withdrawals only from physically free USDC.
 
 Senior and Junior divide the residual economic claim on the HousePool. They do not outrank traders, remove liquidity constraints or convert unrealized trader losses into cash.
 
 Senior receives a Junior-funded target coupon and relative loss priority.
 
 Junior receives residual upside and absorbs first loss.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^perps]: Perpetual contracts, derivatives with no scheduled expiry.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

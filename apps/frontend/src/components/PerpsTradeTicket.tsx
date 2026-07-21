@@ -1,6 +1,6 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
-import { useAccount, useChainId, useReadContracts } from 'wagmi'
+import { useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
@@ -11,6 +11,7 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
+import { usePerpsIdentity, useSponsoredOperationStore } from '../perps-aa'
 import {
   adverseConfidenceBasketPrice,
   directionToPerpsSide,
@@ -50,7 +51,9 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
+import { DOCS_LINKS } from '../config/docs'
+import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -69,12 +72,22 @@ type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 
-interface PreviewRow {
+interface PreviewRowBase {
   label: string
   value: ReactNode
   tone?: 'default' | 'positive' | 'warning' | 'muted'
-  tooltip?: ReactNode
 }
+
+type PreviewRow = PreviewRowBase & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -131,6 +144,10 @@ interface PerpsTradeTicketProps {
   initialDirection?: Direction
   initialSize?: string
   initialReduceOnly?: boolean
+  initialLeverage?: number
+  initialMarginAction?: MarginAction
+  initialMarginActionAmount?: string
+  initialMarginCallSimulatorConfirmationOpen?: boolean
   initialOrderId?: bigint
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
@@ -148,6 +165,8 @@ interface PerpsTradeTicketProps {
   adverseConfidenceMultiplierBps?: string
   oracleFrozen?: boolean
   /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
+  openPreviewFixture?: OpenPreviewView
+  /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
   closePreviewFixture?: ClosePreviewView
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
@@ -157,6 +176,8 @@ interface PerpsTradeTicketProps {
   portfolioValueRaw?: bigint
   withdrawableUsdcRaw?: bigint
   walletUsdcRaw?: bigint
+  ownerWalletUsdcRaw?: bigint
+  tradingAccountUsdcRaw?: bigint
   marginAllowanceUsdc?: bigint
   currentPosition?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
@@ -182,10 +203,9 @@ const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
-const LIVE_SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
-const ORACLE_FROZEN_SLIPPAGE_OPTIONS = [0.5, 0.55, 0.75, 1, Infinity]
+const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
 const DEFAULT_LIVE_SLIPPAGE = 0.1
-const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0.55
+const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0
 const LIGHT_ORANGE_ACTION_BUTTON_CLASS = '!border-[#FFAB96] !bg-[#FFAB96] !text-[#250917] enabled:hover:!border-[#FF572D] enabled:hover:!bg-[#FF572D] enabled:hover:!text-[#FFF5F9] enabled:hover:underline enabled:hover:underline-offset-4'
 const DARK_CANCEL_BUTTON_CLASS = '!border-[#FFAB96]/40 !bg-[#250917] !text-[#FFF5F9] enabled:hover:!border-[#FFAB96] enabled:hover:!bg-[#3B212D] enabled:hover:underline enabled:hover:underline-offset-4'
 const CONNECT_WALLET_ACTION_BUTTON_CLASS = '!border-[#FF572D] !bg-[#FF572D] !text-[#FFF5F9] enabled:hover:!border-[#FFF5F9] enabled:hover:!bg-[#FFF5F9] enabled:hover:!text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
@@ -207,6 +227,18 @@ const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
   'Execution uses the adverse side of the Pyth confidence range for opens and for live or FAD-only closes. Oracle-frozen voluntary closes/reductions waive that price shift and use the separate frozen close spread instead; confidence-width validation still applies.'
 const FROZEN_CLOSE_SPREAD_TOOLTIP =
   'Oracle-frozen closes/reductions use this fixed LP-owned spread instead of the adverse-confidence price shift to protect LPs from price uncertainty. Wait until the market reopens to avoid this spread.'
+const DIRECTION_TOOLTIP =
+  'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls. The underlying FX basket moves in the opposite direction.'
+const CONTRACT_NOTIONAL_TOOLTIP =
+  'The protocol\'s accounting size, calculated using the raw basket price. It is different from your displayed plDXY Perp exposure and determines margin and fees.'
+const EXECUTION_LIMIT_TOOLTIP =
+  'The worst oracle execution price you accept. It does not limit VPI, fees, carry, execution rewards, or a frozen-close spread.'
+const MAINTENANCE_MARGIN_TOOLTIP =
+  'The minimum account equity required to avoid liquidation. At or below this amount, the entire position can be liquidated.'
+const EXECUTION_REWARD_TOOLTIP =
+  'USDC reserved for whoever finalizes or clears the order. It can still be paid if the order fails or expires.'
+const MANUAL_FINALIZATION_TOOLTIP =
+  'Unless marked Sponsored, manual finalization requires ETH for network gas and the Pyth update fee.'
 const KEEPER_REVEAL_GRACE_MS = 20_000
 const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
@@ -649,7 +681,7 @@ function DxyPricePreviewValue({
   return (
     <span className="inline-flex min-h-6 items-center justify-end gap-2 whitespace-nowrap">
       {freshness && freshnessTooltip ? (
-        <Tooltip content={freshnessTooltip} position="top">
+        <Tooltip content={freshnessTooltip} position="top" className={INFO_TOOLTIP_PANEL_CLASS_NAME}>
           <span
             aria-label={`plDXY Perp price ${freshness}`}
             className={`h-2 w-2 shrink-0 rounded-full ${dotClass}`}
@@ -741,6 +773,48 @@ function CopyableValue({
   )
 }
 
+function UserOperationHashActions({
+  hash,
+  explorerUrlTemplate,
+}: {
+  hash: string
+  explorerUrlTemplate?: string
+}) {
+  const explorerUrl = explorerUrlTemplate?.replace(
+    '{userOperationHash}',
+    hash
+  )
+
+  return (
+    <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1">
+      <span className="min-w-0 truncate" title={hash}>{truncateHash(hash)}</span>
+      <button
+        type="button"
+        aria-label="Copy UserOperation hash"
+        title="Copy UserOperation hash"
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
+        onClick={() => {
+          void navigator.clipboard.writeText(hash)
+        }}
+      >
+        <span className="material-symbols-outlined !text-[14px] !leading-none">content_copy</span>
+      </button>
+      {explorerUrl ? (
+        <a
+          aria-label="Open UserOperation in block explorer"
+          title="Open UserOperation in block explorer"
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
+        >
+          <span className="material-symbols-outlined !text-[14px] !leading-none">open_in_new</span>
+        </a>
+      ) : null}
+    </span>
+  )
+}
+
 function previewToneClass(tone: PreviewRow['tone']): string {
   if (tone === 'positive') return 'text-positive'
   if (tone === 'warning') return 'text-brand-peach'
@@ -769,7 +843,7 @@ function PreviewRows({
                 onClick={onSlippageClick}
               >
                 <span className="group-hover:underline group-focus-visible:underline">{row.label}</span>
-                <span className="flex min-h-6 items-center justify-end text-right font-semibold group-hover:underline group-focus-visible:underline">
+                <span className="flex min-h-6 items-center justify-end text-right font-normal group-hover:underline group-focus-visible:underline">
                   {row.value}
                 </span>
               </button>
@@ -779,14 +853,15 @@ function PreviewRows({
         }
 
         return (
-          <div key={row.label} className="flex min-h-6 items-center justify-between gap-3 text-sm">
-            <dt className="inline-flex items-center gap-1.5 text-content-secondary">
+          <div key={row.label} className="flex min-h-6 min-w-0 items-center justify-between gap-3 text-sm">
+            <dt className="inline-flex shrink-0 items-center gap-1.5 text-content-secondary">
               {row.label}
               {row.tooltip ? (
                 <Tooltip
                   content={row.tooltip}
                   position="bottom-end"
-                  className="w-[340px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+                  className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+                  docsLink={row.tooltipDocsLink}
                 >
                   <span
                     aria-label={`${row.label} info`}
@@ -798,7 +873,7 @@ function PreviewRows({
                 </Tooltip>
               ) : null}
             </dt>
-            <dd className={`flex min-h-6 items-center justify-end text-right font-semibold ${previewToneClass(row.tone)}`}>{row.value}</dd>
+            <dd className={`flex min-h-6 min-w-0 items-center justify-end overflow-hidden text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
       })}
@@ -1137,14 +1212,69 @@ function PendingProgressCircle({ progressPercent }: { progressPercent: number })
   )
 }
 
-function SuccessStateCard({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="flex min-h-52 flex-col items-center justify-center border border-brand-border/20 bg-app-bg px-6 py-8 text-center">
-      <div className="flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
+function SuccessStateCard({
+  title,
+  description,
+  celebrate = false,
+}: {
+  title: string
+  description: string
+  celebrate?: boolean
+}) {
+  const [celebrationKey, setCelebrationKey] = useState(0)
+  const [celebrationOrigin, setCelebrationOrigin] = useState<{
+    x: number
+    y: number
+    stageWidth: number
+    stageHeight: number
+    direction: 'up' | 'down'
+  }>()
+  const className = 'relative isolate flex min-h-52 flex-col items-center justify-center overflow-hidden border border-brand-border/20 bg-app-bg px-6 py-8 text-center'
+  const content = (
+    <>
+      {celebrate ? <PerpsFinalizationConfetti key={celebrationKey} origin={celebrationOrigin} /> : null}
+      <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
         <span className="material-symbols-outlined text-4xl">check</span>
       </div>
-      <div className="mt-5 text-xl font-semibold text-content-primary">{title}</div>
-      <div className="mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+      <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
+      <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
+    </>
+  )
+
+  if (celebrate) {
+    return (
+      <button
+        type="button"
+        className={`${className} w-full cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-positive`}
+        aria-label="Replay celebration confetti"
+        onClick={(event) => {
+          const bounds = event.currentTarget.getBoundingClientRect()
+          const x = event.detail === 0
+            ? bounds.width / 2
+            : Math.min(Math.max(event.clientX - bounds.left, 0), bounds.width)
+          const y = event.detail === 0
+            ? bounds.height / 2
+            : Math.min(Math.max(event.clientY - bounds.top, 0), bounds.height)
+          const direction = y > bounds.height / 2 ? 'up' : 'down'
+
+          setCelebrationOrigin({
+            x,
+            y,
+            stageWidth: Math.max(bounds.width, 1),
+            stageHeight: Math.max(direction === 'up' ? y : bounds.height - y, 1),
+            direction,
+          })
+          setCelebrationKey((currentKey) => currentKey + 1)
+        }}
+      >
+        {content}
+      </button>
+    )
+  }
+
+  return (
+    <div className={className}>
+      {content}
     </div>
   )
 }
@@ -1189,17 +1319,30 @@ function AccountContextRow({
   )
 }
 
+interface AccountSummaryRowBaseProps {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'positive' | 'negative'
+}
+
+type AccountSummaryRowProps = AccountSummaryRowBaseProps & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
+
 function AccountSummaryRow({
   label,
   value,
   tone = 'default',
   tooltip,
-}: {
-  label: string
-  value: ReactNode
-  tone?: 'default' | 'positive' | 'negative'
-  tooltip?: ReactNode
-}) {
+  tooltipDocsLink,
+}: AccountSummaryRowProps) {
   const valueClass = tone === 'positive'
     ? 'text-positive'
     : tone === 'negative'
@@ -1214,7 +1357,8 @@ function AccountSummaryRow({
           <Tooltip
             content={tooltip}
             position="bottom-end"
-            className="w-[320px] max-w-[calc(100vw-2rem)] whitespace-normal p-3 text-left leading-5"
+            className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+            docsLink={tooltipDocsLink}
           >
             <span
               aria-label={`${label} info`}
@@ -1255,6 +1399,10 @@ export function PerpsTradeTicket({
   initialDirection = 'long',
   initialSize = '0',
   initialReduceOnly = false,
+  initialLeverage = 5,
+  initialMarginAction,
+  initialMarginActionAmount = '',
+  initialMarginCallSimulatorConfirmationOpen = false,
   initialOrderId,
   initialCommitTxHash,
   initialExecuteTxHash,
@@ -1271,6 +1419,7 @@ export function PerpsTradeTicket({
   latestBasket,
   adverseConfidenceMultiplierBps,
   oracleFrozen = false,
+  openPreviewFixture,
   closePreviewFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
@@ -1280,6 +1429,8 @@ export function PerpsTradeTicket({
   portfolioValueRaw,
   withdrawableUsdcRaw,
   walletUsdcRaw,
+  ownerWalletUsdcRaw,
+  tradingAccountUsdcRaw,
   marginAllowanceUsdc,
   currentPosition,
   pendingOrders = [],
@@ -1298,20 +1449,33 @@ export function PerpsTradeTicket({
   marketCurrentDuration,
   onAccountRefresh,
 }: PerpsTradeTicketProps) {
-  const { address, isConnected } = useAccount()
+  const identity = usePerpsIdentity()
+  const address = identity.accountAddress
+  const isConnected = identity.ownerAddress !== undefined
+  const isSponsoredAccountConfigured = identity.isAaManifestConfigured
   const chainId = useChainId()
   const { open } = useAppKit()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
-  const { depositMargin, withdrawMargin, commitOrder, executeOrder, cleanupExpiredOrder } = usePerpsTrading()
+  const {
+    abandonDepositAuthorization,
+    depositMargin,
+    withdrawMargin,
+    commitOrder,
+    executeOrder,
+    cleanupExpiredOrder,
+  } = usePerpsTrading()
+  const sponsoredOperations = useSponsoredOperationStore((state) => state.operations)
   const marginActionRequest = usePerpsUiStore((s) => s.marginActionRequest)
   const clearMarginActionRequest = usePerpsUiStore((s) => s.clearMarginActionRequest)
-  const slippageOptions = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
+  const slippageOptions = SLIPPAGE_OPTIONS
   const [direction, setDirection] = useState<Direction>(initialDirection)
   const [isReduceOnly, setIsReduceOnly] = useState(initialReduceOnly)
   const [isMarginCallSimulatorEnabled, setIsMarginCallSimulatorEnabled] = useState(false)
-  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(false)
+  const [isMarginCallSimulatorConfirmationOpen, setIsMarginCallSimulatorConfirmationOpen] = useState(
+    initialMarginCallSimulatorConfirmationOpen
+  )
   const [size, setSize] = useState(initialSize)
-  const [leverage, setLeverage] = useState(5)
+  const [leverage, setLeverage] = useState(initialLeverage)
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
@@ -1323,11 +1487,14 @@ export function PerpsTradeTicket({
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>()
-  const [isFinalVpiEstimated, setIsFinalVpiEstimated] = useState(false)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
+  const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
+  const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
+  const [committedOracleFrozenClose, setCommittedOracleFrozenClose] = useState<boolean | undefined>()
+  const [committedFrozenCloseSpreadUsdc, setCommittedFrozenCloseSpreadUsdc] = useState<bigint | undefined>()
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
-  const [marginAction, setMarginAction] = useState<MarginAction | null>(null)
-  const [marginActionAmount, setMarginActionAmount] = useState('')
+  const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
+  const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
   const [marginActionError, setMarginActionError] = useState<string | undefined>()
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
@@ -1347,6 +1514,17 @@ export function PerpsTradeTicket({
   const canEnableMarginCallSimulator = simulatorMaxLeverage > DEFAULT_MAX_LEVERAGE
   const maxLeverage = isMarginCallSimulatorEnabled ? simulatorMaxLeverage : DEFAULT_MAX_LEVERAGE
   const activeLeverage = Math.min(leverage, maxLeverage)
+  const normalizedAccountAddress = address?.toLowerCase()
+  const latestSponsoredOperation = useMemo(
+    () => sponsoredOperations
+      .filter((operation) =>
+        operation.accountAddress.toLowerCase() === normalizedAccountAddress &&
+        operation.action === 'place-order'
+      )
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .at(0),
+    [normalizedAccountAddress, sponsoredOperations]
+  )
 
   useEffect(() => {
     onAccountRefreshRef.current = onAccountRefresh
@@ -1388,9 +1566,11 @@ export function PerpsTradeTicket({
 
     const timeout = window.setTimeout(() => {
       setKeeperRevealNowMs(Date.now())
-      setLifecycleState((currentState) => (
-        currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
-      ))
+      if (!isSponsoredAccountConfigured) {
+        setLifecycleState((currentState) => (
+          currentState === 'revealPending' ? 'selfExecuteAvailable' : currentState
+        ))
+      }
     }, Math.max(0, keeperRevealDeadlineMs - Date.now()))
 
     return () => {
@@ -1398,7 +1578,19 @@ export function PerpsTradeTicket({
       window.clearInterval(messageInterval)
       window.clearTimeout(timeout)
     }
-  }, [enableLiveTrading, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
+  }, [enableLiveTrading, isSponsoredAccountConfigured, keeperRevealDeadlineMs, lifecycleState, showFinalizationProgress])
+
+  useEffect(() => {
+    if (
+      isSponsoredAccountConfigured &&
+      (
+        lifecycleState === 'selfExecuteAvailable' ||
+        lifecycleState === 'selfExecutePending'
+      )
+    ) {
+      setLifecycleState('revealPending')
+    }
+  }, [isSponsoredAccountConfigured, lifecycleState])
 
   const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
     if (order.status === 'Committed') return false
@@ -1416,9 +1608,6 @@ export function PerpsTradeTicket({
       const indexedVpiUsdc = order.vpiUsdcRaw ?? order.activityVpiUsdcRaw
       if (indexedVpiUsdc !== undefined) {
         setFinalVpiUsdc(indexedVpiUsdc)
-        setIsFinalVpiEstimated(false)
-      } else {
-        setIsFinalVpiEstimated(finalVpiUsdc !== undefined)
       }
       setLifecycleState('executed')
     } else {
@@ -1428,7 +1617,7 @@ export function PerpsTradeTicket({
 
     onAccountRefreshRef.current?.()
     return true
-  }, [finalVpiUsdc])
+  }, [])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
@@ -1486,15 +1675,6 @@ export function PerpsTradeTicket({
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
   }, [maxLeverage])
-
-  useEffect(() => {
-    const options = oracleFrozen ? ORACLE_FROZEN_SLIPPAGE_OPTIONS : LIVE_SLIPPAGE_OPTIONS
-    const fallback = oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
-
-    setSlippage((currentSlippage) => (
-      options.includes(currentSlippage) ? currentSlippage : fallback
-    ))
-  }, [oracleFrozen])
 
   useEffect(() => {
     if (!canEnableMarginCallSimulator) {
@@ -1590,7 +1770,9 @@ export function PerpsTradeTicket({
   const pendingCloseExpiryContext = firstPendingCloseSecondsToExpiry === undefined
     ? ''
     : firstPendingCloseSecondsToExpiry <= 0
-      ? ` It is expired and can be cleaned up.`
+      ? isSponsoredAccountConfigured
+        ? ` It is expired and awaiting keeper cleanup.`
+        : ` It is expired and can be cleaned up.`
       : ` It expires in ${formatDuration(firstPendingCloseSecondsToExpiry)}.`
   const availableToTradeForMaxRaw = availableToTradeRaw ?? (enableLiveTrading ? 0n : parsePerpsUsdc(availableToTradeDisplayAmount))
   const selectedOpenCapacityUsdc = direction === 'long' ? longOpenCapacityUsdc : shortOpenCapacityUsdc
@@ -1644,7 +1826,9 @@ export function PerpsTradeTicket({
   const keeperBounty = usdcRawToNumber(estimatedKeeperBountyUsdc)
   const executionFeeBpsRaw = executionFeeBps ?? BigInt(EXECUTION_FEE_BPS)
   const protocolExecutionFeeRaw = executionFeeUsdcRaw(contractNotionalUsdc, executionFeeBpsRaw)
-  const slippageNumber = Math.max(slippage, 0)
+  const slippageNumber = isOracleFrozenClose
+    ? DEFAULT_ORACLE_FROZEN_SLIPPAGE
+    : Math.max(slippage, 0)
   const previewPrice = oraclePriceRaw
     ? displayDxyPriceNumber(oraclePriceRaw)
     : enableLiveTrading
@@ -1658,6 +1842,10 @@ export function PerpsTradeTicket({
     : rawExecutionLimit ? displayDxyPriceNumber(rawExecutionLimit) : !enableLiveTrading && Number.isFinite(slippageNumber)
       ? (2 - MOCK_PREVIEW_PRICE) * (direction === 'long' ? 1 + slippageNumber / 100 : 1 - slippageNumber / 100)
       : undefined
+  const committedExecutionLimit = committedTargetPrice === undefined
+    ? executionLimit
+    : committedTargetPrice
+  const committedSlippageNumber = committedSlippage ?? slippageNumber
   const liquidationPrice = previewPrice === undefined
     ? undefined
     : direction === 'long'
@@ -1734,6 +1922,7 @@ export function PerpsTradeTicket({
   })
   const openPreview = !isReducingCurrentPosition
     ? parseOpenPreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+      ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
     ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
@@ -1762,12 +1951,17 @@ export function PerpsTradeTicket({
     ? undefined
     : Number(firstPendingOrderExpiryTime) - nowSeconds
   const canCleanupOldestPendingOrder = enableLiveTrading &&
+    !isSponsoredAccountConfigured &&
     firstPendingOrderId !== undefined &&
     oldestPendingOrderSecondsToExpiry !== undefined &&
     oldestPendingOrderSecondsToExpiry <= 0
   const liveValidationError = (() => {
     if (!enableLiveTrading) return undefined
     if (!isConnected) return 'Connect wallet to trade.'
+    if (isSponsoredAccountConfigured && identity.status !== 'ready') {
+      return identity.error?.message ??
+        'Confirm the Plether Trading Account before trading.'
+    }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
     if (isZeroSize) return 'Enter an order size.'
@@ -1808,7 +2002,9 @@ export function PerpsTradeTicket({
       availableCloseSizeRaw <= 0n &&
       pendingCloseSizeRaw >= currentPosition.size
     ) {
-      return `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
+      return isSponsoredAccountConfigured
+        ? `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Wait for keeper finalization or cleanup before submitting another reduce order.`
+        : `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
     }
     if (
       isReducingCurrentPosition &&
@@ -1831,7 +2027,9 @@ export function PerpsTradeTicket({
             : `Oldest pending order expired ${formatDuration(Math.abs(oldestPendingOrderSecondsToExpiry))} ago.`
           : `Oldest pending order expires in ${formatDuration(oldestPendingOrderSecondsToExpiry)}.`
 
-      return `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
+      return isSponsoredAccountConfigured
+        ? `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Wait for the keeper to finalize or clean up an order before committing a new one.`
+        : `You already have ${pendingOrderCount.toString()} pending orders, which is the current account limit. ${expiryContext} Execute or clean up an expired order before committing a new one.`
     }
     if (marginShortfall > 0n) return `Deposit ${formatPerpsUsdc(marginShortfall)} USDC more before committing this order.`
     if (hasTradePreviewInputs && !isReducingCurrentPosition && previewPublishTime <= 0n) {
@@ -1955,28 +2153,57 @@ export function PerpsTradeTicket({
         ),
       },
       { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
-      { label: 'Contract notional', value: formatUsdcRaw(previewContractNotionalUsdc) },
+      {
+        label: 'Contract notional',
+        value: formatUsdcRaw(previewContractNotionalUsdc),
+        tooltip: CONTRACT_NOTIONAL_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.contractNotional,
+      },
       { label: 'Initial margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
-      { label: 'Maintenance margin', value: previewMaintenanceMarginValue, tone: previewMaintenanceMarginUsdc === undefined ? previewLensFallbackTone : undefined },
+      {
+        label: 'Maintenance margin',
+        value: previewMaintenanceMarginValue,
+        tone: previewMaintenanceMarginUsdc === undefined ? previewLensFallbackTone : undefined,
+        tooltip: MAINTENANCE_MARGIN_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.maintenanceMargin,
+      },
       { label: 'Resulting leverage', value: previewResultingLeverage, tone: previewResultingLeverage === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Max slippage', value: formatPercent(slippageNumber) },
-      { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+      {
+        label: 'Execution limit',
+        value: formatOptionalPrice(executionLimit),
+        tooltip: EXECUTION_LIMIT_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.executionLimit,
+      },
       isOracleFrozenClose
         ? {
             label: 'Estimated frozen close spread',
             value: previewFrozenCloseSpreadValue,
             tone: previewFrozenCloseSpreadValue === PREVIEW_LOADING_VALUE ? 'muted' as const : undefined,
             tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+            tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
           }
         : {
             label: 'Adverse oracle confidence spread',
             value: adverseOracleConfidenceSpreadValue,
             tooltip: adverseOracleConfidenceSpreadTooltip,
+            tooltipDocsLink: DOCS_LINKS.oracleConfidence,
           },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
       { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
-      { label: 'VPI / Price impact', value: previewVpiValue, tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
-      { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+      {
+        label: 'VPI / Price impact',
+        value: previewVpiValue,
+        tone: previewVpiUsdc === undefined ? previewLensFallbackTone : undefined,
+        tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+      },
+      {
+        label: 'Estimated execution reward',
+        value: formatUsdc(keeperBounty),
+        tooltip: EXECUTION_REWARD_TOOLTIP,
+        tooltipDocsLink: DOCS_LINKS.executionReward,
+      },
       {
         label: 'Contract side capacity',
         value: selectedOpenCapacityUsdc === undefined
@@ -2031,12 +2258,25 @@ export function PerpsTradeTicket({
   const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
+  const displayUserOperationHash = latestSponsoredOperation?.userOperationHash
+  const displayUserOperationHashValue = displayUserOperationHash
+    ? (
+        <UserOperationHashActions
+          hash={displayUserOperationHash}
+          explorerUrlTemplate={identity.manifest?.userOperationExplorerUrlTemplate}
+        />
+      )
+    : '--'
   const isTerminalRevealError = flowError !== undefined &&
     (isOrderNoLongerPendingMessage(flowError) || isTerminalOrderFailureMessage(flowError))
   const shouldShowFinalizationProgress = enableLiveTrading || showFinalizationProgress
   const isKeeperRevealGraceActive = shouldShowFinalizationProgress &&
     lifecycleState === 'revealPending' &&
-    (keeperRevealDeadlineMs === undefined || keeperRevealNowMs < keeperRevealDeadlineMs)
+    (
+      isSponsoredAccountConfigured ||
+      keeperRevealDeadlineMs === undefined ||
+      keeperRevealNowMs < keeperRevealDeadlineMs
+    )
   const keeperRevealRemainingSeconds = keeperRevealDeadlineMs === undefined
     ? Math.ceil(KEEPER_REVEAL_GRACE_MS / 1_000)
     : Math.max(0, Math.ceil((keeperRevealDeadlineMs - keeperRevealNowMs) / 1_000))
@@ -2057,14 +2297,17 @@ export function PerpsTradeTicket({
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, oraclePriceToDisplayDxyPrice(finalExecutionPrice))
     : undefined
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
-  const finalVpiLabel = isFinalVpiEstimated ? 'Estimated VPI / Price impact' : 'VPI / Price impact'
   const finalVpiValue = finalVpiUsdc === undefined ? 'Unavailable' : formatSignedUsdcNoPlus(finalVpiUsdc)
+  const finalUsesFrozenCloseSpread =
+    committedOracleFrozenClose ?? isOracleFrozenClose
+  const finalFrozenCloseSpreadUsdc =
+    committedFrozenCloseSpreadUsdc ?? closePreview?.frozenSpreadUsdc
+  const finalFrozenCloseSpreadValue = finalFrozenCloseSpreadUsdc === undefined
+    ? PREVIEW_UNAVAILABLE_VALUE
+    : formatUsdcRaw(finalFrozenCloseSpreadUsdc)
   const finalOracleConfidenceSpreadRaw = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
     ? absBigInt(finalExecutionPrice - oraclePriceRaw)
     : previewOracleConfidenceSpreadRaw
-  const finalOracleConfidenceSpreadLabel = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
-    ? 'Oracle confidence spread'
-    : 'Estimated oracle confidence spread'
   const finalOracleConfidenceSpreadValue = formatConfidenceSpread(finalOracleConfidenceSpreadRaw, oraclePriceRaw)
   const finalPriceDisplay = finalExecutionPrice
     ? formatDisplayDxyPrice(finalExecutionPrice)
@@ -2098,8 +2341,22 @@ export function PerpsTradeTicket({
     : enableLiveTrading && !isCorrectChain
       ? 'Switch Network'
       : marginActionLabel
-  const marginActionLimit = marginAction === 'withdraw' ? withdrawableUsdcRaw : walletUsdcRaw
-  const marginActionLimitLabel = marginAction === 'withdraw' ? 'Withdrawable' : 'Wallet balance'
+  const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
+  const usesOwnerDepositAuthorization = isSponsoredAccountConfigured &&
+    identity.manifest?.smartAccountMode === 'simple' &&
+    identity.manifest.usdcSupportsEip3009
+  const usesTradingAccountDepositBalance = isSponsoredAccountConfigured &&
+    identity.manifest?.smartAccountMode === 'simple' &&
+    !identity.manifest.usdcSupportsEip3009
+  const depositSourceBalance = usesTradingAccountDepositBalance
+    ? tradingAccountUsdcRaw
+    : ownerWalletBalance
+  const marginActionLimit = marginAction === 'withdraw'
+    ? withdrawableUsdcRaw
+    : depositSourceBalance
+  const marginActionLimitLabel = marginAction === 'withdraw'
+    ? 'Withdrawable'
+    : 'Available to deposit'
   const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
   const canUseMarginActionMax = marginActionLimit !== undefined && marginActionLimit > 0n
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
@@ -2189,7 +2446,16 @@ export function PerpsTradeTicket({
       setMarginActionStatus('pending')
       setMarginActionError(undefined)
       if (marginAction === 'deposit') {
-        await depositMargin(marginActionAmountRaw, marginAllowanceUsdc)
+        const depositSource = isSponsoredAccountConfigured &&
+          identity.manifest?.smartAccountMode === 'simple' &&
+          identity.manifest.usdcSupportsEip3009
+          ? 'owner'
+          : 'account'
+        await depositMargin(
+          marginActionAmountRaw,
+          marginAllowanceUsdc,
+          depositSource
+        )
       } else {
         await withdrawMargin(marginActionAmountRaw)
       }
@@ -2231,6 +2497,13 @@ export function PerpsTradeTicket({
     if (!enableLiveTrading) {
       debugPerpsCommit('ticket:mock-flow')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
+      setCommittedSizeDelta(orderSizeDelta)
+      setCommittedSlippage(slippageNumber)
+      setCommittedTargetPrice(executionLimit)
+      setCommittedOracleFrozenClose(isOracleFrozenClose)
+      setCommittedFrozenCloseSpreadUsdc(
+        isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
+      )
       setLifecycleState('commitPending')
       return
     }
@@ -2249,8 +2522,13 @@ export function PerpsTradeTicket({
       setLifecycleState('commitPreparing')
       const sizeDelta = orderSizeDelta
       setCommittedSizeDelta(sizeDelta)
+      setCommittedSlippage(slippageNumber)
+      setCommittedTargetPrice(executionLimit)
+      setCommittedOracleFrozenClose(isOracleFrozenClose)
+      setCommittedFrozenCloseSpreadUsdc(
+        isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
+      )
       setFinalVpiUsdc(previewVpiUsdc)
-      setIsFinalVpiEstimated(previewVpiUsdc !== undefined)
       const result = await commitOrder({
         direction: effectiveOrderDirection,
         notionalUsdc: contractNotionalUsdc,
@@ -2352,8 +2630,11 @@ export function PerpsTradeTicket({
     setExecuteTxHash(undefined)
     setFinalExecutionPrice(undefined)
     setFinalVpiUsdc(undefined)
-    setIsFinalVpiEstimated(false)
     setCommittedSizeDelta(undefined)
+    setCommittedSlippage(undefined)
+    setCommittedTargetPrice(undefined)
+    setCommittedOracleFrozenClose(undefined)
+    setCommittedFrozenCloseSpreadUsdc(undefined)
     setFlowError(undefined)
     setKeeperRevealDeadlineMs(undefined)
     setKeeperRevealNowMs(Date.now())
@@ -2372,7 +2653,14 @@ export function PerpsTradeTicket({
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-5 px-5 py-4">
         <div>
-          <div className="mb-2 text-xs font-medium uppercase text-content-secondary">Direction</div>
+          <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
+            <span>Direction</span>
+            <InfoTooltip
+              ariaLabel="Direction info"
+              content={DIRECTION_TOOLTIP}
+              docsLink={DOCS_LINKS.direction}
+            />
+          </div>
           <div className="grid grid-cols-2 border border-brand-border/30 bg-app-bg">
             {(['long', 'short'] as Direction[]).map((item) => (
               <button
@@ -2474,7 +2762,12 @@ export function PerpsTradeTicket({
               >
                 Reduce only
               </label>
-              <Tooltip content="Only reduces or closes your current position. It will not open a new position or increase exposure." position="top">
+              <Tooltip
+                content="Only reduces or closes your current position. It will not open a new position or increase exposure."
+                position="top"
+                className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+                docsLink={DOCS_LINKS.reduceOnly}
+              >
                 <span
                   aria-label="Reduce only info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2509,7 +2802,12 @@ export function PerpsTradeTicket({
               >
                 Margin Call Simulator
               </label>
-              <Tooltip content="Maximum leverage mode" position="top">
+              <Tooltip
+                content="Maximum leverage mode"
+                position="top"
+                className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+                docsLink={DOCS_LINKS.marginCallSimulator}
+              >
                 <span
                   aria-label="Margin Call Simulator info"
                   className="inline-flex h-3.5 w-3.5 shrink-0 cursor-help items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -2557,12 +2855,14 @@ export function PerpsTradeTicket({
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>
           <PreviewRows
             rows={sidePanelPreviewRows.slice(0, 11)}
-            onSlippageClick={() => {
-              trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
-              setIsSlippageConfigOpen((isOpen) => !isOpen)
-            }}
+            onSlippageClick={isOracleFrozenClose
+              ? undefined
+              : () => {
+                  trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
+                  setIsSlippageConfigOpen((isOpen) => !isOpen)
+                }}
             slippageConfig={
-              isSlippageConfigOpen ? (
+              isSlippageConfigOpen && !isOracleFrozenClose ? (
                 <div className="mt-3 py-3">
                   <div className="grid grid-cols-5 gap-2">
                     {slippageOptions.map((option) => (
@@ -2659,6 +2959,7 @@ export function PerpsTradeTicket({
                   require a fresh mark and must pass protocol state, pending carry, and post-withdraw margin checks.
                 </span>
               }
+              tooltipDocsLink={DOCS_LINKS.withdrawable}
             />
           </div>
         </div>
@@ -2809,8 +3110,12 @@ export function PerpsTradeTicket({
           {lifecycleState === 'commitPreparing' ? (
             <>
               <PendingStateCard
-                title="Preparing wallet request"
-                description="Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again."
+                title={isSponsoredAccountConfigured ? 'Preparing sponsored transaction' : 'Preparing wallet request'}
+                description={
+                  isSponsoredAccountConfigured
+                    ? 'Plether is requesting sponsorship and estimating the final UserOperation before asking for your signature.'
+                    : 'Checking gas and wallet network before opening your wallet. If this takes more than a few seconds, switch to Arbitrum Sepolia manually and try again.'
+                }
               />
 
               <div className="border border-brand-border/20 bg-app-bg p-4">
@@ -2820,8 +3125,8 @@ export function PerpsTradeTicket({
                     { label: 'Direction', value: directionLabel(direction) },
                     { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
                     { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
-                    { label: 'Max slippage', value: formatPercent(slippageNumber) },
-                    { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
+                    { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                   ]}
@@ -2834,7 +3139,11 @@ export function PerpsTradeTicket({
             <>
               <PendingStateCard
                 title="Waiting for wallet confirmation"
-                description="Confirm the commit transaction in your wallet, then wait for it to be included onchain."
+                description={
+                  isSponsoredAccountConfigured
+                    ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
+                    : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
+                }
               />
 
               {walletRequestWarning ? (
@@ -2850,10 +3159,13 @@ export function PerpsTradeTicket({
                     { label: 'Direction', value: directionLabel(direction) },
                     { label: 'plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
                     { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
-                    { label: 'Max slippage', value: formatPercent(slippageNumber) },
-                    { label: 'Execution limit', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
+                    { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
+                    ...(isSponsoredAccountConfigured
+                      ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
+                      : []),
                   ]}
                 />
               </div>
@@ -2927,14 +3239,21 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
-                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    ...(isSponsoredAccountConfigured
+                      ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
+                      : []),
+                    { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     {
-                      label: 'Manual finalization',
-                      value: shouldShowFinalizationProgress
-                        ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
-                        : 'Available after 04:38',
+                      label: isSponsoredAccountConfigured ? 'Keeper processing' : 'Manual finalization',
+                      value: isSponsoredAccountConfigured
+                        ? 'In progress'
+                        : shouldShowFinalizationProgress
+                          ? `Available in ${keeperRevealRemainingSeconds.toString()}s`
+                          : 'Available after 04:38',
                       tone: shouldShowFinalizationProgress ? 'muted' : undefined,
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />
@@ -3008,7 +3327,7 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
-                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     {
                       label: 'Manual finalization',
@@ -3018,6 +3337,8 @@ export function PerpsTradeTicket({
                           ? 'Retry with price data'
                           : 'Available now',
                       tone: flowError && isRetryableSelfExecuteMessage(flowError) ? 'warning' : 'positive',
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />
@@ -3050,7 +3371,7 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
-                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Transaction', value: 'Awaiting confirmation' },
                   ]}
@@ -3106,11 +3427,13 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
                     { label: 'Commit tx', value: displayCommitTxValue },
-                    { label: 'Acceptable price', value: formatOptionalPrice(executionLimit) },
+                    { label: 'Acceptable price', value: formatOptionalPrice(committedExecutionLimit) },
                     {
                       label: 'Manual finalization',
                       value: isTerminalRevealError ? 'Unavailable' : 'Retry available',
                       tone: 'warning',
+                      tooltip: MANUAL_FINALIZATION_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.manualFinalization,
                     },
                   ]}
                 />
@@ -3158,7 +3481,11 @@ export function PerpsTradeTicket({
 
           {lifecycleState === 'executed' ? (
             <>
-              <SuccessStateCard title={executedTitle} description="Execution settled onchain and the final price is confirmed." />
+              <SuccessStateCard
+                title={executedTitle}
+                description="Execution settled onchain and the final price is confirmed."
+                celebrate
+              />
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Final Result</div>
                 <PreviewRows
@@ -3171,8 +3498,25 @@ export function PerpsTradeTicket({
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     { label: 'Margin posted', value: formatUsdc(marginNumber) },
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
-                    { label: finalOracleConfidenceSpreadLabel, value: finalOracleConfidenceSpreadValue, tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP },
-                    { label: finalVpiLabel, value: finalVpiValue, tooltip: VPI_PRICE_IMPACT_TOOLTIP },
+                    finalUsesFrozenCloseSpread
+                      ? {
+                          label: 'Frozen close spread',
+                          value: finalFrozenCloseSpreadValue,
+                          tooltip: FROZEN_CLOSE_SPREAD_TOOLTIP,
+                          tooltipDocsLink: DOCS_LINKS.frozenCloseSpread,
+                        }
+                      : {
+                          label: 'Oracle confidence spread',
+                          value: finalOracleConfidenceSpreadValue,
+                          tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
+                          tooltipDocsLink: DOCS_LINKS.oracleConfidence,
+                        },
+                    {
+                      label: 'VPI / Price impact',
+                      value: finalVpiValue,
+                      tooltip: VPI_PRICE_IMPACT_TOOLTIP,
+                      tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+                    },
                     { label: 'Execution reward', value: formatUsdc(keeperBounty) },
                     { label: 'Commit tx', value: displayCommitTxValue },
                     { label: 'Reveal tx', value: displayExecuteTxValue },
@@ -3338,8 +3682,14 @@ export function PerpsTradeTicket({
         <div className="space-y-5">
           <p className="text-sm leading-6 text-content-secondary">
             {marginAction === 'withdraw'
-              ? 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
-              : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
+              ? isSponsoredAccountConfigured
+                ? 'Withdraw free USDC from the Margin Account. Separate Trading Accounts return the exact withdrawal to the connected owner wallet in the same sponsored action.'
+                : 'Withdraw free USDC from your margin account. Locked margin, pending orders, and maintenance requirements remain reserved.'
+              : isSponsoredAccountConfigured
+                ? usesOwnerDepositAuthorization
+                  ? 'Authorize USDC from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
+                  : 'Deposit USDC held by the Plether Trading Account into its Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
+                : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
           </p>
 
           <Input
@@ -3377,7 +3727,43 @@ export function PerpsTradeTicket({
 
           <div className="border border-brand-border/20 bg-app-bg p-4">
             <div className="space-y-2">
-              <AccountSummaryRow label={marginActionLimitLabel} value={<TokenAmount amount={marginActionLimitDisplay} />} />
+              {marginAction === 'deposit' ? (
+                <AccountSummaryRow
+                  label={marginActionLimitLabel}
+                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                  tooltip="Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms."
+                  tooltipDocsLink={DOCS_LINKS.withdrawable}
+                />
+              ) : (
+                <AccountSummaryRow
+                  label={marginActionLimitLabel}
+                  value={<TokenAmount amount={marginActionLimitDisplay} />}
+                />
+              )}
+              {isSponsoredAccountConfigured ? (
+                <>
+                  {marginAction === 'deposit' ? (
+                    <AccountSummaryRow
+                      label="Available to trade"
+                      value={<TokenAmount amount={availableToTradeDisplayAmount} />}
+                      tooltip="Free margin already deposited in the Margin Account and available for orders."
+                      tooltipDocsLink={DOCS_LINKS.withdrawable}
+                    />
+                  ) : null}
+                  {marginAction !== 'deposit' || usesTradingAccountDepositBalance ? (
+                    <AccountSummaryRow
+                      label="Owner Wallet USDC"
+                      value={<TokenAmount amount={formatPerpsUsdc(ownerWalletBalance)} />}
+                    />
+                  ) : null}
+                  {marginAction !== 'deposit' || !usesTradingAccountDepositBalance ? (
+                    <AccountSummaryRow
+                      label="Trading Account USDC"
+                      value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
+                    />
+                  ) : null}
+                </>
+              ) : null}
               {shouldShowMarginActionPositionContext ? (
                 <>
                   <AccountSummaryRow label="Position margin" value={<TokenAmount amount={formatPerpsUsdc(marginActionCurrentCollateral)} />} />
@@ -3397,7 +3783,20 @@ export function PerpsTradeTicket({
 
           {marginActionError ? (
             <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-              {marginActionError}
+              <p>{marginActionError}</p>
+              {marginAction === 'deposit' && usesOwnerDepositAuthorization ? (
+                <button
+                  type="button"
+                  className="mt-2 font-semibold underline underline-offset-2"
+                  onClick={() => {
+                    abandonDepositAuthorization()
+                    setMarginActionStatus('idle')
+                    setMarginActionError(undefined)
+                  }}
+                >
+                  Start with a new USDC authorization
+                </button>
+              ) : null}
             </div>
           ) : null}
 

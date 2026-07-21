@@ -1,13 +1,13 @@
-import { createPublicClient, createWalletClient, formatEther, http } from 'viem'
+import { createPublicClient, createWalletClient, http } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { arbitrumSepolia } from 'viem/chains'
 
 const ARBITRUM_SEPOLIA_CHAIN_ID = 421614
 
 const ADDRESSES = {
-  orderRouter: '0x4A0a6c028164A1254e10C3e39cc89Af45090069e',
-  pletherOracle: '0x8c95f554D728215b9f8D15b5F3Da5F5CD7Ba08bA',
-  perpsPublicLens: '0xDdDCfb123569774427802fcA9D19CBF00c14e2Ad',
+  orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+  pletherOracle: '0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c',
+  perpsPublicLens: '0x4E202C06e2C378d1a85577ac631e592AB66f23FB',
 }
 
 const PERPS_PUBLIC_LENS_ABI = [
@@ -88,6 +88,74 @@ function sleep(ms) {
   })
 }
 
+const logRateState = new Map()
+
+function sanitizeLogText(value, limit = 2048) {
+  return String(value)
+    .replace(/https?:\/\/[^\s"'<>]+/gi, (rawUrl) => {
+      try {
+        const parsed = new URL(rawUrl)
+        return `${parsed.origin}/<redacted>`
+      } catch {
+        return '<redacted-url>'
+      }
+    })
+    .slice(0, limit)
+}
+
+function sanitizeLogValue(value) {
+  if (typeof value === 'string') return sanitizeLogText(value)
+  if (typeof value === 'bigint') return value.toString()
+  if (Array.isArray(value)) return value.slice(0, 20).map(sanitizeLogValue)
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).slice(0, 40).map(([key, item]) => [key, sanitizeLogValue(item)])
+    )
+  }
+  return value
+}
+
+function emitLog(level, event, message, attributes = {}) {
+  const severityNumbers = { DEBUG: 5, INFO: 9, WARN: 13, ERROR: 17 }
+  const payload = {
+    ...sanitizeLogValue(attributes),
+    log_schema_version: 1,
+    event: sanitizeLogText(event, 128),
+    message: sanitizeLogText(message, 4096),
+    level,
+    SeverityText: level,
+    SeverityNumber: severityNumbers[level],
+  }
+  const target = level === 'WARN' || level === 'ERROR' ? process.stderr : process.stdout
+  target.write(`${JSON.stringify(payload)}\n`)
+}
+
+function emitLogEvery(intervalSeconds, level, event, message, attributes = {}) {
+  const key = `${level}:${event}`
+  const now = Date.now()
+  const previous = logRateState.get(key)
+  if (previous && now - previous.lastEmittedAt < Math.max(0, intervalSeconds) * 1000) {
+    previous.suppressedCount += 1
+    return
+  }
+
+  emitLog(level, event, message, {
+    ...(previous?.suppressedCount ? { suppressed_count: previous.suppressedCount } : {}),
+    ...attributes,
+  })
+  logRateState.set(key, { lastEmittedAt: now, suppressedCount: 0 })
+}
+
+function errorAttributes(error) {
+  if (error instanceof Error) {
+    return {
+      error_type: error.name,
+      error: sanitizeLogText(error.message),
+    }
+  }
+  return { error: sanitizeLogText(error) }
+}
+
 function formatStatus(status) {
   return {
     phase: Number(status.phase),
@@ -104,7 +172,7 @@ async function fetchCachedPythUpdate(backendUrl) {
   const url = new URL('/api/perps/pyth/cached-latest', backendUrl)
   const response = await fetch(url)
   if (!response.ok) {
-    throw new Error(`Cached Pyth request failed: ${response.status} ${await response.text()}`)
+    throw new Error(`Cached Pyth request failed with HTTP ${response.status}`)
   }
 
   const payload = await response.json()
@@ -132,28 +200,31 @@ async function updateMarkFromCache({ account, backendUrl, dryRun, maxPayloadAgeS
     functionName: 'getProtocolStatus',
   })
   const beforeStatus = formatStatus(before)
-  console.log('Before:', beforeStatus)
 
   const pythPayload = await fetchCachedPythUpdate(backendUrl)
   const maxPublishTime = Math.max(...pythPayload.publishTimes)
   const minPublishTime = Math.min(...pythPayload.publishTimes)
   const now = Math.floor(Date.now() / 1000)
   const ageSeconds = now - maxPublishTime
-  console.log(
-    `Using cached ${pythPayload.source} Pyth payload ${minPublishTime}..${maxPublishTime}; age ${ageSeconds}s`
-  )
 
   if (BigInt(maxPublishTime) <= before.lastMarkTime) {
-    console.log(
-      `Skipping update: cached publish time ${maxPublishTime} is not newer than onchain mark time ${before.lastMarkTime.toString()}.`
-    )
+    emitLogEvery(300, 'INFO', 'oracle_update_not_needed', 'Cached Pyth payload is not newer than the on-chain mark', {
+      payload_source: pythPayload.source,
+      min_publish_time: minPublishTime,
+      max_publish_time: maxPublishTime,
+      onchain_mark_time: before.lastMarkTime,
+      payload_age_seconds: ageSeconds,
+    })
     return
   }
 
   if (ageSeconds > maxPayloadAgeSeconds) {
-    console.log(
-      `Skipping update: cached payload age ${ageSeconds}s exceeds limit ${maxPayloadAgeSeconds}s. Keep plether-basket-worker --latest-loop running.`
-    )
+    emitLogEvery(60, 'WARN', 'oracle_update_payload_stale', 'Cached Pyth payload is too old to submit', {
+      payload_source: pythPayload.source,
+      max_publish_time: maxPublishTime,
+      payload_age_seconds: ageSeconds,
+      max_payload_age_seconds: maxPayloadAgeSeconds,
+    })
     return
   }
 
@@ -163,10 +234,15 @@ async function updateMarkFromCache({ account, backendUrl, dryRun, maxPayloadAgeS
     functionName: 'getUpdateFee',
     args: [pythPayload.updateData],
   })
-  console.log(`Pyth update fee: ${formatEther(updateFee)} ETH`)
 
   if (dryRun) {
-    console.log('DRY_RUN=true, not sending transaction')
+    emitLogEvery(300, 'INFO', 'oracle_update_dry_run', 'Oracle updater prepared a dry-run transaction', {
+      payload_source: pythPayload.source,
+      min_publish_time: minPublishTime,
+      max_publish_time: maxPublishTime,
+      payload_age_seconds: ageSeconds,
+      update_fee_wei: updateFee,
+    })
     return
   }
 
@@ -185,20 +261,32 @@ async function updateMarkFromCache({ account, backendUrl, dryRun, maxPayloadAgeS
   })
 
   const hash = await walletClient.writeContract(request)
-  console.log(`Submitted cached updateMarkPrice tx: ${hash}`)
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success') {
     throw new Error(`updateMarkPrice tx failed: ${hash}`)
   }
-  console.log(`Confirmed in block ${receipt.blockNumber}`)
 
   const after = await publicClient.readContract({
     address: ADDRESSES.perpsPublicLens,
     abi: PERPS_PUBLIC_LENS_ABI,
     functionName: 'getProtocolStatus',
   })
-  console.log('After:', formatStatus(after))
+  const afterStatus = formatStatus(after)
+  emitLogEvery(300, 'INFO', 'oracle_update_mined', 'Oracle mark-price update was mined', {
+    transaction_hash: hash,
+    block_number: receipt.blockNumber,
+    payload_source: pythPayload.source,
+    min_publish_time: minPublishTime,
+    max_publish_time: maxPublishTime,
+    payload_age_seconds: ageSeconds,
+    update_fee_wei: updateFee,
+    previous_mark_time: beforeStatus.lastMarkTime,
+    mark_time: afterStatus.lastMarkTime,
+    mark_price: afterStatus.lastMarkPrice,
+    oracle_frozen: afterStatus.oracleFrozen,
+    trading_active: afterStatus.tradingActive,
+  })
 }
 
 async function main() {
@@ -255,18 +343,25 @@ async function main() {
     return
   }
 
-  console.log(`Starting cached oracle updater loop every ${pollSeconds}s using ${backendUrl}`)
+  emitLog('INFO', 'oracle_worker_started', 'Cached Pyth oracle updater started', {
+    chain_id: chainId,
+    poll_seconds: pollSeconds,
+    max_payload_age_seconds: maxPayloadAgeSeconds,
+    dry_run: dryRun,
+    updater_address: account?.address,
+    backend_origin: new URL(backendUrl).origin,
+  })
   while (true) {
     try {
       await run()
     } catch (error) {
-      console.error(error)
+      emitLogEvery(60, 'ERROR', 'oracle_worker_iteration_failed', 'Oracle updater iteration failed', errorAttributes(error))
     }
     await sleep(pollSeconds * 1000)
   }
 }
 
 main().catch((error) => {
-  console.error(error)
+  emitLog('ERROR', 'oracle_worker_fatal', 'Oracle updater cannot start', errorAttributes(error))
   process.exitCode = 1
 })

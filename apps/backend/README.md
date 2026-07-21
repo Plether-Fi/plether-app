@@ -21,11 +21,94 @@ vim .env
 # Build
 cabal build
 
-# Run
+# Export the file, then run (the backend does not load dotenv files itself)
+set -a
+source .env
+set +a
 cabal run plether-api
 ```
 
 Server starts at `http://localhost:3001`.
+
+## ECS OpenTelemetry Logs
+
+The ECS task definitions route application `stdout` and `stderr` through an
+AWS for Fluent Bit FireLens container. The router enriches every record with
+OpenTelemetry resource attributes, sends OTLP/HTTP logs to PostHog, and keeps a
+second copy in the existing CloudWatch log group.
+
+| ECS container | OpenTelemetry `service.name` |
+|---------------|------------------------------|
+| `plether-api` | `plether-api` |
+| `plether-keeper` | `plether-keeper` |
+| `plether-liquidation-worker` | `plether-liquidation-worker` |
+| `plether-perps-indexer` | `plether-indexer` |
+| `plether-basket-worker` | `plether-basket-worker` |
+| `plether-oracle-worker` | `plether-oracle-worker` |
+
+The router also sets `service.version` to the deployed Git commit and
+`deployment.environment.name` to the Terraform environment. Consolidated
+workers remain in one Fargate task, but run as separate containers so their
+service identities do not get mixed together.
+
+Application records use a shared JSON-line schema with `event`, `message`,
+`level`, and typed context fields such as block ranges, order IDs, HTTP status,
+durations, and transaction hashes. Messages are capped at 4 KiB, string
+attributes at 2 KiB, arrays at 20 items, and URL paths are redacted so RPC API
+keys cannot leak through exception text. Reserved envelope fields cannot be
+overridden by call-site attributes.
+
+The steady-state volume controls are:
+
+- API success traffic is aggregated into at most one request summary per
+  minute. Individual 5xx responses are limited to one every 10 seconds, and
+  slow-request warnings to one per minute.
+- Indexer and basket-cache success progress emits at most once every five
+  minutes per event type.
+- Recurring worker warnings and errors emit at most once per minute per event
+  type. The next emitted record includes `suppressed_count` so repeated failures
+  remain visible without producing one log per poll.
+- Important state changes such as startup, reorg detection, keeper order
+  failures, and mined keeper transactions emit immediately. Repetitive oracle
+  success/no-op states emit at most once every five minutes.
+- The liquidation worker emits structured discovery, opportunity, submission,
+  replacement, confirmation, and circuit-breaker events. A successful-iteration
+  heartbeat is emitted at most once every five minutes so missing-log alerts can
+  detect a stalled or crash-looping worker; recurring RPC and candidate errors
+  are limited to one per minute with a `suppressed_count` on recovery.
+- FireLens suppresses repeated delivery diagnostics from each output for one
+  minute, while unlimited OTLP retries avoid discarding a batch solely because
+  a temporary PostHog outage exhausted a retry count.
+
+The FireLens handoff explicitly maps structured severity fields, caps each
+container's Docker-side queue at 4,096 records, reserves 128 MiB for the router,
+and allows up to 120 seconds for router shutdown. PostHog delivery retries
+without a fixed attempt limit, while the independent CloudWatch copy retries 15
+times and provides a second place to recover logs during a PostHog outage.
+
+The FireLens parser keeps plaintext output from third-party libraries as a
+fallback, but first-party services should use the structured logger instead of
+writing directly to `stdout` or `stderr`.
+
+Set these Terraform variables before applying the ECS changes:
+
+```hcl
+posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
+posthog_otlp_host     = "eu.i.posthog.com"
+```
+
+Use `us.i.posthog.com` for a US-hosted PostHog project. Terraform stores the
+complete authorization header in SSM Parameter Store as a `SecureString`; ECS
+injects it into the FireLens output through `secretOptions`, so it is not part
+of the image or task definition JSON. Keep Terraform state encrypted and never
+commit a populated tfvars file.
+
+The backend deployment workflow builds and pushes both the application image
+and `otel-log-router` image. Apply Terraform first so the ECR repository, SSM
+parameter, IAM permissions, and FireLens-enabled task definition revisions
+exist before running the workflow. For a brand-new environment, bootstrap the
+ECR repositories and images before creating the ECS services, as both service
+images must exist for the first task to start.
 
 ## Database Setup (Optional)
 
@@ -46,7 +129,7 @@ The indexer runs automatically on startup and polls for new blocks every 12 seco
 
 ## Local Perps Stack
 
-For local perps work, run the API, the basket cache worker, and any UI servers as separate foreground processes in separate terminals. This keeps logs visible and makes it obvious which service failed.
+For local perps work, run the API, basket cache, and relevant keeper workers as separate foreground processes in separate terminals. This keeps logs visible and makes it obvious which service failed.
 
 ### 1. Start PostgreSQL
 
@@ -85,7 +168,7 @@ DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-api
 ```
 
-The API should print the route list and start on:
+The API emits an `api_started` record and listens on:
 
 ```text
 http://localhost:3001
@@ -132,6 +215,8 @@ cabal run plether-basket-worker -- --backfill-once --backfill-days 7
 Notes:
 
 - `--latest-loop` defaults to one batched six-feed Hermes request every `5s`.
+- Hermes and Pyth Benchmarks requests use `PYTH_API_KEY`; the key must be entitled to all six basket feeds, including FX feeds.
+- The known legacy `https://hermes.pyth.network` endpoint is rejected because its payloads cannot be verified by the deployed upgraded Pyth contract.
 - On Hermes `429`, the worker backs off before polling again.
 - The worker writes to `perps_basket_snapshots` and `perps_pyth_update_payloads`.
 - The worker does not update the on-chain oracle by itself.
@@ -146,7 +231,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=273137426 \
+PERPS_INDEXER_START_BLOCK=288439939 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -197,9 +282,9 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_USDC=0xf1e1B188b87525C51ECe4bae8627ae621D769651 \
-PERPS_ORDER_ROUTER=0x4A0a6c028164A1254e10C3e39cc89Af45090069e \
-PERPS_MARGIN_CLEARINGHOUSE=0x731bb0939CE531728459394A277B28Cbff8df049 \
+PERPS_USDC=0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3 \
+PERPS_ORDER_ROUTER=0x04E3103752f623fBcDcD01f588590Af4c53E4c1E \
+PERPS_MARGIN_CLEARINGHOUSE=0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker
 ```
@@ -257,15 +342,41 @@ row to bypass the check. A disposable pre-launch database can be reset
 explicitly only when its competition data is no longer needed.
 
 The one known development seed correction—from the old
-`2026-08-09T23:59:59Z` payout timestamp to the published
-`2026-08-07T22:00:00Z` deadline—is migrated automatically only while the row is
-unfinalized and has neither resolved boundary blocks nor account snapshots. If
-any of those exist, startup fails for manual review rather than changing
-historical meaning.
+`2026-08-09T23:59:59Z` payout timestamp to the configured published deadline—is
+migrated automatically only while it is the sole mismatch and the row is
+unfinalized with neither resolved boundary blocks nor account snapshots. If any
+of those conditions is not met, startup fails for manual review rather than
+changing historical meaning.
 
-### 6. Optional: Start The On-Chain Oracle Updater
+### 6. Start The Liquidation Worker
 
-The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions. This is the only service in this local stack that sends transactions.
+`plether-liquidation-worker` independently discovers accounts from CFD engine `PositionOpened` events, verifies current position state onchain, and simulates the canonical liquidation call with the latest cached Pyth payload. It submits only when that simulation succeeds.
+
+Keep the basket worker running so a current six-feed payload is available. Use a separately funded signer to avoid nonce contention with the order keeper:
+
+```bash
+cd apps/backend
+
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker
+```
+
+For one discovery and scan iteration without submitting a transaction:
+
+```bash
+PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
+DATABASE_URL=postgresql://postgres@localhost:55432/plether \
+LIQUIDATION_KEEPER_PRIVATE_KEY=0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY \
+cabal run plether-liquidation-worker -- --once --dry-run
+```
+
+The worker keeps its own low-confirmation discovery cursor and monotonic candidate registry. It verifies zero-size positions at a confirmed block, persists each signed transaction and signer before broadcast, and uses same-nonce fee bumps for stale transactions. Deterministically rejected Pyth payloads and unaffordable signer transactions open persistent retry circuits; raw pending broadcasts and fresh signer repricing are bounded to one attempt per minute. Closed or already-liquidated candidates are removed only after confirmed CFD-engine state reports that no position remains. Do not rotate `LIQUIDATION_KEEPER_PRIVATE_KEY` while a transaction is pending; if that happens, the worker keeps the pending transaction as a circuit breaker and requires manual reconciliation instead of crossing signer nonce lanes.
+
+### 7. Optional: Start The On-Chain Oracle Updater
+
+The frontend repo contains a small Node worker that reads cached Pyth payloads from the backend and submits `updateMarkPrice` transactions independently of the keeper workers.
 
 ```bash
 cd apps/frontend
@@ -275,6 +386,9 @@ PERPS_ORACLE_UPDATER_BACKEND_URL=http://127.0.0.1:3001 \
 PERPS_ORACLE_UPDATER_PRIVATE_KEY=0xYOUR_UPDATER_PRIVATE_KEY \
 npm run perps:oracle-worker -- --loop
 ```
+
+Use a dedicated funded updater key. Sharing this key with the order keeper or
+liquidation worker creates a cross-process nonce race.
 
 For a no-transaction check:
 
@@ -289,7 +403,7 @@ npm run perps:oracle-worker -- --once
 
 Keep the basket worker running before starting the oracle updater. If the cached payload is older than the updater's freshness window, the updater will skip the transaction instead of pushing stale data onchain.
 
-### 7. Companion Frontend Services
+### 8. Companion Frontend Services
 
 The API and workers can run without UI servers, but the usual local perps development stack is:
 
@@ -325,6 +439,7 @@ Local URLs:
 | Currency cards are stale | Keep `plether-basket-worker -- --latest-loop` running. |
 | On-chain DXY price is stale | Run the optional oracle updater with `PERPS_ORACLE_UPDATER_PRIVATE_KEY`; the basket worker only updates the database cache. |
 | Order or transaction history is stale | Keep `plether-perps-indexer -- --loop` running and check `/api/perps/indexer/status`. |
+| Liquidatable positions are not being processed | Keep both `plether-basket-worker -- --latest-loop` and `plether-liquidation-worker` running; verify that the liquidation signer has native ETH. |
 | Browser CORS error from `127.0.0.1:5173` | Include `http://127.0.0.1:5173` in `CORS_ORIGINS`. |
 
 ## Configuration
@@ -339,31 +454,95 @@ Local URLs:
 | `INDEXER_START_BLOCK` | No | `0` | Block to start indexing from (Sepolia: 10188700) |
 | `PERPS_RPC_URL` | Keeper/faucet | - | Arbitrum Sepolia RPC endpoint for perps services and testnet faucet |
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
+| `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
-| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Authoritative emitter for scored mock-USDC deposits and withdrawals |
+| `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
+| `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights equity snapshots |
-| `PERPS_INDEXER_START_BLOCK` | No | `273137426` | Arbitrum Sepolia perps release first log block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `288439939` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
+| `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
+| `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
+| `AA_SPONSORSHIP_ENABLED` | No | `false` | Authoritative issuance/submission kill switch; recovery reads remain available |
+| `AA_IP_RATE_LIMIT_PER_MINUTE` | No | `120` | Per-IP issuance limit; recovery reads receive four times this budget |
+| `AA_ACCOUNT_RATE_LIMIT_PER_MINUTE` | No | `30` | Per-Trading-Account-and-IP issuance limit; Pimlico policy budgets remain the global account control |
+| `AA_MAX_REQUEST_BYTES` | No | `262144` | Maximum JSON-RPC request body size |
+| `AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR` | No | `0` | Actual sponsored gas-cost threshold logged once per hour; `0` disables it |
 | `KEEPER_POLL_SECONDS` | No | `1` | Keeper polling interval |
 | `KEEPER_MAX_BATCH_SIZE` | No | `20` | Maximum queued orders evaluated per iteration |
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
+| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `1` | Delay between liquidation discovery and scan iterations |
+| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `100` | Maximum candidate accounts checked per iteration |
+| `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
+| `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
+| `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |
+| `LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS` | No | `12` | Recently indexed blocks rescanned to heal short L2 reorgs |
+| `LIQUIDATION_WORKER_PENDING_REPLACEMENT_SECONDS` | No | `120` | Age at which an unconfirmed transaction is fee-bumped at the same nonce |
+| `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
+| `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
-| `PYTH_HERMES_URL` | No | `https://hermes.pyth.network` | Hermes endpoint used by the basket worker |
-| `PYTH_API_KEY` | No | - | Optional bearer token for API-key backed Hermes providers |
+| `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
+| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
 | `PYTH_BACKFILL_DAYS` | No | `7` | Default historical backfill window |
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
+| `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
 
+For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
+an existing SecureString. To let Terraform manage the key instead, set
+`enable_pyth_api_key = true` and provide the sensitive `pyth_api_key`. Apply
+Terraform before rolling the API and worker services. The image-only backend
+deployment workflow reuses existing task-definition environment and secret
+settings, so it does not apply this endpoint migration by itself. Its preflight
+refuses a normal rollout until the API and a basket worker have the upgraded
+RPC/contract wiring and the referenced key successfully fetches the exact six
+configured feeds; use the manual bootstrap override only for first-time
+task-definition provisioning.
+
+Review the Terraform plan before changing an existing environment from a
+Terraform-managed Pyth parameter to `pyth_api_key_ssm_parameter_name`. If the
+managed resource already owns the same SSM name, migrate or detach its state
+without destroying the SecureString first; `prevent_destroy` intentionally
+blocks accidental key deletion.
+
+For the Sepolia managed proxy, keep `provision_aa_proxy = true` even when
+`enable_aa_sponsorship = false`; this preserves Pimlico receipt/status access
+while the issuance kill switch is active. The public API origin must use the
+certificate-backed `https://` hostname configured by `api_hostname` and
+`alb_certificate_arn`.
+
+After changing the Terraform AA variables:
+
+1. Point the certificate-backed API hostname at the ALB.
+2. Apply Terraform so the SSM parameters and latest task-definition revision
+   exist.
+3. Run the `Deploy Backend` workflow for `sepolia` so ECS activates that
+   revision.
+4. Set Pages `SEPOLIA_BACKEND_URL` to the HTTPS API hostname and use the same
+   `AA_PROXY_ORIGIN_TOKEN` in Pages and the backend.
+
+Set `operations_alarm_sns_topic_arn` to route the Terraform-managed sponsored
+gas and keeper-task CloudWatch alarms to an operations channel. Keep Pimlico's
+policy-level budget alerts enabled as the authoritative view of sponsored gas;
+the backend alert is a receipt-based secondary signal.
+
 ## API Endpoints
+
+### Managed account abstraction
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /api/aa/pimlico` | Authenticated, fail-closed Pimlico JSON-RPC proxy for the approved Arbitrum Sepolia SimpleAccount and Plether action surface |
 
 ### Protocol
 
@@ -457,6 +636,9 @@ cabal test
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
+# Discover and simulate liquidations once without submitting transactions
+cabal run plether-liquidation-worker -- --once --dry-run
+
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
@@ -466,7 +648,9 @@ ghcid --command="cabal repl plether-api" --test=":main"
 ```
 apps/backend/
 ├── app/
-│   └── Main.hs           # Entry point
+│   ├── Main.hs           # API entry point
+│   ├── Keeper.hs         # FIFO order keeper entry point
+│   └── LiquidationWorker.hs # Liquidation worker entry point
 ├── src/Plether/
 │   ├── Api.hs            # Scotty routes
 │   ├── Cache.hs          # STM caching
@@ -478,6 +662,7 @@ apps/backend/
 │   ├── Types/            # API types
 │   ├── Handlers/         # Route handlers
 │   ├── Ethereum/         # RPC client & contracts
+│   ├── LiquidationWorker.hs # Liquidation discovery and execution
 │   └── Utils/            # Helpers
 ├── config/
 │   ├── addresses.arbitrum-sepolia.json

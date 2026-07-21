@@ -372,6 +372,16 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'function',
+    name: 'executeLiquidation',
+    stateMutability: 'payable',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'pythUpdateData', type: 'bytes[]' },
+    ],
+    outputs: [],
+  },
+  {
+    type: 'function',
     name: 'updateMarkPrice',
     stateMutability: 'payable',
     inputs: [{ name: 'pythUpdateData', type: 'bytes[]' }],

@@ -2,6 +2,8 @@ const ROUTES = {
   '/api/perps/v1/': 'SEPOLIA_BACKEND_URL',
   '/api/spot/v1/': 'MAINNET_BACKEND_URL',
 };
+const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
+const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 
 export default {
   async fetch(request, env) {
@@ -16,6 +18,18 @@ export default {
         const backendUrl = new URL(backendPath + url.search, origin);
 
         const headers = new Headers(request.headers);
+        // Never trust or forward a browser-supplied origin-auth token. The
+        // backend may trust CF-Connecting-IP for AA rate limiting only after
+        // this Worker-to-origin credential has been verified.
+        headers.delete(AA_PROXY_AUTH_HEADER);
+        if (url.pathname === AA_PROXY_PATH) {
+          if (!env.AA_PROXY_ORIGIN_TOKEN) {
+            return new Response('AA proxy authentication not configured', {
+              status: 502,
+            });
+          }
+          headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
+        }
         headers.set('Host', backendUrl.hostname);
         headers.delete('Origin');
 

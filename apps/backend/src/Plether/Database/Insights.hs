@@ -706,7 +706,11 @@ validateOrMigrateCompetitionSeed conn expected stored =
               putStrLn $
                 "Migrated the pre-launch Plether Insights payout deadline for "
                   <> T.unpack (csmSlug expected)
-                  <> " from 2026-08-09T23:59:59Z to 2026-08-07T22:00:00Z."
+                  <> " from Unix timestamp "
+                  <> show legacyPaymentDeadlineTimestamp
+                  <> " to "
+                  <> show (csmPaymentDeadlineTimestamp expected)
+                  <> "."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch payout-deadline correction was detected, but automatic migration is allowed only before boundary blocks, snapshots, or finalization exist."
       | otherwise -> seedMismatchError expected mismatches Nothing

@@ -2,15 +2,13 @@
 
 Margin is assigned to a position. Risk is assessed across the account.
 
-That distinction is fundamental. The USDC shown as **Position margin** is not an isolated loss limit. Free USDC held in the same Plether account can protect the position—and losses can consume that free USDC before becoming bad debt.
+That distinction is fundamental. The USDC[^usdc] shown as **Position margin** is not an isolated loss limit. Free USDC held in the same Plether account can protect the position—and losses can consume that free USDC before becoming bad debt.
 
 The practical model is:
 
-```
-Position margin organizes collateral.
-Account equity determines health.
-Maintenance margin determines liquidation.
-```
+* **Position margin** organizes collateral.
+* **Account equity** determines account health.
+* **Maintenance margin** determines when the account becomes liquidatable.
 
 ### Where your USDC sits
 
@@ -21,11 +19,11 @@ All trader collateral is held in the MarginClearinghouse. Within it, USDC is div
 | Free USDC                | Available for new orders, fees, carry, supporting open positions or withdrawal—subject to risk checks |
 | Position margin          | USDC assigned to the active position                                                                  |
 | Committed order margin   | USDC reserved for a pending order                                                                     |
-| Execution bounty reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
+| Execution reward reserve | USDC reserved to reward the account executing or cleaning up an order                                 |
 
 The total of these buckets forms the account’s settlement balance, but not every bucket is available for every purpose.
 
-Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution bounty reserves are kept separate from ordinary position health.
+Position margin and eligible free USDC support account health. During terminal settlement, committed order margin may also be reachable. Execution reward reserves are kept separate from ordinary position health.
 
 A trader claim—a receivable recorded when the pool cannot immediately cash-settle an amount—is not physical collateral and does not keep another position healthy.
 
@@ -46,7 +44,7 @@ Where:
 * `D` is the displayed Plether Dollar Index price.
 * `B` is the raw foreign-currency basket price.
 
-The risk engine calculates current contract notional from the raw basket:
+The risk engine calculates current contract notional[^notional] from the raw basket:
 
 ```
 N = S × B
@@ -57,7 +55,7 @@ Where `S` is the protocol position size.
 
 This means the notional used for leverage and margin is not simply position size multiplied by the displayed index price.
 
-Directional PnL is still calculated from changes in `D`. The distinction above applies to margin and risk accounting.
+Directional PnL[^pnl] is still calculated from changes in `D`. The distinction above applies to margin and risk accounting.
 
 ### Initial margin
 
@@ -78,7 +76,7 @@ Initial requirement
   )
 ```
 
-The post-trade check includes the applicable execution fee, VPI adjustment and accrued carry. An order that appears sufficiently collateralized before costs may fail after those costs are applied.
+The post-trade check includes the applicable execution fee, VPI[^vpi] adjustment and accrued carry[^carry]. An order that appears sufficiently collateralized before costs may fail after those costs are applied.
 
 The protocol also verifies that:
 
@@ -86,7 +84,7 @@ The protocol also verifies that:
 * the HousePool can cover its bounded maximum liability;
 * the resulting market imbalance remains within protocol limits.
 
-Initial margin rates and bounty parameters are protocol settings. Refer to the live parameters page for current values.
+Initial margin rates and bounty parameters are protocol settings. Use the live onchain values rather than values from static examples.
 
 ### Maintenance margin
 
@@ -154,7 +152,7 @@ Free USDC can therefore reduce effective account leverage without changing the l
 
 Leverage is also a snapshot. It can change because:
 
-* the oracle price changes current notional;
+* the oracle[^oracle] price changes current notional;
 * unrealized PnL changes equity;
 * carry accrues;
 * fees or VPI consume collateral;
@@ -163,7 +161,7 @@ Leverage is also a snapshot. It can change because:
 
 Higher leverage means less room for adverse movement and costs. Leverage itself, however, is not the liquidation trigger. The equity test is.
 
-\[Screenshot placeholder: **Current Position** panel—annotate Leverage, Liquidation price, Unrealized PnL, Cost of carry and the shared-collateral notice.]
+![Current Position annotations](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Depositing USDC versus adding position margin
 
@@ -171,7 +169,7 @@ These actions are not equivalent.
 
 #### Depositing new USDC
 
-Depositing USDC from your wallet increases the account’s settlement balance.
+Depositing new USDC into the Margin Account increases the account’s settlement balance. In the current sponsored flow, that USDC is sourced from the separate Trading Account.
 
 If carry is already due, some of the deposit may be used to settle it immediately. The net improvement in account equity can therefore be smaller than the deposited amount.
 
@@ -189,7 +187,7 @@ Adding position margin can still:
 
 * lower the displayed position leverage;
 * satisfy position-level requirements for a later increase;
-* reduce the part of the position economically financed by LP capital;
+* reduce the part of the position economically financed by LP[^lp] capital;
 * reduce future carry.
 
 Plether realizes accrued carry before locking the added margin. If carry consumes part of the account’s existing position margin, the resulting increase may be smaller than a simple `current margin + added amount` estimate.
@@ -200,7 +198,7 @@ Direct position-margin removal is not supported.
 
 Reducing or closing the position releases assigned margin proportionally. Once released into free USDC, it may be withdrawn if the account passes the post-withdrawal risk checks.
 
-\[Screenshot placeholder: **Margin Account** card beside the **Edit Position Margin** modal—annotate Free margin, Current position margin, Resulting position margin and Resulting leverage.]
+![Position and Edit Position Margin modal](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Available to trade is not the same as withdrawable
 
@@ -282,7 +280,7 @@ The threshold is not permanent. It can move because:
 * the maintenance margin regime changes;
 * pending reservations change.
 
-Actual liquidation uses a fresh, side-adverse confidence-adjusted oracle price. For liquidation testing, the protocol shifts the accepted price against the account:
+Actual liquidation uses a side-adverse confidence-adjusted oracle price validated under the active liquidation policy. Live and FAD-only liquidations require the configured live-liquidation freshness limit; during `oracleFrozen`, the protocol uses its explicitly relaxed frozen-market staleness limit. For liquidation testing, the protocol shifts the accepted price against the account:
 
 * lower for LONG USD;
 * higher for SHORT USD.
@@ -319,13 +317,13 @@ Traders should not wait until the close-only window begins to evaluate whether t
 
 ### What happens during liquidation
 
-Liquidation is permissionless. Once an account satisfies the liquidation condition, a keeper may submit a liquidation transaction.
+Liquidation is permissionless. Once an account satisfies the liquidation condition, a keeper[^keeper] may submit a liquidation transaction.
 
 There is no separate onchain margin-call state and no guaranteed grace period.
 
 A successful liquidation proceeds broadly as follows:
 
-1. The protocol validates a fresh liquidation oracle update.
+1. The protocol validates an oracle update under the active liquidation freshness policy.
 2. It applies the side-adverse confidence adjustment.
 3. It calculates current PnL, carry, reachable collateral and maintenance margin.
 4. If equity remains above maintenance, the transaction is rejected.
@@ -338,7 +336,7 @@ A successful liquidation proceeds broadly as follows:
 
 Liquidation does not charge the normal voluntary-close execution fee or a new voluntary-close VPI adjustment. Pending carry and any applicable negative accrued-VPI adjustment still form part of terminal accounting.
 
-The keeper bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
+The liquidation bounty is a liquidation cost. It is not necessarily equal to the trader’s loss or the size of the liquidated position.
 
 ### Liquidation is always full
 
@@ -348,7 +346,7 @@ Once liquidation succeeds, the complete position is closed. The protocol does no
 
 Crossing the maintenance threshold therefore puts the entire position at risk.
 
-Liquidation also does not force-sell the position through an AMM or order book. It settles against the protocol oracle. One liquidation does not mechanically move the execution price for the next account, although the same oracle move may make many accounts liquidatable at once.
+Liquidation also does not force-sell the position through an AMM[^amm] or order book. It settles against the protocol oracle. One liquidation does not mechanically move the execution price for the next account, although the same oracle move may make many accounts liquidatable at once.
 
 ### A pending close does not protect the position
 
@@ -363,18 +361,16 @@ Until the close executes:
 
 Liquidation uses a separate protective path and does not wait behind the global order queue. If liquidation happens first, pending orders for that account fail with **Account liquidated**.
 
-Reserved order execution bounties are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
-
-\[Screenshot placeholder: A pending close in **Open Orders**—annotate its execution window and add: “Exposure remains live until execution.”]
+Reserved order execution rewards are forfeited to the protocol treasury during liquidation. Eligible committed order margin remains reachable for terminal settlement.
 
 ### Liquidation does not necessarily consume everything
 
 An account can be liquidatable while it still has positive equity. Maintenance margin is a safety threshold above zero.
 
-After carry, applicable adjustments and the keeper bounty:
+After carry, applicable adjustments and the liquidation bounty:
 
 * a positive residual is preserved for the trader;
-* if immediate pool cash is unavailable, some value may be recorded as a trader claim;
+* reachable collateral, including released position margin, is preserved up to the trader’s positive residual; if any additional HousePool-funded payout cannot be funded in full, that complete fresh payout is recorded as a trader claim;
 * an existing trader claim may be netted against a terminal shortfall;
 * only the remaining uncovered loss becomes bad debt borne by the LP waterfall.
 
@@ -382,15 +378,15 @@ Liquidation means the entire position is closed. It does not automatically mean 
 
 ### Voluntary close versus liquidation
 
-|                 | Voluntary close                                       | Liquidation                                           |
-| --------------- | ----------------------------------------------------- | ----------------------------------------------------- |
-| Initiated by    | Trader or delegated account operator                  | Any keeper                                            |
-| Execution path  | Delayed global order queue                            | Separate permissionless path                          |
-| Position size   | Partial or full                                       | Full only                                             |
-| Pricing         | Eligible delayed execution mark                       | Fresh adverse confidence-adjusted liquidation mark    |
-| Costs           | Carry, execution fee, order bounty and applicable VPI | Carry, applicable VPI clawback and liquidation bounty |
-| Pending orders  | Continue independently                                | Failed and cleaned up                                 |
-| Trader residual | Preserved                                             | Preserved after terminal costs                        |
+|                 | Voluntary close                                                           | Liquidation                                                |
+| --------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| Initiated by    | Trader or delegated account operator                                      | Any keeper                                                 |
+| Execution path  | Delayed global order queue                                                | Separate permissionless path                               |
+| Position size   | Partial or full                                                           | Full only                                                  |
+| Pricing         | Eligible delayed execution mark                                           | Active-policy adverse confidence-adjusted liquidation mark |
+| Costs           | Carry, execution fee, execution reward, applicable VPI and frozen-close spread | Carry, applicable VPI clawback and liquidation bounty  |
+| Pending orders  | Continue independently                                                    | Failed and cleaned up                                      |
+| Trader residual | Preserved                                                                 | Preserved after terminal costs                             |
 
 A submitted voluntary close remains only an intention until it executes.
 
@@ -435,11 +431,19 @@ In practice:
 
 ### The central distinction
 
-```
-Position size determines price sensitivity.
-Assigned margin satisfies position-level requirements.
-Account equity determines ongoing health.
-Maintenance margin determines full liquidation.
-```
+* **Position size** determines price sensitivity.
+* **Assigned margin** satisfies position-level requirements.
+* **Account equity** determines ongoing health.
+* **Maintenance margin** determines when full liquidation is permitted.
 
-The fixed `0.00–2.00` range makes directional liability measurable. It does not bound carry, fees or liquidation bounties, and it does not prevent liquidation before either boundary is reached.
+The fixed `0.00–2.00` range bounds directional price PnL for a fixed position. That PnL bound does not include carry, execution fees, execution rewards, VPI or a liquidation bounty, and it does not prevent liquidation before either price boundary is reached.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^amm]: Automated market maker, an onchain liquidity mechanism that prices trades using a pool and formula.

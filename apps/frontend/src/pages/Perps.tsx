@@ -5,11 +5,13 @@ import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/Pe
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
-import { TokenAmount } from '../components/ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
+import { usePerpsIdentity } from '../perps-aa'
+import { DOCS_LINKS } from '../config/docs'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -44,6 +46,7 @@ function formatMarkAge(ageSeconds: number): string {
 }
 
 export function Perps() {
+  const perpsIdentity = usePerpsIdentity()
   const perpsMarket = usePerpsMarket()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
@@ -134,6 +137,10 @@ export function Perps() {
           value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
           freshness: perpsMarket.oracleFreshness,
           freshnessTooltip: dxyFreshnessTooltip,
+          tooltip: 'The oracle-derived dollar-oriented mark, not a guaranteed execution price. Final execution may differ because of oracle confidence; VPI, fees, and execution rewards are separate adjustments.',
+          tooltipDocsLink: DOCS_LINKS.perpsPrice,
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+          tooltipPosition: 'bottom',
         },
         {
           label: '24h change',
@@ -158,14 +165,16 @@ export function Perps() {
           label: 'Pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
           tooltip: poolLiquidityTooltip,
-          tooltipClassName: 'w-[400px] whitespace-normal p-4',
+          tooltipDocsLink: DOCS_LINKS.poolLiquidity,
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'left',
         },
         {
           label: 'Cost of carry',
           value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
           tooltip: costOfCarryTooltip,
-          tooltipClassName: 'w-[520px] whitespace-normal p-4',
+          tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'left',
         },
       ]
@@ -192,8 +201,39 @@ export function Perps() {
   )
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6">
-      <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
+    <div className="space-y-4">
+      {perpsIdentity.isAaManifestConfigured && (
+        perpsIdentity.status === 'selection-required' ||
+        perpsIdentity.status === 'continuity-required' ||
+        perpsIdentity.status === 'blocked'
+      ) ? (
+        <div className="border border-brand-orange/40 bg-brand-orange/10 p-4 text-sm leading-5 text-content-primary">
+          <div className="font-semibold text-brand-orange">Trading Account action required</div>
+          <p className="mt-1 text-content-secondary">
+            {perpsIdentity.error?.message ??
+              (perpsIdentity.status === 'selection-required'
+                ? 'Your connected wallet will remain the owner and signature surface for a Plether Trading Account. Positions, margin, orders, and claims will belong to that Trading Account.'
+                : 'Plether updated its testnet deployment. Confirm the updated Trading Account configuration before continuing. The app will not fall back to the owner wallet.')}
+          </p>
+          {(perpsIdentity.status === 'selection-required' ||
+            perpsIdentity.status === 'continuity-required') &&
+          perpsIdentity.proposedIdentity ? (
+            <button
+              type="button"
+              className="mt-3 border border-[#FFAB96] bg-[#FFAB96] px-4 py-2 text-sm font-semibold text-[#250917] hover:bg-[#FF572D] hover:text-[#FFF5F9]"
+              onClick={() => {
+                perpsIdentity.confirmIdentityAfterContinuityCheck()
+              }}
+            >
+              {perpsIdentity.status === 'selection-required'
+                ? 'Use Plether Trading Account'
+                : 'Confirm updated Trading Account'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex flex-col lg:flex-row gap-6">
+        <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
         <PerpsInstrumentPanel stats={instrumentStats} />
         <DxyBasketPanel
           oraclePriceRaw={perpsMarket.raw.markPrice}
@@ -203,6 +243,7 @@ export function Perps() {
           position={perpsAccount.position}
           equityUsdc={perpsAccount.equityUsdc}
           freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
+          traderClaimBalanceUsdc={perpsAccount.traderClaimBalanceUsdc}
           pendingOrders={perpsAccount.pendingOrders}
           orderHistory={perpsHistory.orderHistory}
           tradeHistory={perpsHistory.tradeHistory}
@@ -216,8 +257,8 @@ export function Perps() {
             void perpsHistory.refetch()
           }}
         />
-      </div>
-      <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
+        </div>
+        <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
         <div className="-mb-px">
           <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
         </div>
@@ -237,6 +278,8 @@ export function Perps() {
           portfolioValueRaw={perpsAccount.equityUsdc}
           withdrawableUsdcRaw={perpsAccount.withdrawableUsdc}
           walletUsdcRaw={perpsAccount.walletUsdc}
+          ownerWalletUsdcRaw={perpsAccount.ownerWalletUsdc}
+          tradingAccountUsdcRaw={perpsAccount.tradingAccountUsdc}
           marginAllowanceUsdc={perpsAccount.marginAllowanceUsdc}
           currentPosition={perpsAccount.position}
           currentPositionSide={perpsAccount.position?.direction}
@@ -261,6 +304,7 @@ export function Perps() {
             void perpsHistory.refetch()
           }}
         />
+        </div>
       </div>
     </div>
   )
