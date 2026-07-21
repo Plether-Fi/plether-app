@@ -267,7 +267,7 @@ variable "perps_margin_clearinghouse" {
 
 variable "perps_account_lens" {
   type    = string
-  default = "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29"
+  default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
 }
 
 variable "perps_indexer_start_block" {

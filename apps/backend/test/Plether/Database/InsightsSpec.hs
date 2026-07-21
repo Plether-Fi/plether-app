@@ -28,6 +28,10 @@ spec = do
       queryContains leaderboardQuerySql "a.block_number <= cb.block_number"
       queryContains walletActivityQuerySql "a.block_number <= b.block_number"
 
+    it "accepts legacy clearinghouse flows whose indexed JSON predates asset metadata" $ do
+      queryContains leaderboardQuerySql "a.activity_type IN ('Deposit', 'Withdraw')"
+      queryContains leaderboardQuerySql "OR NOT (a.data ? 'asset')"
+
 queryContains :: Query -> String -> Expectation
 queryContains sql fragment =
   show sql `shouldSatisfy` isInfixOf fragment

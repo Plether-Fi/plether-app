@@ -42,6 +42,7 @@ main = do
               (cfgPerpsOrderRouter cfg)
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsAccountLens cfg)
           runCommand pool perpsClient args
 
 runCommand :: DbPool -> EthClient -> [String] -> IO ()

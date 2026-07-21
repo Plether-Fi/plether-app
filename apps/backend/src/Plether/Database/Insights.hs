@@ -67,6 +67,7 @@ import Plether.Insights.Competition
   , ParticipantEligibility
   , finalizationBlockers
   , july2026Competition
+  , july2026CompetitionSlug
   , participantEligibilityText
   )
 import Plether.Utils.Address (isValidAddress)
@@ -382,11 +383,12 @@ instance FromRow FinalizationDatabaseRow where
     <*> field
     <*> field
 
-ensureInsightsSchema :: Connection -> Integer -> Text -> Text -> Text -> IO ()
-ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseAddress = do
+ensureInsightsSchema :: Connection -> Integer -> Text -> Text -> Text -> Text -> IO ()
+ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress = do
   validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
   validateOfficialAddress "PERPS_USDC" usdcAddress
   validateOfficialAddress "PERPS_MARGIN_CLEARINGHOUSE" marginClearinghouseAddress
+  validateOfficialAddress "PERPS_ACCOUNT_LENS" accountLensAddress
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_competitions (\
     \ slug TEXT PRIMARY KEY,\
@@ -395,6 +397,7 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ release_router TEXT NOT NULL,\
     \ usdc_address TEXT NOT NULL,\
     \ margin_clearinghouse_address TEXT NOT NULL,\
+    \ account_lens_address TEXT,\
     \ start_timestamp BIGINT NOT NULL,\
     \ new_risk_cutoff_timestamp BIGINT NOT NULL,\
     \ score_cutoff_timestamp BIGINT NOT NULL,\
@@ -424,6 +427,8 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS usdc_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS margin_clearinghouse_address TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS account_lens_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS start_block_hash TEXT"
   _ <- execute_ conn
@@ -558,10 +563,50 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ final_snapshot_hash TEXT NOT NULL,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
     \ )"
-  seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress
+  seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress
+  reconcileCompetitionAccountLens conn july2026CompetitionSlug accountLensAddress
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ALTER COLUMN account_lens_address SET NOT NULL"
+  pure ()
 
-seedJuly2026Competition :: Connection -> Integer -> Text -> Text -> Text -> IO ()
-seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress =
+-- Snapshot values are only meaningful for the exact lens implementation that
+-- produced them. A configured lens change invalidates every mutable snapshot
+-- atomically so the worker rebuilds both the historical baseline and live data.
+-- Finalized competition results are never rewritten automatically.
+reconcileCompetitionAccountLens :: Connection -> Text -> Text -> IO ()
+reconcileCompetitionAccountLens conn slug accountLensAddress =
+  withTransaction conn $ do
+    rows <- query conn
+      "SELECT account_lens_address, finalized FROM insights_competitions\
+      \ WHERE slug = ? FOR UPDATE"
+      (Only slug)
+    case rows of
+      [(storedAddress, finalized)]
+        | fmap normalizeAddress storedAddress == Just normalizedAddress -> pure ()
+        | finalized ->
+            ioError $ userError $
+              "PERPS_ACCOUNT_LENS changed for finalized Insights competition "
+                <> T.unpack slug
+                <> "; refusing to invalidate final results"
+        | otherwise -> do
+            _ <- execute conn
+              "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+              (Only slug)
+            _ <- execute conn
+              "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+              (Only slug)
+            _ <- execute conn
+              "UPDATE insights_competitions\
+              \ SET account_lens_address = ?, updated_at = NOW() WHERE slug = ?"
+              (normalizedAddress, slug)
+            pure ()
+      _ -> ioError $ userError $
+        "Plether Insights could not uniquely identify competition " <> T.unpack slug
+  where
+    normalizedAddress = normalizeAddress accountLensAddress
+
+seedJuly2026Competition :: Connection -> Integer -> Text -> Text -> Text -> Text -> IO ()
+seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress =
   withTransaction conn $ do
     let expected =
           competitionSeedMetadataFor
@@ -572,12 +617,12 @@ seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghou
             marginClearinghouseAddress
     _ <- execute conn
       "INSERT INTO insights_competitions (\
-      \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address,\
+      \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address,\
       \ start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
       \ results_timestamp, payment_deadline_timestamp, starting_balance_usdc,\
       \ minimum_profit_bps, minimum_active_days, scoring_version, rules_version,\
       \ first_prize_usdc, second_prize_usdc, third_prize_usdc)\
-      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
       \ ON CONFLICT (slug) DO NOTHING"
       ( csmSlug expected
       , csmName expected
@@ -585,6 +630,7 @@ seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghou
       , csmReleaseRouter expected
       , csmUsdcAddress expected
       , csmMarginClearinghouseAddress expected
+      , normalizeAddress accountLensAddress
       , csmStartTimestamp expected
       , csmNewRiskCutoffTimestamp expected
       , csmScoreCutoffTimestamp expected
@@ -1409,8 +1455,10 @@ leaderboardQuery =
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
+  \ AND a.activity_type IN ('Deposit', 'Withdraw')\
   \ AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \ AND LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
+  \ AND (LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
+  \   OR NOT (a.data ? 'asset'))\
   \ AND (t.start_block IS NULL OR a.block_number >= t.start_block)\
   \ AND a.block_number <= cb.block_number\
   \ GROUP BY a.account\

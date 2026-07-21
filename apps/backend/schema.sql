@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     release_router TEXT NOT NULL,
     usdc_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
+    account_lens_address TEXT NOT NULL,
     start_timestamp BIGINT NOT NULL,
     new_risk_cutoff_timestamp BIGINT NOT NULL,
     score_cutoff_timestamp BIGINT NOT NULL,

@@ -30,6 +30,7 @@ main = do
               (cfgPerpsOrderRouter cfg)
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsAccountLens cfg)
           client <- newClient $ cfgPerpsRpcUrl cfg
           pollSeconds <- loadPollSeconds
           putStrLn $
