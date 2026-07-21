@@ -1458,7 +1458,7 @@ leaderboardQuery =
   \ AND a.activity_type IN ('Deposit', 'Withdraw')\
   \ AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
   \ AND (LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
-  \   OR NOT (a.data ? 'asset'))\
+  \   OR NOT jsonb_exists(a.data, 'asset'))\
   \ AND (t.start_block IS NULL OR a.block_number >= t.start_block)\
   \ AND a.block_number <= cb.block_number\
   \ GROUP BY a.account\

@@ -30,7 +30,7 @@ spec = do
 
     it "accepts legacy clearinghouse flows whose indexed JSON predates asset metadata" $ do
       queryContains leaderboardQuerySql "a.activity_type IN ('Deposit', 'Withdraw')"
-      queryContains leaderboardQuerySql "OR NOT (a.data ? 'asset')"
+      queryContains leaderboardQuerySql "OR NOT jsonb_exists(a.data, 'asset')"
 
 queryContains :: Query -> String -> Expectation
 queryContains sql fragment =
