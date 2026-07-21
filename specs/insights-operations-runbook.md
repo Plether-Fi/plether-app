@@ -78,13 +78,13 @@ in the restricted case record.
 ## Competition checks
 
 - Before opening: participant count matches the signed-off roster.
-- After `2026-07-19T22:00:00Z`: `startSnapshotsComplete` is true and all
+- After `2026-07-20T16:00:00Z`: `startSnapshotsComplete` is true and all
   registered wallets share the published baseline batch.
 - While live: the snapshot worker stays current and leaderboard `meta.blockNumber`
   never exceeds the published snapshot batch.
 - On weekends: the protocol is closed and weekend executions do not create an
   active day.
-- After `2026-07-31T22:00:00Z`: wait for the confirmation-delayed canonical
+- After `2026-08-03T16:00:00Z`: wait for the confirmation-delayed canonical
   final block and require `finalSnapshotsComplete`.
 
 ## Review, results, and payout
@@ -92,7 +92,7 @@ in the restricted case record.
 1. Review fixed-bankroll compliance, duplicate control, wash activity,
    substantially mirrored accounts, and circular funding. Mark every account
    either `eligible` or `ineligible`; `pending` and `under_review` block finalization.
-2. At or after `2026-08-02T12:00:00Z`, run `finalize`. It fails closed unless
+2. At or after `2026-08-05T12:00:00Z`, run `finalize`. It fails closed unless
    boundary blocks, private trader references, reviews, and one complete
    canonical final snapshot batch are present.
 3. Export the eligibility-aware prize allocation. Exact P&L ties split the

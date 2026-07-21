@@ -20,14 +20,14 @@ so one trader cannot enter through several accounts.
 
 All boundaries are fixed UTC and use half-open intervals.
 
-- Start, inclusive: `2026-07-19T22:00:00Z`
-- New-risk trading ends: `2026-07-31T19:00:00Z`
-- Risk-reduction grace window: `2026-07-31T19:00:00Z` through `2026-07-31T22:00:00Z`
-- Scoring cutoff, exclusive: `2026-07-31T22:00:00Z`
-- Results date: `2026-08-02`
-- Payout deadline: `2026-08-07T22:00:00Z` (within one week of close)
+- Start, inclusive: `2026-07-20T16:00:00Z` (`18:00` Europe/Warsaw, CEST)
+- New-risk trading ends: `2026-08-03T13:00:00Z`
+- Risk-reduction grace window: `2026-08-03T13:00:00Z` through `2026-08-03T16:00:00Z`
+- Scoring cutoff, exclusive: `2026-08-03T16:00:00Z` (`18:00` Europe/Warsaw, exactly 14 days after start)
+- Results date: `2026-08-05`
+- Payout deadline: `2026-08-10T16:00:00Z` (within one week of close)
 
-Public wording: **Trading July 20–31; results August 2.**
+Public wording: **Trading July 20–August 3; results August 5.**
 
 The start block is the first canonical block whose timestamp is greater than or
 equal to the start time. The final block is the last canonical block whose

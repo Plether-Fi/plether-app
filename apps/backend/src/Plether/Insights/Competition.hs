@@ -69,25 +69,25 @@ data CompetitionRules = CompetitionRules
   }
   deriving stock (Show, Eq)
 
--- | The July 2026 competition follows FX sessions. The first eligible session
--- opens Sunday July 19 at 22:00 UTC (the Monday session) and the authoritative
--- score is captured at the Friday July 31 close.
+-- | The July 2026 competition follows FX sessions. Scoring begins Monday July
+-- 20 at 16:00 UTC (18:00 in Warsaw) and runs for exactly 14 days. The final
+-- cutoff is Monday August 3 at 16:00 UTC (18:00 in Warsaw).
 july2026Competition :: CompetitionRules
 july2026Competition =
   CompetitionRules
     { crSlug = july2026CompetitionSlug
     , crName = "Plether Testnet Trading Competition"
-    , crStartAt = utc 2026 7 19 22 0 0
-    , crNewRiskCutoffAt = utc 2026 7 31 19 0 0
-    , crScoreCutoffAt = utc 2026 7 31 22 0 0
-    , crResultsAt = utc 2026 8 2 12 0 0
-    , crPaymentDeadlineAt = utc 2026 8 7 22 0 0
+    , crStartAt = utc 2026 7 20 16 0 0
+    , crNewRiskCutoffAt = utc 2026 8 3 13 0 0
+    , crScoreCutoffAt = utc 2026 8 3 16 0 0
+    , crResultsAt = utc 2026 8 5 12 0 0
+    , crPaymentDeadlineAt = utc 2026 8 10 16 0 0
     , crStartingBalanceUsdc = 100_000 * usdcScale
     , crMinimumProfitBps = 100
     , crMinimumActiveDays = 5
     , crPrizeUsdc = map (* usdcScale) [600, 300, 100]
     , crScoringVersion = "account-value-v1"
-    , crRulesVersion = "2026-07-17"
+    , crRulesVersion = "2026-07-20"
     }
 
 data CompetitionPhase

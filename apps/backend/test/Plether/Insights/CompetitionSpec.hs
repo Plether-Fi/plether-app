@@ -1,6 +1,6 @@
 module Plether.Insights.CompetitionSpec (spec) where
 
-import Data.Time (UTCTime (..), fromGregorian, secondsToDiffTime)
+import Data.Time (UTCTime (..), addUTCTime, fromGregorian, secondsToDiffTime)
 import Plether.Database.Insights
   ( CompetitionSeedMetadata (..)
   , CompetitionSeedMismatch (..)
@@ -76,12 +76,18 @@ spec = do
   describe "July 2026 competition defaults" $ do
     it "uses the published bankroll, threshold, active-day minimum, and prizes" $ do
       crSlug july2026Competition `shouldBe` "testnet-trading-2026"
+      crStartAt july2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 7 20) (secondsToDiffTime $ 16 * 60 * 60)
+      crScoreCutoffAt july2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 8 3) (secondsToDiffTime $ 16 * 60 * 60)
+      crScoreCutoffAt july2026Competition
+        `shouldBe` addUTCTime (14 * 24 * 60 * 60) (crStartAt july2026Competition)
       crStartingBalanceUsdc july2026Competition `shouldBe` 100_000_000_000
       minimumProfitUsdc july2026Competition `shouldBe` 1_000_000_000
       crMinimumActiveDays july2026Competition `shouldBe` 5
       crPrizeUsdc july2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
       crPaymentDeadlineAt july2026Competition
-        `shouldBe` UTCTime (fromGregorian 2026 8 7) (secondsToDiffTime $ 22 * 60 * 60)
+        `shouldBe` UTCTime (fromGregorian 2026 8 10) (secondsToDiffTime $ 16 * 60 * 60)
 
   describe "immutable competition seed metadata" $ do
     let expected = competitionSeedMetadataFor
@@ -174,8 +180,9 @@ spec = do
 
     it "counts only executed voluntary opens and closes inside the competition window" $ do
       activeSessionDays july2026Competition
-        [ ("Open", 1_784_498_400)
-        , ("Close", 1_784_498_500)
+        [ ("Open", 1_784_563_199)
+        , ("Open", 1_784_563_200)
+        , ("Close", 1_784_563_300)
         , ("Liquidated", 1_784_584_800)
         , ("Deposit", 1_784_671_200)
         , ("Open", 1_784_671_200)

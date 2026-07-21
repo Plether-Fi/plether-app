@@ -36,7 +36,7 @@ export function MethodologyPage() {
           <p>Order submissions, failures, expiries, deposits, withdrawals, margin additions, and liquidation by itself do not qualify. Sessions run from 22:00 UTC on the preceding day to 22:00 UTC; markets close for the weekend in line with tracked FX markets.</p>
         </Rule>
         <Rule number="05" title="Timing and prizes">
-          <p>Trading closes on <strong className="text-content-primary">Friday, 31 July 2026 at 22:00 UTC</strong>. Results are reviewed on 2 August.</p>
+          <p>Trading closes exactly 14 days after the start, on <strong className="text-content-primary">Monday, 3 August 2026 at 16:00 UTC (18:00 Warsaw)</strong>. Results are reviewed on 5 August.</p>
           <p>The top three eligible traders receive <strong className="text-content-primary">$600 / $300 / $100</strong> in real USDC, paid within one week of close. If a trader is disqualified, the next eligible trader moves up.</p>
           <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
         </Rule>
