@@ -431,7 +431,7 @@ jobs:
             echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
           fi
 
-      - name: Patch Sepolia task definition network
+      - name: Patch Sepolia API task definition
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
           jq \
@@ -454,6 +454,7 @@ jobs:
                 |
                 upsert_env("CHAIN_ID"; "421614")
                 | upsert_env("INDEXER_START_BLOCK"; "280884700")
+                | upsert_env("AA_SPONSORSHIP_ENABLED"; "true")
                 | upsert_secret("RPC_URL"; $rpcSecret)
               else
                 .
