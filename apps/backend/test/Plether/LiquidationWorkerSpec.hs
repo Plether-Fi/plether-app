@@ -1,49 +1,317 @@
+{-# LANGUAGE RecordWildCards #-}
+
 module Plether.LiquidationWorkerSpec (spec) where
 
 import Control.Exception (bracket)
-import Data.Aeson (toJSON)
+import Data.Aeson (Value, object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
 import Plether.Config (Config (..))
-import Plether.Database.Schema (PythUpdatePayloadRow (..))
-import Plether.Ethereum.Abi (encodeAddress, encodeUint256)
+import Plether.Database.Schema
+  ( BasketSnapshotRow (..)
+  , PythUpdatePayloadRow (..)
+  )
+import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (RpcError (..))
+import Plether.Ethereum.Contracts.CfdEngineAccountLens
+  ( AccountLedgerSnapshot (..)
+  , getAccountLedgerSnapshotCall
+  )
 import Plether.Ethereum.Contracts.Perps (positionLiquidatedTopic)
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
 import Plether.Ethereum.Transaction (Tx1559 (..))
 import Plether.LiquidationWorker
-  ( LiquidationPayloadCircuitDecision (..)
+  ( FreshLiquidationRiskInputs (..)
+  , LiquidationBasketComponent (..)
+  , LiquidationRiskGlobals (..)
+  , PythStoredPrice (..)
+  , LiquidationPayloadCircuitDecision (..)
   , LiquidationPendingSignerAction (..)
   , LiquidationSignerCircuitDecision (..)
   , LiquidationWorkerConfig (..)
   , canAffordTransaction
   , checkLiveSignerBalance
   , decodeCachedPythPayload
+  , decodeCachedLiquidationComponents
+  , decodePythStoredPriceResults
+  , freshLiquidationRiskInputsFromCache
   , isExpectedLiquidationSimulationRevert
   , isInsufficientFundsRpcError
   , isLiquidationReceiptFor
+  , decodeLiquidationSnapshotResults
   , liquidationIndexRange
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
   , liquidationSignerCircuitDecision
+  , liquidationSnapshotCalls
+  , mergeLiquidationBasketComponents
   , payloadGlobalSimulationRevertSelector
   , loadLiquidationWorkerConfig
   , sameNonceReplacementFees
+  , selectLiquidationSimulationCandidates
+  , pythStoredPriceCalls
   , transactionMaximumCost
+  , validateMergedLiquidationBasket
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "loadLiquidationWorkerConfig" $
+  describe "loadLiquidationWorkerConfig" $ do
     it "uses the CFD engine already resolved by shared backend configuration" $ do
       withUnsetEnv "PERPS_CFD_ENGINE" $ do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcCfdEngine workerCfg `shouldBe` configuredCfdEngine
         lwcCfdEngine workerCfg `shouldNotBe` retiredCfdEngine
+
+    it "polls every ten minutes by default" $ do
+      withUnsetEnv "LIQUIDATION_WORKER_POLL_SECONDS" $ do
+        workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+        lwcPollSeconds workerCfg `shouldBe` 600
+
+    it "inherits the account lens and defaults to 1,000-account scans in Multicall chunks of ten" $ do
+      withUnsetEnv "PERPS_ACCOUNT_LENS" $
+        withUnsetEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" $
+          withUnsetEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" $ do
+            workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+            lwcAccountLens workerCfg `shouldBe` configuredAccountLens
+            lwcScanBatchSize workerCfg `shouldBe` 1_000
+            lwcMulticallSize workerCfg `shouldBe` 10
+
+  describe "liquidation snapshot batching" $ do
+    it "builds ordered, allow-failure account-lens calls" $ do
+      let accounts = [account, otherAccount]
+          calls = liquidationSnapshotCalls accountLens accounts
+      map Multicall.callTarget calls `shouldBe` replicate 2 accountLens
+      map Multicall.callAllowFailure calls `shouldBe` [True, True]
+      map Multicall.callCalldata calls
+        `shouldBe` map getAccountLedgerSnapshotCall accounts
+
+    it "decodes successful snapshots without changing account order" $ do
+      let results =
+            [ Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot
+            , Multicall.CallResult True $ encodedAccountSnapshot openRiskySnapshot
+            ]
+      case decodeLiquidationSnapshotResults 2 results of
+        Right [Right first, Right second] ->
+          map alsSize [first, second] `shouldBe` [alsSize openHealthySnapshot, alsSize openRiskySnapshot]
+        other -> expectationFailure $ "expected two ordered snapshots, got " <> show other
+
+    it "isolates failed and malformed subcalls instead of treating them as safe" $ do
+      let results =
+            [ Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot
+            , Multicall.CallResult False BS.empty
+            , Multicall.CallResult True BS.empty
+            ]
+      case decodeLiquidationSnapshotResults 3 results of
+        Right [Right _, Left _, Left _] -> pure ()
+        other -> expectationFailure $ "expected isolated subcall failures, got " <> show other
+
+    it "rejects missing or extra Multicall results" $ do
+      decodeLiquidationSnapshotResults
+        2
+        [Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot]
+        `shouldSatisfy` isLeft
+      decodeLiquidationSnapshotResults
+        1
+        [ Multicall.CallResult True $ encodedAccountSnapshot openHealthySnapshot
+        , Multicall.CallResult True $ encodedAccountSnapshot openRiskySnapshot
+        ]
+        `shouldSatisfy` isLeft
+
+  describe "selectLiquidationSimulationCandidates" $ do
+    it "excludes a definitive no-position snapshot even if its liquidatable bit is stale" $ do
+      let staleClosedSnapshot = closedSnapshot {alsLiquidatable = True}
+      selectLiquidationSimulationCandidates
+        (Just neutralRiskInputs)
+        [("closed" :: Text, Right staleClosedSnapshot)]
+        `shouldBe` []
+
+    it "uses the submitted fresh price instead of a stale stored-risk flag" $ do
+      let freshPriceRisk =
+            openHealthySnapshot
+              { alsAccountEquityUsdc = 2_000_000
+              , alsNetEquityUsdc = 2_000_000
+              , alsLiquidatable = False
+              }
+          storedRisk = openHealthySnapshot {alsLiquidatable = True}
+      selectLiquidationSimulationCandidates
+        (Just adverseRiskInputs)
+        [ ("closed" :: Text, Right closedSnapshot)
+        , ("healthy", Right openHealthySnapshot)
+        , ("fresh-price-risk", Right freshPriceRisk)
+        , ("stored-risk", Right storedRisk)
+        ]
+        `shouldBe` ["fresh-price-risk"]
+
+    it "includes the exact maintenance boundary but excludes a position safely above it" $ do
+      let atBoundary =
+            openHealthySnapshot
+              { alsAccountEquityUsdc = 1_000_000
+              , alsNetEquityUsdc = 1_000_000
+              , alsLiquidatable = False
+              }
+          aboveBoundary =
+            atBoundary
+              { alsAccountEquityUsdc = 1_000_010
+              , alsNetEquityUsdc = 1_000_010
+              }
+      selectLiquidationSimulationCandidates
+        (Just neutralRiskInputs)
+        [ ("at-boundary" :: Text, Right atBoundary)
+        , ("above-boundary", Right aboveBoundary)
+        ]
+        `shouldBe` ["at-boundary"]
+
+    it "does not estimate unreadable snapshots or positions with inconsistent risk inputs" $ do
+      selectLiquidationSimulationCandidates
+        (Just invalidRiskInputs)
+        [ ("closed" :: Text, Right closedSnapshot)
+        , ("open", Right openHealthySnapshot)
+        , ("snapshot-failed", Left "Multicall subcall failed")
+        ]
+        `shouldBe` []
+
+    it "uses only the affirmative stored-risk signal when fresh risk inputs are unavailable" $ do
+      selectLiquidationSimulationCandidates
+        Nothing
+        [ ("closed" :: Text, Right closedSnapshot)
+        , ("healthy", Right openHealthySnapshot)
+        , ("risky", Right openRiskySnapshot)
+        , ("snapshot-failed", Left "Multicall subcall failed")
+        ]
+        `shouldBe` ["risky"]
+
+  describe "freshLiquidationRiskInputsFromCache" $ do
+    it "correlates the full publish-time vector and reconstructs basket price and confidence" $ do
+      freshLiquidationRiskInputsFromCache
+        payload
+        basketSnapshot
+        200_000_000
+        500
+        15_000
+        `shouldBe` Right
+          FreshLiquidationRiskInputs
+            { flriNeutralPrice = 100_000_000
+            , flriBasketConfidence = 1_000
+            , flriCapPrice = 200_000_000
+            , flriRequiredMarginBps = 500
+            , flriAdverseConfidenceMultiplierBps = 15_000
+            , flriRiskBufferBps = 5
+            }
+
+    it "rejects mismatched component counts, publish times, and reconstructed prices" $ do
+      freshLiquidationRiskInputsFromCache
+        payload {puprPublishTimes = toJSON ([101] :: [Integer]), puprMaxPublishTime = 101}
+        basketSnapshot
+        200_000_000
+        500
+        15_000
+        `shouldSatisfy` isLeft
+      freshLiquidationRiskInputsFromCache
+        payload
+        basketSnapshot {bsrComponents = toJSON mismatchedPublishTimeComponents}
+        200_000_000
+        500
+        15_000
+        `shouldSatisfy` isLeft
+      freshLiquidationRiskInputsFromCache
+        payload
+        basketSnapshot {bsrBasketPrice = 99_999_999}
+        200_000_000
+        500
+        15_000
+        `shouldSatisfy` isLeft
+
+    it "rejects a non-positive raw component price instead of understating confidence" $ do
+      freshLiquidationRiskInputsFromCache
+        payload
+        basketSnapshot {bsrComponents = toJSON nonPositiveRawPriceComponents}
+        200_000_000
+        500
+        15_000
+        `shouldSatisfy` isLeft
+
+  describe "Pyth stored-price merge" $ do
+    it "builds one ordered getPriceUnsafe subcall per cached component" $ do
+      case decodeCachedLiquidationComponents payload basketSnapshot of
+        Left err -> expectationFailure $ "expected valid cached components: " <> show err
+        Right components ->
+          case pythStoredPriceCalls pythContract components of
+            Left err -> expectationFailure $ "expected valid Pyth calls: " <> show err
+            Right calls -> do
+              map Multicall.callTarget calls `shouldBe` replicate 2 pythContract
+              map Multicall.callAllowFailure calls `shouldBe` [True, True]
+              map Multicall.callCalldata calls
+                `shouldBe`
+                  [ encodeCall "getPriceUnsafe(bytes32)" [feedA]
+                  , encodeCall "getPriceUnsafe(bytes32)" [feedB]
+                  ]
+
+    it "strictly decodes the four-word Pyth Price struct" $ do
+      let encoded =
+            signedWord 123_000_000
+              <> encodeUint256 456
+              <> signedWord (-8)
+              <> encodeUint256 789
+      decodePythStoredPriceResults 1 [Multicall.CallResult True encoded]
+        `shouldBe`
+          Right
+            [ PythStoredPrice
+                { pspPrice = 123_000_000
+                , pspConfidence = 456
+                , pspExponent = -8
+                , pspPublishTime = 789
+                }
+            ]
+      decodePythStoredPriceResults 1 [Multicall.CallResult True BS.empty]
+        `shouldSatisfy` isLeft
+
+    it "reproduces Pyth update semantics component by component" $ do
+      case decodeCachedLiquidationComponents payload basketSnapshot of
+        Left err -> expectationFailure $ "expected valid cached components: " <> show err
+        Right components ->
+          case
+              mergeLiquidationBasketComponents
+                components
+                [ PythStoredPrice 300_000_000 3_000 (-8) 103
+                , PythStoredPrice 90_000_000 900 (-8) 100
+                ]
+            of
+            Left err -> expectationFailure $ "expected a merged basket: " <> show err
+            Right merged -> do
+              -- Stored data wins for the first feed because it is newer; the
+              -- submitted cached update wins for the second feed.
+              map lbcPrice merged `shouldBe` [300_000_000, 100_000_000]
+              map lbcPublishTime merged `shouldBe` [103, 101]
+
+    it "matches on-chain freshness, confidence, and publish-order policy" $ do
+      case decodeCachedLiquidationComponents payload basketSnapshot of
+        Left err -> expectationFailure $ "expected valid cached components: " <> show err
+        Right components -> do
+          validateMergedLiquidationBasket exactRiskGlobals components `shouldBe` Right ()
+          validateMergedLiquidationBasket
+            exactRiskGlobals {lrgBlockTimestamp = 101}
+            components
+            `shouldSatisfy` isLeft
+          validateMergedLiquidationBasket
+            exactRiskGlobals {lrgBlockTimestamp = 113}
+            components
+            `shouldSatisfy` isLeft
+          validateMergedLiquidationBasket
+            exactRiskGlobals {lrgLastMarkTime = 102}
+            components
+            `shouldSatisfy` isLeft
+          let wideConfidence =
+                case components of
+                  first : rest -> first {lbcConfidence = 1_000_000} : rest
+                  [] -> []
+          validateMergedLiquidationBasket exactRiskGlobals wideConfidence
+            `shouldSatisfy` isLeft
 
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
@@ -217,11 +485,79 @@ payload =
     , puprSource = "backend_hermes_latest_v2"
     }
 
+basketSnapshot :: BasketSnapshotRow
+basketSnapshot =
+  BasketSnapshotRow
+    { bsrTimestamp = 103
+    , bsrIntervalSeconds = 30
+    , bsrBasketPrice = 100_000_000
+    -- Deliberately reverse publish-time order: cache correlation must compare
+    -- the complete vector without relying on component order.
+    , bsrComponents = toJSON basketComponents
+    }
+
+basketComponents :: [Value]
+basketComponents =
+  [ basketComponent 200_000_000 200_000_000 2_000 102 5_000 200_000_000
+  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
+  ]
+
+mismatchedPublishTimeComponents :: [Value]
+mismatchedPublishTimeComponents =
+  [ basketComponent 200_000_000 200_000_000 2_000 103 5_000 200_000_000
+  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
+  ]
+
+nonPositiveRawPriceComponents :: [Value]
+nonPositiveRawPriceComponents =
+  [ basketComponent 200_000_000 (-200_000_000) 2_000 102 5_000 200_000_000
+  , basketComponent 100_000_000 100_000_000 1_000 101 5_000 100_000_000
+  ]
+
+basketComponent
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Value
+basketComponent price rawPrice confidence publishTime weightBps basePrice =
+  object
+    [ "feedId" .= if price == 200_000_000 then feedAText else feedBText
+    , "price" .= price
+    , "rawPrice" .= rawPrice
+    , "confidence" .= confidence
+    , "exponent" .= (-8 :: Int)
+    , "publishTime" .= publishTime
+    , "inverted" .= False
+    , "weightBps" .= weightBps
+    , "basePrice" .= basePrice
+    ]
+
+feedAText :: Text
+feedAText = "0x1111111111111111111111111111111111111111111111111111111111111111"
+
+feedBText :: Text
+feedBText = "0x2222222222222222222222222222222222222222222222222222222222222222"
+
+feedA :: BS.ByteString
+feedA = BS.replicate 32 0x11
+
+feedB :: BS.ByteString
+feedB = BS.replicate 32 0x22
+
 account :: Text
 account = "0x1111111111111111111111111111111111111111"
 
 otherAccount :: Text
 otherAccount = "0x2222222222222222222222222222222222222222"
+
+accountLens :: Text
+accountLens = "0x9999999999999999999999999999999999999999"
+
+pythContract :: Text
+pythContract = "0x8888888888888888888888888888888888888888"
 
 cfdEngine :: Text
 cfdEngine = "0x3333333333333333333333333333333333333333"
@@ -231,6 +567,9 @@ otherEngine = "0x4444444444444444444444444444444444444444"
 
 configuredCfdEngine :: Text
 configuredCfdEngine = "0x5555555555555555555555555555555555555555"
+
+configuredAccountLens :: Text
+configuredAccountLens = "0x6666666666666666666666666666666666666666"
 
 retiredCfdEngine :: Text
 retiredCfdEngine = "0xA1Ebfb8aD9C90367eA30A29592419d447E3f8224"
@@ -259,7 +598,7 @@ testConfig =
     , cfgPerpsCfdEngine = configuredCfdEngine
     , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
-    , cfgPerpsAccountLens = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsAccountLens = configuredAccountLens
     , cfgPerpsIndexerStartBlock = 288439939
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
@@ -324,3 +663,127 @@ maximumCostTx =
 
 updateData :: [BS.ByteString]
 updateData = [BS.pack [0x01], BS.pack [0x02, 0x03]]
+
+closedSnapshot :: AccountLedgerSnapshot
+closedSnapshot =
+  emptyAccountSnapshot
+    { alsHasPosition = False
+    , alsSize = 0
+    , alsLiquidatable = False
+    }
+
+openHealthySnapshot :: AccountLedgerSnapshot
+openHealthySnapshot =
+  emptyAccountSnapshot
+    { alsHasPosition = True
+    , alsSide = 0
+    , alsSize = 100_000_000_000_000_000_000
+    , alsMargin = 10_000_000
+    , alsEntryPrice = 100_000_000
+    , alsAccountEquityUsdc = 10_000_000
+    , alsNetEquityUsdc = 10_000_000
+    , alsLiquidatable = False
+    }
+
+openRiskySnapshot :: AccountLedgerSnapshot
+openRiskySnapshot =
+  openHealthySnapshot
+    { alsAccountEquityUsdc = 500_000
+    , alsNetEquityUsdc = 500_000
+    , alsLiquidatable = True
+    }
+
+neutralRiskInputs :: FreshLiquidationRiskInputs
+neutralRiskInputs =
+  FreshLiquidationRiskInputs
+    { flriNeutralPrice = 100_000_000
+    , flriCapPrice = 200_000_000
+    , flriRequiredMarginBps = 100
+    , flriBasketConfidence = 0
+    , flriAdverseConfidenceMultiplierBps = 0
+    , flriRiskBufferBps = 0
+    }
+
+adverseRiskInputs :: FreshLiquidationRiskInputs
+adverseRiskInputs =
+  neutralRiskInputs
+    { flriBasketConfidence = 1_000_000
+    , flriAdverseConfidenceMultiplierBps = 10_000
+    }
+
+invalidRiskInputs :: FreshLiquidationRiskInputs
+invalidRiskInputs = neutralRiskInputs {flriCapPrice = 0}
+
+exactRiskGlobals :: LiquidationRiskGlobals
+exactRiskGlobals =
+  LiquidationRiskGlobals
+    { lrgCapPrice = 200_000_000
+    , lrgRequiredMarginBps = 100
+    , lrgAdverseConfidenceMultiplierBps = 2_000
+    , lrgPythContract = pythContract
+    , lrgMaxStaleness = 10
+    , lrgMaxConfidenceRatioBps = 10
+    , lrgBlockTimestamp = 110
+    , lrgLastMarkTime = 100
+    }
+
+emptyAccountSnapshot :: AccountLedgerSnapshot
+emptyAccountSnapshot =
+  AccountLedgerSnapshot
+    { alsSettlementBalanceUsdc = 0
+    , alsFreeSettlementUsdc = 0
+    , alsActivePositionMarginUsdc = 0
+    , alsOtherLockedMarginUsdc = 0
+    , alsPositionMarginBucketUsdc = 0
+    , alsCommittedOrderMarginBucketUsdc = 0
+    , alsReservedSettlementBucketUsdc = 0
+    , alsExecutionBountyReserveUsdc = 0
+    , alsCommittedMarginUsdc = 0
+    , alsTraderClaimBalanceUsdc = 0
+    , alsPendingOrderCount = 0
+    , alsCloseReachableUsdc = 0
+    , alsTerminalReachableUsdc = 0
+    , alsAccountEquityUsdc = 0
+    , alsFreeBuyingPowerUsdc = 0
+    , alsHasPosition = False
+    , alsSide = 0
+    , alsSize = 0
+    , alsMargin = 0
+    , alsEntryPrice = 0
+    , alsUnrealizedPnlUsdc = 0
+    , alsNetEquityUsdc = 0
+    , alsLiquidatable = False
+    }
+
+encodedAccountSnapshot :: AccountLedgerSnapshot -> BS.ByteString
+encodedAccountSnapshot AccountLedgerSnapshot {..} =
+  mconcat
+    [ encodeUint256 alsSettlementBalanceUsdc
+    , encodeUint256 alsFreeSettlementUsdc
+    , encodeUint256 alsActivePositionMarginUsdc
+    , encodeUint256 alsOtherLockedMarginUsdc
+    , encodeUint256 alsPositionMarginBucketUsdc
+    , encodeUint256 alsCommittedOrderMarginBucketUsdc
+    , encodeUint256 alsReservedSettlementBucketUsdc
+    , encodeUint256 alsExecutionBountyReserveUsdc
+    , encodeUint256 alsCommittedMarginUsdc
+    , encodeUint256 alsTraderClaimBalanceUsdc
+    , encodeUint256 alsPendingOrderCount
+    , encodeUint256 alsCloseReachableUsdc
+    , encodeUint256 alsTerminalReachableUsdc
+    , encodeUint256 alsAccountEquityUsdc
+    , encodeUint256 alsFreeBuyingPowerUsdc
+    , encodeUint256 $ if alsHasPosition then 1 else 0
+    , encodeUint256 alsSide
+    , encodeUint256 alsSize
+    , encodeUint256 alsMargin
+    , encodeUint256 alsEntryPrice
+    , signedWord alsUnrealizedPnlUsdc
+    , signedWord alsNetEquityUsdc
+    , encodeUint256 $ if alsLiquidatable then 1 else 0
+    ]
+
+signedWord :: Integer -> BS.ByteString
+signedWord value
+  | value >= 0 = encodeUint256 value
+  | otherwise = encodeUint256 $ 2 ^ (256 :: Integer) + value

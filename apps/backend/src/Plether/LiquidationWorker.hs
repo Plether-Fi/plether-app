@@ -20,16 +20,39 @@ module Plether.LiquidationWorker
   , checkLiveSignerBalance
   , transactionMaximumCost
   , canAffordTransaction
+  , FreshLiquidationRiskInputs (..)
+  , LiquidationRiskGlobals (..)
+  , LiquidationBasketComponent (..)
+  , PythStoredPrice (..)
+  , liquidationSnapshotCalls
+  , decodeLiquidationSnapshotResults
+  , selectLiquidationSimulationCandidates
+  , decodeCachedLiquidationComponents
+  , pythStoredPriceCalls
+  , decodePythStoredPriceResults
+  , mergeLiquidationBasketComponents
+  , validateMergedLiquidationBasket
+  , freshLiquidationRiskInputsFromCache
   ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket)
-import Control.Monad (forM_, unless, when)
-import Data.Aeson (FromJSON, Result (..), Value, fromJSON)
+import Control.Monad (forM, forM_, unless, when)
+import Data.Aeson
+  ( FromJSON (..)
+  , Result (..)
+  , Value (..)
+  , fromJSON
+  , withObject
+  , (.:)
+  )
+import Data.Aeson.Types (Parser)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
+import Data.List (nub, sort)
 import Data.Maybe (fromMaybe)
+import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -37,7 +60,8 @@ import Database.PostgreSQL.Simple (Connection)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
-  ( PerpsLiquidationCandidateRow (..)
+  ( BasketSnapshotRow (..)
+  , PerpsLiquidationCandidateRow (..)
   , PerpsLiquidationRejectedPayloadRow (..)
   , PerpsLiquidationSignerRetryRow (..)
   , PythUpdatePayloadRow (..)
@@ -45,6 +69,7 @@ import Plether.Database.Schema
   , clearPerpsLiquidationRejectedPayload
   , clearPerpsLiquidationSignerRetry
   , deletePerpsLiquidationCandidate
+  , getLatestBasketSnapshot
   , getLatestPythUpdatePayload
   , getPerpsLiquidationCandidates
   , getPerpsLiquidationLastIndexedBlock
@@ -62,9 +87,15 @@ import Plether.Database.Schema
   , unlockPerpsLiquidationLock
   , upsertPerpsLiquidationCandidate
   )
-import Plether.Ethereum.Abi (encodeUint256, keccak256)
+import Plether.Ethereum.Abi (decodeBool, decodeInt256, decodeUint256, encodeCall, encodeUint256, keccak256)
 import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Contracts.CfdEngineAccountLens
+  ( AccountLedgerSnapshot (..)
+  , decodeAccountLedgerSnapshot
+  , getAccountLedgerSnapshotCall
+  )
 import qualified Plether.Ethereum.Contracts.Perps as Perps
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc
   ( RpcLog (..)
   , TxReceipt (..)
@@ -94,6 +125,7 @@ import Plether.Logging
   , logWarn
   , logWarnEvery
   )
+import Plether.Pyth.Basket (invertPythPrice, normalizeFeedId, normalizePythPrice)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -125,9 +157,11 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
   , lwcOrderRouter :: Text
   , lwcPletherOracle :: Text
   , lwcCfdEngine :: Text
+  , lwcAccountLens :: Text
   , lwcPrivateKey :: Text
   , lwcPollSeconds :: Int
   , lwcScanBatchSize :: Int
+  , lwcMulticallSize :: Int
   , lwcIndexerStartBlock :: Integer
   , lwcIndexerConfirmations :: Int
   , lwcIndexerBatchSize :: Integer
@@ -140,8 +174,9 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
 
 loadLiquidationWorkerConfig :: Config -> Text -> IO LiquidationWorkerConfig
 loadLiquidationWorkerConfig cfg privateKey = do
-  pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 1
-  scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 100
+  pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 600
+  scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 1_000
+  multicallSize <- readEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" 10
   indexerStartBlock <- readEnv "LIQUIDATION_WORKER_START_BLOCK" (cfgPerpsIndexerStartBlock cfg)
   indexerConfirmations <- readEnv "LIQUIDATION_WORKER_CONFIRMATIONS" 1
   indexerBatchSize <- readEnv "LIQUIDATION_WORKER_INDEX_BATCH_SIZE" 5_000
@@ -155,9 +190,11 @@ loadLiquidationWorkerConfig cfg privateKey = do
       , lwcOrderRouter = cfgPerpsOrderRouter cfg
       , lwcPletherOracle = cfgPerpsPletherOracle cfg
       , lwcCfdEngine = cfgPerpsCfdEngine cfg
+      , lwcAccountLens = cfgPerpsAccountLens cfg
       , lwcPrivateKey = privateKey
       , lwcPollSeconds = max 1 pollSeconds
       , lwcScanBatchSize = max 1 scanBatchSize
+      , lwcMulticallSize = max 1 $ min 100 multicallSize
       , lwcIndexerStartBlock = max 0 indexerStartBlock
       , lwcIndexerConfirmations = max 0 indexerConfirmations
       , lwcIndexerBatchSize = max 1 indexerBatchSize
@@ -171,6 +208,704 @@ readEnv :: (Read a) => String -> a -> IO a
 readEnv name fallback = do
   value <- lookupEnv name
   pure $ fromMaybe fallback (value >>= readMaybe)
+
+-- | Inputs needed to conservatively reproduce the liquidation check against
+-- the exact Pyth payload the worker will submit. Prices and basket confidence
+-- use the protocol's 8-decimal price scale.
+data FreshLiquidationRiskInputs = FreshLiquidationRiskInputs
+  { flriNeutralPrice :: Integer
+  , flriBasketConfidence :: Integer
+  , flriCapPrice :: Integer
+  , flriRequiredMarginBps :: Integer
+  , flriAdverseConfidenceMultiplierBps :: Integer
+  , flriRiskBufferBps :: Integer
+  }
+  deriving stock (Show, Eq)
+
+data LiquidationRiskGlobals = LiquidationRiskGlobals
+  { lrgCapPrice :: Integer
+  , lrgRequiredMarginBps :: Integer
+  , lrgAdverseConfidenceMultiplierBps :: Integer
+  , lrgPythContract :: Text
+  , lrgMaxStaleness :: Integer
+  , lrgMaxConfidenceRatioBps :: Integer
+  , lrgBlockTimestamp :: Integer
+  , lrgLastMarkTime :: Integer
+  }
+  deriving stock (Show, Eq)
+
+data LiquidationBasketComponent = LiquidationBasketComponent
+  { lbcFeedId :: Text
+  , lbcPrice :: Integer
+  , lbcRawPrice :: Integer
+  , lbcConfidence :: Integer
+  , lbcExponent :: Int
+  , lbcPublishTime :: Integer
+  , lbcInverted :: Bool
+  , lbcWeightBps :: Integer
+  , lbcBasePrice :: Integer
+  }
+  deriving stock (Show, Eq)
+
+instance FromJSON LiquidationBasketComponent where
+  parseJSON = withObject "LiquidationBasketComponent" $ \value ->
+    LiquidationBasketComponent
+      <$> value .: "feedId"
+      <*> (value .: "price" >>= parseIntegerValue)
+      <*> (value .: "rawPrice" >>= parseIntegerValue)
+      <*> (value .: "confidence" >>= parseIntegerValue)
+      <*> (value .: "exponent" >>= parseIntValue)
+      <*> (value .: "publishTime" >>= parseIntegerValue)
+      <*> value .: "inverted"
+      <*> (value .: "weightBps" >>= parseIntegerValue)
+      <*> (value .: "basePrice" >>= parseIntegerValue)
+
+data PythStoredPrice = PythStoredPrice
+  { pspPrice :: Integer
+  , pspConfidence :: Integer
+  , pspExponent :: Int
+  , pspPublishTime :: Integer
+  }
+  deriving stock (Show, Eq)
+
+parseIntegerValue :: Value -> Parser Integer
+parseIntegerValue = \case
+  String txt ->
+    case readMaybe $ T.unpack txt of
+      Just value -> pure value
+      Nothing -> fail $ "expected integer string, got " <> T.unpack txt
+  Number number ->
+    case floatingOrInteger number :: Either Double Integer of
+      Right value -> pure value
+      Left _ -> fail "expected integer number"
+  value -> fail $ "expected integer, got " <> show value
+
+parseIntValue :: Value -> Parser Int
+parseIntValue value = do
+  integer <- parseIntegerValue value
+  if integer < toInteger (minBound :: Int) || integer > toInteger (maxBound :: Int)
+    then fail "integer exceeds Int bounds"
+    else pure $ fromInteger integer
+
+liquidationSnapshotCalls :: Text -> [Text] -> [Multicall.Call]
+liquidationSnapshotCalls accountLens accounts =
+  [ Multicall.Call
+      { Multicall.callTarget = accountLens
+      , Multicall.callAllowFailure = True
+      , Multicall.callCalldata = getAccountLedgerSnapshotCall account
+      }
+  | account <- accounts
+  ]
+
+decodeLiquidationSnapshotResults
+  :: Int
+  -> [Multicall.CallResult]
+  -> Either Text [Either Text AccountLedgerSnapshot]
+decodeLiquidationSnapshotResults expectedCount results
+  | length results /= expectedCount =
+      Left $
+        "Expected "
+          <> tshow expectedCount
+          <> " liquidation snapshot results, received "
+          <> tshow (length results)
+  | otherwise = Right $ zipWith decodeResult [0 :: Int ..] results
+  where
+    decodeResult index result
+      | not $ Multicall.resultSuccess result =
+          Left $ "Liquidation snapshot subcall " <> tshow index <> " failed"
+      | otherwise =
+          case decodeAccountLedgerSnapshot $ Multicall.resultData result of
+            Left err -> Left $ "Liquidation snapshot subcall " <> tshow index <> ": " <> err
+            Right snapshot -> Right snapshot
+
+selectLiquidationSimulationCandidates
+  :: Maybe FreshLiquidationRiskInputs
+  -> [(candidate, Either Text AccountLedgerSnapshot)]
+  -> [candidate]
+selectLiquidationSimulationCandidates riskInputs =
+  map fst . filter (liquidationSimulationRequired riskInputs . snd)
+
+data LiquidationRiskDecision
+  = LiquidationPositionClosed
+  | LiquidationPositionHealthy
+  | LiquidationPositionRisky
+  | LiquidationRiskUnknown Text
+  deriving stock (Show, Eq)
+
+liquidationSimulationRequired
+  :: Maybe FreshLiquidationRiskInputs
+  -> Either Text AccountLedgerSnapshot
+  -> Bool
+liquidationSimulationRequired riskInputs =
+  (== LiquidationPositionRisky) . liquidationRiskDecision riskInputs
+
+liquidationRiskDecision
+  :: Maybe FreshLiquidationRiskInputs
+  -> Either Text AccountLedgerSnapshot
+  -> LiquidationRiskDecision
+liquidationRiskDecision _ (Left err) = LiquidationRiskUnknown err
+liquidationRiskDecision riskInputs (Right snapshot)
+  | not (alsHasPosition snapshot) && alsSize snapshot == 0 = LiquidationPositionClosed
+  | not (alsHasPosition snapshot) = LiquidationRiskUnknown "Snapshot reported a nonzero position without hasPosition"
+  | alsSize snapshot <= 0 = LiquidationRiskUnknown "Snapshot reported a non-positive open-position size"
+  | alsEntryPrice snapshot <= 0 = LiquidationRiskUnknown "Snapshot reported a non-positive entry price"
+  | alsSide snapshot `notElem` [0, 1] = LiquidationRiskUnknown "Snapshot reported an unsupported position side"
+  | otherwise =
+      case riskInputs of
+        -- The exact-block lens is a useful fallback when fresh-price inputs
+        -- cannot be reconstructed. Once those inputs are available, however,
+        -- the submitted Pyth price is authoritative and a stale stored-mark
+        -- flag must not create a false-positive gas estimate.
+        Nothing
+          | alsLiquidatable snapshot -> LiquidationPositionRisky
+          | otherwise -> LiquidationRiskUnknown "Fresh liquidation risk inputs were unavailable"
+        Just inputs ->
+          case freshLiquidationRisky inputs snapshot of
+            Left err -> LiquidationRiskUnknown err
+            Right True -> LiquidationPositionRisky
+            Right False -> LiquidationPositionHealthy
+
+freshLiquidationRisky
+  :: FreshLiquidationRiskInputs
+  -> AccountLedgerSnapshot
+  -> Either Text Bool
+freshLiquidationRisky FreshLiquidationRiskInputs {..} snapshot
+  | not (alsHasPosition snapshot) = Left "Cannot classify a snapshot without an open position"
+  | alsSize snapshot <= 0 = Left "Cannot classify a non-positive position size"
+  | alsEntryPrice snapshot <= 0 = Left "Cannot classify a non-positive entry price"
+  | alsSide snapshot `notElem` [0, 1] = Left "Cannot classify an unsupported position side"
+  | flriNeutralPrice <= 0 = Left "Fresh liquidation basket price must be positive"
+  | flriBasketConfidence < 0 = Left "Fresh liquidation basket confidence cannot be negative"
+  | flriCapPrice <= 0 = Left "Liquidation price cap must be positive"
+  | flriRequiredMarginBps <= 0 = Left "Liquidation margin requirement must be positive"
+  | flriAdverseConfidenceMultiplierBps < 0 = Left "Adverse confidence multiplier cannot be negative"
+  | flriRiskBufferBps < 0 = Left "Liquidation risk buffer cannot be negative"
+  | otherwise = Right $ freshEquity <= maintenanceRequirement + riskBuffer
+  where
+    neutralPrice = min flriNeutralPrice flriCapPrice
+    confidenceShift =
+      flriBasketConfidence
+        * flriAdverseConfidenceMultiplierBps
+        `div` basisPointScale
+    adversePrice
+      | alsSide snapshot == 0 = min flriCapPrice $ neutralPrice + confidenceShift
+      | otherwise = max 0 $ neutralPrice - confidenceShift
+    priceDifference = abs $ adversePrice - alsEntryPrice snapshot
+    unsignedPnl = alsSize snapshot * priceDifference `div` tokenPriceScale
+    positionProfits
+      | alsSide snapshot == 0 = adversePrice <= alsEntryPrice snapshot
+      | otherwise = adversePrice >= alsEntryPrice snapshot
+    signedPnl
+      | positionProfits = unsignedPnl
+      | otherwise = negate unsignedPnl
+    baseEquity = alsNetEquityUsdc snapshot - alsUnrealizedPnlUsdc snapshot
+    freshEquity = baseEquity + signedPnl
+    currentNotional = alsSize snapshot * adversePrice `div` tokenPriceScale
+    maintenanceRequirement =
+      currentNotional * flriRequiredMarginBps `div` basisPointScale
+    riskBuffer =
+      max 1 $ currentNotional * flriRiskBufferBps `div` basisPointScale
+
+basisPointScale :: Integer
+basisPointScale = 10_000
+
+tokenPriceScale :: Integer
+tokenPriceScale = 10 ^ (20 :: Int)
+
+liquidationRiskCalls :: LiquidationWorkerConfig -> [Multicall.Call]
+liquidationRiskCalls cfg =
+  [ riskCall (lwcCfdEngine cfg) "riskParams()"
+  , riskCall (lwcCfdEngine cfg) "CAP_PRICE()"
+  , riskCall (lwcPletherOracle cfg) "adverseConfidenceMultiplierBps()"
+  , Multicall.Call
+      { Multicall.callTarget = lwcPletherOracle cfg
+      , Multicall.callAllowFailure = True
+      , Multicall.callCalldata = Perps.pythCall
+      }
+  , riskCall (lwcPletherOracle cfg) "isOracleFrozen()"
+  , riskCall (lwcPletherOracle cfg) "liquidationStalenessLimit()"
+  , riskCall (lwcPletherOracle cfg) "pythMaxConfidenceRatioBps()"
+  , riskCall (lwcCfdEngine cfg) "fadMaxStaleness()"
+  , riskCall (lwcCfdEngine cfg) "isFadWindow()"
+  , riskCall (lwcCfdEngine cfg) "lastMarkTime()"
+  , riskCall Multicall.multicallAddress "getCurrentBlockTimestamp()"
+  ]
+  where
+    riskCall target signature =
+      Multicall.Call
+        { Multicall.callTarget = target
+        , Multicall.callAllowFailure = True
+        , Multicall.callCalldata = encodeCall signature []
+        }
+
+decodeLiquidationRiskGlobals
+  :: [Multicall.CallResult]
+  -> Either Text LiquidationRiskGlobals
+decodeLiquidationRiskGlobals results =
+  case results of
+    [ riskParamsResult
+      , capPriceResult
+      , multiplierResult
+      , pythResult
+      , oracleFrozenResult
+      , liquidationStalenessResult
+      , maxConfidenceRatioResult
+      , fadMaxStalenessResult
+      , isFadWindowResult
+      , lastMarkTimeResult
+      , blockTimestampResult
+      ] -> do
+      riskParams <- successfulResult "riskParams()" (8 * 32) riskParamsResult
+      capPriceBytes <- successfulResult "CAP_PRICE()" 32 capPriceResult
+      multiplierBytes <-
+        successfulResult
+          "adverseConfidenceMultiplierBps()"
+          32
+          multiplierResult
+      pythBytes <- successfulResult "pyth()" 32 pythResult
+      oracleFrozenBytes <- successfulResult "isOracleFrozen()" 32 oracleFrozenResult
+      liquidationStalenessBytes <-
+        successfulResult "liquidationStalenessLimit()" 32 liquidationStalenessResult
+      maxConfidenceRatioBytes <-
+        successfulResult "pythMaxConfidenceRatioBps()" 32 maxConfidenceRatioResult
+      fadMaxStalenessBytes <-
+        successfulResult "fadMaxStaleness()" 32 fadMaxStalenessResult
+      isFadWindowBytes <- successfulResult "isFadWindow()" 32 isFadWindowResult
+      lastMarkTimeBytes <- successfulResult "lastMarkTime()" 32 lastMarkTimeResult
+      blockTimestampBytes <-
+        successfulResult "getCurrentBlockTimestamp()" 32 blockTimestampResult
+      pythContract <-
+        case Perps.decodePythContract pythBytes of
+          Left err -> Left $ "pyth() could not be decoded: " <> rpcErrorText err
+          Right address -> Right address
+      let maintenanceMarginBps = decodeWord riskParams 2
+          fadMarginBps = decodeWord riskParams 4
+          capPrice = decodeWord capPriceBytes 0
+          multiplierBps = decodeWord multiplierBytes 0
+          oracleFrozen = decodeBool oracleFrozenBytes
+          liquidationStaleness = decodeWord liquidationStalenessBytes 0
+          fadMaxStaleness = decodeWord fadMaxStalenessBytes 0
+          maxStaleness = if oracleFrozen then fadMaxStaleness else liquidationStaleness
+          maxConfidenceRatioBps = decodeWord maxConfidenceRatioBytes 0
+          isFadWindow = decodeBool isFadWindowBytes
+          requiredMarginBps = if isFadWindow then fadMarginBps else maintenanceMarginBps
+          lastMarkTime = decodeWord lastMarkTimeBytes 0
+          blockTimestamp = decodeWord blockTimestampBytes 0
+      if maintenanceMarginBps <= 0 || fadMarginBps <= 0 || capPrice <= 0 || maxStaleness <= 0 || blockTimestamp <= 0
+        then Left "Liquidation risk globals contained a non-positive margin rate, price cap, freshness limit, or block timestamp"
+        else
+          Right
+            LiquidationRiskGlobals
+              { lrgCapPrice = capPrice
+              , lrgRequiredMarginBps = requiredMarginBps
+              , lrgAdverseConfidenceMultiplierBps = multiplierBps
+              , lrgPythContract = pythContract
+              , lrgMaxStaleness = maxStaleness
+              , lrgMaxConfidenceRatioBps = maxConfidenceRatioBps
+              , lrgBlockTimestamp = blockTimestamp
+              , lrgLastMarkTime = lastMarkTime
+              }
+    _ ->
+      Left $
+        "Expected 11 liquidation risk results, received " <> tshow (length results)
+  where
+    successfulResult label minimumLength result
+      | not $ Multicall.resultSuccess result = Left $ label <> " subcall failed"
+      | BS.length (Multicall.resultData result) < minimumLength =
+          Left $
+            label
+              <> " returned "
+              <> tshow (BS.length $ Multicall.resultData result)
+              <> " bytes; expected at least "
+              <> tshow minimumLength
+      | otherwise = Right $ Multicall.resultData result
+
+    decodeWord bytes index =
+      decodeUint256 $ BS.take 32 $ BS.drop (index * 32) bytes
+
+freshLiquidationRiskInputs
+  :: PythUpdatePayloadRow
+  -> BasketSnapshotRow
+  -> LiquidationRiskGlobals
+  -> Either Text FreshLiquidationRiskInputs
+freshLiquidationRiskInputs payload basket globals = do
+  components <- decodeCachedLiquidationComponents payload basket
+  freshLiquidationRiskInputsFromComponents components globals
+
+decodeCachedLiquidationComponents
+  :: PythUpdatePayloadRow
+  -> BasketSnapshotRow
+  -> Either Text [LiquidationBasketComponent]
+decodeCachedLiquidationComponents payload basket = do
+  payloadPublishTimes <- decodeJson "Pyth payload publish times" $ puprPublishTimes payload
+  components <- decodeJson "basket components" $ bsrComponents basket
+  whenEither (null components) "Basket snapshot did not contain any components"
+  whenEither
+    (length components /= length payloadPublishTimes)
+    "Basket component count did not match the Pyth payload publish-time count"
+  let componentPublishTimes = map lbcPublishTime components
+  whenEither
+    (sort componentPublishTimes /= sort payloadPublishTimes)
+    "Basket component publish times did not match the Pyth payload"
+  whenEither
+    (minimum componentPublishTimes /= puprMinPublishTime payload)
+    "Basket component minimum publish time did not match the Pyth payload"
+  whenEither
+    (maximum componentPublishTimes /= puprMaxPublishTime payload)
+    "Basket component maximum publish time did not match the Pyth payload"
+  feedIds <- traverse decodeLiquidationFeedId components
+  whenEither
+    (length (nub feedIds) /= length feedIds)
+    "Basket snapshot contained duplicate Pyth feed IDs"
+  contributions <- traverse basketComponentContribution components
+  let reconstructedPrice = sum contributions
+  whenEither
+    (reconstructedPrice /= bsrBasketPrice basket)
+    "Basket components did not reconstruct the cached basket price"
+  pure components
+  where
+    decodeJson :: (FromJSON value) => Text -> Value -> Either Text value
+    decodeJson label value =
+      case fromJSON value of
+        Error err -> Left $ label <> " could not be decoded: " <> T.pack err
+        Success decoded -> Right decoded
+
+freshLiquidationRiskInputsFromComponents
+  :: [LiquidationBasketComponent]
+  -> LiquidationRiskGlobals
+  -> Either Text FreshLiquidationRiskInputs
+freshLiquidationRiskInputsFromComponents components globals = do
+  whenEither (null components) "Liquidation basket did not contain any components"
+  contributions <- traverse basketComponentContribution components
+  confidenceContributions <-
+    traverse (uncurry basketComponentConfidenceContribution) $ zip components contributions
+  let reconstructedPrice = sum contributions
+      aggregateConfidence = sum confidenceContributions
+  whenEither (reconstructedPrice <= 0) "Liquidation basket price must be positive"
+  pure
+    FreshLiquidationRiskInputs
+      { flriNeutralPrice = reconstructedPrice
+      , flriBasketConfidence = aggregateConfidence
+      , flriCapPrice = lrgCapPrice globals
+      , flriRequiredMarginBps = lrgRequiredMarginBps globals
+      , flriAdverseConfidenceMultiplierBps = lrgAdverseConfidenceMultiplierBps globals
+      , flriRiskBufferBps = liquidationRiskBufferBps
+      }
+
+decodeLiquidationFeedId :: LiquidationBasketComponent -> Either Text ByteString
+decodeLiquidationFeedId component = do
+  let feedId = T.strip $ lbcFeedId component
+  decoded <-
+    case B16.decode (TE.encodeUtf8 $ normalizeFeedId feedId) of
+      Left err -> Left $ "Invalid Pyth feed ID " <> feedId <> ": " <> T.pack err
+      Right bytes -> Right bytes
+  whenEither
+    (BS.length decoded /= 32)
+    ("Pyth feed ID must be exactly 32 bytes: " <> feedId)
+  pure decoded
+
+pythStoredPriceCalls
+  :: Text
+  -> [LiquidationBasketComponent]
+  -> Either Text [Multicall.Call]
+pythStoredPriceCalls pythContract components =
+  forM components $ \component -> do
+    feedId <- decodeLiquidationFeedId component
+    pure
+      Multicall.Call
+        { Multicall.callTarget = pythContract
+        , Multicall.callAllowFailure = True
+        , Multicall.callCalldata = encodeCall "getPriceUnsafe(bytes32)" [feedId]
+        }
+
+decodePythStoredPriceResults
+  :: Int
+  -> [Multicall.CallResult]
+  -> Either Text [PythStoredPrice]
+decodePythStoredPriceResults expectedCount results
+  | length results /= expectedCount =
+      Left $
+        "Expected "
+          <> tshow expectedCount
+          <> " Pyth stored-price results, received "
+          <> tshow (length results)
+  | otherwise = traverse decodeResult $ zip [0 :: Int ..] results
+  where
+    decodeResult (index, result)
+      | not $ Multicall.resultSuccess result =
+          Left $ "Pyth stored-price subcall " <> tshow index <> " failed"
+      | BS.length bytes /= 4 * 32 =
+          Left $
+            "Pyth stored-price subcall "
+              <> tshow index
+              <> " returned "
+              <> tshow (BS.length bytes)
+              <> " bytes; expected 128"
+      | rawPrice < 1 || rawPrice > maxInt64 =
+          Left $ "Pyth stored-price subcall " <> tshow index <> " returned an invalid int64 price"
+      | confidence > maxUint64 =
+          Left $ "Pyth stored-price subcall " <> tshow index <> " returned an invalid uint64 confidence"
+      | exponentInteger < minInt32 || exponentInteger > maxInt32 =
+          Left $ "Pyth stored-price subcall " <> tshow index <> " returned an invalid int32 exponent"
+      | otherwise =
+          Right
+            PythStoredPrice
+              { pspPrice = rawPrice
+              , pspConfidence = confidence
+              , pspExponent = fromInteger exponentInteger
+              , pspPublishTime = publishTime
+              }
+      where
+        bytes = Multicall.resultData result
+        wordAt offset = BS.take 32 $ BS.drop offset bytes
+        rawPrice = decodeInt256 $ wordAt 0
+        confidence = decodeUint256 $ wordAt 32
+        exponentInteger = decodeInt256 $ wordAt 64
+        publishTime = decodeUint256 $ wordAt 96
+
+    minInt32 = negate $ 2 ^ (31 :: Int)
+    maxInt32 = 2 ^ (31 :: Int) - 1
+    maxInt64 = 2 ^ (63 :: Int) - 1
+    maxUint64 = 2 ^ (64 :: Int) - 1
+
+mergeLiquidationBasketComponents
+  :: [LiquidationBasketComponent]
+  -> [PythStoredPrice]
+  -> Either Text [LiquidationBasketComponent]
+mergeLiquidationBasketComponents components storedPrices = do
+  whenEither
+    (length components /= length storedPrices)
+    "Pyth stored-price count did not match the liquidation basket"
+  sequence $ zipWith mergeComponent components storedPrices
+  where
+    -- Pyth's updatePriceFeeds keeps the existing value when its publish time is
+    -- equal to or newer than the submitted update. Reproduce that component by
+    -- component; comparing only whole-basket snapshots misses mixed states.
+    mergeComponent component stored
+      | pspPublishTime stored < lbcPublishTime component = Right component
+      | otherwise = do
+          normalizedPrice <-
+            if lbcInverted component
+              then invertPythPrice (pspPrice stored) (pspExponent stored)
+              else normalizePythPrice (pspPrice stored) (pspExponent stored)
+          pure
+            component
+              { lbcPrice = normalizedPrice
+              , lbcRawPrice = pspPrice stored
+              , lbcConfidence = pspConfidence stored
+              , lbcExponent = pspExponent stored
+              , lbcPublishTime = pspPublishTime stored
+              }
+
+validateMergedLiquidationBasket
+  :: LiquidationRiskGlobals
+  -> [LiquidationBasketComponent]
+  -> Either Text ()
+validateMergedLiquidationBasket globals components = do
+  whenEither (null components) "Liquidation basket did not contain any components"
+  let publishTimes = map lbcPublishTime components
+      minPublishTime = minimum publishTimes
+      maxPublishTime = maximum publishTimes
+      blockTimestamp = lrgBlockTimestamp globals
+      allowedAge = lrgMaxStaleness globals
+  whenEither (minPublishTime <= 0) "Liquidation basket contained a non-positive publish time"
+  whenEither
+    (maxPublishTime > blockTimestamp)
+    "Merged Pyth basket contained a future publish time"
+  whenEither
+    (blockTimestamp - minPublishTime > allowedAge)
+    "Merged Pyth basket was outside the liquidation freshness window"
+  whenEither
+    (maxPublishTime - minPublishTime > allowedAge)
+    "Merged Pyth basket exceeded the liquidation publish-time divergence window"
+  whenEither
+    (minPublishTime < lrgLastMarkTime globals)
+    "Merged Pyth basket predated the engine's last mark"
+  forM_ components $ \component -> do
+    whenEither
+      (lbcRawPrice component <= 0)
+      "Merged Pyth basket contained a non-positive component price"
+    whenEither
+      ( lbcConfidence component * basisPointScale
+          > lbcRawPrice component * lrgMaxConfidenceRatioBps globals
+      )
+      "Merged Pyth basket contained a component with confidence wider than the oracle policy"
+
+freshLiquidationRiskInputsFromCache
+  :: PythUpdatePayloadRow
+  -> BasketSnapshotRow
+  -> Integer -- price cap
+  -> Integer -- conservative maintenance margin bps
+  -> Integer -- adverse confidence multiplier bps
+  -> Either Text FreshLiquidationRiskInputs
+freshLiquidationRiskInputsFromCache payload basket capPrice requiredMarginBps multiplierBps =
+  freshLiquidationRiskInputs
+    payload
+    basket
+    LiquidationRiskGlobals
+      { lrgCapPrice = capPrice
+      , lrgRequiredMarginBps = requiredMarginBps
+      , lrgAdverseConfidenceMultiplierBps = multiplierBps
+      , lrgPythContract = ""
+      , lrgMaxStaleness = 0
+      , lrgMaxConfidenceRatioBps = 0
+      , lrgBlockTimestamp = 0
+      , lrgLastMarkTime = 0
+      }
+
+basketComponentContribution
+  :: LiquidationBasketComponent
+  -> Either Text Integer
+basketComponentContribution component
+  | lbcPrice component <= 0 = Left "Basket component price must be positive"
+  | lbcWeightBps component <= 0 = Left "Basket component weight must be positive"
+  | lbcBasePrice component <= 0 = Left "Basket component base price must be positive"
+  | otherwise =
+      Right $
+        lbcPrice component
+          * lbcWeightBps component
+          * basisPointScale
+          `div` lbcBasePrice component
+
+basketComponentConfidenceContribution
+  :: LiquidationBasketComponent
+  -> Integer
+  -> Either Text Integer
+basketComponentConfidenceContribution component contribution
+  | lbcConfidence component < 0 = Left "Basket component confidence cannot be negative"
+  | lbcRawPrice component <= 0 = Left "Basket component raw price must be positive"
+  | otherwise =
+      Right $ contribution * lbcConfidence component `div` lbcRawPrice component
+
+whenEither :: Bool -> Text -> Either Text ()
+whenEither condition err
+  | condition = Left err
+  | otherwise = Right ()
+
+liquidationRiskBufferBps :: Integer
+liquidationRiskBufferBps = 5
+
+loadFreshLiquidationRiskInputs
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> EthClient
+  -> Integer
+  -> PythUpdatePayloadRow
+  -> IO (Either Text FreshLiquidationRiskInputs)
+loadFreshLiquidationRiskInputs cfg conn client blockNumber payload = do
+  basket <- getLatestBasketSnapshot conn
+  case basket of
+    Nothing -> pure $ Left "No basket snapshot was available for the cached Pyth payload"
+    Just snapshot ->
+      case decodeCachedLiquidationComponents payload snapshot of
+        Left err -> pure $ Left err
+        Right cachedComponents -> do
+          globalsResult <-
+            Multicall.multicallAtBlock client (liquidationRiskCalls cfg) blockNumber
+          case firstRpcError "risk Multicall failed" globalsResult >>= decodeLiquidationRiskGlobals of
+            Left err -> pure $ Left err
+            Right globals ->
+              case pythStoredPriceCalls (lrgPythContract globals) cachedComponents of
+                Left err -> pure $ Left err
+                Right calls -> do
+                  storedResult <- Multicall.multicallAtBlock client calls blockNumber
+                  pure $ do
+                    storedCallResults <- firstRpcError "Pyth stored-price Multicall failed" storedResult
+                    storedPrices <-
+                      decodePythStoredPriceResults
+                        (length cachedComponents)
+                        storedCallResults
+                    mergedComponents <-
+                      mergeLiquidationBasketComponents cachedComponents storedPrices
+                    validateMergedLiquidationBasket globals mergedComponents
+                    freshLiquidationRiskInputsFromComponents mergedComponents globals
+
+loadCandidateSnapshots
+  :: LiquidationWorkerConfig
+  -> EthClient
+  -> Integer
+  -> [PerpsLiquidationCandidateRow]
+  -> IO [(PerpsLiquidationCandidateRow, Either Text AccountLedgerSnapshot)]
+loadCandidateSnapshots cfg client blockNumber candidates =
+  fmap concat $ forM (chunksOf (lwcMulticallSize cfg) candidates) $ \candidateChunk -> do
+    let calls =
+          liquidationSnapshotCalls
+            (lwcAccountLens cfg)
+            (map plcrAccount candidateChunk)
+    result <- Multicall.multicallAtBlock client calls blockNumber
+    pure $
+      case result of
+        Left err ->
+          zip candidateChunk $
+            repeat $ Left $ "snapshot Multicall failed: " <> rpcErrorText err
+        Right callResults ->
+          case decodeLiquidationSnapshotResults (length candidateChunk) callResults of
+            Left err -> zip candidateChunk $ repeat $ Left err
+            Right snapshots -> zip candidateChunk snapshots
+
+loadConfirmedPositionSizes
+  :: LiquidationWorkerConfig
+  -> EthClient
+  -> Integer
+  -> [PerpsLiquidationCandidateRow]
+  -> IO [(PerpsLiquidationCandidateRow, Either Text Integer)]
+loadConfirmedPositionSizes cfg client blockNumber candidates =
+  fmap concat $ forM (chunksOf (lwcMulticallSize cfg) candidates) $ \candidateChunk -> do
+    let calls =
+          [ Multicall.Call
+              { Multicall.callTarget = lwcCfdEngine cfg
+              , Multicall.callAllowFailure = True
+              , Multicall.callCalldata = Perps.positionsCall $ plcrAccount candidate
+              }
+          | candidate <- candidateChunk
+          ]
+    result <- Multicall.multicallAtBlock client calls blockNumber
+    pure $
+      case result of
+        Left err ->
+          zip candidateChunk $
+            repeat $ Left $ "confirmed-position Multicall failed: " <> rpcErrorText err
+        Right callResults
+          | length callResults /= length candidateChunk ->
+              zip candidateChunk $
+                repeat $
+                  Left $
+                    "Expected "
+                      <> tshow (length candidateChunk)
+                      <> " confirmed-position results, received "
+                      <> tshow (length callResults)
+          | otherwise -> zip candidateChunk $ zipWith decodePosition [0 :: Int ..] callResults
+  where
+    decodePosition index result
+      | not $ Multicall.resultSuccess result =
+          Left $ "Confirmed-position subcall " <> tshow index <> " failed"
+      | otherwise =
+          case Perps.decodePositionSize $ Multicall.resultData result of
+            Left err ->
+              Left $
+                "Confirmed-position subcall "
+                  <> tshow index
+                  <> " could not be decoded: "
+                  <> rpcErrorText err
+            Right size -> Right size
+
+chunksOf :: Int -> [value] -> [[value]]
+chunksOf size values
+  | null values = []
+  | otherwise =
+      let (next, remaining) = splitAt (max 1 size) values
+       in next : chunksOf size remaining
+
+firstRpcError
+  :: Text
+  -> Either RpcError value
+  -> Either Text value
+firstRpcError label = \case
+  Left err -> Left $ label <> ": " <> rpcErrorText err
+  Right value -> Right value
+
+tshow :: (Show value) => value -> Text
+tshow = T.pack . show
 
 runLiquidationWorker :: LiquidationWorkerConfig -> DbPool -> EthClient -> LiquidationWorkerMode -> Bool -> IO ()
 runLiquidationWorker cfg pool client mode dryRun =
@@ -211,8 +946,25 @@ runLiquidationWorker cfg pool client mode dryRun =
   where
     loop conn workerAddress = do
       runIteration cfg conn client workerAddress dryRun
-      threadDelay (lwcPollSeconds cfg * 1_000_000)
+      waitForNextSweep conn workerAddress $ lwcPollSeconds cfg
       loop conn workerAddress
+
+    -- Discovery and health reads run every ten minutes, but a transaction that
+    -- was already submitted still needs timely receipt, rebroadcast, and nonce
+    -- reconciliation. An empty pending check is database-only and makes no RPC.
+    waitForNextSweep _ _ remainingSeconds | remainingSeconds <= 0 = pure ()
+    waitForNextSweep conn workerAddress remainingSeconds = do
+      let delaySeconds = min pendingReconciliationPollSeconds remainingSeconds
+      threadDelay $ delaySeconds * 1_000_000
+      pending <-
+        getPendingPerpsLiquidationCandidate
+          conn
+          (lwcChainId cfg)
+          (lwcCfdEngine cfg)
+          (lwcPendingReplacementSeconds cfg)
+          pendingBroadcastRetrySeconds
+      forM_ pending $ reconcilePendingCandidate cfg conn client workerAddress
+      waitForNextSweep conn workerAddress $ remainingSeconds - delaySeconds
 
 runIteration :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO ()
 runIteration cfg conn client workerAddress dryRun = do
@@ -234,7 +986,9 @@ indexNewCandidates cfg conn client = do
         "liquidation_chain_head_fetch_failed"
         "Liquidation worker could not fetch the chain head"
         (workerLogFields cfg <> [field "error" $ rpcErrorText err])
-    Right latestBlock -> do
+    Right latestBlock -> indexPages liquidationDiscoveryCatchupPageLimit latestBlock
+  where
+    indexPages remainingPages latestBlock = do
       lastIndexed <- getPerpsLiquidationLastIndexedBlock conn (lwcChainId cfg) (lwcCfdEngine cfg)
       let indexRange =
             liquidationIndexRange
@@ -244,6 +998,8 @@ indexNewCandidates cfg conn client = do
               (lwcIndexerOverlapBlocks cfg)
               lastIndexed
               latestBlock
+          confirmedLatest =
+            max 0 $ latestBlock - fromIntegral (max 0 $ lwcIndexerConfirmations cfg)
       case indexRange of
         Nothing -> pure ()
         Just (startBlock, endBlock) -> do
@@ -288,6 +1044,20 @@ indexNewCandidates cfg conn client = do
                          , field "candidate_count" $ length discovered
                          ]
                   )
+              when (endBlock < confirmedLatest) $
+                if remainingPages > 1
+                  then indexPages (remainingPages - 1) latestBlock
+                  else
+                    logWarnEvery
+                      60
+                      "liquidation_candidate_catchup_limited"
+                      "Liquidation discovery reached its bounded catch-up page limit before the confirmed head"
+                      ( workerLogFields cfg
+                          <> [ field "last_indexed_block" endBlock
+                             , field "confirmed_head_block" confirmedLatest
+                             , field "page_limit" liquidationDiscoveryCatchupPageLimit
+                             ]
+                      )
 
 liquidationIndexRange
   :: Integer -- configured start block
@@ -336,66 +1106,237 @@ processCandidates cfg conn client workerAddress dryRun = do
           (lwcCfdEngine cfg)
           (lwcScanBatchSize cfg)
       unless (null candidates) $ do
-        mPayload <- getLatestPythUpdatePayload conn
-        case mPayload of
-          Nothing ->
+        blockResult <- ethBlockNumber client
+        case blockResult of
+          Left err ->
             logWarnEvery
               60
-              "liquidation_pyth_payload_missing"
-              "Liquidation scan is waiting for a cached latest Pyth payload"
-              (workerLogFields cfg <> [field "candidate_count" $ length candidates])
-          Just payload ->
-            case decodeCachedPythPayload payload of
-              Left err ->
-                logErrorEvery
-                  60
-                  "liquidation_pyth_payload_invalid"
-                  "Latest cached Pyth payload could not be decoded"
-                  (workerLogFields cfg <> [field "error" err])
-              Right (_, updateData) -> do
-                let payloadKey =
-                      liquidationPayloadFingerprint
-                        (lwcPletherOracle cfg)
-                        (lwcOrderRouter cfg)
-                        updateData
-                rejectedPayload <-
-                  getPerpsLiquidationRejectedPayload
-                    conn
-                    (lwcChainId cfg)
-                    (lwcCfdEngine cfg)
-                case
-                    liquidationPayloadCircuitDecision
-                      (plrprPayloadKey <$> rejectedPayload)
-                      payloadKey
-                  of
-                  SuppressRejectedLiquidationPayload ->
-                    case rejectedPayload of
-                      Just rejected ->
-                        logWarnEvery
-                          60
-                          "liquidation_pyth_payload_suppressed"
-                          "Liquidation scan is waiting for a new Pyth payload after a deterministic oracle rejection"
-                          ( workerLogFields cfg
-                              <> [ field "candidate_count" $ length candidates
-                                 , field "payload_key" payloadKey
-                                 , field "revert_selector" $ plrprSelector rejected
-                                 , field "rejected_at" $ plrprRejectedAt rejected
-                                 , field "error" $ plrprError rejected
-                                 ]
-                          )
-                      Nothing -> processPayload candidates payloadKey updateData
-                  ClearRejectedLiquidationPayload -> do
-                    clearPerpsLiquidationRejectedPayload
+              "liquidation_snapshot_block_fetch_failed"
+              "Liquidation worker could not resolve an exact block for its batched position reads"
+              ( workerLogFields cfg
+                  <> [ field "candidate_count" $ length candidates
+                     , field "error" $ rpcErrorText err
+                     ]
+              )
+          Right snapshotBlock -> processCandidatesAtBlock snapshotBlock candidates
+
+    processCandidatesAtBlock snapshotBlock candidates = do
+      snapshots <- loadCandidateSnapshots cfg client snapshotBlock candidates
+      forM_ snapshots $ \(candidate, snapshotResult) ->
+        case snapshotResult of
+          Left err ->
+            recordCandidateError cfg conn candidate "snapshot_read" err
+          Right _ -> pure ()
+
+      let flatCandidates =
+            [ candidate
+            | (candidate, Right snapshot) <- snapshots
+            , not $ alsHasPosition snapshot
+            , alsSize snapshot == 0
+            ]
+      reconcileFlatCandidates snapshotBlock flatCandidates
+
+      mPayload <- getLatestPythUpdatePayload conn
+      case mPayload of
+        Nothing -> do
+          recordUnclassifiedOpenCandidates
+            snapshots
+            "No cached latest Pyth payload was available"
+          logWarnEvery
+            60
+            "liquidation_pyth_payload_missing"
+            "Liquidation scan is waiting for a cached latest Pyth payload"
+            (workerLogFields cfg <> [field "candidate_count" $ length candidates])
+        Just payload ->
+          case decodeCachedPythPayload payload of
+            Left err -> do
+              recordUnclassifiedOpenCandidates
+                snapshots
+                ("Latest cached Pyth payload could not be decoded: " <> err)
+              logErrorEvery
+                60
+                "liquidation_pyth_payload_invalid"
+                "Latest cached Pyth payload could not be decoded"
+                (workerLogFields cfg <> [field "error" err])
+            Right (_, updateData) -> do
+              riskResult <-
+                loadFreshLiquidationRiskInputs
+                  cfg
+                  conn
+                  client
+                  snapshotBlock
+                  payload
+              let riskInputs = either (const Nothing) Just riskResult
+                  classified =
+                    [ (candidate, snapshotResult, liquidationRiskDecision riskInputs snapshotResult)
+                    | (candidate, snapshotResult) <- snapshots
+                    ]
+                  simulationCandidates =
+                    [ candidate
+                    | (candidate, _, LiquidationPositionRisky) <- classified
+                    ]
+              case riskResult of
+                Left err ->
+                  logWarnEvery
+                    60
+                    "liquidation_risk_inputs_unavailable"
+                    "Liquidation risk inputs were unavailable; only exact-block stored-risk positions will be simulated"
+                    ( workerLogFields cfg
+                        <> [ field "candidate_count" $ length candidates
+                           , field "snapshot_block" snapshotBlock
+                           , field "error" err
+                           ]
+                    )
+                Right _ -> pure ()
+
+              -- Rotate every classified healthy or unknown account. The DB
+              -- query orders by last_checked_at, so leaving these untouched
+              -- would permanently starve candidates beyond the first page.
+              -- Unknown state is retained and surfaced as an error, but never
+              -- spends an eth_estimateGas call.
+              forM_ classified $ \(candidate, snapshotResult, decision) ->
+                case decision of
+                  LiquidationPositionHealthy ->
+                    markPerpsLiquidationCandidateChecked
                       conn
                       (lwcChainId cfg)
                       (lwcCfdEngine cfg)
-                    logInfo
-                      "liquidation_pyth_payload_changed"
-                      "Liquidation scan resumed with a new Pyth payload"
-                      (workerLogFields cfg <> [field "payload_key" payloadKey])
-                    processPayload candidates payloadKey updateData
-                  ProcessLiquidationPayload ->
-                    processPayload candidates payloadKey updateData
+                      (plcrAccount candidate)
+                  LiquidationRiskUnknown err ->
+                    case snapshotResult of
+                      -- Snapshot read failures were recorded above already.
+                      Left _ -> pure ()
+                      Right _ ->
+                        recordCandidateError
+                          cfg
+                          conn
+                          candidate
+                          "risk_classification"
+                          err
+                  LiquidationPositionClosed -> pure ()
+                  LiquidationPositionRisky -> pure ()
+
+              let unknownCandidateCount =
+                    length
+                      [ ()
+                      | (_, _, LiquidationRiskUnknown _) <- classified
+                      ]
+                  healthyCandidateCount =
+                    length
+                      [ ()
+                      | (_, _, LiquidationPositionHealthy) <- classified
+                      ]
+
+              logInfoEvery
+                300
+                "liquidation_candidates_classified"
+                "Liquidation worker classified a batched candidate sweep"
+                ( workerLogFields cfg
+                    <> [ field "candidate_count" $ length candidates
+                       , field "snapshot_block" snapshotBlock
+                       , field "multicall_size" $ lwcMulticallSize cfg
+                       , field "snapshot_failure_count" $
+                           length [() | (_, Left _) <- snapshots]
+                       , field "flat_candidate_count" $ length flatCandidates
+                       , field "healthy_candidate_count" healthyCandidateCount
+                       , field "unknown_candidate_count" unknownCandidateCount
+                       , field "simulation_candidate_count" $ length simulationCandidates
+                       ]
+                )
+
+              unless (null simulationCandidates) $
+                processClassifiedPayload
+                  simulationCandidates
+                  updateData
+
+    recordUnclassifiedOpenCandidates snapshots reason =
+      forM_ snapshots $ \(candidate, snapshotResult) ->
+        case snapshotResult of
+          Right snapshot
+            | alsHasPosition snapshot || alsSize snapshot /= 0 ->
+                recordCandidateError
+                  cfg
+                  conn
+                  candidate
+                  "risk_classification"
+                  reason
+          _ -> pure ()
+
+    reconcileFlatCandidates _ [] = pure ()
+    reconcileFlatCandidates snapshotBlock flatCandidates = do
+      let confirmedBlock =
+            max 0 $
+              snapshotBlock - fromIntegral (max 0 $ lwcIndexerConfirmations cfg)
+      confirmed <-
+        loadConfirmedPositionSizes cfg client confirmedBlock flatCandidates
+      forM_ confirmed $ \(candidate, positionResult) ->
+        case positionResult of
+          Left err ->
+            recordCandidateError
+              cfg
+              conn
+              candidate
+              "confirmed_position_read"
+              err
+          Right 0 ->
+            deletePerpsLiquidationCandidate
+              conn
+              (lwcChainId cfg)
+              (lwcCfdEngine cfg)
+              (plcrAccount candidate)
+          Right _ ->
+            -- A close visible at the scan block can still be reorged out.
+            -- Retain the opening candidate until the confirmed read is zero.
+            markPerpsLiquidationCandidateChecked
+              conn
+              (lwcChainId cfg)
+              (lwcCfdEngine cfg)
+              (plcrAccount candidate)
+
+    processClassifiedPayload candidates updateData = do
+      let payloadKey =
+            liquidationPayloadFingerprint
+              (lwcPletherOracle cfg)
+              (lwcOrderRouter cfg)
+              updateData
+      rejectedPayload <-
+        getPerpsLiquidationRejectedPayload
+          conn
+          (lwcChainId cfg)
+          (lwcCfdEngine cfg)
+      case
+          liquidationPayloadCircuitDecision
+            (plrprPayloadKey <$> rejectedPayload)
+            payloadKey
+        of
+        SuppressRejectedLiquidationPayload ->
+          case rejectedPayload of
+            Just rejected ->
+              logWarnEvery
+                60
+                "liquidation_pyth_payload_suppressed"
+                "Liquidation scan is waiting for a new Pyth payload after a deterministic oracle rejection"
+                ( workerLogFields cfg
+                    <> [ field "candidate_count" $ length candidates
+                       , field "payload_key" payloadKey
+                       , field "revert_selector" $ plrprSelector rejected
+                       , field "rejected_at" $ plrprRejectedAt rejected
+                       , field "error" $ plrprError rejected
+                       ]
+                )
+            Nothing -> processPayload candidates payloadKey updateData
+        ClearRejectedLiquidationPayload -> do
+          clearPerpsLiquidationRejectedPayload
+            conn
+            (lwcChainId cfg)
+            (lwcCfdEngine cfg)
+          logInfo
+            "liquidation_pyth_payload_changed"
+            "Liquidation scan resumed with a new Pyth payload"
+            (workerLogFields cfg <> [field "payload_key" payloadKey])
+          processPayload candidates payloadKey updateData
+        ProcessLiquidationPayload ->
+          processPayload candidates payloadKey updateData
 
     processPayload candidates payloadKey updateData = do
       feeResult <- Perps.getUpdateFee client (lwcPletherOracle cfg) updateData
@@ -433,138 +1374,119 @@ processCandidate
   -> IO Bool
 processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate = do
   let account = plcrAccount candidate
-  positionResult <- Perps.getPositionSize client (lwcCfdEngine cfg) account
-  case positionResult of
-    Left err -> do
-      recordCandidateError cfg conn candidate "position_read" $ "position read failed: " <> rpcErrorText err
-      pure False
-    Right 0 -> do
-      confirmedPosition <- getConfirmedPositionSize cfg client account
-      case confirmedPosition of
-        Left err -> do
-          recordCandidateError cfg conn candidate "confirmed_position_read" $
-            "confirmed position read failed: " <> rpcErrorText err
-          pure False
-        Right 0 -> do
-          deletePerpsLiquidationCandidate conn (lwcChainId cfg) (lwcCfdEngine cfg) account
-          pure True
-        Right _ -> do
-          -- A close/liquidation visible only at latest may still be reorged out.
-          -- Keep the original opening candidate until zero size is confirmed.
+      callData = Perps.executeLiquidationCall account updateData
+  gasResult <- ethEstimateGas client workerAddress (lwcOrderRouter cfg) updateFee callData
+  case gasResult of
+    Left err
+      | isExpectedLiquidationSimulationRevert err -> do
+          -- A healthy position and a liquidation race both revert during simulation.
+          -- The next sweep re-reads authoritative on-chain position state.
           markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
           pure True
-    Right _ -> do
-      let callData = Perps.executeLiquidationCall account updateData
-      gasResult <- ethEstimateGas client workerAddress (lwcOrderRouter cfg) updateFee callData
-      case gasResult of
-        Left err
-          | isExpectedLiquidationSimulationRevert err -> do
-              -- A healthy position and a liquidation race both revert during simulation.
-              -- The next sweep re-reads authoritative on-chain position state.
-              markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
-              pure True
-          | Just selectorText <- payloadGlobalSimulationRevertSelector err -> do
-              let failure = "liquidation simulation rejected Pyth payload: " <> rpcErrorText err
-              recordPerpsLiquidationRejectedPayload
-                conn
-                (lwcChainId cfg)
-                (lwcCfdEngine cfg)
-                payloadKey
-                selectorText
-                failure
-              recordCandidateError cfg conn candidate "simulation" failure
-              logError
-                "liquidation_pyth_payload_rejected"
-                "Liquidation worker suppressed a deterministic Pyth payload until the cache changes"
-                ( candidateLogFields cfg candidate
-                    <> [ field "payload_key" payloadKey
-                       , field "revert_selector" selectorText
-                       , field "error" failure
-                       ]
-                )
-              pure False
-          | otherwise -> do
-              recordCandidateError cfg conn candidate "simulation" $ "liquidation simulation failed: " <> rpcErrorText err
-              pure False
-        Right estimatedGas -> do
-          logInfo
-            "liquidation_opportunity_detected"
-            "Liquidation opportunity passed transaction simulation"
+      | Just selectorText <- payloadGlobalSimulationRevertSelector err -> do
+          let failure = "liquidation simulation rejected Pyth payload: " <> rpcErrorText err
+          recordPerpsLiquidationRejectedPayload
+            conn
+            (lwcChainId cfg)
+            (lwcCfdEngine cfg)
+            payloadKey
+            selectorText
+            failure
+          recordCandidateError cfg conn candidate "simulation" failure
+          logError
+            "liquidation_pyth_payload_rejected"
+            "Liquidation worker suppressed a deterministic Pyth payload until the cache changes"
             ( candidateLogFields cfg candidate
-                <> [ field "estimated_gas" estimatedGas
-                   , field "update_fee_wei" $ show updateFee
-                   , field "dry_run" dryRun
+                <> [ field "payload_key" payloadKey
+                   , field "revert_selector" selectorText
+                   , field "error" failure
                    ]
             )
-          if dryRun
-            then do
-              markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
-              pure True
-            else do
-              prepared <-
-                prepareLiquidationTransaction cfg client workerAddress estimatedGas updateFee callData
-              case prepared of
+          pure False
+      | otherwise -> do
+          recordCandidateError cfg conn candidate "simulation" $
+            "liquidation simulation failed: " <> rpcErrorText err
+          pure False
+    Right estimatedGas -> do
+      logInfo
+        "liquidation_opportunity_detected"
+        "Liquidation opportunity passed transaction simulation"
+        ( candidateLogFields cfg candidate
+            <> [ field "estimated_gas" estimatedGas
+               , field "update_fee_wei" $ show updateFee
+               , field "dry_run" dryRun
+               ]
+        )
+      if dryRun
+        then do
+          markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
+          pure True
+        else do
+          prepared <-
+            prepareLiquidationTransaction cfg client workerAddress estimatedGas updateFee callData
+          case prepared of
+            Left err -> do
+              recordCandidateError cfg conn candidate "transaction_prepare" err
+              pure False
+            Right (tx, signed) -> do
+              affordabilityResult <- checkTransactionAffordability client workerAddress tx
+              case affordabilityResult of
                 Left err -> do
-                  recordCandidateError cfg conn candidate "transaction_prepare" err
+                  recordSignerTransactionRetry cfg conn tx err
+                  recordCandidateError cfg conn candidate "transaction_affordability" err
                   pure False
-                Right (tx, signed) -> do
-                  affordabilityResult <- checkTransactionAffordability client workerAddress tx
-                  case affordabilityResult of
+                Right _ -> do
+                  let rawTx = signedRawTransaction signed
+                      txHash = signedTransactionHash signed
+                      pendingCandidate =
+                        candidate
+                          { plcrAttemptCount = plcrAttemptCount candidate + 1
+                          , plcrPendingTxHash = Just txHash
+                          , plcrPendingNonce = Just $ txNonce tx
+                          }
+                  -- Persist the deterministic signed hash before broadcast. If the
+                  -- RPC response is lost, the next iteration reconciles this nonce
+                  -- instead of creating a transaction behind it.
+                  persistPendingTransaction cfg conn workerAddress account tx signed
+                  recordPendingBroadcastAttempt cfg conn account
+                  sendResult <- ethSendRawTransaction client rawTx
+                  case sendResult of
                     Left err -> do
-                      recordSignerTransactionRetry cfg conn tx err
-                      recordCandidateError cfg conn candidate "transaction_affordability" err
+                      when (isInsufficientFundsRpcError err) $
+                        recordSignerTransactionRetry cfg conn tx (rpcErrorText err)
+                      recordCandidateError cfg conn pendingCandidate "transaction_broadcast" $
+                        "broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
                       pure False
-                    Right _ -> do
-                      let rawTx = signedRawTransaction signed
-                          txHash = signedTransactionHash signed
-                          pendingCandidate =
-                            candidate
-                              { plcrAttemptCount = plcrAttemptCount candidate + 1
-                              , plcrPendingTxHash = Just txHash
-                              , plcrPendingNonce = Just $ txNonce tx
-                              }
-                      -- Persist the deterministic signed hash before broadcast. If the
-                      -- RPC response is lost, the next iteration reconciles this nonce
-                      -- instead of creating a transaction behind it.
-                      persistPendingTransaction cfg conn workerAddress account tx signed
-                      recordPendingBroadcastAttempt cfg conn account
-                      sendResult <- ethSendRawTransaction client rawTx
-                      case sendResult of
-                        Left err -> do
-                          when (isInsufficientFundsRpcError err) $
-                            recordSignerTransactionRetry cfg conn tx (rpcErrorText err)
-                          recordCandidateError cfg conn pendingCandidate "transaction_broadcast" $
-                            "broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
+                    Right returnedHash
+                      | normalizeAddress returnedHash /= normalizeAddress txHash -> do
+                          recordCandidateErrorWith
+                            cfg
+                            conn
+                            pendingCandidate
+                            "broadcast_hash_mismatch"
+                            [field "returned_transaction_hash" returnedHash]
+                            "RPC returned a transaction hash that did not match the signed transaction hash"
                           pure False
-                        Right returnedHash
-                          | normalizeAddress returnedHash /= normalizeAddress txHash -> do
-                              recordCandidateErrorWith
-                                cfg
-                                conn
-                                pendingCandidate
-                                "broadcast_hash_mismatch"
-                                [field "returned_transaction_hash" returnedHash]
-                                "RPC returned a transaction hash that did not match the signed transaction hash"
+                      | otherwise -> do
+                          logInfo
+                            "liquidation_transaction_submitted"
+                            "Liquidation transaction was submitted"
+                            ( candidateLogFields cfg pendingCandidate
+                                <> [ field "transaction_hash" txHash
+                                   , field "nonce" $ txNonce tx
+                                   , field "gas_limit" $ txGasLimit tx
+                                   , field "value_wei" $ show $ txValue tx
+                                   , field "max_priority_fee_per_gas_wei" $ show $ txMaxPriorityFeePerGas tx
+                                   , field "max_fee_per_gas_wei" $ show $ txMaxFeePerGas tx
+                                   ]
+                            )
+                          receiptResult <- waitForReceipt client txHash 60
+                          case receiptResult of
+                            Left err -> do
+                              recordCandidateError cfg conn pendingCandidate "receipt_wait" err
                               pure False
-                          | otherwise -> do
-                              logInfo
-                                "liquidation_transaction_submitted"
-                                "Liquidation transaction was submitted"
-                                ( candidateLogFields cfg pendingCandidate
-                                    <> [ field "transaction_hash" txHash
-                                       , field "nonce" $ txNonce tx
-                                       , field "gas_limit" $ txGasLimit tx
-                                       , field "value_wei" $ show $ txValue tx
-                                       , field "max_priority_fee_per_gas_wei" $ show $ txMaxPriorityFeePerGas tx
-                                       , field "max_fee_per_gas_wei" $ show $ txMaxFeePerGas tx
-                                       ]
-                                )
-                              receiptResult <- waitForReceipt client txHash 60
-                              case receiptResult of
-                                Left err -> do
-                                  recordCandidateError cfg conn pendingCandidate "receipt_wait" err
-                                  pure False
-                                Right receipt -> handleLiquidationReceipt cfg conn client pendingCandidate receipt
+                            Right receipt ->
+                              handleLiquidationReceipt cfg conn client pendingCandidate receipt
 
 prepareLiquidationTransaction
   :: LiquidationWorkerConfig
@@ -1142,6 +2064,10 @@ workerLogFields cfg =
   [ field "chain_id" $ lwcChainId cfg
   , field "order_router" $ lwcOrderRouter cfg
   , field "cfd_engine" $ lwcCfdEngine cfg
+  , field "account_lens" $ lwcAccountLens cfg
+  , field "poll_seconds" $ lwcPollSeconds cfg
+  , field "scan_batch_size" $ lwcScanBatchSize cfg
+  , field "multicall_size" $ lwcMulticallSize cfg
   ]
 
 candidateLogFields :: LiquidationWorkerConfig -> PerpsLiquidationCandidateRow -> [LogField]
@@ -1323,6 +2249,15 @@ signerTransactionRetrySeconds = 60
 
 pendingBroadcastRetrySeconds :: Int
 pendingBroadcastRetrySeconds = 60
+
+pendingReconciliationPollSeconds :: Int
+pendingReconciliationPollSeconds = 60
+
+-- Bound startup/outage catch-up without advancing only one 5,000-block page
+-- per ten-minute health sweep. At the default page size this covers five
+-- million blocks in one iteration while still terminating on bad state.
+liquidationDiscoveryCatchupPageLimit :: Int
+liquidationDiscoveryCatchupPageLimit = 1_000
 
 checkSignerTransactionReadiness
   :: LiquidationWorkerConfig

@@ -26,11 +26,17 @@ import Plether.Database.Schema
 import Plether.Ethereum.Client (EthClient, RpcError (..), newClient)
 import Plether.Ethereum.Contracts.Perps
   ( orderSettlementWindow
-  , validatePythUpdateData
-  , validateUniquePythUpdateData
+  , parsePythUpdateData
+  , parseUniquePythUpdateData
   )
 import Plether.Logging (field, logError, logErrorEvery, logInfo, logInfoEvery, logWarnEvery)
-import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
+import Plether.Pyth.Basket
+  ( BasketComponent (..)
+  , BasketComponentPrice
+  , PythPricePoint (..)
+  , basketComponents
+  , computeBasketSnapshot
+  )
 import Plether.Pyth.Hermes
   ( HermesBasketUpdate (..)
   , fetchBasketUpdateAt
@@ -255,7 +261,7 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
           case decodeAdmissionInputs update of
             Left err -> pure $ Left err
             Right (updateData, feedIds) -> do
-              validation <- validateCachePayload
+              admission <- admitCachePayload
                 ethClient
                 cfg
                 historicalBounds
@@ -264,42 +270,49 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                 feedIds
                 minPublishTime
                 maxPublishTime
-              case validation of
+              case admission of
                 Left err ->
                   pure $
                     Left $
                       "Pyth rejected Hermes payload before cache promotion: "
                         <> T.pack (show err)
-                Right () -> do
-                  let minuteBucket = (minPublishTime `div` 60) * 60
-                  withDb pool $ \conn -> do
-                    insertBasketSnapshotWithSource
-                      conn
-                      minuteBucket
-                      60
-                      (hbuBasketPrice update)
-                      (hbuComponents update)
-                      "pyth_hermes_latest"
-                    insertPythUpdatePayload
-                      conn
-                      minPublishTime
-                      maxPublishTime
-                      (toJSON $ hbuPublishTimes update)
-                      (toJSON $ hbuUpdateData update)
-                      (hbuFetchedAt update)
-                      admittedSource
-                  logInfoEvery
-                    300
-                    "basket_cache_progress"
-                    "Pyth basket update was validated on-chain and cached"
-                    [ field "min_publish_time" minPublishTime
-                    , field "max_publish_time" maxPublishTime
-                    , field "minute_bucket" minuteBucket
-                    , field "source" admittedSource
-                    ]
-                  pure $ Right ()
+                Right signedPoints ->
+                  case basketSnapshotFromSignedPrices update signedPoints of
+                    Left err ->
+                      pure $
+                        Left $
+                          "Pyth signed prices did not match Hermes metadata: " <> err
+                    Right (signedBasketPrice, signedComponents) -> do
+                      let minuteBucket = (minPublishTime `div` 60) * 60
+                          signedPublishTimes = map pppPublishTime signedPoints
+                      withDb pool $ \conn -> do
+                        insertBasketSnapshotWithSource
+                          conn
+                          minuteBucket
+                          60
+                          signedBasketPrice
+                          (toJSON signedComponents)
+                          "pyth_hermes_latest"
+                        insertPythUpdatePayload
+                          conn
+                          minPublishTime
+                          maxPublishTime
+                          (toJSON signedPublishTimes)
+                          (toJSON $ hbuUpdateData update)
+                          (hbuFetchedAt update)
+                          admittedSource
+                      logInfoEvery
+                        300
+                        "basket_cache_progress"
+                        "Pyth basket update was decoded on-chain and cached"
+                        [ field "min_publish_time" minPublishTime
+                        , field "max_publish_time" maxPublishTime
+                        , field "minute_bucket" minuteBucket
+                        , field "source" admittedSource
+                        ]
+                      pure $ Right ()
 
-validateCachePayload
+admitCachePayload
   :: EthClient
   -> Config
   -> Maybe (Integer, Integer)
@@ -308,10 +321,10 @@ validateCachePayload
   -> [ByteString]
   -> Integer
   -> Integer
-  -> IO (Either RpcError ())
-validateCachePayload ethClient cfg historicalBounds update updateData feedIds minPublishTime maxPublishTime
+  -> IO (Either RpcError [PythPricePoint])
+admitCachePayload ethClient cfg historicalBounds update updateData feedIds minPublishTime maxPublishTime
   | hbuSource update == "backend_hermes_latest" =
-      validatePythUpdateData
+      parsePythUpdateData
         ethClient
         (cfgPerpsPletherOracle cfg)
         updateData
@@ -323,13 +336,22 @@ validateCachePayload ethClient cfg historicalBounds update updateData feedIds mi
         Nothing ->
           pure $ Left $ RpcJsonError "historical Pyth admission requires the on-chain order reveal bounds"
         Just (routeMinPublishTime, routeMaxPublishTime) ->
-          validateUniquePythUpdateData
+          parseUniquePythUpdateData
             ethClient
             (cfgPerpsPletherOracle cfg)
             updateData
             feedIds
             routeMinPublishTime
             routeMaxPublishTime
+
+basketSnapshotFromSignedPrices
+  :: HermesBasketUpdate
+  -> [PythPricePoint]
+  -> Either T.Text (Integer, [BasketComponentPrice])
+basketSnapshotFromSignedPrices update signedPoints
+  | map pppPublishTime signedPoints /= hbuPublishTimes update =
+      Left "signed PriceFeed[] publish times differed from Hermes parsed publish times"
+  | otherwise = computeBasketSnapshot signedPoints
 
 validateCachePublishTimes :: Config -> HermesBasketUpdate -> Either T.Text (Integer, Integer)
 validateCachePublishTimes cfg update

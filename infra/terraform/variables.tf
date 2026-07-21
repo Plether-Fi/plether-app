@@ -349,12 +349,23 @@ variable "keeper_fee_buffer_bps" {
 
 variable "liquidation_worker_poll_seconds" {
   type    = string
-  default = "1"
+  default = "600"
 }
 
 variable "liquidation_worker_scan_batch_size" {
   type    = string
-  default = "100"
+  default = "1000"
+}
+
+variable "liquidation_worker_multicall_size" {
+  type        = string
+  default     = "10"
+  description = "Number of account-lens reads per liquidation-worker Multicall3 request. Must be between 1 and 100."
+
+  validation {
+    condition     = can(regex("^([1-9]|[1-9][0-9]|100)$", var.liquidation_worker_multicall_size))
+    error_message = "liquidation_worker_multicall_size must be an integer between 1 and 100."
+  }
 }
 
 variable "liquidation_worker_confirmations" {
