@@ -6,6 +6,17 @@ import worker from '../public/_worker.js'
 const apiRequest = () => new Request('https://insights.plether.com/api/insights/v1/status?fresh=true')
 const assets = { fetch: vi.fn().mockResolvedValue(new Response('asset')) }
 
+type ProxyFetchOptions = {
+  cf?: {
+    cacheEverything: boolean
+    cacheTtlByStatus: Record<string, number>
+  }
+}
+
+function proxiedFetchOptions(fetchMock: ReturnType<typeof vi.fn>): ProxyFetchOptions {
+  return fetchMock.mock.calls[0]?.[1] as ProxyFetchOptions
+}
+
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.clearAllMocks()
@@ -71,9 +82,69 @@ describe('Cloudflare Pages Worker', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe(
       'https://backend.example.com/api/insights/v1/status?fresh=true',
     )
+    expect(proxiedFetchOptions(fetchMock).cf).toEqual({
+      cacheEverything: true,
+      cacheTtlByStatus: {
+        '200-299': 30,
+        '300-599': -1,
+      },
+    })
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(response.headers.get('x-content-type-options')).toBe('nosniff')
     await expect(response.json()).resolves.toEqual({ healthy: true })
+  })
+
+  it.each([
+    ['/api/insights/v1/status', 30],
+    ['/api/insights/v1/competitions/current', 60],
+    ['/api/insights/v1/competitions/summer-2026/leaderboard?limit=50', 15],
+    ['/api/insights/v1/competitions/summer-2026/wallets/0x1234', 15],
+  ])('edge-caches successful public reads for %s for %i seconds', async (path, cacheTtl) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.fetch(new Request(`https://insights.plether.com${path}`), {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: assets,
+    })
+
+    expect(proxiedFetchOptions(fetchMock).cf).toEqual({
+      cacheEverything: true,
+      cacheTtlByStatus: {
+        '200-299': cacheTtl,
+        '300-599': -1,
+      },
+    })
+  })
+
+  it('uses the same cache policy for HEAD reads', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.fetch(
+      new Request('https://insights.plether.com/api/insights/v1/status', { method: 'HEAD' }),
+      {
+        INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+        ASSETS: assets,
+      },
+    )
+
+    expect(proxiedFetchOptions(fetchMock).cf?.cacheTtlByStatus['200-299']).toBe(30)
+  })
+
+  it.each([
+    ['POST', '/api/insights/v1/status'],
+    ['GET', '/api/insights/v1/competitions/summer-2026/activity'],
+  ])('does not enable edge caching for %s %s', async (method, path) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ ok: true }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await worker.fetch(new Request(`https://insights.plether.com${path}`, { method }), {
+      INSIGHTS_BACKEND_URL: 'https://backend.example.com',
+      ASSETS: assets,
+    })
+
+    expect(proxiedFetchOptions(fetchMock).cf).toBeUndefined()
   })
 
   it('applies immutable caching and security headers to hashed assets', async () => {

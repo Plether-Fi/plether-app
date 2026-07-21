@@ -183,12 +183,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
 export async function getCurrentCompetition(signal?: AbortSignal): Promise<Competition> {
   const response = await request<WireCompetition | { competition: WireCompetition }>('/competitions/current', signal)
   const rawCompetition = 'competition' in response ? response.competition : response
-  if (rawCompetition.latestIndexedBlock !== undefined || rawCompetition.participantCount !== undefined) {
-    return normalizeCompetition(rawCompetition)
-  }
-
-  const status = await request<WireStatusResponse>('/status', signal).catch(() => undefined)
-  return normalizeCompetition(rawCompetition, status?.status)
+  return normalizeCompetition(rawCompetition)
 }
 
 export interface LeaderboardParams {
@@ -243,7 +238,7 @@ export async function getStatus(signal?: AbortSignal): Promise<InsightsStatus> {
   return normalizeStatus(response)
 }
 
-function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Competition {
+function normalizeCompetition(raw: WireCompetition): Competition {
   return {
     id: raw.id ?? raw.slug,
     slug: raw.slug,
@@ -260,11 +255,10 @@ function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Co
       place: prize.place,
       amount: prize.amount ?? prize.amountUsdc ?? '0',
     })),
-    latestIndexedBlock:
-      raw.latestIndexedBlock ?? parseOptionalNumber(status?.indexedThroughBlock),
-    latestIndexedAt: raw.latestIndexedAt ?? status?.indexerUpdatedAt ?? null,
-    participantCount: raw.participantCount ?? status?.participantCount,
-    eligibleCount: raw.eligibleCount ?? status?.eligibleCount,
+    latestIndexedBlock: raw.latestIndexedBlock ?? null,
+    latestIndexedAt: raw.latestIndexedAt ?? null,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 
@@ -402,6 +396,8 @@ function normalizeStatus(response: WireStatusResponse): InsightsStatus {
     latestIndexedBlock,
     latestIndexedAt,
     chainId: response.chainId ?? parseOptionalNumber(response.competition?.chainId) ?? undefined,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 

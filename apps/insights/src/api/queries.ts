@@ -45,7 +45,8 @@ export function useInsightsStatus() {
   return useQuery({
     queryKey: queryKeys.status,
     queryFn: ({ signal }) => getStatus(signal),
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    staleTime: 60_000,
   })
 }

@@ -1,8 +1,9 @@
-import { useDeferredValue, useState, type SyntheticEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCurrentCompetition, useLeaderboard } from '../api'
+import { useCurrentCompetition, useInsightsStatus, useLeaderboard } from '../api'
 import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, RulesSummary } from '../components/Competition'
 import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
+import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
 
 function LeaderboardContent({ slug, search }: { slug: string; search: string }) {
@@ -35,8 +36,9 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
 
 export function LeaderboardPage() {
   const competition = useCurrentCompetition()
+  const status = useInsightsStatus()
   const [search, setSearch] = useState('')
-  const deferredSearch = useDeferredValue(search.trim())
+  const debouncedSearch = useDebouncedValue(search.trim(), 350)
   const navigate = useNavigate()
 
   function submitSearch(event: SyntheticEvent<HTMLFormElement>) {
@@ -53,9 +55,16 @@ export function LeaderboardPage() {
   if (competition.isError) {
     return <ErrorState title="Competition data is unavailable" message={competition.error.message} onRetry={() => void competition.refetch()} />
   }
-  const competitionData = competition.data
-  if (!competitionData) {
+  const rawCompetitionData = competition.data
+  if (!rawCompetitionData) {
     return <ErrorState title="Competition data is unavailable" />
+  }
+  const competitionData = {
+    ...rawCompetitionData,
+    latestIndexedBlock: rawCompetitionData.latestIndexedBlock ?? status.data?.latestIndexedBlock ?? null,
+    latestIndexedAt: rawCompetitionData.latestIndexedAt ?? status.data?.latestIndexedAt ?? null,
+    participantCount: rawCompetitionData.participantCount ?? status.data?.participantCount,
+    eligibleCount: rawCompetitionData.eligibleCount ?? status.data?.eligibleCount,
   }
 
   return (
@@ -76,7 +85,7 @@ export function LeaderboardPage() {
             <button type="submit" className="border border-brand-orange bg-brand-orange px-4 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">Search</button>
           </form>
         </div>
-        <LeaderboardContent slug={competitionData.slug} search={deferredSearch} />
+        <LeaderboardContent slug={competitionData.slug} search={debouncedSearch} />
       </section>
     </div>
   )
