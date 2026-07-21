@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,11 +7,11 @@ const identityMocks = vi.hoisted(() => ({
   usdcSupportsEip3009: false,
 }))
 
-vi.mock('../../perps-aa', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../perps-aa')>()
+vi.mock('../../perps-aa', async () => {
+  const { useSponsoredOperationStore } = await import('../../perps-aa/operationStore')
   const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
   return {
-    ...actual,
+    useSponsoredOperationStore,
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: address,
@@ -542,6 +543,56 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByRole('textbox')).toHaveValue('250')
     expect(screen.getByText('3.08x')).toBeInTheDocument()
+  })
+
+  it('opens a reduce-only full-close review from the position panel', async () => {
+    const position = {
+      exists: true,
+      side: 0,
+      direction: 'long' as const,
+      size: 2_000n * 10n ** 18n,
+      entryPrice: 98_300_000n,
+      marginUsdc: 400_000_000n,
+      unrealizedPnlUsdc: 48_250_000n,
+      maintenanceMarginUsdc: 20_000_000n,
+      liquidatable: false,
+      estimatedNotionalUsdc: 2_000_000_000n,
+      entryNotionalUsdc: 2_000_000_000n,
+      dxyExposureUsdc: 2_034_000_000n,
+      displayDxyPrice: 101_700_000n,
+      pendingCarryUsdc: 1_250_000n,
+    }
+
+    function ClosePositionFlow() {
+      const [requestId, setRequestId] = useState(0)
+
+      return (
+        <>
+          <PerpsAccountPanel
+            isConnected
+            position={position}
+            onClosePosition={() => {
+              setRequestId((currentRequestId) => currentRequestId + 1)
+            }}
+          />
+          <PerpsTradeTicket
+            closePositionRequestId={requestId}
+            currentPosition={position}
+            oraclePriceRaw={98_300_000n}
+          />
+        </>
+      )
+    }
+
+    render(<ClosePositionFlow />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close position' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('checkbox', { name: 'Reduce only' })).toBeChecked()
+    expect(screen.getByRole('dialog')).toHaveTextContent('You are closing your Long plDXY Perp position.')
   })
 
   it('uses the short accent color for a short current-position badge', () => {
