@@ -150,8 +150,8 @@ variable "provision_aa_proxy" {
 
 variable "enable_aa_sponsorship" {
   type        = bool
-  default     = false
-  description = "Authoritative managed sponsorship issuance/submission kill switch."
+  default     = true
+  description = "Authoritative managed sponsorship issuance/submission kill switch; disable explicitly only when sponsorship must be paused."
 }
 
 variable "pimlico_api_key" {
