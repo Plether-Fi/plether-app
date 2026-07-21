@@ -15,6 +15,8 @@ module Plether.Database.Insights
   , isLegacyPaymentDeadlineOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
+  , stageCompetitionParticipantWalletRemap
+  , applyCompetitionParticipantWalletRemaps
   , setParticipantEligibility
   , finalizeCompetition
   , listCompetitionParticipants
@@ -65,6 +67,7 @@ import Plether.Insights.Competition
   , ParticipantEligibility
   , finalizationBlockers
   , july2026Competition
+  , july2026CompetitionSlug
   , participantEligibilityText
   )
 import Plether.Utils.Address (isValidAddress)
@@ -380,11 +383,12 @@ instance FromRow FinalizationDatabaseRow where
     <*> field
     <*> field
 
-ensureInsightsSchema :: Connection -> Integer -> Text -> Text -> Text -> IO ()
-ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseAddress = do
+ensureInsightsSchema :: Connection -> Integer -> Text -> Text -> Text -> Text -> IO ()
+ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress = do
   validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
   validateOfficialAddress "PERPS_USDC" usdcAddress
   validateOfficialAddress "PERPS_MARGIN_CLEARINGHOUSE" marginClearinghouseAddress
+  validateOfficialAddress "PERPS_ACCOUNT_LENS" accountLensAddress
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_competitions (\
     \ slug TEXT PRIMARY KEY,\
@@ -393,6 +397,7 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ release_router TEXT NOT NULL,\
     \ usdc_address TEXT NOT NULL,\
     \ margin_clearinghouse_address TEXT NOT NULL,\
+    \ account_lens_address TEXT,\
     \ start_timestamp BIGINT NOT NULL,\
     \ new_risk_cutoff_timestamp BIGINT NOT NULL,\
     \ score_cutoff_timestamp BIGINT NOT NULL,\
@@ -422,6 +427,8 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS usdc_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS margin_clearinghouse_address TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS account_lens_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS start_block_hash TEXT"
   _ <- execute_ conn
@@ -461,6 +468,18 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_participants_trader_reference \
     \ ON insights_competition_participants(competition_slug, trader_reference) \
     \ WHERE trader_reference IS NOT NULL"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS insights_participant_wallet_remaps (\
+    \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
+    \ trader_reference TEXT NOT NULL,\
+    \ old_wallet VARCHAR(42) NOT NULL,\
+    \ new_wallet VARCHAR(42) NOT NULL,\
+    \ staged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \ applied_at TIMESTAMPTZ,\
+    \ applied_by TEXT,\
+    \ PRIMARY KEY (competition_slug, trader_reference),\
+    \ UNIQUE (competition_slug, new_wallet)\
+    \ )"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_account_snapshots (\
     \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
@@ -544,10 +563,50 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ final_snapshot_hash TEXT NOT NULL,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\
     \ )"
-  seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress
+  seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress
+  reconcileCompetitionAccountLens conn july2026CompetitionSlug accountLensAddress
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ALTER COLUMN account_lens_address SET NOT NULL"
+  pure ()
 
-seedJuly2026Competition :: Connection -> Integer -> Text -> Text -> Text -> IO ()
-seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress =
+-- Snapshot values are only meaningful for the exact lens implementation that
+-- produced them. A configured lens change invalidates every mutable snapshot
+-- atomically so the worker rebuilds both the historical baseline and live data.
+-- Finalized competition results are never rewritten automatically.
+reconcileCompetitionAccountLens :: Connection -> Text -> Text -> IO ()
+reconcileCompetitionAccountLens conn slug accountLensAddress =
+  withTransaction conn $ do
+    rows <- query conn
+      "SELECT account_lens_address, finalized FROM insights_competitions\
+      \ WHERE slug = ? FOR UPDATE"
+      (Only slug)
+    case rows of
+      [(storedAddress, finalized)]
+        | fmap normalizeAddress storedAddress == Just normalizedAddress -> pure ()
+        | finalized ->
+            ioError $ userError $
+              "PERPS_ACCOUNT_LENS changed for finalized Insights competition "
+                <> T.unpack slug
+                <> "; refusing to invalidate final results"
+        | otherwise -> do
+            _ <- execute conn
+              "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+              (Only slug)
+            _ <- execute conn
+              "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+              (Only slug)
+            _ <- execute conn
+              "UPDATE insights_competitions\
+              \ SET account_lens_address = ?, updated_at = NOW() WHERE slug = ?"
+              (normalizedAddress, slug)
+            pure ()
+      _ -> ioError $ userError $
+        "Plether Insights could not uniquely identify competition " <> T.unpack slug
+  where
+    normalizedAddress = normalizeAddress accountLensAddress
+
+seedJuly2026Competition :: Connection -> Integer -> Text -> Text -> Text -> Text -> IO ()
+seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress =
   withTransaction conn $ do
     let expected =
           competitionSeedMetadataFor
@@ -558,12 +617,12 @@ seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghou
             marginClearinghouseAddress
     _ <- execute conn
       "INSERT INTO insights_competitions (\
-      \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address,\
+      \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address,\
       \ start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
       \ results_timestamp, payment_deadline_timestamp, starting_balance_usdc,\
       \ minimum_profit_bps, minimum_active_days, scoring_version, rules_version,\
       \ first_prize_usdc, second_prize_usdc, third_prize_usdc)\
-      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+      \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
       \ ON CONFLICT (slug) DO NOTHING"
       ( csmSlug expected
       , csmName expected
@@ -571,6 +630,7 @@ seedJuly2026Competition conn chainId releaseRouter usdcAddress marginClearinghou
       , csmReleaseRouter expected
       , csmUsdcAddress expected
       , csmMarginClearinghouseAddress expected
+      , normalizeAddress accountLensAddress
       , csmStartTimestamp expected
       , csmNewRiskCutoffTimestamp expected
       , csmScoreCutoffTimestamp expected
@@ -817,6 +877,136 @@ upsertCompetitionParticipant conn slug traderReference wallet alias =
                   (slug, normalizedWallet, normalizedReference, normalizeAlias alias)
                 pure $ Right ()
       _ -> pure $ Left "Competition registration state is ambiguous"
+
+stageCompetitionParticipantWalletRemap
+  :: Connection
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> IO (Either Text ())
+stageCompetitionParticipantWalletRemap conn slug traderReference oldWallet newWallet =
+  withTransaction conn $ do
+    let normalizedReference = T.strip traderReference
+        normalizedOldWallet = normalizeAddress oldWallet
+        normalizedNewWallet = normalizeAddress newWallet
+    mutable <- competitionIsMutableForUpdate conn slug
+    if not mutable
+      then pure $ Left "The competition is missing or finalized; wallet remaps are locked"
+      else if T.null normalizedReference
+        then pure $ Left "TRADER_REFERENCE must be a non-empty opaque registration identifier"
+        else do
+          participants <- query conn
+            "SELECT wallet FROM insights_competition_participants\
+            \ WHERE competition_slug = ? AND trader_reference = ? FOR UPDATE"
+            (slug, normalizedReference)
+          destinationOwners <- query conn
+            "SELECT trader_reference FROM insights_participant_wallet_remaps\
+            \ WHERE competition_slug = ? AND new_wallet = ? AND trader_reference <> ?\
+            \ FOR UPDATE"
+            (slug, normalizedNewWallet, normalizedReference)
+          case (participants, destinationOwners) of
+            ([], _) -> pure $ Left "TRADER_REFERENCE is not registered for this competition"
+            ([Only currentWallet], _)
+              | normalizeAddress currentWallet /= normalizedOldWallet ->
+                  pure $ Left "The registered wallet does not match OLD_WALLET"
+            ([_], Only owner : _) ->
+              pure $ Left $ "NEW_WALLET is already staged for TRADER_REFERENCE " <> owner
+            ([_], []) -> do
+              _ <- execute conn
+                "INSERT INTO insights_participant_wallet_remaps\
+                \ (competition_slug, trader_reference, old_wallet, new_wallet)\
+                \ VALUES (?, ?, ?, ?)\
+                \ ON CONFLICT (competition_slug, trader_reference) DO UPDATE SET\
+                \ old_wallet = EXCLUDED.old_wallet, new_wallet = EXCLUDED.new_wallet,\
+                \ staged_at = NOW(), applied_at = NULL, applied_by = NULL"
+                (slug, normalizedReference, normalizedOldWallet, normalizedNewWallet)
+              pure $ Right ()
+            _ -> pure $ Left "Participant wallet remap state is ambiguous"
+
+applyCompetitionParticipantWalletRemaps
+  :: Connection
+  -> Text
+  -> Integer
+  -> Text
+  -> IO (Either Text ())
+applyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy =
+  withTransaction conn $ do
+    let normalizedAppliedBy = T.strip appliedBy
+    mutable <- competitionIsMutableForUpdate conn slug
+    if not mutable
+      then pure $ Left "The competition is missing or finalized; wallet remaps are locked"
+      else if expectedCount <= 0
+        then pure $ Left "EXPECTED_COUNT must be positive"
+        else if T.null normalizedAppliedBy
+          then pure $ Left "APPLIED_BY must not be empty"
+          else do
+            counts <- query conn
+              "SELECT\
+              \ (SELECT COUNT(*) FROM insights_competition_participants WHERE competition_slug = ?),\
+              \ (SELECT COUNT(*) FROM insights_participant_wallet_remaps WHERE competition_slug = ? AND applied_at IS NULL),\
+              \ (SELECT COUNT(*) FROM insights_competition_participants p\
+              \   JOIN insights_participant_wallet_remaps m\
+              \   ON m.competition_slug = p.competition_slug AND m.trader_reference = p.trader_reference\
+              \   AND m.old_wallet = p.wallet\
+              \   WHERE p.competition_slug = ? AND m.applied_at IS NULL),\
+              \ (SELECT COUNT(DISTINCT new_wallet) FROM insights_participant_wallet_remaps\
+              \   WHERE competition_slug = ? AND applied_at IS NULL),\
+              \ (SELECT COUNT(*) FROM insights_manual_adjustments WHERE competition_slug = ?),\
+              \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?)"
+              (slug, slug, slug, slug, slug, slug)
+              :: IO [(Integer, Integer, Integer, Integer, Integer, Integer)]
+            case counts of
+              [(participantCount, remapCount, matchingCount, destinationCount, adjustmentCount, auditCount)]
+                | participantCount /= expectedCount ->
+                    pure $ Left "EXPECTED_COUNT does not match the registered participant count"
+                | remapCount /= expectedCount ->
+                    pure $ Left "The staged wallet remap set is incomplete"
+                | matchingCount /= expectedCount ->
+                    pure $ Left "One or more staged remaps do not match the registered roster"
+                | destinationCount /= expectedCount ->
+                    pure $ Left "The staged destination wallet set contains duplicates"
+                | adjustmentCount /= 0 ->
+                    pure $ Left "Wallet remapping is blocked after manual adjustments exist"
+                | auditCount /= 0 ->
+                    pure $ Left "Wallet remapping is blocked after eligibility review has started"
+                | otherwise -> do
+                    _ <- execute conn
+                      "CREATE TEMP TABLE insights_roster_replacement ON COMMIT DROP AS\
+                      \ SELECT p.competition_slug, m.new_wallet AS wallet, p.trader_reference, p.alias,\
+                      \ p.eligibility_status, p.eligibility_reason, p.integrity_flags, p.registered_at,\
+                      \ p.reviewed_at, p.created_at, NOW() AS updated_at\
+                      \ FROM insights_competition_participants p\
+                      \ JOIN insights_participant_wallet_remaps m\
+                      \ ON m.competition_slug = p.competition_slug AND m.trader_reference = p.trader_reference\
+                      \ AND m.old_wallet = p.wallet\
+                      \ WHERE p.competition_slug = ? AND m.applied_at IS NULL"
+                      (Only slug)
+                    _ <- execute conn
+                      "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+                      (Only slug)
+                    _ <- execute conn
+                      "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+                      (Only slug)
+                    _ <- execute conn
+                      "DELETE FROM insights_competition_participants WHERE competition_slug = ?"
+                      (Only slug)
+                    _ <- execute_ conn
+                      "INSERT INTO insights_competition_participants\
+                      \ (competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                      \ integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                      \ SELECT competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                      \ integrity_flags, registered_at, reviewed_at, created_at, updated_at\
+                      \ FROM insights_roster_replacement"
+                    _ <- execute conn
+                      "UPDATE insights_participant_wallet_remaps SET applied_at = NOW(), applied_by = ?\
+                      \ WHERE competition_slug = ? AND applied_at IS NULL"
+                      (normalizedAppliedBy, slug)
+                    _ <- execute conn
+                      "UPDATE insights_competitions SET updated_at = NOW() WHERE slug = ?"
+                      (Only slug)
+                    pure $ Right ()
+              _ -> pure $ Left "Participant wallet remap validation state is ambiguous"
 
 setParticipantEligibility
   :: Connection
@@ -1265,8 +1455,10 @@ leaderboardQuery =
   \ FROM perps_account_activity a JOIN target t ON t.chain_id = a.chain_id AND t.release_router = a.release_router\
   \ CROSS JOIN current_batch cb\
   \ WHERE a.timestamp >= t.start_timestamp AND a.timestamp < t.score_cutoff_timestamp\
+  \ AND a.activity_type IN ('Deposit', 'Withdraw')\
   \ AND LOWER(COALESCE(a.contract_address, '')) = LOWER(t.margin_clearinghouse_address)\
-  \ AND LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
+  \ AND (LOWER(COALESCE(a.data->>'asset', '')) = LOWER(t.usdc_address)\
+  \   OR NOT jsonb_exists(a.data, 'asset'))\
   \ AND (t.start_block IS NULL OR a.block_number >= t.start_block)\
   \ AND a.block_number <= cb.block_number\
   \ GROUP BY a.account\

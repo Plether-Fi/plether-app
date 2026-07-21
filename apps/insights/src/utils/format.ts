@@ -14,30 +14,25 @@ function formatWhole(value: bigint): string {
   return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
 }
 
-export function formatUsdc(value: string | null | undefined, displayDecimals = 2): string {
+export function formatUsdc(value: string | null | undefined): string {
   if (value == null) return '—'
   const units = parseUnits(value)
   if (units == null) return '—'
 
   const negative = units < 0n
   const absolute = negative ? -units : units
-  const decimals = Math.max(0, Math.min(USDC_DECIMALS, displayDecimals))
-  const divisor = 10n ** BigInt(USDC_DECIMALS - decimals)
+  const divisor = 10n ** BigInt(USDC_DECIMALS - 2)
   const rounded = (absolute + divisor / 2n) / divisor
-  const scale = 10n ** BigInt(decimals)
+  const scale = 100n
   const whole = rounded / scale
   const fraction = rounded % scale
-  const fractionText = decimals > 0 ? `.${fraction.toString().padStart(decimals, '0')}` : ''
+  const fractionText = `.${fraction.toString().padStart(2, '0')}`
   return `${negative ? '-' : ''}${formatWhole(whole)}${fractionText} USDC`
 }
 
 export function formatSignedUsdc(value: string | null | undefined): string {
   const units = value == null ? null : parseUnits(value)
-  // P&L drives prize eligibility, so never round away meaningful sub-cent units.
-  // This prevents 999.999999 USDC from being presented as 1,000.00 USDC.
-  const absolute = units == null || units >= 0n ? units : -units
-  const displayDecimals = absolute != null && absolute % 10_000n !== 0n ? USDC_DECIMALS : 2
-  const formatted = formatUsdc(value, displayDecimals)
+  const formatted = formatUsdc(value)
   if (units == null || units <= 0n) return formatted
   return `+${formatted}`
 }
@@ -53,13 +48,13 @@ export function formatCompactUsdc(value: string | null | undefined): string {
     { units: 1_000_000_000n, suffix: 'K' },
   ]
   const threshold = thresholds.find((item) => absolute >= item.units)
-  if (!threshold) return formatUsdc(value, 0)
+  if (!threshold) return formatUsdc(value)
 
-  const tenths = (absolute * 10n + threshold.units / 2n) / threshold.units
+  const hundredths = (absolute * 100n + threshold.units / 2n) / threshold.units
   const sign = units < 0n ? '-' : ''
-  const whole = tenths / 10n
-  const decimal = tenths % 10n
-  return `${sign}${whole.toString()}${decimal === 0n ? '' : `.${decimal.toString()}`}${threshold.suffix} USDC`
+  const whole = hundredths / 100n
+  const fraction = hundredths % 100n
+  return `${sign}${whole.toString()}.${fraction.toString().padStart(2, '0')}${threshold.suffix} USDC`
 }
 
 export function formatRoi(roiBps: number | null | undefined): string {

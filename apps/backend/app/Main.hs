@@ -43,6 +43,7 @@ main = do
               (cfgPerpsOrderRouter cfg)
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsAccountLens cfg)
           logInfo
             "api_database_ready"
             "Database schemas are ready"

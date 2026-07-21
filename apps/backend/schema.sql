@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     release_router TEXT NOT NULL,
     usdc_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
+    account_lens_address TEXT NOT NULL,
     start_timestamp BIGINT NOT NULL,
     new_risk_cutoff_timestamp BIGINT NOT NULL,
     score_cutoff_timestamp BIGINT NOT NULL,
@@ -197,6 +198,18 @@ CREATE INDEX IF NOT EXISTS idx_insights_participants_wallet
 CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_participants_trader_reference
     ON insights_competition_participants(competition_slug, trader_reference)
     WHERE trader_reference IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS insights_participant_wallet_remaps (
+    competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
+    trader_reference TEXT NOT NULL,
+    old_wallet VARCHAR(42) NOT NULL,
+    new_wallet VARCHAR(42) NOT NULL,
+    staged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    applied_at TIMESTAMPTZ,
+    applied_by TEXT,
+    PRIMARY KEY (competition_slug, trader_reference),
+    UNIQUE (competition_slug, new_wallet)
+);
 
 CREATE TABLE IF NOT EXISTS insights_account_snapshots (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,

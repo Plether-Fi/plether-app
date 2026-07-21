@@ -10,14 +10,16 @@ describe('USDC formatting', () => {
 
   it('adds a sign only for positive P&L', () => {
     expect(formatSignedUsdc('1000000000')).toBe('+1,000.00 USDC')
-    expect(formatSignedUsdc('999999999')).toBe('+999.999999 USDC')
+    expect(formatSignedUsdc('999999999')).toBe('+1,000.00 USDC')
+    expect(formatSignedUsdc('313177984')).toBe('+313.18 USDC')
     expect(formatSignedUsdc('0')).toBe('0.00 USDC')
     expect(formatSignedUsdc('-1000000')).toBe('-1.00 USDC')
   })
 
   it('uses compact notation for table values', () => {
-    expect(formatCompactUsdc('1250000000')).toBe('1.3K USDC')
-    expect(formatCompactUsdc('1200000000000')).toBe('1.2M USDC')
+    expect(formatCompactUsdc('1250000000')).toBe('1.25K USDC')
+    expect(formatCompactUsdc('1200000000000')).toBe('1.20M USDC')
+    expect(formatCompactUsdc('999999999')).toBe('1,000.00 USDC')
   })
 })
 

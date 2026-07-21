@@ -10,6 +10,7 @@ module Plether.AA.Pimlico
   , decodeSmartAccountCalls
   , validateActionSequence
   , injectSponsorshipPolicy
+  , resolveTradingAccountAddress
   ) where
 
 import Control.Concurrent.STM
@@ -742,7 +743,7 @@ verifyAccountIdentity
 verifyAccountIdentity client operation =
   case puoFactoryOwner operation of
     Just owner -> verifyCounterfactual owner
-    Nothing -> verifyDeployed
+    Nothing -> verifyDeployedAccountIdentity client sender
   where
     sender = puoSender operation
 
@@ -770,58 +771,93 @@ verifyAccountIdentity client operation =
           Left $ accountNotTrusted "Factory owner/index does not derive the UserOperation sender"
         Right owner
 
-    verifyDeployed = do
-      ( factoryImplementation
-        , code
-        , ownerResult
-        , accountEntryPoint
-        , implementationSlot
-        , beaconSlot
-        ) <-
-          runConcurrently $
-            (,,,,,)
-              <$> Concurrently
-                ( readContractAddress
-                    client
-                    simpleAccountFactory
-                    selectorAccountImplementation
-                )
-              <*> Concurrently (readCode client sender)
-              <*> Concurrently
-                (readContractAddress client sender selectorOwner)
-              <*> Concurrently
-                (readContractAddress client sender selectorEntryPoint)
-              <*> Concurrently
-                (readStorageWord client sender erc1967ImplementationSlot)
-              <*> Concurrently
-                (readStorageWord client sender erc1967BeaconSlot)
-      case factoryImplementation of
-        Left failure -> pure $ Left failure
-        Right implementation
-          | implementation /= simpleAccountImplementation ->
-              pure $ Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
-          | otherwise ->
-              case ownerResult of
-                Left failure -> pure $ Left failure
-                Right owner -> do
-                  expected <- readFactoryAddress client owner
-                  pure $ do
-                    accountCode <- code
-                    expectedSender <- expected
-                    actualEntryPoint <- accountEntryPoint
-                    actualImplementation <- implementationSlot
-                    actualBeacon <- beaconSlot
-                    when (BS.null accountCode) $
-                      Left $ accountNotTrusted "Deployed UserOperation sender has no code"
-                    when (owner == zeroAddress || expectedSender /= sender) $
-                      Left $ accountNotTrusted "Trading Account owner does not derive the sender"
-                    unless (actualEntryPoint == entryPointAddress) $
-                      Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
-                    unless (T.toLower actualImplementation == implementationWord) $
-                      Left $ accountNotTrusted "Trading Account implementation is not approved"
-                    unless (T.toLower actualBeacon == zeroWord) $
-                      Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
-                    Right owner
+
+-- | Resolve a submitted owner EOA to its deterministic index-0 Trading Account,
+-- while preserving a submitted address only when it is an approved deployed
+-- Trading Account. This keeps roster repair on the configured private RPC.
+resolveTradingAccountAddress :: EthClient -> Text -> IO (Either Text Text)
+resolveTradingAccountAddress client rawAddress =
+  case normalizeAddress rawAddress of
+    Nothing -> pure $ Left "Submitted wallet is not a valid Ethereum address"
+    Just submitted -> do
+      codeResult <- readCode client submitted
+      case codeResult of
+        Left failure -> pure $ Left $ pfMessage failure
+        Right code
+          | BS.null code -> do
+              factoryImplementation <-
+                readContractAddress
+                  client
+                  simpleAccountFactory
+                  selectorAccountImplementation
+              derived <- readFactoryAddress client submitted
+              pure $ do
+                implementation <- firstFailure factoryImplementation
+                unless (implementation == simpleAccountImplementation) $
+                  Left "SimpleAccount factory implementation drifted"
+                firstFailure derived
+          | otherwise -> do
+              verified <- verifyDeployedAccountIdentity client submitted
+              pure $ submitted <$ firstFailure verified
+  where
+    firstFailure = either (Left . pfMessage) Right
+
+verifyDeployedAccountIdentity
+  :: EthClient
+  -> Text
+  -> IO (Either ProxyFailure Text)
+verifyDeployedAccountIdentity client sender = do
+  ( factoryImplementation
+    , code
+    , ownerResult
+    , accountEntryPoint
+    , implementationSlot
+    , beaconSlot
+    ) <-
+      runConcurrently $
+        (,,,,,)
+          <$> Concurrently
+            ( readContractAddress
+                client
+                simpleAccountFactory
+                selectorAccountImplementation
+            )
+          <*> Concurrently (readCode client sender)
+          <*> Concurrently
+            (readContractAddress client sender selectorOwner)
+          <*> Concurrently
+            (readContractAddress client sender selectorEntryPoint)
+          <*> Concurrently
+            (readStorageWord client sender erc1967ImplementationSlot)
+          <*> Concurrently
+            (readStorageWord client sender erc1967BeaconSlot)
+  case factoryImplementation of
+    Left failure -> pure $ Left failure
+    Right implementation
+      | implementation /= simpleAccountImplementation ->
+          pure $ Left $ accountNotTrusted "SimpleAccount factory implementation drifted"
+      | otherwise ->
+          case ownerResult of
+            Left failure -> pure $ Left failure
+            Right owner -> do
+              expected <- readFactoryAddress client owner
+              pure $ do
+                accountCode <- code
+                expectedSender <- expected
+                actualEntryPoint <- accountEntryPoint
+                actualImplementation <- implementationSlot
+                actualBeacon <- beaconSlot
+                when (BS.null accountCode) $
+                  Left $ accountNotTrusted "Deployed UserOperation sender has no code"
+                when (owner == zeroAddress || expectedSender /= sender) $
+                  Left $ accountNotTrusted "Trading Account owner does not derive the sender"
+                unless (actualEntryPoint == entryPointAddress) $
+                  Left $ accountNotTrusted "Trading Account EntryPoint is not approved"
+                unless (T.toLower actualImplementation == implementationWord) $
+                  Left $ accountNotTrusted "Trading Account implementation is not approved"
+                unless (T.toLower actualBeacon == zeroWord) $
+                  Left $ accountNotTrusted "Beacon-based Trading Accounts are not approved"
+                Right owner
 
 readFactoryAddress :: EthClient -> Text -> IO (Either ProxyFailure Text)
 readFactoryAddress client owner =

@@ -463,6 +463,34 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
+      - name: Patch Sepolia Insights configuration
+        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          PERPS_ACCOUNT_LENS: "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+          PERPS_INDEXER_CONFIRMATIONS: "1"
+        run: |
+          jq \
+            --arg accountLens "$PERPS_ACCOUNT_LENS" \
+            --arg indexerConfirmations "$PERPS_INDEXER_CONFIRMATIONS" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == "plether-api" or .name == "plether-insights-worker" then
+                upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
+              elif .name == "plether-perps-indexer" then
+                upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
+
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
         env:
