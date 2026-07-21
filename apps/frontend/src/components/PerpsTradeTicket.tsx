@@ -1867,9 +1867,14 @@ export function PerpsTradeTicket({
     leverage: activeLeverage,
     dxyExposureUsdc: summaryDxyExposureUsdc,
   })
-  const orderFundingRequirementUsdc = !isReducingCurrentPosition ? marginUsdc + estimatedKeeperBountyUsdc : estimatedKeeperBountyUsdc
-  const marginShortfall = availableToTradeRaw !== undefined && orderFundingRequirementUsdc > availableToTradeRaw
-    ? orderFundingRequirementUsdc - availableToTradeRaw
+  // Close bounties can be backed by collateral already attached to the position,
+  // even when the account has no free buying power. The close preview and the
+  // commit simulation are the authoritative checks for that backing.
+  const openFundingRequirementUsdc = marginUsdc + estimatedKeeperBountyUsdc
+  const marginShortfall = !isReducingCurrentPosition &&
+    availableToTradeRaw !== undefined &&
+    openFundingRequirementUsdc > availableToTradeRaw
+    ? openFundingRequirementUsdc - availableToTradeRaw
     : 0n
   const isCorrectChain = chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
   const isZeroSize = dxyExposureUsdc <= 0n
