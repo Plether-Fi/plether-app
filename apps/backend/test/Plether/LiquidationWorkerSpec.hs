@@ -24,6 +24,7 @@ import Plether.LiquidationWorker
   , isInsufficientFundsRpcError
   , isLiquidationReceiptFor
   , liquidationIndexRange
+  , nextLiquidationScanElapsedSeconds
   , liquidationPayloadCircuitDecision
   , liquidationPayloadFingerprint
   , liquidationPendingSignerAction
@@ -40,10 +41,16 @@ spec :: Spec
 spec = do
   describe "loadLiquidationWorkerConfig" $
     it "uses the CFD engine already resolved by shared backend configuration" $ do
-      withUnsetEnv "PERPS_CFD_ENGINE" $ do
-        workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
-        lwcCfdEngine workerCfg `shouldBe` configuredCfdEngine
-        lwcCfdEngine workerCfg `shouldNotBe` retiredCfdEngine
+      withUnsetEnv "PERPS_CFD_ENGINE" $
+        withUnsetEnv "LIQUIDATION_WORKER_POLL_SECONDS" $
+          withUnsetEnv "LIQUIDATION_WORKER_SCAN_INTERVAL_SECONDS" $
+            withUnsetEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" $ do
+              workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+              lwcCfdEngine workerCfg `shouldBe` configuredCfdEngine
+              lwcCfdEngine workerCfg `shouldNotBe` retiredCfdEngine
+              lwcPollSeconds workerCfg `shouldBe` 1
+              lwcScanIntervalSeconds workerCfg `shouldBe` 300
+              lwcScanBatchSize workerCfg `shouldBe` 100
 
   describe "decodeCachedPythPayload" $ do
     it "decodes the latest cached publish times and update bytes" $ do
@@ -171,6 +178,14 @@ spec = do
 
     it "waits when the configured start has not reached confirmation depth" $ do
       liquidationIndexRange 200 1 5_000 12 0 150 `shouldBe` Nothing
+
+  describe "nextLiquidationScanElapsedSeconds" $ do
+    it "keeps an overdue scan due while pending work prevents completion" $ do
+      nextLiquidationScanElapsedSeconds 300 1 300 False `shouldBe` 300
+
+    it "resets only after a completed scan and counts poll ticks" $ do
+      nextLiquidationScanElapsedSeconds 300 1 300 True `shouldBe` 1
+      nextLiquidationScanElapsedSeconds 300 1 299 False `shouldBe` 300
 
   describe "sameNonceReplacementFees" $ do
     it "bumps both prior fee fields by at least 12.5 percent" $ do

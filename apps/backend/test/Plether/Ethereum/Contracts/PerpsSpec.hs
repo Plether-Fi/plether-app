@@ -4,7 +4,9 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeUint256)
+import Plether.Ethereum.Client (RpcError (..))
 import Plether.Ethereum.Contracts.Perps
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcLog (..))
 import Test.Hspec
 
@@ -96,6 +98,40 @@ spec = do
       case decodePositionSize encodedPosition of
         Right 42 -> pure ()
         result -> expectationFailure $ "unexpected decode result: " <> show result
+
+    it "builds one failure-tolerant position call per account in order" $ do
+      let cfdEngine = "0x3333333333333333333333333333333333333333"
+          accounts =
+            [ "0x1111111111111111111111111111111111111111"
+            , "0x2222222222222222222222222222222222222222"
+            ]
+          calls = positionSizeCalls cfdEngine accounts
+      map Multicall.callTarget calls `shouldBe` replicate 2 cfdEngine
+      map Multicall.callAllowFailure calls `shouldBe` replicate 2 True
+      map Multicall.callCalldata calls `shouldBe` map positionsCall accounts
+
+    it "keeps batched position results aligned across failures" $ do
+      let encodedPosition = encodeUint256 42 <> BS.replicate (6 * 32) 0
+          results =
+            [ Multicall.CallResult False BS.empty
+            , Multicall.CallResult True encodedPosition
+            , Multicall.CallResult True BS.empty
+            ]
+      decodePositionSizeBatch 3 results
+        `shouldBe` Right
+          [ Left $ RpcJsonError "positions(address) multicall subcall failed"
+          , Right 42
+          , Left $ RpcJsonError "positions(address) returned fewer than seven ABI words"
+          ]
+
+    it "rejects a position batch with the wrong result count" $ do
+      decodePositionSizeBatch 2 [Multicall.CallResult True $ BS.replicate (7 * 32) 0]
+        `shouldBe` Left
+          (RpcJsonError "positions(address) multicall returned 1 results for 2 accounts")
+
+    it "builds and decodes an empty position batch without work" $ do
+      length (positionSizeCalls "0x3333333333333333333333333333333333333333" []) `shouldBe` 0
+      decodePositionSizeBatch 0 [] `shouldBe` Right []
 
     it "keeps an order-56-style reveal payload on the canonical bytes[] layout" $ do
       payload <-

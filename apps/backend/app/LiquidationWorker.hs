@@ -71,6 +71,8 @@ runMain = do
           , field "order_router" $ lwcOrderRouter workerCfg
           , field "cfd_engine" $ lwcCfdEngine workerCfg
           , field "poll_seconds" $ lwcPollSeconds workerCfg
+          , field "scan_interval_seconds" $ lwcScanIntervalSeconds workerCfg
+          , field "scan_batch_size" $ lwcScanBatchSize workerCfg
           , field "confirmations" $ lwcIndexerConfirmations workerCfg
           ]
             <> maybe [] (\balance -> [field "signer_balance_wei" $ show balance]) signerBalance

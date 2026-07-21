@@ -356,6 +356,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "LIQUIDATION_WORKER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "LIQUIDATION_WORKER_POLL_SECONDS", value = var.liquidation_worker_poll_seconds },
+      { name = "LIQUIDATION_WORKER_SCAN_INTERVAL_SECONDS", value = var.liquidation_worker_scan_interval_seconds },
       { name = "LIQUIDATION_WORKER_SCAN_BATCH_SIZE", value = var.liquidation_worker_scan_batch_size },
       { name = "LIQUIDATION_WORKER_CONFIRMATIONS", value = var.liquidation_worker_confirmations },
       { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },

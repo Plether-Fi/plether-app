@@ -13,8 +13,11 @@ module Plether.Ethereum.Contracts.Perps
   , decodePositionLiquidatedAccount
   , getPendingOrderView
   , getPositionSize
+  , getPositionSizes
   , getPositionSizeAtBlock
   , decodePositionSize
+  , positionSizeCalls
+  , decodePositionSizeBatch
   , maxOrderAge
   , orderSettlementWindow
   , orderExecutionStalenessLimit
@@ -63,6 +66,7 @@ import Plether.Ethereum.Client
   , ethCallAtBlock
   , ethCallWithValue
   )
+import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcLog (..))
 
 data PerpsOrderEvent
@@ -186,6 +190,46 @@ getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
 getPositionSize client cfdEngine account = do
   result <- ethCall client (CallParams cfdEngine (positionsCall account))
   pure $ result >>= decodePositionSize
+
+getPositionSizes
+  :: EthClient
+  -> Text
+  -> [Text]
+  -> IO (Either RpcError [Either RpcError Integer])
+getPositionSizes _ _ [] = pure $ Right []
+getPositionSizes client cfdEngine accounts = do
+  result <- Multicall.multicall client $ positionSizeCalls cfdEngine accounts
+  pure $ result >>= decodePositionSizeBatch (length accounts)
+
+positionSizeCalls :: Text -> [Text] -> [Multicall.Call]
+positionSizeCalls cfdEngine accounts =
+  [ Multicall.Call
+      { Multicall.callTarget = cfdEngine
+      , Multicall.callAllowFailure = True
+      , Multicall.callCalldata = positionsCall account
+      }
+  | account <- accounts
+  ]
+
+decodePositionSizeBatch
+  :: Int
+  -> [Multicall.CallResult]
+  -> Either RpcError [Either RpcError Integer]
+decodePositionSizeBatch expectedCount results
+  | length results /= expectedCount =
+      Left $
+        RpcJsonError $
+          "positions(address) multicall returned "
+            <> T.pack (show $ length results)
+            <> " results for "
+            <> T.pack (show expectedCount)
+            <> " accounts"
+  | otherwise = Right $ map decodeResult results
+  where
+    decodeResult result
+      | not $ Multicall.resultSuccess result =
+          Left $ RpcJsonError "positions(address) multicall subcall failed"
+      | otherwise = decodePositionSize $ Multicall.resultData result
 
 getPositionSizeAtBlock :: EthClient -> Text -> Text -> Integer -> IO (Either RpcError Integer)
 getPositionSizeAtBlock client cfdEngine account blockNumber = do

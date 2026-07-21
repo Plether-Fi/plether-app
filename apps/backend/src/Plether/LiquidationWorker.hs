@@ -16,6 +16,7 @@ module Plether.LiquidationWorker
   , isLiquidationReceiptFor
   , isExpectedLiquidationSimulationRevert
   , liquidationIndexRange
+  , nextLiquidationScanElapsedSeconds
   , sameNonceReplacementFees
   , checkLiveSignerBalance
   , transactionMaximumCost
@@ -127,6 +128,7 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
   , lwcCfdEngine :: Text
   , lwcPrivateKey :: Text
   , lwcPollSeconds :: Int
+  , lwcScanIntervalSeconds :: Int
   , lwcScanBatchSize :: Int
   , lwcIndexerStartBlock :: Integer
   , lwcIndexerConfirmations :: Int
@@ -141,6 +143,7 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
 loadLiquidationWorkerConfig :: Config -> Text -> IO LiquidationWorkerConfig
 loadLiquidationWorkerConfig cfg privateKey = do
   pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 1
+  scanIntervalSeconds <- readEnv "LIQUIDATION_WORKER_SCAN_INTERVAL_SECONDS" 300
   scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 100
   indexerStartBlock <- readEnv "LIQUIDATION_WORKER_START_BLOCK" (cfgPerpsIndexerStartBlock cfg)
   indexerConfirmations <- readEnv "LIQUIDATION_WORKER_CONFIRMATIONS" 1
@@ -157,6 +160,7 @@ loadLiquidationWorkerConfig cfg privateKey = do
       , lwcCfdEngine = cfgPerpsCfdEngine cfg
       , lwcPrivateKey = privateKey
       , lwcPollSeconds = max 1 pollSeconds
+      , lwcScanIntervalSeconds = max 1 scanIntervalSeconds
       , lwcScanBatchSize = max 1 scanBatchSize
       , lwcIndexerStartBlock = max 0 indexerStartBlock
       , lwcIndexerConfirmations = max 0 indexerConfirmations
@@ -206,23 +210,44 @@ runLiquidationWorker cfg pool client mode dryRun =
                          ]
                   )
                 case mode of
-                  LiquidationWorkerOnce -> runIteration cfg conn client workerAddress dryRun
-                  LiquidationWorkerLoop -> loop conn workerAddress
+                  LiquidationWorkerOnce -> do
+                    _ <- runIteration cfg conn client workerAddress dryRun
+                    pure ()
+                  LiquidationWorkerLoop -> loop conn workerAddress (lwcScanIntervalSeconds cfg)
   where
-    loop conn workerAddress = do
-      runIteration cfg conn client workerAddress dryRun
+    loop conn workerAddress elapsedSinceScanSeconds = do
+      let scanDue = elapsedSinceScanSeconds >= lwcScanIntervalSeconds cfg
+      scanCompleted <-
+        if scanDue
+          then runIteration cfg conn client workerAddress dryRun
+          else do
+            reconcilePendingCandidateIfAny cfg conn client workerAddress
+            pure False
       threadDelay (lwcPollSeconds cfg * 1_000_000)
-      loop conn workerAddress
+      let nextElapsedSinceScanSeconds =
+            nextLiquidationScanElapsedSeconds
+              (lwcScanIntervalSeconds cfg)
+              (lwcPollSeconds cfg)
+              elapsedSinceScanSeconds
+              scanCompleted
+      loop conn workerAddress nextElapsedSinceScanSeconds
 
-runIteration :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO ()
+runIteration :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO Bool
 runIteration cfg conn client workerAddress dryRun = do
-  indexNewCandidates cfg conn client
-  processCandidates cfg conn client workerAddress dryRun
-  logInfoEvery
-    300
-    "liquidation_worker_heartbeat"
-    "Liquidation worker completed an iteration"
-    (workerLogFields cfg <> [field "dry_run" dryRun])
+  pending <- getPendingLiquidationCandidate cfg conn
+  case pending of
+    Just candidate -> do
+      reconcilePendingCandidate cfg conn client workerAddress candidate
+      pure False
+    Nothing -> do
+      indexNewCandidates cfg conn client
+      processCandidates cfg conn client workerAddress dryRun
+      logInfoEvery
+        300
+        "liquidation_worker_heartbeat"
+        "Liquidation worker completed a scheduled scan"
+        (workerLogFields cfg <> [field "dry_run" dryRun])
+      pure True
 
 indexNewCandidates :: LiquidationWorkerConfig -> Connection -> EthClient -> IO ()
 indexNewCandidates cfg conn client = do
@@ -310,23 +335,21 @@ liquidationIndexRange configuredStart confirmations batchSize overlapBlocks last
       | lastIndexed < safeStart = safeStart
       | otherwise = max safeStart (lastIndexed + 1 - safeOverlap)
 
+nextLiquidationScanElapsedSeconds :: Int -> Int -> Int -> Bool -> Int
+nextLiquidationScanElapsedSeconds scanIntervalSeconds pollSeconds elapsedSeconds scanCompleted
+  | scanCompleted = min safeScanInterval safePoll
+  | otherwise = min safeScanInterval (max 0 elapsedSeconds + safePoll)
+  where
+    safeScanInterval = max 1 scanIntervalSeconds
+    safePoll = max 1 pollSeconds
+
 processCandidates :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO ()
 processCandidates cfg conn client workerAddress dryRun = do
-  pending <-
-    getPendingPerpsLiquidationCandidate
-      conn
-      (lwcChainId cfg)
-      (lwcCfdEngine cfg)
-      (lwcPendingReplacementSeconds cfg)
-      pendingBroadcastRetrySeconds
-  case pending of
-    Just candidate -> reconcilePendingCandidate cfg conn client workerAddress candidate
-    Nothing -> do
-      signerReady <-
-        if dryRun
-          then pure True
-          else checkSignerTransactionReadiness cfg conn
-      when signerReady processAvailableCandidates
+  signerReady <-
+    if dryRun
+      then pure True
+      else checkSignerTransactionReadiness cfg conn
+  when signerReady processAvailableCandidates
   where
     processAvailableCandidates = do
       candidates <-
@@ -414,11 +437,46 @@ processCandidates cfg conn client workerAddress dryRun = do
         Right updateFee ->
           processCandidateBatch candidates payloadKey updateData updateFee
 
-    processCandidateBatch [] _ _ _ = pure ()
-    processCandidateBatch (candidate : rest) payloadKey updateData updateFee = do
-      canContinue <-
-        processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate
-      when canContinue $ processCandidateBatch rest payloadKey updateData updateFee
+    processCandidateBatch candidates payloadKey updateData updateFee = do
+      positionResults <-
+        Perps.getPositionSizes
+          client
+          (lwcCfdEngine cfg)
+          (map plcrAccount candidates)
+      case positionResults of
+        Left err ->
+          logErrorEvery
+            60
+            "liquidation_position_batch_read_failed"
+            "Liquidation worker could not read candidate positions through Multicall"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "error" $ rpcErrorText err
+                   ]
+            )
+        Right results ->
+          processCandidateBatchResults (zip candidates results) payloadKey updateData updateFee
+
+    processCandidateBatchResults [] _ _ _ = pure ()
+    processCandidateBatchResults ((candidate, positionResult) : rest) payloadKey updateData updateFee = do
+      case positionResult of
+        Left err -> do
+          recordCandidateError cfg conn candidate "position_read" $ "position read failed: " <> rpcErrorText err
+          processCandidateBatchResults rest payloadKey updateData updateFee
+        Right positionSize -> do
+          canContinue <-
+            processCandidate
+              cfg
+              conn
+              client
+              workerAddress
+              dryRun
+              payloadKey
+              updateData
+              updateFee
+              candidate
+              positionSize
+          when canContinue $ processCandidateBatchResults rest payloadKey updateData updateFee
 
 processCandidate
   :: LiquidationWorkerConfig
@@ -430,15 +488,12 @@ processCandidate
   -> [ByteString]
   -> Integer
   -> PerpsLiquidationCandidateRow
+  -> Integer
   -> IO Bool
-processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate = do
+processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate positionSize = do
   let account = plcrAccount candidate
-  positionResult <- Perps.getPositionSize client (lwcCfdEngine cfg) account
-  case positionResult of
-    Left err -> do
-      recordCandidateError cfg conn candidate "position_read" $ "position read failed: " <> rpcErrorText err
-      pure False
-    Right 0 -> do
+  case positionSize of
+    0 -> do
       confirmedPosition <- getConfirmedPositionSize cfg client account
       case confirmedPosition of
         Left err -> do
@@ -453,7 +508,7 @@ processCandidate cfg conn client workerAddress dryRun payloadKey updateData upda
           -- Keep the original opening candidate until zero size is confirmed.
           markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
           pure True
-    Right _ -> do
+    _ -> do
       let callData = Perps.executeLiquidationCall account updateData
       gasResult <- ethEstimateGas client workerAddress (lwcOrderRouter cfg) updateFee callData
       case gasResult of
@@ -638,6 +693,28 @@ recordPendingBroadcastAttempt cfg conn account =
     (lwcChainId cfg)
     (lwcCfdEngine cfg)
     account
+
+reconcilePendingCandidateIfAny
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> EthClient
+  -> Text
+  -> IO ()
+reconcilePendingCandidateIfAny cfg conn client workerAddress = do
+  pending <- getPendingLiquidationCandidate cfg conn
+  forM_ pending $ reconcilePendingCandidate cfg conn client workerAddress
+
+getPendingLiquidationCandidate
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> IO (Maybe PerpsLiquidationCandidateRow)
+getPendingLiquidationCandidate cfg conn =
+  getPendingPerpsLiquidationCandidate
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    (lwcPendingReplacementSeconds cfg)
+    pendingBroadcastRetrySeconds
 
 reconcilePendingCandidate
   :: LiquidationWorkerConfig

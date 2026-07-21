@@ -476,8 +476,9 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
-| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `1` | Delay between liquidation discovery and scan iterations |
-| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `100` | Maximum candidate accounts checked per iteration |
+| `LIQUIDATION_WORKER_POLL_SECONDS` | No | `1` | Pending-transaction reconciliation cadence while candidate scans are idle |
+| `LIQUIDATION_WORKER_SCAN_INTERVAL_SECONDS` | No | `300` | Delay between liquidation discovery and candidate scan cycles |
+| `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `100` | Maximum candidate accounts read together through Multicall and checked per scan |
 | `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
 | `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
 | `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |

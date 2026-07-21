@@ -341,6 +341,12 @@ variable "liquidation_worker_poll_seconds" {
   default = "1"
 }
 
+variable "liquidation_worker_scan_interval_seconds" {
+  type        = string
+  default     = "300"
+  description = "Interval between liquidation candidate discovery and scan cycles. Pending transactions continue to reconcile at liquidation_worker_poll_seconds."
+}
+
 variable "liquidation_worker_scan_batch_size" {
   type    = string
   default = "100"

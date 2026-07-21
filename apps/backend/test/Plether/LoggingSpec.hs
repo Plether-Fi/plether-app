@@ -127,6 +127,7 @@ invalidSignerConfig =
     , lwcCfdEngine = "0x0000000000000000000000000000000000000003"
     , lwcPrivateKey = "super-secret-not-a-valid-private-key"
     , lwcPollSeconds = 1
+    , lwcScanIntervalSeconds = 300
     , lwcScanBatchSize = 1
     , lwcIndexerStartBlock = 0
     , lwcIndexerConfirmations = 1
