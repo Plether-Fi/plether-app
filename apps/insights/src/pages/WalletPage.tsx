@@ -1,8 +1,9 @@
 import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletPosition } from '../api'
+import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl, StatusBadge } from '../components/ui'
 import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress } from '../utils/format'
+import { calculatePnlBreakdown } from '../utils/pnl'
 
 function Metric({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -29,7 +30,7 @@ function PositionPanel({ position }: { position: WalletPosition | null }) {
           <Metric label="Entry notional">{formatCompactUsdc(position.size)}</Metric>
           <Metric label="Margin">{formatUsdc(position.margin)}</Metric>
           <Metric label="Entry">{formatPrice(position.entryPrice)}</Metric>
-          <Metric label="Unrealized P&L"><Pnl value={position.unrealizedPnl} /></Metric>
+          <Metric label="Directional unrealized P&L"><Pnl value={position.unrealizedPnl} /></Metric>
         </dl>
       ) : <EmptyState title="No open position" message="This trader is currently flat." />}
     </Panel>
@@ -47,7 +48,7 @@ function ActivityTable({ activity }: { activity: WalletActivity[] | null }) {
     <>
       <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">Price</th><th className="px-5 py-3 text-right">Realized P&amp;L</th></tr></thead>
+          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">Price</th><th className="px-5 py-3 text-right">Directional realized P&amp;L</th></tr></thead>
           <tbody className="divide-y divide-brand-border/15">
             {activity.map((item) => (
               <tr key={item.id} className="hover:bg-brand-peach/5">
@@ -71,6 +72,41 @@ function ActivityTable({ activity }: { activity: WalletActivity[] | null }) {
         ))}
       </div>
     </>
+  )
+}
+
+function PnlReconciliation({ wallet }: { wallet: WalletDetails }) {
+  const breakdown = calculatePnlBreakdown(wallet)
+  if (!breakdown) return null
+
+  const items = [
+    { label: 'Directional realized P&L', value: breakdown.realized },
+    { label: 'Directional unrealized P&L', value: breakdown.unrealized },
+    { label: 'Directional P&L subtotal', value: breakdown.directional },
+    { label: 'Costs & adjustments (net)', value: breakdown.costsAndAdjustments },
+    { label: 'Net competition P&L', value: breakdown.net, emphasized: true },
+  ]
+
+  return (
+    <Panel>
+      <div className="border-b border-brand-border/20 px-5 py-4">
+        <h2 className="text-lg font-semibold">Net P&amp;L reconciliation</h2>
+        <p className="mt-1 max-w-3xl text-xs leading-5 text-content-tertiary">
+          Directional price P&amp;L is shown separately from the account costs that determine competition ranking.
+        </p>
+      </div>
+      <dl className="grid divide-y divide-brand-border/15 sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-5">
+        {items.map((item) => (
+          <div key={item.label} className={`px-5 py-4 ${item.emphasized ? 'bg-brand-peach/5' : ''}`}>
+            <dt className="text-[11px] font-semibold uppercase tracking-[0.12em] text-content-tertiary">{item.label}</dt>
+            <dd className={`mt-2 font-semibold ${item.emphasized ? 'text-lg' : 'text-base'}`}><Pnl value={item.value} /></dd>
+          </div>
+        ))}
+      </dl>
+      <div className="border-t border-brand-border/20 bg-app-bg/45 px-5 py-3 text-xs leading-5 text-content-secondary">
+        <strong className="text-content-primary">Net competition P&amp;L</strong> = directional realized P&amp;L + directional unrealized P&amp;L + the net effect of execution fees, VPI, carry, execution rewards, and competition adjustments.
+      </div>
+    </Panel>
   )
 }
 
@@ -129,19 +165,21 @@ export function WalletPage() {
 
       <Panel>
         <dl className="grid grid-cols-2 divide-x divide-y divide-brand-border/15 sm:grid-cols-3 lg:grid-cols-6 lg:divide-y-0">
-          <Metric label="Final P&L"><Pnl value={wallet.pnl} /></Metric>
-          <Metric label="Return"><span className={wallet.roiBps !== null && wallet.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}>{formatRoi(wallet.roiBps)}</span></Metric>
-          <Metric label="Net equity">{formatUsdc(wallet.equity)}</Metric>
+          <Metric label="Net competition P&L"><Pnl value={wallet.pnl} /></Metric>
+          <Metric label="Net return"><span className={wallet.roiBps !== null && wallet.roiBps >= 0 ? 'text-positive' : 'text-brand-orange'}>{formatRoi(wallet.roiBps)}</span></Metric>
+          <Metric label="Current net equity">{formatUsdc(wallet.equity)}</Metric>
           <Metric label="Volume">{formatCompactUsdc(wallet.volume)}</Metric>
           <Metric label="Trades">{wallet.trades}</Metric>
           <Metric label={`Active days / ${String(competition.minActiveDays)}`}>{wallet.activeDays}</Metric>
         </dl>
       </Panel>
 
+      <PnlReconciliation wallet={wallet} />
+
       <PositionPanel position={wallet.position ?? null} />
 
       <Panel>
-        <div className="border-b border-brand-border/20 px-5 py-4"><h2 className="text-lg font-semibold">Competition activity</h2><p className="mt-1 text-xs text-content-tertiary">Finalized protocol events, newest first</p></div>
+        <div className="border-b border-brand-border/20 px-5 py-4"><h2 className="text-lg font-semibold">Competition activity</h2><p className="mt-1 text-xs text-content-tertiary">Finalized protocol events, newest first · realized values are directional price P&amp;L before account costs</p></div>
         <ActivityTable activity={activity ?? null} />
       </Panel>
     </div>

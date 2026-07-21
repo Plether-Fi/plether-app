@@ -16,6 +16,9 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
   return (
     <div className="space-y-3">
       {provisional ? <ProvisionalNotice /> : null}
+      <div className="border border-brand-peach/30 bg-brand-peach/5 px-4 py-3 text-sm leading-6 text-content-secondary" role="note">
+        <strong className="text-content-primary">Ranked by net P&amp;L.</strong> Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 and rank above active accounts whose net return is negative.
+      </div>
       <Panel>
         <Leaderboard standings={standings} search={search} competitionSlug={slug} />
       </Panel>

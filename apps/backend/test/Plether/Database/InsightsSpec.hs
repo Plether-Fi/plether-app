@@ -32,6 +32,17 @@ spec = do
       queryContains leaderboardQuerySql "a.activity_type IN ('Deposit', 'Withdraw')"
       queryContains leaderboardQuerySql "OR NOT jsonb_exists(a.data, 'asset')"
 
+    it "aggregates realized directional P&L for the public net-P&L reconciliation" $
+      queryContains leaderboardQuerySql "SUM(a.pnl_usdc) FILTER (WHERE a.activity_type IN ('Close', 'Liquidated'))"
+
+    it "ignores an all-zero regression after a stateful live snapshot" $ do
+      queryContains leaderboardQuerySql "b.account_state_count > 0 OR NOT EXISTS"
+      queryContains walletActivityQuerySql "b.account_state_count > 0 OR NOT EXISTS"
+
+    it "reads snapshots only from the competition's recorded account lens" $ do
+      queryContains leaderboardQuerySql "LOWER(b.account_lens_address) = LOWER(t.account_lens_address)"
+      queryContains walletActivityQuerySql "LOWER(b.account_lens_address) = LOWER(t.account_lens_address)"
+
 queryContains :: Query -> String -> Expectation
 queryContains sql fragment =
   show sql `shouldSatisfy` isInfixOf fragment

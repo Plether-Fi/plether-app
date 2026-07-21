@@ -30,6 +30,7 @@ export interface Standing {
   address: string
   displayName: string | null
   pnl: UsdcUnits | null
+  realizedPnl: UsdcUnits
   roiBps: number | null
   volume: UsdcUnits
   trades: number

@@ -590,12 +590,16 @@ Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tie
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/insights/v1/competitions/current` | Current competition rules and schedule |
-| `GET /api/insights/v1/competitions/:slug/leaderboard` | Finalized P&L standings and eligibility state |
-| `GET /api/insights/v1/competitions/:slug/wallets/:address` | Participant score and competition activity |
+| `GET /api/insights/v1/competitions/:slug/leaderboard` | Net account P&L standings and eligibility state |
+| `GET /api/insights/v1/competitions/:slug/wallets/:address` | Net score, directional realized P&L, and competition activity |
 | `GET /api/insights/v1/status` | Snapshot and Perps indexer coverage |
 
 Leaderboard query params: `limit` and integer offset `cursor`. Wallet detail
 accepts `activityLimit`.
+
+`finalPnlUsdc` is the cash-flow-adjusted net competition result. The separate
+`realizedPnlUsdc` field sums directional close/liquidation P&L before execution
+fees, VPI, carry, rewards, and manual competition adjustments.
 
 ## Response Format
 

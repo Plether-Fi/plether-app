@@ -226,12 +226,18 @@ captureBatch
   -> IO ()
 captureBatch client pool cfg competition participants kind block
   | null participants = pure ()
+  | not $ sameHash (cfgPerpsAccountLens cfg) (icrAccountLensAddress competition) =
+      putStrLn $
+        "Insights snapshot skipped: worker account lens "
+          <> T.unpack (cfgPerpsAccountLens cfg)
+          <> " does not match competition account lens "
+          <> T.unpack (icrAccountLensAddress competition)
   | otherwise = do
       results <- forM participants $ \participant -> do
         result <-
           getAccountLedgerSnapshotAtBlock
             client
-            (cfgPerpsAccountLens cfg)
+            (icrAccountLensAddress competition)
             (iprWallet participant)
             (rpcBlockNumber block)
         pure (participant, result)
@@ -276,6 +282,7 @@ captureBatch client pool cfg competition participants kind block
         , asiKind = kind
         , asiChainId = icrChainId competition
         , asiReleaseRouter = icrReleaseRouter competition
+        , asiAccountLensAddress = icrAccountLensAddress competition
         , asiBlockNumber = rpcBlockNumber block
         , asiBlockHash = rpcBlockHash block
         , asiTimestamp = rpcBlockTimestamp block
