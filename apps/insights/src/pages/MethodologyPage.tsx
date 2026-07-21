@@ -20,7 +20,7 @@ export function MethodologyPage() {
 
       <Panel className="mt-8">
         <Rule number="01" title="Starting point">
-          <p>Every registered trader starts with exactly <strong className="text-content-primary">100,000 mock USDC</strong>. The competition is limited to one registered wallet per trader.</p>
+          <p>Every registered trader starts with exactly <strong className="text-content-primary">100,000.00 mock USDC</strong>. The competition is limited to one registered wallet per trader.</p>
         </Rule>
         <Rule number="02" title="Ranking metric">
           <p>Traders are ranked by final net P&amp;L at the closing snapshot. Open positions are marked using the protocol’s official final mark.</p>
@@ -28,7 +28,7 @@ export function MethodologyPage() {
           <p>Account value includes collateral, marked open-position P&amp;L, incurred fees, carry, and outstanding trader claims. Pending orders that have not executed do not count.</p>
         </Rule>
         <Rule number="03" title="Prize eligibility">
-          <p>A trader must finish with at least <strong className="text-positive">+1,000 USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
+          <p>A trader must finish with at least <strong className="text-positive">+1,000.00 USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
           <p>The threshold is evaluated at full six-decimal USDC precision, not from the rounded percentage shown in the interface.</p>
         </Rule>
         <Rule number="04" title="What counts as an active day">
@@ -37,7 +37,7 @@ export function MethodologyPage() {
         </Rule>
         <Rule number="05" title="Timing and prizes">
           <p>Trading closes exactly 14 days after the start, on <strong className="text-content-primary">Monday, 3 August 2026 at 16:00 UTC (18:00 Warsaw)</strong>. Results are reviewed on 5 August.</p>
-          <p>The top three eligible traders receive <strong className="text-content-primary">$600 / $300 / $100</strong> in real USDC, paid within one week of close. If a trader is disqualified, the next eligible trader moves up.</p>
+          <p>The top three eligible traders receive <strong className="text-content-primary">600.00 / 300.00 / 100.00 USDC</strong>, paid within one week of close. If a trader is disqualified, the next eligible trader moves up.</p>
           <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
         </Rule>
         <Rule number="06" title="Integrity review">

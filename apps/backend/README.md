@@ -253,7 +253,7 @@ cabal run plether-perps-indexer -- --backfill --from 123 --to 456
 
 Notes:
 
-- The indexer only writes finalized/safe history. Default finality delay is `120` blocks.
+- The indexer only writes finalized/safe history. Default finality delay is `1` block.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
 - Every activity row retains the normalized emitting contract address. Re-indexing
@@ -486,7 +486,7 @@ Local URLs:
 | `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
-| `PERPS_INDEXER_CONFIRMATIONS` | No | `120` | Blocks to wait before indexing Perps history |
+| `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |

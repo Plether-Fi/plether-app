@@ -277,7 +277,7 @@ variable "perps_indexer_start_block" {
 
 variable "perps_indexer_confirmations" {
   type    = string
-  default = "120"
+  default = "1"
 }
 
 variable "perps_indexer_batch_size" {

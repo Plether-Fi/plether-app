@@ -73,17 +73,17 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
 
 function prizePool(prizes: Competition['prizes']): string {
   try {
-    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString(), 0)
+    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString())
   } catch {
-    return '1,000 USDC'
+    return '1,000.00 USDC'
   }
 }
 
 export function CompetitionStats({ competition }: { competition: Competition }) {
   const stats = [
     { label: 'Prize pool', value: prizePool(competition.prizes), accent: true },
-    { label: 'Starting balance', value: formatUsdc(competition.startingBalance, 0) },
-    { label: 'Prize threshold', value: `+${formatUsdc(competition.pnlEligibilityThreshold, 0)}` },
+    { label: 'Starting balance', value: formatUsdc(competition.startingBalance) },
+    { label: 'Prize threshold', value: `+${formatUsdc(competition.pnlEligibilityThreshold)}` },
     { label: 'Minimum activity', value: `${String(competition.minActiveDays)} active days` },
     { label: 'Registered traders', value: competition.participantCount?.toLocaleString() ?? '—' },
   ]
@@ -113,7 +113,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
   if (standing.prizePlace === null || standing.prizeAmountUsdc === null) return null
   const places = standing.prizePlaces.length > 0 ? standing.prizePlaces : [standing.prizePlace]
   const placeLabel = places.length > 1 ? `Places ${places.join('–')} tie` : `Place #${String(places[0])}`
-  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc, 0)}</div>
+  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc)}</div>
 }
 
 function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
@@ -195,7 +195,7 @@ export function RulesSummary() {
   return (
     <Panel className="grid gap-px bg-brand-border/20 sm:grid-cols-3">
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at <strong className="text-content-primary">+1% or better</strong> and log at least five active FX-session days.</p></div>
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">$600 / $300 / $100</strong> in real USDC for the top three eligible traders.</p></div>
+      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">600.00 / 300.00 / 100.00 USDC</strong> for the top three eligible traders.</p></div>
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Fair play</p><p className="mt-2 text-sm leading-6 text-content-secondary">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p></div>
     </Panel>
   )

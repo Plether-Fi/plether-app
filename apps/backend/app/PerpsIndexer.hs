@@ -31,7 +31,7 @@ data WorkerArgs = WorkerArgs
   deriving (Show)
 
 defaultConfirmations :: Integer
-defaultConfirmations = 120
+defaultConfirmations = 1
 
 defaultBatchSize :: Integer
 defaultBatchSize = 5000

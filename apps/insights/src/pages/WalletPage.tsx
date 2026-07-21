@@ -117,7 +117,7 @@ export function WalletPage() {
       {wallet.prizeAmountUsdc !== null ? (
         <div className="border border-brand-yellow/40 bg-brand-yellow/10 px-4 py-3 text-sm text-brand-yellow">
           <strong>{wallet.prizePlaces.length > 1 ? `Tied prize places ${wallet.prizePlaces.join('–')}` : `Prize place #${String(wallet.prizePlace ?? '—')}`}:</strong>{' '}
-          {formatUsdc(wallet.prizeAmountUsdc, 0)}
+          {formatUsdc(wallet.prizeAmountUsdc)}
         </div>
       ) : null}
 
