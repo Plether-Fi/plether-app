@@ -3,20 +3,9 @@ import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
   { path: '/', label: 'Perps', icon: 'trending_up', color: 'positive' },
-  { path: '/spot', label: 'Spot', icon: 'swap_horiz', color: 'brand-peach' },
-  { path: '/stake', label: 'Stake', icon: 'paid', color: 'brand-orange' },
-  { path: '/mint', label: 'Mint', icon: 'add', color: 'positive' },
 ]
 
 const colorStyles: Record<string, { active: string; hover: string }> = {
-  'brand-peach': {
-    active: 'text-brand-peach bg-brand-peach/10',
-    hover: 'hover:text-[#FFAB96]',
-  },
-  'brand-orange': {
-    active: 'text-brand-orange bg-brand-orange/10',
-    hover: 'hover:text-brand-orange',
-  },
   'positive': {
     active: 'text-positive bg-positive/10',
     hover: 'hover:text-positive',
@@ -25,14 +14,14 @@ const colorStyles: Record<string, { active: string; hover: string }> = {
 
 export function MobileNav() {
   const location = useLocation()
-  const visibleNavLinks = isPrimaryAppDeployment() ? navLinks.filter(({ path }) => path !== '/') : navLinks
+
+  if (isPrimaryAppDeployment()) return null
 
   return (
     <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface-panel border-t border-brand-border/30 safe-area-bottom">
       <div className="flex items-center justify-around h-16">
-        {visibleNavLinks.map(({ path, label, icon, color }) => {
-          const isActive = location.pathname === path ||
-            (path === '/spot' && ['/spot', '/leverage', '/lending'].includes(location.pathname))
+        {navLinks.map(({ path, label, icon, color }) => {
+          const isActive = location.pathname === path
           const styles = colorStyles[color]
           return (
             <Link

@@ -67,6 +67,7 @@ interface PerpsAccountPanelProps {
   isHistoryLoading?: boolean
   historyError?: Error
   onAccountRefresh?: () => void
+  onClosePosition?: () => void
 }
 
 const ACCOUNT_TABS: AccountTab[] = [
@@ -362,6 +363,7 @@ function PositionView({
   isLoading,
   initialPositionMarginModalOpen,
   onAccountRefresh,
+  onClosePosition,
 }: {
   position?: PerpsPosition
   equityUsdc?: bigint
@@ -370,6 +372,7 @@ function PositionView({
   isLoading?: boolean
   initialPositionMarginModalOpen?: boolean
   onAccountRefresh?: () => void
+  onClosePosition?: () => void
 }) {
   const { addPositionMargin } = usePerpsTrading()
   const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(
@@ -491,11 +494,25 @@ function PositionView({
     <div className="border border-brand-border/20 bg-app-bg p-4">
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-content-secondary">Current Position</div>
-        <div className="mt-2 flex items-center gap-3">
-          <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
-            {currentPosition.side}
-          </span>
-          <div className="mt-1 text-lg font-semibold text-content-primary">{currentPosition.market}</div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
+              {currentPosition.side}
+            </span>
+            <div className="mt-1 text-lg font-semibold text-content-primary">{currentPosition.market}</div>
+          </div>
+          {onClosePosition ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="danger"
+              analyticsId="close_position_from_panel"
+              analyticsProperties={{ direction: position.direction }}
+              onClick={onClosePosition}
+            >
+              Close position
+            </Button>
+          ) : null}
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
@@ -838,6 +855,7 @@ function AccountTabContent({
   historyError,
   initialPositionMarginModalOpen,
   onAccountRefresh,
+  onClosePosition,
   nowSeconds,
   cleanupOrderId,
   cleanupError,
@@ -910,6 +928,7 @@ function AccountTabContent({
           isLoading={isLoading}
           initialPositionMarginModalOpen={initialPositionMarginModalOpen}
           onAccountRefresh={onAccountRefresh}
+          onClosePosition={onClosePosition}
         />
       </div>
     )

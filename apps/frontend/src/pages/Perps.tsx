@@ -52,6 +52,7 @@ export function Perps() {
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  const [closePositionRequestId, setClosePositionRequestId] = useState(0)
   const trackedPageViewRef = useRef(false)
 
   useEffect(() => {
@@ -256,6 +257,9 @@ export function Perps() {
             perpsMarket.refetch()
             void perpsHistory.refetch()
           }}
+          onClosePosition={() => {
+            setClosePositionRequestId((requestId) => requestId + 1)
+          }}
         />
         </div>
         <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
@@ -284,6 +288,7 @@ export function Perps() {
           currentPosition={perpsAccount.position}
           currentPositionSide={perpsAccount.position?.direction}
           currentPositionAmount={perpsAccount.display.positionNotional}
+          closePositionRequestId={closePositionRequestId}
           pendingOrders={perpsAccount.pendingOrders}
           orderHistory={perpsHistory.orderHistory}
           pendingOrderCount={perpsAccount.pendingOrders.length}

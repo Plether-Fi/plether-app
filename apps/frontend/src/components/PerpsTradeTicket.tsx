@@ -154,6 +154,7 @@ interface PerpsTradeTicketProps {
   initialFinalExecutionPrice?: bigint
   initialCommittedSizeDelta?: bigint
   initialFlowError?: string
+  closePositionRequestId?: number
   currentPositionSide?: Direction
   currentPositionAmount?: string
   enableLiveTrading?: boolean
@@ -1409,6 +1410,7 @@ export function PerpsTradeTicket({
   initialFinalExecutionPrice,
   initialCommittedSizeDelta,
   initialFlowError,
+  closePositionRequestId,
   currentPositionSide = 'long',
   currentPositionAmount,
   enableLiveTrading = false,
@@ -1508,6 +1510,7 @@ export function PerpsTradeTicket({
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
   const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
+  const handledClosePositionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
   const finalizationShownTitlesRef = useRef<Set<string>>(new Set([FINALIZATION_LOADING_MESSAGES[0].title]))
   const simulatorMaxLeverage = maxLeverageFromMaintenanceMargin(maintenanceMarginBps)
@@ -2622,7 +2625,7 @@ export function PerpsTradeTicket({
     }
   }
 
-  function resetReviewLifecycle() {
+  const resetReviewLifecycle = useCallback(() => {
     handledTerminalOrderKeyRef.current = undefined
     setLifecycleState('preview')
     setOrderId(undefined)
@@ -2638,7 +2641,7 @@ export function PerpsTradeTicket({
     setFlowError(undefined)
     setKeeperRevealDeadlineMs(undefined)
     setKeeperRevealNowMs(Date.now())
-  }
+  }, [])
 
   function closeReviewModal() {
     const shouldResetSize = lifecycleState === 'executed'
@@ -2648,6 +2651,29 @@ export function PerpsTradeTicket({
     }
     setIsReviewOpen(false)
   }
+
+  useEffect(() => {
+    if (
+      closePositionRequestId === undefined ||
+      closePositionRequestId <= 0 ||
+      handledClosePositionRequestRef.current === closePositionRequestId
+    ) {
+      return
+    }
+
+    handledClosePositionRequestRef.current = closePositionRequestId
+    resetReviewLifecycle()
+    setDirection(currentPosition?.direction ?? currentPositionSide)
+    setIsReduceOnly(true)
+    setSize(formatPerpsUsdc(availableCloseDxyExposureRaw, 6))
+    setIsReviewOpen(true)
+  }, [
+    availableCloseDxyExposureRaw,
+    closePositionRequestId,
+    currentPosition?.direction,
+    currentPositionSide,
+    resetReviewLifecycle,
+  ])
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
