@@ -483,6 +483,37 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox')).toHaveValue('0')
   })
 
+  it('does not blame pending orders when a manual reduce exceeds the latest exposure', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialSize="2 100"
+        oraclePriceRaw={98_300_000n}
+        oraclePublishTime={1_784_705_538}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 2_000n * 10n ** 18n,
+          entryPrice: 98_300_000n,
+          marginUsdc: 400_000_000n,
+          unrealizedPnlUsdc: 48_250_000n,
+          maintenanceMarginUsdc: 20_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 1_966_000_000n,
+          entryNotionalUsdc: 1_966_000_000n,
+          dxyExposureUsdc: 2_034_000_000n,
+        }}
+      />
+    )
+
+    expect(screen.getByText('Only 2 034 USDC plDXY Perp exposure is available to reduce at the latest plDXY Perp price.')).toBeInTheDocument()
+    expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeDisabled()
+  })
+
   it('allows a profitable full close with no free buying power when the close preview is valid', () => {
     mockIsConnected = true
     wagmiMocks.readContractsData = [{
@@ -498,7 +529,6 @@ describe('perps lifecycle labels', () => {
         remainingMargin: 0n,
       },
     }]
-
     render(
       <PerpsTradeTicket
         enableLiveTrading
@@ -644,6 +674,105 @@ describe('perps lifecycle labels', () => {
     })
     expect(screen.getByRole('checkbox', { name: 'Reduce only' })).toBeChecked()
     expect(screen.getByRole('dialog')).toHaveTextContent('You are closing your Long plDXY Perp position.')
+  })
+
+  it('keeps a position-panel full close valid when the oracle price refreshes', async () => {
+    mockIsConnected = true
+    const positionSize = 2_000n * 10n ** 18n
+    const positionSizeToUsdcScale = 10n ** 20n
+    const priceCap = 200_000_000n
+
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_300_000n,
+        sizeDelta: positionSize,
+        realizedPnlUsdc: 48_250_000n,
+        executionFeeUsdc: 200_000n,
+        remainingSize: 0n,
+        remainingMargin: 0n,
+      },
+    }]
+    perpsTradingMocks.commitOrder.mockResolvedValue({
+      hash: '0xc105e00000000000000000000000000000000000000000000000000000000000',
+      orderId: 42n,
+    })
+
+    function FullCloseWithOracleRefresh() {
+      const [requestId, setRequestId] = useState(0)
+      const [oraclePrice, setOraclePrice] = useState(98_300_000n)
+      const dxyExposureUsdc = (positionSize * (priceCap - oraclePrice)) / positionSizeToUsdcScale
+      const position = {
+        exists: true,
+        side: 0,
+        direction: 'long' as const,
+        size: positionSize,
+        entryPrice: 98_300_000n,
+        marginUsdc: 400_000_000n,
+        unrealizedPnlUsdc: 48_250_000n,
+        maintenanceMarginUsdc: 20_000_000n,
+        liquidatable: false,
+        estimatedNotionalUsdc: (positionSize * oraclePrice) / positionSizeToUsdcScale,
+        entryNotionalUsdc: 1_966_000_000n,
+        dxyExposureUsdc,
+        displayDxyPrice: priceCap - oraclePrice,
+        pendingCarryUsdc: 1_250_000n,
+      }
+
+      return (
+        <>
+          <button type="button" onClick={() => setOraclePrice(98_400_000n)}>
+            Refresh oracle price
+          </button>
+          <PerpsAccountPanel
+            isConnected
+            position={position}
+            onClosePosition={() => setRequestId((currentRequestId) => currentRequestId + 1)}
+          />
+          <PerpsTradeTicket
+            enableLiveTrading
+            closePositionRequestId={requestId}
+            currentPosition={position}
+            oraclePriceRaw={oraclePrice}
+            oraclePublishTime={1_784_705_538}
+            availableToTradeRaw={0n}
+            availableToTradeAmount="0"
+          />
+        </>
+      )
+    }
+
+    render(<FullCloseWithOracleRefresh />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close position' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('textbox')).toHaveValue('2 034')
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh oracle price' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox')).toHaveValue('2 032')
+    })
+    expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+
+    await waitFor(() => {
+      expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+    })
+    expect(perpsTradingMocks.commitOrder.mock.calls[0]?.[0]).toMatchObject({
+      direction: 'long',
+      sizeDelta: positionSize,
+      isClose: true,
+    })
   })
 
   it('uses the short accent color for a short current-position badge', () => {
