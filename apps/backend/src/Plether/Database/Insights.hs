@@ -42,6 +42,7 @@ module Plether.Database.Insights
   , leaderboardQuerySql
   , leaderboardOrderBySql
   , insightsDataStatusQuerySql
+  , rosterSnapshotVerificationQuerySql
   , snapshotBatchAccessIndexSql
   , walletActivityQuerySql
   , snapshotKindText
@@ -1891,36 +1892,7 @@ verifyCompetitionRosterSnapshots conn slug expectedCount
   | otherwise = do
       status <- getInsightsDataStatus conn slug
       invariantRows <- query conn
-        "WITH target AS (\
-        \ SELECT slug, start_block, starting_balance_usdc, account_lens_address\
-        \ FROM insights_competitions WHERE slug = ?\
-        \ ), canonical_start_batch AS (\
-        \ SELECT b.block_number, b.block_hash, b.chain_id, b.release_router\
-        \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
-        \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL\
-        \ AND b.block_number = t.start_block - 1 AND b.participant_count = ?\
-        \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
-        \ ORDER BY b.published_at DESC LIMIT 1\
-        \ ), participant_start_state AS (\
-        \ SELECT p.wallet, t.starting_balance_usdc, s.wallet AS snapshot_wallet,\
-        \ s.has_open_position, s.terminal_reachable_usdc, s.trader_claims_usdc,\
-        \ COALESCE(NULLIF(s.raw_data->>'pendingOrderCount', '')::numeric, -1) AS pending_orders\
-        \ FROM insights_competition_participants p\
-        \ JOIN target t ON t.slug = p.competition_slug\
-        \ LEFT JOIN canonical_start_batch b ON TRUE\
-        \ LEFT JOIN insights_account_snapshots s\
-        \ ON s.competition_slug = p.competition_slug AND s.wallet = p.wallet\
-        \ AND s.snapshot_kind = 'start' AND s.block_number = b.block_number\
-        \ AND LOWER(s.block_hash) = LOWER(b.block_hash) AND s.chain_id = b.chain_id\
-        \ AND s.release_router = b.release_router\
-        \ )\
-        \ SELECT\
-        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL),\
-        \ COUNT(*) FILTER (WHERE COALESCE(has_open_position, TRUE)),\
-        \ COUNT(*) FILTER (WHERE pending_orders <> 0),\
-        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL OR\
-        \   terminal_reachable_usdc + trader_claims_usdc <> starting_balance_usdc)\
-        \ FROM participant_start_state"
+        rosterSnapshotVerificationQuerySql
         (slug, expectedCount)
         :: IO [(Integer, Integer, Integer, Integer)]
       pure $ case (status, invariantRows) of
@@ -1952,6 +1924,42 @@ verifyCompetitionRosterSnapshots conn slug expectedCount
                 then Right verification
                 else Left $ "Roster snapshot verification failed: " <> T.intercalate "; " blockers
         _ -> Left "Roster snapshot verification state is unavailable"
+
+-- The baseline bankroll rule is a ceiling, not an equality check. Accounts
+-- may be empty before their official allocation is deposited, but an account
+-- already holding more than the published allocation must fail verification.
+rosterSnapshotVerificationQuerySql :: Query
+rosterSnapshotVerificationQuerySql =
+  "WITH target AS (\
+        \ SELECT slug, start_block, starting_balance_usdc, account_lens_address\
+        \ FROM insights_competitions WHERE slug = ?\
+        \ ), canonical_start_batch AS (\
+        \ SELECT b.block_number, b.block_hash, b.chain_id, b.release_router\
+        \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
+        \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL\
+        \ AND b.block_number = t.start_block - 1 AND b.participant_count = ?\
+        \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+        \ ORDER BY b.published_at DESC LIMIT 1\
+        \ ), participant_start_state AS (\
+        \ SELECT p.wallet, t.starting_balance_usdc, s.wallet AS snapshot_wallet,\
+        \ s.has_open_position, s.terminal_reachable_usdc, s.trader_claims_usdc,\
+        \ COALESCE(NULLIF(s.raw_data->>'pendingOrderCount', '')::numeric, -1) AS pending_orders\
+        \ FROM insights_competition_participants p\
+        \ JOIN target t ON t.slug = p.competition_slug\
+        \ LEFT JOIN canonical_start_batch b ON TRUE\
+        \ LEFT JOIN insights_account_snapshots s\
+        \ ON s.competition_slug = p.competition_slug AND s.wallet = p.wallet\
+        \ AND s.snapshot_kind = 'start' AND s.block_number = b.block_number\
+        \ AND LOWER(s.block_hash) = LOWER(b.block_hash) AND s.chain_id = b.chain_id\
+        \ AND s.release_router = b.release_router\
+        \ )\
+        \ SELECT\
+        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL),\
+        \ COUNT(*) FILTER (WHERE COALESCE(has_open_position, TRUE)),\
+        \ COUNT(*) FILTER (WHERE pending_orders <> 0),\
+        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL OR\
+        \   terminal_reachable_usdc + trader_claims_usdc > starting_balance_usdc)\
+        \ FROM participant_start_state"
 
 -- A published batch is the completeness marker for its participant set. The
 -- maximum published count also preserves the old across-history wallet-count

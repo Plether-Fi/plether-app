@@ -7,6 +7,7 @@ import Plether.Database.Insights
   , leaderboardQuerySql
   , leaderboardOrderBySql
   , leaderboardSearchPattern
+  , rosterSnapshotVerificationQuerySql
   , snapshotBatchAccessIndexSql
   , walletActivityQuerySql
   )
@@ -52,6 +53,12 @@ spec = do
       queryContains walletActivityQuerySql "LOWER(b.account_lens_address) = LOWER(t.account_lens_address)"
 
   describe "Insights load-control SQL" $ do
+    it "accepts an empty baseline while rejecting bankrolls above the official allocation" $ do
+      queryContains rosterSnapshotVerificationQuerySql
+        "terminal_reachable_usdc + trader_claims_usdc > starting_balance_usdc"
+      queryDoesNotContain rosterSnapshotVerificationQuerySql
+        "terminal_reachable_usdc + trader_claims_usdc <> starting_balance_usdc"
+
     it "derives data status from published batch metadata without scanning account snapshots" $ do
       queryContains insightsDataStatusQuerySql "FROM insights_snapshot_batches b"
       queryContains insightsDataStatusQuerySql "MAX(b.participant_count)"

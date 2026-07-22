@@ -119,7 +119,7 @@ After the snapshot worker publishes the rebuilt start and live batches, run the
 private `list verify-roster-correction EXPECTED_COUNT` check. It fails unless
 `participantCount`, `snapshottedWalletCount`, and `startSnapshotCount` all equal
 the expected final roster size and every canonical start snapshot is flat, has
-zero pending orders, and equals the official starting bankroll.
+zero pending orders, and does not exceed the official starting bankroll.
 
 Wallet remapping is an atomic full-roster operation. Stage exactly one mapping
 for every registered `TRADER_REFERENCE`, using an identity mapping when the
