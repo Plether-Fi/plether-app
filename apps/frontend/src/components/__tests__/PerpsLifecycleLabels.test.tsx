@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,11 +7,15 @@ const identityMocks = vi.hoisted(() => ({
   usdcSupportsEip3009: false,
 }))
 
-vi.mock('../../perps-aa', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../perps-aa')>()
+const wagmiMocks = vi.hoisted(() => ({
+  readContractsData: undefined as readonly unknown[] | undefined,
+}))
+
+vi.mock('../../perps-aa', async () => {
+  const { useSponsoredOperationStore } = await import('../../perps-aa/operationStore')
   const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
   return {
-    ...actual,
+    useSponsoredOperationStore,
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: address,
@@ -68,7 +73,7 @@ vi.mock('wagmi', () => ({
   }),
   useChainId: () => 421614,
   useReadContracts: () => ({
-    data: undefined,
+    data: wagmiMocks.readContractsData,
   }),
   useSimulateContract: () => ({
     error: null,
@@ -103,6 +108,7 @@ describe('perps lifecycle labels', () => {
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
     identityMocks.usdcSupportsEip3009 = false
+    wagmiMocks.readContractsData = undefined
     useSponsoredOperationStore.setState({
       operations: [],
       activeLanes: {},
@@ -477,6 +483,52 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('textbox')).toHaveValue('0')
   })
 
+  it('allows a profitable full close with no free buying power when the close preview is valid', () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 97_190_495n,
+        sizeDelta: 3_389_329_558_583_534_648_693_500n,
+        realizedPnlUsdc: 5_751_556_687n,
+        executionFeeUsdc: 200_000n,
+        remainingSize: 0n,
+        remainingMargin: 0n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="short"
+        initialSize="3484552.941998"
+        oraclePriceRaw={97_190_495n}
+        oraclePublishTime={1_784_656_207}
+        availableToTradeRaw={0n}
+        availableToTradeAmount="0"
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 3_389_329_558_583_534_648_693_500n,
+          entryPrice: 97_360_191n,
+          marginUsdc: 99_884_165_044n,
+          unrealizedPnlUsdc: 5_751_556_687n,
+          maintenanceMarginUsdc: 9_882_318_525n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 3_294_106_175_168n,
+          entryNotionalUsdc: 3_299_857_731_856n,
+          dxyExposureUsdc: 3_484_552_941_998n,
+        }}
+      />
+    )
+
+    expect(screen.queryByText('Deposit 0.2 USDC more before committing this order.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+  })
+
   it('requires confirmation before enabling the margin call simulator', () => {
     render(
       <PerpsTradeTicket
@@ -542,6 +594,56 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByRole('textbox')).toHaveValue('250')
     expect(screen.getByText('3.08x')).toBeInTheDocument()
+  })
+
+  it('opens a reduce-only full-close review from the position panel', async () => {
+    const position = {
+      exists: true,
+      side: 0,
+      direction: 'long' as const,
+      size: 2_000n * 10n ** 18n,
+      entryPrice: 98_300_000n,
+      marginUsdc: 400_000_000n,
+      unrealizedPnlUsdc: 48_250_000n,
+      maintenanceMarginUsdc: 20_000_000n,
+      liquidatable: false,
+      estimatedNotionalUsdc: 2_000_000_000n,
+      entryNotionalUsdc: 2_000_000_000n,
+      dxyExposureUsdc: 2_034_000_000n,
+      displayDxyPrice: 101_700_000n,
+      pendingCarryUsdc: 1_250_000n,
+    }
+
+    function ClosePositionFlow() {
+      const [requestId, setRequestId] = useState(0)
+
+      return (
+        <>
+          <PerpsAccountPanel
+            isConnected
+            position={position}
+            onClosePosition={() => {
+              setRequestId((currentRequestId) => currentRequestId + 1)
+            }}
+          />
+          <PerpsTradeTicket
+            closePositionRequestId={requestId}
+            currentPosition={position}
+            oraclePriceRaw={98_300_000n}
+          />
+        </>
+      )
+    }
+
+    render(<ClosePositionFlow />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close position' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('checkbox', { name: 'Reduce only' })).toBeChecked()
+    expect(screen.getByRole('dialog')).toHaveTextContent('You are closing your Long plDXY Perp position.')
   })
 
   it('uses the short accent color for a short current-position badge', () => {

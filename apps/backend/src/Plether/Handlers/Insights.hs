@@ -222,6 +222,7 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       , Just $ "volumeUsdc" .= show ilrVolumeUsdc
       , Just $ "executedTrades" .= ilrExecutedTrades
       , Just $ "liquidations" .= ilrLiquidations
+      , Just $ "realizedPnlUsdc" .= show ilrRealizedPnlUsdc
       , ("snapshotBlock" .=) . show <$> ilrLatestSnapshotBlock
       , ("snapshotAt" .=) . isoTimestamp <$> ilrLatestSnapshotTimestamp
       , ("hasOpenPosition" .=) <$> ilrHasOpenPosition

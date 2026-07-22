@@ -150,8 +150,8 @@ variable "provision_aa_proxy" {
 
 variable "enable_aa_sponsorship" {
   type        = bool
-  default     = false
-  description = "Authoritative managed sponsorship issuance/submission kill switch."
+  default     = true
+  description = "Authoritative managed sponsorship issuance/submission kill switch; disable explicitly only when sponsorship must be paused."
 }
 
 variable "pimlico_api_key" {
@@ -267,7 +267,7 @@ variable "perps_margin_clearinghouse" {
 
 variable "perps_account_lens" {
   type    = string
-  default = "0xb46f7ECAE1E7D3BC8ebC7FB1cda20d2d9a83cC29"
+  default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
 }
 
 variable "perps_indexer_start_block" {
@@ -277,7 +277,7 @@ variable "perps_indexer_start_block" {
 
 variable "perps_indexer_confirmations" {
   type    = string
-  default = "120"
+  default = "1"
 }
 
 variable "perps_indexer_batch_size" {
@@ -294,6 +294,17 @@ variable "insights_snapshot_poll_seconds" {
   type        = string
   default     = "60"
   description = "Interval between Plether Insights account snapshot cycles, in seconds. The worker enforces a minimum of 10 seconds."
+}
+
+variable "insights_snapshot_multicall_size" {
+  type        = string
+  default     = "10"
+  description = "Number of account-lens reads per exact-block Multicall3 request. Must be between 0 and 100; set to 0 to roll back to direct eth_call requests."
+
+  validation {
+    condition     = can(regex("^(0|[1-9][0-9]?|100)$", var.insights_snapshot_multicall_size))
+    error_message = "insights_snapshot_multicall_size must be an integer between 0 and 100."
+  }
 }
 
 variable "perps_oracle_updater_poll_seconds" {
@@ -338,12 +349,23 @@ variable "keeper_fee_buffer_bps" {
 
 variable "liquidation_worker_poll_seconds" {
   type    = string
-  default = "1"
+  default = "600"
 }
 
 variable "liquidation_worker_scan_batch_size" {
   type    = string
-  default = "100"
+  default = "1000"
+}
+
+variable "liquidation_worker_multicall_size" {
+  type        = string
+  default     = "10"
+  description = "Number of account-lens reads per liquidation-worker Multicall3 request. Must be between 1 and 100."
+
+  validation {
+    condition     = can(regex("^([1-9]|[1-9][0-9]|100)$", var.liquidation_worker_multicall_size))
+    error_message = "liquidation_worker_multicall_size must be an integer between 1 and 100."
+  }
 }
 
 variable "liquidation_worker_confirmations" {

@@ -10,6 +10,60 @@ const SECURITY_HEADERS = {
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
 };
 
+const API_CACHE_TTLS = {
+  status: 30,
+  currentCompetition: 60,
+  leaderboard: 15,
+  wallet: 15,
+};
+
+function resolveApiCacheTtl(method, pathname) {
+  if (method !== 'GET' && method !== 'HEAD') {
+    return null;
+  }
+
+  const apiPath = pathname.slice(API_PREFIX.length);
+
+  if (apiPath === '/status') {
+    return API_CACHE_TTLS.status;
+  }
+
+  if (apiPath === '/competitions/current') {
+    return API_CACHE_TTLS.currentCompetition;
+  }
+
+  if (/^\/competitions\/[^/]+\/leaderboard$/.test(apiPath)) {
+    return API_CACHE_TTLS.leaderboard;
+  }
+
+  if (/^\/competitions\/[^/]+\/wallets\/[^/]+$/.test(apiPath)) {
+    return API_CACHE_TTLS.wallet;
+  }
+
+  return null;
+}
+
+function apiFetchOptions(request, headers, cacheTtl) {
+  const options = {
+    method: request.method,
+    headers,
+    body: request.body,
+    redirect: 'manual',
+  };
+
+  if (cacheTtl !== null) {
+    options.cf = {
+      cacheEverything: true,
+      cacheTtlByStatus: {
+        '200-299': cacheTtl,
+        '300-599': -1,
+      },
+    };
+  }
+
+  return options;
+}
+
 function applyResponseHeaders(response, pathname) {
   const headers = new Headers(response.headers);
 
@@ -87,12 +141,9 @@ export default {
       headers.set('Host', backendUrl.hostname);
       headers.delete('Origin');
 
-      const response = await fetch(backendUrl, {
-        method: request.method,
-        headers,
-        body: request.body,
-        redirect: 'manual',
-      });
+      const cacheTtl = resolveApiCacheTtl(request.method, url.pathname);
+
+      const response = await fetch(backendUrl, apiFetchOptions(request, headers, cacheTtl));
 
       return applyResponseHeaders(response, url.pathname);
     }

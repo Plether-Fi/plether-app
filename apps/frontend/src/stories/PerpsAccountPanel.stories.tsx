@@ -1,6 +1,12 @@
+import { useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { userEvent, within } from 'storybook/test'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
+import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  PerpsIdentityContext,
+  type PerpsIdentityContextValue,
+} from '../perps-aa'
 import type {
   PerpsOrderHistoryRow,
   PerpsPendingOrder,
@@ -11,6 +17,23 @@ import type {
 const USDC = 1_000_000n
 const POSITION_SIZE = 2_000n * 10n ** 18n
 const NOW_SECONDS = Math.floor(Date.now() / 1_000)
+const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+
+const STORY_IDENTITY: PerpsIdentityContextValue = {
+  status: 'ready',
+  ownerAddress: STORY_ADDRESS,
+  accountAddress: STORY_ADDRESS,
+  chainId: 421614,
+  isAaManifestConfigured: false,
+  sponsorshipEnabled: false,
+  manifest: null,
+  identity: null,
+  proposedIdentity: null,
+  changedIdentityFields: [],
+  error: null,
+  confirmIdentityAfterContinuityCheck: () => false,
+  reloadIdentity: () => undefined,
+}
 
 const connectedPosition = {
   exists: true,
@@ -106,6 +129,13 @@ const meta: Meta<typeof PerpsAccountPanel> = {
   parameters: {
     layout: 'fullscreen',
   },
+  decorators: [
+    (Story) => (
+      <PerpsIdentityContext.Provider value={STORY_IDENTITY}>
+        <Story />
+      </PerpsIdentityContext.Provider>
+    ),
+  ],
 }
 
 export default meta
@@ -130,10 +160,40 @@ export const ConnectedPosition: Story = {
           equityUsdc={1_248_250_000n}
           freeBuyingPowerUsdc={848_250_000n}
           position={connectedPosition}
+          onClosePosition={() => undefined}
         />
       </div>
     </div>
   ),
+}
+
+function ClosePositionFlowStory() {
+  const [closePositionRequestId, setClosePositionRequestId] = useState(0)
+
+  return (
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
+      <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <PerpsAccountPanel
+          isConnected
+          equityUsdc={1_248_250_000n}
+          freeBuyingPowerUsdc={848_250_000n}
+          position={connectedPosition}
+          onClosePosition={() => {
+            setClosePositionRequestId((requestId) => requestId + 1)
+          }}
+        />
+        <PerpsTradeTicket
+          closePositionRequestId={closePositionRequestId}
+          currentPosition={connectedPosition}
+          oraclePriceRaw={96_531_000n}
+        />
+      </div>
+    </div>
+  )
+}
+
+export const ClosePositionFlow: Story = {
+  render: () => <ClosePositionFlowStory />,
 }
 
 export const EditPositionMargin: Story = {

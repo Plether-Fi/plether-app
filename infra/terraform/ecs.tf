@@ -353,10 +353,12 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
       { name = "PERPS_CFD_ENGINE", value = var.perps_cfd_engine },
+      { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
       { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "LIQUIDATION_WORKER_START_BLOCK", value = var.perps_indexer_start_block },
       { name = "LIQUIDATION_WORKER_POLL_SECONDS", value = var.liquidation_worker_poll_seconds },
       { name = "LIQUIDATION_WORKER_SCAN_BATCH_SIZE", value = var.liquidation_worker_scan_batch_size },
+      { name = "LIQUIDATION_WORKER_MULTICALL_SIZE", value = var.liquidation_worker_multicall_size },
       { name = "LIQUIDATION_WORKER_CONFIRMATIONS", value = var.liquidation_worker_confirmations },
       { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },
       { name = "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS", value = var.liquidation_worker_reorg_overlap_blocks },
@@ -569,6 +571,7 @@ resource "aws_ecs_task_definition" "insights_worker" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
+        { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
       ]
     },
     local.otel_log_router_container,
@@ -758,6 +761,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_MARGIN_CLEARINGHOUSE", value = var.perps_margin_clearinghouse },
         { name = "PERPS_ACCOUNT_LENS", value = var.perps_account_lens },
         { name = "INSIGHTS_SNAPSHOT_POLL_SECONDS", value = var.insights_snapshot_poll_seconds },
+        { name = "INSIGHTS_SNAPSHOT_MULTICALL_SIZE", value = var.insights_snapshot_multicall_size },
       ]
     },
     local.otel_log_router_container,

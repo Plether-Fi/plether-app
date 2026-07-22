@@ -431,7 +431,7 @@ jobs:
             echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
           fi
 
-      - name: Patch Sepolia task definition network
+      - name: Patch Sepolia API task definition
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
           jq \
@@ -454,7 +454,66 @@ jobs:
                 |
                 upsert_env("CHAIN_ID"; "421614")
                 | upsert_env("INDEXER_START_BLOCK"; "280884700")
+                | upsert_env("AA_SPONSORSHIP_ENABLED"; "true")
                 | upsert_secret("RPC_URL"; $rpcSecret)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
+
+      - name: Patch liquidation worker cost controls
+        if: matrix.task_suffix == '-liquidation-worker' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          LIQUIDATION_WORKER_POLL_SECONDS: "600"
+          LIQUIDATION_WORKER_SCAN_BATCH_SIZE: "1000"
+          LIQUIDATION_WORKER_MULTICALL_SIZE: "10"
+        run: |
+          jq \
+            --arg liquidationPollSeconds "$LIQUIDATION_WORKER_POLL_SECONDS" \
+            --arg liquidationScanBatchSize "$LIQUIDATION_WORKER_SCAN_BATCH_SIZE" \
+            --arg liquidationMulticallSize "$LIQUIDATION_WORKER_MULTICALL_SIZE" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == "plether-liquidation-worker" then
+                upsert_env("LIQUIDATION_WORKER_POLL_SECONDS"; $liquidationPollSeconds)
+                | upsert_env("LIQUIDATION_WORKER_SCAN_BATCH_SIZE"; $liquidationScanBatchSize)
+                | upsert_env("LIQUIDATION_WORKER_MULTICALL_SIZE"; $liquidationMulticallSize)
+              else
+                .
+              end
+            )
+            ' task-def.json > task-def.patched.json
+          mv task-def.patched.json task-def.json
+
+      - name: Patch Sepolia Insights configuration
+        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          PERPS_ACCOUNT_LENS: "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+          PERPS_INDEXER_CONFIRMATIONS: "1"
+        run: |
+          jq \
+            --arg accountLens "$PERPS_ACCOUNT_LENS" \
+            --arg indexerConfirmations "$PERPS_INDEXER_CONFIRMATIONS" \
+            '
+            def upsert_env($name; $value):
+              .environment = (
+                ((.environment // []) | map(select(.name != $name)))
+                + [{"name": $name, "value": $value}]
+              );
+
+            .containerDefinitions |= map(
+              if .name == "plether-api" or .name == "plether-insights-worker" or .name == "plether-liquidation-worker" then
+                upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
+              elif .name == "plether-perps-indexer" then
+                upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)
               else
                 .
               end

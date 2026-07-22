@@ -34,6 +34,7 @@ const walletResponse: WalletResponse = {
     address: walletAddress,
     displayName: '@profile_trader',
     pnl: '430270000',
+    realizedPnl: '313180000',
     roiBps: 43,
     equity: '100430270000',
     volume: '999890000000',

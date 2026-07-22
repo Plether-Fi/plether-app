@@ -1,8 +1,9 @@
-import { useDeferredValue, useState, type SyntheticEvent } from 'react'
+import { useState, type SyntheticEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useCurrentCompetition, useLeaderboard } from '../api'
+import { useCurrentCompetition, useInsightsStatus, useLeaderboard } from '../api'
 import { CompetitionHero, CompetitionStats, Leaderboard, LeaderboardTitle, RulesSummary } from '../components/Competition'
 import { ErrorState, LoadingState, Panel, ProvisionalNotice } from '../components/ui'
+import { useDebouncedValue } from '../utils/useDebouncedValue'
 import { isWalletAddress } from '../utils/format'
 
 function LeaderboardContent({ slug, search }: { slug: string; search: string }) {
@@ -16,6 +17,9 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
   return (
     <div className="space-y-3">
       {provisional ? <ProvisionalNotice /> : null}
+      <div className="border border-brand-peach/30 bg-brand-peach/5 px-4 py-3 text-sm leading-6 text-content-secondary" role="note">
+        <strong className="text-content-primary">Ranked by net P&amp;L.</strong> Directional realized and unrealized P&amp;L exclude execution fees, VPI, carry, and execution rewards. Accounts with no activity remain at 0.00 and rank above active accounts whose net return is negative.
+      </div>
       <Panel>
         <Leaderboard standings={standings} search={search} competitionSlug={slug} />
       </Panel>
@@ -32,8 +36,9 @@ function LeaderboardContent({ slug, search }: { slug: string; search: string }) 
 
 export function LeaderboardPage() {
   const competition = useCurrentCompetition()
+  const status = useInsightsStatus()
   const [search, setSearch] = useState('')
-  const deferredSearch = useDeferredValue(search.trim())
+  const debouncedSearch = useDebouncedValue(search.trim(), 350)
   const navigate = useNavigate()
 
   function submitSearch(event: SyntheticEvent<HTMLFormElement>) {
@@ -50,9 +55,16 @@ export function LeaderboardPage() {
   if (competition.isError) {
     return <ErrorState title="Competition data is unavailable" message={competition.error.message} onRetry={() => void competition.refetch()} />
   }
-  const competitionData = competition.data
-  if (!competitionData) {
+  const rawCompetitionData = competition.data
+  if (!rawCompetitionData) {
     return <ErrorState title="Competition data is unavailable" />
+  }
+  const competitionData = {
+    ...rawCompetitionData,
+    latestIndexedBlock: rawCompetitionData.latestIndexedBlock ?? status.data?.latestIndexedBlock ?? null,
+    latestIndexedAt: rawCompetitionData.latestIndexedAt ?? status.data?.latestIndexedAt ?? null,
+    participantCount: rawCompetitionData.participantCount ?? status.data?.participantCount,
+    eligibleCount: rawCompetitionData.eligibleCount ?? status.data?.eligibleCount,
   }
 
   return (
@@ -73,7 +85,7 @@ export function LeaderboardPage() {
             <button type="submit" className="border border-brand-orange bg-brand-orange px-4 py-2.5 text-sm font-semibold hover:bg-brand-peach hover:text-app-bg">Search</button>
           </form>
         </div>
-        <LeaderboardContent slug={competitionData.slug} search={deferredSearch} />
+        <LeaderboardContent slug={competitionData.slug} search={debouncedSearch} />
       </section>
     </div>
   )

@@ -7,6 +7,7 @@ perps_rpc_url                  = "https://arb-sepolia.g.alchemy.com/v2/YOUR_KEY"
 keeper_private_key             = "0xYOUR_KEEPER_PRIVATE_KEY"
 oracle_updater_private_key     = "0xYOUR_ORACLE_UPDATER_PRIVATE_KEY"
 liquidation_keeper_private_key = "0xYOUR_LIQUIDATION_KEEPER_PRIVATE_KEY"
+enable_aa_sponsorship          = false # Perps managed sponsorship is Sepolia-only.
 pyth_api_key                    = "PYTH_API_KEY_WITH_FX_FEED_ACCESS"
 enable_pyth_api_key             = true
 pyth_latest_max_age_seconds     = "10"

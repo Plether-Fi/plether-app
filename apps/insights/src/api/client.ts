@@ -56,6 +56,8 @@ interface WireStanding {
   alias?: string | null
   pnl?: string | null
   finalPnlUsdc?: string | null
+  realizedPnl?: string | null
+  realizedPnlUsdc?: string | null
   roiBps?: number | null
   volume?: string
   volumeUsdc?: string
@@ -183,12 +185,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
 export async function getCurrentCompetition(signal?: AbortSignal): Promise<Competition> {
   const response = await request<WireCompetition | { competition: WireCompetition }>('/competitions/current', signal)
   const rawCompetition = 'competition' in response ? response.competition : response
-  if (rawCompetition.latestIndexedBlock !== undefined || rawCompetition.participantCount !== undefined) {
-    return normalizeCompetition(rawCompetition)
-  }
-
-  const status = await request<WireStatusResponse>('/status', signal).catch(() => undefined)
-  return normalizeCompetition(rawCompetition, status?.status)
+  return normalizeCompetition(rawCompetition)
 }
 
 export interface LeaderboardParams {
@@ -222,14 +219,19 @@ export async function getWallet(slug: string, address: string, signal?: AbortSig
     signal,
   )
   const standing = normalizeStanding(response.wallet, response.competition)
+  const activity = response.activity?.map(normalizeActivity) ?? null
   return {
     competition: normalizeCompetition(response.competition),
     wallet: {
       ...standing,
+      realizedPnl:
+        response.wallet.realizedPnl
+        ?? response.wallet.realizedPnlUsdc
+        ?? sumRealizedPnl(activity),
       equity: response.wallet.equity ?? response.wallet.currentAccountValueUsdc ?? null,
       position: normalizePosition(response.wallet.position),
     },
-    activity: response.activity?.map(normalizeActivity) ?? null,
+    activity,
   }
 }
 
@@ -238,7 +240,7 @@ export async function getStatus(signal?: AbortSignal): Promise<InsightsStatus> {
   return normalizeStatus(response)
 }
 
-function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Competition {
+function normalizeCompetition(raw: WireCompetition): Competition {
   return {
     id: raw.id ?? raw.slug,
     slug: raw.slug,
@@ -255,11 +257,10 @@ function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Co
       place: prize.place,
       amount: prize.amount ?? prize.amountUsdc ?? '0',
     })),
-    latestIndexedBlock:
-      raw.latestIndexedBlock ?? parseOptionalNumber(status?.indexedThroughBlock),
-    latestIndexedAt: raw.latestIndexedAt ?? status?.indexerUpdatedAt ?? null,
-    participantCount: raw.participantCount ?? status?.participantCount,
-    eligibleCount: raw.eligibleCount ?? status?.eligibleCount,
+    latestIndexedBlock: raw.latestIndexedBlock ?? null,
+    latestIndexedAt: raw.latestIndexedAt ?? null,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 
@@ -279,7 +280,7 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
   const minimumDays = competition.minActiveDays ?? competition.minimumActiveDays ?? 5
   if (raw.scoreAvailable === false) reasons.push('Awaiting a finalized account snapshot')
   if (raw.scoreAvailable !== false && raw.meetsProfitRequirement === false) {
-    reasons.push('Below the +1% P&L threshold')
+    reasons.push('Below the +1% net P&L threshold')
   }
   if (raw.meetsActiveDaysRequirement === false) {
     reasons.push(`${String(raw.activeDays)} of ${String(minimumDays)} active days`)
@@ -295,6 +296,7 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
     address: raw.address ?? raw.wallet ?? '',
     displayName: raw.displayName ?? raw.alias ?? null,
     pnl: raw.pnl ?? raw.finalPnlUsdc ?? null,
+    realizedPnl: raw.realizedPnl ?? raw.realizedPnlUsdc ?? '0',
     roiBps: raw.roiBps ?? null,
     volume: raw.volume ?? raw.volumeUsdc ?? '0',
     trades: raw.trades ?? raw.executedTrades ?? 0,
@@ -327,6 +329,18 @@ function normalizeActivity(raw: WireActivity): WalletActivity {
     price: normalizePrice(priceRaw),
     pnl: raw.pnl ?? raw.pnlUsdc ?? null,
     txHash: raw.txHash ?? null,
+  }
+}
+
+function sumRealizedPnl(activity: WalletActivity[] | null): string {
+  if (!activity) return '0'
+  try {
+    return activity.reduce(
+      (total, item) => total + (item.pnl !== null && /^-?\d+$/.test(item.pnl) ? BigInt(item.pnl) : 0n),
+      0n,
+    ).toString()
+  } catch {
+    return '0'
   }
 }
 
@@ -391,6 +405,8 @@ function normalizeStatus(response: WireStatusResponse): InsightsStatus {
     latestIndexedBlock,
     latestIndexedAt,
     chainId: response.chainId ?? parseOptionalNumber(response.competition?.chainId) ?? undefined,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 

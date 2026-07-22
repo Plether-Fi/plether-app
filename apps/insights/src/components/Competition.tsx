@@ -73,17 +73,17 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
 
 function prizePool(prizes: Competition['prizes']): string {
   try {
-    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString(), 0)
+    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString())
   } catch {
-    return '1,000 USDC'
+    return '1,000.00 USDC'
   }
 }
 
 export function CompetitionStats({ competition }: { competition: Competition }) {
   const stats = [
     { label: 'Prize pool', value: prizePool(competition.prizes), accent: true },
-    { label: 'Starting balance', value: formatUsdc(competition.startingBalance, 0) },
-    { label: 'Prize threshold', value: `+${formatUsdc(competition.pnlEligibilityThreshold, 0)}` },
+    { label: 'Starting balance', value: formatUsdc(competition.startingBalance) },
+    { label: 'Prize threshold', value: `+${formatUsdc(competition.pnlEligibilityThreshold)}` },
     { label: 'Minimum activity', value: `${String(competition.minActiveDays)} active days` },
     { label: 'Registered traders', value: competition.participantCount?.toLocaleString() ?? '—' },
   ]
@@ -103,7 +103,7 @@ export function CompetitionStats({ competition }: { competition: Competition }) 
 function Rank({ value, prizePlace }: { value: number | null; prizePlace: number | null }) {
   return (
     <div className="flex min-w-9 flex-col items-center gap-1 font-mono text-xs font-semibold">
-      <span className="text-content-secondary" title="Overall P&L rank">#{value ?? '—'}</span>
+      <span className="text-content-secondary" title="Overall net P&L rank">#{value ?? '—'}</span>
       {prizePlace !== null ? <span className="bg-brand-orange px-1.5 py-0.5 text-content-primary" title={`Prize place ${String(prizePlace)}`}>P{prizePlace}</span> : null}
     </div>
   )
@@ -113,7 +113,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
   if (standing.prizePlace === null || standing.prizeAmountUsdc === null) return null
   const places = standing.prizePlaces.length > 0 ? standing.prizePlaces : [standing.prizePlace]
   const placeLabel = places.length > 1 ? `Places ${places.join('–')} tie` : `Place #${String(places[0])}`
-  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc, 0)}</div>
+  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc)}</div>
 }
 
 function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
@@ -124,8 +124,8 @@ function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; c
           <tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary">
             <th className="w-20 px-5 py-3">Rank</th>
             <th className="px-3 py-3">Trader</th>
-            <th className="px-3 py-3 text-right">Final P&amp;L</th>
-            <th className="px-3 py-3 text-right">Return</th>
+            <th className="px-3 py-3 text-right">Net P&amp;L</th>
+            <th className="px-3 py-3 text-right">Net return</th>
             <th className="px-3 py-3 text-right">Volume</th>
             <th className="px-3 py-3 text-right">Trades</th>
             <th className="px-3 py-3 text-right">Active days</th>
@@ -161,7 +161,10 @@ function MobileList({ standings, competitionSlug }: { standings: Standing[]; com
             <div className="min-w-0 flex-1">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0"><WalletIdentity address={standing.address} displayName={standing.displayName} competitionSlug={competitionSlug} /><PrizeAward standing={standing} /></div>
-                <Pnl value={standing.pnl} className="whitespace-nowrap text-sm font-semibold" />
+                <div className="text-right">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-content-tertiary">Net P&amp;L</div>
+                  <Pnl value={standing.pnl} className="whitespace-nowrap text-sm font-semibold" />
+                </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-3 text-xs text-content-tertiary">
                 <span>{standing.activeDays} active days · {standing.trades} trades</span>
@@ -186,7 +189,7 @@ export function LeaderboardTitle({ count }: { count: number }) {
   return (
     <div>
       <h2 className="text-xl font-semibold sm:text-2xl">Leaderboard</h2>
-      <p className="mt-1 text-sm text-content-secondary">Overall rank by final net P&amp;L · zero-trade accounts are unranked · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
+      <p className="mt-1 text-sm text-content-secondary">Overall rank by net account return after trading costs · zero-trade accounts are unranked · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
     </div>
   )
 }
@@ -194,8 +197,8 @@ export function LeaderboardTitle({ count }: { count: number }) {
 export function RulesSummary() {
   return (
     <Panel className="grid gap-px bg-brand-border/20 sm:grid-cols-3">
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at <strong className="text-content-primary">+1% or better</strong> and log at least five active FX-session days.</p></div>
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">$600 / $300 / $100</strong> in real USDC for the top three eligible traders.</p></div>
+      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at a <strong className="text-content-primary">+1% net return or better</strong> after trading costs and log at least five active FX-session days.</p></div>
+      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">600.00 / 300.00 / 100.00 USDC</strong> for the top three eligible traders.</p></div>
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Fair play</p><p className="mt-2 text-sm leading-6 text-content-secondary">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p></div>
     </Panel>
   )

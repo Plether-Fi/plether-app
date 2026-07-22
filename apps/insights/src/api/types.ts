@@ -30,6 +30,7 @@ export interface Standing {
   address: string
   displayName: string | null
   pnl: UsdcUnits | null
+  realizedPnl: UsdcUnits
   roiBps: number | null
   volume: UsdcUnits
   trades: number
@@ -91,6 +92,8 @@ export interface InsightsStatus {
   latestIndexedBlock: number | null
   latestIndexedAt: string | null
   chainId?: number
+  participantCount?: number
+  eligibleCount?: number
 }
 
 export interface ApiErrorBody {

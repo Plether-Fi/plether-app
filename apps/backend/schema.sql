@@ -147,6 +147,7 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     release_router TEXT NOT NULL,
     usdc_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
+    account_lens_address TEXT NOT NULL,
     start_timestamp BIGINT NOT NULL,
     new_risk_cutoff_timestamp BIGINT NOT NULL,
     score_cutoff_timestamp BIGINT NOT NULL,
@@ -198,6 +199,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_participants_trader_reference
     ON insights_competition_participants(competition_slug, trader_reference)
     WHERE trader_reference IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS insights_participant_wallet_remaps (
+    competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
+    trader_reference TEXT NOT NULL,
+    old_wallet VARCHAR(42) NOT NULL,
+    new_wallet VARCHAR(42) NOT NULL,
+    staged_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    applied_at TIMESTAMPTZ,
+    applied_by TEXT,
+    PRIMARY KEY (competition_slug, trader_reference),
+    UNIQUE (competition_slug, new_wallet)
+);
+
 CREATE TABLE IF NOT EXISTS insights_account_snapshots (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
     wallet VARCHAR(42) NOT NULL,
@@ -221,16 +234,20 @@ CREATE INDEX IF NOT EXISTS idx_insights_snapshots_latest
     ON insights_account_snapshots(competition_slug, wallet, block_number DESC);
 CREATE INDEX IF NOT EXISTS idx_insights_snapshots_kind
     ON insights_account_snapshots(competition_slug, snapshot_kind, wallet);
+CREATE INDEX IF NOT EXISTS idx_insights_snapshots_batch_wallet
+    ON insights_account_snapshots(competition_slug, snapshot_kind, block_number, wallet);
 
 CREATE TABLE IF NOT EXISTS insights_snapshot_batches (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
     snapshot_kind TEXT NOT NULL,
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
+    account_lens_address TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     block_hash TEXT NOT NULL,
     timestamp BIGINT NOT NULL,
     participant_count INTEGER NOT NULL,
+    account_state_count INTEGER NOT NULL,
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (competition_slug, snapshot_kind, block_number),
     CHECK (snapshot_kind IN ('start', 'live', 'final')),
