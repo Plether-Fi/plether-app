@@ -210,11 +210,7 @@ bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy = do
   if T.null appliedBy
     then failWith "APPLIED_BY must not be empty"
     else do
-      encodedSecret <- lookupEnv "INSIGHTS_BULK_ROSTER_GZIP_BASE64"
-      unsetEnv "INSIGHTS_BULK_ROSTER_GZIP_BASE64"
-      encoded <- case encodedSecret of
-        Just value | not $ null value -> pure $ T.pack value
-        _ -> failWith "INSIGHTS_BULK_ROSTER_GZIP_BASE64 is required"
+      encoded <- loadBulkRosterSecret
       rosterText <- decodeBulkRosterSecret encoded
       mappings <- case parseBulkRosterMappings expectedCount rosterText of
         Left err -> failWith $ T.unpack err
@@ -236,6 +232,30 @@ bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy = do
               <> show changedCount
               <> ", identity="
               <> show (expectedCount - changedCount)
+
+loadBulkRosterSecret :: IO T.Text
+loadBulkRosterSecret = do
+  let secretName = "INSIGHTS_BULK_ROSTER_GZIP_BASE64"
+      chunkCountName = secretName <> "_CHUNK_COUNT"
+  encodedSecret <- lookupEnv secretName
+  unsetEnv secretName
+  case encodedSecret of
+    Just value | not $ null value -> pure $ T.pack value
+    _ -> do
+      rawChunkCount <- lookupEnv chunkCountName
+      unsetEnv chunkCountName
+      chunkCount <- case rawChunkCount >>= (readMaybe :: String -> Maybe Int) of
+        Just count | count > 0 && count <= 64 -> pure count
+        _ -> failWith $ secretName <> " or a valid " <> chunkCountName <> " is required"
+      chunks <- forM [1 .. chunkCount] $ \index -> do
+        let suffix = if index < 10 then "0" <> show index else show index
+            chunkName = secretName <> "_" <> suffix
+        chunk <- lookupEnv chunkName
+        unsetEnv chunkName
+        case chunk of
+          Just value | not $ null value -> pure $ T.pack value
+          _ -> failWith $ "Bulk roster secret chunk " <> show index <> " is missing"
+      pure $ T.concat chunks
 
 decodeBulkRosterSecret :: T.Text -> IO T.Text
 decodeBulkRosterSecret encoded =
