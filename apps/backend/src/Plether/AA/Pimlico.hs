@@ -82,6 +82,10 @@ import Plether.Ethereum.Abi
   , encodeCall
   , encodeUint256
   )
+import Plether.AA.SimpleAccount
+  ( simpleAccountFactory
+  , simpleAccountImplementation
+  )
 import Plether.Ethereum.Client
   ( CallParams (..)
   , EthClient
@@ -99,12 +103,6 @@ import qualified Web.Scotty as Scotty
 
 entryPointAddress :: Text
 entryPointAddress = "0x4337084d9e255ff0702461cf8895ce9e3b5ff108"
-
-simpleAccountFactory :: Text
-simpleAccountFactory = "0x13e9ed32155810fdbd067d4522c492d6f68e5944"
-
-simpleAccountImplementation :: Text
-simpleAccountImplementation = "0x28426d752372d68d34340bd94390950dce3c9ec3"
 
 pimlicoRpcUrl :: String
 pimlicoRpcUrl = "https://api.pimlico.io/v2/421614/rpc"

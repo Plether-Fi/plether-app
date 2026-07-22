@@ -15,6 +15,7 @@ module Plether.Database.Insights
   , isLegacyPaymentDeadlineOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
+  , getCompetitionParticipantTraderReferenceByAlias
   , stageCompetitionParticipantWalletRemap
   , applyCompetitionParticipantWalletRemaps
   , setParticipantEligibility
@@ -904,6 +905,27 @@ upsertCompetitionParticipant conn slug traderReference wallet alias =
                   (slug, normalizedWallet, normalizedReference, normalizeAlias alias)
                 pure $ Right ()
       _ -> pure $ Left "Competition registration state is ambiguous"
+
+getCompetitionParticipantTraderReferenceByAlias
+  :: Connection
+  -> Text
+  -> Text
+  -> IO (Either Text Text)
+getCompetitionParticipantTraderReferenceByAlias conn slug alias = do
+  let normalizedAlias = T.strip alias
+  rows <- query conn
+    "SELECT trader_reference FROM insights_competition_participants\
+    \ WHERE competition_slug = ? AND LOWER(BTRIM(alias)) = LOWER(?)"
+    (slug, normalizedAlias)
+    :: IO [Only (Maybe Text)]
+  pure $ case rows of
+    [] -> Left "Public alias is not registered for this competition"
+    [Only Nothing] -> Left "Public alias has no private TRADER_REFERENCE"
+    [Only (Just traderReference)]
+      | T.null (T.strip traderReference) ->
+          Left "Public alias has an empty private TRADER_REFERENCE"
+      | otherwise -> Right $ T.strip traderReference
+    _ -> Left "Public alias is not unique for this competition"
 
 stageCompetitionParticipantWalletRemap
   :: Connection

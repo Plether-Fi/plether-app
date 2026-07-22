@@ -18,6 +18,7 @@ library
     import:           warnings
     exposed-modules:
         Plether.AA.Pimlico
+        Plether.AA.SimpleAccount
         Plether.Api
         Plether.Cache
         Plether.Config
@@ -224,6 +225,7 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.SimpleAccountSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec

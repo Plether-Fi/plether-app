@@ -54,6 +54,10 @@ Create a local mode-0600 JSON file with one of these allowlisted payloads:
 
 ```json
 {"requestId":"register-001","args":["register","opaque-trader-001","0xTRADING_ACCOUNT","Public alias"]}
+{"requestId":"remap-001","args":["stage-wallet-remap","opaque-trader-001","0xREGISTERED_ADDRESS","0xTRADING_ACCOUNT"]}
+{"requestId":"derive-remap-001","args":["stage-trading-account-remap","opaque-trader-001","0xOWNER_WALLET"]}
+{"requestId":"alias-remap-batch-001","args":["stage-alias-owner-remaps","@first_alias","0xREGISTERED_ADDRESS_1","0xOWNER_WALLET_1","@second_alias","0xREGISTERED_ADDRESS_2","0xOWNER_WALLET_2"]}
+{"requestId":"apply-remaps-001","args":["apply-wallet-remaps","879","reviewer-name"]}
 {"requestId":"review-001","args":["review","0xTRADING_ACCOUNT","eligible","reviewer-name"]}
 {"requestId":"review-002","args":["review","0xTRADING_ACCOUNT","ineligible","reviewer-name","Generic public reason"]}
 {"requestId":"list-001","args":["list"]}
@@ -74,6 +78,23 @@ Dispatch `Insights Admin` with the matching action and request ID, then enter
 SSM for private inspection or retry. Never put investigation evidence in
 `PUBLIC_REASON`; it is returned by the public API. Keep private review evidence
 in the restricted case record.
+
+Wallet remapping is an atomic full-roster operation. Stage exactly one mapping
+for every registered `TRADER_REFERENCE`, using an identity mapping when the
+registered address is already the verified Trading Account. Resolve duplicate
+destinations before applying. Stage alias-based mappings in batches of at most
+20 entries; staging is idempotent, and a failed or retried batch cannot pass the
+full-roster apply guard until every entry is present. `apply-wallet-remaps` fails unless its expected
+count matches the participant count, every staged source still matches the
+roster, and every destination is unique. Applying replaces the roster and
+invalidates the old snapshot batches; keep the snapshot worker stopped until
+the replacement roster is committed, then rebuild the baseline and live
+batches before restoring public publication.
+
+`stage-alias-owner-remaps` derives every destination locally using the pinned
+canonical v0.8.0 SimpleAccount factory deployment. It does not send participant
+owner wallets to an RPC. Update the pinned deployment artifact and known-vector
+tests together if the configured factory ever changes.
 
 ## Competition checks
 

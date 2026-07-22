@@ -1,7 +1,8 @@
 module Main (main) where
 
+import Control.Monad (forM)
 import qualified Data.Text as T
-import Plether.AA.Pimlico (resolveTradingAccountAddress)
+import Plether.AA.SimpleAccount (deriveTradingAccountAddress)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
@@ -9,6 +10,7 @@ import Plether.Database.Insights
   , applyCompetitionParticipantWalletRemaps
   , ensureInsightsSchema
   , finalizeCompetition
+  , getCompetitionParticipantTraderReferenceByAlias
   , listCompetitionParticipants
   , setParticipantEligibility
   , stageCompetitionParticipantWalletRemap
@@ -18,7 +20,6 @@ import Plether.Insights.Competition
   ( july2026CompetitionSlug
   , participantEligibilityFromText
   )
-import Plether.Ethereum.Client (EthClient, newClient)
 import Plether.Utils.Address (isValidAddress)
 import System.Environment (getArgs)
 import Text.Read (readMaybe)
@@ -34,7 +35,6 @@ main = do
         Nothing -> failWith "DATABASE_URL is required for plether-insights-admin"
         Just databaseUrl -> do
           pool <- newDbPool databaseUrl
-          perpsClient <- newClient $ cfgPerpsRpcUrl cfg
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
@@ -43,10 +43,10 @@ main = do
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
               (cfgPerpsAccountLens cfg)
-          runCommand pool perpsClient args
+          runCommand pool args
 
-runCommand :: DbPool -> EthClient -> [String] -> IO ()
-runCommand pool perpsClient = \case
+runCommand :: DbPool -> [String] -> IO ()
+runCommand pool = \case
   ["register", rawTraderReference, rawWallet] ->
     register pool rawTraderReference rawWallet Nothing
   ["register", rawTraderReference, rawWallet, rawAlias] ->
@@ -54,7 +54,9 @@ runCommand pool perpsClient = \case
   ["stage-wallet-remap", rawTraderReference, rawOldWallet, rawNewWallet] ->
     stageWalletRemap pool rawTraderReference rawOldWallet rawNewWallet
   ["stage-trading-account-remap", rawTraderReference, rawOldWallet] ->
-    stageTradingAccountRemap pool perpsClient rawTraderReference rawOldWallet
+    stageTradingAccountRemap pool rawTraderReference rawOldWallet
+  "stage-alias-owner-remaps" : rawMappings ->
+    stageAliasOwnerRemaps pool rawMappings
   ["apply-wallet-remaps", rawExpectedCount, rawAppliedBy] ->
     applyWalletRemaps pool rawExpectedCount rawAppliedBy
   ["review", rawWallet, rawStatus, rawReviewer] ->
@@ -112,34 +114,81 @@ stageWalletRemap pool rawTraderReference rawOldWallet rawNewWallet = do
             Left err -> failWith $ T.unpack err
             Right () -> putStrLn "Staged participant wallet remap"
 
-stageTradingAccountRemap :: DbPool -> EthClient -> String -> String -> IO ()
-stageTradingAccountRemap pool perpsClient rawTraderReference rawOldWallet = do
+stageTradingAccountRemap :: DbPool -> String -> String -> IO ()
+stageTradingAccountRemap pool rawTraderReference rawOldWallet = do
   let traderReference = T.strip $ T.pack rawTraderReference
       oldWallet = T.pack rawOldWallet
   if T.null traderReference
     then failWith "TRADER_REFERENCE must be a non-empty opaque registration identifier"
     else if not $ isValidAddress oldWallet
       then failWith "OLD_WALLET must be a valid Ethereum address"
-      else do
-        resolved <- resolveTradingAccountAddress perpsClient oldWallet
-        case resolved of
-          Left err -> failWith $ "Trading Account resolution failed: " <> T.unpack err
-          Right newWallet -> do
-            result <- withDb pool $ \conn ->
-              stageCompetitionParticipantWalletRemap
-                conn
-                july2026CompetitionSlug
-                traderReference
-                oldWallet
-                newWallet
-            case result of
-              Left err -> failWith $ T.unpack err
-              Right () ->
-                putStrLn $
-                  "Staged Trading Account remap "
-                    <> T.unpack (canonicalAddress oldWallet)
-                    <> " -> "
-                    <> T.unpack (canonicalAddress newWallet)
+      else case deriveTradingAccountAddress oldWallet of
+        Left err -> failWith $ "Trading Account derivation failed: " <> T.unpack err
+        Right newWallet -> do
+          result <- withDb pool $ \conn ->
+            stageCompetitionParticipantWalletRemap
+              conn
+              july2026CompetitionSlug
+              traderReference
+              oldWallet
+              newWallet
+          case result of
+            Left err -> failWith $ T.unpack err
+            Right () ->
+              putStrLn $
+                "Staged Trading Account remap "
+                  <> T.unpack (canonicalAddress oldWallet)
+                  <> " -> "
+                  <> T.unpack (canonicalAddress newWallet)
+
+stageAliasOwnerRemaps :: DbPool -> [String] -> IO ()
+stageAliasOwnerRemaps pool rawMappings =
+  case mappingTriples rawMappings of
+    Nothing ->
+      failWith "Alias remaps must be provided as repeated ALIAS OLD_WALLET OWNER_WALLET triples"
+    Just [] -> failWith "At least one alias remap is required"
+    Just mappings | length mappings > 20 -> failWith "At most 20 alias remaps can be staged per batch"
+    Just mappings -> do
+      resolved <- forM mappings $ \(rawAlias, rawOldWallet, rawOwnerWallet) -> do
+        let alias = T.strip $ T.pack rawAlias
+            oldWallet = T.pack rawOldWallet
+            ownerWallet = T.pack rawOwnerWallet
+        if T.null alias
+          then failWith "ALIAS must not be empty"
+          else if not $ isValidAddress oldWallet
+            then failWith "OLD_WALLET must be a valid Ethereum address"
+            else if not $ isValidAddress ownerWallet
+              then failWith "OWNER_WALLET must be a valid Ethereum address"
+              else case deriveTradingAccountAddress ownerWallet of
+                Left err -> failWith $ T.unpack err
+                Right newWallet -> do
+                  reference <- withDb pool $ \conn ->
+                    getCompetitionParticipantTraderReferenceByAlias
+                      conn
+                      july2026CompetitionSlug
+                      alias
+                  case reference of
+                    Left err -> failWith $ T.unpack err
+                    Right traderReference ->
+                      pure (traderReference, oldWallet, newWallet)
+      results <- forM resolved $ \(traderReference, oldWallet, newWallet) ->
+        withDb pool $ \conn ->
+          stageCompetitionParticipantWalletRemap
+            conn
+            july2026CompetitionSlug
+            traderReference
+            oldWallet
+            newWallet
+      case [err | Left err <- results] of
+        [] -> putStrLn $ "Staged " <> show (length results) <> " participant wallet remaps"
+        err : _ -> failWith $ T.unpack err
+
+mappingTriples :: [String] -> Maybe [(String, String, String)]
+mappingTriples = \case
+  [] -> Just []
+  alias : oldWallet : newWallet : rest ->
+    ((alias, oldWallet, newWallet) :) <$> mappingTriples rest
+  _ -> Nothing
 
 applyWalletRemaps :: DbPool -> String -> String -> IO ()
 applyWalletRemaps pool rawExpectedCount rawAppliedBy = do
@@ -234,6 +283,7 @@ usage =
     , "  plether-insights-admin register TRADER_REFERENCE WALLET [ALIAS]"
     , "  plether-insights-admin stage-wallet-remap TRADER_REFERENCE OLD_WALLET NEW_WALLET"
     , "  plether-insights-admin stage-trading-account-remap TRADER_REFERENCE OLD_WALLET"
+    , "  plether-insights-admin stage-alias-owner-remaps ALIAS OLD_WALLET OWNER_WALLET [...]"
     , "  plether-insights-admin apply-wallet-remaps EXPECTED_COUNT APPLIED_BY"
     , "  plether-insights-admin review WALLET STATUS REVIEWER [PUBLIC_REASON]"
     , "  plether-insights-admin finalize REVIEWER"

@@ -9,6 +9,10 @@ on:
         type: choice
         options:
           - register
+          - stage-wallet-remap
+          - stage-trading-account-remap
+          - stage-alias-owner-remaps
+          - apply-wallet-remaps
           - review
           - list
           - finalize
@@ -102,7 +106,7 @@ jobs:
               def safe_arg:
                 type == "string"
                 and length <= 2000
-                and (test("[\\u0000-\\u001F\\u007F]") | not);
+                and (test("[[:cntrl:]]") | not);
 
               type == "object"
               and .requestId == $request_id
@@ -118,6 +122,33 @@ jobs:
                   and (.args[1] | nonempty(200))
                   and (.args[2] | wallet)
                   and ((.args | length) == 3 or (.args[3] | nonempty(80))))
+                or
+                ($action == "stage-wallet-remap"
+                  and (.args | length) == 4
+                  and (.args[1] | nonempty(200))
+                  and (.args[2] | wallet)
+                  and (.args[3] | wallet))
+                or
+                ($action == "stage-trading-account-remap"
+                  and (.args | length) == 3
+                  and (.args[1] | nonempty(200))
+                  and (.args[2] | wallet))
+                or
+                ($action == "stage-alias-owner-remaps"
+                  and (.args | length) >= 4
+                  and (.args | length) <= 61
+                  and (((.args | length) - 1) % 3) == 0
+                  and ([range(1; (.args | length); 3) as $i
+                    | (.args[$i] | nonempty(80))] | all)
+                  and ([range(2; (.args | length); 3) as $i
+                    | (.args[$i] | wallet)] | all)
+                  and ([range(3; (.args | length); 3) as $i
+                    | (.args[$i] | wallet)] | all))
+                or
+                ($action == "apply-wallet-remaps"
+                  and (.args | length) == 3
+                  and (.args[1] | type == "string" and test("^[1-9][0-9]*$"))
+                  and (.args[2] | nonempty(128)))
                 or
                 ($action == "review"
                   and ((.args | length) == 4 or (.args | length) == 5)
