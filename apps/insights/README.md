@@ -27,5 +27,8 @@ npm run build
 Cloudflare Pages serves the SPA through `public/_worker.js`. Configure
 `INSIGHTS_BACKEND_URL` as a clean HTTPS origin; HTTP, credentials, paths, query
 parameters, and fragments are rejected. API requests preserve the complete
-`/api/insights/v1/...` path. The deployment workflow also requires the backend
-status endpoint to succeed before publishing Pages.
+`/api/insights/v1/...` path. Successful public GET and HEAD responses are cached
+at the edge for 15 seconds (leaderboards and wallets), 30 seconds (status), or
+60 seconds (current competition metadata); errors and mutating requests are not
+cached. The deployment workflow also requires the backend status endpoint to
+succeed before publishing Pages.

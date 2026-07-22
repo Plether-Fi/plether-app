@@ -9,6 +9,8 @@ import type {
 
 export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026'
 const API_ROOT = '/api/insights/v1'
+const PERPS_PRICE_DECIMALS = 8
+const PLDXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_PRICE_DECIMALS)
 
 interface ApiEnvelope<T> {
   data: T
@@ -183,12 +185,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
 export async function getCurrentCompetition(signal?: AbortSignal): Promise<Competition> {
   const response = await request<WireCompetition | { competition: WireCompetition }>('/competitions/current', signal)
   const rawCompetition = 'competition' in response ? response.competition : response
-  if (rawCompetition.latestIndexedBlock !== undefined || rawCompetition.participantCount !== undefined) {
-    return normalizeCompetition(rawCompetition)
-  }
-
-  const status = await request<WireStatusResponse>('/status', signal).catch(() => undefined)
-  return normalizeCompetition(rawCompetition, status?.status)
+  return normalizeCompetition(rawCompetition)
 }
 
 export interface LeaderboardParams {
@@ -243,7 +240,7 @@ export async function getStatus(signal?: AbortSignal): Promise<InsightsStatus> {
   return normalizeStatus(response)
 }
 
-function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Competition {
+function normalizeCompetition(raw: WireCompetition): Competition {
   return {
     id: raw.id ?? raw.slug,
     slug: raw.slug,
@@ -260,11 +257,10 @@ function normalizeCompetition(raw: WireCompetition, status?: WireDataStatus): Co
       place: prize.place,
       amount: prize.amount ?? prize.amountUsdc ?? '0',
     })),
-    latestIndexedBlock:
-      raw.latestIndexedBlock ?? parseOptionalNumber(status?.indexedThroughBlock),
-    latestIndexedAt: raw.latestIndexedAt ?? status?.indexerUpdatedAt ?? null,
-    participantCount: raw.participantCount ?? status?.participantCount,
-    eligibleCount: raw.eligibleCount ?? status?.eligibleCount,
+    latestIndexedBlock: raw.latestIndexedBlock ?? null,
+    latestIndexedAt: raw.latestIndexedAt ?? null,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 
@@ -387,7 +383,14 @@ function sizeDeltaToNotionalUsdc(
 
 function normalizePrice(value: string | null | undefined): string | null {
   if (value == null) return null
-  return /^-?\d+$/.test(value) ? formatIntegerUnits(value, 8) : value
+  if (!/^-?\d+$/.test(value)) return value
+  try {
+    const basketPrice = BigInt(value)
+    if (basketPrice <= 0n || basketPrice >= PLDXY_PRICE_CAP) return null
+    return formatIntegerUnits((PLDXY_PRICE_CAP - basketPrice).toString(), PERPS_PRICE_DECIMALS)
+  } catch {
+    return null
+  }
 }
 
 function normalizeStatus(response: WireStatusResponse): InsightsStatus {
@@ -402,6 +405,8 @@ function normalizeStatus(response: WireStatusResponse): InsightsStatus {
     latestIndexedBlock,
     latestIndexedAt,
     chainId: response.chainId ?? parseOptionalNumber(response.competition?.chainId) ?? undefined,
+    participantCount: raw.participantCount,
+    eligibleCount: raw.eligibleCount,
   }
 }
 

@@ -3,9 +3,10 @@ module Plether.Ethereum.Contracts.PerpsSpec (spec) where
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
-import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeUint256)
+import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeInt256, encodeUint256)
 import Plether.Ethereum.Contracts.Perps
 import Plether.Ethereum.Rpc (RpcLog (..))
+import Plether.Pyth.Basket (PythPricePoint (..))
 import Test.Hspec
 
 spec :: Spec
@@ -125,6 +126,32 @@ spec = do
       decodePythContract (BS.replicate 32 0) `shouldSatisfy` isDecodeError
 
   describe "parsePriceFeedUpdatesUnique return decoding" $ do
+    it "strictly decodes the signed current price from each nine-word PriceFeed" $ do
+      let firstFeed = BS.replicate 32 0x11
+          secondFeed = BS.replicate 32 0x22
+          encoded =
+            encodePriceFeedStructs
+              [ encodePriceFeed firstFeed 123456 78 (-8) 1000 123400 80 (-8) 999
+              , encodePriceFeed secondFeed (-42) 9 (-10) 1001 (-40) 10 (-10) 998
+              ]
+      decodeParsedPriceFeeds [firstFeed, secondFeed] encoded
+        `shouldBe` Right
+          [ PythPricePoint
+              { pppFeedId = "0x1111111111111111111111111111111111111111111111111111111111111111"
+              , pppPrice = 123456
+              , pppConfidence = 78
+              , pppExponent = -8
+              , pppPublishTime = 1000
+              }
+          , PythPricePoint
+              { pppFeedId = "0x2222222222222222222222222222222222222222222222222222222222222222"
+              , pppPrice = -42
+              , pppConfidence = 9
+              , pppExponent = -10
+              , pppPublishTime = 1001
+              }
+          ]
+
     it "accepts the requested feed IDs in order" $ do
       let feedIds = [BS.replicate 32 0x11, BS.replicate 32 0x22]
       case decodeParsedPriceFeedIds feedIds (encodePriceFeeds feedIds) of
@@ -145,6 +172,28 @@ spec = do
       decodeParsedPriceFeedIds [requested] (encodePriceFeeds [requested, other])
         `shouldSatisfy` isDecodeError
       decodeParsedPriceFeedIds [requested] (encodePriceFeeds [other])
+        `shouldSatisfy` isDecodeError
+
+    it "rejects trailing ABI words and non-canonical typed fields" $ do
+      let feedId = BS.replicate 32 0x11
+          valid = encodePriceFeed feedId 100 2 (-8) 1000 99 3 (-8) 999
+          invalidCurrentPrice =
+            encodePriceFeed feedId (2 ^ (63 :: Integer)) 2 (-8) 1000 99 3 (-8) 999
+          invalidCurrentConfidence =
+            encodePriceFeed feedId 100 (2 ^ (64 :: Integer)) (-8) 1000 99 3 (-8) 999
+          invalidCurrentExponent =
+            encodePriceFeed feedId 100 2 (2 ^ (31 :: Integer)) 1000 99 3 (-8) 999
+          invalidEmaConfidence =
+            encodePriceFeed feedId 100 2 (-8) 1000 99 (2 ^ (64 :: Integer)) (-8) 999
+      decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [valid] <> BS.replicate 32 0)
+        `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidCurrentPrice])
+        `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidCurrentConfidence])
+        `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidCurrentExponent])
+        `shouldSatisfy` isDecodeError
+      decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidEmaConfidence])
         `shouldSatisfy` isDecodeError
 
   describe "decodePerpsOrderEvent" $ do
@@ -277,9 +326,35 @@ expectRight value =
 
 encodePriceFeeds :: [BS.ByteString] -> BS.ByteString
 encodePriceFeeds feedIds =
+  encodePriceFeedStructs [feedId <> BS.replicate (8 * 32) 0 | feedId <- feedIds]
+
+encodePriceFeedStructs :: [BS.ByteString] -> BS.ByteString
+encodePriceFeedStructs feeds =
   encodeUint256 32
-    <> encodeUint256 (fromIntegral $ length feedIds)
-    <> mconcat [feedId <> BS.replicate (8 * 32) 0 | feedId <- feedIds]
+    <> encodeUint256 (fromIntegral $ length feeds)
+    <> mconcat feeds
+
+encodePriceFeed
+  :: BS.ByteString
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> BS.ByteString
+encodePriceFeed feedId price confidence priceExponent publishTime emaPrice emaConfidence emaExponent emaPublishTime =
+  feedId
+    <> encodeInt256 price
+    <> encodeUint256 confidence
+    <> encodeInt256 priceExponent
+    <> encodeUint256 publishTime
+    <> encodeInt256 emaPrice
+    <> encodeUint256 emaConfidence
+    <> encodeInt256 emaExponent
+    <> encodeUint256 emaPublishTime
 
 isRightAddress :: Text -> Either a Text -> Bool
 isRightAddress expected value =

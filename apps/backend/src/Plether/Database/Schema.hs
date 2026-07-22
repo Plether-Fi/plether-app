@@ -1429,7 +1429,12 @@ seedPerpsLiquidationCandidatesFromHistory conn chainId orderRouter cfdEngine = d
         \ON CONFLICT (chain_id, cfd_engine, account) DO UPDATE SET \
         \first_seen_block = LEAST(perps_liquidation_candidates.first_seen_block, EXCLUDED.first_seen_block), \
         \last_seen_block = GREATEST(perps_liquidation_candidates.last_seen_block, EXCLUDED.last_seen_block), \
-        \last_checked_at = NULL, updated_at = NOW()"
+        \last_checked_at = CASE \
+        \  WHEN EXCLUDED.last_seen_block > perps_liquidation_candidates.last_seen_block THEN NULL \
+        \  ELSE perps_liquidation_candidates.last_checked_at \
+        \END, updated_at = NOW() \
+        \WHERE EXCLUDED.first_seen_block < perps_liquidation_candidates.first_seen_block \
+        \OR EXCLUDED.last_seen_block > perps_liquidation_candidates.last_seen_block"
         (normalizeRouter cfdEngine, chainId, normalizeRouter orderRouter)
       pure ()
     _ -> pure ()

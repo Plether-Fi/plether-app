@@ -24,6 +24,8 @@ module Plether.Ethereum.Contracts.Perps
   , getUpdateFee
   , getPythContract
   , decodePythContract
+  , parsePythUpdateData
+  , parseUniquePythUpdateData
   , validatePythUpdateData
   , validateUniquePythUpdateData
   , executeOrderCall
@@ -35,6 +37,7 @@ module Plether.Ethereum.Contracts.Perps
   , updatePriceFeedsCall
   , parsePriceFeedUpdatesCall
   , parsePriceFeedUpdatesUniqueCall
+  , decodeParsedPriceFeeds
   , decodeParsedPriceFeedIds
   , adverseConfidenceMultiplierBpsCall
   , orderFailureReasonText
@@ -42,12 +45,14 @@ module Plether.Ethereum.Contracts.Perps
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Plether.Ethereum.Abi
   ( decodeAddress
   , decodeBool
+  , decodeInt256
   , decodeUint256
   , encodeAddress
   , encodeBool
@@ -64,6 +69,7 @@ import Plether.Ethereum.Client
   , ethCallWithValue
   )
 import Plether.Ethereum.Rpc (RpcLog (..))
+import Plether.Pyth.Basket (PythPricePoint (..))
 
 data PerpsOrderEvent
   = OrderCommitted
@@ -261,26 +267,19 @@ validatePythUpdateData
   -> Integer
   -> IO (Either RpcError ())
 validatePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime =
-  case parsePriceFeedUpdatesCall updateData feedIds minPublishTime maxPublishTime of
-    Left err -> pure $ Left err
-    Right calldata -> do
-      pythResult <- getPythContract client oracle
-      case pythResult of
-        Left err -> pure $ Left err
-        Right pyth -> do
-          feeResult <- getUpdateFee client pyth updateData
-          case feeResult of
-            Left err -> pure $ Left err
-            Right fee -> do
-              result <-
-                ethCallWithValue
-                  client
-                  (CallParams pyth calldata)
-                  fee
-              pure $ do
-                bytes <- result
-                _ <- decodeParsedPriceFeedIds feedIds bytes
-                Right ()
+  fmap (fmap (const ())) $
+    parsePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime
+
+parsePythUpdateData
+  :: EthClient
+  -> Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError [PythPricePoint])
+parsePythUpdateData =
+  parsePythUpdateDataWith parsePriceFeedUpdatesCall
 
 validateUniquePythUpdateData
   :: EthClient
@@ -291,7 +290,31 @@ validateUniquePythUpdateData
   -> Integer
   -> IO (Either RpcError ())
 validateUniquePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime =
-  case parsePriceFeedUpdatesUniqueCall updateData feedIds minPublishTime maxPublishTime of
+  fmap (fmap (const ())) $
+    parseUniquePythUpdateData client oracle updateData feedIds minPublishTime maxPublishTime
+
+parseUniquePythUpdateData
+  :: EthClient
+  -> Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError [PythPricePoint])
+parseUniquePythUpdateData =
+  parsePythUpdateDataWith parsePriceFeedUpdatesUniqueCall
+
+parsePythUpdateDataWith
+  :: ([ByteString] -> [ByteString] -> Integer -> Integer -> Either RpcError ByteString)
+  -> EthClient
+  -> Text
+  -> [ByteString]
+  -> [ByteString]
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError [PythPricePoint])
+parsePythUpdateDataWith makeCalldata client oracle updateData feedIds minPublishTime maxPublishTime =
+  case makeCalldata updateData feedIds minPublishTime maxPublishTime of
     Left err -> pure $ Left err
     Right calldata -> do
       pythResult <- getPythContract client oracle
@@ -303,10 +326,7 @@ validateUniquePythUpdateData client oracle updateData feedIds minPublishTime max
             Left err -> pure $ Left err
             Right fee -> do
               result <- ethCallWithValue client (CallParams pyth calldata) fee
-              pure $ do
-                bytes <- result
-                _ <- decodeParsedPriceFeedIds feedIds bytes
-                Right ()
+              pure $ result >>= decodeParsedPriceFeeds feedIds
 
 orderFailureReasonText :: Integer -> Text
 orderFailureReasonText = \case
@@ -386,41 +406,104 @@ parsePriceFeedUpdatesCallWith signature updateData feedIds minPublishTime maxPub
       , encodedFeedIds
       ]
 
+decodeParsedPriceFeeds :: [ByteString] -> ByteString -> Either RpcError [PythPricePoint]
+decodeParsedPriceFeeds expectedFeedIds bytes = do
+  if null expectedFeedIds
+    then Left $ RpcJsonError "Pyth price-feed parser was given no expected feed IDs"
+    else Right ()
+  if any ((/= 32) . BS.length) expectedFeedIds
+    then Left $ RpcJsonError "Pyth price-feed parser expected a feed ID that was not 32 bytes"
+    else Right ()
+  if BS.length bytes < 2 * 32
+    then Left $ RpcJsonError "Pyth price-feed parser returned truncated ABI data"
+    else Right ()
+  if arrayOffset /= 32
+    then Left $ RpcJsonError "Pyth price-feed parser returned an invalid ABI array offset"
+    else Right ()
+  if priceFeedCount /= fromIntegral expectedCount
+    then Left $ RpcJsonError "Pyth price-feed parser returned an unexpected price-feed count"
+    else Right ()
+  if BS.length bytes /= expectedEncodedLength
+    then Left $ RpcJsonError "Pyth price-feed parser returned a non-canonical PriceFeed[] length"
+    else Right ()
+  traverse decodePriceFeed $ zip3 [0 :: Int ..] expectedFeedIds priceFeedBytes
+  where
+    arrayOffset = decodeUint256 $ BS.take 32 bytes
+    priceFeedCount = decodeUint256 $ BS.take 32 $ BS.drop 32 bytes
+    expectedCount = length expectedFeedIds
+    expectedEncodedLength = 2 * 32 + expectedCount * encodedPriceFeedSize
+    priceFeedBytes =
+      [ BS.take encodedPriceFeedSize $
+          BS.drop (2 * 32 + index * encodedPriceFeedSize) bytes
+      | index <- [0 .. expectedCount - 1]
+      ]
+
+    decodePriceFeed (index, expectedFeedId, encoded) = do
+      let actualFeedId = priceFeedWord 0 encoded
+      if actualFeedId /= expectedFeedId
+        then
+          Left $
+            RpcJsonError $
+              "Pyth price-feed parser returned a mismatched feed ID at index "
+                <> T.pack (show index)
+        else Right ()
+      (price, confidence, priceExponent, publishTime) <-
+        decodePrice "price" index $ BS.drop 32 encoded
+      -- A PriceFeed contains both price and emaPrice. The worker does not use
+      -- emaPrice, but decoding it here prevents malformed trailing struct words
+      -- from being admitted alongside an otherwise valid current price.
+      _ <- decodePrice "EMA price" index $ BS.drop (5 * 32) encoded
+      pure
+        PythPricePoint
+          { pppFeedId = "0x" <> TE.decodeUtf8 (B16.encode actualFeedId)
+          , pppPrice = price
+          , pppConfidence = confidence
+          , pppExponent = priceExponent
+          , pppPublishTime = publishTime
+          }
+
+    decodePrice label index encoded = do
+      let price = decodeInt256 $ priceWord 0
+          confidence = decodeUint256 $ priceWord 1
+          exponentInteger = decodeInt256 $ priceWord 2
+          publishTime = decodeUint256 $ priceWord 3
+          fieldError fieldName =
+            RpcJsonError $
+              "Pyth price-feed parser returned an invalid "
+                <> label
+                <> " "
+                <> fieldName
+                <> " at index "
+                <> T.pack (show index)
+      if price < minInt64 || price > maxInt64
+        then Left $ fieldError "int64 value"
+        else Right ()
+      if confidence > maxUint64
+        then Left $ fieldError "uint64 confidence"
+        else Right ()
+      if exponentInteger < minInt32 || exponentInteger > maxInt32
+        then Left $ fieldError "int32 exponent"
+        else Right ()
+      pure (price, confidence, fromInteger exponentInteger :: Int, publishTime)
+      where
+        priceWord wordIndex = BS.take 32 $ BS.drop (wordIndex * 32) encoded
+
+    priceFeedWord wordIndex encoded =
+      BS.take 32 $ BS.drop (wordIndex * 32) encoded
+
 decodeParsedPriceFeedIds :: [ByteString] -> ByteString -> Either RpcError [ByteString]
 decodeParsedPriceFeedIds expectedFeedIds bytes = do
-  actualFeedIds <- decodePriceFeedIds bytes
-  if null actualFeedIds
-    then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned no price feeds"
-    else if length actualFeedIds /= length expectedFeedIds
-      then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned an unexpected price-feed count"
-      else if actualFeedIds /= expectedFeedIds
-        then Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned mismatched price-feed IDs"
-        else Right actualFeedIds
-
-decodePriceFeedIds :: ByteString -> Either RpcError [ByteString]
-decodePriceFeedIds bytes
-  | BS.length bytes < 32 =
-      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned truncated ABI data"
-  | arrayOffsetWord /= 32 =
-      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned an invalid ABI array offset"
-  | BS.length bytes < arrayOffset + 32 =
-      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned a truncated ABI array"
-  | priceFeedCount > fromIntegral maximumCompletePriceFeeds =
-      Left $ RpcJsonError "parsePriceFeedUpdatesUnique returned truncated price-feed data"
-  | otherwise =
-      Right
-        [ BS.take 32 $ BS.drop (arrayOffset + 32 + index * encodedPriceFeedSize) bytes
-        | index <- [0 .. fromIntegral priceFeedCount - 1]
-        ]
-  where
-    arrayOffsetWord = decodeUint256 $ BS.take 32 bytes
-    arrayOffset = 32
-    priceFeedCount = decodeUint256 $ BS.take 32 $ BS.drop arrayOffset bytes
-    maximumCompletePriceFeeds =
-      max 0 (BS.length bytes - arrayOffset - 32) `div` encodedPriceFeedSize
+  _ <- decodeParsedPriceFeeds expectedFeedIds bytes
+  pure expectedFeedIds
 
 encodedPriceFeedSize :: Int
 encodedPriceFeedSize = 9 * 32
+
+minInt32, maxInt32, minInt64, maxInt64 :: Integer
+minInt32 = negate $ 2 ^ (31 :: Integer)
+maxInt32 = 2 ^ (31 :: Integer) - 1
+minInt64 = negate $ 2 ^ (63 :: Integer)
+maxInt64 = 2 ^ (63 :: Integer) - 1
 
 maxUint64 :: Integer
 maxUint64 = 2 ^ (64 :: Integer) - 1

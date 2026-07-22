@@ -234,16 +234,20 @@ CREATE INDEX IF NOT EXISTS idx_insights_snapshots_latest
     ON insights_account_snapshots(competition_slug, wallet, block_number DESC);
 CREATE INDEX IF NOT EXISTS idx_insights_snapshots_kind
     ON insights_account_snapshots(competition_slug, snapshot_kind, wallet);
+CREATE INDEX IF NOT EXISTS idx_insights_snapshots_batch_wallet
+    ON insights_account_snapshots(competition_slug, snapshot_kind, block_number, wallet);
 
 CREATE TABLE IF NOT EXISTS insights_snapshot_batches (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
     snapshot_kind TEXT NOT NULL,
     chain_id BIGINT NOT NULL,
     release_router TEXT NOT NULL,
+    account_lens_address TEXT NOT NULL,
     block_number BIGINT NOT NULL,
     block_hash TEXT NOT NULL,
     timestamp BIGINT NOT NULL,
     participant_count INTEGER NOT NULL,
+    account_state_count INTEGER NOT NULL,
     published_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (competition_slug, snapshot_kind, block_number),
     CHECK (snapshot_kind IN ('start', 'live', 'final')),
