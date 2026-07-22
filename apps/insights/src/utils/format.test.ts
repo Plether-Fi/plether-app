@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompactUsdc, formatRoi, formatSignedUsdc, formatUsdc, isWalletAddress } from './format'
+import { formatCompactUsdc, formatRoi, formatSignedUsdc, formatUsdc, isWalletAddress, xProfileUrl } from './format'
 
 describe('USDC formatting', () => {
   it('keeps six-decimal integer units lossless and rounds for display', () => {
@@ -32,5 +32,11 @@ describe('other public value formatting', () => {
   it('accepts only complete EVM addresses', () => {
     expect(isWalletAddress(`0x${'a'.repeat(40)}`)).toBe(true)
     expect(isWalletAddress(`0x${'a'.repeat(39)}`)).toBe(false)
+  })
+
+  it('builds X profile links only for valid public usernames', () => {
+    expect(xProfileUrl('@plether')).toBe('https://x.com/plether')
+    expect(xProfileUrl('Plether_Fi')).toBe('https://x.com/Plether_Fi')
+    expect(xProfileUrl('not a username')).toBeNull()
   })
 })
