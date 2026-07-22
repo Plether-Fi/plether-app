@@ -40,6 +40,10 @@ jobs:
         working-directory: apps/frontend
         run: npm ci
 
+      - name: Install Insights story dependencies
+        working-directory: apps/insights
+        run: npm ci
+
       - name: Resolve deploy target
         id: target
         run: |
