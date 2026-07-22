@@ -18,6 +18,7 @@ module Plether.Database.Insights
   , getCompetitionParticipantTraderReferenceByAlias
   , stageCompetitionParticipantWalletRemap
   , applyCompetitionParticipantWalletRemaps
+  , bulkApplyCompetitionParticipantWalletRemaps
   , setParticipantEligibility
   , finalizeCompetition
   , listCompetitionParticipants
@@ -54,6 +55,7 @@ import Database.PostgreSQL.Simple
   , Only (..)
   , Query
   , execute
+  , executeMany
   , execute_
   , query
   , query_
@@ -1056,6 +1058,150 @@ applyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy =
                       (Only slug)
                     pure $ Right ()
               _ -> pure $ Left "Participant wallet remap validation state is ambiguous"
+
+bulkApplyCompetitionParticipantWalletRemaps
+  :: Connection
+  -> Text
+  -> Integer
+  -> Text
+  -> [(Text, Text, Text)]
+  -> IO (Either Text Integer)
+bulkApplyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy mappings =
+  withTransaction conn $ do
+    let normalizedAppliedBy = T.strip appliedBy
+        normalizedMappings =
+          [ (T.toCaseFold $ T.strip alias, normalizeAddress oldWallet, normalizeAddress newWallet)
+          | (alias, oldWallet, newWallet) <- mappings
+          ]
+    mutable <- competitionIsMutableForUpdate conn slug
+    if not mutable
+      then pure $ Left "The competition is missing or finalized; wallet remaps are locked"
+      else if expectedCount <= 0
+        then pure $ Left "EXPECTED_COUNT must be positive"
+        else if T.null normalizedAppliedBy
+          then pure $ Left "APPLIED_BY must not be empty"
+          else if fromIntegral (length normalizedMappings) /= expectedCount
+            then pure $ Left "Bulk roster entry count does not match EXPECTED_COUNT"
+            else do
+              _ <- execute_ conn
+                "CREATE TEMP TABLE insights_bulk_wallet_remaps (\
+                \ alias_key TEXT PRIMARY KEY,\
+                \ old_wallet VARCHAR(42) NOT NULL,\
+                \ new_wallet VARCHAR(42) NOT NULL UNIQUE\
+                \ ) ON COMMIT DROP"
+              _ <- executeMany conn
+                "INSERT INTO insights_bulk_wallet_remaps (alias_key, old_wallet, new_wallet)\
+                \ VALUES (?, ?, ?)"
+                normalizedMappings
+              lockedParticipants <- query conn
+                "SELECT wallet FROM insights_competition_participants\
+                \ WHERE competition_slug = ? FOR UPDATE"
+                (Only slug)
+                :: IO [Only Text]
+              counts <- query conn
+                "SELECT\
+                \ (SELECT COUNT(*) FROM insights_competition_participants WHERE competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_bulk_wallet_remaps),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants p\
+                \   JOIN insights_bulk_wallet_remaps m ON LOWER(BTRIM(p.alias)) = m.alias_key\
+                \   WHERE p.competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants p\
+                \   JOIN insights_bulk_wallet_remaps m ON LOWER(BTRIM(p.alias)) = m.alias_key\
+                \     AND LOWER(p.wallet) = m.old_wallet\
+                \   WHERE p.competition_slug = ?),\
+                \ (SELECT COUNT(DISTINCT new_wallet) FROM insights_bulk_wallet_remaps),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants\
+                \   WHERE competition_slug = ? AND (trader_reference IS NULL OR BTRIM(trader_reference) = '')),\
+                \ (SELECT COUNT(*) FROM insights_manual_adjustments WHERE competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_participant_wallet_remaps\
+                \   WHERE competition_slug = ? AND applied_at IS NOT NULL)"
+                (slug, slug, slug, slug, slug, slug, slug)
+                :: IO [(Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer)]
+              case counts of
+                [(participantCount, inputCount, aliasMatchCount, oldWalletMatchCount, destinationCount, missingReferenceCount, adjustmentCount, auditCount, appliedHistoryCount)]
+                  | fromIntegral (length lockedParticipants) /= expectedCount ->
+                      pure $ Left "The locked participant count does not match EXPECTED_COUNT"
+                  | participantCount /= expectedCount ->
+                      pure $ Left "EXPECTED_COUNT does not match the registered participant count"
+                  | inputCount /= expectedCount ->
+                      pure $ Left "The bulk roster is incomplete"
+                  | aliasMatchCount /= expectedCount ->
+                      pure $ Left "The bulk aliases do not match the complete registered roster"
+                  | oldWalletMatchCount /= expectedCount ->
+                      pure $ Left "One or more bulk OLD_WALLET values do not match the current roster"
+                  | destinationCount /= expectedCount ->
+                      pure $ Left "The bulk destination wallet set contains duplicates"
+                  | missingReferenceCount /= 0 ->
+                      pure $ Left "One or more registered aliases have no private TRADER_REFERENCE"
+                  | adjustmentCount /= 0 ->
+                      pure $ Left "Wallet remapping is blocked after manual adjustments exist"
+                  | auditCount /= 0 ->
+                      pure $ Left "Wallet remapping is blocked after eligibility review has started"
+                  | appliedHistoryCount /= 0 ->
+                      pure $ Left "Wallet remapping is blocked after a previous remap was applied"
+                  | otherwise -> do
+                      changedRows <- query conn
+                        "SELECT COUNT(*) FROM insights_competition_participants p\
+                        \ JOIN insights_bulk_wallet_remaps m\
+                        \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                        \ WHERE p.competition_slug = ? AND LOWER(p.wallet) <> m.new_wallet"
+                        (Only slug)
+                        :: IO [Only Integer]
+                      changedCount <- case changedRows of
+                        [Only count] -> pure count
+                        _ -> fail "Bulk wallet remap summary state is ambiguous"
+                      _ <- execute conn
+                        "DELETE FROM insights_participant_wallet_remaps\
+                        \ WHERE competition_slug = ? AND applied_at IS NULL"
+                        (Only slug)
+                      inserted <- execute conn
+                        "INSERT INTO insights_participant_wallet_remaps\
+                        \ (competition_slug, trader_reference, old_wallet, new_wallet)\
+                        \ SELECT p.competition_slug, p.trader_reference, m.old_wallet, m.new_wallet\
+                        \ FROM insights_competition_participants p\
+                        \ JOIN insights_bulk_wallet_remaps m\
+                        \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                        \ WHERE p.competition_slug = ?"
+                        (Only slug)
+                      if inserted /= fromIntegral expectedCount
+                        then fail "The validated bulk remap set changed before insertion"
+                        else do
+                          _ <- execute conn
+                            "CREATE TEMP TABLE insights_roster_replacement ON COMMIT DROP AS\
+                            \ SELECT p.competition_slug, m.new_wallet AS wallet, p.trader_reference, p.alias,\
+                            \ p.eligibility_status, p.eligibility_reason, p.integrity_flags, p.registered_at,\
+                            \ p.reviewed_at, p.created_at, NOW() AS updated_at\
+                            \ FROM insights_competition_participants p\
+                            \ JOIN insights_bulk_wallet_remaps m\
+                            \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                            \ WHERE p.competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_competition_participants WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute_ conn
+                            "INSERT INTO insights_competition_participants\
+                            \ (competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                            \ integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                            \ SELECT competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                            \ integrity_flags, registered_at, reviewed_at, created_at, updated_at\
+                            \ FROM insights_roster_replacement"
+                          _ <- execute conn
+                            "UPDATE insights_participant_wallet_remaps SET applied_at = NOW(), applied_by = ?\
+                            \ WHERE competition_slug = ? AND applied_at IS NULL"
+                            (normalizedAppliedBy, slug)
+                          _ <- execute conn
+                            "UPDATE insights_competitions SET updated_at = NOW() WHERE slug = ?"
+                            (Only slug)
+                          pure $ Right changedCount
+                _ -> pure $ Left "Bulk participant wallet remap validation state is ambiguous"
 
 setParticipantEligibility
   :: Connection

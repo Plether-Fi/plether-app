@@ -1,13 +1,22 @@
 module Main (main) where
 
+import Codec.Compression.GZip qualified as GZip
+import Control.Exception (SomeException, evaluate, try)
 import Control.Monad (forM)
+import Data.ByteString qualified as BS
+import Data.ByteString.Base64 qualified as Base64
+import Data.ByteString.Lazy qualified as LBS
+import Data.Char (isControl, isSpace)
+import Data.Set qualified as Set
 import qualified Data.Text as T
+import Data.Text.Encoding qualified as TE
 import Plether.AA.SimpleAccount (deriveTradingAccountAddress)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
   ( ParticipantRow (..)
   , applyCompetitionParticipantWalletRemaps
+  , bulkApplyCompetitionParticipantWalletRemaps
   , ensureInsightsSchema
   , finalizeCompetition
   , getCompetitionParticipantTraderReferenceByAlias
@@ -21,7 +30,7 @@ import Plether.Insights.Competition
   , participantEligibilityFromText
   )
 import Plether.Utils.Address (isValidAddress)
-import System.Environment (getArgs)
+import System.Environment (getArgs, lookupEnv, unsetEnv)
 import Text.Read (readMaybe)
 
 main :: IO ()
@@ -57,6 +66,8 @@ runCommand pool = \case
     stageTradingAccountRemap pool rawTraderReference rawOldWallet
   "stage-alias-owner-remaps" : rawMappings ->
     stageAliasOwnerRemaps pool rawMappings
+  ["bulk-apply-alias-owner-roster", rawExpectedCount, rawAppliedBy] ->
+    bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy
   ["apply-wallet-remaps", rawExpectedCount, rawAppliedBy] ->
     applyWalletRemaps pool rawExpectedCount rawAppliedBy
   ["review", rawWallet, rawStatus, rawReviewer] ->
@@ -190,6 +201,91 @@ mappingTriples = \case
     ((alias, oldWallet, newWallet) :) <$> mappingTriples rest
   _ -> Nothing
 
+bulkApplyAliasOwnerRoster :: DbPool -> String -> String -> IO ()
+bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy = do
+  let appliedBy = T.strip $ T.pack rawAppliedBy
+  expectedCount <- case readMaybe rawExpectedCount of
+    Just count | count > 0 -> pure count
+    _ -> failWith "EXPECTED_COUNT must be a positive integer"
+  if T.null appliedBy
+    then failWith "APPLIED_BY must not be empty"
+    else do
+      encodedSecret <- lookupEnv "INSIGHTS_BULK_ROSTER_GZIP_BASE64"
+      unsetEnv "INSIGHTS_BULK_ROSTER_GZIP_BASE64"
+      encoded <- case encodedSecret of
+        Just value | not $ null value -> pure $ T.pack value
+        _ -> failWith "INSIGHTS_BULK_ROSTER_GZIP_BASE64 is required"
+      rosterText <- decodeBulkRosterSecret encoded
+      mappings <- case parseBulkRosterMappings expectedCount rosterText of
+        Left err -> failWith $ T.unpack err
+        Right values -> pure values
+      result <- withDb pool $ \conn ->
+        bulkApplyCompetitionParticipantWalletRemaps
+          conn
+          july2026CompetitionSlug
+          expectedCount
+          appliedBy
+          mappings
+      case result of
+        Left err -> failWith $ T.unpack err
+        Right changedCount ->
+          putStrLn $
+            "Validated and atomically applied "
+              <> show expectedCount
+              <> " participant wallet remaps; changed="
+              <> show changedCount
+              <> ", identity="
+              <> show (expectedCount - changedCount)
+
+decodeBulkRosterSecret :: T.Text -> IO T.Text
+decodeBulkRosterSecret encoded =
+  case Base64.decode $ TE.encodeUtf8 $ T.filter (not . isSpace) encoded of
+    Left _ -> failWith "The bulk roster secret is not valid base64"
+    Right compressed -> do
+      decompressedResult <-
+        try (evaluate $ LBS.toStrict $ GZip.decompress $ LBS.fromStrict compressed)
+          :: IO (Either SomeException BS.ByteString)
+      case decompressedResult of
+        Left _ -> failWith "The bulk roster secret is not valid gzip data"
+        Right bytes -> case TE.decodeUtf8' bytes of
+          Left _ -> failWith "The bulk roster secret is not valid UTF-8"
+          Right value -> pure value
+
+parseBulkRosterMappings :: Integer -> T.Text -> Either T.Text [(T.Text, T.Text, T.Text)]
+parseBulkRosterMappings expectedCount input = do
+  mappings <- traverse parseLine $ filter (not . T.null . T.strip) $ T.lines input
+  if fromIntegral (length mappings) /= expectedCount
+    then Left "Bulk roster entry count does not match EXPECTED_COUNT"
+    else do
+      requireUnique "alias" [alias | (alias, _, _) <- mappings]
+      requireUnique "OLD_WALLET" [oldWallet | (_, oldWallet, _) <- mappings]
+      requireUnique "Trading Account destination" [newWallet | (_, _, newWallet) <- mappings]
+      pure mappings
+  where
+    parseLine line =
+      case T.splitOn "\t" line of
+        [rawAlias, rawOldWallet, rawOwnerWallet] -> do
+          let alias = T.strip rawAlias
+              aliasKey = T.toCaseFold alias
+              oldWallet = canonicalAddress rawOldWallet
+              ownerWallet = canonicalAddress rawOwnerWallet
+          if T.null alias || T.length alias > 80 || T.any isControl alias
+            then Left "Bulk roster contains an invalid alias"
+            else if not $ "@" `T.isPrefixOf` alias
+              then Left "Bulk roster aliases must use the public @handle form"
+              else if not $ isValidAddress oldWallet
+                then Left "Bulk roster contains an invalid OLD_WALLET"
+                else if not $ isValidAddress ownerWallet
+                  then Left "Bulk roster contains an invalid OWNER_WALLET"
+                  else case deriveTradingAccountAddress ownerWallet of
+                    Left err -> Left err
+                    Right newWallet -> Right (aliasKey, oldWallet, canonicalAddress newWallet)
+        _ -> Left "Every bulk roster line must be ALIAS, OLD_WALLET, OWNER_WALLET TSV"
+
+    requireUnique label values
+      | Set.size (Set.fromList values) == length values = Right ()
+      | otherwise = Left $ "Bulk roster contains a duplicate " <> label
+
 applyWalletRemaps :: DbPool -> String -> String -> IO ()
 applyWalletRemaps pool rawExpectedCount rawAppliedBy = do
   let appliedBy = T.strip $ T.pack rawAppliedBy
@@ -284,6 +380,7 @@ usage =
     , "  plether-insights-admin stage-wallet-remap TRADER_REFERENCE OLD_WALLET NEW_WALLET"
     , "  plether-insights-admin stage-trading-account-remap TRADER_REFERENCE OLD_WALLET"
     , "  plether-insights-admin stage-alias-owner-remaps ALIAS OLD_WALLET OWNER_WALLET [...]"
+    , "  plether-insights-admin bulk-apply-alias-owner-roster EXPECTED_COUNT APPLIED_BY"
     , "  plether-insights-admin apply-wallet-remaps EXPECTED_COUNT APPLIED_BY"
     , "  plether-insights-admin review WALLET STATUS REVIEWER [PUBLIC_REASON]"
     , "  plether-insights-admin finalize REVIEWER"
