@@ -14,8 +14,11 @@ import Plether.AA.SimpleAccount (deriveTradingAccountAddress)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Insights
-  ( ParticipantRow (..)
+  ( BulkParticipantAppendResult (..)
+  , ParticipantRow (..)
+  , RosterSnapshotVerification (..)
   , applyCompetitionParticipantWalletRemaps
+  , bulkAppendCompetitionParticipants
   , bulkApplyCompetitionParticipantWalletRemaps
   , ensureInsightsSchema
   , finalizeCompetition
@@ -24,10 +27,15 @@ import Plether.Database.Insights
   , setParticipantEligibility
   , stageCompetitionParticipantWalletRemap
   , upsertCompetitionParticipant
+  , verifyCompetitionRosterSnapshots
   )
 import Plether.Insights.Competition
   ( july2026CompetitionSlug
   , participantEligibilityFromText
+  )
+import Plether.Insights.BulkRoster
+  ( BulkParticipantEntry (..)
+  , parseBulkParticipantEntries
   )
 import Plether.Utils.Address (isValidAddress)
 import System.Environment (getArgs, lookupEnv, unsetEnv)
@@ -68,6 +76,12 @@ runCommand pool = \case
     stageAliasOwnerRemaps pool rawMappings
   ["bulk-apply-alias-owner-roster", rawExpectedCount, rawAppliedBy] ->
     bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy
+  ["register", "bulk-append-alias-owner-roster", rawExpectedExistingCount, rawExpectedInputCount, rawRequestId] ->
+    bulkAppendAliasOwnerRoster
+      pool
+      rawExpectedExistingCount
+      rawExpectedInputCount
+      rawRequestId
   ["apply-wallet-remaps", rawExpectedCount, rawAppliedBy] ->
     applyWalletRemaps pool rawExpectedCount rawAppliedBy
   ["review", rawWallet, rawStatus, rawReviewer] ->
@@ -78,6 +92,8 @@ runCommand pool = \case
     rows <- withDb pool $ \conn ->
       listCompetitionParticipants conn july2026CompetitionSlug
     mapM_ printParticipant rows
+  ["list", "verify-roster-correction", rawExpectedCount] ->
+    verifyRosterCorrection pool rawExpectedCount
   ["finalize", rawReviewer] -> finalize pool rawReviewer
   _ -> failWith usage
 
@@ -232,6 +248,75 @@ bulkApplyAliasOwnerRoster pool rawExpectedCount rawAppliedBy = do
               <> show changedCount
               <> ", identity="
               <> show (expectedCount - changedCount)
+
+bulkAppendAliasOwnerRoster :: DbPool -> String -> String -> String -> IO ()
+bulkAppendAliasOwnerRoster pool rawExpectedExistingCount rawExpectedInputCount rawRequestId = do
+  expectedExistingCount <- positiveCount "EXPECTED_EXISTING_COUNT" rawExpectedExistingCount
+  expectedInputCount <- positiveCount "EXPECTED_INPUT_COUNT" rawExpectedInputCount
+  let requestId = T.strip $ T.pack rawRequestId
+  if T.null requestId
+    then failWith "REQUEST_ID must not be empty"
+    else do
+      encoded <- loadBulkRosterSecret
+      rosterText <- decodeBulkRosterSecret encoded
+      entries <- case parseBulkParticipantEntries expectedInputCount rosterText of
+        Left err -> failWith $ T.unpack err
+        Right values -> pure values
+      result <- withDb pool $ \conn ->
+        bulkAppendCompetitionParticipants
+          conn
+          july2026CompetitionSlug
+          expectedExistingCount
+          requestId
+          [ (bpeAlias entry, bpeTraderReference entry, bpeTradingAccount entry)
+          | entry <- entries
+          ]
+      case result of
+        Left err -> failWith $ T.unpack err
+        Right BulkParticipantAppendResult {..} ->
+          putStrLn $
+            "Validated and atomically corrected participant roster; previous="
+              <> show bparPreviousCount
+              <> ", input="
+              <> show bparInputCount
+              <> ", existing_aliases="
+              <> show bparExistingAliasCount
+              <> ", inserted="
+              <> show bparInsertedCount
+              <> ", remapped="
+              <> show bparRemappedCount
+              <> ", final="
+              <> show bparFinalCount
+
+positiveCount :: String -> String -> IO Integer
+positiveCount label rawValue =
+  case readMaybe rawValue of
+    Just count | count > 0 -> pure count
+    _ -> failWith $ label <> " must be a positive integer"
+
+verifyRosterCorrection :: DbPool -> String -> IO ()
+verifyRosterCorrection pool rawExpectedCount = do
+  expectedCount <- positiveCount "EXPECTED_COUNT" rawExpectedCount
+  result <- withDb pool $ \conn ->
+    verifyCompetitionRosterSnapshots conn july2026CompetitionSlug expectedCount
+  case result of
+    Left err -> failWith $ T.unpack err
+    Right RosterSnapshotVerification {..} ->
+      putStrLn $
+        "Verified roster snapshots; participantCount="
+          <> show rsvParticipantCount
+          <> ", snapshottedWalletCount="
+          <> show rsvSnapshottedWalletCount
+          <> ", startSnapshotCount="
+          <> show rsvStartSnapshotCount
+          <> ", missingStartSnapshotCount="
+          <> show rsvMissingStartSnapshotCount
+          <> ", openPositionCount="
+          <> show rsvOpenPositionCount
+          <> ", pendingOrderCount="
+          <> show rsvPendingOrderCount
+          <> ", bankrollMismatchCount="
+          <> show rsvBankrollMismatchCount
 
 loadBulkRosterSecret :: IO T.Text
 loadBulkRosterSecret = do
@@ -401,10 +486,12 @@ usage =
     , "  plether-insights-admin stage-trading-account-remap TRADER_REFERENCE OLD_WALLET"
     , "  plether-insights-admin stage-alias-owner-remaps ALIAS OLD_WALLET OWNER_WALLET [...]"
     , "  plether-insights-admin bulk-apply-alias-owner-roster EXPECTED_COUNT APPLIED_BY"
+    , "  plether-insights-admin register bulk-append-alias-owner-roster EXPECTED_EXISTING_COUNT EXPECTED_INPUT_COUNT REQUEST_ID"
     , "  plether-insights-admin apply-wallet-remaps EXPECTED_COUNT APPLIED_BY"
     , "  plether-insights-admin review WALLET STATUS REVIEWER [PUBLIC_REASON]"
     , "  plether-insights-admin finalize REVIEWER"
     , "  plether-insights-admin list"
+    , "  plether-insights-admin list verify-roster-correction EXPECTED_COUNT"
     , ""
     , "TRADER_REFERENCE is private and is never printed by list. PUBLIC_REASON is exposed by the public API."
     ]

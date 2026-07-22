@@ -82,6 +82,14 @@ jobs:
           PARAMETER_NAME="$REQUEST_PARAMETER_PREFIX/$REQUEST_ID"
           REQUEST_FILE="$RUNNER_TEMP/insights-admin-request.json"
           OVERRIDES_FILE="$RUNNER_TEMP/insights-admin-overrides.json"
+          PARAMETER_NAMES_FILE="$RUNNER_TEMP/insights-admin-parameter-names.txt"
+          BULK_ROSTER_SECRETS_NDJSON_FILE="$RUNNER_TEMP/insights-admin-bulk-roster-secrets.ndjson"
+          BULK_ROSTER_SECRETS_FILE="$RUNNER_TEMP/insights-admin-bulk-roster-secrets.json"
+          BULK_ROSTER_ENVIRONMENT_FILE="$RUNNER_TEMP/insights-admin-bulk-roster-environment.json"
+
+          printf '%s\n' "$PARAMETER_NAME" > "$PARAMETER_NAMES_FILE"
+          : > "$BULK_ROSTER_SECRETS_NDJSON_FILE"
+          printf '[]\n' > "$BULK_ROSTER_ENVIRONMENT_FILE"
 
           aws ssm get-parameter \
             --name "$PARAMETER_NAME" \
@@ -115,13 +123,28 @@ jobs:
               and ([.args[] | safe_arg] | all)
               and .args[0] == $action
               and (
-                ($action == "list" and (.args | length) == 1)
+                ($action == "list" and (
+                  ((.args | length) == 1)
+                  or
+                  ((.args | length) == 3
+                    and .args[1] == "verify-roster-correction"
+                    and (.args[2] | type == "string" and test("^[1-9][0-9]*$")))
+                ))
                 or
                 ($action == "register"
-                  and ((.args | length) == 3 or (.args | length) == 4)
-                  and (.args[1] | nonempty(200))
-                  and (.args[2] | wallet)
-                  and ((.args | length) == 3 or (.args[3] | nonempty(80))))
+                  and (
+                    (((.args | length) == 3 or (.args | length) == 4)
+                      and (.args[1] | nonempty(200))
+                      and (.args[2] | wallet)
+                      and ((.args | length) == 3 or (.args[3] | nonempty(80))))
+                    or
+                    ((.args | length) == 5
+                      and .args[1] == "bulk-append-alias-owner-roster"
+                      and (.args[2] | type == "string" and test("^[1-9][0-9]*$"))
+                      and (.args[3] | type == "string" and test("^[1-9][0-9]*$"))
+                      and .args[4] == $request_id
+                      and (.bulkRosterChunkCount | type == "number" and . >= 1 and . <= 64 and floor == .))
+                  ))
                 or
                 ($action == "stage-wallet-remap"
                   and (.args | length) == 4
@@ -171,25 +194,61 @@ jobs:
             [ -z "$ARG" ] || echo "::add-mask::$ARG"
           done < <(jq -r '.args[] | @base64' "$REQUEST_FILE")
 
+          if jq --exit-status '
+              .args[0] == "register"
+              and .args[1] == "bulk-append-alias-owner-roster"
+            ' "$REQUEST_FILE" >/dev/null; then
+            CHUNK_COUNT=$(jq -r '.bulkRosterChunkCount' "$REQUEST_FILE")
+            jq -n \
+              --arg value "$CHUNK_COUNT" \
+              '[{name: "INSIGHTS_BULK_ROSTER_GZIP_BASE64_CHUNK_COUNT", value: $value}]' \
+              > "$BULK_ROSTER_ENVIRONMENT_FILE"
+
+            for INDEX in $(seq 1 "$CHUNK_COUNT"); do
+              printf -v SUFFIX '%02d' "$INDEX"
+              CHUNK_PARAMETER_NAME="${PARAMETER_NAME}.bulk-roster-${SUFFIX}"
+              CHUNK_PARAMETER_ARN=$(aws ssm get-parameter \
+                --name "$CHUNK_PARAMETER_NAME" \
+                --query 'Parameter.ARN' \
+                --output text)
+              printf '%s\n' "$CHUNK_PARAMETER_NAME" >> "$PARAMETER_NAMES_FILE"
+
+              jq -n \
+                --arg name "INSIGHTS_BULK_ROSTER_GZIP_BASE64_${SUFFIX}" \
+                --arg valueFrom "$CHUNK_PARAMETER_ARN" \
+                '{name: $name, valueFrom: $valueFrom}' \
+                >> "$BULK_ROSTER_SECRETS_NDJSON_FILE"
+            done
+          fi
+
+          jq --slurp '.' "$BULK_ROSTER_SECRETS_NDJSON_FILE" > "$BULK_ROSTER_SECRETS_FILE"
+
           jq -n \
             --arg container "$ECS_CONTAINER" \
             --slurpfile request "$REQUEST_FILE" \
+            --slurpfile environment "$BULK_ROSTER_ENVIRONMENT_FILE" \
             '{containerOverrides: [{
               name: $container,
-              command: (["plether-insights-admin"] + $request[0].args)
+              command: (["plether-insights-admin"] + $request[0].args),
+              environment: $environment[0]
             }]}' > "$OVERRIDES_FILE"
 
           echo "parameter_name=$PARAMETER_NAME" >> "$GITHUB_OUTPUT"
+          echo "parameter_names_file=$PARAMETER_NAMES_FILE" >> "$GITHUB_OUTPUT"
+          echo "bulk_roster_secrets_file=$BULK_ROSTER_SECRETS_FILE" >> "$GITHUB_OUTPUT"
           echo "overrides_file=$OVERRIDES_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Resolve the deployed task and network
         id: target
+        env:
+          BULK_ROSTER_SECRETS_FILE: ${{ steps.request.outputs.bulk_roster_secrets_file }}
         run: |
           set -euo pipefail
 
           SERVICE_FILE="$RUNNER_TEMP/insights-admin-service.json"
           NETWORK_FILE="$RUNNER_TEMP/insights-admin-network.json"
           TASK_DEFINITION_FILE="$RUNNER_TEMP/insights-admin-task-definition.json"
+          ADMIN_TASK_DEFINITION_FILE="$RUNNER_TEMP/insights-admin-task-definition-input.json"
 
           aws ecs describe-services \
             --cluster "$ECS_CLUSTER" \
@@ -220,7 +279,53 @@ jobs:
             '.taskDefinition.containerDefinitions | any(.name == $container)' \
             "$TASK_DEFINITION_FILE" >/dev/null
 
-          echo "task_definition=$TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          ADMIN_TASK_DEFINITION="$TASK_DEFINITION"
+          TEMPORARY_TASK_DEFINITION=""
+          if [ "$(jq 'length' "$BULK_ROSTER_SECRETS_FILE")" != "0" ]; then
+            jq \
+              --arg container "$ECS_CONTAINER" \
+              --slurpfile extra_secrets "$BULK_ROSTER_SECRETS_FILE" \
+              '.taskDefinition
+               | {
+                   family,
+                   taskRoleArn,
+                   executionRoleArn,
+                   networkMode,
+                   containerDefinitions,
+                   volumes,
+                   placementConstraints,
+                   requiresCompatibilities,
+                   cpu,
+                   memory,
+                   pidMode,
+                   ipcMode,
+                   proxyConfiguration,
+                   inferenceAccelerators,
+                   ephemeralStorage,
+                   runtimePlatform,
+                   enableFaultInjection
+                 }
+               | with_entries(select(.value != null))
+               | .containerDefinitions |= map(
+                   if .name == $container then
+                     .secrets = (
+                       ((.secrets // [])
+                         | map(select(.name | startswith("INSIGHTS_BULK_ROSTER_GZIP_BASE64_") | not)))
+                       + $extra_secrets[0]
+                     )
+                   else . end
+                 )' \
+              "$TASK_DEFINITION_FILE" > "$ADMIN_TASK_DEFINITION_FILE"
+
+            ADMIN_TASK_DEFINITION=$(aws ecs register-task-definition \
+              --cli-input-json "file://$ADMIN_TASK_DEFINITION_FILE" \
+              --query 'taskDefinition.taskDefinitionArn' \
+              --output text)
+            TEMPORARY_TASK_DEFINITION="$ADMIN_TASK_DEFINITION"
+          fi
+
+          echo "task_definition=$ADMIN_TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          echo "temporary_task_definition=$TEMPORARY_TASK_DEFINITION" >> "$GITHUB_OUTPUT"
           echo "network_file=$NETWORK_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Run private admin task
@@ -286,11 +391,22 @@ jobs:
 
       - name: Consume one-time private request
         env:
-          PARAMETER_NAME: ${{ steps.request.outputs.parameter_name }}
+          PARAMETER_NAMES_FILE: ${{ steps.request.outputs.parameter_names_file }}
         run: |
           set -euo pipefail
-          aws ssm delete-parameter --name "$PARAMETER_NAME"
+          while IFS= read -r PARAMETER_NAME; do
+            aws ssm delete-parameter --name "$PARAMETER_NAME"
+          done < "$PARAMETER_NAMES_FILE"
           echo "The one-time request was consumed."
+
+      - name: Deregister temporary admin task definition
+        if: always() && steps.target.outputs.temporary_task_definition != ''
+        continue-on-error: true
+        env:
+          TEMPORARY_TASK_DEFINITION: ${{ steps.target.outputs.temporary_task_definition }}
+        run: |
+          aws ecs deregister-task-definition \
+            --task-definition "$TEMPORARY_TASK_DEFINITION" >/dev/null
 
       - name: Remove temporary request files
         if: always()
@@ -298,8 +414,13 @@ jobs:
           rm -f \
             "$RUNNER_TEMP/insights-admin-request.json" \
             "$RUNNER_TEMP/insights-admin-overrides.json" \
+            "$RUNNER_TEMP/insights-admin-parameter-names.txt" \
+            "$RUNNER_TEMP/insights-admin-bulk-roster-secrets.ndjson" \
+            "$RUNNER_TEMP/insights-admin-bulk-roster-secrets.json" \
+            "$RUNNER_TEMP/insights-admin-bulk-roster-environment.json" \
             "$RUNNER_TEMP/insights-admin-service.json" \
             "$RUNNER_TEMP/insights-admin-network.json" \
             "$RUNNER_TEMP/insights-admin-task-definition.json" \
+            "$RUNNER_TEMP/insights-admin-task-definition-input.json" \
             "$RUNNER_TEMP/insights-admin-run-task.json" \
             "$RUNNER_TEMP/insights-admin-task-status.json"

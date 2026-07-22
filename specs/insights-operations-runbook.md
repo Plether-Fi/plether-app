@@ -54,6 +54,7 @@ Create a local mode-0600 JSON file with one of these allowlisted payloads:
 
 ```json
 {"requestId":"register-001","args":["register","opaque-trader-001","0xTRADING_ACCOUNT","Public alias"]}
+{"requestId":"register-bulk-001","bulkRosterChunkCount":12,"args":["register","bulk-append-alias-owner-roster","879","700","register-bulk-001"]}
 {"requestId":"remap-001","args":["stage-wallet-remap","opaque-trader-001","0xREGISTERED_ADDRESS","0xTRADING_ACCOUNT"]}
 {"requestId":"derive-remap-001","args":["stage-trading-account-remap","opaque-trader-001","0xOWNER_WALLET"]}
 {"requestId":"alias-remap-batch-001","args":["stage-alias-owner-remaps","@first_alias","0xREGISTERED_ADDRESS_1","0xOWNER_WALLET_1","@second_alias","0xREGISTERED_ADDRESS_2","0xOWNER_WALLET_2"]}
@@ -61,6 +62,7 @@ Create a local mode-0600 JSON file with one of these allowlisted payloads:
 {"requestId":"review-001","args":["review","0xTRADING_ACCOUNT","eligible","reviewer-name"]}
 {"requestId":"review-002","args":["review","0xTRADING_ACCOUNT","ineligible","reviewer-name","Generic public reason"]}
 {"requestId":"list-001","args":["list"]}
+{"requestId":"verify-roster-001","args":["list","verify-roster-correction","1579"]}
 {"requestId":"finalize-001","args":["finalize","reviewer-name"]}
 ```
 
@@ -78,6 +80,46 @@ Dispatch `Insights Admin` with the matching action and request ID, then enter
 SSM for private inspection or retry. Never put investigation evidence in
 `PUBLIC_REASON`; it is returned by the public API. Keep private review evidence
 in the restricted case record.
+
+For more than a few approved roster corrections, use one atomic bulk append
+instead of dispatching one registration per participant. Build a private TSV
+with exactly one case-insensitive unique alias per line:
+
+```text
+@alias<TAB>UUIDv4 trader reference<TAB>0xOWNER_WALLET
+```
+
+Aliases, UUIDv4 references, and locally derived Trading Account destinations
+must each be unique. Duplicate or ambiguous aliases must be resolved before
+upload. The admin task derives every destination with the pinned canonical
+SimpleAccount deployment; owner wallets never enter participant storage or the
+RPC snapshot process.
+
+Gzip and base64 the TSV, split the encoded text into chunks no larger than the
+configured SSM parameter limit, and upload every chunk as a one-time
+`SecureString` named:
+
+```text
+/plether/sepolia/insights-admin/requests/register-bulk-001.bulk-roster-01
+/plether/sepolia/insights-admin/requests/register-bulk-001.bulk-roster-02
+...
+```
+
+Set `bulkRosterChunkCount` in the request JSON to the exact number of chunks.
+The second numeric argument is the number of TSV entries; the first is the
+current participant-count guard. Dispatch with `action=register` and
+`confirmation=RUN register-bulk-001 ON SEPOLIA`. The transaction preserves
+existing trader references when an alias already exists, inserts new aliases,
+remaps changed aliases, validates final alias/reference/destination uniqueness,
+invalidates all snapshot batches once, and records an opaque roster-correction
+audit. The workflow deletes the request and all chunks only after the ECS task
+succeeds.
+
+After the snapshot worker publishes the rebuilt start and live batches, run the
+private `list verify-roster-correction EXPECTED_COUNT` check. It fails unless
+`participantCount`, `snapshottedWalletCount`, and `startSnapshotCount` all equal
+the expected final roster size and every canonical start snapshot is flat, has
+zero pending orders, and equals the official starting bankroll.
 
 Wallet remapping is an atomic full-roster operation. Stage exactly one mapping
 for every registered `TRADER_REFERENCE`, using an identity mapping when the
