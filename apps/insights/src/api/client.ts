@@ -9,6 +9,8 @@ import type {
 
 export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026'
 const API_ROOT = '/api/insights/v1'
+const PERPS_PRICE_DECIMALS = 8
+const PLDXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_PRICE_DECIMALS)
 
 interface ApiEnvelope<T> {
   data: T
@@ -367,7 +369,14 @@ function sizeDeltaToNotionalUsdc(
 
 function normalizePrice(value: string | null | undefined): string | null {
   if (value == null) return null
-  return /^-?\d+$/.test(value) ? formatIntegerUnits(value, 8) : value
+  if (!/^-?\d+$/.test(value)) return value
+  try {
+    const basketPrice = BigInt(value)
+    if (basketPrice <= 0n || basketPrice >= PLDXY_PRICE_CAP) return null
+    return formatIntegerUnits((PLDXY_PRICE_CAP - basketPrice).toString(), PERPS_PRICE_DECIMALS)
+  } catch {
+    return null
+  }
 }
 
 function normalizeStatus(response: WireStatusResponse): InsightsStatus {

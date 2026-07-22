@@ -186,7 +186,7 @@ export function LeaderboardTitle({ count }: { count: number }) {
   return (
     <div>
       <h2 className="text-xl font-semibold sm:text-2xl">Leaderboard</h2>
-      <p className="mt-1 text-sm text-content-secondary">Overall rank by final net P&amp;L · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
+      <p className="mt-1 text-sm text-content-secondary">Overall rank by final net P&amp;L · zero-trade accounts are unranked · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
     </div>
   )
 }

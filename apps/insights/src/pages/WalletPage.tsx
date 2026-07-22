@@ -2,7 +2,9 @@ import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletPosition } from '../api'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl, StatusBadge } from '../components/ui'
-import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress } from '../utils/format'
+import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
+
+const ARBITRUM_SEPOLIA_EXPLORER = 'https://sepolia.arbiscan.io'
 
 function Metric({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -28,7 +30,7 @@ function PositionPanel({ position }: { position: WalletPosition | null }) {
           <Metric label="Side">{position.side ? <span className={position.side === 'long' ? 'text-positive' : 'text-brand-orange'}>{position.side.toUpperCase()}</span> : '—'}</Metric>
           <Metric label="Entry notional">{formatCompactUsdc(position.size)}</Metric>
           <Metric label="Margin">{formatUsdc(position.margin)}</Metric>
-          <Metric label="Entry">{formatPrice(position.entryPrice)}</Metric>
+          <Metric label="plDXY entry">{formatPrice(position.entryPrice)}</Metric>
           <Metric label="Unrealized P&L"><Pnl value={position.unrealizedPnl} /></Metric>
         </dl>
       ) : <EmptyState title="No open position" message="This trader is currently flat." />}
@@ -47,7 +49,7 @@ function ActivityTable({ activity }: { activity: WalletActivity[] | null }) {
     <>
       <div className="hidden overflow-x-auto sm:block">
         <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">Price</th><th className="px-5 py-3 text-right">Realized P&amp;L</th></tr></thead>
+          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">plDXY price</th><th className="px-5 py-3 text-right">Realized P&amp;L</th></tr></thead>
           <tbody className="divide-y divide-brand-border/15">
             {activity.map((item) => (
               <tr key={item.id} className="hover:bg-brand-peach/5">
@@ -94,6 +96,8 @@ export function WalletPage() {
   }
 
   const { wallet, activity, competition } = query.data
+  const profileUrl = xProfileUrl(wallet.displayName)
+  const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
     <div className="space-y-6">
       <div>
@@ -104,10 +108,30 @@ export function WalletPage() {
               {wallet.prizePlace !== null ? `Prize place #${String(wallet.prizePlace)} · ` : ''}
               {wallet.rank === null ? 'Rank pending' : `Overall rank #${String(wallet.rank)}`}
             </p>
-            <h1 className="mt-2 truncate text-3xl font-semibold sm:text-4xl">{wallet.displayName ?? shortAddress(wallet.address)}</h1>
+            <h1 className="mt-2 text-3xl font-semibold sm:text-4xl">
+              {profileUrl && wallet.displayName ? (
+                <a
+                  href={profileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex max-w-full items-baseline gap-2 hover:text-brand-peach hover:underline"
+                >
+                  <span className="truncate">{wallet.displayName}</span>
+                  <span aria-hidden="true" className="text-lg">↗</span>
+                </a>
+              ) : wallet.displayName ?? shortAddress(wallet.address)}
+            </h1>
             <p className="mt-2 font-mono text-xs text-content-secondary sm:text-sm">
-              <span className="sm:hidden">{shortAddress(wallet.address)}</span>
-              <span className="hidden break-all sm:inline">{wallet.address}</span>
+              <a
+                href={explorerUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex max-w-full items-center gap-1.5 hover:text-brand-peach hover:underline"
+              >
+                <span className="sm:hidden">{shortAddress(wallet.address)}</span>
+                <span className="hidden break-all sm:inline">{wallet.address}</span>
+                <span aria-hidden="true">↗</span>
+              </a>
             </p>
           </div>
           <StatusBadge eligible={wallet.eligible} label={wallet.eligible ? 'Prize eligible' : wallet.eligibilityStatus === 'pending' ? 'Pending review' : wallet.eligibilityStatus === 'under_review' ? 'Under review' : 'Not eligible'} />

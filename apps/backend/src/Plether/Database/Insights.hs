@@ -33,6 +33,7 @@ module Plether.Database.Insights
   , getLatestIndexedSafeBlock
   , leaderboardSearchPattern
   , leaderboardQuerySql
+  , leaderboardOrderBySql
   , walletActivityQuerySql
   , snapshotKindText
   ) where
@@ -1129,14 +1130,15 @@ getCompetitionLeaderboard conn slug requestedSearch limitRows offsetRows =
   case normalizeLeaderboardSearch requestedSearch of
     Nothing ->
       query conn
-        (leaderboardQuery <> " ORDER BY final_pnl_usdc DESC NULLS LAST, wallet ASC LIMIT ? OFFSET ?")
+        (leaderboardQuery <> leaderboardOrderBy)
         (slug, limitRows, offsetRows)
     Just search ->
       let pattern = leaderboardSearchPattern search
        in query conn
             (leaderboardQuery
               <> " WHERE wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!'\
-                 \ ORDER BY final_pnl_usdc DESC NULLS LAST, wallet ASC LIMIT ? OFFSET ?")
+                 \"
+              <> leaderboardOrderBy)
             (slug, pattern, pattern, limitRows, offsetRows)
 
 getCompetitionWallet :: Connection -> Text -> Text -> IO (Maybe LeaderboardRow)
@@ -1318,7 +1320,8 @@ leaderboardQuery =
   \ ELSE current_value_usdc - starting_value_usdc - deposits_usdc + withdrawals_usdc + adjustment_usdc END AS final_pnl_usdc\
   \ FROM raw\
   \ ), ranked AS (\
-  \ SELECT scored.*, CASE WHEN final_pnl_usdc IS NULL THEN NULL ELSE RANK() OVER (ORDER BY final_pnl_usdc DESC NULLS LAST) END AS competition_rank\
+  \ SELECT scored.*, CASE WHEN final_pnl_usdc IS NULL OR executed_trades = 0 THEN NULL\
+  \ ELSE RANK() OVER (ORDER BY CASE WHEN executed_trades > 0 THEN 0 ELSE 1 END, final_pnl_usdc DESC NULLS LAST) END AS competition_rank\
   \ FROM scored\
   \ ), prize_candidates AS (\
   \ SELECT wallet, RANK() OVER (ORDER BY final_pnl_usdc DESC) AS prize_place,\
@@ -1342,6 +1345,14 @@ leaderboardQuery =
 
 leaderboardQuerySql :: Query
 leaderboardQuerySql = leaderboardQuery
+
+leaderboardOrderBy :: Query
+leaderboardOrderBy =
+  " ORDER BY CASE WHEN executed_trades > 0 THEN 0 ELSE 1 END,\
+  \ final_pnl_usdc DESC NULLS LAST, wallet ASC LIMIT ? OFFSET ?"
+
+leaderboardOrderBySql :: Query
+leaderboardOrderBySql = leaderboardOrderBy
 
 walletActivityQuery :: Query
 walletActivityQuery =

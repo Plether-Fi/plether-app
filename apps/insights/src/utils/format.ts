@@ -1,5 +1,6 @@
 const USDC_DECIMALS = 6
 const ADDRESS_PATTERN = /^0x[a-fA-F0-9]{40}$/
+const X_USERNAME_PATTERN = /^[A-Za-z0-9_]{1,15}$/
 
 function parseUnits(value: string): bigint | null {
   if (!/^-?\d+$/.test(value)) return null
@@ -76,6 +77,13 @@ export function shortAddress(address: string): string {
 
 export function isWalletAddress(value: string): boolean {
   return ADDRESS_PATTERN.test(value.trim())
+}
+
+export function xProfileUrl(value: string | null | undefined): string | null {
+  if (!value) return null
+  const username = value.trim().replace(/^@/, '')
+  if (!X_USERNAME_PATTERN.test(username)) return null
+  return `https://x.com/${username}`
 }
 
 export function formatUtc(value: string | null | undefined): string {

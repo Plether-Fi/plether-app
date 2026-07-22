@@ -41,7 +41,7 @@ describe('Insights API client', () => {
     await expect(getCurrentCompetition()).rejects.toMatchObject<Partial<InsightsApiError>>({ status: 404, code: 'not_found', message: 'Missing' })
   })
 
-  it('keeps raw position and activity size deltas while deriving exact USDC notionals', async () => {
+  it('keeps raw basket accounting for notionals while displaying the plDXY price', async () => {
     const sizeDelta = '123456789012345678901234'
     const price = '101234567'
     const expectedNotional = ((BigInt(sizeDelta) * BigInt(price)) / 100_000_000_000_000_000_000n).toString()
@@ -94,7 +94,7 @@ describe('Insights API client', () => {
         size: expectedNotional,
         sizeDelta,
         margin: '1000000000',
-        entryPrice: '1.01234567',
+        entryPrice: '0.98765433',
         unrealizedPnl: '250000000',
       },
     })
@@ -102,7 +102,7 @@ describe('Insights API client', () => {
       side: 'long',
       size: expectedNotional,
       sizeDelta,
-      price: '1.01234567',
+      price: '0.98765433',
     })
   })
 })
