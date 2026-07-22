@@ -102,7 +102,7 @@ export function WalletPage() {
     <div className="space-y-6">
       <div>
         <Link to="/" className="text-sm text-brand-peach hover:underline">← Back to leaderboard</Link>
-        <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="mt-5 flex flex-col items-start justify-between gap-4 sm:flex-row">
           <div className="min-w-0">
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">
               {wallet.prizePlace !== null ? `Prize place #${String(wallet.prizePlace)} · ` : ''}
