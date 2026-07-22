@@ -1113,13 +1113,11 @@ bulkApplyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy ma
                 \ (SELECT COUNT(*) FROM insights_competition_participants\
                 \   WHERE competition_slug = ? AND (trader_reference IS NULL OR BTRIM(trader_reference) = '')),\
                 \ (SELECT COUNT(*) FROM insights_manual_adjustments WHERE competition_slug = ?),\
-                \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?),\
-                \ (SELECT COUNT(*) FROM insights_participant_wallet_remaps\
-                \   WHERE competition_slug = ? AND applied_at IS NOT NULL)"
-                (slug, slug, slug, slug, slug, slug, slug)
-                :: IO [(Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer)]
+                \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?)"
+                (slug, slug, slug, slug, slug, slug)
+                :: IO [(Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer)]
               case counts of
-                [(participantCount, inputCount, aliasMatchCount, oldWalletMatchCount, destinationCount, missingReferenceCount, adjustmentCount, auditCount, appliedHistoryCount)]
+                [(participantCount, inputCount, aliasMatchCount, oldWalletMatchCount, destinationCount, missingReferenceCount, adjustmentCount, auditCount)]
                   | fromIntegral (length lockedParticipants) /= expectedCount ->
                       pure $ Left "The locked participant count does not match EXPECTED_COUNT"
                   | participantCount /= expectedCount ->
@@ -1138,8 +1136,6 @@ bulkApplyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy ma
                       pure $ Left "Wallet remapping is blocked after manual adjustments exist"
                   | auditCount /= 0 ->
                       pure $ Left "Wallet remapping is blocked after eligibility review has started"
-                  | appliedHistoryCount /= 0 ->
-                      pure $ Left "Wallet remapping is blocked after a previous remap was applied"
                   | otherwise -> do
                       changedRows <- query conn
                         "SELECT COUNT(*) FROM insights_competition_participants p\
@@ -1153,7 +1149,7 @@ bulkApplyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy ma
                         _ -> fail "Bulk wallet remap summary state is ambiguous"
                       _ <- execute conn
                         "DELETE FROM insights_participant_wallet_remaps\
-                        \ WHERE competition_slug = ? AND applied_at IS NULL"
+                        \ WHERE competition_slug = ?"
                         (Only slug)
                       inserted <- execute conn
                         "INSERT INTO insights_participant_wallet_remaps\
