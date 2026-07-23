@@ -81,9 +81,9 @@ function sponsorshipCopy(status: SponsorshipStatus): {
 
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] gap-4 border-b border-brand-border/15 py-3 last:border-b-0">
+    <div className="grid grid-cols-1 gap-1 border-b border-brand-border/15 py-3 last:border-b-0 min-[400px]:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] min-[400px]:gap-4">
       <dt className="text-sm text-content-secondary">{label}</dt>
-      <dd className="min-w-0 text-right text-sm font-semibold text-content-primary">{value}</dd>
+      <dd className="min-w-0 text-sm font-semibold text-content-primary min-[400px]:text-right">{value}</dd>
     </div>
   )
 }

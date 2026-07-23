@@ -21,15 +21,15 @@ export function PositionsSection({
   const hasLowHealth = positions.some((p) => p.healthFactor > 0 && p.healthFactor < HEALTH_FACTOR_WARNING)
 
   return (
-    <div className="mb-12">
-      <h2 className="text-xl font-semibold text-content-primary mb-4">Open Leveraged Positions</h2>
+    <div className="mb-8 min-w-0 sm:mb-12">
+      <h2 className="mb-4 text-lg font-semibold text-content-primary sm:text-xl">Open Leveraged Positions</h2>
 
       {isLoading ? (
-        <div className="bg-surface-panel border border-brand-border/30 p-8 text-center">
+        <div className="border border-brand-border/30 bg-surface-panel p-6 text-center sm:p-8">
           <div className="text-content-secondary">Loading positions...</div>
         </div>
       ) : positions.length === 0 ? (
-        <div className="bg-surface-panel border border-brand-border/30 p-8 text-center">
+        <div className="border border-brand-border/30 bg-surface-panel p-6 text-center sm:p-8">
           <div className="text-content-secondary mb-2">No open positions</div>
           <p className="text-content-secondary/60 text-sm">
             Open a leveraged position using the Leverage tab below

@@ -228,9 +228,9 @@ function isPositionMarginInput(value: string): boolean {
 
 function AccountSummaryRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 text-sm">
-      <dt className="text-content-secondary">{label}</dt>
-      <dd className="text-right font-semibold text-content-primary">{value}</dd>
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm">
+      <dt className="min-w-0 flex-1 text-content-secondary">{label}</dt>
+      <dd className="ml-auto max-w-full min-w-0 break-words text-right font-semibold text-content-primary">{value}</dd>
     </div>
   )
 }
@@ -263,8 +263,8 @@ function AccountMetric({
 }: AccountMetricProps) {
   return (
     <div className="min-w-0">
-      <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
-        <span>{label}</span>
+      <div className="flex min-h-5 min-w-0 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
+        <span className="min-w-0 break-words">{label}</span>
         {tooltip ? (
           <Tooltip
             content={tooltip}
@@ -282,8 +282,8 @@ function AccountMetric({
           </Tooltip>
         ) : null}
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <div className={`text-xl font-semibold ${pnlToneClass(tone)}`}>{value}</div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+        <div className={`min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere] sm:text-xl ${pnlToneClass(tone)}`}>{value}</div>
         {action}
       </div>
     </div>
@@ -491,7 +491,7 @@ function PositionView({
   )
 
   return (
-    <div className="border border-brand-border/20 bg-app-bg p-4">
+    <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-content-secondary">Current Position</div>
         <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
@@ -515,7 +515,7 @@ function PositionView({
           ) : null}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric
           label="Entry notional"
@@ -616,7 +616,7 @@ function PositionView({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
               variant="secondary"
@@ -664,8 +664,14 @@ function OrdersView({
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left">
+      <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
+      <div
+        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        role="region"
+        aria-label={includeStatus ? 'Order history table' : 'Open orders table'}
+        tabIndex={0}
+      >
+        <table className="w-full min-w-[680px] text-left sm:min-w-[760px]">
           <thead className="text-xs uppercase text-content-secondary">
             <tr className="border-b border-brand-border/20">
               {includeStatus ? <th className="py-3 font-medium">Order ID</th> : null}
@@ -753,33 +759,41 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   if (rows.length === 0) return <EmptyState label="transaction history" />
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-left">
-        <thead className="text-xs uppercase text-content-secondary">
-          <tr className="border-b border-brand-border/20">
-            <th className="py-3 font-medium">Time</th>
-            <th className="py-3 font-medium">Market</th>
-            <th className="py-3 font-medium">Action</th>
-            <th className="py-3 font-medium">Price</th>
-            <th className="py-3 font-medium">Size</th>
-            <th className="py-3 font-medium">Result</th>
-            <th className="py-3 text-right font-medium">Tx</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
-          {rows.map((row) => (
-            <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
-              <td className="py-4">{row.time}</td>
-              <td className="py-4 font-semibold">{row.market}</td>
-              <td className="py-4">{row.side}</td>
-              <td className="py-4">{row.price}</td>
-              <td className="py-4">{row.size}</td>
-              <td className="py-4">{row.pnl ?? '--'}</td>
-              <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
+    <div className="space-y-3">
+      <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
+      <div
+        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        role="region"
+        aria-label="Transaction history table"
+        tabIndex={0}
+      >
+        <table className="w-full min-w-[640px] text-left sm:min-w-[720px]">
+          <thead className="text-xs uppercase text-content-secondary">
+            <tr className="border-b border-brand-border/20">
+              <th className="py-3 font-medium">Time</th>
+              <th className="py-3 font-medium">Market</th>
+              <th className="py-3 font-medium">Action</th>
+              <th className="py-3 font-medium">Price</th>
+              <th className="py-3 font-medium">Size</th>
+              <th className="py-3 font-medium">Result</th>
+              <th className="py-3 text-right font-medium">Tx</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
+            {rows.map((row) => (
+              <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
+                <td className="py-4">{row.time}</td>
+                <td className="py-4 font-semibold">{row.market}</td>
+                <td className="py-4">{row.side}</td>
+                <td className="py-4">{row.price}</td>
+                <td className="py-4">{row.size}</td>
+                <td className="py-4">{row.pnl ?? '--'}</td>
+                <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -988,14 +1002,14 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="border-b border-brand-border/20 px-4 pt-4">
-        <div className="flex gap-1 overflow-x-auto">
+      <div className="border-b border-brand-border/20 px-2 pt-2 sm:px-4 sm:pt-4">
+        <div className="grid grid-cols-2 gap-x-1 sm:flex sm:overflow-x-auto">
           {ACCOUNT_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               aria-pressed={activeTab === tab.id}
-              className={`shrink-0 px-4 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
+              className={`min-w-0 px-2 py-2.5 text-xs font-semibold leading-5 transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:shrink-0 sm:px-4 sm:py-3 sm:text-sm ${
                 activeTab === tab.id
                   ? 'border-b-2 border-[#FFAB96] text-[#FFAB96]'
                   : 'text-content-secondary hover:text-content-primary'
@@ -1010,7 +1024,7 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
         </div>
       </div>
 
-      <div className="px-5 py-4">
+      <div className="px-3 py-3 sm:px-5 sm:py-4">
         <AccountTabContent
           activeTab={activeTab}
           nowSeconds={nowSeconds}

@@ -22,9 +22,11 @@ function TransactionNavigator({
   return (
     <div className="flex items-center justify-center gap-3 py-3 border-b border-brand-border/30">
       <button
+        type="button"
+        aria-label="Previous transaction"
         onClick={onPrev}
         disabled={currentIndex === 0}
-        className="p-1 text-content-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="inline-flex h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96] disabled:cursor-not-allowed disabled:opacity-30"
       >
         <span className="material-symbols-outlined text-lg">chevron_left</span>
       </button>
@@ -32,9 +34,11 @@ function TransactionNavigator({
         Transaction {currentIndex + 1}/{total}
       </span>
       <button
+        type="button"
+        aria-label="Next transaction"
         onClick={onNext}
         disabled={currentIndex === total - 1}
-        className="p-1 text-content-secondary hover:text-[#FFAB96] disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="inline-flex h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96] disabled:cursor-not-allowed disabled:opacity-30"
       >
         <span className="material-symbols-outlined text-lg">chevron_right</span>
       </button>
@@ -67,6 +71,17 @@ export function TransactionModal() {
     return () => { document.removeEventListener('keydown', handleEscape); }
   }, [isOpen, close])
 
+  useEffect(() => {
+    if (!isOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
+  }, [isOpen])
+
   const retryCallback = currentTx ? getRetryCallback(currentTx.id) : undefined
   const canRetry = currentTx?.status === 'failed' && retryCallback
 
@@ -83,16 +98,21 @@ export function TransactionModal() {
 
   return createPortal(
     <>
-      {/* Backdrop - only covers content below header */}
+      {/* Backdrop */}
       <div
-        className="fixed inset-0 top-[78px] z-40 cursor-pointer bg-app-bg/45 backdrop-blur-md"
+        className="fixed inset-0 z-[60] cursor-pointer bg-app-bg/65 backdrop-blur-md"
         onClick={close}
       />
 
-      {/* Modal - fixed to right side below header, aligned with header content */}
-      <div className="fixed top-[78px] left-0 right-0 z-50 pointer-events-none">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 flex justify-end">
-          <div className="pointer-events-auto w-full max-w-md border border-brand-border/50 bg-surface-panel/80 shadow-2xl shadow-app-bg/50 backdrop-blur-xl">
+      {/* Viewport-safe transaction sheet */}
+      <div className="pointer-events-none fixed inset-0 z-[70] flex items-end justify-center sm:items-start sm:justify-end sm:p-4">
+        <div className="flex max-h-dvh w-full max-w-md flex-col sm:max-h-[calc(100dvh-2rem)]">
+          <div
+            className="pointer-events-auto min-h-0 overflow-y-auto overscroll-contain border border-brand-border/50 bg-surface-panel/95 shadow-2xl shadow-app-bg/50 backdrop-blur-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-label={currentTx.title}
+          >
             <TransactionNavigator
               currentIndex={currentIndex}
               total={transactions.length}

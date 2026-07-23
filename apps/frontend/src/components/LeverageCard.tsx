@@ -111,30 +111,30 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
     : formatUsd(expectedDebt)
 
   return (
-    <div className="max-w-xl mx-auto space-y-6">
+    <div className="mx-auto min-w-0 max-w-xl space-y-5 sm:space-y-6">
       <div className="space-y-2">
         <label className="text-sm font-medium text-content-secondary">Position Side</label>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
           <button
             onClick={() => { setSelectedSide('BULL'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
+            className={`relative min-h-16 min-w-0 p-3 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current sm:p-4 ${
               selectedSide === 'BULL'
                 ? 'border-2 border-positive bg-positive/10 text-positive'
                 : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-positive/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedSide === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
+            <div className={`break-words font-semibold ${selectedSide === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
             <div className={`text-xs mt-1 ${selectedSide === 'BULL' ? 'text-positive/70' : 'text-content-secondary'}`}>Bullish on USD</div>
           </button>
           <button
             onClick={() => { setSelectedSide('BEAR'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
+            className={`relative min-h-16 min-w-0 p-3 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current sm:p-4 ${
               selectedSide === 'BEAR'
                 ? 'border-2 border-brand-orange bg-brand-orange/10 text-brand-orange'
                 : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-brand-orange/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedSide === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
+            <div className={`break-words font-semibold ${selectedSide === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
             <div className={`text-xs mt-1 ${selectedSide === 'BEAR' ? 'text-brand-orange/70' : 'text-content-secondary'}`}>Bearish on USD</div>
           </button>
         </div>
@@ -171,22 +171,22 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         </div>
       </div>
 
-      <div className="space-y-2 border border-brand-border/20 bg-app-bg p-4">
+      <div className="min-w-0 space-y-2 border border-brand-border/20 bg-app-bg p-3 sm:p-4">
         <div className="mb-3 text-xs font-medium uppercase text-content-secondary">PREVIEW</div>
-        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
-          <span className="text-content-secondary text-sm">Position Value</span>
-          <span className="text-content-primary font-semibold">{positionSizeDisplay} USDC</span>
+        <div className="grid min-h-6 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
+          <span className="text-sm text-content-secondary">Position Value</span>
+          <span className="min-w-0 break-words text-right font-semibold text-content-primary [overflow-wrap:anywhere]">{positionSizeDisplay} USDC</span>
         </div>
-        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
-          <span className="text-content-secondary text-sm">Your Equity</span>
-          <span className="text-content-primary font-semibold">{equityDisplay} USDC</span>
+        <div className="grid min-h-6 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
+          <span className="text-sm text-content-secondary">Your Equity</span>
+          <span className="min-w-0 break-words text-right font-semibold text-content-primary [overflow-wrap:anywhere]">{equityDisplay} USDC</span>
         </div>
-        <div className="flex min-h-6 items-center justify-between gap-3 text-sm">
-          <span className="text-content-secondary text-sm flex items-center gap-1">
+        <div className="grid min-h-6 min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
+          <span className="flex items-center gap-1 text-sm text-content-secondary">
             Debt
             <InfoTooltip content="USDC borrowed from Morpho against your position" />
           </span>
-          <span className="text-warning font-semibold">{debtDisplay} USDC</span>
+          <span className="min-w-0 break-words text-right font-semibold text-warning [overflow-wrap:anywhere]">{debtDisplay} USDC</span>
         </div>
       </div>
 
@@ -194,7 +194,7 @@ export function LeverageCard({ usdcBalance, refetchBalances, onPositionOpened }:
         <button
           onClick={handleOpenPosition}
           disabled={isDisabled}
-          className="w-full bg-brand-orange text-app-bg enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4 font-semibold py-4 px-6 transition-colors text-lg disabled:opacity-50 disabled:cursor-not-allowed"
+          className="min-h-12 w-full bg-brand-orange px-4 py-3 text-base font-semibold text-app-bg transition-colors enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 sm:px-6 sm:py-4 sm:text-lg"
         >
           {getButtonText()}
         </button>

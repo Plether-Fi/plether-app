@@ -153,11 +153,11 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
     : formatAmount(quoteAmountOut, outputToken.decimals)
 
   return (
-    <div className="max-w-xl mx-auto space-y-6">
-      <div className="bg-surface-muted p-1 flex text-sm font-medium mb-8 border border-brand-border/30">
+    <div className="mx-auto min-w-0 max-w-xl space-y-5 sm:space-y-6">
+      <div className="mb-6 flex min-w-0 border border-brand-border/30 bg-surface-muted p-1 text-sm font-medium sm:mb-8">
         <button
           onClick={() => { setMode('buy'); setInputAmount('') }}
-          className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
+          className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 sm:px-4 ${
             mode === 'buy'
               ? 'border border-brand-peach bg-brand-peach text-app-bg'
               : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
@@ -167,7 +167,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         </button>
         <button
           onClick={() => { setMode('sell'); setInputAmount('') }}
-          className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
+          className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 sm:px-4 ${
             mode === 'sell'
               ? 'border border-brand-peach bg-brand-peach text-app-bg'
               : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
@@ -179,27 +179,27 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
 
       <div className="space-y-2">
         <label className="text-sm font-medium text-content-secondary">Select Token</label>
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
           <button
             onClick={() => { setSelectedToken('BULL'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
+            className={`relative min-h-16 min-w-0 p-3 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current sm:p-4 ${
               selectedToken === 'BULL'
                 ? 'border-2 border-positive bg-positive/10 text-positive'
                 : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-positive/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedToken === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
+            <div className={`break-words font-semibold ${selectedToken === 'BULL' ? 'text-positive' : 'text-content-primary'}`}>plDXY-BULL</div>
             <div className={`text-xs mt-1 ${selectedToken === 'BULL' ? 'text-positive/70' : 'text-content-secondary'}`}>Bullish on USD</div>
           </button>
           <button
             onClick={() => { setSelectedToken('BEAR'); }}
-            className={`relative p-4 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current ${
+            className={`relative min-h-16 min-w-0 p-3 text-center transition-colors hover:underline hover:underline-offset-4 hover:decoration-current sm:p-4 ${
               selectedToken === 'BEAR'
                 ? 'border-2 border-brand-orange bg-brand-orange/10 text-brand-orange'
                 : 'border border-brand-border/30 bg-surface-panel text-content-primary hover:border-brand-orange/50 hover:bg-[#3B212D]'
             }`}
           >
-            <div className={`font-semibold ${selectedToken === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
+            <div className={`break-words font-semibold ${selectedToken === 'BEAR' ? 'text-brand-orange' : 'text-content-primary'}`}>plDXY-BEAR</div>
             <div className={`text-xs mt-1 ${selectedToken === 'BEAR' ? 'text-brand-orange/70' : 'text-content-secondary'}`}>Bearish on USD</div>
           </button>
         </div>
@@ -236,7 +236,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       <div className="border-t border-brand-border/30 pt-4">
         <button
           onClick={() => { setShowDetails(!showDetails); }}
-          className="flex w-full items-center justify-between text-sm text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
+          className="flex min-h-11 w-full items-center justify-between text-sm text-content-secondary transition-colors hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
         >
           <span>Swap details</span>
           <span className="material-symbols-outlined text-lg">{showDetails ? 'expand_less' : 'expand_more'}</span>
@@ -244,17 +244,17 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
       </div>
 
       {showDetails && (
-        <div className="space-y-2 border border-brand-border/20 bg-app-bg p-3 text-sm">
-          <div className="flex min-h-6 items-center justify-between gap-3">
+        <div className="min-w-0 space-y-2 border border-brand-border/20 bg-app-bg p-3 text-sm">
+          <div className="grid min-h-6 min-w-0 grid-cols-1 gap-1 sm:grid-cols-[auto_minmax(0,1fr)] sm:items-center sm:gap-3">
             <span className="text-content-secondary">Route</span>
-            <span className="text-right font-semibold text-content-primary">
+            <span className="min-w-0 break-words font-semibold text-content-primary sm:text-right [overflow-wrap:anywhere]">
               {selectedToken === 'BEAR'
                 ? (mode === 'buy' ? 'USDC → Curve → plDXY-BEAR' : 'plDXY-BEAR → Curve → USDC')
                 : (mode === 'buy' ? 'USDC → ZapRouter → plDXY-BULL' : 'plDXY-BULL → ZapRouter → USDC')}
             </span>
           </div>
-          <div className="flex min-h-6 items-center justify-between gap-3">
-            <span className="text-content-secondary">Price Impact</span>
+          <div className="flex min-h-6 min-w-0 items-center justify-between gap-3">
+            <span className="shrink-0 text-content-secondary">Price Impact</span>
             <span className={
               priceImpact > 1 ? 'font-semibold text-red-500' :
               priceImpact > slippage ? 'font-semibold text-warning' :
@@ -264,8 +264,8 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             </span>
           </div>
           {selectedToken === 'BULL' && mode === 'buy' && (
-            <div className="flex min-h-6 items-center justify-between gap-3">
-              <span className="text-content-secondary flex items-center gap-1">
+            <div className="flex min-h-6 min-w-0 items-center justify-between gap-3">
+              <span className="flex min-w-0 items-center gap-1 text-content-secondary">
                 Safety Buffer
                 <InfoTooltip content="Flash loan safety margin. You may receive up to 0.5% of output as BEAR instead of BULL, depending on slippage." />
               </span>
@@ -279,7 +279,7 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
         <button
           onClick={() => { handleSwap() }}
           disabled={isDisabled}
-          className="w-full border border-[#FFAB96] bg-[#FFAB96] px-6 py-4 text-lg font-semibold text-[#250917] transition-colors hover:bg-[#FF572D] hover:text-[#FFF5F9] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+          className="min-h-12 w-full border border-[#FFAB96] bg-[#FFAB96] px-4 py-3 text-base font-semibold text-[#250917] transition-colors hover:bg-[#FF572D] hover:text-[#FFF5F9] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline sm:px-6 sm:py-4 sm:text-lg"
         >
           {getButtonText()}
         </button>
@@ -313,18 +313,18 @@ export function TradeCard({ usdcBalance, bearBalance, bullBalance, refetchBalanc
             You will receive significantly less value than your input. Are you sure you want to proceed?
           </p>
 
-          <div className="flex gap-3">
+          <div className="flex flex-col gap-3 sm:flex-row">
             <Button
               variant="secondary"
               onClick={() => { setShowPriceImpactWarning(false); }}
-              className="flex-1"
+              className="min-h-11 w-full sm:flex-1"
             >
               Cancel
             </Button>
             <Button
               variant="primary"
               onClick={() => { handleConfirmHighImpact() }}
-              className="flex-1 !bg-red-500 hover:!bg-red-600"
+              className="min-h-11 w-full !bg-red-500 hover:!bg-red-600 sm:flex-1"
             >
               Swap Anyway
             </Button>

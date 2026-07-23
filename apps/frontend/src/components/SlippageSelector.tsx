@@ -80,7 +80,7 @@ export function SlippageSelector() {
                   variant={slippage === preset ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => { handleSlippagePresetClick(preset); }}
-                  className="flex-1"
+                  className="min-h-11 flex-1"
                 >
                   {preset}%
                 </Button>
@@ -113,7 +113,7 @@ export function SlippageSelector() {
                   variant={maxPriceImpact === preset ? 'primary' : 'secondary'}
                   size="sm"
                   onClick={() => { handlePriceImpactPresetClick(preset); }}
-                  className="flex-1"
+                  className="min-h-11 flex-1"
                 >
                   {preset}%
                 </Button>

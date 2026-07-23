@@ -96,22 +96,24 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
     isStakePending || isUnstakePending || insufficientBalance
 
   return (
-    <div className="bg-surface-panel border border-brand-border/30 overflow-hidden">
-      <div className={`px-6 py-4 border-b border-brand-border/30 ${isBear ? 'bg-brand-orange/10' : 'bg-positive/10'}`}>
-        <div className="flex items-center gap-3">
-          <TokenIcon side={side} />
-          <div>
-            <h3 className={`font-semibold ${textColor}`}>plDXY-{side} Staking</h3>
+    <div className="min-w-0 overflow-hidden border border-brand-border/30 bg-surface-panel">
+      <div className={`border-b border-brand-border/30 px-4 py-4 sm:px-6 ${isBear ? 'bg-brand-orange/10' : 'bg-positive/10'}`}>
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="shrink-0">
+            <TokenIcon side={side} />
+          </span>
+          <div className="min-w-0">
+            <h3 className={`break-words font-semibold ${textColor}`}>plDXY-{side} Staking</h3>
             <p className="text-xs text-content-secondary">Stake to use as collateral</p>
           </div>
         </div>
       </div>
 
-      <div className="p-6 space-y-6">
-        <div className={`bg-surface-muted p-4 border ${isBear ? 'border-brand-orange/30' : 'border-positive/30'}`}>
-          <div className="flex justify-between items-center">
-            <span className="text-content-secondary text-sm">Staked Balance</span>
-            <span className={`${textColor} font-semibold`}>
+      <div className="min-w-0 space-y-5 p-4 sm:space-y-6 sm:p-6">
+        <div className={`min-w-0 border bg-surface-muted p-3 sm:p-4 ${isBear ? 'border-brand-orange/30' : 'border-positive/30'}`}>
+          <div className="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <span className="shrink-0 text-sm text-content-secondary">Staked Balance</span>
+            <span className={`min-w-0 break-words font-semibold [overflow-wrap:anywhere] sm:text-right ${textColor}`}>
               {formatAmount(stakedBalance, SHARE_DECIMALS)} splDXY-{side}
             </span>
           </div>
@@ -120,7 +122,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         <div className="bg-surface-muted p-1 flex text-sm font-medium border border-brand-border/30">
           <button
             onClick={() => { setMode('stake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 sm:px-4 ${
               mode === 'stake'
                 ? `${bgColor} ${activeTextColor} border ${activeBorderColor}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
@@ -130,7 +132,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
           </button>
           <button
             onClick={() => { setMode('unstake'); setAmount('') }}
-            className={`flex-1 py-2 px-4 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 sm:px-4 ${
               mode === 'unstake'
                 ? `${bgColor} ${activeTextColor} border ${activeBorderColor}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96]'
@@ -161,7 +163,7 @@ export function StakingCard({ side, tokenBalance, stakedBalance, onSuccess }: St
         <button
           onClick={() => { handleAction() }}
           disabled={isDisabled}
-          className={`w-full ${bgColor} ${isBear ? 'text-content-primary enabled:hover:bg-[#FF572D]' : 'text-app-bg enabled:hover:bg-[#00CC77]'} px-6 py-4 text-lg font-semibold transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50`}
+          className={`min-h-12 w-full ${bgColor} ${isBear ? 'text-content-primary enabled:hover:bg-[#FF572D]' : 'text-app-bg enabled:hover:bg-[#00CC77]'} px-4 py-3 text-base font-semibold transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 sm:px-6 sm:py-4 sm:text-lg`}
         >
           {getButtonText()}
         </button>

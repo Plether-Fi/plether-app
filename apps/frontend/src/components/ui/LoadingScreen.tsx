@@ -48,15 +48,17 @@ export function LoadingScreen({
         </div>
       </div>
 
-      <div className="p-8">
-        <div className="flex items-start justify-between mb-8">
-          <h2 className="text-2xl font-bold text-content-primary">
+      <div className="p-4 sm:p-8">
+        <div className="mb-6 flex min-w-0 items-start justify-between gap-3 sm:mb-8">
+          <h2 className="min-w-0 text-xl font-bold text-content-primary sm:text-2xl">
             {title}
           </h2>
           {onClose && (
             <button
+              type="button"
+              aria-label="Close transaction"
               onClick={onClose}
-              className="text-content-secondary hover:text-[#FFAB96] transition-colors -mt-1 -mr-2"
+              className="-mr-2 -mt-2 inline-flex h-11 w-11 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
             >
               <span className="material-symbols-outlined">close</span>
             </button>
@@ -85,8 +87,8 @@ export function LoadingScreen({
                   </span>
                 </div>
                 {step.status === 'error' && errorMessage && (
-                  <div className="mt-3 ml-10 p-3 bg-brand-orange/10 border border-brand-orange/30">
-                    <p className="text-brand-orange text-sm">{errorMessage}</p>
+                  <div className="mt-3 border border-brand-orange/30 bg-brand-orange/10 p-3 sm:ml-10">
+                    <p className="break-words text-sm text-brand-orange">{errorMessage}</p>
                   </div>
                 )}
               </div>
