@@ -14,7 +14,7 @@ on:
           - sepolia
           - mainnet
       bootstrap:
-        description: Allow the first image push before API and basket task definitions exist
+        description: Allow the first image push before API and consolidated worker task definitions exist
         required: false
         default: false
         type: boolean
@@ -53,7 +53,7 @@ jobs:
           trap 'rm -rf "$task_def_dir"' EXIT
           validation_failed=false
           api_definition_validated=false
-          basket_definition_validated=false
+          workers_definition_validated=false
           pyth_api_key_secret_refs=()
           pyth_feed_ids=(
             "0xa995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b"
@@ -199,7 +199,7 @@ jobs:
 
             case "$definition_role" in
               api) api_definition_validated=true ;;
-              basket) basket_definition_validated=true ;;
+              workers) workers_definition_validated=true ;;
               *)
                 report_failure "$task_family" "$container_name" \
                   "workflow configuration supplied an unknown task-definition role."
@@ -312,14 +312,13 @@ jobs:
           }
 
           validate_pyth_container "plether-${TARGET_ENV}" "plether-api" true api
-          validate_pyth_container "plether-${TARGET_ENV}-workers" "plether-basket-worker" true basket
-          validate_pyth_container "plether-${TARGET_ENV}-basket-worker" "plether-basket-worker" true basket
+          validate_pyth_container "plether-${TARGET_ENV}-workers" "plether-basket-worker" true workers
 
-          if [ "$api_definition_validated" != true ] || [ "$basket_definition_validated" != true ]; then
+          if [ "$api_definition_validated" != true ] || [ "$workers_definition_validated" != true ]; then
             if [ "$ALLOW_MISSING_TASK_DEFINITIONS" = true ]; then
               echo "::warning title=Pyth ECS bootstrap override::Proceeding without both required task-definition topologies because the manual bootstrap override was explicitly enabled."
             else
-              echo "::error title=Pyth ECS topology preflight failed::A backend rollout requires the API task definition and at least one consolidated or standalone basket-worker task definition. Apply infra/terraform for ${TARGET_ENV}; use the manual bootstrap override only for first-time provisioning."
+              echo "::error title=Pyth ECS topology preflight failed::A backend rollout requires the API and consolidated workers task definitions. Apply infra/terraform for ${TARGET_ENV}; use the manual bootstrap override only for first-time provisioning."
               validation_failed=true
             fi
           fi
@@ -402,6 +401,7 @@ jobs:
           echo "log_router_image=$LOG_ROUTER_IMAGE" >> "$GITHUB_OUTPUT"
 
   deploy:
+    name: Deploy ${{ matrix.service_name }} (${{ github.event_name == 'push' && 'mainnet' || inputs.environment }})
     needs: build
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap != true }}
     runs-on: ubuntu-latest
@@ -409,7 +409,18 @@ jobs:
       contents: read
     strategy:
       matrix:
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"sepolia","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]') }}
+        # Basket ingestion, oracle updates, indexing, and Insights snapshots run
+        # inside plether-workers; liquidation remains isolated.
+        include:
+          - task_suffix: ""
+            service_name: plether-api
+            container_name: plether-api
+          - task_suffix: -workers
+            service_name: plether-workers
+            container_name: plether-keeper
+          - task_suffix: -liquidation-worker
+            service_name: plether-liquidation-worker
+            container_name: plether-liquidation-worker
 
     steps:
       - name: Configure AWS credentials
@@ -423,7 +434,7 @@ jobs:
         id: task-definition-status
         run: |
           if aws ecs describe-task-definition \
-              --task-definition plether-${{ matrix.environment }}${{ matrix.task_suffix }} \
+              --task-definition plether-${TARGET_ENV}${{ matrix.task_suffix }} \
               --query taskDefinition > task-def.json; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -432,7 +443,7 @@ jobs:
           fi
 
       - name: Patch Sepolia API task definition
-        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        if: env.TARGET_ENV == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |
           jq \
             --arg container "${{ matrix.container_name }}" \
@@ -494,7 +505,7 @@ jobs:
           mv task-def.patched.json task-def.json
 
       - name: Patch Sepolia Insights configuration
-        if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
+        if: env.TARGET_ENV == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
         env:
           PERPS_ACCOUNT_LENS: "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
           PERPS_INDEXER_CONFIRMATIONS: "1"
@@ -562,5 +573,5 @@ jobs:
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ matrix.service_name }}
-          cluster: plether-${{ matrix.environment }}
+          cluster: plether-${{ env.TARGET_ENV }}
           wait-for-service-stability: true
