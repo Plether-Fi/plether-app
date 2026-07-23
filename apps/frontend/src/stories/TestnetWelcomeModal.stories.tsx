@@ -16,6 +16,12 @@ const alreadyClaimedClaim: TestnetFaucetClaim = {
   status: 'already_claimed',
 }
 
+const alreadyFundedClaim: TestnetFaucetClaim = {
+  ...mintedClaim,
+  txHash: null,
+  status: 'already_funded',
+}
+
 const meta: Meta<typeof TestnetWelcomeModalView> = {
   title: 'Testnet/Welcome Modal',
   component: TestnetWelcomeModalView,
@@ -89,6 +95,13 @@ export const MintedToWallet: Story = {
 export const AlreadyClaimed: Story = {
   args: {
     claim: alreadyClaimedClaim,
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const AlreadyFundedWithoutTransactionHash: Story = {
+  args: {
+    claim: alreadyFundedClaim,
   },
   render: (args) => <ModalFrame {...args} />,
 }

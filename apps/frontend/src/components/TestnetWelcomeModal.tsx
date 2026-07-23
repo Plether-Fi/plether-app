@@ -120,9 +120,11 @@ export function TestnetWelcomeModalView({
         {activeClaim ? (
           <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
             <p className="font-medium">
-              {activeClaim.status === 'already_claimed'
-                ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
-                : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
+              {activeClaim.status === 'already_funded'
+                ? `Mock USDC is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                : activeClaim.status === 'already_claimed'
+                  ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                  : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
               {isTradingAccountRecipient
@@ -146,14 +148,16 @@ export function TestnetWelcomeModalView({
                 </a>
               </p>
             )}
-            <a
-              href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="break-all text-positive hover:underline"
-            >
-              {activeClaim.txHash}
-            </a>
+            {activeClaim.txHash ? (
+              <a
+                href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="break-all text-positive hover:underline"
+              >
+                {activeClaim.txHash}
+              </a>
+            ) : null}
           </div>
         ) : null}
       </div>

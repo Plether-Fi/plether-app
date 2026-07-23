@@ -70,7 +70,11 @@ module Plether.Database.Schema
   , TestnetFaucetClaimRow (..)
   , getTestnetFaucetClaim
   , beginTestnetFaucetClaim
+  , beginTestnetFaucetClaimSql
+  , markTestnetFaucetClaimSubmitted
+  , markTestnetFaucetClaimSubmittedSql
   , markTestnetFaucetClaimSuccess
+  , markTestnetFaucetClaimReconciled
   , markTestnetFaucetClaimFailed
   , PerpsOrderRow (..)
   , PerpsActivityRow (..)
@@ -142,6 +146,7 @@ data TestnetFaucetClaimRow = TestnetFaucetClaimRow
   , tfcAmount :: Integer
   , tfcTokenAddress :: Text
   , tfcTxHash :: Maybe Text
+  , tfcRawTx :: Maybe Text
   , tfcStatus :: Text
   , tfcError :: Maybe Text
   }
@@ -150,6 +155,7 @@ data TestnetFaucetClaimRow = TestnetFaucetClaimRow
 instance FromRow TestnetFaucetClaimRow where
   fromRow = TestnetFaucetClaimRow
     <$> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -164,12 +170,14 @@ ensureTestnetFaucetSchema conn = do
     \amount BIGINT NOT NULL,\
     \token_address VARCHAR(42) NOT NULL,\
     \tx_hash VARCHAR(66),\
+    \raw_tx TEXT,\
     \status VARCHAR(16) NOT NULL,\
     \error TEXT,\
     \created_at TIMESTAMP DEFAULT NOW(),\
     \updated_at TIMESTAMP DEFAULT NOW(),\
     \PRIMARY KEY (address, token_address)\
     \)"
+  _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS raw_tx TEXT"
   _ <- execute_ conn "ALTER TABLE testnet_faucet_claims DROP CONSTRAINT IF EXISTS testnet_faucet_claims_pkey"
   _ <- execute_ conn
     "ALTER TABLE testnet_faucet_claims \
@@ -182,7 +190,7 @@ ensureTestnetFaucetSchema conn = do
 getTestnetFaucetClaim :: Connection -> Text -> Text -> IO (Maybe TestnetFaucetClaimRow)
 getTestnetFaucetClaim conn address tokenAddress = do
   rows <- query conn
-    "SELECT address, amount, token_address, tx_hash, status, error \
+    "SELECT address, amount, token_address, tx_hash, raw_tx, status, error \
     \FROM testnet_faucet_claims WHERE address = ? AND token_address = ?"
     (T.toLower address, T.toLower tokenAddress)
   pure $ case rows of
@@ -192,26 +200,55 @@ getTestnetFaucetClaim conn address tokenAddress = do
 beginTestnetFaucetClaim :: Connection -> Text -> Integer -> Text -> IO Bool
 beginTestnetFaucetClaim conn address amount tokenAddress = do
   affected <- execute conn
-    "INSERT INTO testnet_faucet_claims \
-    \(address, amount, token_address, status, error, updated_at) \
-    \VALUES (?, ?, ?, 'pending', NULL, NOW()) \
-    \ON CONFLICT (address, token_address) DO UPDATE SET \
-    \amount = EXCLUDED.amount,\
-    \tx_hash = NULL,\
-    \status = 'pending',\
-    \error = NULL,\
-    \updated_at = NOW() \
-    \WHERE testnet_faucet_claims.status = 'failed'"
+    beginTestnetFaucetClaimSql
     (T.toLower address, amount, T.toLower tokenAddress)
   pure $ affected > (0 :: Int64)
+
+beginTestnetFaucetClaimSql :: Query
+beginTestnetFaucetClaimSql =
+  "INSERT INTO testnet_faucet_claims \
+  \(address, amount, token_address, tx_hash, raw_tx, status, error, updated_at) \
+  \VALUES (?, ?, ?, NULL, NULL, 'preparing', NULL, NOW()) \
+  \ON CONFLICT (address, token_address) DO UPDATE SET \
+  \amount = EXCLUDED.amount,\
+  \tx_hash = NULL,\
+  \raw_tx = NULL,\
+  \status = 'preparing',\
+  \error = NULL,\
+  \updated_at = NOW() \
+  \WHERE testnet_faucet_claims.status = 'failed' \
+  \OR (testnet_faucet_claims.status = 'preparing' \
+  \AND testnet_faucet_claims.updated_at <= NOW() - INTERVAL '5 minutes')"
+
+markTestnetFaucetClaimSubmitted :: Connection -> Text -> Text -> Text -> Text -> IO Bool
+markTestnetFaucetClaimSubmitted conn address tokenAddress txHash rawTx = do
+  affected <- execute conn
+    markTestnetFaucetClaimSubmittedSql
+    (T.toLower txHash, T.toLower rawTx, T.toLower address, T.toLower tokenAddress)
+  pure $ affected > (0 :: Int64)
+
+markTestnetFaucetClaimSubmittedSql :: Query
+markTestnetFaucetClaimSubmittedSql =
+  "UPDATE testnet_faucet_claims SET \
+  \tx_hash = ?, raw_tx = ?, status = 'submitted', error = NULL, updated_at = NOW() \
+  \WHERE address = ? AND token_address = ? AND status = 'preparing'"
 
 markTestnetFaucetClaimSuccess :: Connection -> Text -> Text -> Text -> IO ()
 markTestnetFaucetClaimSuccess conn address tokenAddress txHash = do
   _ <- execute conn
     "UPDATE testnet_faucet_claims SET \
-    \tx_hash = ?, status = 'success', error = NULL, updated_at = NOW() \
+    \tx_hash = ?, raw_tx = NULL, status = 'success', error = NULL, updated_at = NOW() \
     \WHERE address = ? AND token_address = ?"
     (txHash, T.toLower address, T.toLower tokenAddress)
+  pure ()
+
+markTestnetFaucetClaimReconciled :: Connection -> Text -> Text -> IO ()
+markTestnetFaucetClaimReconciled conn address tokenAddress = do
+  _ <- execute conn
+    "UPDATE testnet_faucet_claims SET \
+    \tx_hash = NULL, raw_tx = NULL, status = 'success', error = NULL, updated_at = NOW() \
+    \WHERE address = ? AND token_address = ? AND status = 'pending'"
+    (T.toLower address, T.toLower tokenAddress)
   pure ()
 
 markTestnetFaucetClaimFailed :: Connection -> Text -> Text -> Text -> IO ()

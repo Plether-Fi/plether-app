@@ -224,6 +224,53 @@ describe('perps lifecycle labels', () => {
     expect(document.querySelector('[data-finalization-confetti]')).not.toBeInTheDocument()
   })
 
+  it('keeps the leverage field and slider in sync', () => {
+    render(<PerpsTradeTicket />)
+
+    const leverageInput = screen.getByRole('spinbutton', { name: 'Leverage' })
+    const leverageSlider = screen.getByRole('slider', { name: 'Leverage slider' })
+
+    expect(leverageInput).toHaveValue(5)
+    expect((leverageSlider as HTMLInputElement).value).toBe('5')
+
+    fireEvent.change(leverageInput, { target: { value: '12' } })
+
+    expect(leverageInput).toHaveValue(12)
+    expect((leverageSlider as HTMLInputElement).value).toBe('12')
+
+    fireEvent.change(leverageInput, { target: { value: '99' } })
+    fireEvent.blur(leverageInput)
+
+    expect(leverageInput).toHaveValue(33)
+    expect((leverageSlider as HTMLInputElement).value).toBe('33')
+  })
+
+  it('keeps advanced preview rows behind a show-more control', () => {
+    render(<PerpsTradeTicket />)
+
+    const previewPanel = screen.getByText('Preview').parentElement
+    expect(previewPanel).not.toBeNull()
+    const preview = within(previewPanel!)
+
+    expect(preview.getByText('Required margin')).toBeInTheDocument()
+    expect(preview.getByText('Execution limit')).toBeInTheDocument()
+    expect(preview.getByText('Liquidation price')).toBeInTheDocument()
+    expect(preview.getByText('Estimated fee')).toBeInTheDocument()
+    expect(preview.queryByText('Contract notional')).not.toBeInTheDocument()
+    expect(preview.queryByText('Maintenance margin')).not.toBeInTheDocument()
+    expect(preview.queryByText('Estimated execution reward')).not.toBeInTheDocument()
+
+    const showMoreButton = preview.getByRole('button', { name: 'Show more...' })
+    expect(showMoreButton).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(showMoreButton)
+
+    expect(preview.getByText('Contract notional')).toBeInTheDocument()
+    expect(preview.getByText('Maintenance margin')).toBeInTheDocument()
+    expect(preview.getByText('Estimated execution reward')).toBeInTheDocument()
+    expect(preview.getByRole('button', { name: 'Show less' }))
+      .toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('renders order and transaction history tabs from live rows', () => {
     render(
       <PerpsAccountPanel
