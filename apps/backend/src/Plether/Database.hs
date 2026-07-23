@@ -2,14 +2,16 @@ module Plether.Database
   ( DbPool
   , newDbPool
   , withDb
+  , withDbAdvisoryLock
   ) where
 
-import Control.Exception (bracket)
+import Control.Exception (bracket_)
+import Control.Monad (void)
 import Data.Pool (Pool, newPool, defaultPoolConfig, withResource)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Database.PostgreSQL.Simple (Connection, close, connectPostgreSQL)
 import qualified Data.ByteString.Char8 as BS
+import Database.PostgreSQL.Simple (Connection, Only (..), close, connectPostgreSQL, query)
 
 type DbPool = Pool Connection
 
@@ -24,3 +26,9 @@ newDbPool connStr = newPool poolConfig
 
 withDb :: DbPool -> (Connection -> IO a) -> IO a
 withDb = withResource
+
+withDbAdvisoryLock :: Connection -> Integer -> IO a -> IO a
+withDbAdvisoryLock conn lockId =
+  bracket_
+    (void (query conn "SELECT 1::BIGINT FROM pg_advisory_lock(?)" (Only lockId) :: IO [Only Integer]))
+    (void (query conn "SELECT pg_advisory_unlock(?)" (Only lockId) :: IO [Only Bool]))
