@@ -24,8 +24,11 @@ const meta: Meta<typeof TestnetWelcomeModalView> = {
   },
   args: {
     isOpen: true,
+    isWalletConnected: true,
+    isTradingAccountRecipient: true,
     walletAddress: mintedClaim.address,
     onClose: () => {},
+    onConnectWallet: () => {},
     onRequestFunds: () => {},
     onDeposit: () => {},
   },
@@ -49,6 +52,30 @@ function ModalFrame(args: React.ComponentProps<typeof TestnetWelcomeModalView>) 
 }
 
 export const RequestFunds: Story = {
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const Disconnected: Story = {
+  args: {
+    isWalletConnected: false,
+    walletAddress: '',
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const PreparingTradingAccount: Story = {
+  args: {
+    walletAddress: '',
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const TradingAccountError: Story = {
+  args: {
+    walletAddress: '',
+    recipientError:
+      'The connected chain does not match the Arbitrum Sepolia sponsorship manifest.',
+  },
   render: (args) => <ModalFrame {...args} />,
 }
 
