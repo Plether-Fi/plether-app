@@ -11,10 +11,12 @@ import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
+import { isSepoliaDeployment } from '../utils/deployment'
 import {
   WagmiPerpsIdentityProvider,
   type PerpsAccountAddressResolver,
 } from './PerpsIdentityProvider'
+import { resolvePerpsAaManifestUrl } from './manifestUrl'
 import {
   PerpsAaRuntimeProvider,
 } from './runtime'
@@ -24,9 +26,7 @@ import { createManagedPimlicoRuntime } from './managedPimlicoRuntime'
 
 function configuredManifestUrl(): string | null {
   const value: unknown = import.meta.env.VITE_PERPS_AA_MANIFEST_URL
-  return typeof value === 'string' && value.trim() !== ''
-    ? value.trim()
-    : null
+  return resolvePerpsAaManifestUrl(value, isSepoliaDeployment())
 }
 
 export function PerpsAaProvider({
