@@ -22,7 +22,7 @@ export function ApiErrorBanner() {
 
   return (
     <div className="border-b border-[#FFAB96] bg-[#FF572D] py-3">
-      <div className="max-w-7xl mx-auto px-6 lg:px-8 flex items-center gap-3">
+      <div className="mx-auto flex max-w-7xl flex-col items-stretch gap-3 px-4 sm:flex-row sm:items-center sm:px-6 lg:px-8">
         <span className={`material-symbols-outlined text-[#FFF5F9] ${isRetrying ? 'animate-spin' : ''}`}>
           {isRetrying ? 'sync' : 'cloud_off'}
         </span>
@@ -33,7 +33,7 @@ export function ApiErrorBanner() {
         </p>
         <button
           onClick={() => { window.location.reload() }}
-          className="flex cursor-pointer items-center gap-1.5 border border-[#FFF5F9] bg-[#FFF5F9] px-3 py-1.5 text-sm font-medium text-[#250917] transition-colors hover:bg-[#250917] hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
+          className="flex min-h-11 shrink-0 cursor-pointer items-center justify-center gap-1.5 border border-[#FFF5F9] bg-[#FFF5F9] px-3 py-2 text-sm font-medium text-[#250917] transition-colors hover:bg-[#250917] hover:text-[#FFAB96] hover:underline hover:underline-offset-4"
         >
           <span className="material-symbols-outlined text-base">refresh</span>
           Refresh

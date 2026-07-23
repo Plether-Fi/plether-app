@@ -29,8 +29,8 @@ const sizeStyles = {
 }
 
 const placementStyles = {
-  center: 'items-center justify-center p-4',
-  right: 'items-start justify-end p-4',
+  center: 'items-end justify-center p-0 sm:items-center sm:p-4',
+  right: 'items-end justify-end p-0 sm:items-start sm:p-4',
 }
 
 export function Modal({
@@ -45,7 +45,7 @@ export function Modal({
   size = 'md',
   placement = 'center',
   contentClassName = '',
-  bodyClassName = 'p-6',
+  bodyClassName = 'p-4 sm:p-6',
   analyticsId,
   analyticsSurface = 'perps',
   analyticsProperties,
@@ -123,22 +123,25 @@ export function Modal({
       {/* Modal Content */}
       <div
         className={`
-          relative flex max-h-[calc(100dvh-2rem)] w-full ${sizeStyles[size]} flex-col
+          relative flex max-h-dvh w-full ${sizeStyles[size]} flex-col
           bg-surface-panel  border border-brand-border/50
+          pb-[env(safe-area-inset-bottom)] sm:max-h-[calc(100dvh-2rem)] sm:pb-0
           ${contentClassName}
         `}
         role="dialog"
         aria-modal="true"
       >
         {hasHeader ? (
-          <div className="relative shrink-0 border-b border-brand-border/30 px-6 py-4">
+          <div className="relative shrink-0 border-b border-brand-border/30 px-4 py-3 sm:px-6 sm:py-4">
             {title ? (
-              <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-content-primary">{title}</h2>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <h2 className="min-w-0 text-lg font-semibold text-content-primary">{title}</h2>
                 {showCloseButton ? (
                   <button
+                    type="button"
+                    aria-label="Close dialog"
                     onClick={() => { handleClose('close_button') }}
-                    className="text-content-secondary hover:text-[#FFAB96] transition-colors"
+                    className="-my-2 -mr-2 inline-flex h-11 w-11 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
                   >
                     <span className="material-symbols-outlined">close</span>
                   </button>
@@ -146,8 +149,10 @@ export function Modal({
               </div>
             ) : showCloseButton ? (
               <button
+                type="button"
+                aria-label="Close dialog"
                 onClick={() => { handleClose('close_button') }}
-                className="absolute right-4 top-3 text-content-secondary hover:text-[#FFAB96] transition-colors"
+                className="absolute right-1 top-1 inline-flex h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96] sm:right-3 sm:top-2"
               >
                 <span className="material-symbols-outlined">close</span>
               </button>

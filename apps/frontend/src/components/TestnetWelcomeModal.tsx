@@ -65,7 +65,7 @@ export function TestnetWelcomeModalView({
       size="lg"
       bodyClassName="p-0"
     >
-      <div className="space-y-5 p-6 text-sm text-content-secondary">
+      <div className="space-y-5 p-4 text-sm text-content-secondary sm:p-6">
         <p>
           This is a testnet version of Plether Perps, built for trying deposits, trades, and order
           execution without real funds.
@@ -162,7 +162,7 @@ export function TestnetWelcomeModalView({
         ) : null}
       </div>
 
-      <div className="flex flex-col gap-3 border-t border-brand-border/30 px-6 py-4 sm:flex-row">
+      <div className="flex flex-col gap-3 border-t border-brand-border/30 px-4 py-4 sm:flex-row sm:px-6">
         <Button
           type="button"
           variant={!isWalletConnected ? 'danger' : isRecipientReady ? 'primary' : 'secondary'}

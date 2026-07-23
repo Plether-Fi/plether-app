@@ -82,15 +82,15 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
   const decimals = transaction.tokenSymbol === 'USDC' ? 6 : 18
 
   return (
-    <div className="grid grid-cols-[1fr_7rem_7rem_14rem_5rem] items-center gap-x-4 px-6 py-4 hover:bg-[#3B212D] transition-colors">
-      <div className="flex items-center gap-4">
-        <div className={`w-10 h-10 ${getIconBg(transaction.type)} flex items-center justify-center`}>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-4 px-4 py-4 transition-colors hover:bg-[#3B212D] sm:gap-x-4 sm:px-6 xl:grid-cols-[minmax(0,1fr)_7rem_7rem_14rem_5rem] xl:gap-y-0">
+      <div className="col-span-2 flex min-w-0 items-center gap-3 sm:gap-4 xl:col-span-1">
+        <div className={`h-10 w-10 shrink-0 ${getIconBg(transaction.type)} flex items-center justify-center`}>
           <span className={`material-symbols-outlined ${getIconColor(transaction.type)}`}>
             {typeIcons[transaction.type]}
           </span>
         </div>
-        <div>
-          <p className="font-semibold text-content-primary">
+        <div className="min-w-0">
+          <p className="break-words font-semibold text-content-primary">
             {typeLabels[transaction.type]}
           </p>
           <p className="text-sm text-content-secondary">
@@ -99,18 +99,18 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
         </div>
       </div>
 
-      <div className="text-right tabular-nums">
-        <p className="text-content-primary font-medium">
+      <div className="min-w-0 tabular-nums xl:text-right">
+        <p className="break-all font-medium text-content-primary">
           {formatAmount(transaction.amount, decimals)}
         </p>
         {transaction.secondaryAmount != null && transaction.secondarySymbol && (
-          <p className="text-xs text-content-secondary">
+          <p className="break-all text-xs text-content-secondary">
             {formatAmount(transaction.secondaryAmount, transaction.secondarySymbol === 'USDC' ? 6 : 18)}
           </p>
         )}
       </div>
 
-      <div className="space-y-1">
+      <div className="min-w-0 justify-self-end space-y-1 text-right xl:justify-self-stretch xl:text-left">
         <TokenLabel token={formatTokenLabel(transaction.tokenSymbol, transaction.amount)} />
         {transaction.secondaryAmount != null && transaction.secondarySymbol && (
           <div>
@@ -123,14 +123,14 @@ export function TransactionRow({ transaction }: TransactionRowProps) {
         href={getExplorerTxUrl(chainId, transaction.hash)}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-sm text-brand-peach hover:text-[#FFAB96]/80 inline-flex items-center gap-1"
+        className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-1 break-all text-sm text-brand-peach hover:text-[#FFAB96]/80 xl:min-h-0"
       >
         {truncatedHash}
-        <span className="material-symbols-outlined text-sm">open_in_new</span>
+        <span className="material-symbols-outlined shrink-0 text-sm">open_in_new</span>
       </a>
 
       <div className={`
-        px-3 py-1 rounded-full text-xs font-semibold
+        justify-self-end whitespace-nowrap rounded-full px-3 py-1 text-center text-xs font-semibold xl:justify-self-stretch
         ${transaction.status === 'success'
           ? 'bg-positive/20 text-positive border border-positive/30'
           : 'bg-brand-orange/20 text-brand-orange border border-brand-orange/30'

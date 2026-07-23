@@ -59,9 +59,9 @@ function DetailTable({ rows }: { rows: DetailRows }) {
   const entries = Object.entries(rows) as [string, DetailValue][]
 
   return (
-    <dl className="grid grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+    <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)]">
       {entries.map(([label, value]) => (
-        <div key={label} className="contents">
+        <div key={label} className="grid min-w-0 grid-cols-1 gap-0.5 sm:contents">
           <dt className="text-content-secondary">{label}</dt>
           <dd className="min-w-0 break-all font-mono text-content-primary">{displayValue(value)}</dd>
         </div>

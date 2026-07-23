@@ -119,10 +119,10 @@ export function Mint() {
   const isActionDisabled = !inputAmount || parseFloat(inputAmount) <= 0 || isRunning || insufficientBalance || isPaused
 
   return (
-    <div className="space-y-10 max-w-xl mx-auto">
-      <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-content-primary mb-1">Mint & Redeem</h1>
-        <p className="text-content-secondary font-light">Create or redeem plDXY-BEAR + plDXY-BULL pairs</p>
+    <div className="mx-auto min-w-0 max-w-xl space-y-6 sm:space-y-10">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Mint & Redeem</h1>
+        <p className="text-sm font-light text-content-secondary sm:text-base">Create or redeem plDXY-BEAR + plDXY-BULL pairs</p>
       </div>
 
       {!isProtocolActive && protocolData && mode === 'mint' && (
@@ -135,7 +135,7 @@ export function Mint() {
         <div className="flex border-b border-brand-border/30">
           <button
             onClick={() => { setMode('mint'); setInputAmount('') }}
-            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
+            className={`flex min-h-12 min-w-0 flex-1 items-center justify-center gap-1.5 px-3 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 sm:gap-2 sm:px-6 sm:py-4 ${
               mode === 'mint'
                 ? 'bg-surface-muted text-positive border-b-2 border-positive'
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
@@ -146,7 +146,7 @@ export function Mint() {
           </button>
           <button
             onClick={() => { setMode('redeem'); setInputAmount('') }}
-            className={`flex-1 flex items-center justify-center gap-2 px-6 py-4 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 ${
+            className={`flex min-h-12 min-w-0 flex-1 items-center justify-center gap-1.5 px-3 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 sm:gap-2 sm:px-6 sm:py-4 ${
               mode === 'redeem'
                 ? 'bg-surface-muted text-brand-orange border-b-2 border-brand-orange'
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-[#FFAB96] border-b-2 border-transparent'
@@ -157,7 +157,7 @@ export function Mint() {
           </button>
         </div>
 
-        <div className="p-6 md:p-8 space-y-6">
+        <div className="min-w-0 space-y-5 p-4 sm:space-y-6 sm:p-6 md:p-8">
           {mode === 'mint' ? (
             <>
               <Alert variant="info">
@@ -179,30 +179,30 @@ export function Mint() {
                 </div>
               </div>
 
-              <div className="bg-surface-muted p-4 space-y-3 border border-brand-border/30">
+              <div className="min-w-0 space-y-3 border border-brand-border/30 bg-surface-muted p-3 sm:p-4">
                 <p className="text-sm text-content-secondary">You will receive:</p>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     <TokenIcon side="BULL" size="sm" />
-                    <span className="text-positive font-medium">plDXY-BULL</span>
+                    <span className="break-words font-medium text-positive">plDXY-BULL</span>
                   </div>
-                  <span className="text-content-primary font-semibold">{inputAmount || '0'}</span>
+                  <span className="min-w-0 break-all text-right font-semibold text-content-primary">{inputAmount || '0'}</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     <TokenIcon side="BEAR" size="sm" />
-                    <span className="text-brand-orange font-medium">plDXY-BEAR</span>
+                    <span className="break-words font-medium text-brand-orange">plDXY-BEAR</span>
                   </div>
-                  <span className="text-content-primary font-semibold">{inputAmount || '0'}</span>
+                  <span className="min-w-0 break-all text-right font-semibold text-content-primary">{inputAmount || '0'}</span>
                 </div>
                 <div className="border-t border-brand-border/30 pt-3 mt-3">
-                  <div className="flex justify-between items-center">
-                    <span className="text-content-secondary">USDC required</span>
-                    <span className="text-content-primary font-semibold text-lg">{outputDisplay} USDC</span>
+                  <div className="flex min-w-0 items-start justify-between gap-3">
+                    <span className="shrink-0 text-content-secondary">USDC required</span>
+                    <span className="min-w-0 break-words text-right text-lg font-semibold text-content-primary">{outputDisplay} USDC</span>
                   </div>
-                  <div className="flex justify-between items-center text-sm mt-1">
-                    <span className="text-content-secondary">Your balance</span>
-                    <span className="text-content-secondary">{formatUsd(usdcBalance)} USDC</span>
+                  <div className="mt-1 flex min-w-0 items-start justify-between gap-3 text-sm">
+                    <span className="shrink-0 text-content-secondary">Your balance</span>
+                    <span className="min-w-0 break-words text-right text-content-secondary">{formatUsd(usdcBalance)} USDC</span>
                   </div>
                 </div>
               </div>
@@ -231,21 +231,21 @@ export function Mint() {
                 You need equal amounts of both tokens.
               </Alert>
 
-              <div className="bg-surface-muted p-4 space-y-3 border border-brand-border/30">
+              <div className="min-w-0 space-y-3 border border-brand-border/30 bg-surface-muted p-3 sm:p-4">
                 <p className="text-sm text-content-secondary">Your balances:</p>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     <TokenIcon side="BULL" size="sm" />
-                    <span className="text-positive font-medium">plDXY-BULL</span>
+                    <span className="break-words font-medium text-positive">plDXY-BULL</span>
                   </div>
-                  <span className="text-content-primary font-semibold">{formatAmount(bullBalance, 18)}</span>
+                  <span className="min-w-0 break-all text-right font-semibold text-content-primary">{formatAmount(bullBalance, 18)}</span>
                 </div>
-                <div className="flex justify-between items-center">
-                  <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2">
                     <TokenIcon side="BEAR" size="sm" />
-                    <span className="text-brand-orange font-medium">plDXY-BEAR</span>
+                    <span className="break-words font-medium text-brand-orange">plDXY-BEAR</span>
                   </div>
-                  <span className="text-content-primary font-semibold">{formatAmount(bearBalance, 18)}</span>
+                  <span className="min-w-0 break-all text-right font-semibold text-content-primary">{formatAmount(bearBalance, 18)}</span>
                 </div>
               </div>
 
@@ -264,10 +264,10 @@ export function Mint() {
                 </div>
               </div>
 
-              <div className="bg-surface-muted p-4 border border-brand-border/30">
-                <div className="flex justify-between items-center">
-                  <span className="text-content-secondary">You will receive</span>
-                  <span className="text-content-primary font-semibold text-lg">{outputDisplay} USDC</span>
+              <div className="min-w-0 border border-brand-border/30 bg-surface-muted p-3 sm:p-4">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <span className="shrink-0 text-content-secondary">You will receive</span>
+                  <span className="min-w-0 break-words text-right text-lg font-semibold text-content-primary">{outputDisplay} USDC</span>
                 </div>
               </div>
 

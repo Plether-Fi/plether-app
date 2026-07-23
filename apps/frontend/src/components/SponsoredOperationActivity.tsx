@@ -585,7 +585,7 @@ export function SponsoredOperationHistoryButton() {
         type="button"
         aria-label={buttonLabel}
         title={buttonTitle}
-        className={`relative inline-flex h-9 w-9 shrink-0 items-center justify-center overflow-visible rounded-full border transition-colors duration-200 motion-reduce:transition-none ${buttonTone}`}
+        className={`relative inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-full border transition-colors duration-200 motion-reduce:transition-none ${buttonTone}`}
         onClick={() => {
           useSponsoredOperationStore.getState().acknowledgeOperations(
             unreviewedAttentionOperations.map((operation) => ({

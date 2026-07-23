@@ -23,9 +23,9 @@ function truncateAddress(value: string): string {
 
 function ClaimRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 border-b border-brand-border/15 py-3 last:border-b-0">
+    <div className="grid min-w-0 grid-cols-1 gap-1 border-b border-brand-border/15 py-3 last:border-b-0 min-[400px]:grid-cols-[minmax(0,1fr)_auto] min-[400px]:items-center min-[400px]:gap-4">
       <dt className="text-sm text-content-secondary">{label}</dt>
-      <dd className="text-right text-sm font-semibold text-content-primary">{value}</dd>
+      <dd className="min-w-0 text-sm font-semibold text-content-primary min-[400px]:text-right">{value}</dd>
     </div>
   )
 }
@@ -138,7 +138,7 @@ export function PerpsClaimPanel({
             <ClaimRow label="Destination" value={settlementDestination} />
             <ClaimRow label="Network gas" value={<span className="text-positive">Sponsored</span>} />
           </dl>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button variant="secondary" onClick={() => { setIsConfirmationOpen(false) }}>
               Cancel
             </Button>

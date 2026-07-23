@@ -16,19 +16,19 @@ const filterOptions = [
 
 function TransactionSkeleton() {
   return (
-    <div className="flex items-center justify-between px-6 py-4">
-      <div className="flex items-center gap-4">
-        <div className="w-10 h-10 bg-surface-muted rounded" />
-        <div>
+    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4 px-4 py-4 sm:px-6 lg:grid-cols-[minmax(0,1fr)_auto_auto]">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+        <div className="h-10 w-10 shrink-0 rounded bg-surface-muted" />
+        <div className="min-w-0">
           <div className="h-4 w-24 bg-surface-muted rounded mb-2" />
           <div className="h-3 w-16 bg-surface-muted rounded" />
         </div>
       </div>
-      <div className="text-right">
-        <div className="h-4 w-20 bg-surface-muted rounded mb-2" />
-        <div className="h-3 w-28 bg-surface-muted rounded" />
+      <div className="min-w-0 text-right">
+        <div className="mb-2 ml-auto h-4 w-20 max-w-full rounded bg-surface-muted" />
+        <div className="ml-auto h-3 w-28 max-w-full rounded bg-surface-muted" />
       </div>
-      <div className="h-6 w-16 bg-surface-muted rounded-full" />
+      <div className="col-span-2 h-6 w-16 justify-self-end rounded-full bg-surface-muted lg:col-span-1" />
     </div>
   )
 }
@@ -59,20 +59,20 @@ export function History() {
   }, [transactions, filter])
 
   return (
-    <div className="space-y-10">
-      <div className="mb-8">
-        <h1 className="text-3xl font-semibold text-content-primary mb-1">Transaction History</h1>
-        <p className="text-content-secondary font-light">View your past transactions</p>
+    <div className="min-w-0 space-y-6 sm:space-y-10">
+      <div className="mb-6 sm:mb-8">
+        <h1 className="mb-1 text-2xl font-semibold text-content-primary sm:text-3xl">Transaction History</h1>
+        <p className="text-sm font-light text-content-secondary sm:text-base">View your past transactions</p>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
         {filterOptions.map((option) => (
           <button
             key={option.id}
             onClick={() => { setFilter(option.id); }}
             className={`
-              flex items-center gap-2 px-4 py-2 text-sm font-medium transition-colors hover:underline hover:underline-offset-4
+              flex min-h-11 items-center justify-center gap-2 px-3 py-2 text-sm font-medium transition-colors hover:underline hover:underline-offset-4 sm:px-4
               ${filter === option.id
                 ? 'bg-positive/20 text-positive border border-positive/50'
                 : 'bg-surface-panel text-content-secondary border border-brand-border/30 hover:bg-[#3B212D] hover:text-[#FFAB96] hover:border-[#FFAB96]/50'
@@ -109,7 +109,7 @@ export function History() {
                 <button
                   onClick={() => { void fetchNextPage(); }}
                   disabled={isFetchingNextPage}
-                  className="border border-brand-border/30 bg-surface-panel px-6 py-2 text-content-secondary transition-colors hover:border-[#FFAB96]/50 hover:bg-[#3B212D] hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
+                  className="min-h-11 border border-brand-border/30 bg-surface-panel px-6 py-2 text-content-secondary transition-colors hover:border-[#FFAB96]/50 hover:bg-[#3B212D] hover:text-[#FFAB96] hover:underline hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:no-underline"
                 >
                   {isFetchingNextPage ? 'Loading...' : 'Load more'}
                 </button>
@@ -117,7 +117,7 @@ export function History() {
             )}
           </>
         ) : (
-          <div className="bg-surface-panel p-12 text-center border border-brand-border/30">
+          <div className="border border-brand-border/30 bg-surface-panel p-6 text-center sm:p-12">
             <span className="material-symbols-outlined text-4xl text-content-secondary mb-4 block">search_off</span>
             <p className="text-content-secondary">No transactions found</p>
             <p className="text-content-secondary/60 text-sm mt-2">

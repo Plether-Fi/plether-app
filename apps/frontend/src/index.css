@@ -55,6 +55,7 @@ html {
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background-color: #250917;
   font-family: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
 }
@@ -74,6 +75,7 @@ select:not(:disabled) {
 
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* Safe area for mobile bottom nav */

@@ -40,7 +40,7 @@ export function Tooltip({
   className = '',
   docsLink,
 }: TooltipProps) {
-  const whitespaceClass = className.includes('whitespace-') ? '' : 'whitespace-nowrap'
+  const whitespaceClass = className.includes('whitespace-') ? '' : 'whitespace-normal'
   const tooltipId = useId()
   const triggerRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)

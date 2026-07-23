@@ -18,7 +18,7 @@ export function RiskDisclaimer() {
       closeOnEscape={false}
       bodyClassName="p-0"
     >
-      <div className="space-y-4 p-6 text-sm text-content-secondary">
+      <div className="space-y-4 p-4 text-sm text-content-secondary sm:p-6">
         <p>
           Plether is a decentralized finance protocol. By using this application,
           you acknowledge and accept the following risks:
@@ -67,8 +67,8 @@ export function RiskDisclaimer() {
         </p>
       </div>
 
-      <div className="space-y-3 border-t border-brand-border/30 px-6 py-4">
-        <label className="flex cursor-pointer items-center gap-2 text-sm text-content-secondary">
+      <div className="space-y-3 border-t border-brand-border/30 px-4 py-4 sm:px-6">
+        <label className="flex min-h-11 cursor-pointer items-center gap-3 text-sm text-content-secondary">
           <input
             type="checkbox"
             checked={checked}

@@ -223,53 +223,53 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
   const bgClass = side === 'BEAR' ? 'bg-brand-orange/10' : 'bg-positive/10'
 
   return (
-    <div className={`flex-1 border ${borderClass} bg-surface-panel`}>
+    <div className={`min-w-0 flex-1 border ${borderClass} bg-surface-panel`}>
       {/* Header */}
-      <div className={`${bgClass} px-4 py-3 border-b ${borderClass}`}>
-        <h3 className={`font-semibold ${accentColorClass}`}>{side} Market</h3>
-        <p className="text-xs text-content-secondary mt-0.5">splDXY-{side} collateral</p>
+      <div className={`${bgClass} border-b px-3 py-3 sm:px-4 ${borderClass}`}>
+        <h3 className={`break-words font-semibold ${accentColorClass}`}>{side} Market</h3>
+        <p className="mt-0.5 break-words text-xs text-content-secondary">splDXY-{side} collateral</p>
       </div>
 
       {/* Stats */}
-      <div className="p-4 space-y-2 border-b border-brand-border/20">
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Supplied</span>
-          <span className="text-content-primary font-medium">{formatUsd(market.suppliedAmount)} USDC</span>
+      <div className="space-y-2 border-b border-brand-border/20 p-3 sm:p-4">
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Supplied</span>
+          <span className="min-w-0 break-words text-right font-medium text-content-primary [overflow-wrap:anywhere]">{formatUsd(market.suppliedAmount)} USDC</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Supply APY</span>
-          <span className="text-positive font-medium">{(supplyApy * 100).toFixed(2)}%</span>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Supply APY</span>
+          <span className="min-w-0 break-words text-right font-medium text-positive">{(supplyApy * 100).toFixed(2)}%</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Borrowed</span>
-          <span className="text-content-primary font-medium">{formatUsd(market.borrowedAmount)} USDC</span>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Borrowed</span>
+          <span className="min-w-0 break-words text-right font-medium text-content-primary [overflow-wrap:anywhere]">{formatUsd(market.borrowedAmount)} USDC</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Borrow APY</span>
-          <span className="text-warning font-medium">{(borrowApy * 100).toFixed(2)}%</span>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Borrow APY</span>
+          <span className="min-w-0 break-words text-right font-medium text-warning">{(borrowApy * 100).toFixed(2)}%</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Utilization</span>
-          <span className="text-content-primary font-medium">{(utilization * 100).toFixed(1)}%</span>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Utilization</span>
+          <span className="min-w-0 break-words text-right font-medium text-content-primary">{(utilization * 100).toFixed(1)}%</span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Collateral</span>
-          <span className={`font-medium ${hasCollateral ? accentColorClass : 'text-content-secondary'}`}>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Collateral</span>
+          <span className={`min-w-0 break-words text-right font-medium [overflow-wrap:anywhere] ${hasCollateral ? accentColorClass : 'text-content-secondary'}`}>
             {hasCollateral ? `${formatUsd(market.collateral)} USDC` : 'None'}
           </span>
         </div>
-        <div className="flex justify-between text-sm">
-          <span className="text-content-secondary">Available</span>
-          <span className="text-content-primary font-medium">{formatUsd(market.availableToBorrow)} USDC</span>
+        <div className="flex min-w-0 justify-between gap-3 text-sm">
+          <span className="shrink-0 text-content-secondary">Available</span>
+          <span className="min-w-0 break-words text-right font-medium text-content-primary [overflow-wrap:anywhere]">{formatUsd(market.availableToBorrow)} USDC</span>
         </div>
       </div>
 
       {/* Supply Section */}
-      <div className="p-4 border-b border-brand-border/20">
+      <div className="min-w-0 border-b border-brand-border/20 p-3 sm:p-4">
         <div className="flex text-xs font-medium mb-3 border border-brand-border/30">
           <button
             onClick={() => { setSupplyMode('supply'); setSupplyAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 ${
               supplyMode === 'supply'
                 ? `${bgClass} ${accentColorClass}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
@@ -279,7 +279,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           </button>
           <button
             onClick={() => { setSupplyMode('withdraw'); setSupplyAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 ${
               supplyMode === 'withdraw'
                 ? `${bgClass} ${accentColorClass}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
@@ -299,7 +299,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           <button
             onClick={handleSupply}
             disabled={isSupplyDisabled}
-            className={`w-full px-4 py-2 text-sm font-semibold text-app-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`min-h-11 w-full px-4 py-2 text-sm font-semibold text-app-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
               side === 'BEAR'
                 ? 'bg-brand-orange enabled:hover:bg-[#FF572D]'
                 : 'bg-positive enabled:hover:bg-[#00CC77]'
@@ -311,11 +311,11 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
       </div>
 
       {/* Borrow Section */}
-      <div className="p-4">
+      <div className="min-w-0 p-3 sm:p-4">
         <div className="flex text-xs font-medium mb-3 border border-brand-border/30">
           <button
             onClick={() => { setBorrowMode('borrow'); setBorrowAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 ${
               borrowMode === 'borrow'
                 ? `${bgClass} ${accentColorClass}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
@@ -325,7 +325,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           </button>
           <button
             onClick={() => { setBorrowMode('repay'); setBorrowAmount('') }}
-            className={`flex-1 py-1.5 px-3 transition-colors hover:underline hover:underline-offset-4 ${
+            className={`min-h-11 min-w-0 flex-1 px-3 py-2 transition-colors hover:underline hover:underline-offset-4 ${
               borrowMode === 'repay'
                 ? `${bgClass} ${accentColorClass}`
                 : 'text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
@@ -351,7 +351,7 @@ function MarketColumn({ side, market, usdcBalance, onSuccess }: MarketColumnProp
           <button
             onClick={handleBorrow}
             disabled={isBorrowDisabled}
-            className={`w-full px-4 py-2 text-sm font-semibold text-app-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
+            className={`min-h-11 w-full px-4 py-2 text-sm font-semibold text-app-bg transition-colors enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 ${
               side === 'BEAR'
                 ? 'bg-brand-orange enabled:hover:bg-[#FF572D]'
                 : 'bg-positive enabled:hover:bg-[#00CC77]'
@@ -372,37 +372,37 @@ export function YieldCard({
   onSuccess,
 }: YieldCardProps) {
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="mx-auto min-w-0 max-w-4xl">
       {/* Summary row */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="border border-brand-border/20 bg-app-bg p-3">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:mb-6 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
+        <div className="min-w-0 border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Supplied</p>
-          <p className="text-lg font-bold text-content-primary">
+          <p className="break-words text-base font-bold text-content-primary [overflow-wrap:anywhere] sm:text-lg">
             {formatUsd(bearMarket.suppliedAmount + bullMarket.suppliedAmount)} USDC
           </p>
         </div>
-        <div className="border border-brand-border/20 bg-app-bg p-3">
+        <div className="min-w-0 border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Borrowed</p>
-          <p className="text-lg font-bold text-content-primary">
+          <p className="break-words text-base font-bold text-content-primary [overflow-wrap:anywhere] sm:text-lg">
             {formatUsd(bearMarket.borrowedAmount + bullMarket.borrowedAmount)} USDC
           </p>
         </div>
-        <div className="border border-brand-border/20 bg-app-bg p-3">
+        <div className="min-w-0 border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Collateral</p>
-          <p className="text-lg font-bold text-content-primary">
+          <p className="break-words text-base font-bold text-content-primary [overflow-wrap:anywhere] sm:text-lg">
             {formatUsd(bearMarket.collateral + bullMarket.collateral)} USDC
           </p>
         </div>
-        <div className="border border-brand-border/20 bg-app-bg p-3">
+        <div className="min-w-0 border border-brand-border/20 bg-app-bg p-3">
           <p className="text-xs text-content-secondary">Total Available</p>
-          <p className="text-lg font-bold text-content-primary">
+          <p className="break-words text-base font-bold text-content-primary [overflow-wrap:anywhere] sm:text-lg">
             {formatUsd(bearMarket.availableToBorrow + bullMarket.availableToBorrow)} USDC
           </p>
         </div>
       </div>
 
       {/* Two-column market layout */}
-      <div className="flex gap-6">
+      <div className="flex min-w-0 flex-col gap-4 sm:gap-6 lg:flex-row">
         <MarketColumn
           side="BULL"
           market={bullMarket}

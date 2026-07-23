@@ -25,13 +25,13 @@ export function Layout({ children }: LayoutProps) {
   }, [cleanupOldTransactions])
 
   return (
-    <div className="min-h-screen flex flex-col bg-app-bg text-content-primary">
+    <div className="flex min-h-screen min-h-dvh min-w-0 flex-col bg-app-bg text-content-primary">
       {isConnected && <WrongNetworkBanner />}
       <div className="sticky top-0 z-50">
         {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
       </div>
-      <main className={`flex-grow px-6 lg:px-8 py-10 w-full ${hasMobileNav ? 'pb-24 lg:pb-10' : 'pb-10'} ${fullWidth ? '' : 'max-w-7xl mx-auto'}`}>
+      <main className={`w-full min-w-0 flex-grow px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10 ${hasMobileNav ? 'pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-10' : 'pb-8 lg:pb-10'} ${fullWidth ? '' : 'mx-auto max-w-7xl'}`}>
         {children}
       </main>
       <Footer />

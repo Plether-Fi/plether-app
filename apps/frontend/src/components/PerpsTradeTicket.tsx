@@ -632,7 +632,7 @@ function directionLabel(direction: Direction): string {
 }
 
 function OrderSummaryRawAmount({ value }: { value: bigint }) {
-  return <span className="whitespace-nowrap">{formatPerpsUsdc(value)} USDC</span>
+  return <span className="break-words sm:whitespace-nowrap">{formatPerpsUsdc(value)} USDC</span>
 }
 
 function truncateHash(hash: string): string {
@@ -688,7 +688,7 @@ function DxyPricePreviewValue({
   const freshnessTooltip = freshnessTooltipOverride ?? (ageSeconds === undefined ? undefined : `updated ${formatOracleAge(ageSeconds)}`)
 
   return (
-    <span className="inline-flex min-h-6 items-center justify-end gap-2 whitespace-nowrap">
+    <span className="inline-flex min-h-6 max-w-full flex-wrap items-center justify-end gap-2">
       {freshness && freshnessTooltip ? (
         <Tooltip content={freshnessTooltip} position="top" className={INFO_TOOLTIP_PANEL_CLASS_NAME}>
           <span
@@ -765,13 +765,13 @@ function CopyableValue({
   value: string
 }) {
   return (
-    <span className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
-      <span>{value}</span>
+    <span className="inline-flex min-w-0 max-w-full items-center justify-end gap-1">
+      <span className="min-w-0 truncate" title={value}>{value}</span>
       <button
         type="button"
         aria-label={ariaLabel}
         title={ariaLabel}
-        className="inline-flex h-4 w-4 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-content-secondary/70 transition-colors hover:text-[#FFAB96]"
         onClick={() => {
           void navigator.clipboard.writeText(value)
         }}
@@ -848,11 +848,11 @@ function PreviewRows({
             <div key={row.label}>
               <button
                 type="button"
-                className="group flex min-h-6 w-full items-center justify-between gap-3 text-left text-sm text-[#FFAB96] transition-colors hover:text-content-primary"
+                className="group flex min-h-6 w-full flex-wrap items-start justify-between gap-x-3 gap-y-1 text-left text-sm text-[#FFAB96] transition-colors hover:text-content-primary"
                 onClick={onSlippageClick}
               >
                 <span className="group-hover:underline group-focus-visible:underline">{row.label}</span>
-                <span className="flex min-h-6 items-center justify-end text-right font-normal group-hover:underline group-focus-visible:underline">
+                <span className="ml-auto flex min-h-6 max-w-full flex-wrap items-center justify-end break-words text-right font-normal group-hover:underline group-focus-visible:underline">
                   {row.value}
                 </span>
               </button>
@@ -862,8 +862,8 @@ function PreviewRows({
         }
 
         return (
-          <div key={row.label} className="flex min-h-6 min-w-0 items-center justify-between gap-3 text-sm">
-            <dt className="inline-flex shrink-0 items-center gap-1.5 text-content-secondary">
+          <div key={row.label} className="flex min-h-6 min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1 text-sm">
+            <dt className="inline-flex min-w-0 items-center gap-1.5 text-content-secondary">
               {row.label}
               {row.tooltip ? (
                 <Tooltip
@@ -882,7 +882,7 @@ function PreviewRows({
                 </Tooltip>
               ) : null}
             </dt>
-            <dd className={`flex min-h-6 min-w-0 items-center justify-end overflow-hidden text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
+            <dd className={`ml-auto flex min-h-6 max-w-full min-w-0 flex-wrap items-center justify-end break-words text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
       })}
@@ -1319,11 +1319,11 @@ function AccountContextRow({
     <button
       type="button"
       disabled={disabled}
-      className="group flex w-full cursor-pointer items-center justify-between gap-3 text-left text-sm transition-colors hover:text-content-primary disabled:cursor-default disabled:hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+      className="group flex w-full min-w-0 cursor-pointer flex-wrap items-start justify-between gap-x-3 gap-y-1 text-left text-sm transition-colors hover:text-content-primary disabled:cursor-default disabled:hover:text-inherit focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
       onClick={onClick}
     >
-      <span className="text-content-secondary">{label}</span>
-      <span className={`text-right font-semibold group-hover:underline group-focus-visible:underline ${valueColor}`}>{value}</span>
+      <span className="min-w-0 flex-1 text-content-secondary">{label}</span>
+      <span className={`ml-auto max-w-full min-w-0 break-words text-right font-semibold group-hover:underline group-focus-visible:underline ${valueColor}`}>{value}</span>
     </button>
   )
 }
@@ -1359,8 +1359,8 @@ function AccountSummaryRow({
       : 'text-content-primary'
 
   return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="inline-flex items-center gap-1.5 text-content-secondary">
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1 text-sm">
+      <span className="inline-flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-content-secondary">
         {label}
         {tooltip ? (
           <Tooltip
@@ -1379,7 +1379,7 @@ function AccountSummaryRow({
           </Tooltip>
         ) : null}
       </span>
-      <span className={`text-right font-semibold ${valueClass}`}>{value}</span>
+      <span className={`ml-auto max-w-full min-w-0 break-words text-right font-semibold ${valueClass}`}>{value}</span>
     </div>
   )
 }
@@ -2725,7 +2725,7 @@ export function PerpsTradeTicket({
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="space-y-5 px-5 py-4">
+      <div className="space-y-5 px-3 py-3 sm:px-5 sm:py-4">
         <div>
           <div className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
             <span>Direction</span>
@@ -2966,7 +2966,7 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        <div className="border border-brand-border/20 bg-app-bg p-4">
+        <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>
           <div id="perps-preview-details">
             <PreviewRows
@@ -2980,7 +2980,7 @@ export function PerpsTradeTicket({
               slippageConfig={
                 isSlippageConfigOpen && !isOracleFrozenClose ? (
                   <div className="mt-3 py-3">
-                    <div className="grid grid-cols-5 gap-2">
+                    <div className="grid grid-cols-[repeat(auto-fit,minmax(4.5rem,1fr))] gap-2">
                       {slippageOptions.map((option) => (
                         <button
                           key={option.toString()}
@@ -3069,7 +3069,7 @@ export function PerpsTradeTicket({
           </div>
         ) : null}
 
-        <div className="border border-brand-border/20 bg-app-bg p-4">
+        <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Margin Account</div>
           <div className="space-y-2">
             <AccountSummaryRow label="Portfolio value" value={<TokenAmount amount={formatPerpsUsdc(portfolioValueRaw)} />} />
@@ -3096,7 +3096,7 @@ export function PerpsTradeTicket({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Button
             type="button"
             variant="secondary"
@@ -3303,7 +3303,7 @@ export function PerpsTradeTicket({
               </div>
 
               {!enableLiveTrading ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Button
                     className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
@@ -3392,7 +3392,7 @@ export function PerpsTradeTicket({
               </div>
 
               {isKeeperRevealGraceActive ? null : !enableLiveTrading ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <>
                     <Button
                       className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
@@ -3511,7 +3511,7 @@ export function PerpsTradeTicket({
               </div>
 
               {!enableLiveTrading ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <Button
                     className={`w-full ${DARK_CANCEL_BUTTON_CLASS}`}
                     variant="secondary"
@@ -3769,7 +3769,7 @@ export function PerpsTradeTicket({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
               variant="secondary"
@@ -3932,7 +3932,7 @@ export function PerpsTradeTicket({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
               variant="secondary"

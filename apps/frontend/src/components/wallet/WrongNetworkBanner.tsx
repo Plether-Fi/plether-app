@@ -14,9 +14,9 @@ export function WrongNetworkBanner() {
   if (!isWrongNetwork) return null
 
   return (
-    <div className="bg-brand-orange/20 border-b border-brand-orange/50 px-4 py-3">
-      <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-        <div className="flex items-start gap-3">
+    <div className="border-b border-brand-orange/50 bg-brand-orange/20 px-4 py-3">
+      <div className="mx-auto flex max-w-7xl flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <div className="flex min-w-0 items-start gap-3">
           <span className="material-symbols-outlined text-brand-orange">warning</span>
           <div className="space-y-1">
             <p className="text-brand-orange text-sm">
@@ -32,7 +32,7 @@ export function WrongNetworkBanner() {
         <button
           onClick={() => { void switchToArbitrumSepolia() }}
           disabled={isSwitching}
-          className="flex items-center gap-2 px-4 py-2 bg-brand-orange text-content-primary enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4  text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          className="flex min-h-11 shrink-0 items-center justify-center gap-2 bg-brand-orange px-4 py-2 text-sm font-medium text-content-primary transition-colors enabled:hover:bg-[#FF572D] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50"
         >
           {isSwitching ? (
             <>

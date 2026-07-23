@@ -158,7 +158,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
     const chart = createChart(container, {
       width: container.clientWidth,
-      height: CHART_HEIGHT,
+      height: container.clientHeight || CHART_HEIGHT,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
         textColor: CHART_TEXT_COLOR,
@@ -237,7 +237,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
       chart.applyOptions({
         width: Math.floor(entry.contentRect.width),
-        height: CHART_HEIGHT,
+        height: Math.floor(entry.contentRect.height) || CHART_HEIGHT,
       })
     })
 
@@ -283,7 +283,7 @@ function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: Dx
 
   return (
     <div
-      className="relative h-[320px] w-full overflow-hidden"
+      className="relative h-[240px] w-full overflow-hidden sm:h-[320px]"
       role="img"
       aria-label="plDXY Perp price performance chart"
     >
@@ -363,7 +363,7 @@ export function DxyBasketPanelView({
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
-      <div className="px-5 py-4 border-b border-brand-border/20 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-col gap-4 border-b border-brand-border/20 px-3 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:justify-between">
         <div>
           <div className="flex items-center gap-2 text-content-secondary text-sm">
             <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
@@ -373,7 +373,7 @@ export function DxyBasketPanelView({
             {headerPrice == null && isLoading ? (
               <Skeleton width={126} height={34} />
             ) : (
-              <span className="text-3xl font-semibold leading-none text-content-primary">
+              <span className="text-2xl font-semibold leading-none text-content-primary sm:text-3xl">
                 {headerPrice == null ? '--' : formatPrice(headerPrice)}
               </span>
             )}
@@ -383,14 +383,14 @@ export function DxyBasketPanelView({
           </div>
         </div>
 
-        <div className="inline-grid grid-cols-4 border border-brand-border/30 bg-app-bg w-fit">
+        <div className="grid w-full grid-cols-4 border border-brand-border/30 bg-app-bg md:w-fit">
           {DXY_BASKET_CHART_INTERVALS.map((item) => (
             <button
               key={item.value}
               type="button"
               aria-label={item.ariaLabel}
               aria-pressed={chartInterval === item.value}
-              className={`border px-4 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
+              className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 ${
                 chartInterval === item.value
                   ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
                   : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
@@ -405,13 +405,15 @@ export function DxyBasketPanelView({
         </div>
       </div>
 
-      <div className="p-4 md:p-5">
+      <div className="p-3 sm:p-4 md:p-5">
         {isError ? (
           <Alert variant="warning" title="Basket history unavailable">
             The API has not returned stored Pyth basket snapshots yet.
           </Alert>
         ) : isLoading ? (
-          <Skeleton variant="rectangular" height={320} className="w-full" />
+          <div className="h-[240px] sm:h-[320px]">
+            <Skeleton variant="rectangular" height="100%" className="w-full" />
+          </div>
         ) : chartSeries.length > 0 ? (
           <DxyBasketChart
             areaData={chartSeries}
@@ -425,7 +427,7 @@ export function DxyBasketPanelView({
           </Alert>
         )}
 
-        <div className="mt-4 grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
+        <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] gap-2">
           {latestComponents.map((component) => {
             const priceChange = componentPriceChanges[component.feedId || component.symbol]
 

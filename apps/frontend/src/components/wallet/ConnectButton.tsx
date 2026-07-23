@@ -9,9 +9,9 @@ import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
-  'flex items-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-4 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4'
+  'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-3 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4 sm:px-4'
 const SWITCH_NETWORK_BUTTON_CLASS =
-  'flex cursor-pointer items-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-3 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50'
+  'inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-2 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto xl:px-3'
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
@@ -49,6 +49,8 @@ export function ConnectButton() {
   if (!isConnected) {
     return (
       <button
+        type="button"
+        aria-label="Connect Wallet"
         onClick={() => {
           clearSwitchError()
           syncAppKitModalStyleOverrides()
@@ -58,17 +60,17 @@ export function ConnectButton() {
         className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
-        Connect Wallet
+        <span className="hidden min-[430px]:inline">Connect Wallet</span>
       </button>
     )
   }
 
   return (
-    <div className="flex min-w-0 flex-col items-end gap-1">
-      <div className="flex min-w-0 items-center gap-4">
+    <div className="flex min-w-0 max-w-full flex-col items-end gap-1">
+      <div className="flex min-w-0 max-w-full items-center gap-1.5 sm:gap-2 lg:gap-4">
         {/* Network badge */}
         <span className={`
-          max-w-36 truncate whitespace-nowrap border px-2 py-0.5 text-xs font-medium
+          hidden max-w-36 truncate whitespace-nowrap border px-2 py-0.5 text-xs font-medium xl:inline-block
           ${isWrongNetwork
             ? 'bg-brand-orange/20 text-brand-orange border-brand-orange/30'
             : chainId === sepolia.id || chainId === arbitrumSepolia.id
@@ -84,6 +86,7 @@ export function ConnectButton() {
         {shouldShowPerpsNetworkSwitch ? (
           <button
             type="button"
+            aria-label="Switch wallet network to Arbitrum Sepolia"
             onClick={() => { void switchToArbitrumSepolia() }}
             disabled={isSwitchingNetwork}
             className={SWITCH_NETWORK_BUTTON_CLASS}
@@ -94,12 +97,12 @@ export function ConnectButton() {
                 <span className="relative h-4 w-4">
                   <span className="absolute inset-0 rounded-full border-2 border-[#250917]/30 border-t-[#250917] animate-spin" />
                 </span>
-                Switching...
+                <span className="hidden xl:inline">Switching...</span>
               </>
             ) : (
               <>
                 <span className="material-symbols-outlined text-base">swap_horiz</span>
-                Switch Network
+                <span className="hidden xl:inline">Switch Network</span>
               </>
             )}
           </button>
@@ -115,10 +118,11 @@ export function ConnectButton() {
             syncAppKitModalStyleOverrides()
           }}
           title="Open wallet account"
-          className={`group ${WALLET_BUTTON_CLASS}`}
+          aria-label={`Open wallet account ${formatAddress(address ?? '')}`}
+          className={`group h-11 w-11 !px-0 sm:w-auto sm:!px-3 ${WALLET_BUTTON_CLASS}`}
         >
           <div className="w-2 h-2 rounded-full bg-positive" />
-          <span className="whitespace-nowrap text-xs font-medium sm:text-sm">
+          <span className="hidden whitespace-nowrap text-xs font-medium sm:inline sm:text-sm">
             {formatAddress(address ?? '')}
           </span>
         </button>
@@ -126,8 +130,9 @@ export function ConnectButton() {
         {/* Disconnect button */}
         <button
           onClick={() => { disconnect(); }}
-          className="p-2 text-content-secondary transition-colors hover:text-content-primary"
+          className="hidden h-11 w-11 items-center justify-center text-content-secondary transition-colors hover:text-content-primary sm:inline-flex"
           title="Disconnect"
+          aria-label="Disconnect wallet"
         >
           <span className="material-symbols-outlined text-xl">logout</span>
         </button>

@@ -2,17 +2,19 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BUILD_COMMIT } from '../../config/buildInfo'
 import { BuildDetailsModal } from './BuildDetailsModal'
+import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 export function Footer() {
   const [showBuildDetails, setShowBuildDetails] = useState(false)
+  const hasMobileNav = !isPrimaryAppDeployment()
   const footerLinkClass = "transition-colors hover:text-content-primary hover:underline hover:underline-offset-4"
 
   return (
     <>
-      <footer className="hidden lg:block border-t border-brand-border/30 bg-surface-panel/50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-8 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-content-secondary">
+      <footer className={`border-t border-brand-border/30 bg-surface-panel/50 ${hasMobileNav ? 'pb-[calc(4rem+env(safe-area-inset-bottom))] lg:pb-0' : ''}`}>
+        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-4 py-5 text-center text-xs text-content-secondary sm:px-6 lg:flex-row lg:px-8 lg:py-4 lg:text-left">
           <span>&copy; 2026 Plether Labs Limited. All rights reserved.</span>
-          <nav className="flex gap-4">
+          <nav className="flex flex-wrap justify-center gap-x-4 gap-y-2 lg:justify-end">
             <a href="https://docs.plether.com" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Docs
             </a>

@@ -18,8 +18,8 @@ export function MobileNav() {
   if (isPrimaryAppDeployment()) return null
 
   return (
-    <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-surface-panel border-t border-brand-border/30 safe-area-bottom">
-      <div className="flex items-center justify-around h-16">
+    <nav className="safe-area-bottom fixed inset-x-0 bottom-0 z-40 border-t border-brand-border/30 bg-surface-panel lg:hidden">
+      <div className="flex min-h-16 items-stretch justify-around">
         {navLinks.map(({ path, label, icon, color }) => {
           const isActive = location.pathname === path
           const styles = colorStyles[color]
@@ -28,7 +28,7 @@ export function MobileNav() {
               key={path}
               to={path}
               className={`
-                flex flex-col items-center gap-1 px-4 py-2  transition-colors
+                flex min-h-16 flex-1 flex-col items-center justify-center gap-1 px-4 py-2 transition-colors
                 ${isActive
                   ? styles.active
                   : `text-content-secondary ${styles.hover}`
