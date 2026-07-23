@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
+import { useAppKit } from '@reown/appkit/react'
 import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
 import { perpsApi } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
+import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
@@ -12,13 +14,16 @@ import { Button, Input, Modal } from './ui'
 
 interface TestnetWelcomeModalViewProps {
   isOpen: boolean
+  isWalletConnected: boolean
   walletAddress: string
   fieldError?: string
   submitError?: string
+  recipientError?: string
   claim?: TestnetFaucetClaim | null
   isSubmitting?: boolean
   isTradingAccountRecipient?: boolean
   onClose: () => void
+  onConnectWallet: () => void
   onWalletAddressChange: (address: string) => void
   onRequestFunds: () => void
   onDeposit?: () => void
@@ -26,18 +31,31 @@ interface TestnetWelcomeModalViewProps {
 
 export function TestnetWelcomeModalView({
   isOpen,
+  isWalletConnected,
   walletAddress,
   fieldError,
   submitError,
+  recipientError,
   claim,
   isSubmitting = false,
   isTradingAccountRecipient = false,
   onClose,
+  onConnectWallet,
   onWalletAddressChange,
   onRequestFunds,
   onDeposit,
 }: TestnetWelcomeModalViewProps) {
-  const handleSecondaryAction = claim && onDeposit ? onDeposit : onClose
+  const activeClaim = isWalletConnected ? claim : null
+  const handleSecondaryAction = activeClaim && onDeposit ? onDeposit : onClose
+  const isRecipientReady =
+    isWalletConnected &&
+    (!isTradingAccountRecipient || walletAddress.trim().length > 0) &&
+    !recipientError
+  const isPreparingRecipient =
+    isWalletConnected &&
+    isTradingAccountRecipient &&
+    !isRecipientReady &&
+    !recipientError
 
   return (
     <Modal
@@ -53,8 +71,13 @@ export function TestnetWelcomeModalView({
           execution without real funds.
         </p>
         <p>
-          Enter your {isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address and
-          we will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.
+          {!isWalletConnected
+            ? `Connect your wallet to continue. Once connected, we will fill your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address so you can request 100,000 mock USDC on Arbitrum Sepolia.`
+            : recipientError
+              ? 'Your wallet is connected, but Plether could not prepare the Trading Account address that should receive the test funds.'
+            : isRecipientReady
+              ? `Your ${isTradingAccountRecipient ? 'Plether Trading Account' : 'wallet'} address is shown below. We will send it 100,000 mock USDC on Arbitrum Sepolia to start testing.`
+              : 'Your wallet is connected. Plether is preparing the Trading Account address that will receive the test funds.'}
         </p>
         <p>
           Testnet balances and positions have no real-world value and could be reset at any time.
@@ -67,31 +90,41 @@ export function TestnetWelcomeModalView({
           Nothing here has real-world value, and every bit of feedback helps.
         </p>
 
-        <Input
-          label={isTradingAccountRecipient ? 'Trading Account address' : 'Wallet address'}
-          value={walletAddress}
-          onChange={(event) => {
-            onWalletAddressChange(event.target.value)
-          }}
-          placeholder="0x..."
-          disabled={isTradingAccountRecipient}
-          error={fieldError}
-          spellCheck={false}
-          autoComplete="off"
-        />
+        {isRecipientReady ? (
+          <Input
+            label={isTradingAccountRecipient ? 'Trading Account address' : 'Wallet address'}
+            value={walletAddress}
+            onChange={(event) => {
+              onWalletAddressChange(event.target.value)
+            }}
+            placeholder="0x..."
+            disabled={isTradingAccountRecipient}
+            error={fieldError}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        ) : null}
 
-        {submitError ? (
+        {recipientError ? (
+          <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-brand-orange">
+            {recipientError}
+          </p>
+        ) : null}
+
+        {isRecipientReady && submitError ? (
           <p className="border border-brand-orange/40 bg-brand-orange/10 px-4 py-3 text-sm text-brand-orange">
             {submitError}
           </p>
         ) : null}
 
-        {claim ? (
+        {activeClaim ? (
           <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
             <p className="font-medium">
-              {claim.status === 'already_claimed'
-                ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
-                : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
+              {activeClaim.status === 'already_funded'
+                ? `Mock USDC is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                : activeClaim.status === 'already_claimed'
+                  ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
+                  : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
               {isTradingAccountRecipient
@@ -115,14 +148,16 @@ export function TestnetWelcomeModalView({
                 </a>
               </p>
             )}
-            <a
-              href={`https://sepolia.arbiscan.io/tx/${claim.txHash}`}
-              target="_blank"
-              rel="noreferrer"
-              className="break-all text-positive hover:underline"
-            >
-              {claim.txHash}
-            </a>
+            {activeClaim.txHash ? (
+              <a
+                href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
+                target="_blank"
+                rel="noreferrer"
+                className="break-all text-positive hover:underline"
+              >
+                {activeClaim.txHash}
+              </a>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -130,12 +165,27 @@ export function TestnetWelcomeModalView({
       <div className="flex flex-col gap-3 border-t border-brand-border/30 px-6 py-4 sm:flex-row">
         <Button
           type="button"
-          onClick={onRequestFunds}
-          isLoading={isSubmitting}
-          disabled={!!claim}
+          variant={!isWalletConnected ? 'danger' : isRecipientReady ? 'primary' : 'secondary'}
+          onClick={isWalletConnected ? onRequestFunds : onConnectWallet}
+          isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
+          disabled={
+            isWalletConnected &&
+            (!isRecipientReady || !!activeClaim)
+          }
           className="w-full"
         >
-          Get 100,000 mock USDC
+          {isRecipientReady ? (
+            'Get 100,000 mock USDC'
+          ) : isWalletConnected ? (
+            recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
+          ) : (
+            <>
+              <span aria-hidden="true" className="material-symbols-outlined text-xl">
+                account_balance_wallet
+              </span>
+              Connect Wallet
+            </>
+          )}
         </Button>
         <Button
           type="button"
@@ -143,7 +193,7 @@ export function TestnetWelcomeModalView({
           onClick={handleSecondaryAction}
           className="w-full"
         >
-          {claim ? 'Deposit' : 'Maybe later'}
+          {activeClaim ? 'Deposit' : 'Maybe later'}
         </Button>
       </div>
     </Modal>
@@ -151,7 +201,8 @@ export function TestnetWelcomeModalView({
 }
 
 export function TestnetWelcomeModal() {
-  const { address: connectedAddress } = useAccount()
+  const { address: connectedAddress, isConnected } = useAccount()
+  const { open } = useAppKit()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured
     ? perpsIdentity.accountAddress
@@ -166,6 +217,20 @@ export function TestnetWelcomeModal() {
   const [claim, setClaim] = useState<TestnetFaucetClaim | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const previousConnectedAddressRef = useRef<string | undefined>(faucetRecipient)
+  const displayedWalletAddress = perpsIdentity.isAaManifestConfigured
+    ? faucetRecipient ?? ''
+    : walletAddress
+  const displayedClaim =
+    claim?.address.toLowerCase() === displayedWalletAddress.toLowerCase() ? claim : null
+  const recipientError =
+    isConnected &&
+    perpsIdentity.isAaManifestConfigured &&
+    perpsIdentity.status !== 'ready' &&
+    perpsIdentity.status !== 'loading' &&
+    perpsIdentity.status !== 'disconnected'
+      ? perpsIdentity.error?.message ??
+        'The Trading Account configuration needs attention before testing can continue.'
+      : undefined
 
   useEffect(() => {
     if (!faucetRecipient) return
@@ -182,7 +247,7 @@ export function TestnetWelcomeModal() {
   }, [faucetRecipient])
 
   async function requestFunds() {
-    const trimmedAddress = walletAddress.trim()
+    const trimmedAddress = displayedWalletAddress.trim()
     setSubmitError(null)
 
     if (!isAddress(trimmedAddress)) {
@@ -206,11 +271,21 @@ export function TestnetWelcomeModal() {
   return (
     <TestnetWelcomeModalView
       isOpen={!dismissed}
+      isWalletConnected={isConnected}
       onClose={dismiss}
-      walletAddress={walletAddress}
+      onConnectWallet={() => {
+        setFieldError(null)
+        setSubmitError(null)
+        setClaim(null)
+        syncAppKitModalStyleOverrides()
+        void open()
+        syncAppKitModalStyleOverrides()
+      }}
+      walletAddress={displayedWalletAddress}
       fieldError={fieldError ?? undefined}
       submitError={submitError ?? undefined}
-      claim={claim}
+      recipientError={recipientError}
+      claim={displayedClaim}
       isSubmitting={isSubmitting}
       isTradingAccountRecipient={perpsIdentity.isAaManifestConfigured}
       onWalletAddressChange={(nextAddress) => {

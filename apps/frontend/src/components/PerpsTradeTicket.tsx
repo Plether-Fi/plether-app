@@ -222,6 +222,14 @@ const ORACLE_PRICE_FRESH_SECONDS = 60
 const DEFAULT_MAX_LEVERAGE = 33
 const PREVIEW_LOADING_VALUE = 'Loading'
 const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
+const COMPACT_PREVIEW_ROW_LABELS = new Set([
+  'plDXY Perp price',
+  'Required margin',
+  'Max slippage',
+  'Execution limit',
+  'Liquidation price',
+  'Estimated fee',
+])
 const VPI_PRICE_IMPACT_TOOLTIP =
   'Virtual Price Impact (VPI) is the protocol skew adjustment for a trade. It is calculated from trade size, direction, current long/short skew, available pool depth, and the protocol VPI factor. Positive values are a cost; negative values are a rebate.'
 const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
@@ -1479,12 +1487,14 @@ export function PerpsTradeTicket({
   const [size, setSize] = useState(initialSize)
   const [isFullCloseIntent, setIsFullCloseIntent] = useState(false)
   const [leverage, setLeverage] = useState(initialLeverage)
+  const [leverageInputValue, setLeverageInputValue] = useState(initialLeverage.toString())
   const [slippage, setSlippage] = useState(
     oracleFrozen ? DEFAULT_ORACLE_FROZEN_SLIPPAGE : DEFAULT_LIVE_SLIPPAGE
   )
   const [lifecycleState, setLifecycleState] = useState<TradeLifecycleState>(initialLifecycleState)
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
+  const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
@@ -1679,6 +1689,10 @@ export function PerpsTradeTicket({
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
   }, [maxLeverage])
+
+  useEffect(() => {
+    setLeverageInputValue(activeLeverage.toString())
+  }, [activeLeverage])
 
   useEffect(() => {
     if (!canEnableMarginCallSimulator) {
@@ -2177,7 +2191,7 @@ export function PerpsTradeTicket({
         tooltip: CONTRACT_NOTIONAL_TOOLTIP,
         tooltipDocsLink: DOCS_LINKS.contractNotional,
       },
-      { label: 'Initial margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
+      { label: 'Required margin', value: formatUsdcRaw(previewInitialMarginUsdc) },
       {
         label: 'Maintenance margin',
         value: previewMaintenanceMarginValue,
@@ -2208,7 +2222,7 @@ export function PerpsTradeTicket({
             tooltipDocsLink: DOCS_LINKS.oracleConfidence,
           },
       { label: 'Liquidation price', value: previewLiquidationPrice, tone: previewLiquidationPrice === PREVIEW_LOADING_VALUE ? 'muted' : undefined },
-      { label: 'Estimated protocol execution fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
+      { label: 'Estimated fee', value: formatUsdcRaw(previewExecutionFeeUsdc) },
       {
         label: 'VPI / Price impact',
         value: previewVpiValue,
@@ -2265,6 +2279,12 @@ export function PerpsTradeTicket({
       row.label !== 'Contract side capacity'
     ),
     [previewRows]
+  )
+  const visibleSidePanelPreviewRows = useMemo(
+    () => isPreviewExpanded
+      ? sidePanelPreviewRows
+      : sidePanelPreviewRows.filter((row) => COMPACT_PREVIEW_ROW_LABELS.has(row.label)),
+    [isPreviewExpanded, sidePanelPreviewRows]
   )
 
   const currentLifecycleStep = lifecycleStep(lifecycleState)
@@ -2692,6 +2712,17 @@ export function PerpsTradeTicket({
     resetReviewLifecycle,
   ])
 
+  function commitLeverageInput() {
+    const parsedLeverage = Number(leverageInputValue)
+    const nextLeverage = Number.isFinite(parsedLeverage)
+      ? Math.min(Math.max(Math.round(parsedLeverage), 1), maxLeverage)
+      : activeLeverage
+
+    setLeverage(nextLeverage)
+    setLeverageInputValue(nextLeverage.toString())
+    trackPerpsButtonClicked('leverage_input_changed', commonAnalyticsProperties)
+  }
+
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
       <div className="space-y-5 px-5 py-4">
@@ -2871,20 +2902,55 @@ export function PerpsTradeTicket({
 
         <div>
           <div className="mb-2 flex items-center justify-between gap-3">
-            <label className="text-sm font-medium text-content-secondary" htmlFor="perps-leverage">
+            <label className="text-sm font-medium text-content-secondary" htmlFor="perps-leverage-input">
               Leverage
             </label>
-            <span className="text-lg font-semibold text-[#FFAB96]">{formatLeverage(activeLeverage)}</span>
+            <div className="relative">
+              <input
+                id="perps-leverage-input"
+                type="number"
+                inputMode="numeric"
+                min="1"
+                max={maxLeverage}
+                step="1"
+                value={leverageInputValue}
+                onChange={(event) => {
+                  const nextValue = event.target.value
+                  setLeverageInputValue(nextValue)
+
+                  const nextLeverage = Number(nextValue)
+                  if (Number.isInteger(nextLeverage) && nextLeverage >= 1 && nextLeverage <= maxLeverage) {
+                    setLeverage(nextLeverage)
+                  }
+                }}
+                onBlur={commitLeverageInput}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.currentTarget.blur()
+                  }
+                }}
+                className="w-20 border border-brand-border/30 bg-app-bg py-1 pl-2 pr-7 text-right text-lg font-semibold text-[#FFAB96] [appearance:textfield] outline-none transition-colors focus:border-[#FFAB96] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+              />
+              <span
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-lg font-semibold text-[#FFAB96]"
+              >
+                x
+              </span>
+            </div>
           </div>
           <input
-            id="perps-leverage"
+            id="perps-leverage-slider"
+            aria-label="Leverage slider"
             type="range"
             min="1"
             max={maxLeverage}
             step="1"
             value={activeLeverage}
             onChange={(event) => {
-              setLeverage(Math.min(Number(event.target.value), maxLeverage))
+              const nextLeverage = Math.min(Number(event.target.value), maxLeverage)
+              setLeverage(nextLeverage)
+              setLeverageInputValue(nextLeverage.toString())
             }}
             onPointerUp={() => {
               trackPerpsButtonClicked('leverage_slider_changed', commonAnalyticsProperties)
@@ -2902,40 +2968,57 @@ export function PerpsTradeTicket({
 
         <div className="border border-brand-border/20 bg-app-bg p-4">
           <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Preview</div>
-          <PreviewRows
-            rows={sidePanelPreviewRows.slice(0, 11)}
-            onSlippageClick={isOracleFrozenClose
-              ? undefined
-              : () => {
-                  trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
-                  setIsSlippageConfigOpen((isOpen) => !isOpen)
-                }}
-            slippageConfig={
-              isSlippageConfigOpen && !isOracleFrozenClose ? (
-                <div className="mt-3 py-3">
-                  <div className="grid grid-cols-5 gap-2">
-                    {slippageOptions.map((option) => (
-                      <button
-                        key={option.toString()}
-                        type="button"
-                        className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
-                          slippage === option
-                            ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
-                            : 'border-brand-border/30 text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
-                        }`}
-                        onClick={() => {
-                          trackPerpsButtonClicked('select_slippage_preset', commonAnalyticsProperties)
-                          setSlippage(option)
-                        }}
-                      >
-                        {formatPercent(option)}
-                      </button>
-                    ))}
+          <div id="perps-preview-details">
+            <PreviewRows
+              rows={visibleSidePanelPreviewRows}
+              onSlippageClick={isOracleFrozenClose
+                ? undefined
+                : () => {
+                    trackPerpsButtonClicked('toggle_slippage_config', commonAnalyticsProperties)
+                    setIsSlippageConfigOpen((isOpen) => !isOpen)
+                  }}
+              slippageConfig={
+                isSlippageConfigOpen && !isOracleFrozenClose ? (
+                  <div className="mt-3 py-3">
+                    <div className="grid grid-cols-5 gap-2">
+                      {slippageOptions.map((option) => (
+                        <button
+                          key={option.toString()}
+                          type="button"
+                          className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
+                            slippage === option
+                              ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
+                              : 'border-brand-border/30 text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
+                          }`}
+                          onClick={() => {
+                            trackPerpsButtonClicked('select_slippage_preset', commonAnalyticsProperties)
+                            setSlippage(option)
+                          }}
+                        >
+                          {formatPercent(option)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ) : null
-            }
-          />
+                ) : null
+              }
+            />
+          </div>
+          <button
+            type="button"
+            aria-expanded={isPreviewExpanded}
+            aria-controls="perps-preview-details"
+            className="mx-auto mt-3 block cursor-pointer text-sm font-semibold text-[#FFAB96] transition-colors hover:text-content-primary hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4"
+            onClick={() => {
+              trackPerpsButtonClicked(
+                isPreviewExpanded ? 'hide_trade_preview_details' : 'show_trade_preview_details',
+                commonAnalyticsProperties
+              )
+              setIsPreviewExpanded((isExpanded) => !isExpanded)
+            }}
+          >
+            {isPreviewExpanded ? 'Show less' : 'Show more...'}
+          </button>
         </div>
 
         {enableLiveTrading && isConnected && isCorrectChain && liveValidationError && !isZeroSize ? (

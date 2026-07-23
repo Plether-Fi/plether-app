@@ -37,12 +37,12 @@ disabled until a reviewed immutable account deployment replaces it. Treat
 these testnet Trading Accounts as disposable because a replacement factory
 will derive different addresses.
 
-For local testnet development, set `VITE_PERPS_AA_MANIFEST_URL` to
-`/perps-aa-manifest.json`. Testnet deployments publish that manifest with the
-app. Its `pimlicoRpcUrl` is a same-origin `/api/perps/v1/aa/...` path. The
-backend proxy owns the Pimlico API key, injects the approved sponsorship
-policy, validates Plether call targets, and relays only the required
-bundler/paymaster/status methods.
+Local and hosted testnet deployments use the bundled
+`/perps-aa-manifest.json` by default. Set `VITE_PERPS_AA_MANIFEST_URL` only to
+override that path. Its `pimlicoRpcUrl` is a same-origin
+`/api/perps/v1/aa/...` path. The backend proxy owns the Pimlico API key,
+injects the approved sponsorship policy, validates Plether call targets, and
+relays only the required bundler/paymaster/status methods.
 
 Configure `AA_PROXY_ORIGIN_TOKEN` as a Cloudflare Pages secret and require its
 `X-Plether-AA-Proxy-Token` value on the backend `/api/aa/pimlico` route. This
