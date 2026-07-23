@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     amount BIGINT NOT NULL,
     token_address VARCHAR(42) NOT NULL,
     tx_hash VARCHAR(66),
+    raw_tx TEXT,
     status VARCHAR(16) NOT NULL,
     error TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
