@@ -1,6 +1,10 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  PerpsIdentityContext,
+  type PerpsIdentityContextValue,
+} from '../perps-aa'
 
 type TicketProps = ComponentProps<typeof PerpsTradeTicket>
 type OpenPreviewFixture = NonNullable<TicketProps['openPreviewFixture']>
@@ -9,6 +13,23 @@ type ClosePreviewFixture = NonNullable<TicketProps['closePreviewFixture']>
 const USDC = 1_000_000n
 const POSITION_SIZE = 8_200n * 10n ** 18n
 const ORACLE_PRICE = 98_300_000n
+const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+
+const STORY_IDENTITY: PerpsIdentityContextValue = {
+  status: 'ready',
+  ownerAddress: STORY_ADDRESS,
+  accountAddress: STORY_ADDRESS,
+  chainId: 421614,
+  isAaManifestConfigured: false,
+  sponsorshipEnabled: false,
+  manifest: null,
+  identity: null,
+  proposedIdentity: null,
+  changedIdentityFields: [],
+  error: null,
+  confirmIdentityAfterContinuityCheck: () => false,
+  reloadIdentity: () => undefined,
+}
 
 const latestBasket = {
   timestamp: 1_700_000_000,
@@ -139,6 +160,13 @@ const meta: Meta<typeof PerpsTradeTicket> = {
   parameters: {
     layout: 'fullscreen',
   },
+  decorators: [
+    (Story) => (
+      <PerpsIdentityContext.Provider value={STORY_IDENTITY}>
+        <Story />
+      </PerpsIdentityContext.Provider>
+    ),
+  ],
 }
 
 export default meta
@@ -157,6 +185,8 @@ function TicketFrame(args: React.ComponentProps<typeof PerpsTradeTicket>) {
 export const Compose: Story = {
   args: {
     initialLifecycleState: 'preview',
+    oracleFreshness: 'fresh',
+    oracleFreshnessTooltip: 'live oracle price',
   },
   render: (args) => <TicketFrame {...args} />,
 }
