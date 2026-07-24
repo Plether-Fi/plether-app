@@ -71,6 +71,8 @@ export interface WalletActivity {
   sizeDelta: string | null
   price: string | null
   pnl: UsdcUnits | null
+  executionFee: UsdcUnits | null
+  vpi: UsdcUnits | null
   txHash: string | null
 }
 

@@ -87,6 +87,24 @@ input {
   animation: shimmer 1.5s infinite;
 }
 
+.activity-table-desktop {
+  display: none;
+}
+
+.activity-list-mobile {
+  display: block;
+}
+
+@media (min-width: 640px) {
+  .activity-table-desktop {
+    display: block;
+  }
+
+  .activity-list-mobile {
+    display: none;
+  }
+}
+
 @keyframes shimmer {
   100% {
     transform: translateX(100%);

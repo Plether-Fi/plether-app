@@ -109,6 +109,13 @@ interface WireActivity {
   price?: string | null
   pnl?: string | null
   pnlUsdc?: string | null
+  executionFee?: string | null
+  executionFeeUsdc?: string | null
+  protocolFee?: string | null
+  protocolFeeUsdc?: string | null
+  vpi?: string | null
+  vpiUsdc?: string | null
+  vpiDeltaUsdc?: string | null
   txHash?: string | null
   blockNumber?: string
   logIndex?: number
@@ -328,6 +335,13 @@ function normalizeActivity(raw: WireActivity): WalletActivity {
     sizeDelta,
     price: normalizePrice(priceRaw),
     pnl: raw.pnl ?? raw.pnlUsdc ?? null,
+    executionFee:
+      raw.executionFee
+      ?? raw.executionFeeUsdc
+      ?? raw.protocolFee
+      ?? raw.protocolFeeUsdc
+      ?? null,
+    vpi: raw.vpi ?? raw.vpiUsdc ?? raw.vpiDeltaUsdc ?? null,
     txHash: raw.txHash ?? null,
   }
 }
