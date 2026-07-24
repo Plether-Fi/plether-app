@@ -46,6 +46,22 @@ export function formatPercent(value: number, decimals = 2): string {
 }
 
 /**
+ * Format a number using the compact units shown in market metrics.
+ */
+export function formatCompactNumber(value: number): string {
+  if (!Number.isFinite(value)) return '--'
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(2).replace(/\.?0+$/, '')}B`
+  }
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+
+  return value.toLocaleString('en-US', {
+    maximumFractionDigits: 2,
+  }).replaceAll(',', ' ')
+}
+
+/**
  * Format address to shortened form (0x1234...5678)
  */
 export function formatAddress(address: string): string {
