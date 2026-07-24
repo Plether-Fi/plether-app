@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { DEFAULT_COMPETITION_SLUG, InsightsApiError, useWallet, type WalletActivity, type WalletDetails, type WalletPosition } from '../api'
 import { EmptyState, ErrorState, LoadingState, Panel, Pnl, StatusBadge } from '../components/ui'
-import { formatCompactUsdc, formatPrice, formatRoi, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
+import { formatCompactUsdc, formatPrice, formatRoi, formatSignedUsdc, formatUsdc, formatUtc, isWalletAddress, shortAddress, xProfileUrl } from '../utils/format'
 import { calculatePnlBreakdown } from '../utils/pnl'
 
 const ARBITRUM_SEPOLIA_EXPLORER = 'https://sepolia.arbiscan.io'
@@ -43,35 +43,63 @@ function activityLabel(type: string): string {
   return type.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }
 
+function isTradeCostActivity(type: string): boolean {
+  return type.toLowerCase() === 'open' || type.toLowerCase() === 'close'
+}
+
+function Vpi({ value }: { value: string | null }) {
+  const charge = value != null && /^\+?[1-9]\d*$/.test(value)
+  const rebate = value?.startsWith('-') === true
+  return (
+    <span className={`tabular-nums ${charge ? 'text-brand-orange' : rebate ? 'text-positive' : 'text-content-primary'}`}>
+      {formatSignedUsdc(value)}
+    </span>
+  )
+}
+
 function ActivityTable({ activity }: { activity: WalletActivity[] | null }) {
   if (!activity?.length) return <EmptyState title="No activity yet" message="Finalized competition activity will appear here." />
 
   return (
     <>
-      <div className="hidden overflow-x-auto sm:block">
-        <table className="w-full min-w-[760px] border-collapse text-left">
-          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">plDXY price</th><th className="px-5 py-3 text-right">Directional realized P&amp;L</th></tr></thead>
+      <div className="activity-table-desktop overflow-x-auto">
+        <table className="w-full min-w-[980px] border-collapse text-left">
+          <thead><tr className="border-b border-brand-border/20 text-[11px] font-semibold uppercase tracking-[0.14em] text-content-tertiary"><th className="px-5 py-3">Time</th><th className="px-3 py-3">Activity</th><th className="px-3 py-3">Market</th><th className="px-3 py-3 text-right">Size</th><th className="px-3 py-3 text-right">plDXY price</th><th className="px-3 py-3 text-right">Protocol fee</th><th className="px-3 py-3 text-right" title="Positive VPI is a charge; negative VPI is a rebate.">VPI</th><th className="px-5 py-3 text-right">Directional realized P&amp;L</th></tr></thead>
           <tbody className="divide-y divide-brand-border/15">
-            {activity.map((item) => (
-              <tr key={item.id} className="hover:bg-brand-peach/5">
-                <td className="whitespace-nowrap px-5 py-4 text-xs text-content-secondary">{formatUtc(item.occurredAt)}</td>
-                <td className="px-3 py-4"><div className="text-sm font-semibold">{activityLabel(item.type)}</div>{item.txHash ? <a href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-xs text-brand-peach hover:underline">{shortAddress(item.txHash)} ↗</a> : null}</td>
-                <td className="px-3 py-4 text-sm">{item.market ?? '—'}{item.side ? <span className={`ml-2 text-xs uppercase ${item.side === 'long' ? 'text-positive' : 'text-brand-orange'}`}>{item.side}</span> : null}</td>
-                <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactUsdc(item.size) : '—'}</td>
-                <td className="px-3 py-4 text-right text-sm tabular-nums">{formatPrice(item.price)}</td>
-                <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
-              </tr>
-            ))}
+            {activity.map((item) => {
+              const showTradeCosts = isTradeCostActivity(item.type)
+              return (
+                <tr key={item.id} className="hover:bg-brand-peach/5">
+                  <td className="whitespace-nowrap px-5 py-4 text-xs text-content-secondary">{formatUtc(item.occurredAt)}</td>
+                  <td className="px-3 py-4"><div className="text-sm font-semibold">{activityLabel(item.type)}</div>{item.txHash ? <a href={`https://sepolia.arbiscan.io/tx/${item.txHash}`} target="_blank" rel="noreferrer" className="font-mono text-xs text-brand-peach hover:underline">{shortAddress(item.txHash)} ↗</a> : null}</td>
+                  <td className="px-3 py-4 text-sm">{item.market ?? '—'}{item.side ? <span className={`ml-2 text-xs uppercase ${item.side === 'long' ? 'text-positive' : 'text-brand-orange'}`}>{item.side}</span> : null}</td>
+                  <td className="px-3 py-4 text-right text-sm tabular-nums text-content-secondary">{item.size ? formatCompactUsdc(item.size) : '—'}</td>
+                  <td className="px-3 py-4 text-right text-sm tabular-nums">{formatPrice(item.price)}</td>
+                  <td className="px-3 py-4 text-right text-sm tabular-nums text-brand-orange">{showTradeCosts ? formatUsdc(item.executionFee) : '—'}</td>
+                  <td className="px-3 py-4 text-right text-sm font-semibold">{showTradeCosts ? <Vpi value={item.vpi} /> : '—'}</td>
+                  <td className="px-5 py-4 text-right text-sm font-semibold"><Pnl value={item.pnl} /></td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
       </div>
-      <div className="divide-y divide-brand-border/15 sm:hidden">
-        {activity.map((item) => (
-          <div key={item.id} className="px-4 py-4">
-            <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{activityLabel(item.type)}</p><p className="mt-1 text-xs text-content-tertiary">{formatUtc(item.occurredAt)}</p></div><Pnl value={item.pnl} className="text-sm font-semibold" /></div>
-            <div className="mt-3 flex items-center justify-between text-xs text-content-secondary"><span>{item.market ?? 'Account'}{item.side ? ` · ${item.side}` : ''}</span><span>{item.size ? formatCompactUsdc(item.size) : ''}</span></div>
-          </div>
-        ))}
+      <div className="activity-list-mobile divide-y divide-brand-border/15">
+        {activity.map((item) => {
+          const showTradeCosts = isTradeCostActivity(item.type)
+          return (
+            <div key={item.id} className="px-4 py-4">
+              <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{activityLabel(item.type)}</p><p className="mt-1 text-xs text-content-tertiary">{formatUtc(item.occurredAt)}</p></div><Pnl value={item.pnl} className="text-sm font-semibold" /></div>
+              <div className="mt-3 flex items-center justify-between text-xs text-content-secondary"><span>{item.market ?? 'Account'}{item.side ? ` · ${item.side}` : ''}</span><span>{item.size ? formatCompactUsdc(item.size) : ''}</span></div>
+              {showTradeCosts ? (
+                <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-brand-border/15 pt-3 text-xs">
+                  <div><dt className="text-content-tertiary">Protocol fee</dt><dd className="mt-1 font-semibold tabular-nums text-brand-orange">{formatUsdc(item.executionFee)}</dd></div>
+                  <div className="text-right"><dt className="text-content-tertiary">VPI</dt><dd className="mt-1 font-semibold"><Vpi value={item.vpi} /></dd></div>
+                </dl>
+              ) : null}
+            </div>
+          )
+        })}
       </div>
     </>
   )

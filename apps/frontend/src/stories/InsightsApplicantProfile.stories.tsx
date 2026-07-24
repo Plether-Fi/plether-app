@@ -62,7 +62,7 @@ const walletResponse: WalletResponse = {
   activity: [
     {
       id: 'activity-close',
-      type: 'decrease_position',
+      type: 'Close',
       occurredAt: '2026-07-22T08:52:00.000Z',
       market: 'plDXY Perp',
       side: 'short',
@@ -70,11 +70,13 @@ const walletResponse: WalletResponse = {
       sizeDelta: '256862',
       price: '0.97261',
       pnl: '313180000',
+      executionFee: '100000000',
+      vpi: '-82500000',
       txHash: '0x8b3b735d1f629943362f2ae67bac89996571a7cc2c0be40ad73b7d50507ca122',
     },
     {
       id: 'activity-open',
-      type: 'open_position',
+      type: 'Open',
       occurredAt: '2026-07-21T03:33:00.000Z',
       market: 'plDXY Perp',
       side: 'short',
@@ -82,6 +84,8 @@ const walletResponse: WalletResponse = {
       sizeDelta: '-1027300',
       price: '0.97329',
       pnl: null,
+      executionFee: '399956000',
+      vpi: '140000000',
       txHash: '0xb9a6a7c2d94b48e299ef4399ebc8608294de5626704be96559459195857b00ab',
     },
     {
@@ -94,6 +98,8 @@ const walletResponse: WalletResponse = {
       sizeDelta: null,
       price: null,
       pnl: null,
+      executionFee: null,
+      vpi: null,
       txHash: '0x7b821ad5822352950d2ef179be204db011f5f236ef28887895d4126215916c5b',
     },
   ],
@@ -107,6 +113,9 @@ function ApplicantProfilePreview() {
         queries: {
           retry: false,
           refetchOnWindowFocus: false,
+          refetchOnMount: false,
+          refetchOnReconnect: false,
+          staleTime: Infinity,
         },
       },
     })

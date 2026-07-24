@@ -129,6 +129,8 @@ describe('Insights API client', () => {
         side: 0,
         sizeDelta,
         price,
+        executionFeeUsdc: '1765060537',
+        vpiUsdc: '4854090357',
         txHash: '0xabc',
         logIndex: 7,
       }],
@@ -154,6 +156,32 @@ describe('Insights API client', () => {
       size: expectedNotional,
       sizeDelta,
       price: '0.98765433',
+      executionFee: '1765060537',
+      vpi: '4854090357',
+    })
+  })
+
+  it('normalizes protocol-fee aliases and signed close VPI', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      competition,
+      wallet: {
+        wallet: '0x1111111111111111111111111111111111111111',
+        finalPnlUsdc: '0',
+        activeDays: 1,
+        liquidations: 0,
+      },
+      activity: [{
+        activityType: 'Close',
+        occurredAt: '2026-07-20T12:00:00Z',
+        protocolFeeUsdc: '11280147',
+        vpiDeltaUsdc: '-30992947',
+      }],
+    }), { status: 200 })))
+
+    const response = await getWallet(competition.slug, '0x1111111111111111111111111111111111111111')
+    expect(response.activity?.[0]).toMatchObject({
+      executionFee: '11280147',
+      vpi: '-30992947',
     })
   })
 
