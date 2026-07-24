@@ -10,12 +10,46 @@ export type StableSponsorReason =
   | 'UNKNOWN'
   | (string & {})
 
+export type StablePreflightReason =
+  | 'TRADING_ACCOUNT_UNAVAILABLE'
+  | 'INVALID_AMOUNT'
+  | 'MANIFEST_NOT_CONFIGURED'
+  | 'IDENTITY_NOT_READY'
+  | 'MANIFEST_UNAVAILABLE'
+  | 'MANIFEST_MISMATCH'
+  | 'SPONSORSHIP_DISABLED'
+  | 'RUNTIME_UNAVAILABLE'
+  | 'OWNER_AUTHORIZATION_UNAVAILABLE'
+  | 'OWNER_AUTHORIZATION_FAILED'
+  | 'ACTION_BUILD_FAILED'
+  | 'OPERATION_STORE_UNAVAILABLE'
+  | 'LANE_BUSY'
+  | 'BROWSER_COORDINATION_UNAVAILABLE'
+  | 'ACCOUNT_NOT_TRUSTED'
+  | 'UNKNOWN'
+
 export type UserOperationTerminalStatus =
   | 'execution-reverted'
   | 'dropped'
   | 'replaced'
   | 'expired'
   | 'receipt-timeout'
+
+export class SponsoredPreflightError extends Error {
+  readonly reason: StablePreflightReason
+  override readonly cause: unknown
+
+  constructor(input: {
+    reason: StablePreflightReason
+    message: string
+    cause?: unknown
+  }) {
+    super(input.message)
+    this.name = 'SponsoredPreflightError'
+    this.reason = input.reason
+    this.cause = input.cause
+  }
+}
 
 export class SponsorRequestError extends Error {
   readonly reason: StableSponsorReason
@@ -98,7 +132,7 @@ function sponsorMetadata(error: unknown): {
     const currentCallIndex = data?.callIndex ?? record.callIndex
     const currentRpcCode = record.code ?? record.rpcCode
     if (reason === undefined && typeof currentReason === 'string') {
-      reason = currentReason as StableSponsorReason
+      reason = currentReason
     }
     if (retryable === undefined && typeof currentRetryable === 'boolean') {
       retryable = currentRetryable
@@ -154,6 +188,16 @@ export function findSponsorRequestError(error: unknown): SponsorRequestError | u
   return walkCauses(
     error,
     (value): value is SponsorRequestError => value instanceof SponsorRequestError
+  )
+}
+
+export function findSponsoredPreflightError(
+  error: unknown
+): SponsoredPreflightError | undefined {
+  return walkCauses(
+    error,
+    (value): value is SponsoredPreflightError =>
+      value instanceof SponsoredPreflightError
   )
 }
 

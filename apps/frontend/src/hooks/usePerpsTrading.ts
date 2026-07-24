@@ -21,6 +21,8 @@ import {
   getOrCreateDepositAuthorization,
   sponsorReasonMessage,
   findSponsorRequestError,
+  SponsoredPreflightError,
+  trackSponsoredOperationPreflightFailure,
   usePerpsAaRuntime,
   usePerpsIdentity,
 } from '../perps-aa'
@@ -330,18 +332,26 @@ export function usePerpsTrading() {
 
   const requireSponsoredExecution = useCallback(() => {
     if (!identity.isAaManifestConfigured) {
-      throw new Error(
-        'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_NOT_CONFIGURED',
+        message:
+          'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.',
+      })
     }
     if (identity.status !== 'ready' || !identity.accountAddress || !identity.ownerAddress) {
-      throw new Error(
-        identity.error?.message ??
-        'Confirm the Plether Trading Account before submitting this action.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'IDENTITY_NOT_READY',
+        message:
+          identity.error?.message ??
+          'Confirm the Plether Trading Account before submitting this action.',
+        cause: identity.error,
+      })
     }
     if (!identity.manifest) {
-      throw new Error('The reviewed gas-sponsorship manifest is unavailable.')
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_UNAVAILABLE',
+        message: 'The reviewed gas-sponsorship manifest is unavailable.',
+      })
     }
     if (
       identity.manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
@@ -353,19 +363,25 @@ export function usePerpsTrading() {
       !isAddressEqual(identity.manifest.cfdEngine, PERPS_ARBITRUM_SEPOLIA.cfdEngine) ||
       !isAddressEqual(identity.manifest.orderRouter, PERPS_ARBITRUM_SEPOLIA.orderRouter)
     ) {
-      throw new Error(
-        'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_MISMATCH',
+        message:
+          'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.',
+      })
     }
     if (!identity.sponsorshipEnabled) {
-      throw new Error(
-        'Plether gas sponsorship is temporarily unavailable. Your action was kept under the Trading Account and was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'SPONSORSHIP_DISABLED',
+        message:
+          'Plether gas sponsorship is temporarily unavailable. Your action was kept under the Trading Account and was not sent.',
+      })
     }
     if (!aaRuntime) {
-      throw new Error(
-        'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'RUNTIME_UNAVAILABLE',
+        message:
+          'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.',
+      })
     }
 
     return {
@@ -388,12 +404,19 @@ export function usePerpsTrading() {
     _allowance?: bigint,
     source?: 'owner' | 'account'
   ) => {
+    let executionStarted = false
     try {
       if (!address) {
-        throw new Error('Confirm the Plether Trading Account before depositing margin')
+        throw new SponsoredPreflightError({
+          reason: 'TRADING_ACCOUNT_UNAVAILABLE',
+          message: 'Confirm the Plether Trading Account before depositing margin',
+        })
       }
       if (amount <= 0n) {
-        throw new Error('Deposit amount must be greater than zero')
+        throw new SponsoredPreflightError({
+          reason: 'INVALID_AMOUNT',
+          message: 'Deposit amount must be greater than zero',
+        })
       }
 
       const sponsored = requireSponsoredExecution()
@@ -408,42 +431,63 @@ export function usePerpsTrading() {
           !sponsored.manifest.usdcEip712Name ||
           !sponsored.manifest.usdcEip712Version
         ) {
-          throw new Error(
-            'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.'
-          )
+          throw new SponsoredPreflightError({
+            reason: 'OWNER_AUTHORIZATION_UNAVAILABLE',
+            message:
+              'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.',
+          })
         }
-        const authorization = getOrCreateDepositAuthorization({
-          chainId: sponsored.manifest.chainId,
-          ownerAddress: sponsored.ownerAddress,
-          accountAddress: sponsored.accountAddress,
-          token: sponsored.manifest.usdc,
-          amount,
-        })
-        const typedData = buildReceiveWithAuthorizationTypedData({
-          name: sponsored.manifest.usdcEip712Name,
-          version: sponsored.manifest.usdcEip712Version,
-          chainId: sponsored.manifest.chainId,
-          verifyingContract: sponsored.manifest.usdc,
-        }, authorization)
-        const authorizationSignature = await signTypedDataAsync({
-          ...typedData,
-          account: sponsored.ownerAddress,
-        })
-        action = buildAuthorizedDepositAction({
-          account: sponsored.accountAddress,
-          usdc: sponsored.manifest.usdc,
-          clearinghouse: sponsored.manifest.marginClearinghouse,
-          authorization,
-          authorizationSignature,
-        })
+        try {
+          const authorization = getOrCreateDepositAuthorization({
+            chainId: sponsored.manifest.chainId,
+            ownerAddress: sponsored.ownerAddress,
+            accountAddress: sponsored.accountAddress,
+            token: sponsored.manifest.usdc,
+            amount,
+          })
+          const typedData = buildReceiveWithAuthorizationTypedData({
+            name: sponsored.manifest.usdcEip712Name,
+            version: sponsored.manifest.usdcEip712Version,
+            chainId: sponsored.manifest.chainId,
+            verifyingContract: sponsored.manifest.usdc,
+          }, authorization)
+          const authorizationSignature = await signTypedDataAsync({
+            ...typedData,
+            account: sponsored.ownerAddress,
+          })
+          action = buildAuthorizedDepositAction({
+            account: sponsored.accountAddress,
+            usdc: sponsored.manifest.usdc,
+            clearinghouse: sponsored.manifest.marginClearinghouse,
+            authorization,
+            authorizationSignature,
+          })
+        } catch (error) {
+          throw new SponsoredPreflightError({
+            reason: 'OWNER_AUTHORIZATION_FAILED',
+            message: error instanceof Error
+              ? error.message
+              : 'Unable to authorize the owner-funded margin deposit.',
+            cause: error,
+          })
+        }
       } else {
-        action = buildSmartAccountBalanceDepositAction({
-          account: sponsored.accountAddress,
-          usdc: sponsored.manifest.usdc,
-          clearinghouse: sponsored.manifest.marginClearinghouse,
-          amount,
-        })
+        try {
+          action = buildSmartAccountBalanceDepositAction({
+            account: sponsored.accountAddress,
+            usdc: sponsored.manifest.usdc,
+            clearinghouse: sponsored.manifest.marginClearinghouse,
+            amount,
+          })
+        } catch (error) {
+          throw new SponsoredPreflightError({
+            reason: 'ACTION_BUILD_FAILED',
+            message: 'Unable to build the sponsored margin deposit.',
+            cause: error,
+          })
+        }
       }
+      executionStarted = true
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
@@ -457,11 +501,27 @@ export function usePerpsTrading() {
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (!executionStarted) {
+        trackSponsoredOperationPreflightFailure({
+          action: 'deposit',
+          manifestVersion: identity.manifest?.version,
+          accountMode: identity.manifest?.smartAccountMode,
+          walletFamily: aaRuntime?.walletFamily,
+          walletVersion: aaRuntime?.walletVersion,
+        }, error)
+      }
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
       throw new Error(getPerpsErrorMessage(error, 'deposit'))
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution, signTypedDataAsync])
+  }, [
+    aaRuntime,
+    address,
+    identity.manifest,
+    invalidatePerpsReads,
+    requireSponsoredExecution,
+    signTypedDataAsync,
+  ])
 
   const withdrawMargin = useCallback(async (amount: bigint) => {
     try {

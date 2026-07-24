@@ -12,10 +12,14 @@ import {
   asSponsorRequestError,
   BundlerRequestError,
   SponsorRequestError,
+  SponsoredPreflightError,
 } from './errors'
 import { acquireSponsoredOperationBrowserLane } from './laneLock'
 import type { PerpsAaDeploymentManifest } from './manifest'
-import { beginSponsoredOperationTracking } from './operationTracker'
+import {
+  beginSponsoredOperationTracking,
+  trackSponsoredOperationPreflightFailure,
+} from './operationTracker'
 import { reconcilePimlicoUserOperation } from './operationReconciler'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
@@ -131,57 +135,73 @@ async function waitForPimlicoOutcome(input: {
 export async function executeSponsoredPerpsAction(
   input: ExecuteSponsoredPerpsActionInput
 ): Promise<ExecuteSponsoredPerpsActionResult> {
-  if (!input.manifest.sponsorshipEnabled) {
-    throw new SponsorRequestError({
-      reason: 'SPONSOR_UNAVAILABLE',
-      message: 'Gas sponsorship is disabled by the deployment manifest',
-      retryable: true,
-    })
-  }
-  if (
-    input.runtime.chainId !== input.manifest.chainId ||
-    !isAddressEqual(input.runtime.ownerAddress, input.ownerAddress) ||
-    !isAddressEqual(
-      input.runtime.factoryAddress,
-      input.manifest.smartAccountFactory
-    ) ||
-    input.runtime.accountVersion !== input.manifest.smartAccountVersion ||
-    input.runtime.accountIndex !== input.manifest.smartAccountIndex ||
-    !isAddressEqual(
-      input.runtime.smartAccount.entryPoint,
-      input.manifest.entryPoint
-    )
-  ) {
-    throw new SponsorRequestError({
-      reason: 'ACCOUNT_NOT_TRUSTED',
-      message:
-        'The permissionless.js Trading Account does not match the reviewed manifest',
-      retryable: false,
-    })
-  }
-  if (
-    !isAddressEqual(
-      input.action.account,
-      input.runtime.smartAccount.accountAddress
-    )
-  ) {
-    throw new SponsorRequestError({
-      reason: 'ACCOUNT_NOT_TRUSTED',
-      message: 'The Plether action is bound to a different Trading Account',
-      retryable: false,
-    })
-  }
-
   const lane = input.lane ?? DEFAULT_SPONSORED_OPERATION_LANE
-  const releaseBrowserLane = await acquireSponsoredOperationBrowserLane({
-    chainId: input.manifest.chainId,
-    accountAddress: input.runtime.smartAccount.accountAddress,
-    lane,
-  })
+  const analyticsMetadata = {
+    accountMode: input.manifest.smartAccountMode,
+    manifestVersion: input.manifest.version,
+    action: input.action.kind,
+    walletFamily: input.runtime.walletFamily,
+    walletVersion: input.runtime.walletVersion,
+  }
+  let releaseBrowserLane: (() => void) | undefined
   let tracker: ReturnType<typeof beginSponsoredOperationTracking> | undefined
 
   try {
-    await useSponsoredOperationStore.persist.rehydrate()
+    if (!input.manifest.sponsorshipEnabled) {
+      throw new SponsorRequestError({
+        reason: 'SPONSOR_UNAVAILABLE',
+        message: 'Gas sponsorship is disabled by the deployment manifest',
+        retryable: true,
+      })
+    }
+    if (
+      input.runtime.chainId !== input.manifest.chainId ||
+      !isAddressEqual(input.runtime.ownerAddress, input.ownerAddress) ||
+      !isAddressEqual(
+        input.runtime.factoryAddress,
+        input.manifest.smartAccountFactory
+      ) ||
+      input.runtime.accountVersion !== input.manifest.smartAccountVersion ||
+      input.runtime.accountIndex !== input.manifest.smartAccountIndex ||
+      !isAddressEqual(
+        input.runtime.smartAccount.entryPoint,
+        input.manifest.entryPoint
+      )
+    ) {
+      throw new SponsorRequestError({
+        reason: 'ACCOUNT_NOT_TRUSTED',
+        message:
+          'The permissionless.js Trading Account does not match the reviewed manifest',
+        retryable: false,
+      })
+    }
+    if (
+      !isAddressEqual(
+        input.action.account,
+        input.runtime.smartAccount.accountAddress
+      )
+    ) {
+      throw new SponsorRequestError({
+        reason: 'ACCOUNT_NOT_TRUSTED',
+        message: 'The Plether action is bound to a different Trading Account',
+        retryable: false,
+      })
+    }
+
+    releaseBrowserLane = await acquireSponsoredOperationBrowserLane({
+      chainId: input.manifest.chainId,
+      accountAddress: input.runtime.smartAccount.accountAddress,
+      lane,
+    })
+    try {
+      await useSponsoredOperationStore.persist.rehydrate()
+    } catch (error) {
+      throw new SponsoredPreflightError({
+        reason: 'OPERATION_STORE_UNAVAILABLE',
+        message: 'Unable to restore the sponsored operation activity store',
+        cause: error,
+      })
+    }
     const activeTracker = beginSponsoredOperationTracking({
       ownerAddress: input.ownerAddress,
       accountAddress: input.runtime.smartAccount.accountAddress,
@@ -276,10 +296,14 @@ export async function executeSponsoredPerpsAction(
       transactionHash: receipt.receipt.transactionHash,
     }
   } catch (error) {
-    tracker?.fail(error)
+    if (tracker) {
+      tracker.fail(error)
+    } else {
+      trackSponsoredOperationPreflightFailure(analyticsMetadata, error)
+    }
     throw error
   } finally {
     tracker?.release()
-    releaseBrowserLane()
+    releaseBrowserLane?.()
   }
 }

@@ -11,6 +11,7 @@ const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 
 const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
+  trackSponsoredOperationPreflightFailure: vi.fn(),
   writeContractAsync: vi.fn(),
   invalidateQueries: vi.fn(),
 }))
@@ -56,6 +57,8 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   return {
     ...actual,
     executeSponsoredPerpsAction: mocks.executeSponsoredPerpsAction,
+    trackSponsoredOperationPreflightFailure:
+      mocks.trackSponsoredOperationPreflightFailure,
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: '0x1111111111111111111111111111111111111111',
@@ -128,6 +131,22 @@ describe('usePerpsTrading sponsorship route', () => {
       })
     )
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+
+  it('tracks invalid deposits as explicit preflight failures', async () => {
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.depositMargin(0n)).rejects.toThrow(
+      'Deposit amount must be greater than zero'
+    )
+
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    expect(
+      mocks.trackSponsoredOperationPreflightFailure
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'deposit' }),
+      expect.objectContaining({ reason: 'INVALID_AMOUNT' })
+    )
   })
 
   it('withdraws from the Simple Trading Account to its verified Owner Wallet', async () => {

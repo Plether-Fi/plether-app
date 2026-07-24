@@ -3,33 +3,40 @@ import type {
   SponsoredExecutionStatus,
 } from '@plether/perps-aa-client'
 import type { Address, Hex } from 'viem'
-import {
-  trackPerpsSponsoredOperation,
-  type PerpsSponsoredOperationStatus,
-} from '../analytics/perps'
+import { trackPerpsSponsoredOperation } from '../analytics/perps'
 import {
   findBundlerRequestError,
   findSponsorRequestError,
+  findSponsoredPreflightError,
+  type StablePreflightReason,
 } from './errors'
+import { SponsoredOperationCoordinationError } from './laneLock'
 import {
   createSponsoredOperationSignal,
   isSponsoredOperationTerminal,
   releaseSponsoredOperationSignal,
+  SponsoredOperationLockedError,
   useSponsoredOperationStore,
 } from './operationStore'
 
-export interface SponsoredOperationMetadata {
+export interface SponsoredOperationAnalyticsMetadata {
+  accountMode?: string
+  manifestVersion?: string
+  action: PerpsActionKind
+  walletFamily?: string
+  walletVersion?: string
+}
+
+export interface SponsoredOperationMetadata
+  extends SponsoredOperationAnalyticsMetadata {
   id?: string
   ownerAddress: Address
   accountAddress: Address
   chainId: number
   accountMode: string
   manifestVersion: string
-  action: PerpsActionKind
   authorizationToken?: Address
   lane?: string
-  walletFamily?: string
-  walletVersion?: string
 }
 
 export interface SponsoredOperationTracker {
@@ -48,7 +55,7 @@ function operationId(): string {
 }
 
 function analyticsProperties(
-  metadata: SponsoredOperationMetadata,
+  metadata: SponsoredOperationAnalyticsMetadata,
   extra: Record<string, string | number | boolean | undefined> = {}
 ) {
   return {
@@ -59,6 +66,70 @@ function analyticsProperties(
     wallet_version: metadata.walletVersion,
     ...extra,
   }
+}
+
+function findCause<T>(
+  error: unknown,
+  predicate: (value: unknown) => value is T
+): T | undefined {
+  let current = error
+  const seen = new Set<object>()
+
+  for (let depth = 0; depth < 8 && current !== undefined; depth += 1) {
+    if (predicate(current)) return current
+    if (!current || typeof current !== 'object' || seen.has(current)) {
+      return undefined
+    }
+    seen.add(current)
+    current = (current as { cause?: unknown }).cause
+  }
+
+  return undefined
+}
+
+export function sponsoredPreflightFailureReason(
+  error: unknown
+): StablePreflightReason {
+  const preflightError = findSponsoredPreflightError(error)
+  if (preflightError) return preflightError.reason
+
+  const lockedError = findCause(
+    error,
+    (value): value is SponsoredOperationLockedError =>
+      value instanceof SponsoredOperationLockedError
+  )
+  if (lockedError) return 'LANE_BUSY'
+
+  const coordinationError = findCause(
+    error,
+    (value): value is SponsoredOperationCoordinationError =>
+      value instanceof SponsoredOperationCoordinationError
+  )
+  if (coordinationError) return 'BROWSER_COORDINATION_UNAVAILABLE'
+
+  const sponsorError = findSponsorRequestError(error)
+  if (sponsorError?.reason === 'SPONSOR_UNAVAILABLE') {
+    return 'SPONSORSHIP_DISABLED'
+  }
+  if (sponsorError?.reason === 'ACCOUNT_NOT_TRUSTED') {
+    return 'ACCOUNT_NOT_TRUSTED'
+  }
+
+  return 'UNKNOWN'
+}
+
+export function trackSponsoredOperationPreflightFailure(
+  metadata: SponsoredOperationAnalyticsMetadata,
+  error: unknown
+): StablePreflightReason {
+  const reason = sponsoredPreflightFailureReason(error)
+  trackPerpsSponsoredOperation('preflight_failed', analyticsProperties(metadata, {
+    sponsorship_accepted: false,
+    retry_count: 0,
+    reason_code: reason,
+    terminal_outcome: 'preflight_failed',
+  }))
+  return reason
 }
 
 export function beginSponsoredOperationTracking(
@@ -152,7 +223,7 @@ export function beginSponsoredOperationTracking(
           bundlerError?.replacementUserOperationHash as Hex | undefined,
       })
       trackPerpsSponsoredOperation(
-        operationStatus as PerpsSponsoredOperationStatus,
+        operationStatus,
         analyticsProperties(metadata, {
           reason_code: reason,
           retry_count:
