@@ -260,6 +260,11 @@ variable "perps_cfd_engine" {
   default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
 }
 
+variable "perps_cfd_engine_lens" {
+  type    = string
+  default = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+}
+
 variable "perps_margin_clearinghouse" {
   type    = string
   default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"

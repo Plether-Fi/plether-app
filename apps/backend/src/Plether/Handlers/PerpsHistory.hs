@@ -109,7 +109,7 @@ getPerpsIndexerStatusResponse
 getPerpsIndexerStatusResponse pool cfg = do
   let chainId = cfgPerpsChainId cfg
   mStatus <- withDb pool $ \conn ->
-    getPerpsIndexerStatus conn chainId "perps-history" (cfgPerpsOrderRouter cfg)
+    getPerpsIndexerStatus conn chainId "perps-history-costs-v1" (cfgPerpsOrderRouter cfg)
   pure $ case mStatus of
     Nothing ->
       Left $ E.internalError "Perps history indexer has not written state yet. Start plether-perps-indexer --once or --loop."

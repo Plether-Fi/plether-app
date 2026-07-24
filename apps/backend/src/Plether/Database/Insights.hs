@@ -313,6 +313,8 @@ data InsightsActivityRow = InsightsActivityRow
   , iarSizeDelta :: Maybe Integer
   , iarAmountUsdc :: Maybe Integer
   , iarPnlUsdc :: Maybe Integer
+  , iarExecutionFeeUsdc :: Maybe Integer
+  , iarVpiUsdc :: Maybe Integer
   , iarTxHash :: Text
   , iarBlockNumber :: Integer
   , iarTimestamp :: Integer
@@ -325,6 +327,8 @@ instance FromRow InsightsActivityRow where
   fromRow = InsightsActivityRow
     <$> field
     <*> field
+    <*> numericIntegerField
+    <*> numericIntegerField
     <*> numericIntegerField
     <*> numericIntegerField
     <*> numericIntegerField
@@ -1478,7 +1482,7 @@ insightsDataStatusQuerySql =
   \   EXTRACT(EPOCH FROM i.updated_at)::bigint AS updated_timestamp\
   \ FROM perps_indexer_state i\
   \ JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
-  \ WHERE i.indexer_name = ('perps-history:' || t.release_router) LIMIT 1\
+  \ WHERE i.indexer_name = ('perps-history-costs-v1:' || t.release_router) LIMIT 1\
   \ )\
   \ SELECT COALESCE(p.participant_count, 0), s.wallet_count, s.start_count, s.final_count,\
   \ s.latest_block, s.latest_timestamp, i.last_indexed_block, i.last_indexed_block_hash,\
@@ -1494,7 +1498,7 @@ getLatestIndexedSafeBlock conn chainId releaseRouter = do
   rows <- query conn
     "SELECT last_indexed_block, last_indexed_block_hash FROM perps_indexer_state\
     \ WHERE chain_id = ? AND release_router = ?\
-    \ AND indexer_name = ('perps-history:' || ?) LIMIT 1"
+    \ AND indexer_name = ('perps-history-costs-v1:' || ?) LIMIT 1"
     (chainId, normalizeAddress releaseRouter, normalizeAddress releaseRouter)
   pure $ firstRow rows
 
@@ -1680,6 +1684,7 @@ walletActivityQuery =
   \ ORDER BY b.block_number DESC, CASE WHEN b.snapshot_kind = 'final' THEN 0 ELSE 1 END, b.published_at DESC LIMIT 1\
   \ )\
   \ SELECT a.activity_type, a.side, a.price, a.size_delta, a.amount_usdc, a.pnl_usdc,\
+  \ (a.data->>'executionFeeUsdc')::numeric, (a.data->>'vpiUsdc')::numeric,\
   \ a.tx_hash, a.block_number, a.timestamp, a.log_index,\
   \ CASE WHEN EXTRACT(ISODOW FROM ((to_timestamp(a.timestamp) AT TIME ZONE 'UTC') + INTERVAL '2 hours')) BETWEEN 1 AND 5\
   \ THEN (((to_timestamp(a.timestamp) AT TIME ZONE 'UTC') + INTERVAL '2 hours')::date)::text ELSE NULL END\
