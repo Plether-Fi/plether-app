@@ -12,6 +12,7 @@ import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
 import { computeBasketDisplayPriceChange } from '../utils/dxyBasketChart'
+import { formatCompactNumber } from '../utils/formatters'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -39,19 +40,9 @@ function tupleValue(value: unknown, index: number, key: string): unknown {
   return undefined
 }
 
-function compactNumber(value: number): string {
-  if (!Number.isFinite(value)) return '--'
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`
-
-  return value.toLocaleString('en-US', {
-    maximumFractionDigits: 2,
-  }).replaceAll(',', ' ')
-}
-
 function formatCompactUsdc(amount: bigint | undefined): string | undefined {
   if (amount === undefined) return undefined
-  return compactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
+  return formatCompactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
 }
 
 function parseBigIntString(value: string | undefined): bigint | undefined {
