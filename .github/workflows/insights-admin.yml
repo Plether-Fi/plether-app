@@ -282,8 +282,12 @@ jobs:
           ADMIN_TASK_DEFINITION="$TASK_DEFINITION"
           TEMPORARY_TASK_DEFINITION=""
           if [ "$(jq 'length' "$BULK_ROSTER_SECRETS_FILE")" != "0" ]; then
+            AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+            ADMIN_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/plether-api-sepolia:${GITHUB_SHA}"
+
             jq \
               --arg container "$ECS_CONTAINER" \
+              --arg admin_image "$ADMIN_IMAGE" \
               --slurpfile extra_secrets "$BULK_ROSTER_SECRETS_FILE" \
               '.taskDefinition
                | {
@@ -308,7 +312,8 @@ jobs:
                | with_entries(select(.value != null))
                | .containerDefinitions |= map(
                    if .name == $container then
-                     .secrets = (
+                     .image = $admin_image
+                     | .secrets = (
                        ((.secrets // [])
                          | map(select(.name | startswith("INSIGHTS_BULK_ROSTER_GZIP_BASE64_") | not)))
                        + $extra_secrets[0]
