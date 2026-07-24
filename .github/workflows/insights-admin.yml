@@ -24,6 +24,10 @@ on:
         description: Type RUN <request_id> ON SEPOLIA
         required: true
         type: string
+      image_tag:
+        description: Optional immutable plether-api-sepolia image tag for one-off admin commands
+        required: false
+        type: string
 
 concurrency:
   group: insights-sepolia-admin
@@ -50,6 +54,7 @@ jobs:
         env:
           REQUEST_ID: ${{ inputs.request_id }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
 
@@ -60,6 +65,11 @@ jobs:
 
           if [ "$CONFIRMATION" != "RUN $REQUEST_ID ON SEPOLIA" ]; then
             echo "::error title=Confirmation mismatch::The confirmation phrase does not match this Sepolia request."
+            exit 1
+          fi
+
+          if [ -n "$IMAGE_TAG" ] && [[ ! "$IMAGE_TAG" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error title=Invalid image tag::Use an immutable lowercase 40-character Git commit SHA."
             exit 1
           fi
 
@@ -242,6 +252,7 @@ jobs:
         id: target
         env:
           BULK_ROSTER_SECRETS_FILE: ${{ steps.request.outputs.bulk_roster_secrets_file }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         run: |
           set -euo pipefail
 
@@ -281,9 +292,10 @@ jobs:
 
           ADMIN_TASK_DEFINITION="$TASK_DEFINITION"
           TEMPORARY_TASK_DEFINITION=""
-          if [ "$(jq 'length' "$BULK_ROSTER_SECRETS_FILE")" != "0" ]; then
+          if [ "$(jq 'length' "$BULK_ROSTER_SECRETS_FILE")" != "0" ] || [ -n "$IMAGE_TAG" ]; then
             AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-            ADMIN_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/plether-api-sepolia:${GITHUB_SHA}"
+            ADMIN_IMAGE_TAG="${IMAGE_TAG:-$GITHUB_SHA}"
+            ADMIN_IMAGE="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/plether-api-sepolia:${ADMIN_IMAGE_TAG}"
 
             jq \
               --arg container "$ECS_CONTAINER" \
