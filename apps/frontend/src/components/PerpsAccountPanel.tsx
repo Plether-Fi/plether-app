@@ -4,7 +4,7 @@ import { usePerpsTrading } from '../hooks'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
@@ -460,8 +460,8 @@ function PositionView({
   const currentPosition: PositionRow = {
     market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
-    size: <TokenAmount amount={formatPerpsUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} />,
-    entryNotional: <TokenAmount amount={formatPerpsUsdc(position.entryNotionalUsdc)} />,
+    size: <TokenAmount amount={formatPerpsSummaryUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} wrap />,
+    entryNotional: <TokenAmount amount={formatPerpsSummaryUsdc(position.entryNotionalUsdc)} wrap />,
     entry: formatDisplayDxyPrice(position.entryPrice),
     leverage: formatPositionLeverage(position),
     liquidationPrice: (
@@ -470,8 +470,8 @@ function PositionView({
         liquidationPrice={position.liquidationPrice}
       />
     ),
-    pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
-    costOfCarryUsdc: <TokenAmount amount={formatPerpsUsdc(position.pendingCarryUsdc)} />,
+    pnl: <TokenAmount amount={formatSignedPerpsSummaryUsdc(currentPnl)} wrap />,
+    costOfCarryUsdc: <TokenAmount amount={formatPerpsSummaryUsdc(position.pendingCarryUsdc)} wrap />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
   const editPositionMarginAction = (
@@ -515,7 +515,7 @@ function PositionView({
           ) : null}
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric
           label="Entry notional"
