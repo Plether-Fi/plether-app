@@ -499,10 +499,12 @@ jobs:
         if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
         env:
           PERPS_ACCOUNT_LENS: "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+          PERPS_CFD_ENGINE_LENS: "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
           PERPS_INDEXER_CONFIRMATIONS: "1"
         run: |
           jq \
             --arg accountLens "$PERPS_ACCOUNT_LENS" \
+            --arg cfdEngineLens "$PERPS_CFD_ENGINE_LENS" \
             --arg indexerConfirmations "$PERPS_INDEXER_CONFIRMATIONS" \
             '
             def upsert_env($name; $value):
@@ -516,6 +518,7 @@ jobs:
                 upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
               elif .name == "plether-perps-indexer" then
                 upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)
+                | upsert_env("PERPS_CFD_ENGINE_LENS"; $cfdEngineLens)
               else
                 .
               end

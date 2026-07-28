@@ -8,6 +8,9 @@ module Plether.Perps.HistoryIndexer
   , parsePerpsLog
   , RpcLog (..)
   , ParsedPerpsLog (..)
+  , TradeCosts (..)
+  , decodeOpenTradeCosts
+  , decodeCloseTradeCosts
   , orderFailReasonName
   , terminalStatus
   ) where
@@ -48,6 +51,7 @@ import Plether.Database.Schema
   , upsertPerpsOrderCommitted
   , upsertPerpsOrderTerminal
   )
+import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (field, logErrorEvery, logInfoEvery, logWarn, logWarnEvery)
 import Plether.Utils.Hex (hexToInteger, intToHex)
@@ -55,6 +59,7 @@ import Plether.Utils.Hex (hexToInteger, intToHex)
 data PerpsAddresses = PerpsAddresses
   { paOrderRouter :: Text
   , paCfdEngine :: Text
+  , paCfdEngineLens :: Text
   , paMarginClearinghouse :: Text
   }
   deriving stock (Show)
@@ -64,6 +69,7 @@ defaultPerpsAddresses =
   PerpsAddresses
     { paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , paCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , paCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
     , paMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     }
 
@@ -111,6 +117,12 @@ data ParsedPerpsLog
   | ParsedOrderFailed Integer Int Text Value
   | ParsedPositionActivity Text Text Int (Maybe Integer) (Maybe Integer) (Maybe Integer) (Maybe Integer) Value
   | ParsedMarginActivity Text Text Integer Value
+  deriving stock (Show, Eq)
+
+data TradeCosts = TradeCosts
+  { tcExecutionFeeUsdc :: Integer
+  , tcVpiUsdc :: Integer
+  }
   deriving stock (Show, Eq)
 
 orderCommittedTopic :: ByteString
@@ -204,7 +216,12 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         blockInfo <- requireRpc "eth_getBlockByNumber" $
           getBlockByNumber manager (picRpcUrls cfg) reqIdRef (rlBlockNumber logEntry)
         mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
-        processLog pool cfg blockInfo mTxFrom logEntry
+        tradeCosts <- case parsePerpsLog logEntry of
+          Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
+            | kind == "Open" || kind == "Close" ->
+            Just <$> requireRpc "eth_call trade-cost preview" (getTradeCosts manager cfg reqIdRef logEntry parsed)
+          _ -> pure Nothing
+        processLog pool cfg blockInfo mTxFrom tradeCosts logEntry
       endInfo <- requireRpc "eth_getBlockByNumber" $
         getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
       withDb pool $ \conn -> do
@@ -252,8 +269,8 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
 
-processLog :: DbPool -> PerpsIndexerConfig -> BlockInfo -> Maybe Text -> RpcLog -> IO ()
-processLog pool cfg blockInfo txFrom logEntry =
+processLog :: DbPool -> PerpsIndexerConfig -> BlockInfo -> Maybe Text -> Maybe TradeCosts -> RpcLog -> IO ()
+processLog pool cfg blockInfo txFrom tradeCosts logEntry =
   case parsePerpsLog logEntry of
     Nothing -> pure ()
     Just parsed -> withDb pool $ \conn -> do
@@ -284,7 +301,7 @@ processLog pool cfg blockInfo txFrom logEntry =
           insertPerpsActivity conn (picChainId cfg) releaseRouter (rlAddress logEntry) (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing (Just side') price sizeDelta amountUsdc pnl (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
-            (biTimestamp blockInfo) payload
+            (biTimestamp blockInfo) (addTradeCosts tradeCosts payload)
         ParsedMarginActivity kind account' amount payload ->
           insertPerpsActivity conn (picChainId cfg) releaseRouter (rlAddress logEntry) (activityKey logEntry kind Nothing) account'
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
@@ -360,6 +377,88 @@ parsePositionClosed logEntry = do
         , "pnl" .= show pnl
         ]
   pure $ ParsedPositionActivity "Close" account side (Just price) (Just sizeDelta) Nothing (Just pnl) payload
+
+getTradeCosts
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> RpcLog
+  -> ParsedPerpsLog
+  -> IO (Either Text TradeCosts)
+getTradeCosts manager cfg reqIdRef logEntry parsed
+  | rlBlockNumber logEntry <= 0 = pure $ Left "Cannot preview trade costs before genesis"
+  | otherwise = do
+      let callData = case parsed of
+            ParsedPositionActivity "Open" account side (Just price) (Just sizeDelta) (Just marginDelta) _ _ ->
+              Just $
+                encodeCall
+                  "previewOpen(address,uint8,uint256,uint256,uint256,uint64)"
+                  [ encodeAddress account
+                  , encodeUint256 $ toInteger side
+                  , encodeUint256 sizeDelta
+                  , encodeUint256 marginDelta
+                  , encodeUint256 price
+                  , encodeUint256 0
+                  ]
+            ParsedPositionActivity "Close" account _ (Just price) (Just sizeDelta) _ _ _ ->
+              Just $
+                encodeCall
+                  "previewClose(address,uint256,uint256)"
+                  [encodeAddress account, encodeUint256 sizeDelta, encodeUint256 price]
+            _ -> Nothing
+      case callData of
+        Nothing -> pure $ Left "Unsupported position activity for trade-cost preview"
+        Just encoded -> do
+          result <-
+            rpcCallAny
+              manager
+              (picRpcUrls cfg)
+              reqIdRef
+              "eth_call"
+              [ object
+                  [ "to" .= paCfdEngineLens (picAddresses cfg)
+                  , "data" .= ("0x" <> bytesToHex encoded)
+                  ]
+              , String $ "0x" <> intToHex (rlBlockNumber logEntry - 1)
+              ]
+          pure $ do
+            response <- case result of
+              Left err -> Left err
+              Right (String value) -> Right $ decodeHex value
+              Right _ -> Left "Expected eth_call hex result"
+            case parsed of
+              ParsedPositionActivity "Open" _ _ _ _ _ _ _ -> decodeOpenTradeCosts response
+              ParsedPositionActivity "Close" _ _ _ _ _ _ _ -> decodeCloseTradeCosts response
+              _ -> Left "Unsupported position activity for trade-cost preview"
+
+decodeOpenTradeCosts :: ByteString -> Either Text TradeCosts
+decodeOpenTradeCosts bytes
+  | BS.length bytes < 10 * 32 = Left "Open preview result is shorter than 10 ABI words"
+  | executionFee < 0 = Left "Open preview returned a negative execution fee"
+  | otherwise = Right $ TradeCosts executionFee vpi
+  where
+    vpi = intWordAt bytes 7
+    tradeCost = intWordAt bytes 9
+    executionFee = tradeCost - vpi
+
+decodeCloseTradeCosts :: ByteString -> Either Text TradeCosts
+decodeCloseTradeCosts bytes
+  | BS.length bytes < 8 * 32 = Left "Close preview result is shorter than 8 ABI words"
+  | otherwise = Right $ TradeCosts (wordAt bytes 7) (intWordAt bytes 5)
+
+addTradeCosts :: Maybe TradeCosts -> Value -> Value
+addTradeCosts Nothing payload = payload
+addTradeCosts (Just TradeCosts {..}) payloadValue = addToPayload payloadValue
+  where
+    addToPayload = \case
+      Object payload ->
+        Object $
+          KM.insert (Key.fromText "vpiUsdc") (String $ T.pack $ show tcVpiUsdc) $
+            KM.insert
+              (Key.fromText "executionFeeUsdc")
+              (String $ T.pack $ show tcExecutionFeeUsdc)
+              payload
+      payload -> payload
 
 parsePositionLiquidated :: RpcLog -> Maybe ParsedPerpsLog
 parsePositionLiquidated logEntry = do

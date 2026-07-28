@@ -11,6 +11,9 @@ import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
   ( ParsedPerpsLog (..)
   , RpcLog (..)
+  , TradeCosts (..)
+  , decodeCloseTradeCosts
+  , decodeOpenTradeCosts
   , orderFailReasonName
   , parsePerpsLog
   , terminalStatus
@@ -87,6 +90,28 @@ spec = do
     it "matches deployed OrderFailReason ordinals" $ do
       map orderFailReasonName [0 .. 5]
         `shouldBe` ["Expired", "CloseOnly", "SlippageExceeded", "EnginePanic", "AccountLiquidated", "EngineRevert"]
+
+  describe "trade cost previews" $ do
+    it "recovers an open fee from trade cost even when the preview is otherwise invalid" $ do
+      let vpi = -3_916_326_394
+          executionFee = 1_540_032_807
+          preview = words32 [0, 5, 2, 96_915_422, 3_972_620_599_900_312_417_020_777, 3_850_082_018_852, 137_483_749_999]
+            <> signedWord vpi
+            <> word 0
+            <> signedWord (vpi + executionFee)
+      decodeOpenTradeCosts preview
+        `shouldBe` Right (TradeCosts executionFee vpi)
+
+    it "decodes signed close VPI and execution fee" $ do
+      let vpi = -4_487_207_153
+          executionFee = 1_748_645_480
+          preview =
+            words32 [1, 0, 96_866_388, 4_513_034_696_886_011_329_166_042, 3_424_490_727]
+              <> signedWord vpi
+              <> word 0
+              <> word executionFee
+      decodeCloseTradeCosts preview
+        `shouldBe` Right (TradeCosts executionFee vpi)
 
 shouldBeParsedAs :: Maybe ParsedPerpsLog -> (ParsedPerpsLog -> Bool) -> Expectation
 shouldBeParsedAs parsed predicate =

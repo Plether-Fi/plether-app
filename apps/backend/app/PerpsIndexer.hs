@@ -54,6 +54,7 @@ main = do
       let configuredAddresses =
             defaultPerpsAddresses
               { paOrderRouter = cfgPerpsOrderRouter cfg
+              , paCfdEngine = cfgPerpsCfdEngine cfg
               , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
               }
           args = parseWorkerArgs configuredAddresses envArgs cliArgs
@@ -78,7 +79,7 @@ main = do
                   , picConfirmations = waConfirmations args
                   , picBatchSize = waBatchSize args
                   , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
-                  , picIndexerName = "perps-history"
+                  , picIndexerName = "perps-history-costs-v1"
                   , picMode = waMode args
                   }
           logInfo
@@ -103,6 +104,7 @@ loadEnvArgs = do
     , "PERPS_INDEXER_POLL_SECONDS"
     , "PERPS_ORDER_ROUTER"
     , "PERPS_CFD_ENGINE"
+    , "PERPS_CFD_ENGINE_LENS"
     , "PERPS_MARGIN_CLEARINGHOUSE"
     ]
   pure $ catMaybes pairs
@@ -128,6 +130,7 @@ parseWorkerArgs addressDefaults env args =
         addressDefaults
           { paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
           , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
+          , paCfdEngineLens = T.pack $ fromMaybe (T.unpack $ paCfdEngineLens addressDefaults) (lookup "PERPS_CFD_ENGINE_LENS" env)
           , paMarginClearinghouse = T.pack $ fromMaybe (T.unpack $ paMarginClearinghouse addressDefaults) (lookup "PERPS_MARGIN_CLEARINGHOUSE" env)
           }
     }

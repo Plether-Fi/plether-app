@@ -1,15 +1,18 @@
 module Plether.Database.InsightsSpec (spec) where
 
+import Data.Aeson (object, (.=))
 import Data.List (isInfixOf)
 import Database.PostgreSQL.Simple (Query)
 import Plether.Database.Insights
-  ( insightsDataStatusQuerySql
+  ( InsightsActivityRow (..)
+  , insightsDataStatusQuerySql
   , leaderboardQuerySql
   , leaderboardOrderBySql
   , leaderboardSearchPattern
   , snapshotBatchAccessIndexSql
   , walletActivityQuerySql
   )
+import Plether.Handlers.Insights (activityRowToJson)
 import Test.Hspec
 
 spec :: Spec
@@ -35,6 +38,44 @@ spec = do
     it "uses one published snapshot batch as the event projection upper bound" $ do
       queryContains leaderboardQuerySql "a.block_number <= cb.block_number"
       queryContains walletActivityQuerySql "a.block_number <= b.block_number"
+
+    it "projects indexed execution fee and signed VPI into wallet activity" $ do
+      queryContains walletActivityQuerySql "a.data->>'executionFeeUsdc'"
+      queryContains walletActivityQuerySql "a.data->>'vpiUsdc'"
+      queryContains insightsDataStatusQuerySql "perps-history-costs-v1:"
+
+    it "serializes execution fee and signed VPI as lossless decimal strings" $ do
+      activityRowToJson
+        InsightsActivityRow
+          { iarActivityType = "Close"
+          , iarSide = Just 1
+          , iarPrice = Just 96_866_388
+          , iarSizeDelta = Just 4_513_034_696_886_011_329_166_042
+          , iarAmountUsdc = Nothing
+          , iarPnlUsdc = Just 3_424_490_727
+          , iarExecutionFeeUsdc = Just 1_748_645_480
+          , iarVpiUsdc = Just (-4_487_207_153)
+          , iarTxHash = "0xabc"
+          , iarBlockNumber = 290_862_399
+          , iarTimestamp = 1_784_901_245
+          , iarLogIndex = 16
+          , iarSessionDay = Just "2026-07-24"
+          }
+        `shouldBe` object
+          [ "activityType" .= ("Close" :: String)
+          , "side" .= (1 :: Int)
+          , "price" .= ("96866388" :: String)
+          , "sizeDelta" .= ("4513034696886011329166042" :: String)
+          , "pnlUsdc" .= ("3424490727" :: String)
+          , "executionFeeUsdc" .= ("1748645480" :: String)
+          , "vpiUsdc" .= ("-4487207153" :: String)
+          , "txHash" .= ("0xabc" :: String)
+          , "blockNumber" .= ("290862399" :: String)
+          , "timestamp" .= (1_784_901_245 :: Integer)
+          , "occurredAt" .= ("2026-07-24T13:54:05Z" :: String)
+          , "logIndex" .= (16 :: Integer)
+          , "sessionDay" .= ("2026-07-24" :: String)
+          ]
 
     it "accepts legacy clearinghouse flows whose indexed JSON predates asset metadata" $ do
       queryContains leaderboardQuerySql "a.activity_type IN ('Deposit', 'Withdraw')"
