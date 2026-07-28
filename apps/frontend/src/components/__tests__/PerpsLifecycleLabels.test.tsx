@@ -478,6 +478,65 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
+  it('explains skew-limited capacity and directs a new trader to the opposing side', () => {
+    mockIsConnected = true
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialSize="1 000"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_781_267_148}
+        longOpenCapacityUsdc={0n}
+        shortOpenCapacityUsdc={2_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+      />
+    )
+
+    expect(screen.getByText(
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum position size of 1 000 USDC. Opening more Long exposure would worsen the market imbalance. You can open a Short plDXY Perp position instead, which helps rebalance the market.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+  })
+
+  it('tells a trader with an existing position to close it before switching sides', () => {
+    mockIsConnected = true
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialSize="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_781_267_148}
+        longOpenCapacityUsdc={0n}
+        shortOpenCapacityUsdc={2_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 1_000_000_000_000_000_000_000n,
+          entryPrice: 100_000_000n,
+          marginUsdc: 100_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 10_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 1_000_000_000n,
+          dxyExposureUsdc: 1_000_000_000n,
+        }}
+      />
+    )
+
+    expect(screen.getByText(
+      'Long plDXY Perp positions are temporarily unavailable because there is not enough remaining Long capacity to fit the minimum increase size of 100 USDC. Opening more Long exposure would worsen the market imbalance. You can reduce or close your current Long position. After closing it, you can open a Short plDXY Perp position, which helps rebalance the market.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+  })
+
   it('explains when a pending full close already reserves the position', () => {
     mockIsConnected = true
     const fullPositionSize = 1526359014354277024332n
