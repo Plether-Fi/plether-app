@@ -29,6 +29,7 @@ export type PerpsMarginLifecycleEvent =
   | 'withdraw_succeeded'
   | 'withdraw_failed'
 export type PerpsSponsoredOperationStatus =
+  | 'preflight_failed'
   | 'building'
   | 'requesting-stub'
   | 'estimating'
@@ -50,7 +51,7 @@ export type PerpsAnalyticsProperties = AnalyticsProperties
 function compactProperties(properties: PerpsAnalyticsProperties = {}): PerpsAnalyticsProperties {
   return Object.fromEntries(
     Object.entries(properties).filter(([, value]) => value !== undefined && value !== null)
-  ) as PerpsAnalyticsProperties
+  )
 }
 
 function failureLogLevel(properties?: PerpsAnalyticsProperties): 'warn' | 'error' {

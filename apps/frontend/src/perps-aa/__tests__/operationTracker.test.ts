@@ -1,8 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
-import { SponsorRequestError } from '../errors'
-import { useSponsoredOperationStore } from '../operationStore'
-import { beginSponsoredOperationTracking } from '../operationTracker'
+import {
+  SponsorRequestError,
+  SponsoredPreflightError,
+} from '../errors'
+import { SponsoredOperationCoordinationError } from '../laneLock'
+import {
+  SponsoredOperationLockedError,
+  useSponsoredOperationStore,
+} from '../operationStore'
+import {
+  beginSponsoredOperationTracking,
+  trackSponsoredOperationPreflightFailure,
+} from '../operationTracker'
 
 const analyticsMocks = vi.hoisted(() => ({
   trackPerpsSponsoredOperation: vi.fn(),
@@ -97,5 +107,52 @@ describe('sponsored operation tracker', () => {
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
       status: 'confirmed',
     })
+  })
+
+  it('emits an explicit terminal reason for typed preflight failures', () => {
+    const reason = trackSponsoredOperationPreflightFailure({
+      accountMode: 'simple',
+      manifestVersion: 'v1',
+      action: 'deposit',
+    }, new SponsoredPreflightError({
+      reason: 'IDENTITY_NOT_READY',
+      message: 'Trading Account identity is not ready',
+    }))
+
+    expect(reason).toBe('IDENTITY_NOT_READY')
+    expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenCalledWith(
+      'preflight_failed',
+      {
+        manifest_version: 'v1',
+        account_mode: 'simple',
+        action_kind: 'deposit',
+        wallet_family: undefined,
+        wallet_version: undefined,
+        sponsorship_accepted: false,
+        retry_count: 0,
+        reason_code: 'IDENTITY_NOT_READY',
+        terminal_outcome: 'preflight_failed',
+      }
+    )
+  })
+
+  it.each([
+    [
+      new SponsoredOperationLockedError('operation-1'),
+      'LANE_BUSY',
+    ],
+    [
+      new SponsoredOperationCoordinationError('Web Locks unavailable'),
+      'BROWSER_COORDINATION_UNAVAILABLE',
+    ],
+  ])('maps coordination errors to stable preflight reasons', (error, reason) => {
+    trackSponsoredOperationPreflightFailure({
+      action: 'deposit',
+    }, error)
+
+    expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenCalledWith(
+      'preflight_failed',
+      expect.objectContaining({ reason_code: reason })
+    )
   })
 })

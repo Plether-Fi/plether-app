@@ -16,9 +16,21 @@ const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
 }))
 
+const analyticsMocks = vi.hoisted(() => ({
+  trackPerpsSponsoredOperation: vi.fn(),
+}))
+
 vi.mock('../authorizationStore', () => ({
   clearDepositAuthorization: authorizationMocks.clearDepositAuthorization,
 }))
+
+vi.mock('../../analytics/perps', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../analytics/perps')>()
+  return {
+    ...actual,
+    trackPerpsSponsoredOperation: analyticsMocks.trackPerpsSponsoredOperation,
+  }
+})
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -137,6 +149,7 @@ const action = {
 describe('executeSponsoredPerpsAction', () => {
   beforeEach(() => {
     authorizationMocks.clearDepositAuthorization.mockReset()
+    analyticsMocks.trackPerpsSponsoredOperation.mockReset()
     globalThis.localStorage.clear()
     vi.stubGlobal('navigator', {
       locks: {
@@ -167,6 +180,14 @@ describe('executeSponsoredPerpsAction', () => {
       reason: 'SPONSOR_UNAVAILABLE',
       retryable: true,
     })
+    expect(analyticsMocks.trackPerpsSponsoredOperation).toHaveBeenCalledWith(
+      'preflight_failed',
+      expect.objectContaining({
+        action_kind: 'deposit',
+        reason_code: 'SPONSORSHIP_DISABLED',
+        terminal_outcome: 'preflight_failed',
+      })
+    )
   })
 
   it('persists the locally computed hash before Pimlico submission', async () => {

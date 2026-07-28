@@ -20,6 +20,17 @@ Use the typed helpers in `perps.ts` instead of calling PostHog directly. If a
 new property is genuinely needed, add it to the allow-list in `client.ts` and
 include a test proving sensitive values are still dropped or redacted.
 
+Sponsored actions that stop before the persisted operation tracker starts emit
+`perps sponsored operation` with `sponsorship_status=preflight_failed`,
+`terminal_outcome=preflight_failed`, and a stable `reason_code`. Supported
+preflight reasons are `TRADING_ACCOUNT_UNAVAILABLE`, `INVALID_AMOUNT`,
+`MANIFEST_NOT_CONFIGURED`, `IDENTITY_NOT_READY`, `MANIFEST_UNAVAILABLE`,
+`MANIFEST_MISMATCH`, `SPONSORSHIP_DISABLED`, `RUNTIME_UNAVAILABLE`,
+`OWNER_AUTHORIZATION_UNAVAILABLE`, `OWNER_AUTHORIZATION_FAILED`,
+`ACTION_BUILD_FAILED`, `OPERATION_STORE_UNAVAILABLE`, `LANE_BUSY`,
+`BROWSER_COORDINATION_UNAVAILABLE`, and `ACCOUNT_NOT_TRUSTED`. Use `UNKNOWN`
+only for genuinely unclassified failures; never send raw exception messages.
+
 PostHog Logs uses the same privacy boundary. Send logs through
 `captureFrontendLog` only; it applies a second allow-list and a `beforeSend`
 safety filter. Log bodies must be stable descriptions written by developers,
