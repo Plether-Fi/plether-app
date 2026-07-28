@@ -277,15 +277,16 @@ Check:
 * Active Trading Account
 * Network
 * Sponsorship status
+* Owner-wallet Arbitrum Sepolia ETH when a transfer is required
 
-On the current deployment, deposit funds must already be held at the Trading Account address. MockUSDC sent to the owner wallet is a separate balance and is not available to the deposit modal. The testnet welcome flow funds the derived Trading Account directly.
+The deposit modal includes both Trading Account and owner-wallet MockUSDC in **Available to deposit**. The testnet welcome flow normally funds the derived Trading Account directly. If the requested amount exceeds that balance, the application first transfers the exact shortfall from the owner wallet. That regular token transfer requires Arbitrum Sepolia ETH for gas.
 
-The owner wallet authorizes one sponsored Trading Account operation. It batches:
+After the required USDC is at the Trading Account address, the owner wallet authorizes one sponsored Trading Account operation. It batches:
 
 1. An exact approval to the Margin Clearinghouse.
 2. A deposit for the same amount.
 
-There is no separate owner-wallet transfer authorization on the current deployment. A failed atomic batch leaves the Margin Account unchanged and the USDC at the Trading Account.
+If the owner-wallet transfer confirms but the sponsored operation fails, the transferred USDC remains at the Trading Account address. Retry the deposit from the same modal or refresh first. The application will not request the completed shortfall transfer again once the updated balance is visible.
 
 #### The deposit succeeded, but Available to Trade increased by less
 

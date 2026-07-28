@@ -69,7 +69,7 @@ export type TradeLifecycleState =
   | 'failed'
 type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
-type MarginActionStatus = 'idle' | 'pending' | 'failed'
+type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
 
 interface PreviewRowBase {
@@ -1468,6 +1468,7 @@ export function PerpsTradeTicket({
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const {
     abandonDepositAuthorization,
+    fundTradingAccount,
     depositMargin,
     withdrawMargin,
     commitOrder,
@@ -1510,6 +1511,10 @@ export function PerpsTradeTicket({
   const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
   const [marginActionStatus, setMarginActionStatus] = useState<MarginActionStatus>('idle')
   const [marginActionError, setMarginActionError] = useState<string | undefined>()
+  const [locallyConfirmedFundingBalances, setLocallyConfirmedFundingBalances] = useState<{
+    ownerWallet: bigint
+    tradingAccount: bigint
+  } | null>(null)
   const [cleanupStatus, setCleanupStatus] = useState<CleanupStatus>('idle')
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
@@ -2372,13 +2377,7 @@ export function PerpsTradeTicket({
     isCorrectChain &&
     (Boolean(liveValidationError) || isTradePreviewPending)
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
-  const isMarginActionPending = marginActionStatus === 'pending'
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
-  const marginActionCtaLabel = enableLiveTrading && !isConnected
-    ? 'Connect Wallet'
-    : enableLiveTrading && !isCorrectChain
-      ? 'Switch Network'
-      : marginActionLabel
   const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
   const usesOwnerDepositAuthorization = isSponsoredAccountConfigured &&
     identity.manifest?.smartAccountMode === 'simple' &&
@@ -2386,8 +2385,24 @@ export function PerpsTradeTicket({
   const usesTradingAccountDepositBalance = isSponsoredAccountConfigured &&
     identity.manifest?.smartAccountMode === 'simple' &&
     !identity.manifest.usdcSupportsEip3009
+  const effectiveOwnerWalletBalance = locallyConfirmedFundingBalances &&
+      ownerWalletBalance !== undefined
+    ? ownerWalletBalance < locallyConfirmedFundingBalances.ownerWallet
+      ? ownerWalletBalance
+      : locallyConfirmedFundingBalances.ownerWallet
+    : ownerWalletBalance
+  const effectiveTradingAccountBalance = locallyConfirmedFundingBalances &&
+      tradingAccountUsdcRaw !== undefined
+    ? tradingAccountUsdcRaw > locallyConfirmedFundingBalances.tradingAccount
+      ? tradingAccountUsdcRaw
+      : locallyConfirmedFundingBalances.tradingAccount
+    : tradingAccountUsdcRaw
+  const manualTransferDepositBalance = effectiveOwnerWalletBalance !== undefined &&
+      effectiveTradingAccountBalance !== undefined
+    ? effectiveOwnerWalletBalance + effectiveTradingAccountBalance
+    : undefined
   const depositSourceBalance = usesTradingAccountDepositBalance
-    ? tradingAccountUsdcRaw
+    ? manualTransferDepositBalance
     : ownerWalletBalance
   const marginActionLimit = marginAction === 'withdraw'
     ? withdrawableUsdcRaw
@@ -2398,7 +2413,31 @@ export function PerpsTradeTicket({
   const marginActionLimitDisplay = formatPerpsUsdc(marginActionLimit)
   const canUseMarginActionMax = marginActionLimit !== undefined && marginActionLimit > 0n
   const isMarginActionInsufficient = marginActionLimit !== undefined && marginActionAmountRaw > marginActionLimit
-  const isMarginActionInvalid = marginActionAmountRaw <= 0n || isMarginActionInsufficient
+  const isDepositBalanceUnavailable = marginAction === 'deposit' && marginActionLimit === undefined
+  const isMarginActionInvalid = marginActionAmountRaw <= 0n ||
+    isMarginActionInsufficient ||
+    isDepositBalanceUnavailable
+  const ownerWalletTransferAmountRaw = marginAction === 'deposit' &&
+      usesTradingAccountDepositBalance &&
+      effectiveTradingAccountBalance !== undefined &&
+      marginActionAmountRaw > effectiveTradingAccountBalance
+    ? marginActionAmountRaw - effectiveTradingAccountBalance
+    : 0n
+  const requiresOwnerWalletTransfer = ownerWalletTransferAmountRaw > 0n
+  const isMarginActionPending = marginActionStatus === 'pending' ||
+    marginActionStatus === 'funding' ||
+    marginActionStatus === 'depositing'
+  const marginActionCtaLabel = enableLiveTrading && !isConnected
+    ? 'Connect Wallet'
+    : enableLiveTrading && !isCorrectChain
+      ? 'Switch Network'
+      : marginActionStatus === 'funding'
+        ? 'Transferring USDC'
+        : marginActionStatus === 'depositing'
+          ? 'Depositing'
+          : requiresOwnerWalletTransfer
+            ? 'Transfer & Deposit'
+            : marginActionLabel
   const marginActionCurrentCollateral = currentPosition?.exists
     ? currentPosition.marginUsdc
     : undefined
@@ -2451,6 +2490,7 @@ export function PerpsTradeTicket({
     setMarginActionAmount('')
     setMarginActionStatus('idle')
     setMarginActionError(undefined)
+    setLocallyConfirmedFundingBalances(null)
   }, [commonAnalyticsProperties])
 
   useEffect(() => {
@@ -2479,11 +2519,28 @@ export function PerpsTradeTicket({
       return
     }
 
+    let ownerWalletTransferConfirmed = false
     try {
       trackPerpsMarginLifecycle(`${marginAction}_submitted`, commonAnalyticsProperties)
-      setMarginActionStatus('pending')
       setMarginActionError(undefined)
       if (marginAction === 'deposit') {
+        if (requiresOwnerWalletTransfer) {
+          if (
+            effectiveOwnerWalletBalance === undefined ||
+            effectiveTradingAccountBalance === undefined
+          ) {
+            throw new Error('Wallet balances are still loading. Refresh and retry.')
+          }
+          setMarginActionStatus('funding')
+          await fundTradingAccount(ownerWalletTransferAmountRaw)
+          ownerWalletTransferConfirmed = true
+          setLocallyConfirmedFundingBalances({
+            ownerWallet: effectiveOwnerWalletBalance - ownerWalletTransferAmountRaw,
+            tradingAccount: effectiveTradingAccountBalance + ownerWalletTransferAmountRaw,
+          })
+          onAccountRefresh?.()
+        }
+        setMarginActionStatus('depositing')
         const depositSource = isSponsoredAccountConfigured &&
           identity.manifest?.smartAccountMode === 'simple' &&
           identity.manifest.usdcSupportsEip3009
@@ -2495,16 +2552,23 @@ export function PerpsTradeTicket({
           depositSource
         )
       } else {
+        setMarginActionStatus('pending')
         await withdrawMargin(marginActionAmountRaw)
       }
       setMarginActionStatus('idle')
       setMarginAction(null)
       setMarginActionAmount('')
+      setLocallyConfirmedFundingBalances(null)
       trackPerpsMarginLifecycle(`${marginAction}_succeeded`, commonAnalyticsProperties)
       onAccountRefresh?.()
     } catch (error) {
       setMarginActionStatus('failed')
-      setMarginActionError(error instanceof Error ? error.message : `${marginActionLabel} failed. Check wallet and retry.`)
+      const errorMessage = error instanceof Error
+        ? error.message
+        : `${marginActionLabel} failed. Check wallet and retry.`
+      setMarginActionError(ownerWalletTransferConfirmed
+        ? `The transfer succeeded, but the Margin Account deposit failed. The USDC remains in your Trading Account and will not be transferred again when you retry. ${errorMessage}`
+        : errorMessage)
       trackPerpsMarginLifecycle(`${marginAction}_failed`, {
         ...commonAnalyticsProperties,
         error_category: perpsErrorCategory(error),
@@ -3804,6 +3868,7 @@ export function PerpsTradeTicket({
         onClose={() => {
           if (!isMarginActionPending) {
             setMarginAction(null)
+            setLocallyConfirmedFundingBalances(null)
           }
         }}
         title={`${marginActionLabel} Margin`}
@@ -3820,9 +3885,20 @@ export function PerpsTradeTicket({
               : isSponsoredAccountConfigured
                 ? usesOwnerDepositAuthorization
                   ? 'Authorize USDC from the Owner Wallet, then deposit it atomically into the Plether Trading Account Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
-                  : 'Deposit USDC held by the Plether Trading Account into its Margin Account. Plether sponsors network gas; USDC protocol costs still apply.'
+                  : 'Deposit USDC into the Plether Trading Account Margin Account. If the Trading Account needs funds, Plether first transfers the exact shortfall from the Owner Wallet.'
                 : 'Deposit USDC into your margin account. Deposited margin increases available buying power and can be used for committed orders.'}
           </p>
+
+          {marginAction === 'deposit' && requiresOwnerWalletTransfer ? (
+            <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm leading-5 text-content-primary">
+              <p className="font-semibold">
+                Transfer <TokenAmount amount={formatPerpsUsdc(ownerWalletTransferAmountRaw)} /> from Owner Wallet
+              </p>
+              <p className="mt-1 text-content-secondary">
+                This first confirmation is a regular Arbitrum Sepolia USDC transfer to your Trading Account and requires ETH for network gas. The following Margin Account deposit is gas-sponsored.
+              </p>
+            </div>
+          ) : null}
 
           <Input
             label="Amount"
@@ -3863,7 +3939,9 @@ export function PerpsTradeTicket({
                 <AccountSummaryRow
                   label={marginActionLimitLabel}
                   value={<TokenAmount amount={marginActionLimitDisplay} />}
-                  tooltip="Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms."
+                  tooltip={usesTradingAccountDepositBalance
+                    ? 'Combined Trading Account and Owner Wallet USDC available for this flow. Any required Owner Wallet transfer confirms before the sponsored deposit.'
+                    : 'Wallet-held USDC available to move into the Margin Account. It cannot fund orders until the deposit confirms.'}
                   tooltipDocsLink={DOCS_LINKS.withdrawable}
                 />
               ) : (
@@ -3885,10 +3963,16 @@ export function PerpsTradeTicket({
                   {marginAction !== 'deposit' || usesTradingAccountDepositBalance ? (
                     <AccountSummaryRow
                       label="Owner Wallet USDC"
-                      value={<TokenAmount amount={formatPerpsUsdc(ownerWalletBalance)} />}
+                      value={<TokenAmount amount={formatPerpsUsdc(effectiveOwnerWalletBalance)} />}
                     />
                   ) : null}
-                  {marginAction !== 'deposit' || !usesTradingAccountDepositBalance ? (
+                  {marginAction === 'deposit' && usesTradingAccountDepositBalance ? (
+                    <AccountSummaryRow
+                      label="Trading Account USDC"
+                      value={<TokenAmount amount={formatPerpsUsdc(effectiveTradingAccountBalance)} />}
+                    />
+                  ) : null}
+                  {marginAction !== 'deposit' ? (
                     <AccountSummaryRow
                       label="Trading Account USDC"
                       value={<TokenAmount amount={formatPerpsUsdc(tradingAccountUsdcRaw)} />}
@@ -3942,6 +4026,7 @@ export function PerpsTradeTicket({
               analyticsProperties={commonAnalyticsProperties}
               onClick={() => {
                 setMarginAction(null)
+                setLocallyConfirmedFundingBalances(null)
               }}
             >
               Cancel

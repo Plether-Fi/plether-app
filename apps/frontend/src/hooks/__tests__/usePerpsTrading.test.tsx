@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   getBlock: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
+  writeContractAsync: vi.fn(),
   signTypedDataAsync: vi.fn(),
   executeSponsoredPerpsAction: vi.fn(),
   invalidateQueries: vi.fn(),
@@ -38,6 +40,10 @@ vi.mock('wagmi', () => ({
     getBlock: mocks.getBlock,
     readContract: mocks.readContract,
     simulateContract: mocks.simulateContract,
+    waitForTransactionReceipt: mocks.waitForTransactionReceipt,
+  }),
+  useWriteContract: () => ({
+    writeContractAsync: mocks.writeContractAsync,
   }),
   useSignTypedData: () => ({
     signTypedDataAsync: mocks.signTypedDataAsync,

@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
 import {
   PerpsIdentityContext,
+  type PerpsAaDeploymentManifest,
   type PerpsIdentityContextValue,
 } from '../perps-aa'
 
@@ -14,6 +15,32 @@ const USDC = 1_000_000n
 const POSITION_SIZE = 8_200n * 10n ** 18n
 const ORACLE_PRICE = 98_300_000n
 const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
+const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
+
+const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
+  version: 'perps-aa-arbitrum-sepolia-v1',
+  chainId: 421614,
+  entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
+  entryPointVersion: '0.8',
+  pimlicoRpcUrl: '/api/perps/v1/aa/pimlico',
+  smartAccountMode: 'simple',
+  smartAccountVersion: 'permissionless-simple-v0.8',
+  smartAccountIndex: '0',
+  smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
+  usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3',
+  usdcSupportsEip3009: false,
+  usdcEip712Name: null,
+  usdcEip712Version: null,
+  marginClearinghouse: '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e',
+  cfdEngine: '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a',
+  orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+  userOperationExplorerUrlTemplate:
+    'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
+  transactionExplorerUrlTemplate:
+    'https://arbitrum-sepolia.blockscout.com/tx/{transactionHash}',
+  testnetFaucet: null,
+  sponsorshipEnabled: true,
+}
 
 const STORY_IDENTITY: PerpsIdentityContextValue = {
   status: 'ready',
@@ -29,6 +56,14 @@ const STORY_IDENTITY: PerpsIdentityContextValue = {
   error: null,
   confirmIdentityAfterContinuityCheck: () => false,
   reloadIdentity: () => undefined,
+}
+
+const SPONSORED_STORY_IDENTITY: PerpsIdentityContextValue = {
+  ...STORY_IDENTITY,
+  accountAddress: STORY_TRADING_ACCOUNT,
+  isAaManifestConfigured: true,
+  sponsorshipEnabled: true,
+  manifest: SPONSORED_STORY_MANIFEST,
 }
 
 const latestBasket = {
@@ -388,6 +423,24 @@ export const DepositMargin: Story = {
     withdrawableUsdcRaw: 5_000_000_000n,
   },
   render: (args) => <TicketFrame {...args} />,
+}
+
+export const OwnerWalletTransferDeposit: Story = {
+  args: {
+    initialMarginAction: 'deposit',
+    initialMarginActionAmount: '100 000',
+    availableToTradeRaw: 880_000n,
+    availableToTradeAmount: '0.88',
+    ownerWalletUsdcRaw: 100_049n * USDC,
+    tradingAccountUsdcRaw: 0n,
+    portfolioValueRaw: 880_000n,
+    withdrawableUsdcRaw: 880_000n,
+  },
+  render: (args) => (
+    <PerpsIdentityContext.Provider value={SPONSORED_STORY_IDENTITY}>
+      <TicketFrame {...args} />
+    </PerpsIdentityContext.Provider>
+  ),
 }
 
 export const WithdrawMargin: Story = {

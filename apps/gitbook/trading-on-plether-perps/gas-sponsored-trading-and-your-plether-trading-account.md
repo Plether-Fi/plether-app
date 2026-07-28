@@ -86,25 +86,26 @@ Creating the signature is an offchain action and does not itself consume network
 
 ![Sequence showing the user reviewing and signing, Plether checking eligibility, submitting the authorized operation and paying eligible network gas.](../.gitbook/assets/diagrams/authorization-and-gas-sponsorship.svg)
 
-### Fund and deposit from the Trading Account
+### Fund and deposit
 
-On the current Arbitrum Sepolia deployment, deposits use USDC already held at the Trading Account address.
+On the current Arbitrum Sepolia deployment, the sponsored deposit operation uses USDC held at the Trading Account address.
 
-The testnet welcome flow sends MockUSDC directly to the derived Trading Account. If you fund it another way, verify the Trading Account address first; tokens at the owner-wallet address are a different balance and are not available to the deposit modal.
+The testnet welcome flow sends MockUSDC directly to the derived Trading Account. The deposit modal also supports MockUSDC that has returned to the owner wallet after a withdrawal. It first transfers only the required shortfall to the verified Trading Account, then continues with the sponsored deposit.
 
 To deposit:
 
-1. Confirm that the token balance appears as **Available to deposit**. This is USDC held by the Trading Account, outside the Margin Account.
+1. Confirm that the combined owner-wallet and Trading Account token balance appears as **Available to deposit**.
 2. In the trade ticket’s **Margin Account** section, select **Deposit**.
 3. Enter an amount no greater than **Available to deposit**.
-4. Authorize the sponsored operation in the owner wallet.
+4. If the button says **Transfer & Deposit**, confirm the regular owner-wallet transfer. This requires Arbitrum Sepolia ETH for network gas.
+5. Authorize the sponsored deposit operation in the owner wallet.
 
 The Trading Account batches two exact calls:
 
 1. Approve the Margin Clearinghouse for the deposit amount.
 2. Deposit the same amount into the Margin Account.
 
-This requires one owner-wallet authorization in the current deployment. There is no separate owner-wallet USDC transfer authorization and no EIP-7702 delegation step.
+When the Trading Account already holds the complete amount, the transfer step is skipped. If the transfer succeeds but the sponsored deposit fails, the USDC remains in the Trading Account and can be deposited on retry.
 
 The batch is atomic. If either call fails, the Margin Account is not credited and the approval does not remain changed.
 
@@ -207,9 +208,9 @@ USDC in the Margin Account remains subject to Plether’s margin, reservation an
 
 #### Do I need the network’s native gas token?
 
-The owner wallet and Trading Account do not need native gas for eligible actions in the current sponsored Plether flow. Keeper-operated order execution and expiry cleanup also do not charge the owner wallet native gas.
+The owner wallet and Trading Account do not need native gas for eligible sponsored Plether operations. Keeper-operated order execution and expiry cleanup also do not charge the owner wallet native gas.
 
-You may still need native gas for actions performed outside Plether, such as transferring tokens from the owner wallet through another application.
+The owner wallet does need Arbitrum Sepolia ETH when the deposit flow must first transfer MockUSDC to the Trading Account. That transfer is a regular token transaction rather than a sponsored Trading Account operation.
 
 #### Why is my sponsored order still pending?
 

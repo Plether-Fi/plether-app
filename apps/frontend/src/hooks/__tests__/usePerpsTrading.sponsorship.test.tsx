@@ -12,12 +12,13 @@ const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
   writeContractAsync: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
 }))
 
 vi.mock('wagmi', () => ({
   usePublicClient: () => ({
-    waitForTransactionReceipt: vi.fn(),
+    waitForTransactionReceipt: mocks.waitForTransactionReceipt,
   }),
   useWriteContract: () => ({
     writeContractAsync: mocks.writeContractAsync,
@@ -106,6 +107,32 @@ describe('usePerpsTrading sponsorship route', () => {
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
     })
+    mocks.writeContractAsync.mockResolvedValue(TRANSACTION_HASH)
+    mocks.waitForTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      transactionHash: TRANSACTION_HASH,
+    })
+  })
+
+  it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.fundTradingAccount(25_000_000n))
+      .resolves.toBe(TRANSACTION_HASH)
+
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: OWNER,
+        chainId: 421614,
+        address: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3',
+        functionName: 'transfer',
+        args: [ACCOUNT, 25_000_000n],
+      })
+    )
+    expect(mocks.waitForTransactionReceipt).toHaveBeenCalledWith({
+      hash: TRANSACTION_HASH,
+    })
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
   it('builds an atomic Trading Account balance deposit without a direct EOA write', async () => {

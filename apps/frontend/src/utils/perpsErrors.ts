@@ -1,6 +1,6 @@
 import { decodeErrorResult, parseAbi } from 'viem'
 
-type PerpsAction = 'approve' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute'
+type PerpsAction = 'approve' | 'fund' | 'deposit' | 'withdraw' | 'addPositionMargin' | 'settleClaim' | 'commit' | 'execute'
 
 export const COMMIT_UNDECODED_FALLBACK_MESSAGE = 'Commit reverted before creating an order, but the RPC did not return a contract error. Refresh account state and check pending orders, free margin, market state, and slippage.'
 
@@ -388,6 +388,8 @@ function fallbackMessage(action: PerpsAction): string {
   switch (action) {
     case 'approve':
       return 'USDC approval failed. Check the wallet message and retry.'
+    case 'fund':
+      return 'Transfer to the Trading Account failed. Check the Owner Wallet USDC balance and Arbitrum Sepolia ETH for gas.'
     case 'deposit':
       return 'Deposit failed. Check USDC balance, allowance, and wallet gas.'
     case 'withdraw':

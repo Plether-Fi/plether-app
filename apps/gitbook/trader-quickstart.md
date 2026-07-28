@@ -47,6 +47,8 @@ Find the **Margin Account** section in the trade ticket and select `Deposit`.
 
 Enter the amount of MockUSDC you want to deposit and review the active Trading Account. On the current deployment, your owner wallet signs one sponsored Trading Account operation that approves the exact MockUSDC amount and deposits it into the Margin Account.
 
+If some of the amount is held in the owner wallet—for example, after a withdrawal—the button changes to `Transfer & Deposit`. Confirm the regular Arbitrum Sepolia transfer of the exact shortfall to the Trading Account, then confirm the sponsored deposit. The first transaction requires Arbitrum Sepolia ETH for gas; the second operation is sponsored.
+
 Wait for the sponsored operation to confirm. Depositing does not open a position. It moves MockUSDC into the Trading Account’s Margin Account, where it becomes available for trading.
 
 The interface separates several balances:
