@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
-import { usePublicClient, useSignTypedData } from 'wagmi'
+import { usePublicClient, useSignTypedData, useWriteContract } from 'wagmi'
 import {
   buildAddMarginAction,
   buildAuthorizedDepositAction,
@@ -13,7 +13,12 @@ import {
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
 } from '@plether/perps-aa-client'
-import { PERPS_CFD_ENGINE_LENS_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
+import {
+  ERC20_ABI,
+  PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+  PERPS_PUBLIC_LENS_ABI,
+} from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   executeSponsoredPerpsAction,
@@ -320,6 +325,7 @@ export function usePerpsTrading() {
   const aaRuntime = usePerpsAaRuntime()
   const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
   const { signTypedDataAsync } = useSignTypedData()
+  const { writeContractAsync } = useWriteContract()
   const queryClient = useQueryClient()
 
   const invalidatePerpsReads = useCallback(() => {
@@ -382,6 +388,39 @@ export function usePerpsTrading() {
       'Direct USDC approvals are disabled. Sponsored deposits execute atomically through the Trading Account.'
     )
   }, [])
+
+  const fundTradingAccount = useCallback(async (amount: bigint) => {
+    try {
+      if (amount <= 0n) {
+        throw new Error('Funding amount must be greater than zero')
+      }
+
+      const sponsored = requireSponsoredExecution()
+      const client = requireClient(publicClient)
+      const hash = await writeContractAsync({
+        account: sponsored.ownerAddress,
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: sponsored.manifest.usdc,
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [sponsored.accountAddress, amount],
+      })
+      const receipt = await client.waitForTransactionReceipt({ hash })
+      if (receipt.status === 'reverted') {
+        throw new Error('Trading Account funding transaction reverted')
+      }
+
+      invalidatePerpsReads()
+      return hash
+    } catch (error) {
+      throw new Error(getPerpsErrorMessage(error, 'fund'))
+    }
+  }, [
+    invalidatePerpsReads,
+    publicClient,
+    requireSponsoredExecution,
+    writeContractAsync,
+  ])
 
   const depositMargin = useCallback(async (
     amount: bigint,
@@ -784,6 +823,7 @@ export function usePerpsTrading() {
 
   return {
     approveUsdcForMargin,
+    fundTradingAccount,
     depositMargin,
     abandonDepositAuthorization,
     withdrawMargin,

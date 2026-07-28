@@ -56,6 +56,7 @@ vi.mock('@reown/appkit/react', () => ({
 
 let mockIsConnected = false
 const perpsTradingMocks = vi.hoisted(() => ({
+  fundTradingAccount: vi.fn(),
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
@@ -87,6 +88,7 @@ vi.mock('wagmi', () => ({
 
 vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
+    fundTradingAccount: perpsTradingMocks.fundTradingAccount,
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
@@ -434,7 +436,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('2.22x')).not.toBeInTheDocument()
   })
 
-  it('distinguishes wallet USDC available to deposit from deposited buying power', () => {
+  it('combines owner and Trading Account USDC in the supported deposit flow', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
 
@@ -455,8 +457,81 @@ describe('perps lifecycle labels', () => {
     expect(within(dialog).getByText('Available to trade')).toBeInTheDocument()
     expect(within(dialog).getByText('Owner Wallet USDC')).toBeInTheDocument()
     expect(within(dialog).queryByText('Trading Account balance')).not.toBeInTheDocument()
-    expect(within(dialog).queryByText('Trading Account USDC')).not.toBeInTheDocument()
-    expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('100 000')
+    expect(within(dialog).getByText('Trading Account USDC')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /Max:/ })).toHaveTextContent('200 000')
+  })
+
+  it('transfers only the Trading Account shortfall before depositing margin', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    perpsTradingMocks.fundTradingAccount.mockResolvedValue('0xtransfer')
+    perpsTradingMocks.depositMargin.mockResolvedValue('0xdeposit')
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        availableToTradeRaw={0n}
+        availableToTradeAmount="0"
+        ownerWalletUsdcRaw={100000000000n}
+        tradingAccountUsdcRaw={25000000000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByRole('textbox'), {
+      target: { value: '50 000' },
+    })
+
+    const fundingNotice = within(dialog).getByText(/requires ETH for network gas/i)
+    expect(fundingNotice.parentElement).toHaveTextContent('Transfer')
+    expect(fundingNotice.parentElement).toHaveTextContent('25 000')
+    expect(fundingNotice.parentElement).toHaveTextContent('from Owner Wallet')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer & Deposit' }))
+
+    await waitFor(() => {
+      expect(perpsTradingMocks.fundTradingAccount).toHaveBeenCalledWith(25000000000n)
+      expect(perpsTradingMocks.depositMargin).toHaveBeenCalledWith(
+        50000000000n,
+        undefined,
+        'account'
+      )
+    })
+  })
+
+  it('does not transfer twice when the sponsored deposit needs a retry', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    perpsTradingMocks.fundTradingAccount.mockResolvedValue('0xtransfer')
+    perpsTradingMocks.depositMargin
+      .mockRejectedValueOnce(new Error('Sponsorship is temporarily unavailable.'))
+      .mockResolvedValueOnce('0xdeposit')
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        availableToTradeRaw={0n}
+        availableToTradeAmount="0"
+        ownerWalletUsdcRaw={50000000000n}
+        tradingAccountUsdcRaw={0n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Deposit' }))
+    const dialog = screen.getByRole('dialog')
+    fireEvent.change(within(dialog).getByRole('textbox'), {
+      target: { value: '50 000' },
+    })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Transfer & Deposit' }))
+
+    expect(await within(dialog).findByText(/The transfer succeeded, but the Margin Account deposit failed/))
+      .toBeInTheDocument()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Deposit' }))
+
+    await waitFor(() => {
+      expect(perpsTradingMocks.depositMargin).toHaveBeenCalledTimes(2)
+    })
+    expect(perpsTradingMocks.fundTradingAccount).toHaveBeenCalledTimes(1)
   })
 
   it('uses the engine new-position minimum when opening from zero', () => {

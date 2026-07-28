@@ -133,7 +133,7 @@ export function TestnetWelcomeModalView({
             </p>
             {isTradingAccountRecipient ? (
               <p className="text-content-secondary">
-                Plether sponsors eligible perps network gas, so the owner wallet and Trading Account do not need Arbitrum Sepolia ETH for the sponsored journey.
+                Plether sponsors eligible perps operations. A later owner-wallet transfer back to the Trading Account, such as after withdrawing MockUSDC, requires Arbitrum Sepolia ETH for gas.
               </p>
             ) : (
               <p className="text-content-secondary">
