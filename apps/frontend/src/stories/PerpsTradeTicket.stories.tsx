@@ -1,6 +1,9 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  getOpenCapacityUnavailableMessage,
+  PerpsTradeTicket,
+} from '../components/PerpsTradeTicket'
 import {
   PerpsIdentityContext,
   type PerpsAaDeploymentManifest,
@@ -222,6 +225,23 @@ export const Compose: Story = {
     initialLifecycleState: 'preview',
     oracleFreshness: 'fresh',
     oracleFreshnessTooltip: 'live oracle price',
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const LongUnavailableDueToMarketSkew: Story = {
+  name: 'Long unavailable due to market skew',
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'preview',
+    initialDirection: 'long',
+    initialSize: '1 058.97',
+    currentPositionAmount: '0',
+    validationErrorFixture: getOpenCapacityUnavailableMessage({
+      direction: 'long',
+      isOpeningFromZero: true,
+      minimumDxyExposureUsdc: 1_058_970_000n,
+    }),
   },
   render: (args) => <TicketFrame {...args} />,
 }

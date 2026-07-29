@@ -169,6 +169,8 @@ interface PerpsTradeTicketProps {
   openPreviewFixture?: OpenPreviewView
   /** Static preview data for non-live stories and design review. Ignored when live trading is enabled. */
   closePreviewFixture?: ClosePreviewView
+  /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
+  validationErrorFixture?: string
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -629,6 +631,25 @@ function maxLeverageFromMaintenanceMargin(maintenanceMarginBps: bigint | undefin
 
 function directionLabel(direction: Direction): string {
   return direction === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
+}
+
+export function getOpenCapacityUnavailableMessage({
+  direction,
+  isOpeningFromZero,
+  minimumDxyExposureUsdc,
+}: {
+  direction: Direction
+  isOpeningFromZero: boolean
+  minimumDxyExposureUsdc: bigint
+}): string {
+  const selectedDirectionLabel = direction === 'long' ? 'Long' : 'Short'
+  const opposingDirectionLabel = direction === 'long' ? 'Short' : 'Long'
+  const minimumLabel = isOpeningFromZero ? 'minimum position size' : 'minimum increase size'
+  const alternativeAction = isOpeningFromZero
+    ? `You can open a ${opposingDirectionLabel} plDXY Perp position instead, which helps rebalance the market.`
+    : `You can reduce or close your current ${selectedDirectionLabel} position. After closing it, you can open a ${opposingDirectionLabel} plDXY Perp position, which helps rebalance the market.`
+
+  return `${selectedDirectionLabel} plDXY Perp positions are temporarily unavailable because there is not enough remaining ${selectedDirectionLabel} capacity to fit the ${minimumLabel} of ${formatPerpsUsdc(minimumDxyExposureUsdc)} USDC. Opening more ${selectedDirectionLabel} exposure would worsen the market imbalance. ${alternativeAction}`
 }
 
 function OrderSummaryRawAmount({ value }: { value: bigint }) {
@@ -1431,6 +1452,7 @@ export function PerpsTradeTicket({
   oracleFrozen = false,
   openPreviewFixture,
   closePreviewFixture,
+  validationErrorFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
   oracleBasketComponents,
@@ -2014,8 +2036,11 @@ export function PerpsTradeTicket({
       effectiveMinOpenDxyExposureUsdc !== undefined &&
       selectedOpenDxyCapacityUsdc < effectiveMinOpenDxyExposureUsdc
     ) {
-      const minimumLabel = isOpeningFromZero ? 'minimum new position' : 'minimum order size'
-      return `New ${directionLabel(direction)} opens are unavailable right now. Max plDXY Perp exposure is ${formatPerpsUsdc(selectedOpenDxyCapacityUsdc)} USDC, below the ${formatPerpsUsdc(effectiveMinOpenDxyExposureUsdc)} USDC ${minimumLabel}. Add LP liquidity or loosen the skew cap before opening this side.`
+      return getOpenCapacityUnavailableMessage({
+        direction,
+        isOpeningFromZero,
+        minimumDxyExposureUsdc: effectiveMinOpenDxyExposureUsdc,
+      })
     }
     if (
       !isReducingCurrentPosition &&
@@ -2087,6 +2112,9 @@ export function PerpsTradeTicket({
     }
     return undefined
   })()
+  const displayedValidationError = enableLiveTrading
+    ? liveValidationError
+    : validationErrorFixture
   const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
   const previewInitialMarginUsdc = openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
@@ -2372,10 +2400,12 @@ export function PerpsTradeTicket({
       : direction === 'long' ? 'Review Long' : 'Review Short'
   const isConnectWalletCta = enableLiveTrading && !isConnected
   const isSwitchNetworkCta = enableLiveTrading && isConnected && !isCorrectChain
-  const isReviewButtonDisabled = enableLiveTrading &&
+  const isReviewButtonDisabled = (
+    enableLiveTrading &&
     isConnected &&
     isCorrectChain &&
     (Boolean(liveValidationError) || isTradePreviewPending)
+  ) || (!enableLiveTrading && Boolean(validationErrorFixture))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
   const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
@@ -3085,9 +3115,11 @@ export function PerpsTradeTicket({
           </button>
         </div>
 
-        {enableLiveTrading && isConnected && isCorrectChain && liveValidationError && !isZeroSize ? (
+        {displayedValidationError &&
+        !isZeroSize &&
+        (!enableLiveTrading || (isConnected && isCorrectChain)) ? (
           <div className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-sm text-brand-orange">
-            {liveValidationError}
+            {displayedValidationError}
           </div>
         ) : null}
 
@@ -3102,7 +3134,7 @@ export function PerpsTradeTicket({
           size="lg"
           variant={isConnectWalletCta || isSwitchNetworkCta ? 'secondary' : direction === 'short' ? 'danger' : 'primary'}
           disabled={isReviewButtonDisabled}
-          title={isReviewButtonDisabled ? liveValidationError : undefined}
+          title={isReviewButtonDisabled ? displayedValidationError : undefined}
           analyticsId={isConnectWalletCta ? 'connect_wallet_cta' : isSwitchNetworkCta ? 'switch_network_cta' : 'review_trade'}
           analyticsProperties={commonAnalyticsProperties}
           onClick={() => {
