@@ -53,6 +53,17 @@ const connectedPosition = {
   pendingCarryUsdc: 1_250_000n,
 } satisfies PerpsPosition
 
+const largeConnectedPosition = {
+  ...connectedPosition,
+  entryPrice: 96_880_000n,
+  marginUsdc: 800_000n * USDC,
+  unrealizedPnlUsdc: 247_932_780_000n,
+  estimatedNotionalUsdc: 3_826_052_100_000n,
+  entryNotionalUsdc: 3_826_052_100_000n,
+  dxyExposureUsdc: 4_073_013_780_000n,
+  pendingCarryUsdc: 108_429_670_000n,
+} satisfies PerpsPosition
+
 const pendingOrders = [
   {
     orderId: 72n,
@@ -160,6 +171,22 @@ export const ConnectedPosition: Story = {
           equityUsdc={1_248_250_000n}
           freeBuyingPowerUsdc={848_250_000n}
           position={connectedPosition}
+          onClosePosition={() => undefined}
+        />
+      </div>
+    </div>
+  ),
+}
+
+export const LargeConnectedPosition: Story = {
+  render: () => (
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
+      <div className="mx-auto max-w-5xl">
+        <PerpsAccountPanel
+          isConnected
+          equityUsdc={1_048_250n * USDC}
+          freeBuyingPowerUsdc={248_250n * USDC}
+          position={largeConnectedPosition}
           onClosePosition={() => undefined}
         />
       </div>
