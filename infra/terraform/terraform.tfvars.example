@@ -21,6 +21,8 @@ db_password                     = "CHANGE_ME_STRONG_PASSWORD"
 db_username                     = "plether"
 chain_id                        = "11155111"
 cors_origins                    = "https://testnet.plether.fi"
+# Explicit audited opt-in after explorer backfill and reconciliation checks pass.
+protocol_explorer_enabled       = false
 indexer_start_block             = "10188700"
 perps_chain_id                  = "421614"
 perps_indexer_start_block = "273137426"

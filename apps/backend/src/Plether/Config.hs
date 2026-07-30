@@ -10,6 +10,8 @@ module Plether.Config
   , defaultPythLatestMaxAgeSeconds
   , maxPythLatestMaxAgeSeconds
   , validatePythLatestMaxAgeSeconds
+  , defaultProtocolExplorerEnabled
+  , validateProtocolExplorerEnabled
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
@@ -38,6 +40,7 @@ data Config = Config
   , cfgPythSampleIntervalSeconds :: Integer
   , cfgPythLatestMaxAgeSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
+  , cfgProtocolExplorerEnabled :: Bool
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
@@ -46,6 +49,12 @@ data Config = Config
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
+  , cfgPerpsPublicLens :: Text
+  , cfgPerpsHousePool :: Text
+  , cfgPerpsSeniorVault :: Text
+  , cfgPerpsJuniorVault :: Text
+  , cfgPerpsOrderRouterAdmin :: Text
+  , cfgPerpsCfdEngineAdmin :: Text
   , cfgPerpsIndexerStartBlock :: Integer
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
@@ -161,6 +170,9 @@ defaultPythLatestMaxAgeSeconds = 10
 maxPythLatestMaxAgeSeconds :: Integer
 maxPythLatestMaxAgeSeconds = 10
 
+defaultProtocolExplorerEnabled :: Bool
+defaultProtocolExplorerEnabled = False
+
 validatePythLatestMaxAgeSeconds :: String -> Either String Integer
 validatePythLatestMaxAgeSeconds rawValue =
   case readMaybe normalizedValue of
@@ -174,6 +186,14 @@ validatePythLatestMaxAgeSeconds rawValue =
           <> "; the upper bound preserves headroom below the oracle's 15-second staleness limit"
  where
   normalizedValue = T.unpack $ T.strip $ T.pack rawValue
+
+validateProtocolExplorerEnabled :: String -> Either String Bool
+validateProtocolExplorerEnabled rawValue =
+  case parseBoolStrict rawValue of
+    Just enabled -> Right enabled
+    Nothing ->
+      Left
+        "PROTOCOL_EXPLORER_ENABLED must be one of true, false, 1, 0, yes, no, on, or off"
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
@@ -193,9 +213,18 @@ loadConfig = do
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
       pythLatestMaxAgeStr <- fromMaybe (show defaultPythLatestMaxAgeSeconds) <$> lookupEnv "PYTH_LATEST_MAX_AGE_SECONDS"
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
+      protocolExplorerEnabledStr <-
+        fromMaybe (if defaultProtocolExplorerEnabled then "true" else "false")
+          <$> lookupEnv "PROTOCOL_EXPLORER_ENABLED"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
+      perpsPublicLens <- fromMaybe "0x4E202C06e2C378d1a85577ac631e592AB66f23FB" <$> lookupEnv "PERPS_PUBLIC_LENS"
+      perpsHousePool <- fromMaybe "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18" <$> lookupEnv "PERPS_HOUSE_POOL"
+      perpsSeniorVault <- fromMaybe "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8" <$> lookupEnv "PERPS_SENIOR_VAULT"
+      perpsJuniorVault <- fromMaybe "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458" <$> lookupEnv "PERPS_JUNIOR_VAULT"
+      perpsOrderRouterAdmin <- fromMaybe "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C" <$> lookupEnv "PERPS_ORDER_ROUTER_ADMIN"
+      perpsCfdEngineAdmin <- fromMaybe "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39" <$> lookupEnv "PERPS_CFD_ENGINE_ADMIN"
       perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
       perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
       perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
@@ -285,10 +314,16 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig) of
-        (Left err, _) -> pure $ Left err
-        (_, Left err) -> pure $ Left err
-        (Right pythLatestMaxAgeSeconds, Right resolvedAaConfig) -> do
+      case
+          ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
+          , validateProtocolExplorerEnabled protocolExplorerEnabledStr
+          , aaConfig
+          )
+        of
+        (Left err, _, _) -> pure $ Left err
+        (_, Left err, _) -> pure $ Left err
+        (_, _, Left err) -> pure $ Left err
+        (Right pythLatestMaxAgeSeconds, Right protocolExplorerEnabled, Right resolvedAaConfig) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
             Left err -> pure $ Left $ "Failed to load addresses: " <> err
@@ -310,6 +345,7 @@ loadConfig = do
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
                 , cfgPythLatestMaxAgeSeconds = pythLatestMaxAgeSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
+                , cfgProtocolExplorerEnabled = protocolExplorerEnabled
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
@@ -318,6 +354,12 @@ loadConfig = do
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
+                , cfgPerpsPublicLens = T.pack perpsPublicLens
+                , cfgPerpsHousePool = T.pack perpsHousePool
+                , cfgPerpsSeniorVault = T.pack perpsSeniorVault
+                , cfgPerpsJuniorVault = T.pack perpsJuniorVault
+                , cfgPerpsOrderRouterAdmin = T.pack perpsOrderRouterAdmin
+                , cfgPerpsCfdEngineAdmin = T.pack perpsCfdEngineAdmin
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey

@@ -591,6 +591,7 @@ testConfig =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgProtocolExplorerEnabled = True
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"

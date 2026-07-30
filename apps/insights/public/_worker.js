@@ -15,6 +15,14 @@ const API_CACHE_TTLS = {
   currentCompetition: 60,
   leaderboard: 15,
   wallet: 15,
+  protocolBootstrap: 5,
+  protocolLiveState: 15,
+  protocolActivity: 10,
+  // The backend currently exposes a shallow confirmed head. Keep canonical
+  // transaction details close to live-state TTLs so a reorg rewind cannot
+  // leave an orphaned detail page cached for an hour.
+  protocolConfirmedDetail: 15,
+  protocolHistory: 30,
 };
 
 function resolveApiCacheTtl(method, pathname) {
@@ -38,6 +46,26 @@ function resolveApiCacheTtl(method, pathname) {
 
   if (/^\/competitions\/[^/]+\/wallets\/[^/]+$/.test(apiPath)) {
     return API_CACHE_TTLS.wallet;
+  }
+
+  if (apiPath === '/protocol/releases/current') {
+    return API_CACHE_TTLS.protocolBootstrap;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/(overview|house-pool|keepers|wallets|parameters|orders\/[^/]+|keepers\/[^/]+|wallets\/[^/]+|tranches\/[^/]+)$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolLiveState;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/transactions$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolActivity;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/transactions\/[^/]+$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolConfirmedDetail;
+  }
+
+  if (/^\/protocol\/releases\/[^/]+\/(tranches\/[^/]+\/history|parameter-changes)$/.test(apiPath)) {
+    return API_CACHE_TTLS.protocolHistory;
   }
 
   return null;
@@ -64,14 +92,21 @@ function apiFetchOptions(request, headers, cacheTtl) {
   return options;
 }
 
-function applyResponseHeaders(response, pathname) {
+function applyResponseHeaders(response, pathname, method = 'GET') {
   const headers = new Headers(response.headers);
 
   for (const [name, value] of Object.entries(SECURITY_HEADERS)) {
     headers.set(name, value);
   }
 
-  if (pathname.startsWith('/assets/')) {
+  if (
+    method !== 'GET'
+    && method !== 'HEAD'
+  ) {
+    headers.set('Cache-Control', 'no-store');
+  } else if (response.status < 200 || response.status >= 300) {
+    headers.set('Cache-Control', 'no-store');
+  } else if (pathname.startsWith('/assets/')) {
     headers.set('Cache-Control', 'public, max-age=31536000, immutable');
   } else if (pathname === '/favicon.svg') {
     headers.set('Cache-Control', 'public, max-age=86400');
@@ -84,11 +119,31 @@ function applyResponseHeaders(response, pathname) {
   });
 }
 
-function backendConfigurationError(code, message, pathname) {
+function backendConfigurationError(code, message, pathname, method = 'GET') {
   return applyResponseHeaders(
     Response.json({ error: { code, message } }, { status: 502 }),
     pathname,
+    method,
   );
+}
+
+function publicApiRequestHeaders(request, backendUrl) {
+  const headers = new Headers();
+  for (const name of [
+    'Accept',
+    'Accept-Encoding',
+    'Content-Type',
+    'If-Modified-Since',
+    'If-None-Match',
+    'User-Agent',
+  ]) {
+    const value = request.headers.get(name);
+    if (value !== null) {
+      headers.set(name, value);
+    }
+  }
+  headers.set('Host', backendUrl.hostname);
+  return headers;
 }
 
 function resolveBackendOrigin(configuredOrigin) {
@@ -124,6 +179,7 @@ export default {
           'backend_not_configured',
           'Insights backend is not configured.',
           url.pathname,
+          request.method,
         );
       }
 
@@ -133,25 +189,34 @@ export default {
           'backend_configuration_invalid',
           'Insights backend configuration is invalid.',
           url.pathname,
+          request.method,
         );
       }
 
       const backendUrl = new URL(url.pathname + url.search, origin);
-      const headers = new Headers(request.headers);
-      headers.set('Host', backendUrl.hostname);
-      headers.delete('Origin');
+      const headers = publicApiRequestHeaders(request, backendUrl);
 
       const cacheTtl = resolveApiCacheTtl(request.method, url.pathname);
 
-      const response = await fetch(backendUrl, apiFetchOptions(request, headers, cacheTtl));
+      let response;
+      try {
+        response = await fetch(backendUrl, apiFetchOptions(request, headers, cacheTtl));
+      } catch {
+        return backendConfigurationError(
+          'backend_unavailable',
+          'Insights backend is temporarily unavailable.',
+          url.pathname,
+          request.method,
+        );
+      }
 
-      return applyResponseHeaders(response, url.pathname);
+      return applyResponseHeaders(response, url.pathname, request.method);
     }
 
     let response = await env.ASSETS.fetch(request);
     if (response.status === 404 && !url.pathname.includes('.')) {
       response = await env.ASSETS.fetch(new URL('/', request.url));
     }
-    return applyResponseHeaders(response, url.pathname);
+    return applyResponseHeaders(response, url.pathname, request.method);
   },
 };

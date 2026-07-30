@@ -296,6 +296,7 @@ testConfig =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgProtocolExplorerEnabled = True
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = usdc

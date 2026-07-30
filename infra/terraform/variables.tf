@@ -230,6 +230,12 @@ variable "cors_origins" {
   default = "*"
 }
 
+variable "protocol_explorer_enabled" {
+  type        = bool
+  default     = false
+  description = "Expose the release-scoped Protocol Transparency Explorer API and UI bootstrap. Enable only after the release backfill and reconciliation acceptance checks pass."
+}
+
 variable "indexer_start_block" {
   type    = string
   default = "7726000"
@@ -268,6 +274,38 @@ variable "perps_margin_clearinghouse" {
 variable "perps_account_lens" {
   type    = string
   default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+}
+
+# Transparency explorer release manifest. These remain ordinary, non-secret
+# deployment inputs so a later release can be indexed without a schema change.
+variable "perps_public_lens" {
+  type    = string
+  default = "0x4E202C06e2C378d1a85577ac631e592AB66f23FB"
+}
+
+variable "perps_house_pool" {
+  type    = string
+  default = "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
+}
+
+variable "perps_senior_vault" {
+  type    = string
+  default = "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
+}
+
+variable "perps_junior_vault" {
+  type    = string
+  default = "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
+}
+
+variable "perps_order_router_admin" {
+  type    = string
+  default = "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C"
+}
+
+variable "perps_cfd_engine_admin" {
+  type    = string
+  default = "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39"
 }
 
 variable "perps_indexer_start_block" {
