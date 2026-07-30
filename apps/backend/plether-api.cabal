@@ -64,6 +64,8 @@ library
         Plether.Pyth.Hermes
         Plether.Pyth.History
         Plether.Pyth.RevealPayload
+        Plether.Perps.ExecutionOracle
+        Plether.Perps.ExecutionTrace
         Plether.Perps.HistoryIndexer
         Plether.Types.History
         Plether.Indexer
@@ -241,6 +243,8 @@ test-suite plether-api-test
         Plether.LiquidationWorkerSpec
         Plether.Pyth.HermesSpec
         Plether.Pyth.RevealPayloadSpec
+        Plether.Perps.ExecutionOracleSpec
+        Plether.Perps.ExecutionTraceSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
@@ -255,6 +259,7 @@ test-suite plether-api-test
         QuickCheck >= 2.14,
         aeson >= 2.1,
         bytestring >= 0.11,
+        containers >= 0.6,
         directory >= 1.3,
         postgresql-simple >= 0.7,
         text >= 2.0,

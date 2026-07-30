@@ -255,6 +255,9 @@ Notes:
 
 - The indexer only writes finalized/safe history. Default finality delay is `1` block.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
+- Exact execution economics use `debug_traceTransaction`; on Arbitrum Sepolia the
+  indexer falls back to the public Blockscout raw-trace API. Override or disable
+  that fallback with `PERPS_INDEXER_TRACE_API_URL`.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
 - Every activity row retains the normalized emitting contract address. Re-indexing
   safely fills this provenance for matching legacy rows; rows whose emitter cannot
@@ -466,6 +469,7 @@ Local URLs:
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
+| `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
 | `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
@@ -494,6 +498,7 @@ Local URLs:
 | `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
+| `PERPS_INDEXER_TRACE_API_URL` | No | Arbitrum Sepolia Blockscout on chain `421614` | Raw call-trace fallback used to persist exact execution VPI and frozen-close spread; set blank to disable |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |

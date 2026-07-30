@@ -179,6 +179,18 @@ function closeTicket({
       initialFinalExecutionPrice={
         lifecycleState === 'executed' ? 100_000_000n : undefined
       }
+      initialFinalExecutionOraclePrice={
+        lifecycleState === 'executed' ? oraclePriceRaw : undefined
+      }
+      initialFinalExecutionOracleFrozen={
+        lifecycleState === 'executed' ? oracleFrozen : undefined
+      }
+      initialFinalFrozenCloseSpreadUsdc={
+        lifecycleState === 'executed' && oracleFrozen ? 12_345_678n : undefined
+      }
+      initialFinalExecutionEconomicsVersion={
+        lifecycleState === 'executed' ? 1 : undefined
+      }
       oraclePriceRaw={oraclePriceRaw}
       oraclePriceDisplay="1.0000"
       latestBasket={latestBasket}
