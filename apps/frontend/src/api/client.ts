@@ -154,6 +154,20 @@ const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
   timeout: 30000,
 };
 
+// The backend can spend up to 165 seconds across its bounded database,
+// transaction-preparation, receipt-polling, and final-persistence stages.
+export const TESTNET_FAUCET_TIMEOUT_MS = 180_000;
+export const TESTNET_FAUCET_TIMEOUT_MESSAGE =
+  'The faucet is taking longer than expected. Your request may still complete. Wait a moment, then try again—retrying is safe.';
+const NETWORK_ERROR_MESSAGE =
+  'We could not reach Plether. Check your connection and try again.';
+
+interface ApiRequestPolicy {
+  operation?: string;
+  timeoutMs?: number;
+  timeoutMessage?: string;
+}
+
 const API_ERROR_CODES = new Set<string>([
   'INVALID_ADDRESS',
   'INVALID_AMOUNT',
@@ -230,26 +244,54 @@ async function parseErrorResponse(response: Response, url: string): Promise<Plet
 // HTTP Client
 // =============================================================================
 
-function logApiFailure(apiError: PlethApiError): void {
+function logApiFailure(
+  apiError: PlethApiError,
+  policy: ApiRequestPolicy,
+  durationMs: number,
+  timeoutMs: number,
+  didTimeout = false
+): void {
   captureFrontendLog('error', 'frontend api request failed', {
     component: 'api_client',
-    operation: 'request',
+    operation: policy.operation ?? 'request',
     outcome: 'failure',
-    error_category: apiError.code.toLowerCase(),
+    error_category: didTimeout ? 'timeout' : apiError.code.toLowerCase(),
     http_status: apiError.status,
+    duration_ms: durationMs,
+    timeout_ms: timeoutMs,
+    reason_code: didTimeout ? 'client_timeout' : undefined,
+  });
+}
+
+function logApiSuccess(
+  policy: ApiRequestPolicy,
+  durationMs: number,
+  timeoutMs: number
+): void {
+  if (!policy.operation) return;
+
+  captureFrontendLog('info', 'frontend api request completed', {
+    component: 'api_client',
+    operation: policy.operation,
+    outcome: 'success',
+    duration_ms: durationMs,
+    timeout_ms: timeoutMs,
   });
 }
 
 async function fetchApi<T>(
   config: PlethApiConfig,
   path: string,
-  options?: RequestInit
+  options?: RequestInit,
+  policy: ApiRequestPolicy = {}
 ): Promise<Result<ApiResponse<T>, PlethApiError>> {
   const url = `${config.baseUrl}${path}`;
+  const timeoutMs = policy.timeoutMs ?? config.timeout ?? DEFAULT_CONFIG.timeout;
+  const startedAt = Date.now();
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort();
-  }, config.timeout ?? DEFAULT_CONFIG.timeout);
+  }, timeoutMs);
 
   try {
     const response = await fetch(url, {
@@ -272,7 +314,7 @@ async function fetchApi<T>(
     if (!response.ok) {
       const apiError = await parseErrorResponse(response, url);
 
-      logApiFailure(apiError);
+      logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
@@ -280,24 +322,28 @@ async function fetchApi<T>(
     if (!isJsonResponse(response)) {
       const apiError = createNonJsonApiError(response, url, await readResponsePreview(response));
 
-      logApiFailure(apiError);
+      logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
       config.onError?.(apiError);
       return Result.err(apiError);
     }
 
     const data = (await response.json()) as ApiResponse<T>;
+    logApiSuccess(policy, Date.now() - startedAt, timeoutMs);
     return Result.ok(data);
   } catch (err) {
     clearTimeout(timeoutId);
+    const didTimeout = controller.signal.aborted;
 
     const apiError = new PlethApiError(
       'NETWORK_ERROR',
-      err instanceof Error ? err.message : 'Network request failed',
+      didTimeout
+        ? policy.timeoutMessage ?? 'The request took too long. Please try again.'
+        : NETWORK_ERROR_MESSAGE,
       undefined,
       err
     );
 
-    logApiFailure(apiError);
+    logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs, didTimeout);
     config.onError?.(apiError);
     return Result.err(apiError);
   }
@@ -357,6 +403,10 @@ export class PlethApiClient {
     return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', {
       method: 'POST',
       body: JSON.stringify({ address }),
+    }, {
+      operation: 'claim_testnet_faucet',
+      timeoutMs: TESTNET_FAUCET_TIMEOUT_MS,
+      timeoutMessage: TESTNET_FAUCET_TIMEOUT_MESSAGE,
     });
   }
 

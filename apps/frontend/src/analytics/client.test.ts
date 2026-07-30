@@ -98,6 +98,7 @@ describe('analytics client', () => {
       outcome: 'failure',
       error_category: 'failed for user@example.com',
       http_status: 503,
+      timeout_ms: 180_000,
       wallet_address: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
       details: { rpc: 'payload' },
     })).toEqual({
@@ -106,6 +107,7 @@ describe('analytics client', () => {
       outcome: 'failure',
       error_category: 'failed for [redacted]',
       http_status: 503,
+      timeout_ms: 180_000,
     })
   })
 
