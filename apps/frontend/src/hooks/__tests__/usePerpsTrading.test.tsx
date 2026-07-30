@@ -225,11 +225,13 @@ describe('usePerpsTrading', () => {
       .rejects.toThrow('Expired-order cleanup is keeper-operated')
   })
 
-  it('signals the wallet request from the managed sponsored operation', async () => {
+  it('forwards managed sponsored operation status changes', async () => {
     mocks.identityReady = true
-    const onWalletRequestStart = vi.fn()
+    const onStatus = vi.fn()
     mocks.executeSponsoredPerpsAction.mockImplementationOnce(async (input) => {
       input.onStatus?.('awaiting-signature')
+      input.onStatus?.('submitting')
+      input.onStatus?.('confirming')
       return sponsoredResult()
     })
 
@@ -243,14 +245,18 @@ describe('usePerpsTrading', () => {
       oraclePrice: 98_300_000n,
       slippagePercent: 0.1,
       isClose: false,
-      onWalletRequestStart,
+      onStatus,
     })).resolves.toEqual({
       hash: TRANSACTION_HASH,
       userOperationHash: USER_OPERATION_HASH,
       orderId: 42n,
     })
 
-    expect(onWalletRequestStart).toHaveBeenCalledTimes(1)
+    expect(onStatus.mock.calls).toEqual([
+      ['awaiting-signature'],
+      ['submitting'],
+      ['confirming'],
+    ])
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerAddress: OWNER,
