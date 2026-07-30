@@ -30,15 +30,79 @@ migration path.
 5. Let permissionless.js prepare the fully estimated, Pimlico-sponsored
    UserOperation.
 6. Ask the owner wallet to sign the final operation.
-7. Compute and persist the EntryPoint UserOperation hash locally.
+7. Compute the EntryPoint UserOperation hash and atomically persist it with
+   the signed UserOperation preimage before `eth_sendUserOperation`.
 8. Submit that exact operation through the same-origin Pimlico proxy.
 9. Require Pimlico's returned hash to match the local hash.
 10. Reconcile through `pimlico_getUserOperationStatus` and
     `eth_getUserOperationReceipt`.
 
-`not_found` and `not_submitted` are not proof that retrying is safe. An
-operation with a persisted hash remains locked until receipt/status or
-protocol state proves a terminal outcome.
+`not_found` and `not_submitted` are not proof that retrying is safe. Recovery
+checks the exact UserOperation receipt first and distinguishes a typed
+not-found response from transport or decoding failures. Pimlico status is
+queried only after that receipt miss and remains diagnostic; vendor
+`not_found`, `not_submitted`, rejected, or failed states do not prove an
+onchain outcome or make a retry safe. A Pimlico receipt is accepted only after
+its transaction and matching EntryPoint event are verified on the canonical
+RPC at or below the `safe` head. A Pimlico transport failure remains
+inconclusive and does not prevent the independent safe-chain nonce and expiry
+proof below from resolving the operation.
+
+For a new record, recovery parses the persisted signed preimage, recomputes
+the exact EntryPoint hash, and requires it to match the persisted hash and
+Trading Account. The operation nonce and sponsorship validity are trusted
+only from that verified preimage. The deadline must come from the pinned
+Pimlico v0.8 paymaster format and be nonzero.
+
+Recovery reads the timestamp and EntryPoint nonce at one `safe` block, using
+the nonce key encoded in the operation nonce's upper 192 bits. If the nonce is
+unchanged and that timestamp is past the verified `validUntil`, the operation
+is retry-safe expired. If the nonce advanced without an exact canonical
+inclusion event, its past outcome is unknown and non-retryable, but the local
+lane is released because the old nonce can no longer land.
+
+Blockscout supplies only a positive full-history event locator. An empty,
+missing, or failed explorer result is never evidence of absence. Every
+Blockscout hit must be verified by an exact, one-block
+`UserOperationEvent` query against the canonical RPC, including its hash,
+sender, transaction, and execution result. Third-party, RPC, or corrupt
+persisted-data failures fail closed; only the hash-bound protocol nonce or
+expiry proofs above can release a lane without a verified event.
+
+Legacy hash-only records cannot bind a nonce or validity deadline and never
+auto-expire. Storage migration converts old unverified terminal labels back to
+a locked, unknown submission state, removes diagnostic transaction hashes, and
+backfills every unresolved hash into the directly addressed lane head while
+holding that lane's browser lock. Each legacy hash exposes an explicit
+“Force-release stale local lock” escape hatch with a confirmation that the old
+action may already have executed or may still execute later. It marks only
+that hash outcome unknown and non-retryable; another ambiguous hash in the same
+lane remains guarded until it is reviewed separately. Before retrying after a
+manual release, close or reload every other Plether tab so an already-open
+legacy client cannot restore the obsolete shared-store lock.
+
+The browser-wide Web Lock covers submission, abandoned-record recovery, and
+manual force release. Before network send, execution also requires the store
+to confirm that it durably journaled the exact hash and signed preimage under a
+dedicated per-operation storage key and published a directly addressable
+chain/account/lane head. While holding that lane's Web Lock, submission and
+recovery read the head and its journal directly instead of relying on mutable
+storage-key enumeration. The conservative lane head is written before its
+journals, so a crash between durable writes fails closed. Cross-tab hydration
+merges the legacy shared snapshot with journals by identity and monotonic
+evidence, but version 1 treats the whole-store key as a read-only legacy inbox.
+All current mutable persistence writes use per-ID journals; only the locked
+migration and submission paths mutate lane heads. This prevents an unrelated
+current tab from erasing a version-0 operation through a stale shared-state
+read/modify/write. Manual and canonical lane-releasing outcomes are also
+written first to append-only ID/hash/status resolution tombstones. Every
+journal, lane-head, migration, and raw-inbox check overlays those tombstones,
+so a stale tab cannot rewrite a resolved operation back into a blocker and
+24-hour history cleanup cannot resurrect it. After all status callbacks,
+execution restores the lane once more and exact-checks that singleton head,
+signed journal, raw legacy inbox, and persistence revision immediately before
+invoking Pimlico. Repeated identical recovery errors are idempotent and do not
+resurrect acknowledged alerts.
 
 ## Manifest
 

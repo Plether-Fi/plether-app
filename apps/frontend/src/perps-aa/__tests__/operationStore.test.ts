@@ -2,6 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
 import {
   cancelSponsoredOperationRequest,
+  canForceUnlockLegacySponsoredOperation,
+  forceUnlockLegacySponsoredOperation,
+  LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
+  mergeSponsoredOperationState,
+  migrateSponsoredOperationState,
+  restoreSponsoredOperationLane,
+  SPONSORED_OPERATION_JOURNAL_PREFIX,
+  SPONSORED_OPERATION_LANE_HEAD_PREFIX,
+  SPONSORED_OPERATION_RESOLUTION_PREFIX,
+  SPONSORED_OPERATION_STORAGE_NAME,
   SponsoredOperationLockedError,
   useSponsoredOperationStore,
 } from '../operationStore'
@@ -23,6 +33,16 @@ function begin(id: string) {
 
 describe('sponsored operation store', () => {
   beforeEach(() => {
+    globalThis.localStorage.clear()
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: vi.fn(async (
+          name: string,
+          _options: LockOptions,
+          callback: (lock: Lock | null) => Promise<unknown> | unknown
+        ) => await callback({ name, mode: 'exclusive' } as Lock)),
+      } as unknown as LockManager,
+    })
     useSponsoredOperationStore.setState({
       operations: [],
       activeLanes: {},
@@ -31,6 +51,8 @@ describe('sponsored operation store', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('accepts sponsorship only after managed preparation succeeds', () => {
@@ -74,9 +96,26 @@ describe('sponsored operation store', () => {
     )
 
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+      status: 'submitting',
       userOperationHash: '0x1234',
       transactionHash: '0xabcd',
     })
+  })
+
+  it('never overwrites the first persisted UserOperation hash', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'34'.repeat(32)}`
+    )
+
+    expect(
+      useSponsoredOperationStore.getState().operations[0]?.userOperationHash
+    ).toBe(`0x${'12'.repeat(32)}`)
   })
 
   it('acknowledges attention without changing operation recency', () => {
@@ -128,7 +167,7 @@ describe('sponsored operation store', () => {
     })
     expect(useSponsoredOperationStore.getState().operations[0])
       .toMatchObject({
-        attentionRevision: 2,
+        attentionRevision: 1,
         acknowledgedAttentionRevision: 1,
         updatedAt: Date.now(),
       })
@@ -164,6 +203,35 @@ describe('sponsored operation store', () => {
         attentionRevision: 2,
         acknowledgedAttentionRevision: 1,
       })
+  })
+
+  it('does not resurrect acknowledged attention for the same timeout', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+    useSponsoredOperationStore.getState().acknowledgeOperations([{
+      id: 'operation-1',
+      attentionRevision: 1,
+    }])
+    const acknowledged = useSponsoredOperationStore.getState().operations[0]!
+
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+      attentionRevision: acknowledged.attentionRevision,
+      acknowledgedAttentionRevision:
+        acknowledged.acknowledgedAttentionRevision,
+      updatedAt: acknowledged.updatedAt,
+    })
   })
 
   it('does not locally cancel an operation once submission has started', () => {
@@ -216,5 +284,705 @@ describe('sponsored operation store', () => {
       'dropped'
     )
     expect(() => begin('operation-2')).not.toThrow()
+  })
+
+  it('does not resurrect a terminal operation during late recovery', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().transition(
+      'operation-1',
+      'confirmed'
+    )
+
+    useSponsoredOperationStore.getState().transition(
+      'operation-1',
+      'confirming'
+    )
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    expect(
+      useSponsoredOperationStore.getState().operations[0]?.status
+    ).toBe('confirmed')
+    expect(() => begin('operation-2')).not.toThrow()
+  })
+
+  it('manually releases only the known hash-only legacy lock as outcome unknown', async () => {
+    useSponsoredOperationStore.getState().beginOperation({
+      id: 'legacy-operation',
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      accountMode: 'simple',
+      manifestVersion: LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
+      action: 'place-order',
+    })
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'legacy-operation',
+      `0x${'12'.repeat(32)}`
+    )
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'legacy-operation',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    await forceUnlockLegacySponsoredOperation('legacy-operation')
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'outcome-unknown',
+        forcedLegacyUnlock: true,
+        retryable: false,
+      })
+    expect(
+      useSponsoredOperationStore.getState().operations[0]?.reason
+    ).toBeUndefined()
+    expect(() => begin('operation-2')).not.toThrow()
+  })
+
+  it('does not let a later legacy snapshot relock a force-released hash', async () => {
+    begin('seed-operation')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      id: 'legacy-operation',
+      manifestVersion: LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
+      status: 'dropped' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+      updatedAt: Date.now() + 60_000,
+    }
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.clear()
+    const legacySnapshot = JSON.stringify({
+      state: {
+        operations: [legacyOperation],
+        activeLanes: {},
+      },
+      version: 0,
+    })
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      legacySnapshot
+    )
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+
+    expect(await forceUnlockLegacySponsoredOperation(
+      'legacy-operation'
+    )).toBe(true)
+
+    // A still-open version-0 tab can republish a more recently timestamped
+    // diagnostic snapshot. The v1 journal's explicit outcome-unknown decision
+    // is stronger evidence and must remain lane-releasing.
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      legacySnapshot
+    )
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+
+    expect(useSponsoredOperationStore.getState().operations
+      .find((operation) => operation.id === 'legacy-operation'))
+      .toMatchObject({
+        status: 'outcome-unknown',
+        forcedLegacyUnlock: true,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+
+    begin('operation-2')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-2',
+      `0x${'34'.repeat(32)}`
+    )).toBe(true)
+  })
+
+  it('keeps legacy resolution durable across cleanup and stale journal writes', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-29T08:00:00.000Z'))
+    begin('seed-operation')
+    const legacyHash = `0x${'12'.repeat(32)}` as `0x${string}`
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      id: 'legacy-operation',
+      status: 'dropped' as const,
+      userOperationHash: legacyHash,
+    }
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.clear()
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: {
+          operations: [legacyOperation],
+          activeLanes: {},
+        },
+        version: 0,
+      })
+    )
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}legacy-operation`
+    const staleJournal = globalThis.localStorage.getItem(journalKey)
+    expect(staleJournal).toContain('receipt-timeout')
+
+    expect(await forceUnlockLegacySponsoredOperation(
+      'legacy-operation'
+    )).toBe(true)
+    const resolutionKey =
+      `${SPONSORED_OPERATION_RESOLUTION_PREFIX}` +
+      `legacy-operation:${legacyHash}:outcome-unknown`
+    expect(globalThis.localStorage.getItem(resolutionKey))
+      .toContain('outcome-unknown')
+
+    vi.advanceTimersByTime(25 * 60 * 60 * 1000)
+    useSponsoredOperationStore.getState().cleanupOperations()
+    expect(globalThis.localStorage.getItem(resolutionKey))
+      .toContain('outcome-unknown')
+    expect(globalThis.localStorage.getItem(journalKey))
+      .toContain('outcome-unknown')
+
+    // Model an unrelated tab completing a stale journal write after the
+    // resolution commit, then make key enumeration omit that journal.
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.setItem(journalKey, staleJournal!)
+    vi.spyOn(globalThis.localStorage, 'key').mockReturnValue(null)
+
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+
+    expect(useSponsoredOperationStore.getState().operations
+      .find((operation) => operation.id === 'legacy-operation'))
+      .toMatchObject({
+        status: 'outcome-unknown',
+        forcedLegacyUnlock: true,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+    expect(globalThis.localStorage.getItem(resolutionKey))
+      .toContain('outcome-unknown')
+  })
+
+  it('does not force-unlock a hash from an unknown manifest', async () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    await forceUnlockLegacySponsoredOperation('operation-1')
+
+    expect(
+      useSponsoredOperationStore.getState().operations[0]?.status
+    ).toBe('receipt-timeout')
+    expect(() => begin('operation-2')).toThrow(SponsoredOperationLockedError)
+  })
+
+  it('relocks v0 diagnostic terminal records for explicit manual recovery', () => {
+    begin('operation-1')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      manifestVersion: 'older-deployment',
+      status: 'dropped' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+      transactionHash: `0x${'34'.repeat(32)}` as `0x${string}`,
+    }
+
+    const migrated = migrateSponsoredOperationState({
+      operations: [legacyOperation],
+      activeLanes: {},
+    }, 0)
+
+    expect(migrated.operations[0]).toMatchObject({
+      status: 'receipt-timeout',
+      legacyManualUnlockEligible: true,
+      retryable: false,
+    })
+    expect(migrated.operations[0]?.transactionHash).toBeUndefined()
+    expect(migrated.activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+    expect(
+      canForceUnlockLegacySponsoredOperation(migrated.operations[0]!)
+    ).toBe(true)
+  })
+
+  it('relocks a v0 confirmed record instead of trusting its transaction hash', () => {
+    begin('operation-1')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      manifestVersion: 'older-deployment',
+      status: 'confirmed' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+      transactionHash: `0x${'34'.repeat(32)}` as `0x${string}`,
+    }
+
+    const migrated = migrateSponsoredOperationState({
+      operations: [legacyOperation],
+      activeLanes: {},
+    }, 0)
+
+    expect(migrated.operations[0]).toMatchObject({
+      status: 'receipt-timeout',
+      legacyManualUnlockEligible: true,
+      retryable: false,
+    })
+    expect(migrated.operations[0]?.transactionHash).toBeUndefined()
+    expect(
+      migrated.operations[0]?.transactionHashVerified
+    ).toBeUndefined()
+    expect(migrated.activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('publishes the legacy lane guard before writing operation journals', () => {
+    begin('operation-1')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      status: 'dropped' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+    }
+    globalThis.localStorage.clear()
+    const originalSetItem =
+      globalThis.localStorage.setItem.bind(globalThis.localStorage)
+    originalSetItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: {
+          operations: [legacyOperation],
+          activeLanes: {},
+        },
+        version: 0,
+      })
+    )
+    vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation(
+      (key, value) => {
+        if (key.startsWith(SPONSORED_OPERATION_JOURNAL_PREFIX)) {
+          throw new Error('simulated crash before journal write')
+        }
+        originalSetItem(key, value)
+      }
+    )
+
+    try {
+      restoreSponsoredOperationLane({
+        chainId: 421614,
+        accountAddress: ACCOUNT,
+        lane: 'default',
+      })
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error)
+    }
+
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_LANE_HEAD_PREFIX}` +
+      `421614:${ACCOUNT.toLowerCase()}:default`
+    )).toContain('operation-1')
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    )).toBeNull()
+    expect(globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )).not.toBeNull()
+    expect(JSON.parse(globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )!).version).toBe(0)
+  })
+
+  it('does not publish a headless hash during unlocked v0 hydration', async () => {
+    begin('legacy-operation')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      status: 'dropped' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+    }
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.clear()
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: {
+          operations: [legacyOperation],
+          activeLanes: {},
+        },
+        version: 0,
+      })
+    )
+
+    await useSponsoredOperationStore.persist.rehydrate()
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        id: 'legacy-operation',
+        status: 'receipt-timeout',
+      })
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_LANE_HEAD_PREFIX}` +
+      `421614:${ACCOUNT.toLowerCase()}:default`
+    )).toBeNull()
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}legacy-operation`
+    )).toBeNull()
+    expect(JSON.parse(globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )!).version).toBe(0)
+  })
+
+  it('rejects a signed submission when a different durable lane head survives', async () => {
+    begin('legacy-operation')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      status: 'dropped' as const,
+      userOperationHash: `0x${'12'.repeat(32)}` as `0x${string}`,
+    }
+    globalThis.localStorage.clear()
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: {
+          operations: [legacyOperation],
+          activeLanes: {},
+        },
+        version: 0,
+      })
+    )
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+    await useSponsoredOperationStore.persist.rehydrate()
+    const laneHeadKey =
+      `${SPONSORED_OPERATION_LANE_HEAD_PREFIX}` +
+      `421614:${ACCOUNT.toLowerCase()}:default`
+    const legacyLaneHead = globalThis.localStorage.getItem(laneHeadKey)
+    expect(legacyLaneHead).toContain('legacy-operation')
+
+    // Model an older tab erasing the shared snapshot while the directly
+    // addressable legacy head and journal survive.
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: { operations: [], activeLanes: {} },
+        version: 1,
+      })
+    )
+    begin('new-operation')
+
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'new-operation',
+      `0x${'34'.repeat(32)}`
+    )).toBe(false)
+    expect(globalThis.localStorage.getItem(laneHeadKey))
+      .toBe(legacyLaneHead)
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}new-operation`
+    )).toBeNull()
+    expect(
+      useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'new-operation')
+        ?.userOperationHash
+    ).toBeUndefined()
+  })
+
+  it('restores a submitted operation from its per-operation journal', async () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    )).toContain(`0x${'12'.repeat(32)}`)
+
+    // Model a last-writer race that loses the operation from the shared
+    // snapshot. The per-operation journal remains authoritative.
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: { operations: [], activeLanes: {} },
+        version: 1,
+      })
+    )
+
+    await useSponsoredOperationStore.persist.rehydrate()
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        id: 'operation-1',
+        status: 'submitting',
+        userOperationHash: `0x${'12'.repeat(32)}`,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('merges peer storage without erasing a newer persisted submission hash', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    const currentState = useSponsoredOperationStore.getState()
+    const currentOperation = currentState.operations[0]!
+    const staleOperation = {
+      ...currentOperation,
+      status: 'awaiting-signature' as const,
+      userOperationHash: undefined,
+      updatedAt: currentOperation.updatedAt - 1,
+    }
+
+    const merged = mergeSponsoredOperationState({
+      operations: [staleOperation],
+      activeLanes: {},
+    }, currentState)
+
+    expect(merged.operations[0]).toMatchObject({
+      status: 'submitting',
+      userOperationHash: `0x${'12'.repeat(32)}`,
+    })
+    expect(merged.activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('keeps a local operation when a peer snapshot omits its id', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+
+    const merged = mergeSponsoredOperationState({
+      operations: [],
+      activeLanes: {},
+    }, useSponsoredOperationStore.getState())
+
+    expect(merged.operations).toHaveLength(1)
+    expect(merged.operations[0]?.userOperationHash)
+      .toBe(`0x${'12'.repeat(32)}`)
+    expect(merged.activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('never creates or rewrites the read-only legacy snapshot', () => {
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    expect(globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )).toBeNull()
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    )).toContain(`0x${'12'.repeat(32)}`)
+
+    // Generic Zustand persistence may run from any tab. It can update
+    // directly addressed journals, but the whole-store key remains a
+    // read-only legacy inbox.
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+
+    expect(globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )).toBeNull()
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    )).toContain(`0x${'12'.repeat(32)}`)
+  })
+
+  it('does not erase legacy evidence that races an unrelated tab write', () => {
+    begin('seed-operation')
+    const legacyOperation = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+      id: 'legacy-operation',
+      status: 'dropped' as const,
+      userOperationHash: `0x${'34'.repeat(32)}` as `0x${string}`,
+    }
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.clear()
+
+    const originalGetItem =
+      globalThis.localStorage.getItem.bind(globalThis.localStorage)
+    const originalSetItem =
+      globalThis.localStorage.setItem.bind(globalThis.localStorage)
+    let injected = false
+    vi.spyOn(globalThis.localStorage, 'getItem').mockImplementation((key) => {
+      const staleValue = originalGetItem(key)
+      if (!injected && key === SPONSORED_OPERATION_STORAGE_NAME) {
+        injected = true
+        originalSetItem(
+          SPONSORED_OPERATION_STORAGE_NAME,
+          JSON.stringify({
+            state: {
+              operations: [legacyOperation],
+              activeLanes: {},
+            },
+            version: 0,
+          })
+        )
+      }
+      return staleValue
+    })
+
+    // This models generic persistence in a different current-code tab. It
+    // read the old value before a version-0 tab published its operation.
+    begin('current-operation')
+
+    expect(injected).toBe(true)
+    expect(originalGetItem(SPONSORED_OPERATION_STORAGE_NAME))
+      .toContain('legacy-operation')
+  })
+
+  it('promotes the next ambiguous legacy hash after one is force-released', async () => {
+    begin('operation-1')
+    const base = useSponsoredOperationStore.getState().operations[0]!
+    const migrated = migrateSponsoredOperationState({
+      operations: [
+        {
+          ...base,
+          id: 'older-operation',
+          status: 'dropped',
+          userOperationHash: `0x${'12'.repeat(32)}`,
+          updatedAt: 1,
+        },
+        {
+          ...base,
+          id: 'newer-operation',
+          status: 'execution-reverted',
+          userOperationHash: `0x${'34'.repeat(32)}`,
+          updatedAt: 2,
+        },
+      ],
+      activeLanes: {},
+    }, 0)
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState(migrated)
+
+    expect(migrated.activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'newer-operation',
+    })
+    await forceUnlockLegacySponsoredOperation('newer-operation')
+
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'older-operation',
+    })
+    expect(
+      useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'newer-operation')?.status
+    ).toBe('outcome-unknown')
+
+    // The rollout guard must promote/preserve the remaining ambiguous hash
+    // without relying on shared-state or journal-key enumeration.
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    globalThis.localStorage.setItem(
+      SPONSORED_OPERATION_STORAGE_NAME,
+      JSON.stringify({
+        state: { operations: [], activeLanes: {} },
+        version: 1,
+      })
+    )
+    vi.spyOn(globalThis.localStorage, 'key').mockReturnValue(null)
+    restoreSponsoredOperationLane({
+      chainId: 421614,
+      accountAddress: ACCOUNT,
+      lane: 'default',
+    })
+
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'older-operation',
+    })
+  })
+
+  it('promotes the next ambiguous legacy hash after canonical confirmation', () => {
+    begin('operation-1')
+    const base = useSponsoredOperationStore.getState().operations[0]!
+    const migrated = migrateSponsoredOperationState({
+      operations: [
+        {
+          ...base,
+          id: 'older-operation',
+          status: 'dropped',
+          userOperationHash: `0x${'12'.repeat(32)}`,
+          updatedAt: 1,
+        },
+        {
+          ...base,
+          id: 'newer-operation',
+          status: 'confirmed',
+          userOperationHash: `0x${'34'.repeat(32)}`,
+          updatedAt: 2,
+        },
+      ],
+      activeLanes: {},
+    }, 0)
+    globalThis.localStorage.clear()
+    useSponsoredOperationStore.setState(migrated)
+
+    useSponsoredOperationStore.getState().transition(
+      'newer-operation',
+      'confirmed'
+    )
+
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'older-operation',
+    })
   })
 })

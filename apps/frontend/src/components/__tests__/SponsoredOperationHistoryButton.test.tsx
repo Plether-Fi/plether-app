@@ -37,7 +37,10 @@ vi.mock('../../perps-aa', async (importOriginal) => {
 })
 
 import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
-import { useSponsoredOperationStore } from '../../perps-aa'
+import {
+  createSponsoredOperationSignal,
+  useSponsoredOperationStore,
+} from '../../perps-aa'
 
 const OTHER_ACCOUNT =
   '0x3333333333333333333333333333333333333333' as Address
@@ -55,6 +58,9 @@ function operation(input: {
   transactionHash?: Hex
   reason?: SponsoredOperation['reason']
   sponsorshipAccepted?: boolean
+  retryable?: boolean
+  manifestVersion?: string
+  submissionMetadataVersion?: 1
 }): SponsoredOperation {
   return {
     id: input.id,
@@ -63,7 +69,8 @@ function operation(input: {
       input.accountAddress ?? identityMocks.accountAddress as Address,
     chainId: input.chainId ?? identityMocks.chainId,
     accountMode: 'simple',
-    manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+    manifestVersion:
+      input.manifestVersion ?? 'perps-aa-arbitrum-sepolia-v1',
     action: input.action,
     lane: 'default',
     status: input.status,
@@ -71,8 +78,10 @@ function operation(input: {
       input.sponsorshipAccepted ?? input.status !== 'failed',
     userOperationHash: input.userOperationHash,
     transactionHash: input.transactionHash,
+    transactionHashVerified: input.transactionHash !== undefined,
     reason: input.reason,
-    retryable: input.reason !== undefined,
+    retryable: input.retryable ?? input.reason !== undefined,
+    submissionMetadataVersion: input.submissionMetadataVersion,
     retryCount: 0,
     createdAt: input.updatedAt - 1_000,
     updatedAt: input.updatedAt,
@@ -84,6 +93,16 @@ function operation(input: {
 
 describe('SponsoredOperationHistoryButton', () => {
   beforeEach(() => {
+    globalThis.localStorage.clear()
+    vi.stubGlobal('navigator', {
+      locks: {
+        request: vi.fn(async (
+          name: string,
+          _options: LockOptions,
+          callback: (lock: Lock | null) => Promise<unknown> | unknown
+        ) => await callback({ name, mode: 'exclusive' } as Lock)),
+      } as unknown as LockManager,
+    })
     useSponsoredOperationStore.setState({
       operations: [],
       activeLanes: {},
@@ -92,6 +111,8 @@ describe('SponsoredOperationHistoryButton', () => {
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
   })
 
   it('does not claim sponsorship for a failure before submission', () => {
@@ -116,10 +137,193 @@ describe('SponsoredOperationHistoryButton', () => {
       name: 'Open Trading Account activity. 1 action needs attention.',
     }))
 
-    expect(screen.getByText('Not submitted · No network gas used'))
+    expect(screen.getByText('Not included · No network gas used'))
       .toBeInTheDocument()
     expect(screen.queryByText('Sponsored by Plether · 0 ETH network gas'))
       .not.toBeInTheDocument()
+    expect(screen.getByText(
+      'Plether gas sponsorship is temporarily unavailable. Your action was not sent. Retry the same Trading Account action or contact support.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText(/could not verify whether this transaction/i))
+      .not.toBeInTheDocument()
+  })
+
+  it('shows recovered submission uncertainty without calling it a sponsorship failure', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'submission-uncertain',
+          action: 'place-order',
+          status: 'confirming',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          reason: 'BUNDLER_UNAVAILABLE',
+          sponsorshipAccepted: true,
+          retryable: false,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action in progress.',
+    }))
+
+    expect(screen.getByText('Checking submission status')).toBeInTheDocument()
+    expect(screen.getByText(
+      'Gas sponsorship approved · Submission unconfirmed'
+    )).toBeInTheDocument()
+    expect(screen.getByText(
+      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/your action was not sent/i))
+      .not.toBeInTheDocument()
+    expect(screen.getByRole('link', {
+      name: 'Check operation on Blockscout',
+    })).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/op/${USER_OPERATION_HASH}`
+    )
+  })
+
+  it('labels a receipt timeout as unknown submission status', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'receipt-timeout',
+          action: 'place-order',
+          status: 'receipt-timeout',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          reason: 'BUNDLER_UNAVAILABLE',
+          sponsorshipAccepted: true,
+          retryable: false,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(screen.getByText('Submission status unknown')).toBeInTheDocument()
+    expect(screen.getByText(
+      'Gas sponsorship approved · Submission unconfirmed'
+    )).toBeInTheDocument()
+    expect(screen.getByText(
+      'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText(/could not sponsor/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/your action was not sent/i))
+      .not.toBeInTheDocument()
+  })
+
+  it('tells the user when protocol evidence makes retrying safe', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'expired',
+          action: 'place-order',
+          status: 'expired',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          reason: 'expired',
+          sponsorshipAccepted: true,
+          retryable: true,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(screen.getByText('Expired')).toBeInTheDocument()
+    expect(screen.getByText(
+      'This operation expired before it was included onchain. It is safe to retry the action.'
+    )).toBeInTheDocument()
+    expect(screen.getByText('Not included · No network gas used'))
+      .toBeInTheDocument()
+  })
+
+  it('requires explicit confirmation to release a legacy lock as outcome unknown', async () => {
+    const confirm = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirm)
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'legacy-lock',
+          action: 'place-order',
+          status: 'receipt-timeout',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          reason: 'BUNDLER_UNAVAILABLE',
+          sponsorshipAccepted: true,
+          retryable: false,
+          manifestVersion:
+            'perps-aa-arbitrum-sepolia-20260717-v1',
+        }),
+      ],
+      activeLanes: {
+        [`${identityMocks.accountAddress.toLowerCase()}:default`]:
+          'legacy-lock',
+      },
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Force-release stale local lock',
+    }))
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining(
+      'may already have executed or may still execute later'
+    ))
+    expect(await screen.findByText('Outcome unknown')).toBeInTheDocument()
+    expect(screen.getByText('Past onchain outcome unverified'))
+      .toBeInTheDocument()
+    expect(screen.getByText(
+      'You force-released this stale local lock. Plether cannot prove whether the old action executed or may still execute later. Close or reload every other Plether tab, then review your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText('Not included · No network gas used'))
+      .not.toBeInTheDocument()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('does not call a consumed nonce replaced or retry-safe', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'nonce-consumed',
+          action: 'place-order',
+          status: 'outcome-unknown',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          sponsorshipAccepted: true,
+          retryable: false,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(screen.getByText('Outcome unknown')).toBeInTheDocument()
+    expect(screen.getByText(
+      'The old nonce can no longer land, but Plether could not prove which operation consumed it. Refresh and review your Trading Account before taking another action. Do not blindly retry it.'
+    )).toBeInTheDocument()
+    expect(screen.queryByText(/safe to retry/i)).not.toBeInTheDocument()
   })
 
   it('prioritizes actions that need attention over in-progress and recent activity', () => {
@@ -261,6 +465,7 @@ describe('SponsoredOperationHistoryButton', () => {
   })
 
   it('keeps failed or cancellable history reachable when zero operations completed', () => {
+    createSponsoredOperationSignal('building')
     useSponsoredOperationStore.setState({
       operations: [
         operation({
@@ -374,9 +579,17 @@ describe('SponsoredOperationHistoryButton', () => {
     })).toHaveTextContent('history')
 
     act(() => {
-      useSponsoredOperationStore.getState().transition('failed', 'building')
+      useSponsoredOperationStore.getState().beginOperation({
+        id: 'failed-again',
+        ownerAddress: identityMocks.ownerAddress as Address,
+        accountAddress: identityMocks.accountAddress as Address,
+        chainId: 421614,
+        accountMode: 'simple',
+        manifestVersion: 'v1',
+        action: 'withdraw',
+      })
       useSponsoredOperationStore.getState().failOperation({
-        id: 'failed',
+        id: 'failed-again',
         reason: 'POLICY_DENIED',
         retryable: false,
       })
@@ -392,9 +605,10 @@ describe('SponsoredOperationHistoryButton', () => {
       name: 'Open Trading Account activity. 1 action needs attention.',
     }))
     expect(
-      useSponsoredOperationStore.getState().operations[0]
+      useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'failed-again')
         ?.acknowledgedAttentionRevision
-    ).toBe(2)
+    ).toBe(1)
     expect(screen.getByText('1 action needs attention')).toBeInTheDocument()
     expect(screen.getByRole('button', {
       name: 'Open Trading Account activity.',

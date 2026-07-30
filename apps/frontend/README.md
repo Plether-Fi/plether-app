@@ -50,10 +50,51 @@ keeps direct callers from spoofing the client IP used for rate limits. The
 testnet deploy workflow provisions the Pages value from the GitHub Actions
 secret with the same name; the backend must receive the matching secret.
 
-The frontend persists the locally computed UserOperation hash before calling
-`eth_sendUserOperation`. Ambiguous submissions remain locked for status and
-receipt reconciliation; they are not automatically rebuilt or sent through
-the owner EOA.
+Before `eth_sendUserOperation`, the frontend atomically persists the locally
+computed hash with the signed UserOperation preimage. Recovery parses that
+preimage, recomputes and matches the exact hash, and derives the nonce and
+nonzero pinned-Pimlico `validUntil` from it. Pimlico statuses are diagnostic
+only after an exact receipt miss. A receipt becomes terminal evidence only
+after its transaction and EntryPoint event are verified against the canonical
+RPC at or below the safe head. Pimlico outages remain inconclusive but do not
+prevent independent safe-chain nonce and expiry recovery.
+
+At one safe block, recovery reads the timestamp and EntryPoint nonce for the
+key encoded in the nonce's upper 192 bits. An unchanged nonce after the
+verified deadline is retry-safe expired. An advanced nonce without a verified
+event releases the lane as outcome unknown and non-retryable because the old
+nonce cannot land.
+
+Blockscout is only a positive event locator: empty or missing results never
+prove absence, and every hit is verified by an exact one-block canonical RPC
+`UserOperationEvent` query. Third-party, RPC, and corrupt-data failures remain
+locked unless the verified protocol nonce/expiry proof resolves future
+execution. Legacy hash-only records and old diagnostic terminal labels are
+re-locked by storage migration, backfilled into their directly addressed lane
+head while holding that lane's browser lock, and never auto-expire. Each one
+instead exposes a force-release escape hatch warning that the old action may
+already have executed or may still execute later. It requires reviewing the
+Trading Account and operation hash and explicitly accepting the risk before
+repeating the action. Before retrying, close or reload every other Plether tab
+so an already-open legacy client cannot restore the obsolete shared-store lock.
+
+Submission, stale-record recovery, and manual release share a browser-wide
+lane lock. The app refuses to send unless its exact hash and signed preimage
+were durably written to a dedicated per-operation recovery journal and a
+directly addressable chain/account/lane head. Under the lane lock, submission
+and recovery read that head directly rather than depending on storage-key
+enumeration. The conservative head is written before its journals, making a
+crash between durable writes fail closed. Cross-tab hydration merges journals
+with the old shared snapshot, but version 1 treats that whole-store key as a
+read-only legacy inbox. Mutable current persistence uses per-operation
+journals; only the locked migration and submission paths mutate lane heads.
+Manual and canonical resolutions are written first to append-only
+ID/hash/status tombstones and overlaid on every recovery read. This prevents
+any current tab—not just the submitting one—from erasing legacy evidence or
+rewriting a resolved operation into a blocker through a stale write.
+Hash-verified records can continue recovery across a metadata-only manifest
+version bump; a changed EntryPoint still fails hash verification closed.
+Operations are never automatically rebuilt or sent through the owner EOA.
 
 ## Networks
 

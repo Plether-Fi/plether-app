@@ -107,6 +107,7 @@ vi.mock('../../hooks', () => ({
 
 describe('perps lifecycle labels', () => {
   beforeEach(() => {
+    globalThis.localStorage.clear()
     mockIsConnected = false
     identityMocks.isAaManifestConfigured = false
     identityMocks.usdcSupportsEip3009 = false

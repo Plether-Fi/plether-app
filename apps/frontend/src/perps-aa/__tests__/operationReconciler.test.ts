@@ -13,9 +13,16 @@ const ENTRY_POINT = '0x3333333333333333333333333333333333333333' as Address
 const HASH = `0x${'44'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'55'.repeat(32)}` as Hex
 
+function receiptNotFoundError(): Error {
+  const error = new Error('receipt not found')
+  error.name = 'UserOperationReceiptNotFoundError'
+  return error
+}
+
 function runtime(
   status: PimlicoUserOperationStatus,
-  receiptSuccess = true
+  receiptSuccess = true,
+  receiptAvailable = status === 'included'
 ): PerpsAaSmartAccountRuntime {
   const receipt = {
     actualGasCost: 1n,
@@ -54,7 +61,12 @@ function runtime(
             ? TRANSACTION_HASH
             : null,
       })),
-      getUserOperationReceipt: vi.fn(async () => receipt),
+      getUserOperationReceipt: vi.fn(async () => {
+        if (!receiptAvailable) {
+          throw receiptNotFoundError()
+        }
+        return receipt
+      }),
     },
   }
 }
@@ -65,6 +77,9 @@ describe('reconcilePimlicoUserOperation', () => {
     'not_submitted',
     'submitted',
     'queued',
+    'rejected',
+    'failed',
+    'reverted',
   ] satisfies PimlicoUserOperationStatus[])(
     'keeps %s fail-closed and pending',
     async (status) => {
@@ -77,20 +92,6 @@ describe('reconcilePimlicoUserOperation', () => {
       })
     }
   )
-
-  it.each([
-    ['rejected', 'dropped'],
-    ['failed', 'dropped'],
-    ['reverted', 'execution-reverted'],
-  ] as const)('maps %s to terminal %s', async (status, terminalStatus) => {
-    await expect(reconcilePimlicoUserOperation({
-      runtime: runtime(status),
-      userOperationHash: HASH,
-    })).resolves.toMatchObject({
-      kind: 'terminal',
-      terminalStatus,
-    })
-  })
 
   it('requires a successful UserOperation receipt after inclusion', async () => {
     await expect(reconcilePimlicoUserOperation({
@@ -111,5 +112,45 @@ describe('reconcilePimlicoUserOperation', () => {
       kind: 'confirmed',
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it('keeps vendor inclusion pending until a canonical-safe receipt is available', async () => {
+    await expect(reconcilePimlicoUserOperation({
+      runtime: runtime('included', true, false),
+      userOperationHash: HASH,
+    })).resolves.toMatchObject({
+      kind: 'pending',
+      status: 'included',
+      transactionHash: TRANSACTION_HASH,
+    })
+  })
+
+  it('lets an exact receipt override a stale terminal status', async () => {
+    const managedRuntime = runtime('failed', true, true)
+    await expect(reconcilePimlicoUserOperation({
+      runtime: managedRuntime,
+      userOperationHash: HASH,
+    })).resolves.toMatchObject({
+      kind: 'confirmed',
+      transactionHash: TRANSACTION_HASH,
+    })
+    expect(
+      managedRuntime.smartAccount.getUserOperationStatus
+    ).not.toHaveBeenCalled()
+  })
+
+  it('keeps transport failures fail-closed instead of trusting status', async () => {
+    const managedRuntime = runtime('not_submitted')
+    managedRuntime.smartAccount.getUserOperationReceipt = vi.fn(async () => {
+      throw new Error('RPC transport unavailable')
+    })
+
+    await expect(reconcilePimlicoUserOperation({
+      runtime: managedRuntime,
+      userOperationHash: HASH,
+    })).rejects.toThrow('RPC transport unavailable')
+    expect(
+      managedRuntime.smartAccount.getUserOperationStatus
+    ).not.toHaveBeenCalled()
   })
 })
