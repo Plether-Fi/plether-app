@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, use } from 'react'
 import type {
   PerpsActionKind,
   SmartAccountCall,
@@ -87,5 +87,5 @@ export const PerpsAaRuntimeContext = createContext<
 >(undefined)
 
 export function usePerpsAaRuntime(): PerpsAaSmartAccountRuntime | undefined {
-  return useContext(PerpsAaRuntimeContext)
+  return use(PerpsAaRuntimeContext)
 }

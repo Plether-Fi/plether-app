@@ -51,6 +51,7 @@ import {
   getPerpsOpenRevertMessage,
   getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
+import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
@@ -631,25 +632,6 @@ function maxLeverageFromMaintenanceMargin(maintenanceMarginBps: bigint | undefin
 
 function directionLabel(direction: Direction): string {
   return direction === 'long' ? 'Long plDXY Perp' : 'Short plDXY Perp'
-}
-
-export function getOpenCapacityUnavailableMessage({
-  direction,
-  isOpeningFromZero,
-  minimumDxyExposureUsdc,
-}: {
-  direction: Direction
-  isOpeningFromZero: boolean
-  minimumDxyExposureUsdc: bigint
-}): string {
-  const selectedDirectionLabel = direction === 'long' ? 'Long' : 'Short'
-  const opposingDirectionLabel = direction === 'long' ? 'Short' : 'Long'
-  const minimumLabel = isOpeningFromZero ? 'minimum position size' : 'minimum increase size'
-  const alternativeAction = isOpeningFromZero
-    ? `You can open a ${opposingDirectionLabel} plDXY Perp position instead, which helps rebalance the market.`
-    : `You can reduce or close your current ${selectedDirectionLabel} position. After closing it, you can open a ${opposingDirectionLabel} plDXY Perp position, which helps rebalance the market.`
-
-  return `${selectedDirectionLabel} plDXY Perp positions are temporarily unavailable because there is not enough remaining ${selectedDirectionLabel} capacity to fit the ${minimumLabel} of ${formatPerpsUsdc(minimumDxyExposureUsdc)} USDC. Opening more ${selectedDirectionLabel} exposure would worsen the market imbalance. ${alternativeAction}`
 }
 
 function OrderSummaryRawAmount({ value }: { value: bigint }) {
