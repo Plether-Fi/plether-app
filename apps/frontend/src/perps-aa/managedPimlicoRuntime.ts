@@ -8,6 +8,7 @@ import {
   isAddress,
   isAddressEqual,
   isHex,
+  maxUint256,
   parseAbi,
   parseAbiItem,
   size,
@@ -108,6 +109,35 @@ function assertReceipt(
       'Pimlico returned a receipt for a different Trading Account operation'
     )
   }
+}
+
+function normalizeReceiptNonce(
+  receipt: UserOperationReceipt<'0.8'>
+): UserOperationReceipt<'0.8'> {
+  // Pimlico's JSON-RPC response currently leaves `nonce` as a quantity string
+  // at runtime even though permissionless/viem declares it as bigint.
+  const nonce: unknown = receipt.nonce
+  if (
+    typeof nonce === 'bigint' &&
+    nonce >= 0n &&
+    nonce <= maxUint256
+  ) {
+    return receipt
+  }
+  if (
+    typeof nonce === 'string' &&
+    /^0x(?:0|[1-9a-f][0-9a-f]*)$/i.test(nonce)
+  ) {
+    const normalizedNonce = hexToBigInt(nonce as Hex)
+    if (normalizedNonce > maxUint256) {
+      throw new Error('Pimlico returned an invalid UserOperation receipt nonce')
+    }
+    return {
+      ...receipt,
+      nonce: normalizedNonce,
+    }
+  }
+  throw new Error('Pimlico returned an invalid UserOperation receipt nonce')
 }
 
 async function assertCanonicalSafeReceipt(input: {
@@ -507,9 +537,11 @@ export async function createManagedPimlicoRuntime({
         ),
 
       getUserOperationReceipt: async (userOperationHash) => {
-        const receipt = await pimlicoClient.getUserOperationReceipt({
-          hash: userOperationHash,
-        })
+        const receipt = normalizeReceiptNonce(
+          await pimlicoClient.getUserOperationReceipt({
+            hash: userOperationHash,
+          })
+        )
         assertReceipt(
           receipt,
           userOperationHash,

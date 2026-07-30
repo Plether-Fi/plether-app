@@ -277,7 +277,9 @@ describe('createManagedPimlicoRuntime', () => {
       actualGasUsed: 1n,
       entryPoint: ENTRY_POINT,
       logs: [],
-      nonce: 7n,
+      // Match Pimlico's actual JSON-RPC runtime shape. Its public TypeScript
+      // type currently claims this field has already been converted to bigint.
+      nonce: '0x7' as never,
       sender: ACCOUNT,
       success: true,
       userOpHash: HASH,
@@ -334,8 +336,57 @@ describe('createManagedPimlicoRuntime', () => {
       runtime.smartAccount.getUserOperationReceipt(HASH)
     ).rejects.toMatchObject({
       name: 'UserOperationReceiptNotSafeError',
-      receipt: pimlicoReceipt,
+      receipt: {
+        ...pimlicoReceipt,
+        nonce: 7n,
+      },
     })
+    expect(pimlicoReceipt.nonce).toBe('0x7')
+  })
+
+  it('rejects an out-of-range Pimlico receipt nonce', async () => {
+    const getUserOperationReceipt = vi.fn(async () => ({
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint: ENTRY_POINT,
+      logs: [],
+      nonce: `0x1${'0'.repeat(64)}` as never,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: HASH,
+      receipt: {
+        blockHash: INCLUDED_BLOCK_HASH,
+        blockNumber: 554n,
+        status: 'success',
+        transactionHash: TRANSACTION_HASH,
+      },
+    }))
+    mocks.createPimlicoClient.mockReturnValue({
+      getUserOperationGasPrice: vi.fn(async () => ({
+        fast: { maxFeePerGas: 2n, maxPriorityFeePerGas: 1n },
+      })),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationStatus: vi.fn(),
+      getUserOperationReceipt,
+    })
+    const getBlock = vi.fn()
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock,
+      } as never,
+    })
+
+    await expect(
+      runtime.smartAccount.getUserOperationReceipt(HASH)
+    ).rejects.toThrow('invalid UserOperation receipt nonce')
+    expect(getBlock).not.toHaveBeenCalled()
   })
 
   it('reads recovery time and nonce from the same safe block', async () => {

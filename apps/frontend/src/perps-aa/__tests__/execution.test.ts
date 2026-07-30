@@ -324,6 +324,87 @@ describe('executeSponsoredPerpsAction', () => {
     }
   })
 
+  it('retries a failed inclusion callback while canonical inclusion is polled', async () => {
+    vi.useFakeTimers()
+    try {
+      const includedReceipt = receipt()
+      const getUserOperationReceipt = vi.fn()
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(includedReceipt)
+        )
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(includedReceipt)
+        )
+        .mockResolvedValue(includedReceipt)
+      const callbackError = new Error('temporary receipt parser failure')
+      const onIncluded = vi.fn()
+        .mockImplementationOnce(() => {
+          throw callbackError
+        })
+
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({ getUserOperationReceipt }),
+        onIncluded,
+      })
+
+      await vi.waitFor(() => {
+        expect(onIncluded).toHaveBeenCalledOnce()
+      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({ status: 'confirming' })
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(onIncluded).toHaveBeenCalledTimes(2)
+      expect(onIncluded).toHaveBeenLastCalledWith({
+        userOperationHash: USER_OPERATION_HASH,
+        receipt: includedReceipt,
+        transactionHash: TRANSACTION_HASH,
+      })
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      await expect(execution).resolves.toMatchObject({
+        userOperationHash: USER_OPERATION_HASH,
+        transactionHash: TRANSACTION_HASH,
+      })
+      expect(onIncluded).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('preserves the last reconciliation error as the receipt timeout cause', async () => {
+    vi.useFakeTimers()
+    try {
+      const reconciliationError =
+        new Error('canonical receipt nonce mismatch')
+      const getUserOperationReceipt = vi.fn(async () => {
+        throw reconciliationError
+      })
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({ getUserOperationReceipt }),
+      }).catch((error: unknown) => error)
+
+      await vi.waitFor(() => {
+        expect(getUserOperationReceipt).toHaveBeenCalled()
+      })
+      await vi.advanceTimersByTimeAsync(120_000)
+
+      await expect(execution).resolves.toMatchObject({
+        name: 'BundlerRequestError',
+        terminalStatus: 'receipt-timeout',
+        cause: reconciliationError,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps a hash mismatch in reconciliation instead of retrying', async () => {
     const getUserOperationStatus = vi.fn()
     const managedRuntime = runtime({
