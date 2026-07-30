@@ -4,6 +4,7 @@ import type {
   PerpsAaSmartAccountRuntime,
   PimlicoUserOperationStatus,
 } from './runtimeContext'
+import { UserOperationReceiptNotSafeError } from './runtimeContext'
 
 export type PimlicoReconciliationOutcome =
   | {
@@ -13,6 +14,11 @@ export type PimlicoReconciliationOutcome =
     }
   | {
       kind: 'confirmed'
+      receipt: ManagedUserOperationReceipt
+      transactionHash: Hex
+    }
+  | {
+      kind: 'included'
       receipt: ManagedUserOperationReceipt
       transactionHash: Hex
     }
@@ -69,16 +75,38 @@ function isReceiptNotFoundError(error: unknown): boolean {
   return false
 }
 
-async function getExactReceiptOrUndefined(input: {
+type ExactReceiptResult =
+  | {
+      kind: 'safe'
+      receipt: ManagedUserOperationReceipt
+    }
+  | {
+      kind: 'included'
+      receipt: ManagedUserOperationReceipt
+    }
+  | {
+      kind: 'not-found'
+    }
+
+async function getExactReceipt(input: {
   runtime: PerpsAaSmartAccountRuntime
   userOperationHash: Hex
-}): Promise<ManagedUserOperationReceipt | undefined> {
+}): Promise<ExactReceiptResult> {
   try {
-    return await input.runtime.smartAccount.getUserOperationReceipt(
-      input.userOperationHash
-    )
+    return {
+      kind: 'safe',
+      receipt: await input.runtime.smartAccount.getUserOperationReceipt(
+        input.userOperationHash
+      ),
+    }
   } catch (error) {
-    if (isReceiptNotFoundError(error)) return undefined
+    if (error instanceof UserOperationReceiptNotSafeError) {
+      return {
+        kind: 'included',
+        receipt: error.receipt,
+      }
+    }
+    if (isReceiptNotFoundError(error)) return { kind: 'not-found' }
     throw error
   }
 }
@@ -90,8 +118,17 @@ export async function reconcilePimlicoUserOperation(input: {
   // The exact receipt is authoritative and must win over stale Pimlico status
   // data. Only a typed not-found result permits status/expiry reconciliation;
   // transport, decoding, and account-mismatch failures stay fail-closed.
-  const exactReceipt = await getExactReceiptOrUndefined(input)
-  if (exactReceipt) return outcomeFromReceipt(exactReceipt)
+  const exactReceipt = await getExactReceipt(input)
+  if (exactReceipt.kind === 'safe') {
+    return outcomeFromReceipt(exactReceipt.receipt)
+  }
+  if (exactReceipt.kind === 'included') {
+    return {
+      kind: 'included',
+      receipt: exactReceipt.receipt,
+      transactionHash: exactReceipt.receipt.receipt.transactionHash,
+    }
+  }
 
   const status = await input.runtime.smartAccount.getUserOperationStatus(
     input.userOperationHash
@@ -99,10 +136,10 @@ export async function reconcilePimlicoUserOperation(input: {
 
   // Vendor status is diagnostic only. Rejected, failed, and reverted do not
   // prove canonical inclusion or that the signed operation can never land.
-  // Even "included" remains pending until the runtime returns a receipt whose
-  // EntryPoint event and transaction are canonical at the safe block.
-  // Keep the lane ambiguous until an exact receipt/event or hash-bound
-  // nonce/expiry evidence resolves it.
+  // A vendor-only "included" status remains pending. The separate `included`
+  // outcome above requires an exact receipt whose transaction and EntryPoint
+  // event match the canonical latest chain, but only a safe receipt or the
+  // hash-bound nonce/expiry evidence may resolve the durable lane.
   return {
     kind: 'pending',
     status: status.status,

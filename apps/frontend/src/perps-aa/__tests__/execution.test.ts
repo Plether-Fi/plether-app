@@ -23,6 +23,7 @@ import type {
   ManagedUserOperationReceipt,
   PerpsAaSmartAccountRuntime,
 } from '../runtimeContext'
+import { UserOperationReceiptNotSafeError } from '../runtimeContext'
 
 const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
@@ -139,6 +140,7 @@ function runtime(input: {
   getUserOperationHash?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationHash']
   sendUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
   getUserOperationStatus?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationStatus']
+  getUserOperationReceipt?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationReceipt']
 } = {}): PerpsAaSmartAccountRuntime {
   return {
     chainId: 421614,
@@ -161,7 +163,8 @@ function runtime(input: {
           status: 'included',
           transactionHash: TRANSACTION_HASH,
         })),
-      getUserOperationReceipt: vi.fn(async () => receipt()),
+      getUserOperationReceipt: input.getUserOperationReceipt ??
+        vi.fn(async () => receipt()),
     },
   }
 }
@@ -270,6 +273,55 @@ describe('executeSponsoredPerpsAction', () => {
       submissionMetadataVersion: 1,
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it('reports canonical inclusion before safe confirmation without unlocking the lane', async () => {
+    vi.useFakeTimers()
+    try {
+      const includedReceipt = receipt()
+      const getUserOperationReceipt = vi.fn()
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(includedReceipt)
+        )
+        .mockResolvedValue(includedReceipt)
+      const onIncluded = vi.fn()
+
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({ getUserOperationReceipt }),
+        onIncluded,
+      })
+
+      await vi.waitFor(() => {
+        expect(onIncluded).toHaveBeenCalledOnce()
+      })
+      expect(onIncluded).toHaveBeenCalledWith({
+        userOperationHash: USER_OPERATION_HASH,
+        receipt: includedReceipt,
+        transactionHash: TRANSACTION_HASH,
+      })
+      const includedOperation =
+        useSponsoredOperationStore.getState().operations[0]
+      expect(includedOperation).toMatchObject({ status: 'confirming' })
+      expect(includedOperation?.transactionHash).toBeUndefined()
+      expect(includedOperation?.transactionHashVerified).toBeUndefined()
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      await expect(execution).resolves.toMatchObject({
+        userOperationHash: USER_OPERATION_HASH,
+        transactionHash: TRANSACTION_HASH,
+      })
+      expect(onIncluded).toHaveBeenCalledOnce()
+      expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+        status: 'confirmed',
+        transactionHash: TRANSACTION_HASH,
+        transactionHashVerified: true,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('keeps a hash mismatch in reconciliation instead of retrying', async () => {

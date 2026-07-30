@@ -28,6 +28,7 @@ import {
   findSponsorRequestError,
   SponsoredPreflightError,
   trackSponsoredOperationPreflightFailure,
+  type ExecuteSponsoredPerpsActionResult,
   usePerpsAaRuntime,
   usePerpsIdentity,
 } from '../perps-aa'
@@ -49,12 +50,13 @@ interface CommitOrderInput {
   slippagePercent: number
   isClose: boolean
   onStatus?: (status: SponsoredExecutionStatus) => void
+  onIncluded?: (result: CommitOrderResult) => void
 }
 
 interface CommitOrderResult {
   hash: Hex
   userOperationHash?: Hex
-  orderId?: bigint
+  orderId: bigint
 }
 
 interface ExecuteOrderResult {
@@ -141,6 +143,45 @@ function requireIncludedTransactionHash(input: {
     )
   }
   return input.transactionHash
+}
+
+function commitOrderResult(
+  result: ExecuteSponsoredPerpsActionResult,
+  expected: {
+    accountAddress: Address
+    orderRouter: Address
+  }
+): CommitOrderResult {
+  const hash = requireIncludedTransactionHash(result)
+  if (
+    !result.receipt.success ||
+    result.receipt.receipt.status !== 'success'
+  ) {
+    throw new Error(
+      'The sponsored commit UserOperation reverted before creating an order.'
+    )
+  }
+
+  const committed = parseEventLogs({
+    abi: PERPS_ORDER_ROUTER_ABI,
+    eventName: 'OrderCommitted',
+    logs: result.receipt.logs.filter((log) =>
+      isAddressEqual(log.address, expected.orderRouter)
+    ),
+  }).filter((event) =>
+    isAddressEqual(event.args.account, expected.accountAddress)
+  )
+  if (committed.length !== 1) {
+    throw new Error(
+      'Sponsored commit was included, but no unique matching OrderCommitted event was found. Refresh account state before retrying.'
+    )
+  }
+
+  return {
+    hash,
+    userOperationHash: result.userOperationHash,
+    orderId: committed[0].args.orderId,
+  }
 }
 
 function readRecordValue(value: unknown, key: string, index: number): unknown {
@@ -635,6 +676,7 @@ export function usePerpsTrading() {
     slippagePercent,
     isClose,
     onStatus,
+    onIncluded,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
     let diagnosticClient: PerpsPublicClient | undefined
     let diagnosticArgs: CommitOrderArgs | undefined
@@ -752,32 +794,30 @@ export function usePerpsTrading() {
         targetPrice,
         isClose,
       })
+      const expectedCommit = {
+        accountAddress: sponsored.accountAddress,
+        orderRouter: sponsored.manifest.orderRouter,
+      }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
         onStatus,
+        onIncluded: (includedResult) => {
+          const includedCommit = commitOrderResult(
+            includedResult,
+            expectedCommit
+          )
+          diagnosticHash = includedCommit.hash
+          invalidatePerpsReads()
+          onIncluded?.(includedCommit)
+        },
       })
-      const hash = requireIncludedTransactionHash(result)
-      diagnosticHash = hash
-      const committed = parseEventLogs({
-        abi: PERPS_ORDER_ROUTER_ABI,
-        eventName: 'OrderCommitted',
-        logs: [...result.receipt.receipt.logs],
-      }).at(0)
-      if (committed?.args.orderId === undefined) {
-        throw new Error(
-          'Sponsored commit was included, but no OrderCommitted event was found. Refresh account state before retrying.'
-        )
-      }
-
+      const committedResult = commitOrderResult(result, expectedCommit)
+      diagnosticHash = committedResult.hash
       invalidatePerpsReads()
-      return {
-        hash,
-        userOperationHash: result.userOperationHash,
-        orderId: committed.args.orderId,
-      }
+      return committedResult
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
@@ -798,23 +838,26 @@ export function usePerpsTrading() {
         diagnosticMarginDelta !== undefined
       ) {
         const failureHash = diagnosticHash ?? findTransactionHash(error)
-        throw new Error(await describeCommitFailure({
-          client: diagnosticClient,
-          address,
-          hash: failureHash,
-          intro: failureHash === undefined
-            ? 'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.'
-            : 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
-          args: diagnosticArgs,
-          isClose,
-          side: diagnosticSide,
-          sizeDelta: diagnosticSizeDelta,
-          marginDelta: diagnosticMarginDelta,
-          oraclePrice,
-        }))
+        throw new Error(
+          await describeCommitFailure({
+            client: diagnosticClient,
+            address,
+            hash: failureHash,
+            intro: failureHash === undefined
+              ? 'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.'
+              : 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
+            args: diagnosticArgs,
+            isClose,
+            side: diagnosticSide,
+            sizeDelta: diagnosticSizeDelta,
+            marginDelta: diagnosticMarginDelta,
+            oraclePrice,
+          }),
+          { cause: error }
+        )
       }
 
-      throw new Error(message)
+      throw new Error(message, { cause: error })
     }
   }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution])
 

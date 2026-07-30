@@ -12,6 +12,16 @@ import type {
 export type ManagedUserOperation = UserOperation<'0.8'>
 export type ManagedUserOperationReceipt = UserOperationReceipt<'0.8'>
 
+export class UserOperationReceiptNotSafeError extends Error {
+  readonly receipt: ManagedUserOperationReceipt
+
+  constructor(receipt: ManagedUserOperationReceipt) {
+    super('The UserOperation receipt has not reached the canonical safe block')
+    this.name = 'UserOperationReceiptNotSafeError'
+    this.receipt = receipt
+  }
+}
+
 export type PimlicoUserOperationStatus =
   | 'not_found'
   | 'not_submitted'

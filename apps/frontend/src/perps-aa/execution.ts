@@ -41,6 +41,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   authorizationTokenToClearOnConfirmation?: Address
   lane?: string
   onStatus?: (status: SponsoredExecutionStatus) => void
+  onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
 }
 
 export interface ExecuteSponsoredPerpsActionResult {
@@ -86,12 +87,25 @@ async function waitForPimlicoOutcome(input: {
   userOperationHash: Hex
   signal: AbortSignal
   onTransactionHash: (hash: Hex) => void
+  onIncluded?: (receipt: ManagedUserOperationReceipt) => void
   timeoutMs?: number
   pollIntervalMs?: number
 }): Promise<ManagedUserOperationReceipt> {
   const startedAt = Date.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   const pollIntervalMs = input.pollIntervalMs ?? 1_500
+  let inclusionReported = false
+
+  const reportInclusion = (receipt: ManagedUserOperationReceipt) => {
+    if (inclusionReported) return
+    inclusionReported = true
+    try {
+      input.onIncluded?.(receipt)
+    } catch {
+      // Consumer callbacks must not interrupt safe-head reconciliation or
+      // release the sponsored-operation lane early.
+    }
+  }
 
   while (Date.now() - startedAt < timeoutMs) {
     input.signal.throwIfAborted()
@@ -100,13 +114,17 @@ async function waitForPimlicoOutcome(input: {
         runtime: input.runtime,
         userOperationHash: input.userOperationHash,
       })
+      if (outcome.kind === 'included') {
+        reportInclusion(outcome.receipt)
+      }
       if (
-        outcome.kind !== 'pending' &&
+        (outcome.kind === 'confirmed' || outcome.kind === 'terminal') &&
         outcome.transactionHash
       ) {
         input.onTransactionHash(outcome.transactionHash)
       }
       if (outcome.kind === 'confirmed') {
+        reportInclusion(outcome.receipt)
         return outcome.receipt
       }
       if (outcome.kind === 'terminal') {
@@ -343,6 +361,13 @@ export async function executeSponsoredPerpsAction(
       userOperationHash: localUserOperationHash,
       signal: activeTracker.signal,
       onTransactionHash: activeTracker.onTransactionHash,
+      onIncluded: (includedReceipt) => {
+        input.onIncluded?.({
+          userOperationHash: localUserOperationHash,
+          receipt: includedReceipt,
+          transactionHash: includedReceipt.receipt.transactionHash,
+        })
+      },
     })
     status('confirmed')
 

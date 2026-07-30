@@ -48,6 +48,14 @@ RPC at or below the `safe` head. A Pimlico transport failure remains
 inconclusive and does not prevent the independent safe-chain nonce and expiry
 proof below from resolving the operation.
 
+Interactive order progress is deliberately separate from that durable
+resolution. An above-`safe` receipt may advance the trade ticket only after
+the same exact transaction and EntryPoint event pass canonical RPC validation
+and the expected protocol event is decoded from that receipt. This
+latest-chain inclusion callback never records a verified transaction hash,
+clears authorization state, releases the sponsored-operation lane, or permits
+a retry. Safe-head reconciliation continues independently.
+
 For a new record, recovery parses the persisted signed preimage, recomputes
 the exact EntryPoint hash, and requires it to match the persisted hash and
 Trading Account. The operation nonce and sponsorship validity are trusted
