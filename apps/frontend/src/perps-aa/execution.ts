@@ -95,15 +95,20 @@ async function waitForPimlicoOutcome(input: {
   const timeoutMs = input.timeoutMs ?? 120_000
   const pollIntervalMs = input.pollIntervalMs ?? 1_500
   let inclusionReported = false
+  let lastReconciliationError: unknown
 
   const reportInclusion = (receipt: ManagedUserOperationReceipt) => {
     if (inclusionReported) return
-    inclusionReported = true
     try {
       input.onIncluded?.(receipt)
-    } catch {
+      inclusionReported = true
+      lastReconciliationError = undefined
+    } catch (error) {
+      lastReconciliationError = error
       // Consumer callbacks must not interrupt safe-head reconciliation or
-      // release the sponsored-operation lane early.
+      // release the sponsored-operation lane early. Retry while inclusion is
+      // still being polled so a transient parser or state error cannot leave
+      // the UI permanently behind canonical chain state.
     }
   }
 
@@ -141,6 +146,7 @@ async function waitForPimlicoOutcome(input: {
       ) {
         throw error
       }
+      lastReconciliationError = error
       // Receipt and status requests can race with Pimlico's indexer or fail
       // transiently. Keep reconciling the already-persisted local hash.
     }
@@ -153,6 +159,7 @@ async function waitForPimlicoOutcome(input: {
       'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
     retryable: false,
     terminalStatus: 'receipt-timeout',
+    cause: lastReconciliationError,
   })
 }
 
