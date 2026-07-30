@@ -47,6 +47,25 @@ export interface ManagedPimlicoSmartAccount {
   ): Promise<ManagedUserOperationReceipt>
 }
 
+export interface SponsoredOperationRecoverySnapshot {
+  blockNumber: bigint
+  blockTimestamp: bigint
+  accountNonce: bigint
+  userOperationEvidence:
+    | {
+        kind: 'included'
+        success: boolean
+        transactionHash: Hex
+        blockNumber: bigint
+      }
+    | {
+        kind: 'not-located'
+      }
+    | {
+        kind: 'not-safe-yet'
+      }
+}
+
 export interface PerpsAaSmartAccountRuntime {
   chainId: number
   ownerAddress: Address
@@ -54,8 +73,13 @@ export interface PerpsAaSmartAccountRuntime {
   factoryAddress: Address
   accountVersion: string
   accountIndex: string
+  manifestVersion?: string
   walletFamily?: string
   walletVersion?: string
+  getRecoverySnapshot?(
+    userOperationHash: Hex,
+    nonceKey?: bigint
+  ): Promise<SponsoredOperationRecoverySnapshot>
 }
 
 export const PerpsAaRuntimeContext = createContext<

@@ -18,6 +18,7 @@ import {
   SponsoredOperationLockedError,
   useSponsoredOperationStore,
 } from './operationStore'
+import type { ManagedUserOperation } from './runtimeContext'
 
 export interface SponsoredOperationAnalyticsMetadata {
   accountMode?: string
@@ -43,7 +44,12 @@ export interface SponsoredOperationTracker {
   id: string
   signal: AbortSignal
   onStatus: (status: SponsoredExecutionStatus) => void
-  onUserOperationHash: (hash: Hex) => void
+  onUserOperationHash: (
+    hash: Hex,
+    metadata: {
+      signedUserOperation: ManagedUserOperation
+    }
+  ) => boolean
   onTransactionHash: (hash: Hex) => void
   onEstimationRestart: () => void
   fail: (error: unknown) => void
@@ -169,9 +175,12 @@ export function beginSponsoredOperationTracking(
       }))
     },
 
-    onUserOperationHash: (hash) => {
-      useSponsoredOperationStore.getState().recordUserOperationHash(id, hash)
-    },
+    onUserOperationHash: (hash, submissionMetadata) =>
+      useSponsoredOperationStore.getState().recordUserOperationHash(
+        id,
+        hash,
+        submissionMetadata
+      ),
 
     onTransactionHash: (hash) => {
       useSponsoredOperationStore.getState().recordTransactionHash(id, hash)
@@ -196,17 +205,17 @@ export function beginSponsoredOperationTracking(
       }
       const sponsorError = findSponsorRequestError(error)
       const bundlerError = findBundlerRequestError(error)
-      const hasSubmittedHash = currentOperation?.userOperationHash !== undefined
+      const hasPersistedHash = currentOperation?.userOperationHash !== undefined
       const terminalStatus = bundlerError?.terminalStatus
       const operationStatus =
         terminalStatus && terminalStatus !== 'receipt-timeout'
           ? terminalStatus
-          : hasSubmittedHash
+          : hasPersistedHash
             ? 'receipt-timeout'
             : 'failed'
       const reason = sponsorError?.reason ??
         terminalStatus ??
-        (hasSubmittedHash
+        (hasPersistedHash
           ? 'BUNDLER_UNAVAILABLE'
           : undefined) ??
         'UNKNOWN'

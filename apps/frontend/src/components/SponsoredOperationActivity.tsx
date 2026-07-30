@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   canCancelSponsoredOperationLocally,
+  canForceUnlockLegacySponsoredOperation,
+  forceUnlockLegacySponsoredOperation,
   getSponsoredOperationAttentionRevision,
   isSponsoredOperationAttentionStatus,
   isSponsoredOperationTerminal,
@@ -20,6 +22,16 @@ import { Badge, Modal } from './ui'
 
 const SUCCESS_FEEDBACK_DURATION_MS = 5_000
 const SUCCESS_EXIT_ANIMATION_MS = 240
+const SPONSORSHIP_FAILURE_REASONS = new Set([
+  'RESTART_ESTIMATION',
+  'RATE_LIMITED',
+  'SPONSOR_BUDGET_EXCEEDED',
+  'SIMULATION_FAILED',
+  'SPONSOR_UNAVAILABLE',
+  'POLICY_DENIED',
+  'PAYMASTER_PAUSED',
+  'ACCOUNT_NOT_TRUSTED',
+])
 
 function abbreviatedHash(hash: string): string {
   return `${hash.slice(0, 10)}…${hash.slice(-8)}`
@@ -89,6 +101,64 @@ function statusBadgeVariant(
   if (status === 'receipt-timeout') return 'warning'
   if (status === 'awaiting-signature') return 'info'
   return 'warning'
+}
+
+function isSubmissionUncertain(operation: SponsoredOperation): boolean {
+  if (!operation.userOperationHash) return false
+
+  return operation.status === 'receipt-timeout' ||
+    (
+      operation.reason !== undefined &&
+      (
+        operation.status === 'submitting' ||
+        operation.status === 'confirming'
+      )
+    )
+}
+
+function operationStatusLabel(operation: SponsoredOperation): string {
+  if (!isSubmissionUncertain(operation)) {
+    return sponsoredOperationStatusLabel(operation.status)
+  }
+
+  return operation.status === 'receipt-timeout'
+    ? 'Submission status unknown'
+    : 'Checking submission status'
+}
+
+function operationReasonMessage(
+  operation: SponsoredOperation
+): string | undefined {
+  if (isSubmissionUncertain(operation)) {
+    return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+  }
+
+  switch (operation.status) {
+    case 'execution-reverted':
+      return 'The transaction was included but failed during onchain execution.'
+    case 'dropped':
+      return 'The bundler reported that this operation was dropped, but Plether could not independently verify its final onchain outcome.'
+    case 'replaced':
+      return 'The Trading Account nonce was consumed by another operation. Refresh account state before trying this action again.'
+    case 'expired':
+      return 'This operation expired before it was included onchain. It is safe to retry the action.'
+    case 'outcome-unknown':
+      return operation.forcedLegacyUnlock
+        ? 'You force-released this stale local lock. Plether cannot prove whether the old action executed or may still execute later. Close or reload every other Plether tab, then review your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+        : 'The old nonce can no longer land, but Plether could not prove which operation consumed it. Refresh and review your Trading Account before taking another action. Do not blindly retry it.'
+    case 'failed':
+      if (!operation.reason) return undefined
+      if (!SPONSORSHIP_FAILURE_REASONS.has(operation.reason)) {
+        return 'Plether could not prepare or submit this transaction. Your action was not sent.'
+      }
+      return sponsorReasonMessage(new SponsorRequestError({
+        reason: operation.reason,
+        message: operation.reason,
+        retryable: operation.retryable ?? false,
+      }))
+    default:
+      return undefined
+  }
 }
 
 function HashActions({
@@ -194,6 +264,10 @@ function OperationHistoryItem({
   operation: SponsoredOperation
   manifest: ReturnType<typeof usePerpsIdentity>['manifest']
 }) {
+  const [legacyUnlockState, setLegacyUnlockState] = useState<
+    'idle' | 'working' | 'blocked'
+  >('idle')
+  const submissionUncertain = isSubmissionUncertain(operation)
   const userOperationUrl = operation.userOperationHash && manifest
     ? manifest.userOperationExplorerUrlTemplate.replace(
         '{userOperationHash}',
@@ -218,28 +292,43 @@ function OperationHistoryItem({
     ? 'View transaction on Blockscout'
     : replacementUserOperationUrl
       ? 'View replacement operation'
-      : 'Track operation on Blockscout'
-  const reasonMessage = operation.reason
-    ? sponsorReasonMessage(new SponsorRequestError({
-        reason: operation.reason,
-        message: operation.reason,
-        retryable: operation.retryable ?? false,
-      }))
-    : undefined
+      : submissionUncertain
+        ? 'Check operation on Blockscout'
+        : 'Track operation on Blockscout'
+  const reasonMessage = operationReasonMessage(operation)
   const canCancelLocally = canCancelSponsoredOperationLocally(operation)
+  const canForceUnlockLegacy =
+    canForceUnlockLegacySponsoredOperation(operation)
   const hasTechnicalDetails = Boolean(
     operation.userOperationHash ??
     operation.transactionHash ??
     operation.replacementUserOperationHash
   )
-  const wasSubmitted = hasTechnicalDetails
-  const sponsorshipSummary = wasSubmitted && operation.sponsorshipAccepted
-    ? 'Sponsored by Plether · 0 ETH network gas'
-    : isSponsoredOperationTerminal(operation.status) && !wasSubmitted
-      ? 'Not submitted · No network gas used'
-      : operation.sponsorshipAccepted
-        ? 'Gas sponsorship approved'
-        : undefined
+  const wasIncluded =
+    operation.transactionHash !== undefined &&
+    operation.transactionHashVerified === true
+  const sponsorshipSummary = operation.status === 'outcome-unknown'
+    ? 'Past onchain outcome unverified'
+    : submissionUncertain && operation.sponsorshipAccepted
+    ? 'Gas sponsorship approved · Submission unconfirmed'
+    : wasIncluded && operation.sponsorshipAccepted
+      ? 'Sponsored by Plether · 0 ETH network gas'
+      : isSponsoredOperationTerminal(operation.status) &&
+          !wasIncluded &&
+          (
+            operation.userOperationHash === undefined ||
+            operation.status === 'expired'
+          )
+        ? 'Not included · No network gas used'
+        : isSponsoredOperationTerminal(operation.status) && !wasIncluded
+          ? 'Past onchain outcome unverified'
+        : operation.sponsorshipAccepted
+          ? 'Gas sponsorship approved'
+          : undefined
+  const sponsorshipSummaryTone =
+    wasIncluded && !submissionUncertain
+      ? 'text-positive'
+      : 'text-content-secondary'
   const itemTone = isSponsoredOperationAttentionStatus(operation.status)
     ? 'border-brand-orange/50'
     : isInProgressStatus(operation.status)
@@ -265,10 +354,10 @@ function OperationHistoryItem({
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
           <Badge variant={statusBadgeVariant(operation.status)}>
-            {sponsoredOperationStatusLabel(operation.status)}
+            {operationStatusLabel(operation)}
           </Badge>
           {sponsorshipSummary ? (
-            <span className={`text-xs ${wasSubmitted ? 'text-positive' : 'text-content-secondary'}`}>
+            <span className={`text-xs ${sponsorshipSummaryTone}`}>
               {sponsorshipSummary}
             </span>
           ) : null}
@@ -284,13 +373,13 @@ function OperationHistoryItem({
       {reasonMessage ? (
         <p className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-xs leading-5 text-content-secondary">
           {reasonMessage}
-          {operation.retryable
+          {operation.status === 'failed' && operation.retryable
             ? ' Retry the same Trading Account action or contact support.'
             : ''}
         </p>
       ) : null}
 
-      {primaryExplorerUrl || canCancelLocally ? (
+      {primaryExplorerUrl || canCancelLocally || canForceUnlockLegacy ? (
         <div className="flex flex-wrap items-center gap-3">
           {primaryExplorerUrl ? (
             <a
@@ -315,6 +404,40 @@ function OperationHistoryItem({
             >
               Cancel local request
             </button>
+          ) : null}
+          {canForceUnlockLegacy ? (
+            <>
+              <button
+                type="button"
+                disabled={legacyUnlockState === 'working'}
+                className="border border-brand-orange/50 px-3 py-1.5 text-xs font-semibold text-[#FFAB96] transition-colors hover:border-[#FFAB96] hover:text-content-primary disabled:cursor-wait disabled:opacity-60"
+                onClick={() => {
+                  const confirmed = globalThis.confirm(
+                    'Force-release this stale local lock? The old action may already have executed or may still execute later. Close or reload every other Plether tab, then check your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+                  )
+                  if (!confirmed) return
+
+                  setLegacyUnlockState('working')
+                  void forceUnlockLegacySponsoredOperation(operation.id)
+                    .then((unlocked) => {
+                      setLegacyUnlockState(unlocked ? 'idle' : 'blocked')
+                    })
+                }}
+              >
+                {legacyUnlockState === 'working'
+                  ? 'Checking lane…'
+                  : 'Force-release stale local lock'}
+              </button>
+              {legacyUnlockState === 'blocked' ? (
+                <span
+                  role="status"
+                  className="text-xs text-content-secondary"
+                >
+                  Another tab or status check is using this Trading Account.
+                  Close it or wait a moment, then try again.
+                </span>
+              ) : null}
+            </>
           ) : null}
         </div>
       ) : null}

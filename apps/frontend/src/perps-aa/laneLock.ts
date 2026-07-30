@@ -1,5 +1,5 @@
 import type { Address } from 'viem'
-import { SponsoredOperationLockedError } from './operationStore'
+import { SponsoredOperationLockedError } from './operationLockError'
 
 export class SponsoredOperationCoordinationError extends Error {
   constructor(message: string, options?: ErrorOptions) {

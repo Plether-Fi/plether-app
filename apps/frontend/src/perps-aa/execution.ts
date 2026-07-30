@@ -21,8 +21,11 @@ import {
   trackSponsoredOperationPreflightFailure,
 } from './operationTracker'
 import { reconcilePimlicoUserOperation } from './operationReconciler'
+import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
+  hasDurableSponsoredOperationSubmission,
+  restoreSponsoredOperationLane,
   useSponsoredOperationStore,
 } from './operationStore'
 import type {
@@ -97,7 +100,10 @@ async function waitForPimlicoOutcome(input: {
         runtime: input.runtime,
         userOperationHash: input.userOperationHash,
       })
-      if (outcome.transactionHash) {
+      if (
+        outcome.kind !== 'pending' &&
+        outcome.transactionHash
+      ) {
         input.onTransactionHash(outcome.transactionHash)
       }
       if (outcome.kind === 'confirmed') {
@@ -194,7 +200,17 @@ export async function executeSponsoredPerpsAction(
       lane,
     })
     try {
+      restoreSponsoredOperationLane({
+        chainId: input.manifest.chainId,
+        accountAddress: input.runtime.smartAccount.accountAddress,
+        lane,
+      })
       await useSponsoredOperationStore.persist.rehydrate()
+      restoreSponsoredOperationLane({
+        chainId: input.manifest.chainId,
+        accountAddress: input.runtime.smartAccount.accountAddress,
+        lane,
+      })
     } catch (error) {
       throw new SponsoredPreflightError({
         reason: 'OPERATION_STORE_UNAVAILABLE',
@@ -232,6 +248,19 @@ export async function executeSponsoredPerpsAction(
     } catch (error) {
       throw asSponsorRequestError(error)
     }
+    if (
+      pimlicoSponsorshipValidUntil(
+        operation.paymaster,
+        operation.paymasterData
+      ) === undefined
+    ) {
+      throw new SponsorRequestError({
+        reason: 'SPONSOR_UNAVAILABLE',
+        message:
+          'Pimlico returned a sponsorship format without a recoverable validity deadline',
+        retryable: false,
+      })
+    }
 
     activeTracker.signal.throwIfAborted()
     status('awaiting-signature')
@@ -239,15 +268,56 @@ export async function executeSponsoredPerpsAction(
       await input.runtime.smartAccount.signUserOperation(operation)
     activeTracker.signal.throwIfAborted()
 
+    // Wallet approval can remain open long enough for another tab's legacy
+    // storage event to hydrate into this tab. Re-read and bulk-guard the lane
+    // under the still-held Web Lock immediately before binding the signed
+    // hash; recordUserOperationHash will then reject every competing record.
+    restoreSponsoredOperationLane({
+      chainId: input.manifest.chainId,
+      accountAddress: input.runtime.smartAccount.accountAddress,
+      lane,
+    })
+
     // The EntryPoint hash excludes the account signature, but includes all
     // nonce, gas, factory and managed-paymaster fields. Persist it before the
     // first network submission so an ambiguous response can only be reconciled,
     // never retried as a fresh owner-EOA transaction.
     const localUserOperationHash =
       input.runtime.smartAccount.getUserOperationHash(signedOperation)
-    activeTracker.onUserOperationHash(localUserOperationHash)
+    const submissionStatePersisted =
+      activeTracker.onUserOperationHash(localUserOperationHash, {
+        signedUserOperation: signedOperation,
+      })
+    if (!submissionStatePersisted) {
+      throw new SponsoredPreflightError({
+        reason: 'OPERATION_STORE_UNAVAILABLE',
+        message:
+          'The signed UserOperation could not be bound to its recovery record',
+      })
+    }
 
     status('submitting')
+    // No user callback runs after this point. Reconcile any storage event that
+    // landed during the status update, then exact-check the singleton head,
+    // signed journal, shared snapshot, and persistence revision immediately
+    // before invoking Pimlico.
+    restoreSponsoredOperationLane({
+      chainId: input.manifest.chainId,
+      accountAddress: input.runtime.smartAccount.accountAddress,
+      lane,
+    })
+    if (
+      !hasDurableSponsoredOperationSubmission(
+        activeTracker.id,
+        localUserOperationHash
+      )
+    ) {
+      throw new SponsoredPreflightError({
+        reason: 'OPERATION_STORE_UNAVAILABLE',
+        message:
+          'The signed UserOperation recovery record changed before submission',
+      })
+    }
     let returnedUserOperationHash: Hex
     try {
       returnedUserOperationHash =

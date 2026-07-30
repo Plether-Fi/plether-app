@@ -32,6 +32,7 @@ const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
 describe('sponsored operation tracker', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    globalThis.localStorage.clear()
     useSponsoredOperationStore.setState({
       operations: [],
       activeLanes: {},
