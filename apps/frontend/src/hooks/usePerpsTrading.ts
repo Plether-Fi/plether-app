@@ -48,7 +48,7 @@ interface CommitOrderInput {
   oraclePrice: bigint
   slippagePercent: number
   isClose: boolean
-  onWalletRequestStart?: () => void
+  onStatus?: (status: SponsoredExecutionStatus) => void
 }
 
 interface CommitOrderResult {
@@ -634,7 +634,7 @@ export function usePerpsTrading() {
     oraclePrice,
     slippagePercent,
     isClose,
-    onWalletRequestStart,
+    onStatus,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
     let diagnosticClient: PerpsPublicClient | undefined
     let diagnosticArgs: CommitOrderArgs | undefined
@@ -757,11 +757,7 @@ export function usePerpsTrading() {
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
-        onStatus: (status: SponsoredExecutionStatus) => {
-          if (status === 'awaiting-signature') {
-            onWalletRequestStart?.()
-          }
-        },
+        onStatus,
       })
       const hash = requireIncludedTransactionHash(result)
       diagnosticHash = hash

@@ -122,6 +122,103 @@ describe('perps lifecycle labels', () => {
     })
   })
 
+  function startDelayedSponsoredCommit() {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise<never>(() => undefined))
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialReviewOpen
+        initialSize="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={1_000_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
+
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
+      onStatus?: (
+        status: 'awaiting-signature' | 'submitting' | 'confirming'
+      ) => void
+    } | undefined
+    if (!commitInput?.onStatus) {
+      throw new Error('Expected commitOrder to receive an onStatus callback')
+    }
+    return commitInput.onStatus
+  }
+
+  it('clears the delayed wallet warning when the signed operation starts submitting', async () => {
+    vi.useFakeTimers()
+    const onStatus = startDelayedSponsoredCommit()
+
+    act(() => onStatus('awaiting-signature'))
+    expect(screen.getByText('Waiting for wallet confirmation')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(14_999)
+    })
+    expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(screen.getByText(/No wallet response yet/)).toBeInTheDocument()
+
+    await act(async () => {
+      onStatus('submitting')
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(screen.getByText('Submitting sponsored transaction')).toBeInTheDocument()
+    expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000)
+    })
+    expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+
+    await act(async () => {
+      onStatus('confirming')
+    })
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(screen.getByText('Waiting for on-chain confirmation')).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(15_000)
+    })
+    expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+  })
+
+  it('cancels the wallet warning timer when signing finishes before the threshold', async () => {
+    vi.useFakeTimers()
+    const onStatus = startDelayedSponsoredCommit()
+
+    act(() => onStatus('awaiting-signature'))
+    await act(async () => {
+      vi.advanceTimersByTime(10_000)
+    })
+
+    act(() => onStatus('submitting'))
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+
+    expect(screen.getByText('Submitting sponsored transaction')).toBeInTheDocument()
+    expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+  })
+
   it('distinguishes plDXY Perp exposure from contract and entry notionals', () => {
     render(
       <>

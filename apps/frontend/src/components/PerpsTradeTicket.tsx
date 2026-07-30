@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAppKit } from '@reown/appkit/react'
+import type { SponsoredExecutionStatus } from '@plether/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
@@ -1526,6 +1527,9 @@ export function PerpsTradeTicket({
   const [keeperRevealNowMs, setKeeperRevealNowMs] = useState(() => Date.now())
   const [finalizationLoadingMessage, setFinalizationLoadingMessage] = useState<FinalizationLoadingMessage>(FINALIZATION_LOADING_MESSAGES[0])
   const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
+  const [commitExecutionStatus, setCommitExecutionStatus] = useState<
+    SponsoredExecutionStatus | undefined
+  >(initialLifecycleState === 'commitPending' ? 'awaiting-signature' : undefined)
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
@@ -1548,6 +1552,24 @@ export function PerpsTradeTicket({
       .at(0),
     [normalizedAccountAddress, sponsoredOperations]
   )
+  const commitPendingTitle =
+    commitExecutionStatus === 'submitting'
+      ? 'Submitting sponsored transaction'
+      : commitExecutionStatus === 'confirming'
+        ? 'Waiting for on-chain confirmation'
+        : commitExecutionStatus === 'confirmed'
+          ? 'Transaction confirmed'
+          : 'Waiting for wallet confirmation'
+  const commitPendingDescription =
+    commitExecutionStatus === 'submitting'
+      ? 'Your wallet approved the sponsored UserOperation. Plether is submitting it to the network.'
+      : commitExecutionStatus === 'confirming'
+        ? 'Your wallet approved the sponsored UserOperation and it was submitted. Plether is waiting for on-chain confirmation.'
+        : commitExecutionStatus === 'confirmed'
+          ? 'The sponsored UserOperation is confirmed on-chain. Plether is loading the committed order.'
+          : isSponsoredAccountConfigured
+            ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
+            : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
 
   useEffect(() => {
     onAccountRefreshRef.current = onAccountRefresh
@@ -1710,7 +1732,12 @@ export function PerpsTradeTicket({
   }, [canEnableMarginCallSimulator])
 
   useEffect(() => {
-    if (lifecycleState !== 'commitPending' || commitTxHash || flowError) {
+    if (
+      lifecycleState !== 'commitPending' ||
+      commitExecutionStatus !== 'awaiting-signature' ||
+      commitTxHash ||
+      flowError
+    ) {
       setWalletRequestWarning(undefined)
       return undefined
     }
@@ -1728,7 +1755,14 @@ export function PerpsTradeTicket({
     return () => {
       globalThis.clearTimeout(timeout)
     }
-  }, [address, chainId, commitTxHash, flowError, lifecycleState])
+  }, [
+    address,
+    chainId,
+    commitExecutionStatus,
+    commitTxHash,
+    flowError,
+    lifecycleState,
+  ])
 
   const dxyExposureNumber = parseAmount(size)
   const currentPositionSideValue = currentPosition?.exists ? currentPosition.direction : currentPositionSide
@@ -2591,6 +2625,7 @@ export function PerpsTradeTicket({
   async function handleConfirmCommit() {
     setFlowError(undefined)
     setWalletRequestWarning(undefined)
+    setCommitExecutionStatus(undefined)
     debugPerpsCommit('ticket:confirm-click', {
       enableLiveTrading,
       isConnected,
@@ -2618,6 +2653,7 @@ export function PerpsTradeTicket({
       setCommittedFrozenCloseSpreadUsdc(
         isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
       )
+      setCommitExecutionStatus('awaiting-signature')
       setLifecycleState('commitPending')
       return
     }
@@ -2651,10 +2687,15 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
-        onWalletRequestStart: () => {
-          debugPerpsCommit('ticket:lifecycle:commitPending')
-          trackPerpsOrderLifecycle('commit_pending', commonAnalyticsProperties)
-          setLifecycleState('commitPending')
+        onStatus: (status) => {
+          debugPerpsCommit(`ticket:execution:${status}`)
+          setCommitExecutionStatus(status)
+          if (status === 'awaiting-signature') {
+            trackPerpsOrderLifecycle('commit_pending', commonAnalyticsProperties)
+            setLifecycleState('commitPending')
+          } else {
+            setWalletRequestWarning(undefined)
+          }
         },
       })
       debugPerpsCommit('ticket:commit-result', {
@@ -2750,6 +2791,8 @@ export function PerpsTradeTicket({
     setCommittedOracleFrozenClose(undefined)
     setCommittedFrozenCloseSpreadUsdc(undefined)
     setFlowError(undefined)
+    setCommitExecutionStatus(undefined)
+    setWalletRequestWarning(undefined)
     setKeeperRevealDeadlineMs(undefined)
     setKeeperRevealNowMs(Date.now())
   }, [])
@@ -3348,12 +3391,8 @@ export function PerpsTradeTicket({
           {lifecycleState === 'commitPending' ? (
             <>
               <PendingStateCard
-                title="Waiting for wallet confirmation"
-                description={
-                  isSponsoredAccountConfigured
-                    ? 'Confirm the final sponsored UserOperation in your owner wallet. Plether has already installed the gas sponsorship.'
-                    : 'Confirm the commit transaction in your wallet, then wait for it to be included onchain.'
-                }
+                title={commitPendingTitle}
+                description={commitPendingDescription}
               />
 
               {walletRequestWarning ? (
