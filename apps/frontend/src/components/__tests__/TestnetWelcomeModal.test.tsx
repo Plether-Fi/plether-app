@@ -10,6 +10,7 @@ vi.mock('../../config/wagmi', () => ({
 }))
 
 import { TestnetWelcomeModalView } from '../TestnetWelcomeModal'
+import { TESTNET_FAUCET_TIMEOUT_MESSAGE } from '../../api/client'
 
 const walletAddress = '0x6b72fE6CC52201a1eb7892A813C6C10cCe62745c'
 
@@ -134,5 +135,26 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(screen.getByText('Mock USDC is already available for this wallet.')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /^0x/ })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Deposit' })).toBeInTheDocument()
+  })
+
+  it('shows an actionable faucet timeout and leaves retry available', () => {
+    render(
+      <TestnetWelcomeModalView
+        isOpen
+        isWalletConnected
+        isTradingAccountRecipient
+        walletAddress={walletAddress}
+        submitError={TESTNET_FAUCET_TIMEOUT_MESSAGE}
+        onClose={() => {}}
+        onWalletAddressChange={() => {}}
+        onConnectWallet={() => {}}
+        onRequestFunds={() => {}}
+      />
+    )
+
+    expect(screen.getByText(TESTNET_FAUCET_TIMEOUT_MESSAGE)).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Get 100,000 mock USDC' })
+    ).toBeEnabled()
   })
 })

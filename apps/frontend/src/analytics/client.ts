@@ -40,6 +40,7 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'sponsorship_status',
   'surface',
   'terminal_outcome',
+  'timeout_ms',
   'validation_reason',
   'wallet_family',
   'wallet_version',
