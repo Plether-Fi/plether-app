@@ -59,6 +59,13 @@ after its transaction and EntryPoint event are verified against the canonical
 RPC at or below the safe head. Pimlico outages remain inconclusive but do not
 prevent independent safe-chain nonce and expiry recovery.
 
+The trade ticket may progress earlier from an exact canonical-latest receipt
+after its matching EntryPoint event and expected protocol event are validated.
+That interactive inclusion signal does not mark the sponsored operation
+confirmed, persist a verified transaction hash, clear authorization state, or
+release its lane; all retry and recovery decisions continue to require the
+safe-chain evidence above.
+
 At one safe block, recovery reads the timestamp and EntryPoint nonce for the
 key encoded in the nonce's upper 192 bits. An unchanged nonce after the
 verified deadline is retry-safe expired. An advanced nonce without a verified

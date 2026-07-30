@@ -316,13 +316,25 @@ describe('createManagedPimlicoRuntime', () => {
           status: 'success',
           transactionHash: TRANSACTION_HASH,
         })),
+        getLogs: vi.fn(async () => [{
+          blockHash: INCLUDED_BLOCK_HASH,
+          blockNumber: 556n,
+          transactionHash: TRANSACTION_HASH,
+          args: {
+            userOpHash: HASH,
+            sender: ACCOUNT,
+            nonce: 7n,
+            success: true,
+          },
+        }]),
       } as never,
     })
 
     await expect(
       runtime.smartAccount.getUserOperationReceipt(HASH)
     ).rejects.toMatchObject({
-      name: 'UserOperationReceiptNotFoundError',
+      name: 'UserOperationReceiptNotSafeError',
+      receipt: pimlicoReceipt,
     })
   })
 

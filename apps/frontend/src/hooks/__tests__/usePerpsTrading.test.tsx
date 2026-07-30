@@ -151,9 +151,13 @@ function sponsoredResult() {
     transactionHash: TRANSACTION_HASH,
     receipt: {
       success: true,
+      logs: [{
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      }],
       receipt: {
         transactionHash: TRANSACTION_HASH,
         logs: [],
+        status: 'success',
       },
     },
   }
@@ -166,7 +170,12 @@ describe('usePerpsTrading', () => {
     mocks.getBlock.mockResolvedValue({ timestamp: 1_700_000_000n })
     mocks.simulateContract.mockResolvedValue({})
     mocks.executeSponsoredPerpsAction.mockResolvedValue(sponsoredResult())
-    mocks.parseEventLogs.mockReturnValue([{ args: { orderId: 42n } }])
+    mocks.parseEventLogs.mockReturnValue([{
+      args: {
+        account: ACCOUNT,
+        orderId: 42n,
+      },
+    }])
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
       switch (functionName) {
         case 'getPendingOrders':
@@ -228,10 +237,12 @@ describe('usePerpsTrading', () => {
   it('forwards managed sponsored operation status changes', async () => {
     mocks.identityReady = true
     const onStatus = vi.fn()
+    const onIncluded = vi.fn()
     mocks.executeSponsoredPerpsAction.mockImplementationOnce(async (input) => {
       input.onStatus?.('awaiting-signature')
       input.onStatus?.('submitting')
       input.onStatus?.('confirming')
+      input.onIncluded?.(sponsoredResult())
       return sponsoredResult()
     })
 
@@ -246,6 +257,7 @@ describe('usePerpsTrading', () => {
       slippagePercent: 0.1,
       isClose: false,
       onStatus,
+      onIncluded,
     })).resolves.toEqual({
       hash: TRANSACTION_HASH,
       userOperationHash: USER_OPERATION_HASH,
@@ -257,6 +269,19 @@ describe('usePerpsTrading', () => {
       ['submitting'],
       ['confirming'],
     ])
+    expect(onIncluded).toHaveBeenCalledOnce()
+    expect(onIncluded).toHaveBeenCalledWith({
+      hash: TRANSACTION_HASH,
+      userOperationHash: USER_OPERATION_HASH,
+      orderId: 42n,
+    })
+    expect(mocks.parseEventLogs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logs: [{
+          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        }],
+      })
+    )
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerAddress: OWNER,
@@ -265,6 +290,30 @@ describe('usePerpsTrading', () => {
           account: ACCOUNT,
         }),
       })
+    )
+  })
+
+  it('rejects an OrderCommitted log that belongs to another account', async () => {
+    mocks.identityReady = true
+    mocks.parseEventLogs.mockReturnValue([{
+      args: {
+        account: OWNER,
+        orderId: 99n,
+      },
+    }])
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      direction: 'long',
+      notionalUsdc: 1_000_000_000n,
+      sizeDelta: 1_000_000_000_000_000_000n,
+      marginUsdc: 200_000_000n,
+      oraclePrice: 98_300_000n,
+      slippagePercent: 0.1,
+      isClose: false,
+    })).rejects.toThrow(
+      'no unique matching OrderCommitted event was found'
     )
   })
 

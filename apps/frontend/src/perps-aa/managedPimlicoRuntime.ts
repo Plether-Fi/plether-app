@@ -33,6 +33,7 @@ import type {
   PimlicoUserOperationStatusResult,
   SponsoredOperationRecoverySnapshot,
 } from './runtimeContext'
+import { UserOperationReceiptNotSafeError } from './runtimeContext'
 
 const PIMLICO_STATUSES = new Set<PimlicoUserOperationStatus>([
   'not_found',
@@ -109,12 +110,6 @@ function assertReceipt(
   }
 }
 
-function receiptNotSafeYet(message: string): Error {
-  const error = new Error(message)
-  error.name = 'UserOperationReceiptNotFoundError'
-  return error
-}
-
 async function assertCanonicalSafeReceipt(input: {
   publicClient: PublicClient
   receipt: UserOperationReceipt<'0.8'>
@@ -128,11 +123,6 @@ async function assertCanonicalSafeReceipt(input: {
       hash: input.receipt.receipt.transactionHash,
     }),
   ])
-  if (input.receipt.receipt.blockNumber > safeBlock.number) {
-    throw receiptNotSafeYet(
-      'The UserOperation receipt has not reached the canonical safe block'
-    )
-  }
   if (
     canonicalTransactionReceipt.blockNumber !==
       input.receipt.receipt.blockNumber ||
@@ -178,6 +168,9 @@ async function assertCanonicalSafeReceipt(input: {
     throw new Error(
       'The canonical UserOperation event does not match Pimlico’s receipt'
     )
+  }
+  if (input.receipt.receipt.blockNumber > safeBlock.number) {
+    throw new UserOperationReceiptNotSafeError(input.receipt)
   }
 }
 

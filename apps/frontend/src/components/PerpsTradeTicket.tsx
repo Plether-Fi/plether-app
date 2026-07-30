@@ -12,7 +12,11 @@ import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../
 import { usePerpsTrading, useSwitchToArbitrumSepolia, waitForPerpsOrderTerminal } from '../hooks'
 import { getExplorerTxUrl } from '../utils/explorer'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
-import { usePerpsIdentity, useSponsoredOperationStore } from '../perps-aa'
+import {
+  findBundlerRequestError,
+  usePerpsIdentity,
+  useSponsoredOperationStore,
+} from '../perps-aa'
 import {
   adverseConfidenceBasketPrice,
   directionToPerpsSide,
@@ -73,6 +77,10 @@ type OrderLifecycleStep = 'preview' | 'commit' | 'reveal'
 type MarginAction = 'deposit' | 'withdraw'
 type MarginActionStatus = 'idle' | 'pending' | 'funding' | 'depositing' | 'failed'
 type CleanupStatus = 'idle' | 'pending' | 'failed'
+
+function readMutableRef<T>(ref: { current: T }): T {
+  return ref.current
+}
 
 interface PreviewRowBase {
   label: string
@@ -1533,6 +1541,19 @@ export function PerpsTradeTicket({
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
+  const commitAttemptIdRef = useRef(0)
+  const includedCommitAttemptRef = useRef<number | undefined>(undefined)
+  const includedCommitIdentityRef = useRef<{
+    hash: string
+    orderId: bigint
+  } | undefined>(undefined)
+  const deferredSafeConfirmationErrorRef = useRef<{
+    hash: string
+    message: string
+    orderId: bigint
+  } | undefined>(undefined)
+  const orderHistoryRef = useRef(orderHistory)
+  orderHistoryRef.current = orderHistory
   const handledMarginActionRequestRef = useRef<number | undefined>(undefined)
   const handledClosePositionRequestRef = useRef<number | undefined>(undefined)
   const terminalLifecycleTrackedRef = useRef<TradeLifecycleState | undefined>(undefined)
@@ -1639,6 +1660,17 @@ export function PerpsTradeTicket({
 
   const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
     if (order.status === 'Committed') return false
+    const includedIdentity = includedCommitIdentityRef.current
+    if (
+      includedIdentity !== undefined &&
+      (
+        order.orderId !== includedIdentity.orderId ||
+        order.commitTxHash.toLowerCase() !==
+          includedIdentity.hash.toLowerCase()
+      )
+    ) {
+      return false
+    }
 
     const terminalOrderKey = `${order.orderId.toString()}:${order.status}:${order.revealTxHash ?? ''}`
     if (handledTerminalOrderKeyRef.current === terminalOrderKey) return true
@@ -1667,9 +1699,42 @@ export function PerpsTradeTicket({
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return
 
-    const terminalOrder = orderHistory.find((row) => row.orderId === orderId && row.status !== 'Committed')
-    if (terminalOrder) {
-      applyTerminalOrder(terminalOrder)
+    const deferredSafeConfirmationError =
+      deferredSafeConfirmationErrorRef.current
+    if (
+      deferredSafeConfirmationError?.orderId === orderId &&
+      !orderHistory.some((row) =>
+        row.orderId === deferredSafeConfirmationError.orderId &&
+        row.commitTxHash.toLowerCase() ===
+          deferredSafeConfirmationError.hash.toLowerCase()
+      )
+    ) {
+      deferredSafeConfirmationErrorRef.current = undefined
+      includedCommitAttemptRef.current = undefined
+      includedCommitIdentityRef.current = undefined
+      handledTerminalOrderKeyRef.current = undefined
+      setOrderId(undefined)
+      setCommitTxHash(undefined)
+      setExecuteTxHash(undefined)
+      setFinalExecutionPrice(undefined)
+      setFinalVpiUsdc(undefined)
+      setFlowError(deferredSafeConfirmationError.message)
+      setLifecycleState('failed')
+      return
+    }
+
+    const includedIdentity = includedCommitIdentityRef.current
+    const indexedOrder = orderHistory.find((row) =>
+      row.orderId === orderId &&
+      (
+        includedIdentity === undefined ||
+        row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+      )
+    )
+    if (indexedOrder) {
+      if (indexedOrder.status !== 'Committed') {
+        applyTerminalOrder(indexedOrder)
+      }
     }
   }, [applyTerminalOrder, enableLiveTrading, orderHistory, orderId])
 
@@ -2623,6 +2688,9 @@ export function PerpsTradeTicket({
   }
 
   async function handleConfirmCommit() {
+    const commitAttemptId = commitAttemptIdRef.current + 1
+    commitAttemptIdRef.current = commitAttemptId
+    deferredSafeConfirmationErrorRef.current = undefined
     setFlowError(undefined)
     setWalletRequestWarning(undefined)
     setCommitExecutionStatus(undefined)
@@ -2679,6 +2747,51 @@ export function PerpsTradeTicket({
         isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
       )
       setFinalVpiUsdc(previewVpiUsdc)
+      const applyIncludedCommit = (result: {
+        hash: string
+        orderId: bigint
+      }) => {
+        if (commitAttemptIdRef.current !== commitAttemptId) return
+
+        const previousIdentity = includedCommitIdentityRef.current
+        const inclusionChanged = previousIdentity !== undefined &&
+          (
+            previousIdentity.orderId !== result.orderId ||
+            previousIdentity.hash.toLowerCase() !== result.hash.toLowerCase()
+          )
+        includedCommitIdentityRef.current = result
+        deferredSafeConfirmationErrorRef.current = undefined
+        setCommitTxHash(result.hash)
+        setOrderId(result.orderId)
+        const isFirstInclusion =
+          includedCommitAttemptRef.current !== commitAttemptId
+        if (!isFirstInclusion) {
+          if (inclusionChanged) {
+            handledTerminalOrderKeyRef.current = undefined
+            setExecuteTxHash(undefined)
+            setFinalExecutionPrice(undefined)
+            setFinalVpiUsdc(undefined)
+            setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
+            setKeeperRevealNowMs(Date.now())
+            setLifecycleState('revealPending')
+            onAccountRefresh?.()
+          }
+          return
+        }
+
+        includedCommitAttemptRef.current = commitAttemptId
+        setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
+        setKeeperRevealNowMs(Date.now())
+        setLifecycleState((currentState) => (
+          currentState === 'commitPreparing' ||
+          currentState === 'commitPending' ||
+          currentState === 'commitConfirmed'
+            ? 'revealPending'
+            : currentState
+        ))
+        trackPerpsOrderLifecycle('commit_succeeded', commonAnalyticsProperties)
+        onAccountRefresh?.()
+      }
       const result = await commitOrder({
         direction: effectiveOrderDirection,
         notionalUsdc: contractNotionalUsdc,
@@ -2687,7 +2800,15 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
+        onIncluded: (includedResult) => {
+          debugPerpsCommit('ticket:commit-included', {
+            hash: includedResult.hash,
+            orderId: includedResult.orderId,
+          })
+          applyIncludedCommit(includedResult)
+        },
         onStatus: (status) => {
+          if (commitAttemptIdRef.current !== commitAttemptId) return
           debugPerpsCommit(`ticket:execution:${status}`)
           setCommitExecutionStatus(status)
           if (status === 'awaiting-signature') {
@@ -2702,14 +2823,51 @@ export function PerpsTradeTicket({
         hash: result.hash,
         orderId: result.orderId,
       })
-      setCommitTxHash(result.hash)
-      setOrderId(result.orderId)
-      setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
-      setKeeperRevealNowMs(Date.now())
-      setLifecycleState('revealPending')
-      trackPerpsOrderLifecycle('commit_succeeded', commonAnalyticsProperties)
-      onAccountRefresh?.()
+      applyIncludedCommit(result)
     } catch (error) {
+      const inclusionWasReported = () =>
+        includedCommitAttemptRef.current === commitAttemptId
+      if (commitAttemptIdRef.current !== commitAttemptId) {
+        debugPerpsCommit('ticket:commit-error-after-inclusion', {
+          message: error instanceof Error ? error.message : String(error),
+        })
+        return
+      }
+      const includedIdentity = readMutableRef(includedCommitIdentityRef)
+      const currentOrderHistory = readMutableRef(orderHistoryRef)
+      const bundlerError = findBundlerRequestError(error)
+      const hasIndexedOrderEvidence =
+        includedIdentity !== undefined &&
+        currentOrderHistory.some((row) =>
+          row.orderId === includedIdentity.orderId &&
+          row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+        )
+      if (
+        inclusionWasReported() &&
+        bundlerError?.terminalStatus === 'receipt-timeout' &&
+        hasIndexedOrderEvidence
+      ) {
+        deferredSafeConfirmationErrorRef.current = {
+          ...includedIdentity,
+          message: bundlerError.message,
+        }
+        debugPerpsCommit('ticket:safe-confirmation-timeout-after-indexing', {
+          orderId: includedIdentity.orderId,
+          message: error instanceof Error ? error.message : String(error),
+        })
+        return
+      }
+      if (inclusionWasReported()) {
+        includedCommitAttemptRef.current = undefined
+        includedCommitIdentityRef.current = undefined
+        deferredSafeConfirmationErrorRef.current = undefined
+        handledTerminalOrderKeyRef.current = undefined
+        setOrderId(undefined)
+        setCommitTxHash(undefined)
+        setExecuteTxHash(undefined)
+        setFinalExecutionPrice(undefined)
+        setFinalVpiUsdc(undefined)
+      }
       debugPerpsCommit('ticket:commit-error', {
         message: error instanceof Error ? error.message : String(error),
       })
@@ -2778,6 +2936,10 @@ export function PerpsTradeTicket({
   }
 
   const resetReviewLifecycle = useCallback(() => {
+    commitAttemptIdRef.current += 1
+    includedCommitAttemptRef.current = undefined
+    includedCommitIdentityRef.current = undefined
+    deferredSafeConfirmationErrorRef.current = undefined
     handledTerminalOrderKeyRef.current = undefined
     setLifecycleState('preview')
     setOrderId(undefined)

@@ -6,6 +6,7 @@ import type {
   PerpsAaSmartAccountRuntime,
   PimlicoUserOperationStatus,
 } from '../runtimeContext'
+import { UserOperationReceiptNotSafeError } from '../runtimeContext'
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
@@ -123,6 +124,27 @@ describe('reconcilePimlicoUserOperation', () => {
       status: 'included',
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it('reports an exact canonical receipt separately while it awaits the safe head', async () => {
+    const managedRuntime = runtime('included')
+    const includedReceipt =
+      await managedRuntime.smartAccount.getUserOperationReceipt(HASH)
+    managedRuntime.smartAccount.getUserOperationReceipt = vi.fn(async () => {
+      throw new UserOperationReceiptNotSafeError(includedReceipt)
+    })
+
+    await expect(reconcilePimlicoUserOperation({
+      runtime: managedRuntime,
+      userOperationHash: HASH,
+    })).resolves.toMatchObject({
+      kind: 'included',
+      receipt: includedReceipt,
+      transactionHash: TRANSACTION_HASH,
+    })
+    expect(
+      managedRuntime.smartAccount.getUserOperationStatus
+    ).not.toHaveBeenCalled()
   })
 
   it('lets an exact receipt override a stale terminal status', async () => {

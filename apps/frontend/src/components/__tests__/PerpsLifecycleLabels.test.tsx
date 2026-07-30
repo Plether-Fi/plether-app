@@ -13,8 +13,14 @@ const wagmiMocks = vi.hoisted(() => ({
 
 vi.mock('../../perps-aa', async () => {
   const { useSponsoredOperationStore } = await import('../../perps-aa/operationStore')
+  const {
+    BundlerRequestError,
+    findBundlerRequestError,
+  } = await import('../../perps-aa/errors')
   const address = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
   return {
+    BundlerRequestError,
+    findBundlerRequestError,
     useSponsoredOperationStore,
     usePerpsIdentity: () => ({
       status: 'ready',
@@ -42,7 +48,10 @@ vi.mock('../../perps-aa', async () => {
 })
 import { PerpsAccountPanel } from '../PerpsAccountPanel'
 import { PerpsTradeTicket } from '../PerpsTradeTicket'
-import { useSponsoredOperationStore } from '../../perps-aa'
+import {
+  BundlerRequestError,
+  useSponsoredOperationStore,
+} from '../../perps-aa'
 
 vi.mock('@reown/appkit/react', () => ({
   createAppKit: vi.fn(),
@@ -217,6 +226,300 @@ describe('perps lifecycle labels', () => {
 
     expect(screen.getByText('Submitting sponsored transaction')).toBeInTheDocument()
     expect(screen.queryByText(/No wallet response yet/)).not.toBeInTheDocument()
+  })
+
+  it('keeps indexed inclusion through a safe timeout and revokes it if the row disappears', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise(() => {})
+    )
+
+    let rejectSafeConfirmation: (error: Error) => void = () => {}
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise((_, reject) => {
+      rejectSafeConfirmation = reject
+    }))
+    const onAccountRefresh = vi.fn()
+    const baseProps = {
+      enableLiveTrading: true,
+      initialReviewOpen: true,
+      initialSize: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 1_000_000_000n,
+      onAccountRefresh,
+    }
+    const terminalOrder = {
+      orderId: 9177n,
+      time: '30 Jul, 19:05',
+      market: 'plDXY Perp',
+      side: 'Long',
+      type: 'Open',
+      price: '1.0000',
+      size: '100',
+      status: 'Executed' as const,
+      commitTxHash:
+        '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e' as const,
+      revealTxHash:
+        '0x77f23300000000000000000000000000000000000000000000000000000067d1' as const,
+      executionPriceRaw: 100_000_000n,
+    }
+
+    const { rerender } = render(
+      <PerpsTradeTicket {...baseProps} orderHistory={[]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
+      onStatus?: (
+        status: 'awaiting-signature' | 'confirming'
+      ) => void
+      onIncluded?: (result: {
+        hash: `0x${string}`
+        orderId: bigint
+      }) => void
+    } | undefined
+    expect(commitInput?.onStatus).toBeTypeOf('function')
+    expect(commitInput?.onIncluded).toBeTypeOf('function')
+
+    await act(async () => {
+      commitInput?.onStatus?.('awaiting-signature')
+      commitInput?.onStatus?.('confirming')
+    })
+    expect(
+      screen.getByText('Waiting for on-chain confirmation')
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      commitInput?.onIncluded?.({
+        hash: terminalOrder.commitTxHash,
+        orderId: terminalOrder.orderId,
+      })
+    })
+
+    expect(
+      screen.queryByText('Waiting for on-chain confirmation')
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('Waiting for verified market data')
+    ).toBeInTheDocument()
+    expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: terminalOrder.orderId })
+    )
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[terminalOrder]}
+      />
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+
+    await act(async () => {
+      rejectSafeConfirmation(
+        new Error(
+          'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+          {
+            cause: new BundlerRequestError({
+              message:
+                'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+              retryable: false,
+              terminalStatus: 'receipt-timeout',
+            }),
+          }
+        )
+      )
+    })
+
+    expect(screen.getByText('Final Result')).toBeInTheDocument()
+    expect(screen.queryByText('Commit transaction failed')).not.toBeInTheDocument()
+    expect(onAccountRefresh).toHaveBeenCalledTimes(2)
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[]}
+      />
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Commit transaction failed')).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText(
+        'Timed out reconciling the locally persisted UserOperation hash with Pimlico'
+      )
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+  })
+
+  it('does not suppress a safe-head timeout after indexed evidence disappears', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise(() => {})
+    )
+
+    let rejectSafeConfirmation: (error: Error) => void = () => {}
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise((_, reject) => {
+      rejectSafeConfirmation = reject
+    }))
+    const baseProps = {
+      enableLiveTrading: true,
+      initialReviewOpen: true,
+      initialSize: '100',
+      oraclePriceRaw: 100_000_000n,
+      oraclePublishTime: Math.floor(Date.now() / 1_000),
+      availableToTradeRaw: 1_000_000_000n,
+    }
+    const indexedOrder = {
+      orderId: 9177n,
+      time: '30 Jul, 19:05',
+      market: 'plDXY Perp',
+      side: 'Long',
+      type: 'Open',
+      price: '1.0000',
+      size: '100',
+      status: 'Committed' as const,
+      commitTxHash:
+        '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e' as const,
+    }
+
+    const { rerender } = render(
+      <PerpsTradeTicket {...baseProps} orderHistory={[]} />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
+      onIncluded?: (result: {
+        hash: `0x${string}`
+        orderId: bigint
+      }) => void
+    } | undefined
+
+    await act(async () => {
+      commitInput?.onIncluded?.({
+        hash: indexedOrder.commitTxHash,
+        orderId: indexedOrder.orderId,
+      })
+    })
+    expect(
+      screen.getByText('Waiting for verified market data')
+    ).toBeInTheDocument()
+
+    rerender(
+      <PerpsTradeTicket {...baseProps} orderHistory={[indexedOrder]} />
+    )
+    rerender(
+      <PerpsTradeTicket {...baseProps} orderHistory={[]} />
+    )
+
+    await act(async () => {
+      rejectSafeConfirmation(
+        new Error(
+          'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+          {
+            cause: new BundlerRequestError({
+              message:
+                'Timed out reconciling the locally persisted UserOperation hash with Pimlico',
+              retryable: false,
+              terminalStatus: 'receipt-timeout',
+            }),
+          }
+        )
+      )
+    })
+
+    expect(screen.getByText('Commit transaction failed')).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Timed out reconciling the locally persisted UserOperation hash with Pimlico'
+      )
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Waiting for verified market data')
+    ).not.toBeInTheDocument()
+  })
+
+  it('lets an authoritative safe-head revert override optimistic inclusion', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise(() => {})
+    )
+
+    let rejectSafeConfirmation: (error: Error) => void = () => {}
+    perpsTradingMocks.commitOrder.mockReturnValue(new Promise((_, reject) => {
+      rejectSafeConfirmation = reject
+    }))
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialReviewOpen
+        initialSize="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={1_000_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
+      onStatus?: (
+        status: 'awaiting-signature' | 'confirming'
+      ) => void
+      onIncluded?: (result: {
+        hash: `0x${string}`
+        orderId: bigint
+      }) => void
+    } | undefined
+
+    await act(async () => {
+      commitInput?.onStatus?.('awaiting-signature')
+      commitInput?.onStatus?.('confirming')
+      commitInput?.onIncluded?.({
+        hash:
+          '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e',
+        orderId: 9177n,
+      })
+    })
+    expect(
+      screen.getByText('Waiting for verified market data')
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      rejectSafeConfirmation(
+        new Error('UserOperation reverted at the safe head', {
+          cause: new BundlerRequestError({
+            message: 'UserOperation reverted at the safe head',
+            retryable: false,
+            terminalStatus: 'execution-reverted',
+          }),
+        })
+      )
+    })
+
+    expect(screen.getByText('Commit transaction failed')).toBeInTheDocument()
+    expect(
+      screen.getByText('UserOperation reverted at the safe head')
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByText('Waiting for verified market data')
+    ).not.toBeInTheDocument()
   })
 
   it('distinguishes plDXY Perp exposure from contract and entry notionals', () => {
