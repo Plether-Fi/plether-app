@@ -1,9 +1,7 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import {
-  getOpenCapacityUnavailableMessage,
-  PerpsTradeTicket,
-} from '../components/PerpsTradeTicket'
+import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import {
   PerpsIdentityContext,
   type PerpsAaDeploymentManifest,
