@@ -60,6 +60,8 @@ LP[^lp] capital backs trader payouts and absorbs bad debt. Realized carry[^carry
 
 LP withdrawals are subject to cooldowns, reserved obligations, available pool liquidity, oracle state, and solvency checks. Capital already required to support trader liabilities cannot leave the pool.
 
+To provide liquidity, start with the [Liquidity provider quickstart](liquidity-provider-quickstart.md). The task-oriented guides under **Providing liquidity on Plether** cover tranche selection, deposits, pending epochs, position monitoring and withdrawals.
+
 ### Market hours and risk
 
 The underlying FX[^fx] market does not operate like crypto markets.

@@ -14,6 +14,8 @@ The HousePool has a narrower role:
 
 LPs[^lp] provide this capital through two ERC-4626[^erc4626] vaults: **Senior** and **Junior**.
 
+This page is the canonical reference for HousePool accounting and the tranche waterfall. For step-by-step LP actions, start with the [Liquidity provider quickstart](../liquidity-provider-quickstart.md) or the guides to [deposit liquidity](../providing-liquidity/deposit-liquidity.md), [manage a pending deposit](../providing-liquidity/manage-a-pending-deposit.md) and [withdraw liquidity](../providing-liquidity/withdraw-liquidity.md).
+
 ### Capital before yield
 
 Core HousePool capital remains in USDC. It is not lent into an external yield protocol.
@@ -512,7 +514,7 @@ Each successful partial withdrawal restarts the holder cooldown.
 
 A scheduled close-only runway does not, by itself, activate frozen-oracle tranche fees.
 
-Once the oracle is genuinely frozen:
+While the onchain `oracleFrozen` state is active:
 
 * withdrawals use the extended frozen-market freshness policy;
 * immediate deposits remain possible only when no positions are open;
@@ -521,7 +523,9 @@ Once the oracle is genuinely frozen:
 
 For a deposit, the surcharge results in fewer shares.
 
-For a withdrawal, the holder burns against the gross tranche claim but receives less net USDC.
+For an asset-denominated withdrawal, delivering the target USDC amount requires more shares.
+
+For a share-denominated redemption, the submitted shares return less USDC.
 
 The retained value:
 
@@ -570,9 +574,9 @@ This prevents a new depositor from obtaining the recovery rights of previously w
 
 ### Current interface status
 
-The current Plether frontend does not yet expose LP actions or tranche accounting.
+The published Plether testnet frontend does not yet expose LP actions or tranche accounting. A separate `Vaults` frontend implementation is in progress.
 
-There is currently no interface for:
+The published interface currently has no controls or views for:
 
 * Senior or Junior deposits;
 * pending deposit epochs;

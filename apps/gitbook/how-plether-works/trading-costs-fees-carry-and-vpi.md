@@ -744,6 +744,8 @@ High VPI, frozen-close spread or carry revenue should never be read without the 
 
 > Liability is the product. Return is what LPs receive for underwriting it.
 
+For the LP-facing interpretation of revenue, losses and share value, see [Understand LP returns and share value](../providing-liquidity/understand-lp-returns-and-share-value.md).
+
 ### What traders should check
 
 Before committing an order, review:

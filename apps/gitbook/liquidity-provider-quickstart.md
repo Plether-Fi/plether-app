@@ -2,384 +2,188 @@
 
 > **Supply the balance sheet behind the market.**
 
-Plether liquidity providers deposit USDC[^usdc] into the **HousePool**, the capital base that stands behind trader profits and protocol liabilities.
+Plether liquidity providers deposit USDC[^usdc] through the **Senior Vault** or **Junior Vault**. Their capital becomes part of the HousePool, which stands behind trader profits and other protocol liabilities.
 
-LP[^lp] capital is not idle collateral. It can be used to pay winning traders. In return, LPs participate in realized trader losses, carry[^carry] and other pool revenue according to the Senior–Junior waterfall.
-
-**Liability is the product. Return is what LPs receive for underwriting it.**
+In return, LPs[^lp] receive vault shares whose value reflects their tranche's share of pool revenue and losses. This is underwriting capital, not a savings balance: share value can rise or fall, and not all share value is necessarily withdrawable at once.
 
 > **Current interface status**
 >
-> The testnet application currently displays aggregate HousePool liquidity but does not yet provide the LP deposit, pending-epoch, share-claim or withdrawal interface.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. Labels, layouts and available actions can change. LP screenshots elsewhere in the documentation are prototypes, not evidence that a control is live.
 >
-> Control names in square brackets below are placeholders for the forthcoming LP interface.
+> The work-in-progress pending lifecycle appears as a disabled `Lifecycle coming soon` preview. Follow only the actions enabled in the published application; do not bypass a disabled step.
 >
-> The `Deposit` button in the existing welcome window opens the trader margin-deposit flow; the ticket’s deposit action funds a trader’s **Margin Account**. Neither provides liquidity to the HousePool.
+> The `Deposit` control in the existing Perps trade interface funds the Trading Account's **Margin Account**. It does **not** provide liquidity to either LP vault.
 >
-> **Gas sponsorship scope:** the trader sponsorship promise does not currently include LP approvals, deposits, pending-epoch actions, share claims or withdrawals. LP users must keep enough Arbitrum Sepolia ETH for those transactions. Treat an LP method as sponsored only if a later interface explicitly marks that specific action as **Sponsored**.
+> LP actions execute from the connected **owner wallet**, which must hold the USDC being deposited and enough ETH for transaction fees. Approval, deposit, pending-epoch request, cancellation, finalization, claim and withdrawal transactions are **not gas-sponsored unless that exact action is explicitly marked as Sponsored** in the live interface.
 
-### What you receive
+### The LP flow in one line
 
-LPs do not deposit directly into the HousePool. They deposit through one of two ERC-4626[^erc4626] tranche[^tranche] vaults:
+`Owner-wallet USDC → Senior or Junior Vault → immediate shares or pending deposit → active vault shares → withdrawal subject to available pool liquidity → owner wallet`
 
-* The **Senior Vault**
-* The **Junior Vault**
+Never send USDC directly to the HousePool. Deposit only through the verified Senior or Junior Vault surfaced by the official application and active deployment metadata.
 
-In return, you receive vault shares representing a proportional claim on that tranche.
+For the protocol-level model, read [The HousePool and tranche waterfall](how-plether-works/the-housepool-and-tranche-waterfall.md).
 
-Shares are not fixed at one USDC. Their value can rise or fall as the pool earns revenue, pays traders and moves losses through the waterfall.
+### Before you begin
 
-Never send USDC directly to the HousePool. Use the verified Senior or Junior Vault address from the active deployment’s official contract metadata.
-
-### 1. Choose your tranche
-
-The two tranches underwrite the same HousePool but take different positions in the capital structure.
-
-|                         | Senior                                              | Junior                                                              |
-| ----------------------- | --------------------------------------------------- | ------------------------------------------------------------------- |
-| **Return profile**      | Configurable target coupon funded from Junior NAV   | Residual pool revenue after Senior obligations                      |
-| **Loss priority**       | Absorbs losses after Junior is exhausted            | Absorbs losses first                                                |
-| **Withdrawal priority** | First claim on free LP liquidity                    | Withdraws only from free liquidity above the Senior claim           |
-| **Main risk**           | Coupon can stop and principal can still be impaired | Pays the Senior coupon and can be partially or completely wiped out |
-| **Upside**              | Targeted return and restoration priority            | Variable residual upside from underwriting                          |
-
-The basic waterfall is:
-
-![Three-lane diagram summarizing loss absorption, new-revenue allocation and Senior coupon funding.](.gitbook/assets/diagrams/senior-junior-waterfall-rules.svg)
-
-#### Senior is protected, not protected from everything
-
-The Senior tranche receives a target coupon funded directly from Junior NAV[^nav].
-
-“Target” matters. The coupon is:
-
-* Not a guaranteed APY[^apy]
-* Not external yield
-* Not necessarily funded by trading revenue
-* Limited by the amount of Junior capital available
-* Not converted into a separate debt claim if Junior cannot fund it
-
-When paid, the coupon increases Senior’s protected high-water mark. If Senior is later impaired, future pool revenue restores it toward that mark before Junior receives additional surplus.
-
-Senior is therefore **last-loss**, not risk-free. If losses exhaust Junior capital, Senior share value can decline.
-
-#### Junior receives the residual
-
-Junior capital pays the Senior target coupon and absorbs pool losses first.
-
-In exchange, Junior receives residual realized trading revenue after Senior restoration and coupon obligations have been accounted for.
-
-Junior has greater upside participation, but it can lose value before Senior is affected. A sufficiently large loss can wipe out the Junior tranche completely.
-
-> **Neither tranche is a savings account.**
->
-> Senior changes the order in which risk is absorbed. It does not remove the risk.
-
-### 2. Understand what changes LP value
-
-LP share value can increase through:
-
-* Realized trader losses collected by the pool
-* Realized carry paid for LP-backed exposure
-* Positive VPI[^vpi] and other trader-to-pool price adjustments
-* Oracle-frozen[^oracle] LP surcharges retained inside the affected tranche
-
-LP share value can decrease through:
-
-* Profits paid or owed to traders
-* VPI rebates paid by the pool
-* Liquidation shortfalls and bad debt
-* Oracle, smart-contract, stablecoin and operational failures
-* The Senior target coupon, from Junior’s perspective
-
-Protocol execution fees belong to the protocol treasury. They should not be treated as LP revenue.
-
-Plether also applies conservative accounting:
-
-* Unrealized trader profits are treated as pool liabilities.
-* Unrealized trader losses are not treated as spendable LP assets until physically realized.
-
-This means your displayed share value and your currently withdrawable USDC can differ.
-
-### 3. Prepare your wallet
-
-To test liquidity provision, you need:
+You need:
 
 * A compatible self-custody wallet
 * Arbitrum Sepolia selected in your wallet
-* Arbitrum Sepolia ETH for transaction fees
-* MockUSDC to deposit
-* Enough ETH for multiple transactions if the deposit uses a pending epoch
+* MockUSDC held by the connected owner wallet
+* Enough Arbitrum Sepolia ETH for every required transaction
+* The official application and verified contract metadata for the active deployment
+* Time to monitor a pending deposit through activation, finalization and claim, once that route is supported
 
-LP deposits require MockUSDC in the connected **owner wallet**, because the future LP flow is not gas-sponsored. The current welcome faucet instead pre-fills and locks the separate **Trading Account** address; tokens minted there cannot be used directly for an owner-wallet LP approval. Obtain test MockUSDC at the owner-wallet address from the deployment operator or by a direct transfer, and verify the recipient before proceeding.
+The welcome faucet may fund the separate **Trading Account** rather than the owner wallet. A Trading Account balance cannot be approved for an owner-wallet LP deposit. Confirm which address holds the MockUSDC before you start.
 
-Do not use the welcome window’s `Deposit` action for LP purposes—it opens the trader margin-deposit flow.
+MockUSDC is test collateral. It is not issued by Circle and cannot be redeemed for real dollars.
 
-### 4. Review the pool before depositing
+### 1. Choose Senior or Junior
 
-Open the future `[Liquidity]` section and review both tranches.
+Both tranches supply the same HousePool, but they occupy different positions in its waterfall.
 
-At minimum, the interface should show:
+|                         | Senior Vault                                      | Junior Vault                                                 |
+| ----------------------- | ------------------------------------------------- | ------------------------------------------------------------ |
+| **Return profile**      | Target coupon funded from Junior NAV[^nav]        | Residual pool revenue after Senior obligations               |
+| **Loss priority**       | Absorbs losses after Junior is exhausted          | Absorbs losses first                                         |
+| **Withdrawal priority** | First claim on free LP liquidity                  | Withdraws only from liquidity above the complete Senior accounting claim (Senior principal) |
+| **Central risk**        | Coupon can stop; principal can still be impaired  | Share value can be partially or completely wiped out first   |
 
-* Total tranche assets
-* Current share price
-* Senior target coupon
-* Recent or projected performance, clearly marked as variable
+Senior is **last-loss**, not risk-free. Its coupon is a target rather than a guaranteed return and is limited by available Junior capital.
+
+Junior takes losses first and funds the Senior target coupon, but receives the residual upside after Senior obligations are met.
+
+Read [Choose Senior or Junior](providing-liquidity/choose-senior-or-junior.md) before selecting a tranche.
+
+### 2. Know what your shares represent
+
+Each tranche is an ERC-4626[^erc4626] vault. A deposit mints shares representing proportional ownership of that tranche.
+
+Shares are not fixed at one USDC. Their value may increase through collected trader losses, collected carry[^carry], positive VPI[^vpi] and other LP-owned revenue. Their value may decrease when the pool pays trader profits or VPI rebates, or absorbs bad debt and other losses allocated through the waterfall.
+
+Cash-credited protocol execution fees belong to the treasury and should not be counted as LP returns.
+
+Plether treats unrealized trader profits as liabilities but does not treat unrealized trader losses as spendable LP assets. Consequently:
+
+* Share value can change before a trader position closes.
+* Displayed position value can exceed currently withdrawable USDC.
+* A historical return does not predict the next period's return.
+
+See [Understand LP returns and share value](providing-liquidity/understand-lp-returns-and-share-value.md) and [Trading costs: fees, carry and VPI](how-plether-works/trading-costs-fees-carry-and-vpi.md).
+
+### 3. Check whether the deposit is immediate or pending
+
+The protocol, not the depositor, determines the available path.
+
+| Condition | Path | When you receive shares |
+| --------- | ---- | ----------------------- |
+| No trader positions are open and all deposit gates pass | Immediate | In the successful deposit transaction |
+| One or more trader positions are open and the pending-request gates pass | Pending epoch | After activation, finalization and a separate claim |
+| Deposits are paused, Senior is impaired or another gate fails | Unavailable | No shares are issued |
+
+Immediate deposits are restricted while positions are open because unrealized trader losses are not collected LP assets and the exact losing-trader receivables remain unsettled. In a live market, pending deposits should be expected to be the normal route.
+
+If the application shows `Lifecycle coming soon`, the pending path is informational and cannot yet be completed through that interface. Wait for the lifecycle controls to become available.
+
+Read [Deposit liquidity](providing-liquidity/deposit-liquidity.md) for all deposit checks and [Manage a pending deposit](providing-liquidity/manage-a-pending-deposit.md) for the complete epoch lifecycle.
+
+### 4. Review the tranche and pool
+
+Open `Vaults`, then select the **Senior Vault** or **Junior Vault** card.
+
+Before entering an amount, check the live values for:
+
+* Tranche assets and share price
 * Current Senior and Junior capital
-* Whether Senior is impaired
-* Deposit availability
-* Immediate or pending deposit mode
-* Active oracle-frozen fee, if any
-* Pool free liquidity
-* Current withdrawal availability
-* Oracle and market state
+* Senior impairment status
+* Deposit availability and path
+* Pool free liquidity and withdrawal availability
+* Oracle[^oracle] and market state
+* Any active LP surcharge
 
-Do not choose a tranche based only on the highest displayed return. Understand where it sits in the loss and withdrawal waterfall.
+Do not select a tranche from its displayed return alone. Review [LP risks and safeguards](providing-liquidity/lp-risks-and-safeguards.md) and [Market states and oracle closures](how-plether-works/market-states-and-oracle-closures.md) first.
 
-### 5. Enter the deposit
+### 5. Make your first deposit
 
-Select the Senior or Junior tranche, enter the amount of MockUSDC and review the expected vault shares.
+Proceed only when the selected vault's deposit action is enabled.
 
-The preview should identify:
+1. Select the `deposit` mode on the intended vault; the action panel should read `Deposit USDC`.
+2. Enter the amount held by the connected owner wallet.
+3. Select `Review deposit`.
+4. Verify the tranche, USDC amount, estimated or indicative shares, share price, deposit path, network and surcharge state. Confirm the `Wallet balance` shown on the amount form separately.
 
-* Selected tranche
-* USDC deposited
-* Estimated shares received
-* Current share price
-* Immediate or pending deposit
-* Expected activation time, if pending
-* Active oracle-frozen surcharge
-* Wallet balance after deposit
-* Tranche risk classification
+If the preview says **Pending deposit epoch** and shows `Lifecycle coming soon`, stop here. The current work-in-progress interface is previewing the route, not accepting the request.
 
-The number of shares determines your proportional ownership. The USDC value shown in the preview is not a guaranteed future redemption value.
+If the preview says **Immediate deposit**:
 
-If the vault allowance is insufficient, the first step is approving the selected tranche vault to use your MockUSDC. The approval and deposit or request are separate transactions.
+5. Confirm that the approval spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
+6. Select `Approve & deposit` when an exact allowance is required, or `Deposit USDC` when the current allowance is sufficient. Confirm each required owner-wallet transaction.
+7. Keep the application open until it reports the resulting onchain state.
 
-Verify that the spender is the selected **Tranche Vault**, not the HousePool, Margin Clearinghouse or an unknown contract.
+An estimate is not a guaranteed redemption value. Share price, surcharge state and available liquidity can change before a transaction confirms or a pending epoch finalizes.
 
-### 6. Immediate versus pending deposits
+#### If the deposit is immediate
 
-The protocol determines which deposit path is available.
+The successful transaction should mint shares directly to your owner wallet. Verify the share balance and the position shown for the selected tranche.
 
-| Market condition                                                     | Deposit path          | When shares are received                 |
-| -------------------------------------------------------------------- | --------------------- | ---------------------------------------- |
-| No trader positions are open and all safety gates pass               | Immediate deposit     | In the deposit transaction               |
-| One or more trader positions are open                                | Pending deposit epoch | After activation, finalization and claim |
-| Deposits are paused, Senior is impaired or another safety gate fails | Deposit unavailable   | No shares issued                         |
+#### If the deposit is pending
 
-Immediate deposits are deliberately restricted while trader positions exist. This prevents new shares from being priced against an incomplete view of unrealized trader losses.
+The requested USDC moves into vault escrow, but no shares exist for it yet. Record the tranche, amount and assigned epoch.
 
-In normal live-market conditions, the pending-epoch route should be treated as the standard LP entry path.
+A pending deposit follows this lifecycle:
 
-### 7. Immediate deposit flow
+`Request → cancellation window → activation → finalization (claimable shares in escrow) → claim (shares in owner wallet)`
 
-If `[Immediate deposit]` is available:
+Do not expect wallet-held shares at request time. Finalization creates the claimable batch shares in vault escrow; a separate claim transfers them to the owner wallet. The final share amount may differ from the request preview because the batch is priced at finalization.
 
-1. Select the tranche.
-2. Enter the USDC amount.
-3. Review the share and fee preview.
-4. Approve the selected vault if required.
-5. Confirm the deposit transaction.
-6. Verify that the vault shares appear in your LP position.
+### 6. Verify the result
 
-An immediate deposit starts a **one-hour withdrawal cooldown**. During that period, the newly held shares cannot be withdrawn or transferred.
+After an immediate deposit—or after claiming a finalized pending deposit—confirm all of the following:
 
-Depositing more into the same vault refreshes the applicable cooldown.
+* The transaction succeeded on Arbitrum Sepolia.
+* The event names the intended Senior or Junior Vault.
+* Owner-wallet USDC decreased by the expected amount.
+* Vault shares appear for the same owner wallet and tranche.
+* No active pending request remains for an amount already claimed.
+* The displayed share value and withdrawable amount are treated as different values.
 
-### 8. Pending deposit flow
+If USDC moved but no shares or pending request appear, stop before trying again. Use [LP troubleshooting](providing-liquidity/lp-troubleshooting.md) to distinguish a Margin Account deposit, pending epoch, failed claim or wrong-wallet issue.
 
-If trader positions are open, the application should use `[Request deposit]`.
-
-#### Request the deposit
-
-1. Select Senior or Junior.
-2. Enter the MockUSDC amount.
-3. Review the estimated activation time.
-4. Approve the selected vault if required.
-5. Confirm the funded deposit request.
-6. Record the assigned epoch.
-
-The MockUSDC leaves your wallet immediately and is held in vault escrow. You do not yet own active tranche shares, and the requested funds are not yet participating in the HousePool.
-
-The current vaults use one-hour epochs. Requests are assigned two epoch IDs ahead, producing a wait of roughly one to two hours depending on when the request is submitted.
-
-#### Before activation
-
-A pending request can normally be cancelled before its activation epoch begins.
-
-If you cancel:
-
-* The request is removed.
-* The escrowed MockUSDC returns to your wallet.
-* No tranche shares are issued.
-
-#### After activation
-
-Once the activation epoch begins, the request normally becomes binding and can no longer be cancelled.
-
-The epoch must then be finalized. Finalization is permissionless: it may be submitted by the application, a keeper[^keeper] or any user.
-
-Finalization:
-
-* Reconciles the HousePool
-* Fixes one batch share price for the epoch
-* Applies any active oracle-frozen surcharge
-* Moves the batch USDC into the HousePool
-* Mints the batch shares into vault escrow
-
-The final number of shares can differ from the request-time estimate because tranche economics and fee conditions may change before finalization.
-
-#### Claim your shares
-
-Finalization does not automatically transfer shares to every depositor.
-
-After the epoch is finalized:
-
-1. Select `[Claim shares]`.
-2. Confirm the transaction.
-3. Verify that the shares appear in your LP position.
-4. Confirm that the pending request has cleared.
-
-If Senior impairment prevents the epoch from finalizing, cancellation becomes available again so depositors can recover their escrowed USDC.
-
-### 9. Monitor your LP position
-
-Once shares are active, the LP position should show:
-
-* Tranche
-* Vault shares held
-* Current USDC value
-* Average entry value
-* Current share price
-* Unrealized change in value
-* Current withdrawable USDC
-* Active cooldown
-* Active oracle-frozen fee
-* Pending deposit epochs, if any
-
-LP economics are reflected through the value of your vault shares. There is no separate periodic interest payment that must be harvested.
-
-For Senior, share value reflects coupon transfers, restoration and any losses that reach the tranche.
-
-For Junior, share value reflects residual realized revenue minus Senior coupon transfers and first-loss absorption.
-
-A rising historical share price does not guarantee that the next period will be profitable.
-
-![Prototype LP position with value, share performance, withdrawal capacity and pending epochs](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--position.png)
-
-### 10. Understand withdrawal availability
-
-LP withdrawals are synchronous rather than epoch-queued: when a permitted withdrawal confirms, USDC goes directly to the recipient wallet.
-
-However, not all share value is necessarily withdrawable at every moment.
-
-Before allowing capital to leave, Plether reserves USDC for:
-
-* Winning-trader liabilities
-* Outstanding trader claims
-* Current directional exposure
-* Other explicit or unassigned liabilities
-* The Senior claim ahead of Junior withdrawals
-
-Conceptually:
-
-```
-Free LP liquidity
-= Physical pool assets
-− Reserved trader liabilities
-− Other protected amounts
-```
-
-Senior can withdraw up to the lower of its tranche claim and free LP liquidity.
-
-Junior can withdraw only from free liquidity remaining above the complete Senior claim.
-
-As a result:
-
-* Senior withdrawal availability can be below Senior share value.
-* Junior withdrawal availability can be zero while Senior remains fully protected.
-* A displayed LP balance is not a promise of immediate redemption.
-* Withdrawal availability may improve as positions close and liabilities are released.
-
-This mechanism is the **withdrawal firewall**. It prevents LP withdrawals from consuming collateral already standing behind traders.
-
-### 11. Withdraw or redeem shares
-
-When you are ready to exit:
-
-1. Open the tranche position.
-2. Select `[Withdraw]`.
-3. Choose either a USDC amount or number of shares to redeem.
-4. Check the live maximum.
-5. Review any active fee.
-6. Confirm the transaction.
-7. Verify the USDC receipt in your wallet.
-
-The vault reconciles pool accounting during withdrawal. The final allowed amount may therefore be lower than the position’s displayed USDC value.
-
-An immediate deposit must complete its one-hour cooldown before withdrawal. A successful partial withdrawal starts another one-hour cooldown for the remaining shares.
-
-If the maximum is lower than your intended withdrawal, the remaining shares stay invested. You can try again after the cooldown and when more pool liquidity becomes free.
-
-Ordinary partial withdrawals must satisfy the vault’s minimum amount. A complete residual exit can still be permitted when the remaining value is below that minimum.
-
-![Prototype LP withdrawal preview with requested amount, burned shares, fee and expected receipt](.gitbook/assets/screenshots/storybook-documentation-lp-interface-prototype--withdrawal-preview.png)
-
-### Oracle-frozen LP actions
-
-When the FX[^fx] oracle is genuinely frozen, LP entry and exit can remain available under a tranche-specific surcharge.
-
-The surcharge works differently from a protocol fee:
-
-* Depositors receive fewer shares.
-* Withdrawers receive less USDC for the tranche claim being redeemed.
-* The retained value stays inside the same tranche.
-* Existing LPs in that tranche benefit from the retained amount.
-* It does not go to the protocol treasury.
-
-Senior and Junior can have different surcharge rates. Always use the live value shown in the interface rather than assuming a fixed number.
-
-The surcharge begins only when the oracle is actually frozen. A market-close runway by itself does not activate it.
-
-### Common problems
-
-| Problem                                             | What to check                                                                          |
-| --------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| MockUSDC was deposited but no LP shares appeared    | You may have used the Trading Account’s Margin Account deposit instead of a Tranche Vault |
-| Immediate deposit is unavailable                    | Open trader positions require the pending-epoch route                                  |
-| Pending request shows no shares                     | Wait for activation, epoch finalization and then claim                                 |
-| Pending request cannot be cancelled                 | The activation epoch has probably begun                                                |
-| Epoch cannot finalize                               | Activation time, oracle state, Senior impairment or other deposit gate                 |
-| Share amount differs from the original estimate     | Final batch pricing and active fees are applied at finalization                        |
-| Withdrawable amount is zero                         | Cooldown, reserved trader liabilities, oracle state, degraded mode or tranche priority |
-| Junior cannot withdraw despite positive share value | Free liquidity does not currently exceed the Senior claim                              |
-| Senior return is below its target                   | The coupon is not guaranteed and is limited by available Junior NAV                    |
-| Share value declined                                | Realized trader profits, rebates, bad debt or waterfall losses reduced tranche assets  |
+To monitor the position, read [Read your LP position and pool health](providing-liquidity/read-your-lp-position-and-pool-health.md).
 
 ### First-deposit checklist
 
-Before approving the vault:
+Before you approve anything:
 
-* Confirm whether you are choosing Senior or Junior.
-* Understand the tranche’s place in the loss waterfall.
-* Verify the official vault address.
-* Confirm that you are not depositing into the Trading Account’s Margin Account.
-* Check whether the deposit is immediate or pending.
-* Review the expected shares and current share price.
-* Check the current oracle-frozen fee.
-* Understand when a pending request becomes non-cancellable.
-* Keep enough Arbitrum Sepolia ETH for approval, request, finalization and claim transactions.
-* Accept that share value and withdrawal availability can both change.
+* I am using the official application and the active deployment.
+* My MockUSDC is in the connected owner wallet, not only the Trading Account.
+* I have enough Arbitrum Sepolia ETH for every required LP transaction.
+* I chose Senior or Junior based on its loss and withdrawal priority.
+* I verified the selected Tranche Vault as the approval spender.
+* I know whether this deposit is immediate, pending or unavailable.
+* I understand when a pending request becomes non-cancellable.
+* I reviewed the estimated shares, live share price and any surcharge.
+* I accept that share value can fall and withdrawals can be constrained.
+* I will verify shares or pending state before submitting another deposit.
+
+### Continue from here
+
+* [Choose Senior or Junior](providing-liquidity/choose-senior-or-junior.md)
+* [Understand LP returns and share value](providing-liquidity/understand-lp-returns-and-share-value.md)
+* [LP risks and safeguards](providing-liquidity/lp-risks-and-safeguards.md)
+* [Deposit liquidity](providing-liquidity/deposit-liquidity.md)
+* [Manage a pending deposit](providing-liquidity/manage-a-pending-deposit.md)
+* [Read your LP position and pool health](providing-liquidity/read-your-lp-position-and-pool-health.md)
+* [Withdraw liquidity](providing-liquidity/withdraw-liquidity.md)
+* [LP troubleshooting](providing-liquidity/lp-troubleshooting.md)
+
+Trader liabilities rank ahead of LP withdrawals; see [Settlement liquidity and trader claims](how-plether-works/settlement-liquidity-and-trader-claims.md) for the rationale.
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
-[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
-[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
-[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
 [^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.
-[^apy]: Annual percentage yield, an annualized return measure that includes compounding.
+[^erc4626]: The Ethereum tokenized-vault standard used for Plether tranche shares.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
 [^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^fx]: Foreign exchange, the market for trading one currency against another.

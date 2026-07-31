@@ -370,6 +370,8 @@ A generic “Pool liquidity” number should therefore not be treated as a guara
 
 Trader claims become reserved liabilities as soon as they are recorded. The HousePool does not need to transfer USDC for the reserve to take effect.
 
+For the holder-facing withdrawal flow and live-limit checks, see [Withdraw liquidity](../providing-liquidity/withdraw-liquidity.md).
+
 The core withdrawal reserve is:
 
 ```

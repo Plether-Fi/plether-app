@@ -381,6 +381,8 @@ If the mark is over-stale, withdrawal from an account with an open position is b
 
 LP operations distinguish scheduled close-only from actual oracle-frozen operation.
 
+For the LP-facing action and monitoring checklist, see [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md) and [Read your LP position and pool health](../providing-liquidity/read-your-lp-position-and-pool-health.md).
+
 #### Scheduled close-only, oracle still live
 
 The normal LP rules remain in force:
