@@ -53,12 +53,15 @@ function operation(input: {
   action: SponsoredOperation['action']
   status: SponsoredOperationStatus
   updatedAt: number
+  createdAt?: number
   accountAddress?: Address
   chainId?: number
   userOperationHash?: Hex
   includedTransactionHash?: Hex
+  inclusionObservedAt?: number
   laneReleasedAfterSuccessfulInclusion?: true
   transactionHash?: Hex
+  confirmedAt?: number
   reason?: SponsoredOperation['reason']
   sponsorshipAccepted?: boolean
   retryable?: boolean
@@ -86,7 +89,7 @@ function operation(input: {
     inclusionObservedAt:
       input.includedTransactionHash === undefined
         ? undefined
-        : input.updatedAt,
+        : input.inclusionObservedAt ?? input.updatedAt,
     inclusionEvidenceRevision:
       input.includedTransactionHash === undefined
         ? undefined
@@ -97,12 +100,24 @@ function operation(input: {
     retryable: input.retryable ?? input.reason !== undefined,
     submissionMetadataVersion: input.submissionMetadataVersion,
     retryCount: 0,
-    createdAt: input.updatedAt - 1_000,
+    createdAt: input.createdAt ?? input.updatedAt - 1_000,
     updatedAt: input.updatedAt,
     statusTimestamps: {
-      [input.status]: input.updatedAt,
+      [input.status]: input.status === 'confirmed'
+        ? input.confirmedAt ?? input.updatedAt
+        : input.updatedAt,
     },
   }
+}
+
+function timestampForLabel(
+  container: HTMLElement,
+  label: string
+): HTMLTimeElement {
+  const labelElement = within(container).getByText(label)
+  const timestamp = labelElement.parentElement?.querySelector('time')
+  expect(timestamp).not.toBeNull()
+  return timestamp as HTMLTimeElement
 }
 
 describe('SponsoredOperationHistoryButton', () => {
@@ -290,6 +305,18 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(within(includedItem as HTMLElement).getByText(
       'The transaction is onchain. Safety verification continues in the background; no action is required.'
     )).toBeInTheDocument()
+    expect(timestampForLabel(
+      includedItem as HTMLElement,
+      'Inclusion observed at'
+    )).toHaveAttribute(
+      'datetime',
+      new Date(
+        useSponsoredOperationStore.getState().operations[0].inclusionObservedAt!
+      ).toISOString()
+    )
+    expect(within(includedItem as HTMLElement).queryByText(
+      'Safely confirmed at'
+    )).not.toBeInTheDocument()
     expect(within(dialog).queryByRole('region', { name: 'In progress' }))
       .not.toBeInTheDocument()
     expect(screen.queryByText('Submission status unknown'))
@@ -311,6 +338,127 @@ describe('SponsoredOperationHistoryButton', () => {
       'href',
       `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`
     )
+  })
+
+  it('shows stable lifecycle times and sorts recent activity by action creation time', () => {
+    const olderCreatedAt = Date.UTC(2026, 6, 31, 12, 0)
+    const olderIncludedAt = Date.UTC(2026, 6, 31, 12, 2)
+    const olderConfirmedAt = Date.UTC(2026, 6, 31, 12, 20)
+    const olderUpdatedAt = Date.UTC(2026, 6, 31, 12, 30)
+    const newerCreatedAt = Date.UTC(2026, 6, 31, 12, 5)
+    const newerIncludedAt = Date.UTC(2026, 6, 31, 12, 7)
+    const newerConfirmedAt = Date.UTC(2026, 6, 31, 12, 15)
+
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'older-created-later-updated',
+          action: 'place-order',
+          status: 'confirmed',
+          createdAt: olderCreatedAt,
+          inclusionObservedAt: olderIncludedAt,
+          confirmedAt: olderConfirmedAt,
+          updatedAt: olderUpdatedAt,
+          userOperationHash: USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
+          transactionHash: TRANSACTION_HASH,
+        }),
+        operation({
+          id: 'newer-created-earlier-updated',
+          action: 'withdraw',
+          status: 'confirmed',
+          createdAt: newerCreatedAt,
+          inclusionObservedAt: newerIncludedAt,
+          confirmedAt: newerConfirmedAt,
+          updatedAt: newerConfirmedAt,
+          userOperationHash: OTHER_USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
+          transactionHash: TRANSACTION_HASH,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    }))
+
+    const dialog = screen.getByRole('dialog')
+    const historyItems = dialog.querySelectorAll('[data-operation-id]')
+    expect(historyItems).toHaveLength(2)
+    expect(historyItems[0]).toHaveAttribute(
+      'data-operation-id',
+      'newer-created-earlier-updated'
+    )
+    expect(historyItems[1]).toHaveAttribute(
+      'data-operation-id',
+      'older-created-later-updated'
+    )
+
+    const olderItem = historyItems[1] as HTMLElement
+    expect(timestampForLabel(olderItem, 'Started at')).toHaveAttribute(
+      'datetime',
+      new Date(olderCreatedAt).toISOString()
+    )
+    expect(timestampForLabel(
+      olderItem,
+      'Inclusion observed at'
+    )).toHaveAttribute(
+      'datetime',
+      new Date(olderIncludedAt).toISOString()
+    )
+    expect(timestampForLabel(
+      olderItem,
+      'Safely confirmed at'
+    )).toHaveAttribute(
+      'datetime',
+      new Date(olderConfirmedAt).toISOString()
+    )
+    expect(
+      Array.from(olderItem.querySelectorAll('time')).some(
+        (timestamp) =>
+          timestamp.getAttribute('datetime') ===
+            new Date(olderUpdatedAt).toISOString()
+      )
+    ).toBe(false)
+  })
+
+  it('labels the updated-time fallback for an incomplete legacy record', () => {
+    const updatedAt = Date.UTC(2026, 6, 31, 12, 30)
+    const completeOperation = operation({
+      id: 'incomplete-legacy-record',
+      action: 'withdraw',
+      status: 'confirmed',
+      updatedAt,
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    useSponsoredOperationStore.setState({
+      operations: [completeOperation],
+      activeLanes: {},
+    })
+    const legacyOperation = useSponsoredOperationStore
+      .getState().operations[0] as Partial<SponsoredOperation>
+    delete legacyOperation.createdAt
+    delete legacyOperation.statusTimestamps
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity.',
+    }))
+
+    const item = screen.getByRole('dialog').querySelector(
+      '[data-operation-id="incomplete-legacy-record"]'
+    ) as HTMLElement
+    expect(timestampForLabel(item, 'Last updated')).toHaveAttribute(
+      'datetime',
+      new Date(updatedAt).toISOString()
+    )
+    expect(within(item).queryByText('Started at')).not.toBeInTheDocument()
+    expect(within(item).queryByText('Safely confirmed at'))
+      .not.toBeInTheDocument()
   })
 
   it('keeps the spinner only for foreground work when another action is included', () => {
