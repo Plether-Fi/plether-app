@@ -232,7 +232,7 @@ describe('SponsoredOperationHistoryButton', () => {
       .not.toBeInTheDocument()
   })
 
-  it('shows latest-chain inclusion as awaiting safe confirmation, not attention', () => {
+  it('shows latest-chain inclusion as static background verification', () => {
     useSponsoredOperationStore.setState({
       operations: [
         operation({
@@ -252,19 +252,42 @@ describe('SponsoredOperationHistoryButton', () => {
     })
 
     render(<SponsoredOperationHistoryButton />)
-    fireEvent.click(screen.getByRole('button', {
-      name: 'Open Trading Account activity. 1 action in progress.',
-    }))
+    const activityButton = screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action included onchain.',
+    })
+    const activityIcon = activityButton.querySelector(
+      '.sponsored-activity-base-icon'
+    )
+    expect(activityButton).toHaveAttribute('title', '1 action included onchain')
+    expect(activityIcon).toHaveTextContent('check_circle')
+    expect(activityIcon).not.toHaveClass('animate-spin')
 
-    expect(screen.getByText(
-      'The action is included onchain and is waiting for safe confirmation.'
+    fireEvent.click(activityButton)
+
+    const dialog = screen.getByRole('dialog')
+    const includedSection = within(dialog).getByRole('region', {
+      name: 'Included onchain',
+    })
+    const includedItem = includedSection.querySelector(
+      '[data-operation-id="included-awaiting-safe"]'
+    )
+    expect(includedItem).not.toBeNull()
+
+    expect(within(dialog).getByText('1 action included onchain'))
+      .toBeInTheDocument()
+    expect(within(dialog).getByText(
+      'Safety verification continues in the background. No action is required.'
     )).toBeInTheDocument()
-    expect(screen.getByText(
-      'Included · awaiting safe confirmation'
+    expect(within(includedItem as HTMLElement).getByText('Included onchain'))
+      .toBeInTheDocument()
+    expect(within(includedItem as HTMLElement).getByText(
+      'Sponsored by Plether · 0 ETH network gas'
     )).toBeInTheDocument()
-    expect(screen.getByText(
-      'Sponsored by Plether · awaiting safe confirmation'
+    expect(within(includedItem as HTMLElement).getByText(
+      'The transaction is onchain. Safety verification continues in the background; no action is required.'
     )).toBeInTheDocument()
+    expect(within(dialog).queryByRole('region', { name: 'In progress' }))
+      .not.toBeInTheDocument()
     expect(screen.queryByText('Submission status unknown'))
       .not.toBeInTheDocument()
     expect(screen.queryByText(/could not verify whether this transaction/i))
@@ -279,12 +302,70 @@ describe('SponsoredOperationHistoryButton', () => {
 
     fireEvent.click(screen.getByText('Technical details'))
     expect(screen.getByRole('link', {
-      name:
-        'Open Included transaction (awaiting safe confirmation) in block explorer',
+      name: 'Open Included transaction in block explorer',
     })).toHaveAttribute(
       'href',
       `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`
     )
+  })
+
+  it('keeps the spinner only for foreground work when another action is included', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'pending',
+          action: 'deposit',
+          status: 'confirming',
+          updatedAt: 200,
+          userOperationHash: USER_OPERATION_HASH,
+        }),
+        operation({
+          id: 'included',
+          action: 'place-order',
+          status: 'confirming',
+          updatedAt: 100,
+          userOperationHash: USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
+          sponsorshipAccepted: true,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    const activityButton = screen.getByRole('button', {
+      name:
+        'Open Trading Account activity. 1 action in progress; 1 action included onchain.',
+    })
+    const activityIcon = activityButton.querySelector(
+      '.sponsored-activity-base-icon'
+    )
+    expect(activityIcon).toHaveTextContent('progress_activity')
+    expect(activityIcon).toHaveClass('animate-spin')
+
+    fireEvent.click(activityButton)
+
+    const dialog = screen.getByRole('dialog')
+    expect(within(dialog).getByText('1 action in progress'))
+      .toBeInTheDocument()
+    expect(within(dialog).getByText(
+      'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation. 1 action already included onchain; safety verification continues in the background.'
+    )).toBeInTheDocument()
+
+    const inProgressSection = within(dialog).getByRole('region', {
+      name: 'In progress',
+    })
+    const includedSection = within(dialog).getByRole('region', {
+      name: 'Included onchain',
+    })
+    expect(inProgressSection.querySelector('[data-operation-id="pending"]'))
+      .toBeInTheDocument()
+    expect(inProgressSection.querySelector('[data-operation-id="included"]'))
+      .not.toBeInTheDocument()
+    expect(includedSection.querySelector('[data-operation-id="included"]'))
+      .toBeInTheDocument()
+    expect(includedSection.querySelector('[data-operation-id="pending"]'))
+      .not.toBeInTheDocument()
   })
 
   it('turns a retracted inclusion back into submission attention', () => {
@@ -307,12 +388,15 @@ describe('SponsoredOperationHistoryButton', () => {
     )).toBe(true)
 
     render(<SponsoredOperationHistoryButton />)
-    fireEvent.click(screen.getByRole('button', {
-      name: 'Open Trading Account activity. 1 action in progress.',
-    }))
-    expect(screen.getByText(
-      'Included · awaiting safe confirmation'
-    )).toBeInTheDocument()
+    const includedButton = screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action included onchain.',
+    })
+    expect(includedButton).toHaveTextContent('check_circle')
+    expect(includedButton.querySelector('.sponsored-activity-base-icon'))
+      .not.toHaveClass('animate-spin')
+    fireEvent.click(includedButton)
+    expect(screen.getByRole('region', { name: 'Included onchain' }))
+      .toBeInTheDocument()
 
     act(() => {
       expect(
@@ -328,11 +412,21 @@ describe('SponsoredOperationHistoryButton', () => {
       })
     })
 
-    expect(screen.queryByText(
-      'Included · awaiting safe confirmation'
-    )).not.toBeInTheDocument()
+    const attentionButton = screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    })
+    expect(attentionButton).toHaveTextContent('warning')
+    expect(attentionButton.querySelector('.sponsored-activity-base-icon'))
+      .not.toHaveClass('animate-spin')
+    expect(screen.queryByRole('region', { name: 'Included onchain' }))
+      .not.toBeInTheDocument()
     expect(screen.getByText('Submission status unknown')).toBeInTheDocument()
-    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    const attentionSection = screen.getByRole('region', {
+      name: 'Needs attention',
+    })
+    expect(attentionSection.querySelector(
+      '[data-operation-id="reorged-inclusion"]'
+    )).toBeInTheDocument()
     expect(screen.queryByRole('link', {
       name: 'View included transaction on Blockscout',
     })).not.toBeInTheDocument()
@@ -471,7 +565,7 @@ describe('SponsoredOperationHistoryButton', () => {
     expect(screen.queryByText(/safe to retry/i)).not.toBeInTheDocument()
   })
 
-  it('prioritizes actions that need attention over in-progress and recent activity', () => {
+  it('prioritizes attention, foreground progress, included, then recent activity', () => {
     useSponsoredOperationStore.setState({
       operations: [
         operation({
@@ -487,6 +581,14 @@ describe('SponsoredOperationHistoryButton', () => {
           action: 'place-order',
           status: 'confirming',
           updatedAt: 400,
+        }),
+        operation({
+          id: 'included',
+          action: 'place-order',
+          status: 'confirming',
+          updatedAt: 350,
+          userOperationHash: USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
         }),
         operation({
           id: 'failed',
@@ -516,9 +618,11 @@ describe('SponsoredOperationHistoryButton', () => {
     render(<SponsoredOperationHistoryButton />)
 
     const activityButton = screen.getByRole('button', {
-      name: /open trading account activity\. 1 action needs attention; 1 action in progress/i,
+      name:
+        'Open Trading Account activity. 1 action needs attention; 1 action in progress; 1 action included onchain.',
     })
     expect(activityButton).not.toHaveTextContent('1')
+    expect(activityButton).toHaveTextContent('warning')
 
     fireEvent.click(activityButton)
 
@@ -532,17 +636,21 @@ describe('SponsoredOperationHistoryButton', () => {
         ?.acknowledgedAttentionRevision
     ).toBeUndefined()
     expect(screen.getByRole('button', {
-      name: 'Open Trading Account activity. 1 action in progress.',
+      name:
+        'Open Trading Account activity. 1 action in progress; 1 action included onchain.',
     })).toHaveTextContent('progress_activity')
 
     const dialog = screen.getByRole('dialog')
     const historyItems = dialog.querySelectorAll('[data-operation-id]')
-    expect(historyItems).toHaveLength(3)
+    expect(historyItems).toHaveLength(4)
     expect(historyItems[0]).toHaveAttribute('data-operation-id', 'failed')
     expect(historyItems[1]).toHaveAttribute('data-operation-id', 'pending')
-    expect(historyItems[2]).toHaveAttribute('data-operation-id', 'confirmed')
+    expect(historyItems[2]).toHaveAttribute('data-operation-id', 'included')
+    expect(historyItems[3]).toHaveAttribute('data-operation-id', 'confirmed')
     expect(within(dialog).getByText('Needs attention')).toBeInTheDocument()
     expect(within(dialog).getByText('In progress')).toBeInTheDocument()
+    expect(within(dialog).getByRole('region', { name: 'Included onchain' }))
+      .toBeInTheDocument()
     expect(within(dialog).getByText('Recent activity')).toBeInTheDocument()
 
     fireEvent.click(within(dialog).getByText('Account details'))
@@ -572,7 +680,7 @@ describe('SponsoredOperationHistoryButton', () => {
       'href',
       `https://arbitrum-sepolia.blockscout.com/address/${identityMocks.accountAddress}`
     )
-    expect(within(dialog).getByText('Commit order')).toBeInTheDocument()
+    expect(within(dialog).getAllByText('Commit order')).toHaveLength(2)
     expect(within(dialog).getByText('Deposit margin')).toBeInTheDocument()
     expect(within(dialog).getByText('Withdraw margin')).toBeInTheDocument()
     expect(within(dialog).queryByText('Settle trader claim')).not.toBeInTheDocument()
