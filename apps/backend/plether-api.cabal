@@ -271,3 +271,34 @@ test-suite plether-api-test
     default-language: GHC2021
     default-extensions:
         OverloadedStrings
+
+test-suite plether-api-integration-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    other-modules:
+        Plether.Perps.CriticalPathFixture
+        Plether.Perps.CriticalPathSpec
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        hspec >= 2.11,
+        aeson >= 2.1,
+        bytestring >= 0.11,
+        text >= 2.0,
+        base16-bytestring >= 1.0,
+        http-client >= 0.7,
+        http-types >= 0.12,
+        postgresql-simple >= 0.7,
+        resource-pool >= 0.4,
+        scotty >= 0.22,
+        wai >= 3.2,
+        wai-extra >= 3.1,
+        warp >= 3.3
+    hs-source-dirs:   test-integration
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1

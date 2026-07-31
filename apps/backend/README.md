@@ -651,6 +651,12 @@ cabal build
 # Run tests
 cabal test
 
+# Run the deterministic Perps critical-path gate against an isolated PostgreSQL database.
+# The database name must contain "critical_path"; the suite refuses any other database.
+PERPS_CRITICAL_PATH_REQUIRED=1 \
+PERPS_CRITICAL_PATH_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path \
+  cabal test plether-api-integration-test --test-show-details=direct -j1
+
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
@@ -660,6 +666,13 @@ cabal run plether-liquidation-worker -- --once --dry-run
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
+
+The critical-path gate runs the real Perps history indexer and HTTP API against
+PostgreSQL and an in-process scripted chain. It covers delayed trace evidence,
+Blockscout fallback, finalized-value stability, stale evidence guards, stale
+keeper suppression, and canonical reorg replacement. In CI, its PostgreSQL
+prerequisites are mandatory; missing configuration or an unexpected RPC request
+fails the job rather than silently skipping it.
 
 ## Project Structure
 
