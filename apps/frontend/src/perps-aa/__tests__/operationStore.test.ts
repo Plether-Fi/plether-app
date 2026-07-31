@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 import {
   cancelSponsoredOperationRequest,
   canForceUnlockLegacySponsoredOperation,
@@ -100,6 +100,149 @@ describe('sponsored operation store', () => {
       userOperationHash: '0x1234',
       transactionHash: '0xabcd',
     })
+  })
+
+  it('durably records latest-chain inclusion without unlocking the lane', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-31T08:00:00.000Z'))
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const includedTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'operation-1',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      {
+        transactionHash: includedTransactionHash,
+        blockNumber: '123',
+        blockHash: `0x${'78'.repeat(32)}`,
+      }
+    )).toBe(true)
+    const includedOperation =
+      useSponsoredOperationStore.getState().operations[0]!
+    expect(includedOperation).toMatchObject({
+      status: 'confirming',
+      userOperationHash,
+      includedTransactionHash,
+      includedBlockNumber: '123',
+      includedBlockHash: `0x${'78'.repeat(32)}`,
+      inclusionObservedAt: expect.any(Number),
+      inclusionEvidenceRevision: 1,
+      sponsorshipAccepted: true,
+    })
+    expect(includedOperation.reason).toBeUndefined()
+    expect(includedOperation.retryable).toBeUndefined()
+    expect(includedOperation.transactionHash).toBeUndefined()
+    expect(includedOperation.transactionHashVerified).toBeUndefined()
+    expect(() => begin('operation-2')).toThrow(SponsoredOperationLockedError)
+
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    const durableJournal = globalThis.localStorage.getItem(journalKey)
+    vi.advanceTimersByTime(5_000)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      {
+        transactionHash: includedTransactionHash,
+        blockNumber: '123',
+        blockHash: `0x${'78'.repeat(32)}`,
+      }
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().operations[0]?.updatedAt)
+      .toBe(includedOperation.updatedAt)
+    expect(globalThis.localStorage.getItem(journalKey)).toBe(durableJournal)
+
+    useSponsoredOperationStore.setState({
+      operations: [],
+      activeLanes: {},
+    })
+    await useSponsoredOperationStore.persist.rehydrate()
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        id: 'operation-1',
+        status: 'confirming',
+        includedTransactionHash,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+  })
+
+  it('retracts reorged inclusion and accepts a replacement before safe confirmation', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-31T08:00:00.000Z'))
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const firstTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    const replacementTransactionHash = `0x${'56'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: firstTransactionHash }
+    )).toBe(true)
+    const staleIncludedOperation =
+      useSponsoredOperationStore.getState().operations[0]!
+
+    // Evidence ordering must survive a user or OS clock adjustment.
+    vi.setSystemTime(new Date('2026-07-31T07:00:00.000Z'))
+    expect(
+      useSponsoredOperationStore.getState().clearObservedInclusion(
+        'operation-1'
+      )
+    ).toBe(true)
+    const retractedOperation =
+      useSponsoredOperationStore.getState().operations[0]!
+    expect(retractedOperation.includedTransactionHash).toBeUndefined()
+    expect(retractedOperation.inclusionObservedAt).toBeUndefined()
+    expect(retractedOperation.inclusionEvidenceRevision).toBe(2)
+
+    const merged = mergeSponsoredOperationState({
+      operations: [staleIncludedOperation],
+      activeLanes: {},
+    }, useSponsoredOperationStore.getState())
+    expect(merged.operations[0]?.includedTransactionHash).toBeUndefined()
+
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: replacementTransactionHash }
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'confirming',
+        includedTransactionHash: replacementTransactionHash,
+      })
+
+    useSponsoredOperationStore.getState().recordTransactionHash(
+      'operation-1',
+      replacementTransactionHash
+    )
+    useSponsoredOperationStore.getState().transition(
+      'operation-1',
+      'confirmed'
+    )
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: firstTransactionHash }
+    )).toBe(false)
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'confirmed',
+        transactionHash: replacementTransactionHash,
+        transactionHashVerified: true,
+      })
   })
 
   it('never overwrites the first persisted UserOperation hash', () => {

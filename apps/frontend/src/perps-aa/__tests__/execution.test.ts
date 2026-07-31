@@ -57,6 +57,9 @@ const TARGET = '0x3333333333333333333333333333333333333333' as Address
 const USER_OPERATION_HASH = `0x${'44'.repeat(32)}` as Hex
 const OTHER_USER_OPERATION_HASH = `0x${'55'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'66'.repeat(32)}` as Hex
+const INCLUDED_BLOCK_HASH = `0x${'77'.repeat(32)}` as Hex
+const REPLACEMENT_TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
+const REPLACEMENT_BLOCK_HASH = `0x${'99'.repeat(32)}` as Hex
 const SPONSORSHIP_VALID_UNTIL = 1_784_869_349n
 
 function paymasterData(): Hex {
@@ -131,8 +134,16 @@ function receipt(): ManagedUserOperationReceipt {
     receipt: {
       transactionHash: TRANSACTION_HASH,
       status: 'success',
+      blockNumber: 123n,
+      blockHash: INCLUDED_BLOCK_HASH,
     },
   } as ManagedUserOperationReceipt
+}
+
+function receiptNotFoundError(): Error {
+  const error = new Error('receipt not found')
+  error.name = 'UserOperationReceiptNotFoundError'
+  return error
 }
 
 function runtime(input: {
@@ -141,6 +152,8 @@ function runtime(input: {
   sendUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['sendUserOperation']
   getUserOperationStatus?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationStatus']
   getUserOperationReceipt?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationReceipt']
+  verifyObservedInclusion?:
+    PerpsAaSmartAccountRuntime['verifyObservedInclusion']
 } = {}): PerpsAaSmartAccountRuntime {
   return {
     chainId: 421614,
@@ -148,6 +161,7 @@ function runtime(input: {
     factoryAddress: FACTORY,
     accountVersion: 'permissionless-simple-v0.8',
     accountIndex: '0',
+    verifyObservedInclusion: input.verifyObservedInclusion,
     smartAccount: {
       accountAddress: ACCOUNT,
       entryPoint: ENTRY_POINT,
@@ -304,7 +318,10 @@ describe('executeSponsoredPerpsAction', () => {
       })
       const includedOperation =
         useSponsoredOperationStore.getState().operations[0]
-      expect(includedOperation).toMatchObject({ status: 'confirming' })
+      expect(includedOperation).toMatchObject({
+        status: 'confirming',
+        includedTransactionHash: TRANSACTION_HASH,
+      })
       expect(includedOperation?.transactionHash).toBeUndefined()
       expect(includedOperation?.transactionHashVerified).toBeUndefined()
 
@@ -318,6 +335,187 @@ describe('executeSponsoredPerpsAction', () => {
         status: 'confirmed',
         transactionHash: TRANSACTION_HASH,
         transactionHashVerified: true,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps observed inclusion nonterminal when safe confirmation exceeds the interactive timeout', async () => {
+    vi.useFakeTimers()
+    try {
+      const includedReceipt = receipt()
+      const getUserOperationReceipt = vi.fn(async () => {
+        throw new UserOperationReceiptNotSafeError(includedReceipt)
+      })
+      const onIncluded = vi.fn()
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({ getUserOperationReceipt }),
+        onIncluded,
+      }).catch((error: unknown) => error)
+
+      await vi.waitFor(() => {
+        expect(onIncluded).toHaveBeenCalledOnce()
+      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirming',
+          includedTransactionHash: TRANSACTION_HASH,
+        })
+
+      await vi.advanceTimersByTimeAsync(120_000)
+      await expect(execution).resolves.toMatchObject({
+        name: 'BundlerRequestError',
+        terminalStatus: 'receipt-timeout',
+      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirming',
+          includedTransactionHash: TRANSACTION_HASH,
+        })
+      expect(useSponsoredOperationStore.getState().operations[0]?.reason)
+        .toBeUndefined()
+      expect(() => {
+        useSponsoredOperationStore.getState().beginOperation({
+          id: 'operation-after-inclusion',
+          ownerAddress: OWNER,
+          accountAddress: ACCOUNT,
+          chainId: 421614,
+          accountMode: 'simple',
+          manifestVersion: manifest().version,
+          action: 'place-order',
+        })
+      }).toThrow(SponsoredOperationLockedError)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('retains observed inclusion through a transient Pimlico receipt miss', async () => {
+    vi.useFakeTimers()
+    try {
+      const includedReceipt = receipt()
+      const getUserOperationReceipt = vi.fn()
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(includedReceipt)
+        )
+        .mockRejectedValueOnce(receiptNotFoundError())
+        .mockResolvedValue(includedReceipt)
+      const verifyObservedInclusion = vi.fn(
+        async () => 'canonical' as const
+      )
+      const onIncluded = vi.fn()
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({
+          getUserOperationReceipt,
+          verifyObservedInclusion,
+        }),
+        onIncluded,
+      })
+
+      await vi.waitFor(() => {
+        expect(onIncluded).toHaveBeenCalledOnce()
+      })
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(verifyObservedInclusion).toHaveBeenCalledWith({
+        transactionHash: TRANSACTION_HASH,
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
+      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirming',
+          includedTransactionHash: TRANSACTION_HASH,
+          includedBlockNumber: '123',
+          includedBlockHash: INCLUDED_BLOCK_HASH,
+        })
+      expect(onIncluded).toHaveBeenCalledOnce()
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      await expect(execution).resolves.toMatchObject({
+        userOperationHash: USER_OPERATION_HASH,
+        transactionHash: TRANSACTION_HASH,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('replaces observed inclusion only after direct canonical reorg proof', async () => {
+    vi.useFakeTimers()
+    try {
+      const firstReceipt = receipt()
+      const replacementReceipt = {
+        ...receipt(),
+        receipt: {
+          ...receipt().receipt,
+          transactionHash: REPLACEMENT_TRANSACTION_HASH,
+          blockNumber: 124n,
+          blockHash: REPLACEMENT_BLOCK_HASH,
+        },
+      } as ManagedUserOperationReceipt
+      const getUserOperationReceipt = vi.fn()
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(firstReceipt)
+        )
+        .mockRejectedValueOnce(receiptNotFoundError())
+        .mockRejectedValueOnce(
+          new UserOperationReceiptNotSafeError(replacementReceipt)
+        )
+        .mockResolvedValue(replacementReceipt)
+      const verifyObservedInclusion = vi.fn(
+        async () => 'reorged' as const
+      )
+      const onIncluded = vi.fn()
+      const execution = executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: runtime({
+          getUserOperationReceipt,
+          verifyObservedInclusion,
+        }),
+        onIncluded,
+      })
+
+      await vi.waitFor(() => {
+        expect(onIncluded).toHaveBeenCalledOnce()
+      })
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(verifyObservedInclusion).toHaveBeenCalledWith({
+        transactionHash: TRANSACTION_HASH,
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
+      })
+      expect(
+        useSponsoredOperationStore.getState().operations[0]
+          ?.includedTransactionHash
+      ).toBeUndefined()
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      expect(onIncluded).toHaveBeenCalledTimes(2)
+      expect(onIncluded).toHaveBeenLastCalledWith({
+        userOperationHash: USER_OPERATION_HASH,
+        receipt: replacementReceipt,
+        transactionHash: REPLACEMENT_TRANSACTION_HASH,
+      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          includedTransactionHash: REPLACEMENT_TRANSACTION_HASH,
+          includedBlockNumber: '124',
+          includedBlockHash: REPLACEMENT_BLOCK_HASH,
+        })
+
+      await vi.advanceTimersByTimeAsync(1_500)
+      await expect(execution).resolves.toMatchObject({
+        userOperationHash: USER_OPERATION_HASH,
+        transactionHash: REPLACEMENT_TRANSACTION_HASH,
       })
     } finally {
       vi.useRealTimers()
@@ -354,7 +552,10 @@ describe('executeSponsoredPerpsAction', () => {
         expect(onIncluded).toHaveBeenCalledOnce()
       })
       expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({ status: 'confirming' })
+        .toMatchObject({
+          status: 'confirming',
+          includedTransactionHash: TRANSACTION_HASH,
+        })
 
       await vi.advanceTimersByTimeAsync(1_500)
       expect(onIncluded).toHaveBeenCalledTimes(2)

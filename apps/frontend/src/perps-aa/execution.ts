@@ -26,6 +26,7 @@ import {
   DEFAULT_SPONSORED_OPERATION_LANE,
   hasDurableSponsoredOperationSubmission,
   restoreSponsoredOperationLane,
+  type SponsoredOperationInclusionObservation,
   useSponsoredOperationStore,
 } from './operationStore'
 import type {
@@ -87,6 +88,10 @@ async function waitForPimlicoOutcome(input: {
   userOperationHash: Hex
   signal: AbortSignal
   onTransactionHash: (hash: Hex) => void
+  onObservedInclusion?: (
+    observation: SponsoredOperationInclusionObservation
+  ) => boolean
+  onInclusionRetracted?: () => boolean
   onIncluded?: (receipt: ManagedUserOperationReceipt) => void
   timeoutMs?: number
   pollIntervalMs?: number
@@ -94,14 +99,35 @@ async function waitForPimlicoOutcome(input: {
   const startedAt = Date.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   const pollIntervalMs = input.pollIntervalMs ?? 1_500
-  let inclusionReported = false
+  let persistedInclusion:
+    SponsoredOperationInclusionObservation | undefined
+  let reportedInclusionHash: Hex | undefined
   let lastReconciliationError: unknown
 
   const reportInclusion = (receipt: ManagedUserOperationReceipt) => {
-    if (inclusionReported) return
+    const transactionHash = receipt.receipt.transactionHash
+    const observation: SponsoredOperationInclusionObservation = {
+      transactionHash,
+      blockNumber: receipt.receipt.blockNumber.toString(),
+      blockHash: receipt.receipt.blockHash,
+    }
     try {
-      input.onIncluded?.(receipt)
-      inclusionReported = true
+      if (
+        input.onObservedInclusion &&
+        !input.onObservedInclusion(observation)
+      ) {
+        throw new Error(
+          'The latest-chain inclusion could not be persisted for recovery'
+        )
+      }
+      persistedInclusion = observation
+      if (
+        reportedInclusionHash?.toLowerCase() !==
+          transactionHash.toLowerCase()
+      ) {
+        input.onIncluded?.(receipt)
+        reportedInclusionHash = transactionHash
+      }
       lastReconciliationError = undefined
     } catch (error) {
       lastReconciliationError = error
@@ -109,6 +135,43 @@ async function waitForPimlicoOutcome(input: {
       // release the sponsored-operation lane early. Retry while inclusion is
       // still being polled so a transient parser or state error cannot leave
       // the UI permanently behind canonical chain state.
+    }
+  }
+
+  const retractInclusionIfReorged = async () => {
+    if (
+      persistedInclusion?.blockNumber === undefined ||
+      persistedInclusion.blockHash === undefined ||
+      input.runtime.verifyObservedInclusion === undefined
+    ) {
+      return
+    }
+    let canonicality
+    try {
+      canonicality = await input.runtime.verifyObservedInclusion({
+        transactionHash: persistedInclusion.transactionHash,
+        blockNumber: BigInt(persistedInclusion.blockNumber),
+        blockHash: persistedInclusion.blockHash,
+      })
+    } catch {
+      return
+    }
+    if (canonicality !== 'reorged') return
+
+    try {
+      if (
+        input.onInclusionRetracted &&
+        !input.onInclusionRetracted()
+      ) {
+        throw new Error(
+          'The reorged latest-chain inclusion could not be retracted'
+        )
+      }
+      persistedInclusion = undefined
+      reportedInclusionHash = undefined
+      lastReconciliationError = undefined
+    } catch (error) {
+      lastReconciliationError = error
     }
   }
 
@@ -121,6 +184,12 @@ async function waitForPimlicoOutcome(input: {
       })
       if (outcome.kind === 'included') {
         reportInclusion(outcome.receipt)
+      }
+      if (outcome.kind === 'pending') {
+        // Pimlico can temporarily miss a receipt it previously indexed.
+        // Retract only when the chain RPC proves that the exact observed block
+        // hash was replaced.
+        await retractInclusionIfReorged()
       }
       if (
         (outcome.kind === 'confirmed' || outcome.kind === 'terminal') &&
@@ -147,6 +216,7 @@ async function waitForPimlicoOutcome(input: {
         throw error
       }
       lastReconciliationError = error
+      await retractInclusionIfReorged()
       // Receipt and status requests can race with Pimlico's indexer or fail
       // transiently. Keep reconciling the already-persisted local hash.
     }
@@ -368,6 +438,8 @@ export async function executeSponsoredPerpsAction(
       userOperationHash: localUserOperationHash,
       signal: activeTracker.signal,
       onTransactionHash: activeTracker.onTransactionHash,
+      onObservedInclusion: activeTracker.onObservedInclusion,
+      onInclusionRetracted: activeTracker.onInclusionRetracted,
       onIncluded: (includedReceipt) => {
         input.onIncluded?.({
           userOperationHash: localUserOperationHash,

@@ -5,6 +5,7 @@ import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
 import {
   PerpsIdentityContext,
+  isSponsoredOperationTerminal,
   type PerpsAaDeploymentManifest,
   type PerpsIdentityContextValue,
   type SponsoredOperation,
@@ -69,6 +70,7 @@ function operation(input: {
   status: SponsoredOperationStatus
   minutesAgo: number
   userOperationHash?: Hex
+  includedTransactionHash?: Hex
   transactionHash?: Hex
   reason?: SponsoredOperation['reason']
   retryable?: boolean
@@ -87,7 +89,14 @@ function operation(input: {
     sponsorshipAccepted:
       input.status !== 'building' && input.status !== 'failed',
     userOperationHash: input.userOperationHash,
+    includedTransactionHash: input.includedTransactionHash,
+    inclusionObservedAt:
+      input.includedTransactionHash === undefined ? undefined : timestamp,
+    inclusionEvidenceRevision:
+      input.includedTransactionHash === undefined ? undefined : 1,
     transactionHash: input.transactionHash,
+    transactionHashVerified:
+      input.transactionHash === undefined ? undefined : true,
     reason: input.reason,
     retryable: input.retryable,
     retryCount: 0,
@@ -128,6 +137,17 @@ const pendingOperations = [
   }),
 ]
 
+const includedOperations = [
+  operation({
+    id: 'order-included',
+    action: 'place-order',
+    status: 'confirming',
+    minutesAgo: 1,
+    userOperationHash: hash('7'),
+    includedTransactionHash: hash('8'),
+  }),
+]
+
 const successFeedbackOperations = [
   operation({
     id: 'deposit-success-feedback',
@@ -151,7 +171,7 @@ const failedOperations = [
 
 const mixedOperations = [
   ...confirmedOperations,
-  ...pendingOperations,
+  ...includedOperations,
   ...failedOperations,
 ]
 
@@ -167,10 +187,19 @@ function WalletHeaderPreview({
       useSponsoredOperationStore.getState().operations
     const previousActiveLanes =
       useSponsoredOperationStore.getState().activeLanes
+    const activeOperation = operations
+      .filter((operation) => !isSponsoredOperationTerminal(operation.status))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .at(0)
 
     useSponsoredOperationStore.setState({
       operations,
-      activeLanes: {},
+      activeLanes: activeOperation
+        ? {
+            [`${activeOperation.accountAddress.toLowerCase()}:${activeOperation.lane}`]:
+              activeOperation.id,
+          }
+        : {},
     })
 
     const confirmationTimeoutId = confirmOperationId
@@ -261,6 +290,28 @@ export const Pending: Story = {
   render: () => (
     <WalletHeaderPreview operations={pendingOperations} />
   ),
+}
+
+export const IncludedAwaitingSafeConfirmation: Story = {
+  name: 'Included · awaiting safe confirmation',
+  render: () => (
+    <WalletHeaderPreview operations={includedOperations} />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await userEvent.click(
+      await canvas.findByRole('button', {
+        name: 'Open Trading Account activity. 1 action in progress.',
+      })
+    )
+    const dialog = await within(document.body).findByRole('dialog')
+    expect(within(dialog).getByText(
+      'Included · awaiting safe confirmation'
+    )).toBeVisible()
+    expect(within(dialog).getByRole('link', {
+      name: 'View included transaction on Blockscout',
+    })).toBeVisible()
+  },
 }
 
 export const Failed: Story = {

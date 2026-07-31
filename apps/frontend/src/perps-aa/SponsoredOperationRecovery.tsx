@@ -3,6 +3,7 @@ import { isAddressEqual, type Hex } from 'viem'
 import { clearDepositAuthorization } from './authorizationStore'
 import {
   hasSponsoredOperationSignal,
+  hasObservedSponsoredOperationInclusion,
   isSponsoredOperationTerminal,
   restoreSponsoredOperationLane,
   SPONSORED_OPERATION_JOURNAL_PREFIX,
@@ -163,6 +164,29 @@ function operationMatchesRuntime(
     operation.ownerAddress.toLowerCase() ===
       runtime.ownerAddress.toLowerCase() &&
     operation.accountAddress.toLowerCase() === accountAddress.toLowerCase()
+}
+
+async function observedInclusionIsReorged(
+  operation: SponsoredOperation,
+  runtime: PerpsAaSmartAccountRuntime
+): Promise<boolean> {
+  if (
+    operation.includedTransactionHash === undefined ||
+    operation.includedBlockNumber === undefined ||
+    operation.includedBlockHash === undefined ||
+    runtime.verifyObservedInclusion === undefined
+  ) {
+    return false
+  }
+  try {
+    return await runtime.verifyObservedInclusion({
+      transactionHash: operation.includedTransactionHash,
+      blockNumber: BigInt(operation.includedBlockNumber),
+      blockHash: operation.includedBlockHash,
+    }) === 'reorged'
+  } catch {
+    return false
+  }
 }
 
 export function SponsoredOperationRecovery() {
@@ -331,18 +355,6 @@ export function SponsoredOperationRecovery() {
               return
             }
 
-            if (
-              !laneWasReleased &&
-              latestOperation.status !== 'receipt-timeout'
-            ) {
-              store.failOperation({
-                id: latestOperation.id,
-                status: 'receipt-timeout',
-                reason: 'BUNDLER_UNAVAILABLE',
-                retryable: false,
-              })
-            }
-
             let outcome
             try {
               outcome = await reconcilePimlicoUserOperation({
@@ -350,7 +362,29 @@ export function SponsoredOperationRecovery() {
                 userOperationHash,
               })
             } catch {
-              if (!laneWasReleased) {
+              const currentOperation =
+                useSponsoredOperationStore.getState().operations
+                  .find((item) => item.id === latestOperation.id)
+              let retainsObservedInclusion =
+                currentOperation !== undefined &&
+                hasObservedSponsoredOperationInclusion(currentOperation)
+              if (
+                currentOperation &&
+                hasObservedSponsoredOperationInclusion(currentOperation) &&
+                await observedInclusionIsReorged(
+                  currentOperation,
+                  runtime
+                )
+              ) {
+                retainsObservedInclusion =
+                  !useSponsoredOperationStore
+                    .getState()
+                    .clearObservedInclusion(latestOperation.id)
+              }
+              if (
+                !laneWasReleased &&
+                !retainsObservedInclusion
+              ) {
                 useSponsoredOperationStore.getState().failOperation({
                   id: latestOperation.id,
                   status: 'receipt-timeout',
@@ -359,6 +393,70 @@ export function SponsoredOperationRecovery() {
                 })
               }
             }
+
+            if (outcome?.kind === 'included') {
+              const inclusionPersisted =
+                useSponsoredOperationStore
+                  .getState()
+                  .recordObservedInclusion(
+                    latestOperation.id,
+                    {
+                      transactionHash: outcome.transactionHash,
+                      blockNumber:
+                        outcome.receipt.receipt.blockNumber.toString(),
+                      blockHash: outcome.receipt.receipt.blockHash,
+                    }
+                  )
+              if (!inclusionPersisted) {
+                const currentOperation =
+                  useSponsoredOperationStore.getState().operations
+                    .find((item) => item.id === latestOperation.id)
+                if (
+                  !laneWasReleased &&
+                  (
+                    !currentOperation ||
+                    !hasObservedSponsoredOperationInclusion(currentOperation)
+                  )
+                ) {
+                  useSponsoredOperationStore.getState().failOperation({
+                    id: latestOperation.id,
+                    status: 'receipt-timeout',
+                    reason: 'BUNDLER_UNAVAILABLE',
+                    retryable: false,
+                  })
+                }
+              }
+              return
+            }
+
+            if (outcome?.kind === 'pending' && !laneWasReleased) {
+              const currentOperation =
+                useSponsoredOperationStore.getState().operations
+                  .find((item) => item.id === latestOperation.id)
+              const hasObservedInclusion =
+                currentOperation !== undefined &&
+                hasObservedSponsoredOperationInclusion(currentOperation)
+              const inclusionWasReorged =
+                hasObservedInclusion &&
+                await observedInclusionIsReorged(
+                  currentOperation,
+                  runtime
+                )
+              const inclusionWasRetracted =
+                inclusionWasReorged &&
+                useSponsoredOperationStore
+                  .getState()
+                  .clearObservedInclusion(latestOperation.id)
+              if (!hasObservedInclusion || inclusionWasRetracted) {
+                useSponsoredOperationStore.getState().failOperation({
+                  id: latestOperation.id,
+                  status: 'receipt-timeout',
+                  reason: 'BUNDLER_UNAVAILABLE',
+                  retryable: false,
+                })
+              }
+            }
+
             if (
               outcome &&
               (

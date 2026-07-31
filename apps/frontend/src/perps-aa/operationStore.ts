@@ -51,6 +51,22 @@ export interface SponsoredOperation {
   protocolNonceAdvanced?: true
   legacyManualUnlockEligible?: boolean
   legacyInboxIdentity?: true
+  /**
+   * Exact latest-chain inclusion observed before the receipt reached the
+   * RPC's safe head. This evidence is deliberately distinct from the
+   * safe-confirmed transactionHash below: it keeps retry locked while letting
+   * activity report that the operation is already onchain.
+   */
+  includedTransactionHash?: Hex
+  includedBlockNumber?: string
+  includedBlockHash?: Hex
+  inclusionObservedAt?: number
+  /**
+   * Orders unsafe-inclusion observations and retractions across tabs. A
+   * revision with no includedTransactionHash means a direct canonical block
+   * check proved that the prior observation was reorged.
+   */
+  inclusionEvidenceRevision?: number
   transactionHash?: Hex
   transactionHashVerified?: boolean
   reason?: StableSponsorReason
@@ -76,6 +92,12 @@ interface BeginSponsoredOperationInput {
   lane?: string
 }
 
+export interface SponsoredOperationInclusionObservation {
+  transactionHash: Hex
+  blockNumber?: string
+  blockHash?: Hex
+}
+
 interface SponsoredOperationState {
   operations: SponsoredOperation[]
   activeLanes: Record<string, string>
@@ -89,6 +111,12 @@ interface SponsoredOperationState {
       signedUserOperation: ManagedUserOperation
     }
   ) => boolean
+  recordObservedInclusion: (
+    id: string,
+    observation: SponsoredOperationInclusionObservation
+  ) => boolean
+  /** Call only after a direct canonical block-hash check proves a reorg. */
+  clearObservedInclusion: (id: string) => boolean
   recordTransactionHash: (id: string, hash: Hex) => void
   incrementRetry: (id: string) => void
   acknowledgeOperations: (operations: {
@@ -176,6 +204,46 @@ export function isSponsoredOperationAttentionStatus(
     'expired',
     'outcome-unknown',
   ].includes(status)
+}
+
+export function hasObservedSponsoredOperationInclusion(
+  operation: SponsoredOperation
+): operation is SponsoredOperation & { includedTransactionHash: Hex } {
+  return operation.includedTransactionHash !== undefined
+}
+
+function sponsoredOperationInclusionEvidenceRevision(
+  operation: SponsoredOperation | undefined
+): number {
+  return operation?.inclusionEvidenceRevision ??
+    (operation?.includedTransactionHash === undefined ? 0 : 1)
+}
+
+function operationMatchesInclusionObservation(
+  operation: SponsoredOperation | undefined,
+  observation: SponsoredOperationInclusionObservation
+): boolean {
+  return operation?.includedTransactionHash?.toLowerCase() ===
+      observation.transactionHash.toLowerCase() &&
+    (
+      observation.blockNumber === undefined ||
+      operation.includedBlockNumber === observation.blockNumber
+    ) &&
+    (
+      observation.blockHash === undefined ||
+      operation.includedBlockHash?.toLowerCase() ===
+        observation.blockHash.toLowerCase()
+    )
+}
+
+function sponsoredOperationInclusionEvidenceTieBreakKey(
+  operation: SponsoredOperation
+): string {
+  return [
+    operation.includedTransactionHash?.toLowerCase() ?? '',
+    operation.includedBlockNumber ?? '',
+    operation.includedBlockHash?.toLowerCase() ?? '',
+  ].join(':')
 }
 
 export function getSponsoredOperationAttentionRevision(
@@ -385,7 +453,12 @@ function operationMergeScore(operation: SponsoredOperation): number {
     (operation.transactionHashVerified === true ? 8 : 0) +
     (operation.submissionMetadataVersion === 1 ? 4 : 0) +
     (operation.userOperationHash !== undefined ? 2 : 0) +
-    (operation.transactionHash !== undefined ? 1 : 0)
+    (
+      operation.includedTransactionHash !== undefined ||
+      operation.transactionHash !== undefined
+        ? 1
+        : 0
+    )
   )
 }
 
@@ -468,6 +541,19 @@ function mergeOperationRecord(
                 ? persisted
                 : current
   const other = preferred === current ? persisted : current
+  const preferredInclusionEvidenceRevision =
+    sponsoredOperationInclusionEvidenceRevision(preferred)
+  const otherInclusionEvidenceRevision =
+    sponsoredOperationInclusionEvidenceRevision(other)
+  const preferredInclusionEvidence =
+    preferredInclusionEvidenceRevision > otherInclusionEvidenceRevision
+      ? preferred
+      : preferredInclusionEvidenceRevision < otherInclusionEvidenceRevision
+        ? other
+        : sponsoredOperationInclusionEvidenceTieBreakKey(preferred) >=
+            sponsoredOperationInclusionEvidenceTieBreakKey(other)
+          ? preferred
+          : other
   return {
     ...preferred,
     // Submission identity and canonical evidence are monotonic. Rehydrating a
@@ -480,6 +566,16 @@ function mergeOperationRecord(
       preferred.submissionMetadataVersion ??
       other.submissionMetadataVersion,
     hashRecordedAt: preferred.hashRecordedAt ?? other.hashRecordedAt,
+    includedTransactionHash:
+      preferredInclusionEvidence.includedTransactionHash,
+    includedBlockNumber:
+      preferredInclusionEvidence.includedBlockNumber,
+    includedBlockHash:
+      preferredInclusionEvidence.includedBlockHash,
+    inclusionObservedAt:
+      preferredInclusionEvidence.inclusionObservedAt,
+    inclusionEvidenceRevision:
+      preferredInclusionEvidence.inclusionEvidenceRevision,
     transactionHash:
       preferred.transactionHashVerified === true
         ? preferred.transactionHash
@@ -1846,6 +1942,259 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             if (requiresSubmissionRevision && !retainSubmissionRevision) {
               sponsoredOperationSubmissionRevisions.delete(id)
             }
+          }
+        },
+
+        recordObservedInclusion: (id, observation) => {
+          const currentOperation = get().operations.find(
+            (operation) => operation.id === id
+          )
+          if (
+            currentOperation?.userOperationHash === undefined ||
+            (
+              currentOperation.transactionHashVerified === true &&
+              currentOperation.transactionHash?.toLowerCase() !==
+                observation.transactionHash.toLowerCase()
+            )
+          ) {
+            return false
+          }
+          if (isSponsoredOperationTerminal(currentOperation.status)) {
+            return currentOperation.status === 'confirmed' &&
+              currentOperation.transactionHashVerified === true &&
+              currentOperation.transactionHash?.toLowerCase() ===
+                observation.transactionHash.toLowerCase()
+          }
+
+          let durableBefore: SponsoredOperation | undefined
+          try {
+            durableBefore = readDurableOperation({
+              id: currentOperation.id,
+              userOperationHash: currentOperation.userOperationHash,
+              chainId: currentOperation.chainId,
+              accountAddress: currentOperation.accountAddress,
+              lane: currentOperation.lane,
+            })
+          } catch {
+            return false
+          }
+          if (
+            currentOperation.status === 'confirming' &&
+            durableBefore?.status === 'confirming' &&
+            operationMatchesInclusionObservation(
+              currentOperation,
+              observation
+            ) &&
+            operationMatchesInclusionObservation(
+              durableBefore,
+              observation
+            ) &&
+            currentOperation.reason === undefined &&
+            currentOperation.retryable === undefined &&
+            hasDurableOperationJournal(
+              currentOperation,
+              currentOperation.userOperationHash,
+              false
+            )
+          ) {
+            return true
+          }
+
+          const nextEvidenceRevision = Math.max(
+            sponsoredOperationInclusionEvidenceRevision(currentOperation),
+            sponsoredOperationInclusionEvidenceRevision(durableBefore)
+          ) + 1
+          const now = Math.max(
+            Date.now(),
+            currentOperation.updatedAt + 1,
+            (durableBefore?.updatedAt ?? 0) + 1
+          )
+          try {
+            set((state) => ({
+              operations: updateOperation(
+                state.operations,
+                id,
+                (operation) => {
+                  if (
+                    isSponsoredOperationTerminal(operation.status) ||
+                    operation.userOperationHash === undefined ||
+                    (
+                      operation.transactionHashVerified === true &&
+                      operation.transactionHash?.toLowerCase() !==
+                        observation.transactionHash.toLowerCase()
+                    )
+                  ) {
+                    return operation
+                  }
+                  const sameTransaction =
+                    operation.includedTransactionHash?.toLowerCase() ===
+                      observation.transactionHash.toLowerCase()
+                  return {
+                    ...operation,
+                    status: 'confirming',
+                    sponsorshipAccepted: true,
+                    includedTransactionHash: observation.transactionHash,
+                    includedBlockNumber:
+                      observation.blockNumber ??
+                      (sameTransaction
+                        ? operation.includedBlockNumber
+                        : undefined),
+                    includedBlockHash:
+                      observation.blockHash ??
+                      (sameTransaction
+                        ? operation.includedBlockHash
+                        : undefined),
+                    inclusionObservedAt:
+                      sameTransaction
+                        ? operation.inclusionObservedAt ?? now
+                        : now,
+                    inclusionEvidenceRevision: nextEvidenceRevision,
+                    reason: undefined,
+                    retryable: undefined,
+                    updatedAt: now,
+                    attentionRevision: transitionAttentionRevision(
+                      operation,
+                      'confirming'
+                    ),
+                    statusTimestamps: {
+                      ...operation.statusTimestamps,
+                      confirming: now,
+                    },
+                  }
+                }
+              ),
+            }))
+
+            const recordedOperation = get().operations.find(
+              (operation) => operation.id === id
+            )
+            if (
+              recordedOperation?.userOperationHash === undefined ||
+              recordedOperation.status !== 'confirming' ||
+              !operationMatchesInclusionObservation(
+                recordedOperation,
+                observation
+              ) ||
+              recordedOperation.inclusionEvidenceRevision !==
+                nextEvidenceRevision
+            ) {
+              return false
+            }
+            const durableOperation = readDurableOperation({
+              id: recordedOperation.id,
+              userOperationHash: recordedOperation.userOperationHash,
+              chainId: recordedOperation.chainId,
+              accountAddress: recordedOperation.accountAddress,
+              lane: recordedOperation.lane,
+            })
+            return durableOperation?.status === 'confirming' &&
+              operationMatchesInclusionObservation(
+                durableOperation,
+                observation
+              ) &&
+              durableOperation.inclusionEvidenceRevision ===
+                nextEvidenceRevision &&
+              hasDurableOperationJournal(
+                recordedOperation,
+                recordedOperation.userOperationHash,
+                false
+              )
+          } catch {
+            return false
+          }
+        },
+
+        clearObservedInclusion: (id) => {
+          const currentOperation = get().operations.find(
+            (operation) => operation.id === id
+          )
+          if (
+            !currentOperation ||
+            isSponsoredOperationTerminal(currentOperation.status)
+          ) {
+            return false
+          }
+          let durableBefore: SponsoredOperation | undefined
+          try {
+            if (currentOperation.userOperationHash !== undefined) {
+              durableBefore = readDurableOperation({
+                id: currentOperation.id,
+                userOperationHash: currentOperation.userOperationHash,
+                chainId: currentOperation.chainId,
+                accountAddress: currentOperation.accountAddress,
+                lane: currentOperation.lane,
+              })
+            }
+          } catch {
+            return false
+          }
+          if (
+            currentOperation.includedTransactionHash === undefined &&
+            durableBefore?.includedTransactionHash === undefined
+          ) {
+            return true
+          }
+
+          const nextEvidenceRevision = Math.max(
+            sponsoredOperationInclusionEvidenceRevision(currentOperation),
+            sponsoredOperationInclusionEvidenceRevision(durableBefore)
+          ) + 1
+          const now = Math.max(
+            Date.now(),
+            currentOperation.updatedAt + 1,
+            (durableBefore?.updatedAt ?? 0) + 1
+          )
+          try {
+            set((state) => ({
+              operations: updateOperation(
+                state.operations,
+                id,
+                (operation) => {
+                  if (
+                    isSponsoredOperationTerminal(operation.status)
+                  ) {
+                    return operation
+                  }
+                  return {
+                    ...operation,
+                    includedTransactionHash: undefined,
+                    includedBlockNumber: undefined,
+                    includedBlockHash: undefined,
+                    inclusionObservedAt: undefined,
+                    inclusionEvidenceRevision: nextEvidenceRevision,
+                    updatedAt: now,
+                  }
+                }
+              ),
+            }))
+            const clearedOperation = get().operations.find(
+              (operation) => operation.id === id
+            )
+            if (
+              clearedOperation?.userOperationHash === undefined ||
+              clearedOperation.includedTransactionHash !== undefined ||
+              clearedOperation.inclusionEvidenceRevision !==
+                nextEvidenceRevision
+            ) {
+              return false
+            }
+            const durableOperation = readDurableOperation({
+              id: clearedOperation.id,
+              userOperationHash: clearedOperation.userOperationHash,
+              chainId: clearedOperation.chainId,
+              accountAddress: clearedOperation.accountAddress,
+              lane: clearedOperation.lane,
+            })
+            return durableOperation?.includedTransactionHash === undefined &&
+              durableOperation?.inclusionEvidenceRevision ===
+                nextEvidenceRevision &&
+              hasDurableOperationJournal(
+                clearedOperation,
+                clearedOperation.userOperationHash,
+                false
+              )
+          } catch {
+            return false
           }
         },
 

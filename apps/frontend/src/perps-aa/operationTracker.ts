@@ -16,6 +16,7 @@ import {
   isSponsoredOperationTerminal,
   releaseSponsoredOperationSignal,
   SponsoredOperationLockedError,
+  type SponsoredOperationInclusionObservation,
   useSponsoredOperationStore,
 } from './operationStore'
 import type { ManagedUserOperation } from './runtimeContext'
@@ -50,6 +51,10 @@ export interface SponsoredOperationTracker {
       signedUserOperation: ManagedUserOperation
     }
   ) => boolean
+  onObservedInclusion: (
+    observation: SponsoredOperationInclusionObservation
+  ) => boolean
+  onInclusionRetracted: () => boolean
   onTransactionHash: (hash: Hex) => void
   onEstimationRestart: () => void
   fail: (error: unknown) => void
@@ -182,6 +187,15 @@ export function beginSponsoredOperationTracking(
         submissionMetadata
       ),
 
+    onObservedInclusion: (observation) =>
+      useSponsoredOperationStore.getState().recordObservedInclusion(
+        id,
+        observation
+      ),
+
+    onInclusionRetracted: () =>
+      useSponsoredOperationStore.getState().clearObservedInclusion(id),
+
     onTransactionHash: (hash) => {
       useSponsoredOperationStore.getState().recordTransactionHash(id, hash)
     },
@@ -222,6 +236,16 @@ export function beginSponsoredOperationTracking(
       const retryable = sponsorError?.retryable ??
         bundlerError?.retryable ??
         false
+
+      if (
+        operationStatus === 'receipt-timeout' &&
+        currentOperation?.includedTransactionHash !== undefined
+      ) {
+        // Exact latest-chain inclusion is already persisted. A timeout here
+        // only means that the RPC's safe head has not caught up yet, so keep
+        // the lane locked and let background recovery finish verification.
+        return
+      }
 
       useSponsoredOperationStore.getState().failOperation({
         id,
