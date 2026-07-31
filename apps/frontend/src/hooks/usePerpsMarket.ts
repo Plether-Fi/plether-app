@@ -13,6 +13,7 @@ import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
 import { computeBasketDisplayPriceChange } from '../utils/dxyBasketChart'
 import { formatCompactNumber } from '../utils/formatters'
+import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -221,6 +222,12 @@ export function usePerpsMarket() {
     const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
     const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
     const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const directionalLimit = calculatePerpsDirectionalLimit({
+      longOpenInterestUsdc: bullOpenInterestUsdc,
+      shortOpenInterestUsdc: bearOpenInterestUsdc,
+      poolAssetsUsdc,
+      maxSkewRatio,
+    })
     const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
     const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
     const longOpenCapacityUsdc = openCapacityUsdc({
@@ -274,6 +281,14 @@ export function usePerpsMarket() {
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
       shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
+      directionalLimit: directionalLimit
+        ? {
+            usagePercent: directionalLimit.usagePercent,
+            side: directionalLimit.side,
+            netExposure: formatCompactUsdc(directionalLimit.netExposureUsdc),
+            limit: formatCompactUsdc(directionalLimit.limitUsdc),
+          }
+        : undefined,
       priceChange24h: formatPercentChange(priceChange24hValue),
       priceChange24hTone: percentChangeTone(priceChange24hValue),
       volume24h: formatCompactUsdc(volume24hUsdc),
