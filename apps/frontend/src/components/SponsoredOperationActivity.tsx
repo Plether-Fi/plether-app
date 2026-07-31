@@ -68,6 +68,56 @@ function formatOperationTime(timestamp: number): string {
   })
 }
 
+function validOperationTimestamp(
+  timestamp: number | undefined
+): number | undefined {
+  if (
+    timestamp === undefined ||
+    !Number.isFinite(timestamp) ||
+    timestamp < 0
+  ) {
+    return undefined
+  }
+  return timestamp
+}
+
+function operationStatusTimestamps(
+  operation: SponsoredOperation
+): SponsoredOperation['statusTimestamps'] | undefined {
+  return (operation as {
+    statusTimestamps?: SponsoredOperation['statusTimestamps']
+  }).statusTimestamps
+}
+
+function operationHeaderTimestamp(
+  operation: SponsoredOperation
+): { label: 'Started at' | 'Last updated'; timestamp: number } | undefined {
+  const createdAt = validOperationTimestamp(operation.createdAt)
+  if (createdAt !== undefined) {
+    return { label: 'Started at', timestamp: createdAt }
+  }
+
+  const earliestLifecycleTimestamp = Object.values(
+    operationStatusTimestamps(operation) ?? {}
+  )
+    .map(validOperationTimestamp)
+    .filter((timestamp): timestamp is number => timestamp !== undefined)
+    .sort((a, b) => a - b)
+    .at(0)
+  if (earliestLifecycleTimestamp !== undefined) {
+    return { label: 'Started at', timestamp: earliestLifecycleTimestamp }
+  }
+
+  const updatedAt = validOperationTimestamp(operation.updatedAt)
+  return updatedAt === undefined
+    ? undefined
+    : { label: 'Last updated', timestamp: updatedAt }
+}
+
+function operationSortTimestamp(operation: SponsoredOperation): number {
+  return operationHeaderTimestamp(operation)?.timestamp ?? 0
+}
+
 function isFailedStatus(status: SponsoredOperationStatus): boolean {
   return [
     'failed',
@@ -354,6 +404,15 @@ function OperationHistoryItem({
     operation.transactionHashVerified === true
   const awaitingSafeConfirmation =
     isAwaitingSafeConfirmation(operation)
+  const headerTimestamp = operationHeaderTimestamp(operation)
+  const includedAt = operation.includedTransactionHash
+    ? validOperationTimestamp(operation.inclusionObservedAt)
+    : undefined
+  const safelyConfirmedAt = operation.status === 'confirmed'
+    ? validOperationTimestamp(
+        operationStatusTimestamps(operation)?.confirmed
+      )
+    : undefined
   const sponsorshipSummary = operation.status === 'outcome-unknown'
     ? 'Past onchain outcome unverified'
     : awaitingSafeConfirmation && operation.sponsorshipAccepted
@@ -397,12 +456,14 @@ function OperationHistoryItem({
           <h3 className="font-semibold text-content-primary">
             {sponsoredOperationActionLabel(operation.action)}
           </h3>
-          <time
-            dateTime={new Date(operation.updatedAt).toISOString()}
-            className="whitespace-nowrap text-xs text-content-secondary"
-          >
-            {formatOperationTime(operation.updatedAt)}
-          </time>
+          {headerTimestamp ? (
+            <span className="whitespace-nowrap text-xs text-content-secondary">
+              <span>{headerTimestamp.label}</span>{' '}
+              <time dateTime={new Date(headerTimestamp.timestamp).toISOString()}>
+                {formatOperationTime(headerTimestamp.timestamp)}
+              </time>
+            </span>
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
           <Badge
@@ -420,6 +481,30 @@ function OperationHistoryItem({
             </span>
           ) : null}
         </div>
+        {includedAt !== undefined || safelyConfirmedAt !== undefined ? (
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary">
+            {includedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Inclusion observed at</dt>
+                <dd>
+                  <time dateTime={new Date(includedAt).toISOString()}>
+                    {formatOperationTime(includedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+            {safelyConfirmedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Safely confirmed at</dt>
+                <dd>
+                  <time dateTime={new Date(safelyConfirmedAt).toISOString()}>
+                    {formatOperationTime(safelyConfirmedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
       </div>
 
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (
@@ -568,7 +653,10 @@ export function SponsoredOperationHistoryButton() {
           (ownerAddress === undefined ||
             operation.ownerAddress.toLowerCase() === ownerAddress)
         )
-        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .sort((a, b) =>
+          operationSortTimestamp(b) - operationSortTimestamp(a) ||
+          a.id.localeCompare(b.id)
+        )
     : []
   const attentionOperations = accountOperations.filter(isAttentionOperation)
   const unreviewedAttentionOperations = attentionOperations.filter(
