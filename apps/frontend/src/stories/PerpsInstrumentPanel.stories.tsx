@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { userEvent, within } from 'storybook/test'
+import { expect, userEvent, within } from 'storybook/test'
 import {
   PerpsInstrumentPanel,
   type PerpsDirectionalLimitDetails,
@@ -131,6 +131,84 @@ export const Default: Story = {
       </div>
     </div>
   ),
+}
+
+export const WideDesktop: Story = {
+  args: {
+    description: 'Dollar Index Perpetual',
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 98,
+        side: 'long',
+        netExposure: <TokenAmount amount="346M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+      price: '1.0153',
+      priceChange: '-0.17%',
+      volume: '136.4M',
+      liquidity: '25.3M',
+      costOfCarry: '5%',
+    }),
+  },
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
+      <PerpsInstrumentPanel {...args} />
+    </div>
+  ),
+}
+
+export const HoverOverlayOnChart: Story = {
+  args: WideDesktop.args,
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
+      <PerpsInstrumentPanel {...args} />
+      <div
+        data-testid="chart-surface"
+        className="mt-6 h-64 overflow-hidden border border-brand-border/30 bg-surface-panel p-4"
+      >
+        <div className="text-xs font-medium text-content-secondary">DXY basket chart</div>
+        <div className="mt-4 grid h-44 grid-rows-4 border-x border-brand-border/15">
+          {[0, 1, 2, 3].map((line) => (
+            <div key={line} className="border-t border-brand-border/15" />
+          ))}
+        </div>
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const trigger = canvas.getByRole('button', { name: 'Directional limit used details' })
+    const chart = canvas.getByTestId('chart-surface')
+    const panel = trigger.closest('section')
+    const detailsId = trigger.getAttribute('aria-controls')
+    const details = detailsId ? canvasElement.ownerDocument.getElementById(detailsId) : null
+    const overlay = details?.parentElement
+
+    if (!panel || !overlay) throw new Error('Instrument panel overlay not found')
+
+    const panelHeight = panel.getBoundingClientRect().height
+    const chartTop = chart.getBoundingClientRect().top
+
+    await userEvent.hover(trigger)
+
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(panel.getBoundingClientRect().height).toBe(panelHeight)
+    expect(chart.getBoundingClientRect().top).toBe(chartTop)
+
+    const panelRect = panel.getBoundingClientRect()
+    const overlayRect = overlay.getBoundingClientRect()
+    const panelStyle = getComputedStyle(panel)
+    const overlayStyle = getComputedStyle(overlay)
+
+    expect(overlayRect.left).toBe(panelRect.left)
+    expect(overlayRect.right).toBe(panelRect.right)
+    expect(overlayRect.width).toBe(panelRect.width)
+    expect(overlayRect.top).toBe(panelRect.bottom - 1)
+    expect(overlayStyle.backgroundColor).toBe(panelStyle.backgroundColor)
+    expect(overlayStyle.borderLeftWidth).toBe(panelStyle.borderLeftWidth)
+    expect(overlayStyle.borderRightWidth).toBe(panelStyle.borderRightWidth)
+    expect(overlayStyle.borderBottomWidth).toBe(panelStyle.borderBottomWidth)
+  },
 }
 
 export const PositiveSession: Story = {
