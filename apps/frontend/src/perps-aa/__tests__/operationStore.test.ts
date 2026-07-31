@@ -3,13 +3,16 @@ import type { Address, Hex } from 'viem'
 import {
   cancelSponsoredOperationRequest,
   canForceUnlockLegacySponsoredOperation,
+  createSponsoredOperationSignal,
   forceUnlockLegacySponsoredOperation,
   LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
   mergeSponsoredOperationState,
   migrateSponsoredOperationState,
+  releaseSponsoredOperationSignal,
   restoreSponsoredOperationLane,
   SPONSORED_OPERATION_JOURNAL_PREFIX,
   SPONSORED_OPERATION_LANE_HEAD_PREFIX,
+  SPONSORED_OPERATION_LANE_RELEASE_PREFIX,
   SPONSORED_OPERATION_RESOLUTION_PREFIX,
   SPONSORED_OPERATION_STORAGE_NAME,
   SponsoredOperationLockedError,
@@ -102,7 +105,7 @@ describe('sponsored operation store', () => {
     })
   })
 
-  it('durably records latest-chain inclusion without unlocking the lane', async () => {
+  it('durably releases the lane after exact successful latest-chain inclusion', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-07-31T08:00:00.000Z'))
     const userOperationHash = `0x${'12'.repeat(32)}` as Hex
@@ -127,6 +130,21 @@ describe('sponsored operation store', () => {
         blockHash: `0x${'78'.repeat(32)}`,
       }
     )).toBe(true)
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+    })
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        {
+          transactionHash: includedTransactionHash,
+          blockNumber: '123',
+          blockHash: `0x${'78'.repeat(32)}`,
+          success: true,
+        }
+      )).toBe(true)
     const includedOperation =
       useSponsoredOperationStore.getState().operations[0]!
     expect(includedOperation).toMatchObject({
@@ -137,13 +155,14 @@ describe('sponsored operation store', () => {
       includedBlockHash: `0x${'78'.repeat(32)}`,
       inclusionObservedAt: expect.any(Number),
       inclusionEvidenceRevision: 1,
+      laneReleasedAfterSuccessfulInclusion: true,
       sponsorshipAccepted: true,
     })
     expect(includedOperation.reason).toBeUndefined()
     expect(includedOperation.retryable).toBeUndefined()
     expect(includedOperation.transactionHash).toBeUndefined()
     expect(includedOperation.transactionHashVerified).toBeUndefined()
-    expect(() => begin('operation-2')).toThrow(SponsoredOperationLockedError)
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
 
     const journalKey =
       `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
@@ -172,10 +191,271 @@ describe('sponsored operation store', () => {
         id: 'operation-1',
         status: 'confirming',
         includedTransactionHash,
+        laneReleasedAfterSuccessfulInclusion: true,
       })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+    expect(() => begin('operation-2')).not.toThrow()
+  })
+
+  it('does not release the lane when the durable release marker cannot persist', () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const includedTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    const releaseKey =
+      `${SPONSORED_OPERATION_LANE_RELEASE_PREFIX}` +
+      `operation-1:${userOperationHash.toLowerCase()}`
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: includedTransactionHash }
+    )).toBe(true)
+    const preReleaseJournal = globalThis.localStorage.getItem(journalKey)
+    expect(preReleaseJournal).not.toContain(
+      'laneReleasedAfterSuccessfulInclusion'
+    )
+    const originalSetItem =
+      globalThis.localStorage.setItem.bind(globalThis.localStorage)
+    vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation(
+      (key, value) => {
+        if (key === releaseKey) {
+          throw new Error('simulated lane-release tombstone failure')
+        }
+        originalSetItem(key, value)
+      }
+    )
+
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        { transactionHash: includedTransactionHash, success: true }
+      )).toBe(false)
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+    expect(globalThis.localStorage.getItem(releaseKey)).toBeNull()
+    expect(globalThis.localStorage.getItem(journalKey))
+      .toBe(preReleaseJournal)
+    expect(globalThis.localStorage.getItem(journalKey)).not.toContain(
+      'laneReleasedAfterSuccessfulInclusion'
+    )
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
       [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
     })
+    expect(() => begin('operation-2')).toThrow(SponsoredOperationLockedError)
+  })
+
+  it('releases after the tombstone barrier even if the mutable journal write fails', () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const includedTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: includedTransactionHash }
+    )).toBe(true)
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    const releaseKey =
+      `${SPONSORED_OPERATION_LANE_RELEASE_PREFIX}` +
+      `operation-1:${userOperationHash.toLowerCase()}`
+    const preReleaseJournal = globalThis.localStorage.getItem(journalKey)
+    const originalSetItem =
+      globalThis.localStorage.setItem.bind(globalThis.localStorage)
+    let releaseBarrierPersisted = false
+    vi.spyOn(globalThis.localStorage, 'setItem').mockImplementation(
+      (key, value) => {
+        if (key === releaseKey) {
+          originalSetItem(key, value)
+          releaseBarrierPersisted = true
+          return
+        }
+        if (releaseBarrierPersisted && key === journalKey) {
+          throw new Error('simulated post-barrier journal failure')
+        }
+        originalSetItem(key, value)
+      }
+    )
+
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        { transactionHash: includedTransactionHash, success: true }
+      )).toBe(true)
+    expect(releaseBarrierPersisted).toBe(true)
+    expect(globalThis.localStorage.getItem(releaseKey))
+      .toContain(includedTransactionHash)
+    expect(globalThis.localStorage.getItem(journalKey))
+      .toBe(preReleaseJournal)
+    expect(globalThis.localStorage.getItem(journalKey)).not.toContain(
+      'laneReleasedAfterSuccessfulInclusion'
+    )
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({ laneReleasedAfterSuccessfulInclusion: true })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('restores release from its tombstone after an old v1 journal overwrite', async () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const includedTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: includedTransactionHash }
+    )).toBe(true)
+    const journalKey =
+      `${SPONSORED_OPERATION_JOURNAL_PREFIX}operation-1`
+    const releaseKey =
+      `${SPONSORED_OPERATION_LANE_RELEASE_PREFIX}` +
+      `operation-1:${userOperationHash.toLowerCase()}`
+    const oldV1Journal = globalThis.localStorage.getItem(journalKey)
+    expect(oldV1Journal).not.toContain(
+      'laneReleasedAfterSuccessfulInclusion'
+    )
+
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        { transactionHash: includedTransactionHash, success: true }
+      )).toBe(true)
+    expect(globalThis.localStorage.getItem(releaseKey)).not.toBeNull()
+
+    // A still-open v1 tab can finish a stale mutable-journal write after the
+    // new append-only release barrier. The tombstone must win on hydration.
+    globalThis.localStorage.setItem(journalKey, oldV1Journal!)
+    expect(globalThis.localStorage.getItem(journalKey)).not.toContain(
+      'laneReleasedAfterSuccessfulInclusion'
+    )
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    await useSponsoredOperationStore.persist.rehydrate()
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        id: 'operation-1',
+        status: 'confirming',
+        includedTransactionHash,
+        laneReleasedAfterSuccessfulInclusion: true,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('merges newer durable inclusion evidence into a signal-held stale record', async () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    const firstTransactionHash = `0x${'34'.repeat(32)}` as Hex
+    const replacementTransactionHash = `0x${'56'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    const staleBeforeInclusion = {
+      ...useSponsoredOperationStore.getState().operations[0]!,
+    }
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: firstTransactionHash }
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        { transactionHash: firstTransactionHash, success: true }
+      )).toBe(true)
+    expect(useSponsoredOperationStore.getState().clearObservedInclusion(
+      'operation-1'
+    )).toBe(true)
+
+    createSponsoredOperationSignal('operation-1')
+    try {
+      useSponsoredOperationStore.setState({
+        operations: [staleBeforeInclusion],
+        activeLanes: {
+          [`${ACCOUNT.toLowerCase()}:default`]: 'operation-1',
+        },
+      })
+      await useSponsoredOperationStore.persist.rehydrate()
+
+      const durableRetraction =
+        useSponsoredOperationStore.getState().operations[0]!
+      expect(durableRetraction).toMatchObject({
+        inclusionEvidenceRevision: 2,
+        laneReleasedAfterSuccessfulInclusion: true,
+      })
+      expect(durableRetraction.includedTransactionHash).toBeUndefined()
+      expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+
+      expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+        'operation-1',
+        { transactionHash: replacementTransactionHash }
+      )).toBe(true)
+      const durableReplacement =
+        useSponsoredOperationStore.getState().operations[0]!
+      expect(durableReplacement).toMatchObject({
+        includedTransactionHash: replacementTransactionHash,
+        inclusionEvidenceRevision: 3,
+        laneReleasedAfterSuccessfulInclusion: true,
+      })
+
+      useSponsoredOperationStore.setState({
+        operations: [durableRetraction],
+        activeLanes: {},
+      })
+      await useSponsoredOperationStore.persist.rehydrate()
+
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          includedTransactionHash: replacementTransactionHash,
+          inclusionEvidenceRevision: 3,
+          laneReleasedAfterSuccessfulInclusion: true,
+        })
+      expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+    } finally {
+      releaseSponsoredOperationSignal('operation-1')
+    }
+  })
+
+  it('rejects a duplicate hash after a released inclusion is rehydrated', async () => {
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    begin('operation-1')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      userOperationHash
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'operation-1',
+      { transactionHash: `0x${'34'.repeat(32)}` }
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        {
+          transactionHash: `0x${'34'.repeat(32)}`,
+          success: true,
+        }
+      )).toBe(true)
+
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+
+    begin('operation-2')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-2',
+      userOperationHash
+    )).toBe(false)
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-2',
+      `0x${'56'.repeat(32)}`
+    )).toBe(true)
   })
 
   it('retracts reorged inclusion and accepts a replacement before safe confirmation', () => {
@@ -193,8 +473,21 @@ describe('sponsored operation store', () => {
       'operation-1',
       { transactionHash: firstTransactionHash }
     )).toBe(true)
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'operation-1',
+        { transactionHash: firstTransactionHash, success: true }
+      )).toBe(true)
     const staleIncludedOperation =
       useSponsoredOperationStore.getState().operations[0]!
+    expect(staleIncludedOperation.laneReleasedAfterSuccessfulInclusion)
+      .toBe(true)
+
+    begin('operation-2')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-2',
+      `0x${'ab'.repeat(32)}`
+    )).toBe(true)
 
     // Evidence ordering must survive a user or OS clock adjustment.
     vi.setSystemTime(new Date('2026-07-31T07:00:00.000Z'))
@@ -208,12 +501,18 @@ describe('sponsored operation store', () => {
     expect(retractedOperation.includedTransactionHash).toBeUndefined()
     expect(retractedOperation.inclusionObservedAt).toBeUndefined()
     expect(retractedOperation.inclusionEvidenceRevision).toBe(2)
+    expect(retractedOperation.laneReleasedAfterSuccessfulInclusion).toBe(true)
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-2',
+    })
 
     const merged = mergeSponsoredOperationState({
       operations: [staleIncludedOperation],
       activeLanes: {},
     }, useSponsoredOperationStore.getState())
     expect(merged.operations[0]?.includedTransactionHash).toBeUndefined()
+    expect(merged.operations[0]?.laneReleasedAfterSuccessfulInclusion)
+      .toBe(true)
 
     expect(useSponsoredOperationStore.getState().recordObservedInclusion(
       'operation-1',
@@ -224,6 +523,9 @@ describe('sponsored operation store', () => {
         status: 'confirming',
         includedTransactionHash: replacementTransactionHash,
       })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-2',
+    })
 
     useSponsoredOperationStore.getState().recordTransactionHash(
       'operation-1',
@@ -243,6 +545,9 @@ describe('sponsored operation store', () => {
         transactionHash: replacementTransactionHash,
         transactionHashVerified: true,
       })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-2',
+    })
   })
 
   it('never overwrites the first persisted UserOperation hash', () => {

@@ -18,7 +18,10 @@ import {
   persistManagedUserOperation,
   type PersistedManagedUserOperationV1,
 } from './persistedUserOperation'
-import { acquireSponsoredOperationBrowserLane } from './laneLock'
+import {
+  acquireSponsoredOperationBrowserLane,
+  type ReleaseSponsoredOperationBrowserLock,
+} from './laneLock'
 import { SponsoredOperationLockedError } from './operationLockError'
 import type { ManagedUserOperation } from './runtimeContext'
 
@@ -40,6 +43,8 @@ export interface SponsoredOperation {
   manifestVersion: string
   action: PerpsActionKind
   authorizationToken?: Address
+  /** EIP-3009 nonce paired with authorizationToken for owned cleanup. */
+  authorizationNonce?: Hex
   lane: string
   status: SponsoredOperationStatus
   sponsorshipAccepted: boolean
@@ -52,10 +57,17 @@ export interface SponsoredOperation {
   legacyManualUnlockEligible?: boolean
   legacyInboxIdentity?: true
   /**
+   * Monotonic record that the lane was released after observing an exact,
+   * canonical, successful inclusion. The observation can still be reorged,
+   * but this marker must not be erased and relock the lane behind a newer
+   * operation. Recovery keeps tracking the original operation independently.
+   */
+  laneReleasedAfterSuccessfulInclusion?: true
+  /**
    * Exact latest-chain inclusion observed before the receipt reached the
    * RPC's safe head. This evidence is deliberately distinct from the
-   * safe-confirmed transactionHash below: it keeps retry locked while letting
-   * activity report that the operation is already onchain.
+   * safe-confirmed transactionHash below so recovery can continue tracking it
+   * after the submission lane has been released.
    */
   includedTransactionHash?: Hex
   includedBlockNumber?: string
@@ -89,6 +101,7 @@ interface BeginSponsoredOperationInput {
   manifestVersion: string
   action: PerpsActionKind
   authorizationToken?: Address
+  authorizationNonce?: Hex
   lane?: string
 }
 
@@ -96,7 +109,16 @@ export interface SponsoredOperationInclusionObservation {
   transactionHash: Hex
   blockNumber?: string
   blockHash?: Hex
+  /**
+   * Callers set this only after both the exact UserOperation receipt and its
+   * canonical transaction receipt report success. Recording evidence alone
+   * never releases a lane; releaseLaneAfterSuccessfulInclusion requires true.
+   */
+  success?: boolean
 }
+
+export type SuccessfulSponsoredOperationInclusionObservation =
+  SponsoredOperationInclusionObservation & { success: true }
 
 interface SponsoredOperationState {
   operations: SponsoredOperation[]
@@ -114,6 +136,10 @@ interface SponsoredOperationState {
   recordObservedInclusion: (
     id: string,
     observation: SponsoredOperationInclusionObservation
+  ) => boolean
+  releaseLaneAfterSuccessfulInclusion: (
+    id: string,
+    observation: SuccessfulSponsoredOperationInclusionObservation
   ) => boolean
   /** Call only after a direct canonical block-hash check proves a reorg. */
   clearObservedInclusion: (id: string) => boolean
@@ -145,6 +171,8 @@ export const SPONSORED_OPERATION_LANE_HEAD_PREFIX =
   `${SPONSORED_OPERATION_STORAGE_NAME}:lane:`
 export const SPONSORED_OPERATION_RESOLUTION_PREFIX =
   `${SPONSORED_OPERATION_STORAGE_NAME}:resolution:`
+export const SPONSORED_OPERATION_LANE_RELEASE_PREFIX =
+  `${SPONSORED_OPERATION_STORAGE_NAME}:lane-release:`
 export const DEFAULT_SPONSORED_OPERATION_LANE = 'default'
 export const LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION =
   'perps-aa-arbitrum-sepolia-20260717-v1'
@@ -178,6 +206,18 @@ export function isSponsoredOperationTerminal(
     'expired',
     'outcome-unknown',
   ].includes(status)
+}
+
+/**
+ * The lifecycle and lane-serialization state machines intentionally diverge
+ * after an exact successful inclusion: recovery remains nonterminal while a
+ * newer operation may use the lane.
+ */
+export function isSponsoredOperationLaneBlocking(
+  operation: SponsoredOperation
+): boolean {
+  return !isSponsoredOperationTerminal(operation.status) &&
+    operation.laneReleasedAfterSuccessfulInclusion !== true
 }
 
 function canResolveTerminalOperation(
@@ -234,6 +274,12 @@ function operationMatchesInclusionObservation(
       operation.includedBlockHash?.toLowerCase() ===
         observation.blockHash.toLowerCase()
     )
+}
+
+function observationReportsSuccessfulInclusion(
+  observation: SponsoredOperationInclusionObservation
+): observation is SuccessfulSponsoredOperationInclusionObservation {
+  return observation.success === true
 }
 
 function sponsoredOperationInclusionEvidenceTieBreakKey(
@@ -354,7 +400,10 @@ export function migrateSponsoredOperationState(
     )
   }
   if (persistedVersion === SPONSORED_OPERATION_STORAGE_VERSION) {
-    return persisted
+    return {
+      operations: persisted.operations,
+      activeLanes: activeLanesForOperations(persisted.operations),
+    }
   }
 
   const relockIds = new Set<string>()
@@ -431,7 +480,7 @@ export function migrateSponsoredOperationState(
     Object.entries(persisted.activeLanes).filter(([, operationId]) => {
       const operation = operationById.get(operationId)
       return operation !== undefined &&
-        !isSponsoredOperationTerminal(operation.status)
+        isSponsoredOperationLaneBlocking(operation)
     })
   )
   const relockCandidates = operations
@@ -513,18 +562,17 @@ function mergeOperationRecord(
   current: SponsoredOperation,
   persisted: SponsoredOperation
 ): SponsoredOperation {
-  if (
+  const preferLiveCurrent =
     operationAbortControllers.has(current.id) &&
     !isSponsoredOperationTerminal(current.status)
-  ) {
-    return current
-  }
 
   const currentEvidence = operationSubmissionEvidenceScore(current)
   const persistedEvidence = operationSubmissionEvidenceScore(persisted)
   const currentResolution = operationResolutionEvidenceScore(current)
   const persistedResolution = operationResolutionEvidenceScore(persisted)
-  const preferred = persistedEvidence > currentEvidence
+  const preferred = preferLiveCurrent
+    ? current
+    : persistedEvidence > currentEvidence
     ? persisted
     : persistedEvidence < currentEvidence
       ? current
@@ -554,8 +602,11 @@ function mergeOperationRecord(
             sponsoredOperationInclusionEvidenceTieBreakKey(other)
           ? preferred
           : other
+  const preferredWithoutDerivedFlags = { ...preferred }
+  delete preferredWithoutDerivedFlags.laneReleasedAfterSuccessfulInclusion
+  delete preferredWithoutDerivedFlags.transactionHashVerified
   return {
-    ...preferred,
+    ...preferredWithoutDerivedFlags,
     // Submission identity and canonical evidence are monotonic. Rehydrating a
     // stale whole-store snapshot must not erase them.
     userOperationHash:
@@ -576,15 +627,24 @@ function mergeOperationRecord(
       preferredInclusionEvidence.inclusionObservedAt,
     inclusionEvidenceRevision:
       preferredInclusionEvidence.inclusionEvidenceRevision,
+    ...(
+      preferred.laneReleasedAfterSuccessfulInclusion === true ||
+      other.laneReleasedAfterSuccessfulInclusion === true
+        ? { laneReleasedAfterSuccessfulInclusion: true as const }
+        : {}
+    ),
     transactionHash:
       preferred.transactionHashVerified === true
         ? preferred.transactionHash
         : other.transactionHashVerified === true
           ? other.transactionHash
           : preferred.transactionHash,
-    transactionHashVerified:
+    ...(
       preferred.transactionHashVerified === true ||
-      other.transactionHashVerified === true,
+      other.transactionHashVerified === true
+        ? { transactionHashVerified: true as const }
+        : {}
+    ),
     attentionRevision: Math.max(
       preferred.attentionRevision ?? 0,
       other.attentionRevision ?? 0
@@ -600,10 +660,10 @@ function activeLanesForOperations(
   operations: SponsoredOperation[]
 ): Record<string, string> {
   const activeLanes: Record<string, string> = {}
-  const nonterminal = operations
-    .filter((operation) => !isSponsoredOperationTerminal(operation.status))
+  const blocking = operations
+    .filter(isSponsoredOperationLaneBlocking)
     .sort((left, right) => right.updatedAt - left.updatedAt)
-  for (const operation of nonterminal) {
+  for (const operation of blocking) {
     const key = laneKey(operation.accountAddress, operation.lane)
     activeLanes[key] ??= operation.id
   }
@@ -637,6 +697,7 @@ export function mergeSponsoredOperationState(
     activeLanes: {},
   }).operations
     .sort((left, right) => left.createdAt - right.createdAt)
+  assertUniqueUserOperationHashes(operations)
 
   return {
     ...currentState,
@@ -668,6 +729,7 @@ function mergePersistedOperationStates(
       operation.updatedAt > terminalCutoff
     )
     .sort((left, right) => left.createdAt - right.createdAt)
+  assertUniqueUserOperationHashes(operations)
   return {
     operations,
     activeLanes: activeLanesForOperations(operations),
@@ -718,6 +780,19 @@ interface SponsoredOperationResolutionV1 {
   acknowledgedAttentionRevision?: number
 }
 
+interface SponsoredOperationLaneReleaseV1 {
+  version: 1
+  operationId: string
+  userOperationHash: Hex
+  chainId: number
+  accountAddress: Address
+  lane: string
+  transactionHash: Hex
+  blockNumber?: string
+  blockHash?: Hex
+  releasedAt: number
+}
+
 interface SponsoredOperationLaneHeadV1 {
   version: 1
   chainId: number
@@ -744,6 +819,15 @@ function sponsoredOperationResolutionKey(
     `${encodeURIComponent(operation.id)}:` +
     `${operation.userOperationHash.toLowerCase()}:` +
     status
+}
+
+function sponsoredOperationLaneReleaseKey(operation: {
+  id: string
+  userOperationHash: Hex
+}): string {
+  return SPONSORED_OPERATION_LANE_RELEASE_PREFIX +
+    `${encodeURIComponent(operation.id)}:` +
+    operation.userOperationHash.toLowerCase()
 }
 
 function sponsoredOperationLaneHeadKey(input: {
@@ -934,12 +1018,137 @@ function readExactOperationResolution(
   return resolved
 }
 
+function parseSponsoredOperationLaneRelease(
+  value: string | null
+): SponsoredOperationLaneReleaseV1 | undefined {
+  if (value === null) return undefined
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== 'object') return undefined
+    const record = parsed as Record<string, unknown>
+    if (
+      typeof record.version === 'number' &&
+      record.version > SPONSORED_OPERATION_STORAGE_VERSION
+    ) {
+      throw new Error(
+        'A sponsored-operation lane release was written by a newer app version'
+      )
+    }
+    if (
+      record.version !== 1 ||
+      typeof record.operationId !== 'string' ||
+      typeof record.userOperationHash !== 'string' ||
+      !record.userOperationHash.startsWith('0x') ||
+      typeof record.chainId !== 'number' ||
+      typeof record.accountAddress !== 'string' ||
+      !record.accountAddress.startsWith('0x') ||
+      typeof record.lane !== 'string' ||
+      typeof record.transactionHash !== 'string' ||
+      !record.transactionHash.startsWith('0x') ||
+      (
+        record.blockNumber !== undefined &&
+        typeof record.blockNumber !== 'string'
+      ) ||
+      (
+        record.blockHash !== undefined &&
+        (
+          typeof record.blockHash !== 'string' ||
+          !record.blockHash.startsWith('0x')
+        )
+      ) ||
+      typeof record.releasedAt !== 'number'
+    ) {
+      return undefined
+    }
+    return record as unknown as SponsoredOperationLaneReleaseV1
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.includes('newer app version')
+    ) {
+      throw error
+    }
+    return undefined
+  }
+}
+
+function readExactSponsoredOperationLaneRelease(
+  identity: SponsoredOperationIdentity
+): SponsoredOperationLaneReleaseV1 | undefined {
+  const value = globalThis.localStorage.getItem(
+    sponsoredOperationLaneReleaseKey(identity)
+  )
+  const release = parseSponsoredOperationLaneRelease(value)
+  if (value !== null && release === undefined) {
+    throw new Error(
+      'The sponsored-operation lane-release tombstone is unreadable'
+    )
+  }
+  if (
+    release &&
+    (
+      release.operationId !== identity.id ||
+      release.userOperationHash.toLowerCase() !==
+        identity.userOperationHash.toLowerCase() ||
+      release.chainId !== identity.chainId ||
+      release.accountAddress.toLowerCase() !==
+        identity.accountAddress.toLowerCase() ||
+      release.lane !== identity.lane
+    )
+  ) {
+    throw new Error(
+      'The sponsored-operation lane-release tombstone has a mismatched identity'
+    )
+  }
+  return release
+}
+
+function writeSponsoredOperationLaneRelease(
+  operation: SponsoredOperation & { userOperationHash: Hex },
+  observation: SuccessfulSponsoredOperationInclusionObservation
+): void {
+  const key = sponsoredOperationLaneReleaseKey(operation)
+  const existingValue = globalThis.localStorage.getItem(key)
+  if (existingValue !== null) {
+    const existing = readExactSponsoredOperationLaneRelease({
+      id: operation.id,
+      userOperationHash: operation.userOperationHash,
+      chainId: operation.chainId,
+      accountAddress: operation.accountAddress,
+      lane: operation.lane,
+    })
+    if (!existing) {
+      throw new Error(
+        'The sponsored-operation lane-release tombstone is unreadable'
+      )
+    }
+    return
+  }
+  globalThis.localStorage.setItem(
+    key,
+    JSON.stringify({
+      version: 1,
+      operationId: operation.id,
+      userOperationHash: operation.userOperationHash,
+      chainId: operation.chainId,
+      accountAddress: operation.accountAddress,
+      lane: operation.lane,
+      transactionHash: observation.transactionHash,
+      blockNumber: observation.blockNumber,
+      blockHash: observation.blockHash,
+      releasedAt: Date.now(),
+    } satisfies SponsoredOperationLaneReleaseV1)
+  )
+}
+
 function applyOperationResolution(
   operation: SponsoredOperation,
   resolution: SponsoredOperationResolutionV1
 ): SponsoredOperation {
+  const operationWithoutVerifiedFlag = { ...operation }
+  delete operationWithoutVerifiedFlag.transactionHashVerified
   return {
-    ...operation,
+    ...operationWithoutVerifiedFlag,
     status: resolution.status,
     forcedLegacyUnlock: resolution.forcedLegacyUnlock,
     protocolNonceAdvanced: resolution.protocolNonceAdvanced,
@@ -951,9 +1160,12 @@ function applyOperationResolution(
         : operation.transactionHashVerified === true
           ? operation.transactionHash
           : undefined,
-    transactionHashVerified:
+    ...(
       resolution.transactionHashVerified === true ||
-      operation.transactionHashVerified === true,
+      operation.transactionHashVerified === true
+        ? { transactionHashVerified: true as const }
+        : {}
+    ),
     reason: resolution.reason,
     retryable: resolution.retryable,
     updatedAt: Math.max(operation.updatedAt, resolution.resolvedAt),
@@ -1058,6 +1270,26 @@ function assertCompatibleOperationHashes(
   }
 }
 
+function assertUniqueUserOperationHashes(
+  operations: SponsoredOperation[]
+): void {
+  const operationIdsByHash = new Map<string, string>()
+  for (const operation of operations) {
+    if (operation.userOperationHash === undefined) continue
+    const normalizedHash = operation.userOperationHash.toLowerCase()
+    const existingOperationId = operationIdsByHash.get(normalizedHash)
+    if (
+      existingOperationId !== undefined &&
+      existingOperationId !== operation.id
+    ) {
+      throw new Error(
+        'One sponsored UserOperation hash belongs to multiple operation records'
+      )
+    }
+    operationIdsByHash.set(normalizedHash, operation.id)
+  }
+}
+
 function readDurableOperation(
   identity: SponsoredOperationIdentity
 ): SponsoredOperation | undefined {
@@ -1075,9 +1307,17 @@ function readDurableOperation(
     )
   }
   const resolution = readExactOperationResolution(identity)
+  const laneRelease = readExactSponsoredOperationLaneRelease(identity)
   if (!journalOperation) return undefined
-  if (!resolution) return journalOperation
-  return applyOperationResolution(journalOperation, resolution)
+  const resolvedOperation = resolution
+    ? applyOperationResolution(journalOperation, resolution)
+    : journalOperation
+  return laneRelease
+    ? {
+        ...resolvedOperation,
+        laneReleasedAfterSuccessfulInclusion: true,
+      }
+    : resolvedOperation
 }
 
 function mergeExactOperationJournals(
@@ -1182,7 +1422,7 @@ function parseSponsoredOperationLaneHead(
 function writeSponsoredOperationLaneHead(
   operation: SponsoredOperation,
   options: {
-    rejectOtherNonterminal?: boolean
+    rejectOtherLaneBlocking?: boolean
   } = {}
 ): void {
   if (operation.userOperationHash === undefined) {
@@ -1211,6 +1451,7 @@ function writeSponsoredOperationLaneHead(
     operationId: string
     userOperationHash: Hex
   }>()
+  const operationIdsByHash = new Map<string, string>()
   for (const entry of existingHead?.operations ?? []) {
     const journalOperation = readDurableOperation({
       id: entry.operationId,
@@ -1232,15 +1473,42 @@ function writeSponsoredOperationLaneHead(
         'The sponsored-operation lane recovery journal is unreadable'
       )
     }
+    const normalizedHash = entry.userOperationHash.toLowerCase()
+    const operationIdForHash = operationIdsByHash.get(normalizedHash)
+    if (
+      (operationIdForHash !== undefined &&
+        operationIdForHash !== entry.operationId) ||
+      (
+        entry.operationId !== operation.id &&
+        normalizedHash === operation.userOperationHash.toLowerCase()
+      )
+    ) {
+      throw new Error(
+        'One sponsored UserOperation hash belongs to multiple operation records'
+      )
+    }
+    operationIdsByHash.set(normalizedHash, entry.operationId)
     if (!isSponsoredOperationTerminal(journalOperation.status)) {
       if (
-        options.rejectOtherNonterminal === true &&
-        entry.operationId !== operation.id
+        options.rejectOtherLaneBlocking === true &&
+        entry.operationId !== operation.id &&
+        isSponsoredOperationLaneBlocking(journalOperation)
       ) {
         throw new SponsoredOperationLockedError(entry.operationId)
       }
       operations.set(entry.operationId, entry)
     }
+  }
+  const operationHashOwner = operationIdsByHash.get(
+    operation.userOperationHash.toLowerCase()
+  )
+  if (
+    operationHashOwner !== undefined &&
+    operationHashOwner !== operation.id
+  ) {
+    throw new Error(
+      'One sponsored UserOperation hash belongs to multiple operation records'
+    )
   }
   operations.set(operation.id, {
     operationId: operation.id,
@@ -1306,54 +1574,59 @@ function durableJournalState(): PersistedSponsoredOperationState {
   }
 }
 
+function writeExactOperationJournal(
+  operation: SponsoredOperation
+): SponsoredOperation | undefined {
+  // Enumeration is only a discovery aid. Every identity being written must
+  // first be read directly so a concurrent key insertion cannot hide it.
+  const existing = readExactOperationJournal(operation.id)
+  if (
+    operation.userOperationHash === undefined &&
+    existing === undefined
+  ) {
+    return undefined
+  }
+  if (existing) assertCompatibleOperationHashes(operation, existing)
+
+  let durableOperation = existing
+    ? mergeOperationRecord(operation, existing)
+    : operation
+  if (durableOperation.userOperationHash !== undefined) {
+    const resolution = readExactOperationResolution({
+      id: durableOperation.id,
+      userOperationHash: durableOperation.userOperationHash,
+      chainId: durableOperation.chainId,
+      accountAddress: durableOperation.accountAddress,
+      lane: durableOperation.lane,
+    })
+    if (resolution) {
+      durableOperation = applyOperationResolution(
+        durableOperation,
+        resolution
+      )
+    }
+  }
+  // Resolution evidence is append-only and written before the mutable
+  // journal. An unrelated tab may still complete a stale journal write, but
+  // mergeOperationRecord makes successful-inclusion lane release monotonic.
+  writeSponsoredOperationResolution(durableOperation)
+  globalThis.localStorage.setItem(
+    sponsoredOperationJournalKey(operation.id),
+    JSON.stringify({
+      version: 1,
+      operation: durableOperation,
+    } satisfies SponsoredOperationJournalV1)
+  )
+  return durableOperation
+}
+
 function writeOperationJournals(
   operations: SponsoredOperation[]
 ): void {
   const retainedIds = new Set(operations.map((operation) => operation.id))
   const existingEntries = operationJournalEntries()
   for (const operation of operations) {
-    // Enumeration is only a discovery aid. A concurrent key insertion or
-    // removal can shift indices and make localStorage.key() omit an existing
-    // journal, so every identity being written must first be read directly.
-    const existing = readExactOperationJournal(operation.id)
-    if (
-      operation.userOperationHash === undefined &&
-      existing === undefined
-    ) {
-      continue
-    }
-    if (existing) {
-      assertCompatibleOperationHashes(operation, existing)
-    }
-    let durableOperation = existing
-      ? mergeOperationRecord(operation, existing)
-      : operation
-    if (durableOperation.userOperationHash !== undefined) {
-      const resolution = readExactOperationResolution({
-        id: durableOperation.id,
-        userOperationHash: durableOperation.userOperationHash,
-        chainId: durableOperation.chainId,
-        accountAddress: durableOperation.accountAddress,
-        lane: durableOperation.lane,
-      })
-      if (resolution) {
-        durableOperation = applyOperationResolution(
-          durableOperation,
-          resolution
-        )
-      }
-    }
-    // Resolution evidence is append-only and written before the mutable
-    // journal. An unrelated tab may still complete a stale journal write, but
-    // it cannot erase this directly addressed tombstone.
-    writeSponsoredOperationResolution(durableOperation)
-    globalThis.localStorage.setItem(
-      sponsoredOperationJournalKey(operation.id),
-      JSON.stringify({
-        version: 1,
-        operation: durableOperation,
-      } satisfies SponsoredOperationJournalV1)
-    )
+    writeExactOperationJournal(operation)
   }
   for (const { key, journal } of existingEntries) {
     if (
@@ -1485,6 +1758,7 @@ function publishSponsoredOperationLaneHeadBeforeJournals(
   }
 
   const mergedCandidates = [...candidatesById.values()]
+  assertUniqueUserOperationHashes(mergedCandidates)
   const guardedOperations = mergedCandidates
     .filter((
       operation
@@ -1516,7 +1790,8 @@ function publishSponsoredOperationLaneHeadBeforeJournals(
 function hasDurableOperationJournal(
   operation: SponsoredOperation,
   userOperationHash: Hex,
-  requireSubmissionMetadata: boolean
+  requireSubmissionMetadata: boolean,
+  requireOnlyLaneBlocker = false
 ): boolean {
   const journalOperation = readDurableOperation({
     id: operation.id,
@@ -1530,33 +1805,87 @@ function hasDurableOperationJournal(
       sponsoredOperationLaneHeadKey(operation)
     )
   )
-  return journalOperation?.userOperationHash?.toLowerCase() ===
-      userOperationHash.toLowerCase() &&
-    !isSponsoredOperationTerminal(journalOperation.status) &&
-    journalOperation.chainId === operation.chainId &&
-    journalOperation.accountAddress.toLowerCase() ===
-      operation.accountAddress.toLowerCase() &&
-    journalOperation.lane === operation.lane &&
+  if (
+    journalOperation === undefined ||
+    journalOperation.userOperationHash?.toLowerCase() !==
+      userOperationHash.toLowerCase() ||
+    isSponsoredOperationTerminal(journalOperation.status) ||
+    journalOperation.chainId !== operation.chainId ||
+    journalOperation.accountAddress.toLowerCase() !==
+      operation.accountAddress.toLowerCase() ||
+    journalOperation.lane !== operation.lane ||
     (
-      !requireSubmissionMetadata ||
+      requireSubmissionMetadata &&
       (
-        journalOperation.submissionMetadataVersion === 1 &&
-        journalOperation.signedUserOperation !== undefined &&
-        operation.submissionMetadataVersion === 1 &&
-        operation.signedUserOperation !== undefined &&
-        JSON.stringify(journalOperation.signedUserOperation) ===
+        journalOperation.submissionMetadataVersion !== 1 ||
+        journalOperation.signedUserOperation === undefined ||
+        operation.submissionMetadataVersion !== 1 ||
+        operation.signedUserOperation === undefined ||
+        JSON.stringify(journalOperation.signedUserOperation) !==
           JSON.stringify(operation.signedUserOperation)
       )
-    ) &&
-    laneHead?.chainId === operation.chainId &&
-    laneHead.accountAddress.toLowerCase() ===
-      operation.accountAddress.toLowerCase() &&
-    laneHead.lane === operation.lane &&
-    laneHead.operations.length === 1 &&
-    laneHead.operations[0]?.operationId === operation.id &&
-    laneHead.operations[0].userOperationHash.toLowerCase() ===
-      userOperationHash.toLowerCase() &&
-    storedSnapshotHasNoCompetingLaneOperation(operation)
+    ) ||
+    laneHead?.chainId !== operation.chainId ||
+    laneHead.accountAddress.toLowerCase() !==
+      operation.accountAddress.toLowerCase() ||
+    laneHead.lane !== operation.lane
+  ) {
+    return false
+  }
+
+  const durableHeadOperations: SponsoredOperation[] = []
+  const operationIdsByHash = new Map<string, string>()
+  let containsOperation = false
+  for (const entry of laneHead.operations) {
+    const durableHeadOperation = readDurableOperation({
+      id: entry.operationId,
+      userOperationHash: entry.userOperationHash,
+      chainId: operation.chainId,
+      accountAddress: operation.accountAddress,
+      lane: operation.lane,
+    })
+    if (
+      durableHeadOperation?.id !== entry.operationId ||
+      durableHeadOperation.userOperationHash?.toLowerCase() !==
+        entry.userOperationHash.toLowerCase() ||
+      !operationMatchesLane(durableHeadOperation, operation)
+    ) {
+      return false
+    }
+    const normalizedHash = entry.userOperationHash.toLowerCase()
+    const existingOperationId = operationIdsByHash.get(normalizedHash)
+    if (
+      existingOperationId !== undefined &&
+      existingOperationId !== entry.operationId
+    ) {
+      return false
+    }
+    operationIdsByHash.set(normalizedHash, entry.operationId)
+    durableHeadOperations.push(durableHeadOperation)
+    if (
+      entry.operationId === operation.id &&
+      normalizedHash === userOperationHash.toLowerCase()
+    ) {
+      containsOperation = true
+    }
+  }
+  if (!containsOperation) return false
+
+  const laneBlockers = durableHeadOperations.filter(
+    isSponsoredOperationLaneBlocking
+  )
+  if (laneBlockers.length > 1) return false
+  if (
+    requireOnlyLaneBlocker &&
+    (
+      laneBlockers.length !== 1 ||
+      laneBlockers[0]?.id !== operation.id ||
+      !storedSnapshotHasNoCompetingLaneOperation(operation)
+    )
+  ) {
+    return false
+  }
+  return true
 }
 
 function storedSnapshotHasNoCompetingLaneOperation(
@@ -1586,6 +1915,23 @@ function storedSnapshotHasNoCompetingLaneOperation(
       lane: candidate.lane,
     }) !== undefined
   }
+  const isDurablyLaneReleased = (
+    candidate: SponsoredOperation
+  ): boolean => {
+    if (candidate.laneReleasedAfterSuccessfulInclusion === true) return true
+    if (candidate.userOperationHash === undefined) return false
+    try {
+      return readDurableOperation({
+        id: candidate.id,
+        userOperationHash: candidate.userOperationHash,
+        chainId: candidate.chainId,
+        accountAddress: candidate.accountAddress,
+        lane: candidate.lane,
+      })?.laneReleasedAfterSuccessfulInclusion === true
+    } catch {
+      return false
+    }
+  }
   const rawConflict = rawState.operations.some((candidate) => {
     if (!operationMatchesLane(candidate, operation)) return false
     if (candidate.id === operation.id) {
@@ -1593,23 +1939,41 @@ function storedSnapshotHasNoCompetingLaneOperation(
         candidate.userOperationHash.toLowerCase() !==
           operation.userOperationHash?.toLowerCase()
     }
+    if (
+      candidate.userOperationHash?.toLowerCase() ===
+        operation.userOperationHash?.toLowerCase()
+    ) {
+      return true
+    }
     if (isDurablyResolved(candidate)) return false
+    if (isDurablyLaneReleased(candidate)) return false
     return (
       persistedVersion < SPONSORED_OPERATION_STORAGE_VERSION &&
       candidate.userOperationHash !== undefined
-    ) || !isSponsoredOperationTerminal(candidate.status)
+    ) || isSponsoredOperationLaneBlocking(candidate)
   })
   if (rawConflict) return false
   const persisted = migrateSponsoredOperationState(
     parsed.state,
     persistedVersion
   )
-  return !persisted.operations.some((candidate) =>
-    candidate.id !== operation.id &&
-    operationMatchesLane(candidate, operation) &&
-    !isDurablyResolved(candidate) &&
-    !isSponsoredOperationTerminal(candidate.status)
-  )
+  return !persisted.operations.some((candidate) => {
+    if (
+      candidate.id === operation.id ||
+      !operationMatchesLane(candidate, operation)
+    ) {
+      return false
+    }
+    if (
+      candidate.userOperationHash?.toLowerCase() ===
+        operation.userOperationHash?.toLowerCase()
+    ) {
+      return true
+    }
+    return !isDurablyResolved(candidate) &&
+      !isDurablyLaneReleased(candidate) &&
+      isSponsoredOperationLaneBlocking(candidate)
+  })
 }
 
 function hasExactSponsoredOperationLaneHead(
@@ -1630,6 +1994,73 @@ function hasExactSponsoredOperationLaneHead(
       entry.userOperationHash.toLowerCase() ===
         operation.userOperationHash?.toLowerCase()
     )
+}
+
+function anotherOperationUsesUserOperationHash(
+  operationId: string,
+  userOperationHash: Hex
+): boolean {
+  const normalizedHash = userOperationHash.toLowerCase()
+  if (useSponsoredOperationStore.getState().operations.some((candidate) =>
+    candidate.id !== operationId &&
+    candidate.userOperationHash?.toLowerCase() === normalizedHash
+  )) {
+    return true
+  }
+
+  try {
+    for (let index = 0; index < globalThis.localStorage.length; index += 1) {
+      const key = globalThis.localStorage.key(index)
+      if (!key) continue
+      if (
+        key.startsWith(SPONSORED_OPERATION_LANE_RELEASE_PREFIX) &&
+        key.endsWith(`:${normalizedHash}`) &&
+        key !== sponsoredOperationLaneReleaseKey({
+          id: operationId,
+          userOperationHash,
+        })
+      ) {
+        return true
+      }
+      if (key.startsWith(SPONSORED_OPERATION_JOURNAL_PREFIX)) {
+        const value = globalThis.localStorage.getItem(key)
+        const journal = parseOperationJournal(value)
+        if (value !== null && journal === undefined) return true
+        if (
+          journal?.operation.id !== operationId &&
+          journal?.operation.userOperationHash?.toLowerCase() === normalizedHash
+        ) {
+          return true
+        }
+        continue
+      }
+      if (key.startsWith(SPONSORED_OPERATION_LANE_HEAD_PREFIX)) {
+        const value = globalThis.localStorage.getItem(key)
+        const head = parseSponsoredOperationLaneHead(value)
+        if (value !== null && head === undefined) return true
+        if (head?.operations.some((entry) =>
+          entry.operationId !== operationId &&
+          entry.userOperationHash.toLowerCase() === normalizedHash
+        )) {
+          return true
+        }
+      }
+    }
+
+    const storedValue = globalThis.localStorage.getItem(
+      SPONSORED_OPERATION_STORAGE_NAME
+    )
+    if (storedValue === null) return false
+    const stored = parseStorageValue(storedValue)
+    if (!stored) return true
+    return persistedOperationState(stored.state).operations.some((candidate) =>
+      candidate.id !== operationId &&
+      candidate.userOperationHash?.toLowerCase() === normalizedHash
+    )
+  } catch {
+    // Unreadable or newer recovery state must fail closed before submission.
+    return true
+  }
 }
 
 let sponsoredOperationPersistenceBlockedRevision = 0
@@ -1833,10 +2264,11 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             !currentOperation ||
             isSponsoredOperationTerminal(currentOperation.status) ||
             currentOperation.userOperationHash !== undefined ||
+            anotherOperationUsesUserOperationHash(id, hash) ||
             get().operations.some((operation) =>
               operation.id !== currentOperation.id &&
               operationMatchesLane(operation, currentOperation) &&
-              !isSponsoredOperationTerminal(operation.status)
+              isSponsoredOperationLaneBlocking(operation)
             )
           ) {
             return false
@@ -1874,7 +2306,7 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             const persistenceRevision =
               sponsoredOperationPersistenceBlockedRevision
             writeSponsoredOperationLaneHead(pendingOperation, {
-              rejectOtherNonterminal: true,
+              rejectOtherLaneBlocking: true,
             })
             set((state) => ({
               operations: updateOperation(
@@ -1926,7 +2358,8 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
             const isDurable = hasDurableOperationJournal(
               recordedOperation,
               hash,
-              metadata !== undefined
+              metadata !== undefined,
+              true
             )
             if (isDurable && requiresSubmissionRevision) {
               sponsoredOperationSubmissionRevisions.set(
@@ -2099,6 +2532,123 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
                 recordedOperation.userOperationHash,
                 false
               )
+          } catch {
+            return false
+          }
+        },
+
+        releaseLaneAfterSuccessfulInclusion: (id, observation) => {
+          if (!observationReportsSuccessfulInclusion(observation)) return false
+
+          const currentOperation = get().operations.find(
+            (operation) => operation.id === id
+          )
+          if (currentOperation?.userOperationHash === undefined) return false
+          if (isSponsoredOperationTerminal(currentOperation.status)) {
+            return currentOperation.status === 'confirmed' &&
+              currentOperation.transactionHashVerified === true &&
+              currentOperation.transactionHash?.toLowerCase() ===
+                observation.transactionHash.toLowerCase()
+          }
+
+          let durableBefore: SponsoredOperation | undefined
+          try {
+            durableBefore = readDurableOperation({
+              id: currentOperation.id,
+              userOperationHash: currentOperation.userOperationHash,
+              chainId: currentOperation.chainId,
+              accountAddress: currentOperation.accountAddress,
+              lane: currentOperation.lane,
+            })
+            if (
+              !operationMatchesInclusionObservation(
+                currentOperation,
+                observation
+              ) ||
+              !operationMatchesInclusionObservation(
+                durableBefore,
+                observation
+              ) ||
+              !hasDurableOperationJournal(
+                currentOperation,
+                currentOperation.userOperationHash,
+                false
+              )
+            ) {
+              return false
+            }
+
+            const releaseCandidate: SponsoredOperation & {
+              userOperationHash: Hex
+            } = {
+              ...currentOperation,
+              userOperationHash: currentOperation.userOperationHash,
+              laneReleasedAfterSuccessfulInclusion: true,
+            }
+            writeSponsoredOperationLaneRelease(
+              releaseCandidate,
+              observation
+            )
+
+            // The append-only tombstone readback is the release barrier. The
+            // inclusion evidence was already persisted above; old v1 tabs may
+            // overwrite its mutable journal but cannot erase this record.
+            const releaseTombstone =
+              readExactSponsoredOperationLaneRelease({
+                id: currentOperation.id,
+                userOperationHash: currentOperation.userOperationHash,
+                chainId: currentOperation.chainId,
+                accountAddress: currentOperation.accountAddress,
+                lane: currentOperation.lane,
+              })
+            if (releaseTombstone === undefined) return false
+
+            const durableReleased = readDurableOperation({
+              id: currentOperation.id,
+              userOperationHash: currentOperation.userOperationHash,
+              chainId: currentOperation.chainId,
+              accountAddress: currentOperation.accountAddress,
+              lane: currentOperation.lane,
+            })
+            if (
+              durableReleased?.laneReleasedAfterSuccessfulInclusion !== true ||
+              !operationMatchesInclusionObservation(
+                durableReleased,
+                observation
+              )
+            ) {
+              return false
+            }
+
+            try {
+              set((state) => {
+                const operations = updateOperation(
+                  state.operations,
+                  id,
+                  (operation) => {
+                    if (
+                      operation.userOperationHash?.toLowerCase() !==
+                        currentOperation.userOperationHash?.toLowerCase()
+                    ) {
+                      return operation
+                    }
+                    return {
+                      ...operation,
+                      laneReleasedAfterSuccessfulInclusion: true,
+                    }
+                  }
+                )
+                return {
+                  operations,
+                  activeLanes: activeLanesForOperations(operations),
+                }
+              })
+            } catch {
+              // Zustand applies the state projection before invoking custom
+              // persistence. Even if that later write fails, the append-only
+              // tombstone above is the authoritative release boundary.
+            }
+            return true
           } catch {
             return false
           }
@@ -2289,7 +2839,10 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           ) {
             return
           }
-          const now = Date.now()
+          const now = Math.max(
+            Date.now(),
+            currentOperation.updatedAt + 1
+          )
           set((state) => {
             const operations = updateOperation(
               state.operations,
@@ -2570,10 +3123,11 @@ export function hasDurableSponsoredOperationSubmission(
       isSponsoredOperationTerminal(operation.status) ||
       sponsoredOperationSubmissionRevisions.get(operationId) !==
         sponsoredOperationPersistenceBlockedRevision ||
+      anotherOperationUsesUserOperationHash(operationId, userOperationHash) ||
       useSponsoredOperationStore.getState().operations.some((candidate) =>
         candidate.id !== operation.id &&
         operationMatchesLane(candidate, operation) &&
-        !isSponsoredOperationTerminal(candidate.status)
+        isSponsoredOperationLaneBlocking(candidate)
       )
     ) {
       return false
@@ -2581,6 +3135,7 @@ export function hasDurableSponsoredOperationSubmission(
     return hasDurableOperationJournal(
       operation,
       userOperationHash,
+      true,
       true
     )
   } catch {
@@ -2629,7 +3184,7 @@ export async function forceUnlockLegacySponsoredOperation(
     return false
   }
 
-  let releaseBrowserLane: (() => void) | undefined
+  let releaseBrowserLane: ReleaseSponsoredOperationBrowserLock | undefined
   try {
     releaseBrowserLane = await acquireSponsoredOperationBrowserLane({
       chainId: initialOperation.chainId,
@@ -2691,7 +3246,7 @@ export async function forceUnlockLegacySponsoredOperation(
   } catch {
     return false
   } finally {
-    releaseBrowserLane?.()
+    await releaseBrowserLane?.()
   }
 }
 

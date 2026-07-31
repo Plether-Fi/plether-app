@@ -38,6 +38,7 @@ export interface SponsoredOperationMetadata
   accountMode: string
   manifestVersion: string
   authorizationToken?: Address
+  authorizationNonce?: Hex
   lane?: string
 }
 
@@ -157,6 +158,7 @@ export function beginSponsoredOperationTracking(
     manifestVersion: metadata.manifestVersion,
     action: metadata.action,
     authorizationToken: metadata.authorizationToken,
+    authorizationNonce: metadata.authorizationNonce,
     lane: metadata.lane,
   })
 

@@ -112,7 +112,7 @@ describe('sponsored operation tracker', () => {
     })
   })
 
-  it('does not turn observed inclusion into a safe-head timeout', () => {
+  it('keeps evidence-only inclusion locked until success is explicitly released', () => {
     const tracker = beginSponsoredOperationTracking({
       id: 'operation-included',
       ownerAddress: OWNER,
@@ -137,6 +137,8 @@ describe('sponsored operation tracker', () => {
         status: 'confirming',
         includedTransactionHash: TRANSACTION_HASH,
       })
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
     expect(useSponsoredOperationStore.getState().operations[0]?.reason)
       .toBeUndefined()
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({

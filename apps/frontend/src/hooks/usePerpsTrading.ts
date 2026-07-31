@@ -505,6 +505,7 @@ export function usePerpsTrading() {
         sponsored.manifest.usdcSupportsEip3009
       )
       let action: PerpsActionPlan
+      let authorizationNonce: Hex | undefined
       if (useOwnerAuthorization) {
         if (
           !sponsored.manifest.usdcSupportsEip3009 ||
@@ -525,6 +526,7 @@ export function usePerpsTrading() {
             token: sponsored.manifest.usdc,
             amount,
           })
+          authorizationNonce = authorization.nonce
           const typedData = buildReceiveWithAuthorizationTypedData({
             name: sponsored.manifest.usdcEip712Name,
             version: sponsored.manifest.usdcEip712Version,
@@ -576,6 +578,7 @@ export function usePerpsTrading() {
         authorizationTokenToClearOnConfirmation: useOwnerAuthorization
           ? sponsored.manifest.usdc
           : undefined,
+        authorizationNonceToClearOnConfirmation: authorizationNonce,
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
