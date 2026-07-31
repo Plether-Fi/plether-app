@@ -168,6 +168,39 @@ describe('createManagedPimlicoRuntime', () => {
     })
   })
 
+  it('proves a reorg only when the canonical block hash changed', async () => {
+    const getBlock = vi.fn()
+      .mockResolvedValueOnce({ number: 123n, hash: INCLUDED_BLOCK_HASH })
+      .mockResolvedValueOnce({ number: 123n, hash: SAFE_BLOCK_HASH })
+      .mockRejectedValueOnce(new Error('RPC unavailable'))
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock,
+      } as never,
+    })
+    const inclusion = {
+      transactionHash: TRANSACTION_HASH,
+      blockNumber: 123n,
+      blockHash: INCLUDED_BLOCK_HASH,
+    }
+
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('canonical')
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('reorged')
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('unknown')
+    expect(getBlock).toHaveBeenCalledTimes(3)
+    expect(getBlock).toHaveBeenCalledWith({ blockNumber: 123n })
+  })
+
   it('rejects status values outside Pimlico’s reviewed state machine', async () => {
     const pimlicoClient = {
       getUserOperationGasPrice: vi.fn(async () => ({

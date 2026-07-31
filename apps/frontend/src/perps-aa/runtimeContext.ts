@@ -73,8 +73,19 @@ export interface SponsoredOperationRecoverySnapshot {
       }
     | {
         kind: 'not-safe-yet'
-      }
+    }
 }
+
+export interface ObservedUserOperationInclusion {
+  transactionHash: Hex
+  blockNumber: bigint
+  blockHash: Hex
+}
+
+export type ObservedInclusionCanonicality =
+  | 'canonical'
+  | 'reorged'
+  | 'unknown'
 
 export interface PerpsAaSmartAccountRuntime {
   chainId: number
@@ -90,6 +101,9 @@ export interface PerpsAaSmartAccountRuntime {
     userOperationHash: Hex,
     nonceKey?: bigint
   ): Promise<SponsoredOperationRecoverySnapshot>
+  verifyObservedInclusion?(
+    inclusion: ObservedUserOperationInclusion
+  ): Promise<ObservedInclusionCanonicality>
 }
 
 export const PerpsAaRuntimeContext = createContext<

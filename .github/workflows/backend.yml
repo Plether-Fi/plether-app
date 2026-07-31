@@ -24,6 +24,7 @@ jobs:
         with:
           ghc-version: '9.4.8'
           cabal-version: 'latest'
+          cabal-update: false
 
       - name: Cache cabal store
         uses: actions/cache@v4
@@ -32,8 +33,25 @@ jobs:
           key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
 
+      - name: Update Cabal package index
+        run: |
+          for attempt in 1 2 3; do
+            if cabal update; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cabal update failed after 3 attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
+
       - name: Install dependencies
-        run: cabal update && cabal build --only-dependencies
+        run: cabal build --only-dependencies
 
       - name: Build
         run: cabal build
@@ -78,6 +96,7 @@ jobs:
         with:
           ghc-version: '9.4.8'
           cabal-version: 'latest'
+          cabal-update: false
 
       - name: Cache cabal store
         uses: actions/cache@v4
@@ -86,8 +105,25 @@ jobs:
           key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
           restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
 
+      - name: Update Cabal package index
+        run: |
+          for attempt in 1 2 3; do
+            if cabal update; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cabal update failed after 3 attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
+
       - name: Install integration test dependencies
-        run: cabal update && cabal build --only-dependencies plether-api-integration-test
+        run: cabal build --only-dependencies plether-api-integration-test
 
       - name: Verify PostgreSQL prerequisite
         run: |

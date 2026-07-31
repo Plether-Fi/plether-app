@@ -4,6 +4,7 @@ import {
   canForceUnlockLegacySponsoredOperation,
   forceUnlockLegacySponsoredOperation,
   getSponsoredOperationAttentionRevision,
+  hasObservedSponsoredOperationInclusion,
   isSponsoredOperationAttentionStatus,
   isSponsoredOperationTerminal,
   sponsorReasonMessage,
@@ -79,14 +80,35 @@ function isFailedStatus(status: SponsoredOperationStatus): boolean {
 function isUnreviewedAttentionOperation(
   operation: SponsoredOperation
 ): boolean {
-  if (!isSponsoredOperationAttentionStatus(operation.status)) return false
+  if (
+    isAwaitingSafeConfirmation(operation) ||
+    !isSponsoredOperationAttentionStatus(operation.status)
+  ) {
+    return false
+  }
 
   return (operation.acknowledgedAttentionRevision ?? 0) <
     getSponsoredOperationAttentionRevision(operation)
 }
 
-function isInProgressStatus(status: SponsoredOperationStatus): boolean {
-  return !isSponsoredOperationTerminal(status) && status !== 'receipt-timeout'
+function isAwaitingSafeConfirmation(
+  operation: SponsoredOperation
+): boolean {
+  return !isSponsoredOperationTerminal(operation.status) &&
+    hasObservedSponsoredOperationInclusion(operation)
+}
+
+function isInProgressOperation(operation: SponsoredOperation): boolean {
+  return isAwaitingSafeConfirmation(operation) ||
+    (
+      !isSponsoredOperationTerminal(operation.status) &&
+      operation.status !== 'receipt-timeout'
+    )
+}
+
+function isAttentionOperation(operation: SponsoredOperation): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    isSponsoredOperationAttentionStatus(operation.status)
 }
 
 function actionCountLabel(count: number): string {
@@ -104,7 +126,12 @@ function statusBadgeVariant(
 }
 
 function isSubmissionUncertain(operation: SponsoredOperation): boolean {
-  if (!operation.userOperationHash) return false
+  if (
+    !operation.userOperationHash ||
+    isAwaitingSafeConfirmation(operation)
+  ) {
+    return false
+  }
 
   return operation.status === 'receipt-timeout' ||
     (
@@ -117,6 +144,9 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
 }
 
 function operationStatusLabel(operation: SponsoredOperation): string {
+  if (isAwaitingSafeConfirmation(operation)) {
+    return 'Included · awaiting safe confirmation'
+  }
   if (!isSubmissionUncertain(operation)) {
     return sponsoredOperationStatusLabel(operation.status)
   }
@@ -129,6 +159,7 @@ function operationStatusLabel(operation: SponsoredOperation): string {
 function operationReasonMessage(
   operation: SponsoredOperation
 ): string | undefined {
+  if (isAwaitingSafeConfirmation(operation)) return undefined
   if (isSubmissionUncertain(operation)) {
     return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
   }
@@ -280,6 +311,13 @@ function OperationHistoryItem({
         operation.transactionHash
       )
     : undefined
+  const includedTransactionUrl =
+    operation.includedTransactionHash && manifest
+      ? manifest.transactionExplorerUrlTemplate.replace(
+          '{transactionHash}',
+          operation.includedTransactionHash
+        )
+      : undefined
   const replacementUserOperationUrl =
     operation.replacementUserOperationHash && manifest
       ? manifest.userOperationExplorerUrlTemplate.replace(
@@ -287,9 +325,15 @@ function OperationHistoryItem({
           operation.replacementUserOperationHash
         )
       : undefined
-  const primaryExplorerUrl = transactionUrl ?? replacementUserOperationUrl ?? userOperationUrl
+  const primaryExplorerUrl =
+    transactionUrl ??
+    includedTransactionUrl ??
+    replacementUserOperationUrl ??
+    userOperationUrl
   const primaryExplorerLabel = transactionUrl
     ? 'View transaction on Blockscout'
+    : includedTransactionUrl
+      ? 'View included transaction on Blockscout'
     : replacementUserOperationUrl
       ? 'View replacement operation'
       : submissionUncertain
@@ -301,37 +345,43 @@ function OperationHistoryItem({
     canForceUnlockLegacySponsoredOperation(operation)
   const hasTechnicalDetails = Boolean(
     operation.userOperationHash ??
+    operation.includedTransactionHash ??
     operation.transactionHash ??
     operation.replacementUserOperationHash
   )
-  const wasIncluded =
+  const wasSafelyConfirmed =
     operation.transactionHash !== undefined &&
     operation.transactionHashVerified === true
+  const awaitingSafeConfirmation =
+    isAwaitingSafeConfirmation(operation)
   const sponsorshipSummary = operation.status === 'outcome-unknown'
     ? 'Past onchain outcome unverified'
+    : awaitingSafeConfirmation && operation.sponsorshipAccepted
+      ? 'Sponsored by Plether · awaiting safe confirmation'
     : submissionUncertain && operation.sponsorshipAccepted
     ? 'Gas sponsorship approved · Submission unconfirmed'
-    : wasIncluded && operation.sponsorshipAccepted
+    : wasSafelyConfirmed && operation.sponsorshipAccepted
       ? 'Sponsored by Plether · 0 ETH network gas'
-      : isSponsoredOperationTerminal(operation.status) &&
-          !wasIncluded &&
+    : isSponsoredOperationTerminal(operation.status) &&
+          !wasSafelyConfirmed &&
           (
             operation.userOperationHash === undefined ||
             operation.status === 'expired'
           )
         ? 'Not included · No network gas used'
-        : isSponsoredOperationTerminal(operation.status) && !wasIncluded
+        : isSponsoredOperationTerminal(operation.status) &&
+            !wasSafelyConfirmed
           ? 'Past onchain outcome unverified'
         : operation.sponsorshipAccepted
           ? 'Gas sponsorship approved'
           : undefined
   const sponsorshipSummaryTone =
-    wasIncluded && !submissionUncertain
+    wasSafelyConfirmed && !submissionUncertain
       ? 'text-positive'
       : 'text-content-secondary'
-  const itemTone = isSponsoredOperationAttentionStatus(operation.status)
+  const itemTone = isAttentionOperation(operation)
     ? 'border-brand-orange/50'
-    : isInProgressStatus(operation.status)
+    : isInProgressOperation(operation)
       ? 'border-[#FFAB96]/50'
       : 'border-brand-border/30'
 
@@ -462,6 +512,14 @@ function OperationHistoryItem({
                 explorerUrl={transactionUrl}
               />
             ) : null}
+            {!operation.transactionHash &&
+            operation.includedTransactionHash ? (
+              <HashActions
+                hash={operation.includedTransactionHash}
+                label="Included transaction (awaiting safe confirmation)"
+                explorerUrl={includedTransactionUrl}
+              />
+            ) : null}
             {operation.replacementUserOperationHash ? (
               <HashActions
                 hash={operation.replacementUserOperationHash}
@@ -498,15 +556,16 @@ export function SponsoredOperationHistoryButton() {
         )
         .sort((a, b) => b.updatedAt - a.updatedAt)
     : []
-  const attentionOperations = accountOperations.filter(
-    (operation) => isSponsoredOperationAttentionStatus(operation.status)
-  )
+  const attentionOperations = accountOperations.filter(isAttentionOperation)
   const unreviewedAttentionOperations = attentionOperations.filter(
     isUnreviewedAttentionOperation
   )
   const inProgressOperations = accountOperations.filter(
-    (operation) => isInProgressStatus(operation.status)
+    isInProgressOperation
   )
+  const awaitingSafeConfirmationCount = inProgressOperations.filter(
+    isAwaitingSafeConfirmation
+  ).length
   const openedAttentionOperationIds = new Set(
     openedActivity?.identityKey === identityKey
       ? openedActivity.attentionOperationIds
@@ -523,7 +582,7 @@ export function SponsoredOperationHistoryButton() {
   const recentOperations = accountOperations.filter(
     (operation) =>
       !needsAttentionOperationIds.has(operation.id) &&
-      !isInProgressStatus(operation.status)
+      !isInProgressOperation(operation)
   )
   const [confirmationFeedback, setConfirmationFeedback] = useState<{
     identityKey: string
@@ -689,7 +748,11 @@ export function SponsoredOperationHistoryButton() {
     : inProgressCount > 0
       ? {
           title: `${actionCountLabel(inProgressCount)} in progress`,
-          description: 'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+          description: awaitingSafeConfirmationCount === inProgressCount
+            ? inProgressCount === 1
+              ? 'The action is included onchain and is waiting for safe confirmation.'
+              : `All ${actionCountLabel(inProgressCount)} are included onchain and waiting for safe confirmation.`
+            : 'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
           tone: 'border-[#FFAB96]/40 bg-[#FFAB96]/10',
         }
       : null

@@ -160,11 +160,19 @@ interface PerpsTradeTicketProps {
   initialOrderId?: bigint
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
+  /** Static UserOperation hash for deterministic stories and tests. */
+  initialUserOperationHash?: string
+  /** Static sponsored-operation status for deterministic stories and tests. */
+  initialCommitExecutionStatus?: SponsoredExecutionStatus
+  /** Static delayed-wallet warning for deterministic stories and tests. */
+  initialWalletRequestWarning?: string
   initialFinalExecutionPrice?: bigint
   initialFinalExecutionOraclePrice?: bigint
   initialFinalExecutionOracleFrozen?: boolean
   initialFinalFrozenCloseSpreadUsdc?: bigint
   initialFinalExecutionEconomicsVersion?: number
+  /** Static exact VPI evidence for deterministic stories and tests. */
+  initialFinalVpiUsdc?: bigint
   initialCommittedSizeDelta?: bigint
   initialFlowError?: string
   closePositionRequestId?: number
@@ -1451,11 +1459,15 @@ export function PerpsTradeTicket({
   initialOrderId,
   initialCommitTxHash,
   initialExecuteTxHash,
+  initialUserOperationHash,
+  initialCommitExecutionStatus,
+  initialWalletRequestWarning,
   initialFinalExecutionPrice,
   initialFinalExecutionOraclePrice,
   initialFinalExecutionOracleFrozen,
   initialFinalFrozenCloseSpreadUsdc,
   initialFinalExecutionEconomicsVersion,
+  initialFinalVpiUsdc,
   initialCommittedSizeDelta,
   initialFlowError,
   closePositionRequestId,
@@ -1551,7 +1563,7 @@ export function PerpsTradeTicket({
     useState<bigint | undefined>(initialFinalFrozenCloseSpreadUsdc)
   const [finalExecutionEconomicsVersion, setFinalExecutionEconomicsVersion] =
     useState<number | undefined>(initialFinalExecutionEconomicsVersion)
-  const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>()
+  const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>(initialFinalVpiUsdc)
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
@@ -1570,10 +1582,15 @@ export function PerpsTradeTicket({
   const [keeperRevealDeadlineMs, setKeeperRevealDeadlineMs] = useState<number | undefined>()
   const [keeperRevealNowMs, setKeeperRevealNowMs] = useState(() => Date.now())
   const [finalizationLoadingMessage, setFinalizationLoadingMessage] = useState<FinalizationLoadingMessage>(FINALIZATION_LOADING_MESSAGES[0])
-  const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>()
+  const [walletRequestWarning, setWalletRequestWarning] = useState<string | undefined>(
+    initialWalletRequestWarning
+  )
   const [commitExecutionStatus, setCommitExecutionStatus] = useState<
     SponsoredExecutionStatus | undefined
-  >(initialLifecycleState === 'commitPending' ? 'awaiting-signature' : undefined)
+  >(
+    initialCommitExecutionStatus ??
+      (initialLifecycleState === 'commitPending' ? 'awaiting-signature' : undefined)
+  )
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
@@ -2640,7 +2657,8 @@ export function PerpsTradeTicket({
   const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
   const displayExecuteTxValue = displayExecuteTx ? <TxHashActions hash={displayExecuteTx} /> : '--'
-  const displayUserOperationHash = latestSponsoredOperation?.userOperationHash
+  const displayUserOperationHash =
+    initialUserOperationHash ?? latestSponsoredOperation?.userOperationHash
   const displayUserOperationHashValue = displayUserOperationHash
     ? (
         <UserOperationHashActions

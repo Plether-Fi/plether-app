@@ -416,6 +416,20 @@ export async function createManagedPimlicoRuntime({
     accountVersion: manifest.smartAccountVersion,
     accountIndex: manifest.smartAccountIndex,
     manifestVersion: manifest.version,
+    verifyObservedInclusion: async (inclusion) => {
+      try {
+        const block = await publicClient.getBlock({
+          blockNumber: inclusion.blockNumber,
+        })
+        return block.hash.toLowerCase() === inclusion.blockHash.toLowerCase()
+          ? 'canonical'
+          : 'reorged'
+      } catch {
+        // An unavailable or lagging RPC cannot prove that an observed block
+        // was reorged. Keep the conservative inclusion state and retry later.
+        return 'unknown'
+      }
+    },
     getRecoverySnapshot: async (userOperationHash, nonceKey = 0n) => {
       const block = await publicClient.getBlock({ blockTag: 'safe' })
       const [accountNonce, locator] = await Promise.all([

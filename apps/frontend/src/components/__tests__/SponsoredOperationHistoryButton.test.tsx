@@ -55,6 +55,7 @@ function operation(input: {
   accountAddress?: Address
   chainId?: number
   userOperationHash?: Hex
+  includedTransactionHash?: Hex
   transactionHash?: Hex
   reason?: SponsoredOperation['reason']
   sponsorshipAccepted?: boolean
@@ -77,6 +78,15 @@ function operation(input: {
     sponsorshipAccepted:
       input.sponsorshipAccepted ?? input.status !== 'failed',
     userOperationHash: input.userOperationHash,
+    includedTransactionHash: input.includedTransactionHash,
+    inclusionObservedAt:
+      input.includedTransactionHash === undefined
+        ? undefined
+        : input.updatedAt,
+    inclusionEvidenceRevision:
+      input.includedTransactionHash === undefined
+        ? undefined
+        : 1,
     transactionHash: input.transactionHash,
     transactionHashVerified: input.transactionHash !== undefined,
     reason: input.reason,
@@ -222,6 +232,112 @@ describe('SponsoredOperationHistoryButton', () => {
       .not.toBeInTheDocument()
   })
 
+  it('shows latest-chain inclusion as awaiting safe confirmation, not attention', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'included-awaiting-safe',
+          action: 'place-order',
+          status: 'confirming',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
+          sponsorshipAccepted: true,
+        }),
+      ],
+      activeLanes: {
+        [`${identityMocks.accountAddress.toLowerCase()}:default`]:
+          'included-awaiting-safe',
+      },
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action in progress.',
+    }))
+
+    expect(screen.getByText(
+      'The action is included onchain and is waiting for safe confirmation.'
+    )).toBeInTheDocument()
+    expect(screen.getByText(
+      'Included · awaiting safe confirmation'
+    )).toBeInTheDocument()
+    expect(screen.getByText(
+      'Sponsored by Plether · awaiting safe confirmation'
+    )).toBeInTheDocument()
+    expect(screen.queryByText('Submission status unknown'))
+      .not.toBeInTheDocument()
+    expect(screen.queryByText(/could not verify whether this transaction/i))
+      .not.toBeInTheDocument()
+    expect(screen.queryByText('Needs attention')).not.toBeInTheDocument()
+    expect(screen.getByRole('link', {
+      name: 'View included transaction on Blockscout',
+    })).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`
+    )
+
+    fireEvent.click(screen.getByText('Technical details'))
+    expect(screen.getByRole('link', {
+      name:
+        'Open Included transaction (awaiting safe confirmation) in block explorer',
+    })).toHaveAttribute(
+      'href',
+      `https://arbitrum-sepolia.blockscout.com/tx/${TRANSACTION_HASH}`
+    )
+  })
+
+  it('turns a retracted inclusion back into submission attention', () => {
+    useSponsoredOperationStore.getState().beginOperation({
+      id: 'reorged-inclusion',
+      ownerAddress: identityMocks.ownerAddress as Address,
+      accountAddress: identityMocks.accountAddress as Address,
+      chainId: identityMocks.chainId,
+      accountMode: 'simple',
+      manifestVersion: 'v1',
+      action: 'place-order',
+    })
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'reorged-inclusion',
+      USER_OPERATION_HASH
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'reorged-inclusion',
+      { transactionHash: TRANSACTION_HASH }
+    )).toBe(true)
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action in progress.',
+    }))
+    expect(screen.getByText(
+      'Included · awaiting safe confirmation'
+    )).toBeInTheDocument()
+
+    act(() => {
+      expect(
+        useSponsoredOperationStore
+          .getState()
+          .clearObservedInclusion('reorged-inclusion')
+      ).toBe(true)
+      useSponsoredOperationStore.getState().failOperation({
+        id: 'reorged-inclusion',
+        status: 'receipt-timeout',
+        reason: 'BUNDLER_UNAVAILABLE',
+        retryable: false,
+      })
+    })
+
+    expect(screen.queryByText(
+      'Included · awaiting safe confirmation'
+    )).not.toBeInTheDocument()
+    expect(screen.getByText('Submission status unknown')).toBeInTheDocument()
+    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    expect(screen.queryByRole('link', {
+      name: 'View included transaction on Blockscout',
+    })).not.toBeInTheDocument()
+  })
+
   it('tells the user when protocol evidence makes retrying safe', () => {
     useSponsoredOperationStore.setState({
       operations: [
@@ -250,6 +366,35 @@ describe('SponsoredOperationHistoryButton', () => {
     )).toBeInTheDocument()
     expect(screen.getByText('Not included · No network gas used'))
       .toBeInTheDocument()
+  })
+
+  it('still surfaces a safely verified execution revert as new attention', () => {
+    useSponsoredOperationStore.setState({
+      operations: [
+        operation({
+          id: 'execution-reverted',
+          action: 'place-order',
+          status: 'execution-reverted',
+          updatedAt: Date.now(),
+          userOperationHash: USER_OPERATION_HASH,
+          includedTransactionHash: TRANSACTION_HASH,
+          transactionHash: TRANSACTION_HASH,
+          sponsorshipAccepted: true,
+          retryable: false,
+        }),
+      ],
+      activeLanes: {},
+    })
+
+    render(<SponsoredOperationHistoryButton />)
+    fireEvent.click(screen.getByRole('button', {
+      name: 'Open Trading Account activity. 1 action needs attention.',
+    }))
+
+    expect(screen.getByText('Failed onchain')).toBeInTheDocument()
+    expect(screen.getByText(
+      'The transaction was included but failed during onchain execution.'
+    )).toBeInTheDocument()
   })
 
   it('requires explicit confirmation to release a legacy lock as outcome unknown', async () => {

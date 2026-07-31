@@ -23,6 +23,7 @@ import {
   type ManagedUserOperationReceipt,
   type PerpsAaSmartAccountRuntime,
   type SponsoredOperationRecoverySnapshot,
+  UserOperationReceiptNotSafeError,
 } from './runtimeContext'
 import { SponsoredOperationRecovery } from './SponsoredOperationRecovery'
 
@@ -32,6 +33,7 @@ const TOKEN = '0x9999999999999999999999999999999999999999' as Address
 const USER_OPERATION_HASH = `0x${'aa'.repeat(32)}` as Hex
 const OTHER_USER_OPERATION_HASH = `0x${'cc'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'bb'.repeat(32)}` as Hex
+const INCLUDED_BLOCK_HASH = `0x${'dd'.repeat(32)}` as Hex
 const MANIFEST_VERSION = 'perps-aa-arbitrum-sepolia-v1'
 
 function paymasterData(validUntil: bigint): Hex {
@@ -80,6 +82,8 @@ function runtimeValue(input: {
     SponsoredOperationRecoverySnapshot['userOperationEvidence']
   computedHash?: Hex
   getRecoverySnapshot?: PerpsAaSmartAccountRuntime['getRecoverySnapshot']
+  verifyObservedInclusion?:
+    PerpsAaSmartAccountRuntime['verifyObservedInclusion']
 } = {}): PerpsAaSmartAccountRuntime {
   return {
     chainId: 421614,
@@ -89,6 +93,7 @@ function runtimeValue(input: {
     accountVersion: 'permissionless-simple-v0.8',
     accountIndex: '0',
     manifestVersion: input.manifestVersion ?? MANIFEST_VERSION,
+    verifyObservedInclusion: input.verifyObservedInclusion,
     getRecoverySnapshot: input.getRecoverySnapshot ?? vi.fn(async () => ({
       blockNumber: 123n,
       blockTimestamp: input.chainTimestamp ?? 0n,
@@ -317,6 +322,8 @@ describe('SponsoredOperationRecovery', () => {
       receipt: {
         transactionHash: TRANSACTION_HASH,
         status: 'success',
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
       },
     } as ManagedUserOperationReceipt
 
@@ -343,6 +350,147 @@ describe('SponsoredOperationRecovery', () => {
       nowSeconds: 1_000n,
     })
     expect(nextAuthorization.nonce).not.toBe(initialAuthorization.nonce)
+  })
+
+  it('persists latest-chain inclusion through outages and confirms only at the safe head', async () => {
+    const includedReceipt = {
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint:
+        '0x3333333333333333333333333333333333333333',
+      logs: [],
+      nonce: 0n,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: USER_OPERATION_HASH,
+      receipt: {
+        transactionHash: TRANSACTION_HASH,
+        status: 'success',
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
+      },
+    } as ManagedUserOperationReceipt
+    const includedLookup = vi.fn(async () => {
+      throw new UserOperationReceiptNotSafeError(includedReceipt)
+    })
+    const unavailableLookup = vi.fn(async () => {
+      throw new Error('Pimlico proxy unavailable')
+    })
+    const safeLookup = vi.fn(async () => includedReceipt)
+    beginHashOperation({ id: 'included-awaiting-safe' })
+
+    const rendered = render(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        receipt: includedLookup,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+
+    await waitFor(() => {
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirming',
+          includedTransactionHash: TRANSACTION_HASH,
+        })
+    })
+    expect(useSponsoredOperationStore.getState().operations[0]?.reason)
+      .toBeUndefined()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'included-awaiting-safe',
+    })
+
+    const verifyCanonicalInclusion = vi.fn(async () => 'canonical' as const)
+    rendered.rerender(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        verifyObservedInclusion: verifyCanonicalInclusion,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+    await waitFor(() => {
+      expect(verifyCanonicalInclusion).toHaveBeenCalledWith({
+        transactionHash: TRANSACTION_HASH,
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
+      })
+    })
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'confirming',
+        includedTransactionHash: TRANSACTION_HASH,
+      })
+
+    rendered.rerender(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        receipt: unavailableLookup,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+    await waitFor(() => {
+      expect(unavailableLookup).toHaveBeenCalled()
+    })
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'confirming',
+        includedTransactionHash: TRANSACTION_HASH,
+      })
+
+    rendered.rerender(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        receipt: safeLookup,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+    await waitFor(() => {
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({
+          status: 'confirmed',
+          transactionHash: TRANSACTION_HASH,
+          transactionHashVerified: true,
+        })
+    })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('retracts unsafe inclusion only after direct canonical reorg proof', async () => {
+    beginHashOperation({ id: 'reorged-inclusion' })
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'reorged-inclusion',
+      {
+        transactionHash: TRANSACTION_HASH,
+        blockNumber: '123',
+        blockHash: INCLUDED_BLOCK_HASH,
+      }
+    )).toBe(true)
+    const verifyObservedInclusion = vi.fn(async () => 'reorged' as const)
+
+    render(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        verifyObservedInclusion,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+
+    await waitFor(() => {
+      expect(useSponsoredOperationStore.getState().operations[0]?.status)
+        .toBe('receipt-timeout')
+    })
+    expect(
+      useSponsoredOperationStore.getState().operations[0]
+        ?.includedTransactionHash
+    ).toBeUndefined()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'reorged-inclusion',
+    })
+    expect(verifyObservedInclusion).toHaveBeenCalledWith({
+      transactionHash: TRANSACTION_HASH,
+      blockNumber: 123n,
+      blockHash: INCLUDED_BLOCK_HASH,
+    })
   })
 
   it('expires a hash-verified operation only after its safe-chain deadline', async () => {

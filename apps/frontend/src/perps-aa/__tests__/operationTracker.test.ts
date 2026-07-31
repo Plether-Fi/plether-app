@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Address } from 'viem'
+import type { Address, Hex } from 'viem'
 import {
   SponsorRequestError,
   SponsoredPreflightError,
@@ -28,6 +28,8 @@ vi.mock('../../analytics/perps', async (importOriginal) => {
 
 const OWNER = '0x1111111111111111111111111111111111111111' as Address
 const ACCOUNT = '0x2222222222222222222222222222222222222222' as Address
+const USER_OPERATION_HASH = `0x${'12'.repeat(32)}` as Hex
+const TRANSACTION_HASH = `0x${'34'.repeat(32)}` as Hex
 
 describe('sponsored operation tracker', () => {
   beforeEach(() => {
@@ -107,6 +109,38 @@ describe('sponsored operation tracker', () => {
 
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
       status: 'confirmed',
+    })
+  })
+
+  it('does not turn observed inclusion into a safe-head timeout', () => {
+    const tracker = beginSponsoredOperationTracking({
+      id: 'operation-included',
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      accountMode: 'simple',
+      manifestVersion: 'v1',
+      action: 'place-order',
+    })
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      tracker.id,
+      USER_OPERATION_HASH
+    )).toBe(true)
+    expect(tracker.onObservedInclusion({
+      transactionHash: TRANSACTION_HASH,
+    })).toBe(true)
+
+    tracker.fail(new Error('safe head did not catch up before timeout'))
+
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({
+        status: 'confirming',
+        includedTransactionHash: TRANSACTION_HASH,
+      })
+    expect(useSponsoredOperationStore.getState().operations[0]?.reason)
+      .toBeUndefined()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'operation-included',
     })
   })
 
