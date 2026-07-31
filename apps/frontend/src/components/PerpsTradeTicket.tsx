@@ -18,7 +18,6 @@ import {
   useSponsoredOperationStore,
 } from '../perps-aa'
 import {
-  adverseConfidenceBasketPrice,
   directionToPerpsSide,
   dxyExposureFromContractNotional,
   formatDisplayDxyPrice,
@@ -162,6 +161,10 @@ interface PerpsTradeTicketProps {
   initialCommitTxHash?: string
   initialExecuteTxHash?: string
   initialFinalExecutionPrice?: bigint
+  initialFinalExecutionOraclePrice?: bigint
+  initialFinalExecutionOracleFrozen?: boolean
+  initialFinalFrozenCloseSpreadUsdc?: bigint
+  initialFinalExecutionEconomicsVersion?: number
   initialCommittedSizeDelta?: bigint
   initialFlowError?: string
   closePositionRequestId?: number
@@ -195,6 +198,7 @@ interface PerpsTradeTicketProps {
   currentPosition?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
   orderHistory?: PerpsOrderHistoryRow[]
+  ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
@@ -265,6 +269,7 @@ const KEEPER_REVEAL_PROGRESS_MS = 250
 const FINALIZATION_MESSAGE_ROTATE_MS = 4_000
 const ORDER_TERMINAL_WAIT_SECONDS = 60
 const ORDER_TERMINAL_RETRY_DELAY_MS = 2_000
+const ORDER_EXECUTION_EVIDENCE_POLL_MS = 60_000
 const FINALIZATION_LOADING_MESSAGES = [
   {
     title: 'Waiting for verified market data',
@@ -419,6 +424,25 @@ function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
   const detail = failureReasonMessage(order.failureReason)
     ?? `Terminal status: ${order.status}. Refresh order history for details.`
   return `Order failed: ${detail}`
+}
+
+function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
+  return order.status !== 'Executed'
+    || (
+      order.oracleDerivationVersion !== undefined
+      && order.executionEconomicsVersion !== undefined
+      && order.executionOracleFrozen !== undefined
+    )
+}
+
+function terminalOrderKey(order: PerpsOrderHistoryRow): string {
+  return [
+    order.orderId.toString(),
+    order.status,
+    order.commitTxHash.toLowerCase(),
+    order.revealTxHash?.toLowerCase() ?? '',
+    order.terminalBlockNumberRaw?.toString() ?? '',
+  ].join(':')
 }
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
@@ -1428,6 +1452,10 @@ export function PerpsTradeTicket({
   initialCommitTxHash,
   initialExecuteTxHash,
   initialFinalExecutionPrice,
+  initialFinalExecutionOraclePrice,
+  initialFinalExecutionOracleFrozen,
+  initialFinalFrozenCloseSpreadUsdc,
+  initialFinalExecutionEconomicsVersion,
   initialCommittedSizeDelta,
   initialFlowError,
   closePositionRequestId,
@@ -1446,7 +1474,6 @@ export function PerpsTradeTicket({
   validationErrorFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
-  oracleBasketComponents,
   availableToTradeRaw,
   availableToTradeAmount,
   portfolioValueRaw,
@@ -1458,6 +1485,7 @@ export function PerpsTradeTicket({
   currentPosition,
   pendingOrders = [],
   orderHistory = [],
+  ordersIndexedThroughBlockRaw,
   pendingOrderCount,
   maxPendingOrders,
   firstPendingOrderId,
@@ -1513,12 +1541,20 @@ export function PerpsTradeTicket({
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
   const [finalExecutionPrice, setFinalExecutionPrice] = useState<bigint | undefined>(initialFinalExecutionPrice)
+  const [finalExecutionOraclePrice, setFinalExecutionOraclePrice] = useState<bigint | undefined>(
+    initialFinalExecutionOraclePrice
+  )
+  const [finalExecutionOracleFrozen, setFinalExecutionOracleFrozen] = useState<boolean | undefined>(
+    initialFinalExecutionOracleFrozen
+  )
+  const [finalExecutionFrozenCloseSpreadUsdc, setFinalExecutionFrozenCloseSpreadUsdc] =
+    useState<bigint | undefined>(initialFinalFrozenCloseSpreadUsdc)
+  const [finalExecutionEconomicsVersion, setFinalExecutionEconomicsVersion] =
+    useState<number | undefined>(initialFinalExecutionEconomicsVersion)
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>()
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
-  const [committedOracleFrozenClose, setCommittedOracleFrozenClose] = useState<boolean | undefined>()
-  const [committedFrozenCloseSpreadUsdc, setCommittedFrozenCloseSpreadUsdc] = useState<bigint | undefined>()
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
   const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
   const [marginActionAmount, setMarginActionAmount] = useState(initialMarginActionAmount)
@@ -1541,6 +1577,17 @@ export function PerpsTradeTicket({
   const onAccountRefreshRef = useRef(onAccountRefresh)
   const orderWaitStartedForRef = useRef<bigint | undefined>(undefined)
   const handledTerminalOrderKeyRef = useRef<string | undefined>(undefined)
+  const handledTerminalBlockNumberRef = useRef<bigint | undefined>(undefined)
+  const handledTerminalBlockHashRef = useRef<string | undefined>(undefined)
+  const rejectedTerminalRef = useRef<{
+    terminalKey: string
+    blockHash?: string
+  } | undefined>(undefined)
+  const executionEvidencePollRef = useRef<{
+    terminalKey: string
+    deadlineMs: number
+    exhausted: boolean
+  } | undefined>(undefined)
   const commitAttemptIdRef = useRef(0)
   const includedCommitAttemptRef = useRef<number | undefined>(undefined)
   const includedCommitIdentityRef = useRef<{
@@ -1658,7 +1705,10 @@ export function PerpsTradeTicket({
     }
   }, [isSponsoredAccountConfigured, lifecycleState])
 
-  const applyTerminalOrder = useCallback((order: PerpsOrderHistoryRow) => {
+  const applyTerminalOrder = useCallback((
+    order: PerpsOrderHistoryRow,
+    isCanonicalHistory = false
+  ) => {
     if (order.status === 'Committed') return false
     const includedIdentity = includedCommitIdentityRef.current
     if (
@@ -1672,20 +1722,100 @@ export function PerpsTradeTicket({
       return false
     }
 
-    const terminalOrderKey = `${order.orderId.toString()}:${order.status}:${order.revealTxHash ?? ''}`
-    if (handledTerminalOrderKeyRef.current === terminalOrderKey) return true
-    handledTerminalOrderKeyRef.current = terminalOrderKey
+    const nextTerminalOrderKey = terminalOrderKey(order)
+    const nextTerminalBlockHash = order.terminalBlockHash?.toLowerCase()
+    const rejectedTerminal = rejectedTerminalRef.current
+    if (rejectedTerminal?.terminalKey === nextTerminalOrderKey) {
+      const provesDifferentCanonicalBlock =
+        rejectedTerminal.blockHash !== undefined
+        && nextTerminalBlockHash !== undefined
+        && rejectedTerminal.blockHash !== nextTerminalBlockHash
+      if (!isCanonicalHistory && !provesDifferentCanonicalBlock) return false
+    }
+    if (rejectedTerminal !== undefined) {
+      rejectedTerminalRef.current = undefined
+    }
+    const hasSameTerminalBase =
+      handledTerminalOrderKeyRef.current === nextTerminalOrderKey
+    const hasKnownBlockHashReplacement =
+      hasSameTerminalBase
+      && handledTerminalBlockHashRef.current !== undefined
+      && nextTerminalBlockHash !== undefined
+      && handledTerminalBlockHashRef.current !== nextTerminalBlockHash
+    const isSameTerminalOrder =
+      hasSameTerminalBase && !hasKnownBlockHashReplacement
+    if (hasKnownBlockHashReplacement) {
+      executionEvidencePollRef.current = undefined
+    }
+    if (hasCompleteExecutionEvidence(order)) {
+      executionEvidencePollRef.current = undefined
+    } else if (executionEvidencePollRef.current?.terminalKey !== nextTerminalOrderKey) {
+      executionEvidencePollRef.current = {
+        terminalKey: nextTerminalOrderKey,
+        deadlineMs: Date.now() + ORDER_EXECUTION_EVIDENCE_POLL_MS,
+        exhausted: false,
+      }
+    }
+
+    if (order.status === 'Executed') {
+      const indexedExecutionPrice = order.executionPriceRaw ?? order.activityPriceRaw
+      setFinalExecutionPrice((current) => (
+        isSameTerminalOrder && indexedExecutionPrice === undefined
+          ? current
+          : indexedExecutionPrice
+      ))
+      setFinalExecutionOraclePrice((current) => (
+        isSameTerminalOrder && order.executionOraclePriceRaw === undefined
+          ? current
+          : order.executionOraclePriceRaw
+      ))
+      setFinalExecutionOracleFrozen((current) => (
+        isSameTerminalOrder && order.executionOracleFrozen === undefined
+          ? current
+          : order.executionOracleFrozen
+      ))
+      setFinalVpiUsdc((current) => (
+        isSameTerminalOrder && order.vpiUsdcRaw === undefined
+          ? current
+          : order.vpiUsdcRaw
+      ))
+      setFinalExecutionFrozenCloseSpreadUsdc((current) => (
+        isSameTerminalOrder && order.frozenCloseSpreadUsdcRaw === undefined
+          ? current
+          : order.frozenCloseSpreadUsdcRaw
+      ))
+      setFinalExecutionEconomicsVersion((current) => (
+        isSameTerminalOrder && order.executionEconomicsVersion === undefined
+          ? current
+          : order.executionEconomicsVersion
+      ))
+    } else if (!isSameTerminalOrder) {
+      setFinalExecutionPrice(undefined)
+      setFinalExecutionOraclePrice(undefined)
+      setFinalExecutionOracleFrozen(undefined)
+      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+      setFinalExecutionEconomicsVersion(undefined)
+      setFinalVpiUsdc(undefined)
+    }
+
+    if (isSameTerminalOrder) {
+      if (
+        handledTerminalBlockHashRef.current === undefined
+        && nextTerminalBlockHash !== undefined
+      ) {
+        handledTerminalBlockHashRef.current = nextTerminalBlockHash
+      }
+      return true
+    }
+    handledTerminalOrderKeyRef.current = nextTerminalOrderKey
+    handledTerminalBlockNumberRef.current = order.terminalBlockNumberRaw
+    handledTerminalBlockHashRef.current = nextTerminalBlockHash
 
     setCommitTxHash((current) => current ?? order.commitTxHash)
     setExecuteTxHash(order.revealTxHash)
 
     if (order.status === 'Executed') {
       setFlowError(undefined)
-      setFinalExecutionPrice(order.executionPriceRaw ?? order.activityPriceRaw)
-      const indexedVpiUsdc = order.vpiUsdcRaw ?? order.activityVpiUsdcRaw
-      if (indexedVpiUsdc !== undefined) {
-        setFinalVpiUsdc(indexedVpiUsdc)
-      }
       setLifecycleState('executed')
     } else {
       setFlowError(terminalOrderFailureMessage(order))
@@ -1694,6 +1824,33 @@ export function PerpsTradeTicket({
 
     onAccountRefreshRef.current?.()
     return true
+  }, [])
+
+  const rewindHandledTerminalOrder = useCallback(() => {
+    const rewindStartedAt = Date.now()
+    const rejectedTerminalKey = handledTerminalOrderKeyRef.current
+    if (rejectedTerminalKey !== undefined) {
+      rejectedTerminalRef.current = {
+        terminalKey: rejectedTerminalKey,
+        blockHash: handledTerminalBlockHashRef.current,
+      }
+    }
+    handledTerminalOrderKeyRef.current = undefined
+    handledTerminalBlockNumberRef.current = undefined
+    handledTerminalBlockHashRef.current = undefined
+    executionEvidencePollRef.current = undefined
+    orderWaitStartedForRef.current = undefined
+    setExecuteTxHash(undefined)
+    setFinalExecutionPrice(undefined)
+    setFinalExecutionOraclePrice(undefined)
+    setFinalExecutionOracleFrozen(undefined)
+    setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+    setFinalExecutionEconomicsVersion(undefined)
+    setFinalVpiUsdc(undefined)
+    setFlowError(undefined)
+    setKeeperRevealDeadlineMs(rewindStartedAt + KEEPER_REVEAL_GRACE_MS)
+    setKeeperRevealNowMs(rewindStartedAt)
+    setLifecycleState('revealPending')
   }, [])
 
   useEffect(() => {
@@ -1713,10 +1870,18 @@ export function PerpsTradeTicket({
       includedCommitAttemptRef.current = undefined
       includedCommitIdentityRef.current = undefined
       handledTerminalOrderKeyRef.current = undefined
+      handledTerminalBlockNumberRef.current = undefined
+      handledTerminalBlockHashRef.current = undefined
+      rejectedTerminalRef.current = undefined
+      executionEvidencePollRef.current = undefined
       setOrderId(undefined)
       setCommitTxHash(undefined)
       setExecuteTxHash(undefined)
       setFinalExecutionPrice(undefined)
+      setFinalExecutionOraclePrice(undefined)
+      setFinalExecutionOracleFrozen(undefined)
+      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+      setFinalExecutionEconomicsVersion(undefined)
       setFinalVpiUsdc(undefined)
       setFlowError(deferredSafeConfirmationError.message)
       setLifecycleState('failed')
@@ -1731,22 +1896,80 @@ export function PerpsTradeTicket({
         row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
       )
     )
-    if (indexedOrder) {
-      if (indexedOrder.status !== 'Committed') {
-        applyTerminalOrder(indexedOrder)
-      }
+    if (indexedOrder && indexedOrder.status !== 'Committed') {
+      applyTerminalOrder(indexedOrder, true)
+      return
     }
-  }, [applyTerminalOrder, enableLiveTrading, orderHistory, orderId])
+
+    const handledTerminalBlockNumber = handledTerminalBlockNumberRef.current
+    if (
+      handledTerminalOrderKeyRef.current !== undefined
+      && handledTerminalBlockNumber !== undefined
+      && ordersIndexedThroughBlockRaw !== undefined
+      && ordersIndexedThroughBlockRaw >= handledTerminalBlockNumber
+      && indexedOrder?.status === 'Committed'
+    ) {
+      rewindHandledTerminalOrder()
+    }
+  }, [
+    applyTerminalOrder,
+    enableLiveTrading,
+    orderHistory,
+    orderId,
+    ordersIndexedThroughBlockRaw,
+    rewindHandledTerminalOrder,
+  ])
 
   useEffect(() => {
     if (!enableLiveTrading || orderId === undefined) return undefined
-    if (handledTerminalOrderKeyRef.current?.startsWith(`${orderId.toString()}:`)) return undefined
+    const handledTerminalKey = handledTerminalOrderKeyRef.current
+    const indexedOrder = orderHistory.find((row) => row.orderId === orderId)
+    const indexedTerminalKey =
+      indexedOrder !== undefined && indexedOrder.status !== 'Committed'
+        ? terminalOrderKey(indexedOrder)
+        : undefined
+    if (
+      handledTerminalKey !== undefined
+      && indexedTerminalKey === handledTerminalKey
+      && indexedOrder !== undefined
+      && hasCompleteExecutionEvidence(indexedOrder)
+    ) {
+      return undefined
+    }
+    const activeEvidencePoll = executionEvidencePollRef.current
+    if (
+      handledTerminalKey !== undefined
+      && activeEvidencePoll?.terminalKey === handledTerminalKey
+    ) {
+      if (activeEvidencePoll.exhausted) return undefined
+      if (Date.now() >= activeEvidencePoll.deadlineMs) {
+        activeEvidencePoll.exhausted = true
+        onAccountRefreshRef.current?.()
+        return undefined
+      }
+    }
     if (orderWaitStartedForRef.current === orderId) return undefined
 
     const activeOrderId = orderId
     orderWaitStartedForRef.current = orderId
     const controller = new AbortController()
     const isCancelled = () => controller.signal.aborted
+
+    function stopIfEvidencePollExpired(): boolean {
+      const currentTerminalKey = handledTerminalOrderKeyRef.current
+      const pollState = executionEvidencePollRef.current
+      if (
+        currentTerminalKey === undefined
+        || pollState?.terminalKey !== currentTerminalKey
+      ) {
+        return false
+      }
+      if (pollState.exhausted) return true
+      if (Date.now() < pollState.deadlineMs) return false
+      pollState.exhausted = true
+      onAccountRefreshRef.current?.()
+      return true
+    }
 
     async function waitForTerminalOrderLoop() {
       while (!isCancelled()) {
@@ -1759,20 +1982,28 @@ export function PerpsTradeTicket({
           })
 
           if (isCancelled()) return
-          if (result.order !== undefined && applyTerminalOrder(result.order)) return
-
-          onAccountRefreshRef.current?.()
+          if (result.order !== undefined && applyTerminalOrder(result.order)) {
+            if (hasCompleteExecutionEvidence(result.order)) return
+            if (stopIfEvidencePollExpired()) return
+          } else {
+            onAccountRefreshRef.current?.()
+          }
         } catch (error: unknown) {
           if (isCancelled() || (error instanceof DOMException && error.name === 'AbortError')) return
         }
 
+        if (stopIfEvidencePollExpired()) return
         await new Promise<void>((resolve) => {
           window.setTimeout(resolve, ORDER_TERMINAL_RETRY_DELAY_MS)
         })
       }
     }
 
-    void waitForTerminalOrderLoop()
+    void waitForTerminalOrderLoop().finally(() => {
+      if (orderWaitStartedForRef.current === activeOrderId) {
+        orderWaitStartedForRef.current = undefined
+      }
+    })
 
     return () => {
       controller.abort()
@@ -1780,7 +2011,14 @@ export function PerpsTradeTicket({
         orderWaitStartedForRef.current = undefined
       }
     }
-  }, [address, applyTerminalOrder, enableLiveTrading, orderId])
+  }, [
+    address,
+    applyTerminalOrder,
+    enableLiveTrading,
+    orderHistory,
+    orderId,
+    ordersIndexedThroughBlockRaw,
+  ])
 
   useEffect(() => {
     setLeverage((currentLeverage) => Math.min(currentLeverage, maxLeverage))
@@ -2214,14 +2452,6 @@ export function PerpsTradeTicket({
   const previewVpiValue = previewVpiUsdc === undefined
     ? previewLensFallbackValue
     : formatSignedUsdcNoPlus(previewVpiUsdc)
-  const adverseOraclePriceRaw = adverseConfidenceBasketPrice({
-    components: oracleBasketComponents,
-    direction: effectiveOrderDirection,
-    isClose: isReducingCurrentPosition,
-  })
-  const previewOracleConfidenceSpreadRaw = adverseOraclePriceRaw !== undefined && oraclePriceRaw !== undefined
-    ? absBigInt(adverseOraclePriceRaw - oraclePriceRaw)
-    : undefined
   const previewLiquidationPrice = (() => {
     if (!enableLiveTrading) return formatOptionalPrice(liquidationPrice)
     if (openPreview === undefined) return shouldReadTradePreview ? previewLensFallbackValue : PREVIEW_UNAVAILABLE_VALUE
@@ -2449,18 +2679,27 @@ export function PerpsTradeTicket({
     ? sizeDeltaToNotionalUsdc(committedSizeDelta, oraclePriceToDisplayDxyPrice(finalExecutionPrice))
     : undefined
   const finalProtocolExecutionFee = executionFeeUsdcRaw(finalExecutedNotionalUsdc ?? contractNotionalUsdc, executionFeeBpsRaw)
-  const finalVpiValue = finalVpiUsdc === undefined ? 'Unavailable' : formatSignedUsdcNoPlus(finalVpiUsdc)
+  const finalExecutionEconomicsComplete = finalExecutionEconomicsVersion !== undefined
+  const finalVpiValue =
+    !finalExecutionEconomicsComplete || finalVpiUsdc === undefined
+      ? 'Unavailable'
+      : formatSignedUsdcNoPlus(finalVpiUsdc)
   const finalUsesFrozenCloseSpread =
-    committedOracleFrozenClose ?? isOracleFrozenClose
-  const finalFrozenCloseSpreadUsdc =
-    committedFrozenCloseSpreadUsdc ?? closePreview?.frozenSpreadUsdc
-  const finalFrozenCloseSpreadValue = finalFrozenCloseSpreadUsdc === undefined
+    finalExecutionEconomicsComplete && finalExecutionOracleFrozen === true
+  const finalFrozenCloseSpreadValue = finalExecutionFrozenCloseSpreadUsdc === undefined
     ? PREVIEW_UNAVAILABLE_VALUE
-    : formatUsdcRaw(finalFrozenCloseSpreadUsdc)
-  const finalOracleConfidenceSpreadRaw = finalExecutionPrice !== undefined && oraclePriceRaw !== undefined
-    ? absBigInt(finalExecutionPrice - oraclePriceRaw)
-    : previewOracleConfidenceSpreadRaw
-  const finalOracleConfidenceSpreadValue = formatConfidenceSpread(finalOracleConfidenceSpreadRaw, oraclePriceRaw)
+    : formatUsdcRaw(finalExecutionFrozenCloseSpreadUsdc)
+  const finalOracleConfidenceSpreadRaw =
+    finalExecutionEconomicsComplete
+      && finalExecutionOracleFrozen === false
+      && finalExecutionPrice !== undefined
+      && finalExecutionOraclePrice !== undefined
+      ? absBigInt(finalExecutionPrice - finalExecutionOraclePrice)
+      : undefined
+  const finalOracleConfidenceSpreadValue = formatConfidenceSpread(
+    finalOracleConfidenceSpreadRaw,
+    finalExecutionOraclePrice
+  )
   const finalPriceDisplay = finalExecutionPrice
     ? formatDisplayDxyPrice(finalExecutionPrice)
     : enableLiveTrading
@@ -2691,6 +2930,8 @@ export function PerpsTradeTicket({
     const commitAttemptId = commitAttemptIdRef.current + 1
     commitAttemptIdRef.current = commitAttemptId
     deferredSafeConfirmationErrorRef.current = undefined
+    rejectedTerminalRef.current = undefined
+    executionEvidencePollRef.current = undefined
     setFlowError(undefined)
     setWalletRequestWarning(undefined)
     setCommitExecutionStatus(undefined)
@@ -2717,10 +2958,6 @@ export function PerpsTradeTicket({
       setCommittedSizeDelta(orderSizeDelta)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
-      setCommittedOracleFrozenClose(isOracleFrozenClose)
-      setCommittedFrozenCloseSpreadUsdc(
-        isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
-      )
       setCommitExecutionStatus('awaiting-signature')
       setLifecycleState('commitPending')
       return
@@ -2742,11 +2979,12 @@ export function PerpsTradeTicket({
       setCommittedSizeDelta(sizeDelta)
       setCommittedSlippage(slippageNumber)
       setCommittedTargetPrice(executionLimit)
-      setCommittedOracleFrozenClose(isOracleFrozenClose)
-      setCommittedFrozenCloseSpreadUsdc(
-        isOracleFrozenClose ? closePreview?.frozenSpreadUsdc : undefined
-      )
-      setFinalVpiUsdc(previewVpiUsdc)
+      setFinalExecutionPrice(undefined)
+      setFinalExecutionOraclePrice(undefined)
+      setFinalExecutionOracleFrozen(undefined)
+      setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+      setFinalExecutionEconomicsVersion(undefined)
+      setFinalVpiUsdc(undefined)
       const applyIncludedCommit = (result: {
         hash: string
         orderId: bigint
@@ -2768,8 +3006,16 @@ export function PerpsTradeTicket({
         if (!isFirstInclusion) {
           if (inclusionChanged) {
             handledTerminalOrderKeyRef.current = undefined
+            handledTerminalBlockNumberRef.current = undefined
+            handledTerminalBlockHashRef.current = undefined
+            rejectedTerminalRef.current = undefined
+            executionEvidencePollRef.current = undefined
             setExecuteTxHash(undefined)
             setFinalExecutionPrice(undefined)
+            setFinalExecutionOraclePrice(undefined)
+            setFinalExecutionOracleFrozen(undefined)
+            setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+            setFinalExecutionEconomicsVersion(undefined)
             setFinalVpiUsdc(undefined)
             setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
             setKeeperRevealNowMs(Date.now())
@@ -2862,10 +3108,18 @@ export function PerpsTradeTicket({
         includedCommitIdentityRef.current = undefined
         deferredSafeConfirmationErrorRef.current = undefined
         handledTerminalOrderKeyRef.current = undefined
+        handledTerminalBlockNumberRef.current = undefined
+        handledTerminalBlockHashRef.current = undefined
+        rejectedTerminalRef.current = undefined
+        executionEvidencePollRef.current = undefined
         setOrderId(undefined)
         setCommitTxHash(undefined)
         setExecuteTxHash(undefined)
         setFinalExecutionPrice(undefined)
+        setFinalExecutionOraclePrice(undefined)
+        setFinalExecutionOracleFrozen(undefined)
+        setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+        setFinalExecutionEconomicsVersion(undefined)
         setFinalVpiUsdc(undefined)
       }
       debugPerpsCommit('ticket:commit-error', {
@@ -2941,17 +3195,23 @@ export function PerpsTradeTicket({
     includedCommitIdentityRef.current = undefined
     deferredSafeConfirmationErrorRef.current = undefined
     handledTerminalOrderKeyRef.current = undefined
+    handledTerminalBlockNumberRef.current = undefined
+    handledTerminalBlockHashRef.current = undefined
+    rejectedTerminalRef.current = undefined
+    executionEvidencePollRef.current = undefined
     setLifecycleState('preview')
     setOrderId(undefined)
     setCommitTxHash(undefined)
     setExecuteTxHash(undefined)
     setFinalExecutionPrice(undefined)
+    setFinalExecutionOraclePrice(undefined)
+    setFinalExecutionOracleFrozen(undefined)
+    setFinalExecutionFrozenCloseSpreadUsdc(undefined)
+    setFinalExecutionEconomicsVersion(undefined)
     setFinalVpiUsdc(undefined)
     setCommittedSizeDelta(undefined)
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
-    setCommittedOracleFrozenClose(undefined)
-    setCommittedFrozenCloseSpreadUsdc(undefined)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)

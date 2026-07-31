@@ -1619,7 +1619,7 @@ describe('perps lifecycle labels', () => {
     )
   })
 
-  it('shows the execution confirmation when refreshed order history sees keeper execution', async () => {
+  it('preserves lagging committed history and rewinds only after an indexed reorg proof', async () => {
     mockIsConnected = true
     perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(new Promise(() => {}))
     const onAccountRefresh = vi.fn()
@@ -1634,8 +1634,13 @@ describe('perps lifecycle labels', () => {
       status: 'Executed' as const,
       commitTxHash: '0x971c00000000000000000000000000000000eeab',
       revealTxHash: '0xec0c00000000000000000000000000000000d745',
+      terminalBlockNumberRaw: 190_002_345n,
       executionPriceRaw: 97_138_163n,
+      executionOraclePriceRaw: 97_330_315n,
+      executionOracleFrozen: false,
+      oracleDerivationVersion: 1,
       vpiUsdcRaw: 12_345_678n,
+      executionEconomicsVersion: 1,
     }
     const baseProps = {
       enableLiveTrading: true,
@@ -1674,13 +1679,299 @@ describe('perps lifecycle labels', () => {
     expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
     expect(within(finalResult!).getByText('VPI / Price impact')).toBeInTheDocument()
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
+    const oracleSpreadRow = within(finalResult!).getByText('Oracle confidence spread').closest('div')
+    expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.1974%')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
-    rerender(<PerpsTradeTicket {...baseProps} orderHistory={[{ ...terminalOrder }]} />)
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        oraclePriceRaw={98_000_000n}
+        orderHistory={[{ ...terminalOrder }]}
+      />
+    )
 
     await act(async () => {})
+    expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.1974%')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
     expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[{
+          ...terminalOrder,
+          status: 'Committed',
+          revealTxHash: undefined,
+          terminalBlockNumberRaw: undefined,
+          terminalBlockHash: undefined,
+          executionPriceRaw: undefined,
+          executionOraclePriceRaw: undefined,
+          executionOracleFrozen: undefined,
+          oracleDerivationVersion: undefined,
+          vpiUsdcRaw: undefined,
+          executionEconomicsVersion: undefined,
+        }]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
+      expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.1974%')
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
+    })
+    expect(onAccountRefresh).toHaveBeenCalledTimes(1)
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        ordersIndexedThroughBlockRaw={190_002_345n}
+        orderHistory={[]}
+      />
+    )
+
+    await act(async () => {})
+    expect(screen.getByText('Final Result')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
+    const waitCallsBeforeReorgProof =
+      perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.length
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: terminalOrder,
+    })
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        ordersIndexedThroughBlockRaw={190_002_345n}
+        orderHistory={[{
+          ...terminalOrder,
+          status: 'Committed',
+          revealTxHash: undefined,
+          terminalBlockNumberRaw: undefined,
+          terminalBlockHash: undefined,
+          executionPriceRaw: undefined,
+          executionOraclePriceRaw: undefined,
+          executionOracleFrozen: undefined,
+          oracleDerivationVersion: undefined,
+          vpiUsdcRaw: undefined,
+          executionEconomicsVersion: undefined,
+        }]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+      expect(screen.getByText('Waiting for verified market data')).toBeInTheDocument()
+      expect(
+        perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.length
+      ).toBeGreaterThan(waitCallsBeforeReorgProof)
+    })
+
+    await act(async () => {})
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        ordersIndexedThroughBlockRaw={190_002_346n}
+        orderHistory={[{
+          ...terminalOrder,
+          terminalBlockHash:
+            '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        }]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+      expect(screen.getByText('12.3')).toBeInTheDocument()
+    })
+  })
+
+  it('polls and hydrates exact execution evidence after the terminal response', async () => {
+    mockIsConnected = true
+    const terminalOrder = {
+      orderId: 73n,
+      time: '30 Jul, 20:57',
+      market: 'plDXY Perp',
+      side: 'Short',
+      type: 'Close',
+      price: '0.9839',
+      size: '100 000',
+      status: 'Executed' as const,
+      commitTxHash: '0x54237f181c19e86acfd661fd217e219fd6570227dc5f0b9815589a9d278f6104' as const,
+      revealTxHash: '0xebbbf75e5b32d516e9e0398d9a7b1647a1dcf434b385c0e90b123b815957eaed' as const,
+      terminalBlockNumberRaw: 190_002_346n,
+      terminalBlockHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const,
+      executionPriceRaw: 98_391_251n,
+      executionOraclePriceRaw: 98_391_482n,
+    }
+    perpsTradingMocks.waitForPerpsOrderTerminal
+      .mockResolvedValueOnce({
+        timedOut: false,
+        order: terminalOrder,
+      })
+      .mockResolvedValue({
+        timedOut: false,
+        order: {
+          ...terminalOrder,
+          executionOracleFrozen: false,
+          oracleDerivationVersion: 1,
+          vpiUsdcRaw: 182_822_887n,
+          executionEconomicsVersion: 1,
+        },
+      })
+    const onAccountRefresh = vi.fn()
+    const baseProps = {
+      enableLiveTrading: true,
+      initialLifecycleState: 'revealPending' as const,
+      initialReviewOpen: true,
+      initialDirection: 'short' as const,
+      initialSize: '100 000',
+      initialOrderId: 73n,
+      oraclePriceRaw: 98_391_482n,
+      oraclePublishTime: Math.floor(Date.now() / 1000),
+      availableToTradeRaw: 200_000_000_000n,
+      walletUsdcRaw: 2_000_000_000n,
+      portfolioValueRaw: 200_000_000_000n,
+      withdrawableUsdcRaw: 2_000_000_000n,
+      minOpenNotionalUsdc: 100_000_000n,
+      minNewPositionNotionalUsdc: 100_000_000n,
+      onAccountRefresh,
+    }
+
+    const { rerender } = render(
+      <PerpsTradeTicket {...baseProps} orderHistory={[]} />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+    const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
+    expect(finalResult).toBeInTheDocument()
+    const vpiRow = within(finalResult!).getByText('VPI / Price impact').closest('div')
+    expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+    expect(onAccountRefresh).toHaveBeenCalledTimes(1)
+
+    await waitFor(() => {
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent('182.8')
+      expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
+    }, { timeout: 4_000 })
+    expect(onAccountRefresh).toHaveBeenCalledTimes(1)
+
+    const oracleSpreadRow = within(finalResult!).getByText('Oracle confidence spread').closest('div')
+    expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.0002%')
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise(() => {})
+    )
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[{
+          ...terminalOrder,
+          terminalBlockHash: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          executionPriceRaw: 98_400_000n,
+          executionOraclePriceRaw: undefined,
+          executionOracleFrozen: false,
+          oracleDerivationVersion: 1,
+          vpiUsdcRaw: undefined,
+          executionEconomicsVersion: 1,
+        }]}
+      />
+    )
+
+    await waitFor(() => {
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+      expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('Unavailable')
+    })
+    expect(onAccountRefresh).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the execution-evidence deadline bounded across history rerenders', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-30T20:00:00Z'))
+    mockIsConnected = true
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockReturnValue(
+      new Promise(() => {})
+    )
+    const onAccountRefresh = vi.fn()
+    const terminalOrder = {
+      orderId: 74n,
+      time: '30 Jul, 22:00',
+      market: 'plDXY Perp',
+      side: 'Long',
+      type: 'Open',
+      price: '0.9839',
+      size: '1 000',
+      status: 'Executed' as const,
+      commitTxHash:
+        '0x1111111111111111111111111111111111111111111111111111111111111111' as const,
+      revealTxHash:
+        '0x2222222222222222222222222222222222222222222222222222222222222222' as const,
+      terminalBlockNumberRaw: 190_002_347n,
+      terminalBlockHash:
+        '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as const,
+      executionPriceRaw: 98_391_251n,
+    }
+    const baseProps = {
+      enableLiveTrading: true,
+      initialLifecycleState: 'revealPending' as const,
+      initialReviewOpen: true,
+      initialOrderId: 74n,
+      initialSize: '1 000',
+      oraclePriceRaw: 98_391_482n,
+      availableToTradeRaw: 2_000_000_000n,
+      walletUsdcRaw: 2_000_000_000n,
+      portfolioValueRaw: 2_000_000_000n,
+      withdrawableUsdcRaw: 2_000_000_000n,
+      minOpenNotionalUsdc: 100_000_000n,
+      minNewPositionNotionalUsdc: 100_000_000n,
+      onAccountRefresh,
+    }
+    const { rerender } = render(
+      <PerpsTradeTicket {...baseProps} orderHistory={[terminalOrder]} />
+    )
+
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(screen.getByText('Final Result')).toBeInTheDocument()
+    expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[{ ...terminalOrder }]}
+      />
+    )
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+    expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
+
+    await act(async () => {
+      vi.advanceTimersByTime(30_000)
+    })
+    const callsAtDeadline =
+      perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.length
+    rerender(
+      <PerpsTradeTicket
+        {...baseProps}
+        orderHistory={[{ ...terminalOrder }]}
+      />
+    )
+    await act(async () => {
+      vi.advanceTimersByTime(0)
+    })
+
+    expect(
+      perpsTradingMocks.waitForPerpsOrderTerminal.mock.calls.length
+    ).toBe(callsAtDeadline)
   })
 
   it('keeps waiting for keeper execution after the first terminal wait times out', async () => {

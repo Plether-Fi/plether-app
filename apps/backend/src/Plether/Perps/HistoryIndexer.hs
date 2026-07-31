@@ -3,21 +3,24 @@ module Plether.Perps.HistoryIndexer
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
   , defaultPerpsAddresses
+  , perpsIndexerName
   , runPerpsIndexer
   , perpsEventTopics
   , parsePerpsLog
   , RpcLog (..)
+  , BlockInfo (..)
   , ParsedPerpsLog (..)
   , TradeCosts (..)
+  , validateRpcLogBlockHash
   , decodeOpenTradeCosts
   , decodeCloseTradeCosts
   , orderFailReasonName
   , terminalStatus
   ) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (forM_, forever, when)
+import Control.Monad (forM, forM_, forever, unless, when)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -26,8 +29,9 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Foldable (toList)
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
+import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -39,28 +43,49 @@ import Network.HTTP.Client
   , httpLbs
   , parseRequest
   , responseBody
+  , responseTimeoutMicro
   )
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
-  ( deletePerpsHistoryFromBlock
+  ( PerpsExecutionEvidenceRow (..)
+  , deletePerpsHistoryFromBlock
+  , getPendingPerpsExecutionEvidence
   , getPerpsIndexerLastBlock
   , insertPerpsExpiredCleanupActivityIfReady
   , insertPerpsActivity
   , insertPerpsEvent
+  , markPerpsExecutionEvidenceAttempt
   , setPerpsIndexerState
+  , updatePerpsOrderEconomicsEvidence
+  , updatePerpsOrderOracleEvidence
   , upsertPerpsOrderCommitted
   , upsertPerpsOrderTerminal
   )
 import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
+import Plether.Ethereum.Client (EthClient (..), RpcError)
+import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (field, logErrorEvery, logInfoEvery, logWarn, logWarnEvery)
+import Plether.Perps.ExecutionOracle
+  ( ExecutionOracleSnapshot (..)
+  , decodeExecutionUpdateData
+  , deriveExecutionOracleSnapshot
+  , executionOraclePublishTimeBounds
+  )
+import Plether.Perps.ExecutionTrace
+  ( TradeExecutionEvidence (..)
+  , decodeTradeExecutionEvidence
+  )
+import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
 import Plether.Utils.Hex (hexToInteger, intToHex)
 
 data PerpsAddresses = PerpsAddresses
   { paOrderRouter :: Text
   , paCfdEngine :: Text
   , paCfdEngineLens :: Text
+  , paCfdEngineSettlementSidecar :: Text
   , paMarginClearinghouse :: Text
+  , paPletherOracle :: Text
   }
   deriving stock (Show)
 
@@ -70,8 +95,13 @@ defaultPerpsAddresses =
     { paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , paCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
     , paCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+    , paCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
     , paMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+    , paPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
     }
+
+perpsIndexerName :: Text
+perpsIndexerName = "perps-history-costs-v1"
 
 data PerpsIndexerMode
   = PerpsIndexerLoop
@@ -81,6 +111,7 @@ data PerpsIndexerMode
 
 data PerpsIndexerConfig = PerpsIndexerConfig
   { picRpcUrls :: [Text]
+  , picTraceApiUrl :: Maybe Text
   , picChainId :: Integer
   , picAddresses :: PerpsAddresses
   , picStartBlock :: Integer
@@ -108,6 +139,15 @@ data BlockInfo = BlockInfo
   { biNumber :: Integer
   , biHash :: Text
   , biTimestamp :: Integer
+  }
+  deriving stock (Show)
+
+data TransactionInfo = TransactionInfo
+  { tiHash :: Text
+  , tiFrom :: Text
+  , tiTo :: Text
+  , tiBlockHash :: Text
+  , tiInput :: ByteString
   }
   deriving stock (Show)
 
@@ -168,7 +208,17 @@ perpsEventTopics =
 runPerpsIndexer :: Manager -> DbPool -> PerpsIndexerConfig -> IO ()
 runPerpsIndexer manager pool cfg =
   case picMode cfg of
-    PerpsIndexerLoop -> forever $ do
+    PerpsIndexerLoop -> do
+      _ <- forkIO runEvidenceLoop
+      runIndexerLoop
+    PerpsIndexerOnce -> do
+      _ <- runOneRange manager pool cfg Nothing Nothing
+      runEvidenceBatch
+    PerpsIndexerBackfill fromBlock toBlock -> do
+      runBackfill fromBlock toBlock
+      runEvidenceBatch
+  where
+    runIndexerLoop = forever $ do
       result <- try @SomeException $ runOneRange manager pool cfg Nothing Nothing
       case result of
         Left err -> do
@@ -180,12 +230,25 @@ runPerpsIndexer manager pool cfg =
           threadDelay (picPollIntervalMicros cfg * 2)
         Right indexed ->
           when (not indexed) $ threadDelay (picPollIntervalMicros cfg)
-    PerpsIndexerOnce -> do
-      _ <- runOneRange manager pool cfg Nothing Nothing
-      pure ()
-    PerpsIndexerBackfill fromBlock toBlock -> do
-      runBackfill fromBlock toBlock
-  where
+
+    runEvidenceLoop = forever $ do
+      runEvidenceBatch
+      threadDelay (max 1_000_000 $ picPollIntervalMicros cfg)
+
+    runEvidenceBatch = do
+      reqIdRef <- newIORef 1
+      result <-
+        try @SomeException $
+          enrichPendingExecutionEvidence manager pool cfg reqIdRef
+      case result of
+        Left err ->
+          logErrorEvery
+            60
+            "perps_indexer_execution_evidence_iteration_failed"
+            "Optional execution-evidence enrichment failed"
+            [field "error" $ show err]
+        Right () -> pure ()
+
     runBackfill fromBlock toBlock
       | fromBlock > toBlock = pure ()
       | otherwise = do
@@ -211,19 +274,63 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
     else do
       logs <- requireRpc "eth_getLogs" $
         getLogs manager (picRpcUrls cfg) reqIdRef (perpsAddresses cfg) startBlock endBlock
-      let orderedLogs = sortOn (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry)) logs
-      forM_ orderedLogs $ \logEntry -> do
+      let orderedLogs =
+            sortOn
+              (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry))
+              logs
+          logBlockNumbers =
+            Map.keys $
+              Map.fromList
+                [ (rlBlockNumber logEntry, ())
+                | logEntry <- orderedLogs
+                ]
+      -- Resolve and validate the complete range before the first database
+      -- write. Reading the end block on both sides of the per-block lookups
+      -- detects a provider/fork switch during this snapshot.
+      endInfoBefore <- requireRpc "eth_getBlockByNumber" $
+        getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+      blockInfos <- forM logBlockNumbers $ \blockNumber -> do
         blockInfo <- requireRpc "eth_getBlockByNumber" $
-          getBlockByNumber manager (picRpcUrls cfg) reqIdRef (rlBlockNumber logEntry)
-        mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
-        tradeCosts <- case parsePerpsLog logEntry of
-          Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
-            | kind == "Open" || kind == "Close" ->
-            Just <$> requireRpc "eth_call trade-cost preview" (getTradeCosts manager cfg reqIdRef logEntry parsed)
-          _ -> pure Nothing
-        processLog pool cfg blockInfo mTxFrom tradeCosts logEntry
+          getBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+        pure (blockNumber, blockInfo)
+      let blockInfoByNumber = Map.fromList blockInfos
+      validatedLogs <- forM orderedLogs $ \logEntry ->
+        case Map.lookup (rlBlockNumber logEntry) blockInfoByNumber of
+          Nothing ->
+            fail $
+              "Missing canonical block metadata for log block "
+                <> show (rlBlockNumber logEntry)
+          Just blockInfo ->
+            case validateRpcLogBlockHash logEntry blockInfo of
+              Left err -> fail $ T.unpack err
+              Right () -> pure (logEntry, blockInfo)
       endInfo <- requireRpc "eth_getBlockByNumber" $
         getBlockByNumber manager (picRpcUrls cfg) reqIdRef endBlock
+      unless
+        (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
+        (fail "Canonical end block changed while validating the fetched log range")
+
+      forM_ validatedLogs $ \(logEntry, blockInfo) -> do
+        mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+        let parsedLog = parsePerpsLog logEntry
+        tradeCosts <- case parsedLog of
+          Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
+            | kind == "Open" || kind == "Close" -> do
+            result <- getTradeCosts manager cfg reqIdRef logEntry parsed
+            case result of
+              Right costs -> pure $ Just costs
+              Left err -> do
+                logWarnEvery
+                  60
+                  "perps_indexer_trade_cost_preview_failed"
+                  "Perps history indexer could not reconstruct optional activity cost metadata"
+                  [ field "tx_hash" $ rlTxHash logEntry
+                  , field "log_index" $ rlLogIndex logEntry
+                  , field "error" err
+                  ]
+                pure Nothing
+          _ -> pure Nothing
+        processLog pool cfg blockInfo mTxFrom tradeCosts logEntry
       withDb pool $ \conn -> do
         (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
         when (endBlock >= currentCursor) $
@@ -238,6 +345,15 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         , field "event_count" $ length orderedLogs
         ]
       pure True
+
+validateRpcLogBlockHash :: RpcLog -> BlockInfo -> Either Text ()
+validateRpcLogBlockHash logEntry blockInfo = do
+  unless
+    (rlBlockNumber logEntry == biNumber blockInfo)
+    (Left "RPC log block number does not match canonical block metadata")
+  unless
+    (normalizeHex (rlBlockHash logEntry) == normalizeHex (biHash blockInfo))
+    (Left "RPC log block hash does not match canonical block metadata")
 
 verifyCursor :: Manager -> DbPool -> PerpsIndexerConfig -> IORef Integer -> Integer -> Maybe Text -> IO ()
 verifyCursor _ _ _ _ 0 _ = pure ()
@@ -257,11 +373,14 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
         ]
   where
     rewind = do
-      let rewindBlock = max (picStartBlock cfg) lastBlock
+      -- A mismatch at the cursor proves that some ancestor may also have been
+      -- replaced. We only persist the cursor hash, so the sole correctness-safe
+      -- recovery is to rebuild this release from its configured start block.
+      let rewindBlock = picStartBlock cfg
           newCursor = max 0 (rewindBlock - 1)
       logWarn
         "perps_indexer_reorg_detected"
-        "Perps indexer detected a block hash mismatch and rewound its cursor"
+        "Perps indexer detected a block hash mismatch and is rebuilding the release history"
         [ field "mismatch_block" lastBlock
         , field "rewind_to_block" newCursor
         ]
@@ -269,7 +388,294 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
 
-processLog :: DbPool -> PerpsIndexerConfig -> BlockInfo -> Maybe Text -> Maybe TradeCosts -> RpcLog -> IO ()
+enrichPendingExecutionEvidence
+  :: Manager
+  -> DbPool
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> IO ()
+enrichPendingExecutionEvidence manager pool cfg reqIdRef = do
+  let releaseRouter = paOrderRouter $ picAddresses cfg
+  candidates <- withDb pool $ \conn ->
+    getPendingPerpsExecutionEvidence
+      conn
+      (picChainId cfg)
+      releaseRouter
+      executionOracleDerivationVersion
+      executionEconomicsDerivationVersion
+      executionEvidenceBatchSize
+  transactionCacheRef <- newIORef Map.empty
+  traceCacheRef <- newIORef Map.empty
+  oracleCacheRef <- newIORef Map.empty
+  forM_ candidates $ \candidate -> do
+    withDb pool $ \conn ->
+      markPerpsExecutionEvidenceAttempt
+        conn
+        (picChainId cfg)
+        releaseRouter
+        (peerOrderId candidate)
+        (peerTerminalTxHash candidate)
+        (peerTerminalBlockNumber candidate)
+        (peerTerminalBlockHash candidate)
+    txResult <-
+      cachedBy
+        transactionCacheRef
+        (normalizeHex $ peerTerminalTxHash candidate)
+        (getTransactionInfo manager (picRpcUrls cfg) reqIdRef $ peerTerminalTxHash candidate)
+    case txResult >>= validateExecutionTransaction candidate of
+      Left err ->
+        logExecutionEvidenceFailure candidate "transaction" err
+      Right txInfo -> do
+        let needsOracle =
+              peerOracleDerivationVersion candidate
+                /= Just executionOracleDerivationVersion
+            needsEconomics =
+              peerExecutionEconomicsVersion candidate
+                /= Just executionEconomicsDerivationVersion
+        traceResult <-
+          cachedBy
+            traceCacheRef
+            (normalizeHex $ peerTerminalTxHash candidate)
+            (deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo)
+        case traceResult >>= evidenceForOrder (peerOrderId candidate) of
+          Right TradeExecutionEvidence {..} -> do
+            when needsEconomics $
+              withDb pool $ \conn ->
+                updatePerpsOrderEconomicsEvidence
+                  conn
+                  (picChainId cfg)
+                  releaseRouter
+                  (peerOrderId candidate)
+                  (peerTerminalTxHash candidate)
+                  (peerTerminalBlockNumber candidate)
+                  (peerTerminalBlockHash candidate)
+                  teeVpiUsdc
+                  teeFrozenCloseSpreadUsdc
+                  executionEconomicsDerivationVersion
+            when needsOracle $
+              withDb pool $ \conn ->
+                updatePerpsOrderOracleEvidence
+                  conn
+                  (picChainId cfg)
+                  releaseRouter
+                  (peerOrderId candidate)
+                  (peerTerminalTxHash candidate)
+                  (peerTerminalBlockNumber candidate)
+                  (peerTerminalBlockHash candidate)
+                  (Just teeExecutionOraclePrice)
+                  (Just teeOracleFrozen)
+                  (Just teeOraclePublishTime)
+                  (Just teeOraclePublishTime)
+                  executionOracleDerivationVersion
+          Left traceErr -> do
+            when needsEconomics $
+              logExecutionEvidenceFailure candidate "economics" traceErr
+            when needsOracle $ do
+              oracleResult <-
+                case peerCommitTimestamp candidate of
+                  Nothing -> pure $ Left "Executed order is missing its commit timestamp"
+                  Just commitTimestamp ->
+                    cachedBy
+                      oracleCacheRef
+                      (normalizeHex $ peerTerminalTxHash candidate, commitTimestamp)
+                      (deriveOrderExecutionOracle manager cfg reqIdRef candidate txInfo commitTimestamp)
+              case oracleResult of
+                Left err ->
+                  logExecutionEvidenceFailure candidate "oracle" err
+                Right snapshot ->
+                  withDb pool $ \conn ->
+                    updatePerpsOrderOracleEvidence
+                      conn
+                      (picChainId cfg)
+                      releaseRouter
+                      (peerOrderId candidate)
+                      (peerTerminalTxHash candidate)
+                      (peerTerminalBlockNumber candidate)
+                      (peerTerminalBlockHash candidate)
+                      (eosMidpointPrice <$> snapshot)
+                      Nothing
+                      (eosMinPublishTime <$> snapshot)
+                      (eosMaxPublishTime <$> snapshot)
+                      executionOraclePayloadDerivationVersion
+
+cachedBy :: Ord key => IORef (Map.Map key value) -> key -> IO value -> IO value
+cachedBy cacheRef key action = do
+  cache <- readIORef cacheRef
+  case Map.lookup key cache of
+    Just cached -> pure cached
+    Nothing -> do
+      value <- action
+      writeIORef cacheRef $ Map.insert key value cache
+      pure value
+
+validateExecutionTransaction
+  :: PerpsExecutionEvidenceRow
+  -> TransactionInfo
+  -> Either Text TransactionInfo
+validateExecutionTransaction candidate txInfo = do
+  unless
+    (normalizeHex (tiHash txInfo) == normalizeHex (peerTerminalTxHash candidate))
+    (Left "Transaction hash does not match the indexed terminal event")
+  unless
+    (normalizeHex (tiBlockHash txInfo) == normalizeHex (peerTerminalBlockHash candidate))
+    (Left "Transaction block hash does not match the indexed terminal event")
+  pure txInfo
+
+deriveOrderExecutionOracle
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> PerpsExecutionEvidenceRow
+  -> TransactionInfo
+  -> Integer
+  -> IO (Either Text (Maybe ExecutionOracleSnapshot))
+deriveOrderExecutionOracle manager cfg reqIdRef candidate txInfo commitTimestamp =
+  case executionUpdateData
+    cfg
+    (peerTerminalTxHash candidate)
+    (peerTerminalBlockHash candidate)
+    txInfo
+    (peerOrderId candidate) of
+      Left err -> pure $ Left err
+      Right [] -> pure $ Right Nothing
+      Right updateData -> do
+        case executionOraclePublishTimeBounds commitTimestamp of
+          Left err -> pure $ Left err
+          Right publishTimeBounds ->
+            fmap Just
+              <$> deriveExecutionOracleMidpoint
+                manager
+                cfg
+                reqIdRef
+                updateData
+                publishTimeBounds
+
+deriveTransactionExecutionEconomics
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> TransactionInfo
+  -> IO (Either Text (Map.Map Integer TradeExecutionEvidence))
+deriveTransactionExecutionEconomics manager cfg reqIdRef txInfo = do
+  rpcTrace <-
+    rpcCallAny
+      manager
+      (picRpcUrls cfg)
+      reqIdRef
+      "debug_traceTransaction"
+      [ String $ tiHash txInfo
+      , object
+          [ "tracer" .= ("callTracer" :: Text)
+          , "timeout" .= ("20s" :: Text)
+          ]
+      ]
+  case rpcTrace >>= decodeTrace of
+    Right evidence -> pure $ Right evidence
+    Left rpcErr ->
+      case picTraceApiUrl cfg of
+        Nothing -> pure $ Left rpcErr
+        Just traceApiUrl -> do
+          explorerTrace <- fetchBlockscoutTrace manager traceApiUrl (tiHash txInfo)
+          pure $
+            case explorerTrace >>= decodeTrace of
+              Right evidence -> Right evidence
+              Left explorerErr ->
+                Left $
+                  "RPC call trace failed ("
+                    <> rpcErr
+                    <> "); trace API fallback failed ("
+                    <> explorerErr
+                    <> ")"
+  where
+    decodeTrace trace = do
+      validateCanonicalTraceRoot txInfo trace
+      decodeTradeExecutionEvidence
+        (paOrderRouter $ picAddresses cfg)
+        (paCfdEngine $ picAddresses cfg)
+        (paCfdEngineSettlementSidecar $ picAddresses cfg)
+        (paPletherOracle $ picAddresses cfg)
+        trace
+
+validateCanonicalTraceRoot :: TransactionInfo -> Value -> Either Text ()
+validateCanonicalTraceRoot txInfo = \case
+  Object trace -> do
+    traceFrom <- requiredString "from" trace
+    traceTo <- requiredString "to" trace
+    traceInput <- requiredString "input" trace
+    unless (normalizeHex traceFrom == normalizeHex (tiFrom txInfo)) $
+      Left "Trace root sender does not match the canonical transaction"
+    unless (normalizeHex traceTo == normalizeHex (tiTo txInfo)) $
+      Left "Trace root target does not match the canonical transaction"
+    unless (decodeHex traceInput == tiInput txInfo) $
+      Left "Trace root calldata does not match the canonical transaction"
+  _ -> Left "Trace root must be an object"
+
+fetchBlockscoutTrace :: Manager -> Text -> Text -> IO (Either Text Value)
+fetchBlockscoutTrace manager traceApiUrl txHash = do
+  let url =
+        T.dropWhileEnd (== '/') traceApiUrl
+          <> "/transactions/"
+          <> normalizeHex txHash
+          <> "/raw-trace"
+  eResult <- try @SomeException $ do
+    baseRequest <- parseRequest $ T.unpack url
+    let request =
+          baseRequest
+            { responseTimeout = responseTimeoutMicro traceRequestTimeoutMicros
+            }
+    responseBody <$> httpLbs request manager
+  pure $ case eResult of
+    Left err -> Left $ T.pack $ show err
+    Right body ->
+      case Aeson.eitherDecode body of
+        Left err -> Left $ "Invalid trace API JSON response: " <> T.pack err
+        Right value -> Right value
+
+evidenceForOrder
+  :: Integer
+  -> Map.Map Integer TradeExecutionEvidence
+  -> Either Text TradeExecutionEvidence
+evidenceForOrder orderId evidence =
+  maybe
+    (Left $ "Transaction trace contains no exact execution economics for order " <> T.pack (show orderId))
+    Right
+    (Map.lookup orderId evidence)
+
+logExecutionEvidenceFailure
+  :: PerpsExecutionEvidenceRow
+  -> Text
+  -> Text
+  -> IO ()
+logExecutionEvidenceFailure candidate component err =
+  logWarnEvery
+    60
+    ("perps_indexer_execution_evidence_" <> component <> "_failed")
+    "Perps history indexer could not derive optional exact execution evidence"
+    [ field "component" component
+    , field "order_id" $ peerOrderId candidate
+    , field "tx_hash" $ peerTerminalTxHash candidate
+    , field "error" err
+    ]
+
+executionEvidenceBatchSize :: Int
+executionEvidenceBatchSize = 5
+
+traceRequestTimeoutMicros :: Int
+traceRequestTimeoutMicros = 20_000_000
+
+executionOracleDerivationVersion, executionOraclePayloadDerivationVersion, executionEconomicsDerivationVersion :: Int
+executionOracleDerivationVersion = 2
+executionOraclePayloadDerivationVersion = 1
+executionEconomicsDerivationVersion = 1
+
+processLog
+  :: DbPool
+  -> PerpsIndexerConfig
+  -> BlockInfo
+  -> Maybe Text
+  -> Maybe TradeCosts
+  -> RpcLog
+  -> IO ()
 processLog pool cfg blockInfo txFrom tradeCosts logEntry =
   case parsePerpsLog logEntry of
     Nothing -> pure ()
@@ -290,11 +696,31 @@ processLog pool cfg blockInfo txFrom tradeCosts logEntry =
               (rlBlockNumber logEntry) (biTimestamp blockInfo)
             insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
         ParsedOrderExecuted oid executionPrice _ ->
-          upsertPerpsOrderTerminal conn (picChainId cfg) releaseRouter oid "Executed" Nothing (Just executionPrice) Nothing
-            (rlTxHash logEntry) (rlBlockNumber logEntry) (biTimestamp blockInfo)
+          upsertPerpsOrderTerminal
+            conn
+            (picChainId cfg)
+            releaseRouter
+            oid
+            "Executed"
+            Nothing
+            (Just executionPrice)
+            Nothing
+            (rlTxHash logEntry)
+            (rlBlockNumber logEntry)
+            (biTimestamp blockInfo)
         ParsedOrderFailed oid reason reasonName _ -> do
-          upsertPerpsOrderTerminal conn (picChainId cfg) releaseRouter oid (terminalStatus reasonName) (Just reasonName) Nothing txFrom
-            (rlTxHash logEntry) (rlBlockNumber logEntry) (biTimestamp blockInfo)
+          upsertPerpsOrderTerminal
+            conn
+            (picChainId cfg)
+            releaseRouter
+            oid
+            (terminalStatus reasonName)
+            (Just reasonName)
+            Nothing
+            txFrom
+            (rlTxHash logEntry)
+            (rlBlockNumber logEntry)
+            (biTimestamp blockInfo)
           when (reason == 0) $
             insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
         ParsedPositionActivity kind account' side' price sizeDelta amountUsdc pnl payload ->
@@ -597,15 +1023,111 @@ getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
         }
     Right _ -> Left "Expected block object"
 
-getTransactionFrom :: Manager -> [Text] -> IORef Integer -> Text -> IO (Maybe Text)
-getTransactionFrom manager rpcUrls reqIdRef txHash = do
+getTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
+getTransactionInfo manager rpcUrls reqIdRef txHash = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
   pure $ case result of
-    Right (Object obj) ->
-      case KM.lookup (Key.fromText "from") obj of
-        Just (String fromAddr) -> Just fromAddr
-        _ -> Nothing
-    _ -> Nothing
+    Left err -> Left err
+    Right (Object obj) -> do
+      transactionHash <- requiredString "hash" obj
+      fromAddress <- requiredString "from" obj
+      toAddress <- requiredString "to" obj
+      blockHash <- requiredString "blockHash" obj
+      input <- requiredString "input" obj
+      Right
+        TransactionInfo
+          { tiHash = transactionHash
+          , tiFrom = fromAddress
+          , tiTo = toAddress
+          , tiBlockHash = blockHash
+          , tiInput = decodeHex input
+          }
+    Right Null -> Left $ "Transaction not found: " <> txHash
+    Right _ -> Left "Expected transaction object"
+
+getTransactionFrom :: Manager -> [Text] -> IORef Integer -> Text -> IO (Maybe Text)
+getTransactionFrom manager rpcUrls reqIdRef txHash = do
+  result <- getTransactionInfo manager rpcUrls reqIdRef txHash
+  case result of
+    Right txInfo -> pure $ Just $ tiFrom txInfo
+    Left err -> do
+      logWarnEvery
+        60
+        "perps_indexer_transaction_sender_unavailable"
+        "Perps history indexer could not read optional transaction sender metadata"
+        [ field "tx_hash" txHash
+        , field "error" err
+        ]
+      pure Nothing
+
+executionUpdateData
+  :: PerpsIndexerConfig
+  -> Text
+  -> Text
+  -> TransactionInfo
+  -> Integer
+  -> Either Text [ByteString]
+executionUpdateData cfg expectedTxHash expectedBlockHash txInfo orderId = do
+  if normalizeHex (tiHash txInfo) == normalizeHex expectedTxHash
+    then Right ()
+    else Left "Execution transaction hash does not match the indexed terminal event"
+  if normalizeHex (tiBlockHash txInfo) == normalizeHex expectedBlockHash
+    then Right ()
+    else Left "Execution transaction block hash does not match the indexed terminal event"
+  if normalizeHex (tiTo txInfo) == normalizeHex (paOrderRouter $ picAddresses cfg)
+    then Right ()
+    else Left "Execution transaction target does not match the configured order router"
+  decodeExecutionUpdateData orderId (tiInput txInfo)
+
+deriveExecutionOracleMidpoint
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> [ByteString]
+  -> (Integer, Integer)
+  -> IO (Either Text ExecutionOracleSnapshot)
+deriveExecutionOracleMidpoint manager cfg reqIdRef updateData (minPublishTime, maxPublishTime) =
+  case executionFeedIds of
+    Left err -> pure $ Left err
+    Right feedIds -> tryRpcUrls (picRpcUrls cfg) feedIds []
+  where
+    tryRpcUrls [] _ errors =
+      pure $
+        Left $
+          "All RPC providers failed to parse the signed execution oracle payload"
+            <> if null errors then "" else ": " <> T.intercalate "; " (reverse errors)
+    tryRpcUrls (rpcUrl : remaining) feedIds errors = do
+      let client =
+            EthClient
+              { clientManager = manager
+              , clientRpcUrl = rpcUrl
+              , clientRequestId = reqIdRef
+              }
+      parsed <-
+        parseUniquePythUpdateData
+          client
+          (paPletherOracle $ picAddresses cfg)
+          updateData
+          feedIds
+          minPublishTime
+          maxPublishTime
+      case parsed of
+        Right pricePoints ->
+          pure $ deriveExecutionOracleSnapshot pricePoints
+        Left err ->
+          tryRpcUrls remaining feedIds (renderRpcError err : errors)
+
+executionFeedIds :: Either Text [ByteString]
+executionFeedIds = traverse decodeFeedId basketComponents
+  where
+    decodeFeedId component =
+      let decoded = decodeHex $ bcFeedId component
+       in if BS.length decoded == 32
+            then Right decoded
+            else Left $ "Configured Pyth feed ID is not 32 bytes: " <> bcFeedId component
+
+renderRpcError :: RpcError -> Text
+renderRpcError = T.pack . show
 
 getLogs :: Manager -> [Text] -> IORef Integer -> [Text] -> Integer -> Integer -> IO (Either Text [RpcLog])
 getLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
@@ -672,6 +1194,7 @@ rpcCall manager rpcUrl reqIdRef methodName params = do
           { method = "POST"
           , requestHeaders = [("Content-Type", "application/json")]
           , requestBody = RequestBodyLBS $ Aeson.encode payload
+          , responseTimeout = responseTimeoutMicro rpcRequestTimeoutMicros
           }
     responseBody <$> httpLbs req' manager
   case eResult of
@@ -686,6 +1209,9 @@ rpcCall manager rpcUrl reqIdRef methodName params = do
 
 nextId :: IORef Integer -> IO Integer
 nextId ref = atomicModifyIORef' ref $ \n -> (n + 1, n)
+
+rpcRequestTimeoutMicros :: Int
+rpcRequestTimeoutMicros = 25_000_000
 
 indexedUint :: [ByteString] -> Int -> Maybe Integer
 indexedUint topics idx
@@ -732,6 +1258,12 @@ getString :: Text -> Aeson.Object -> Text
 getString key obj = case KM.lookup (Key.fromText key) obj of
   Just (String s) -> s
   _ -> ""
+
+requiredString :: Text -> Aeson.Object -> Either Text Text
+requiredString key obj =
+  case KM.lookup (Key.fromText key) obj of
+    Just (String value) | not (T.null value) -> Right value
+    _ -> Left $ "Transaction response is missing string field " <> key
 
 getStringArray :: Text -> Aeson.Object -> [Text]
 getStringArray key obj = case KM.lookup (Key.fromText key) obj of

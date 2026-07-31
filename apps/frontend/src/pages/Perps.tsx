@@ -267,6 +267,7 @@ export function Perps() {
             closePositionRequestId={closePositionRequestId}
             pendingOrders={perpsAccount.pendingOrders}
             orderHistory={perpsHistory.orderHistory}
+            ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}

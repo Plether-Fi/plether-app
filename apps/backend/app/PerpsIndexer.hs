@@ -14,6 +14,7 @@ import Plether.Perps.HistoryIndexer
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
   , defaultPerpsAddresses
+  , perpsIndexerName
   , runPerpsIndexer
   )
 import System.Environment (getArgs, lookupEnv)
@@ -26,6 +27,7 @@ data WorkerArgs = WorkerArgs
   , waPollSeconds :: Int
   , waStartBlock :: Maybe Integer
   , waRpcUrls :: Maybe [Text]
+  , waTraceApiUrl :: Maybe Text
   , waAddresses :: PerpsAddresses
   }
   deriving (Show)
@@ -56,6 +58,7 @@ main = do
               { paOrderRouter = cfgPerpsOrderRouter cfg
               , paCfdEngine = cfgPerpsCfdEngine cfg
               , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
+              , paPletherOracle = cfgPerpsPletherOracle cfg
               }
           args = parseWorkerArgs configuredAddresses envArgs cliArgs
        in case cfgDatabaseUrl cfg of
@@ -70,16 +73,25 @@ main = do
           withDb pool ensurePerpsHistorySchema
           let rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
               startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
+              traceApiUrl = case waTraceApiUrl args of
+                Just value
+                  | T.null (T.strip value) -> Nothing
+                  | otherwise -> Just $ T.strip value
+                Nothing
+                  | cfgPerpsChainId cfg == 421614 ->
+                      Just "https://arbitrum-sepolia.blockscout.com/api/v2"
+                  | otherwise -> Nothing
               indexerCfg =
                 PerpsIndexerConfig
                   { picRpcUrls = rpcUrls
+                  , picTraceApiUrl = traceApiUrl
                   , picChainId = cfgPerpsChainId cfg
                   , picAddresses = waAddresses args
                   , picStartBlock = startBlock
                   , picConfirmations = waConfirmations args
                   , picBatchSize = waBatchSize args
                   , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
-                  , picIndexerName = "perps-history-costs-v1"
+                  , picIndexerName = perpsIndexerName
                   , picMode = waMode args
                   }
           logInfo
@@ -91,6 +103,7 @@ main = do
             , field "batch_size" $ waBatchSize args
             , field "poll_seconds" $ waPollSeconds args
             , field "rpc_provider_count" $ maybe 1 length $ waRpcUrls args
+            , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
             ]
           runPerpsIndexer manager pool indexerCfg
 
@@ -98,6 +111,7 @@ loadEnvArgs :: IO [(String, String)]
 loadEnvArgs = do
   pairs <- traverse readEnv
     [ "PERPS_INDEXER_RPC_URLS"
+    , "PERPS_INDEXER_TRACE_API_URL"
     , "PERPS_INDEXER_START_BLOCK"
     , "PERPS_INDEXER_CONFIRMATIONS"
     , "PERPS_INDEXER_BATCH_SIZE"
@@ -105,7 +119,9 @@ loadEnvArgs = do
     , "PERPS_ORDER_ROUTER"
     , "PERPS_CFD_ENGINE"
     , "PERPS_CFD_ENGINE_LENS"
+    , "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
     , "PERPS_MARGIN_CLEARINGHOUSE"
+    , "PERPS_PLETHER_ORACLE"
     ]
   pure $ catMaybes pairs
   where
@@ -126,12 +142,23 @@ parseWorkerArgs addressDefaults env args =
         case firstJust (lookupFlag "--rpc-urls" args) (lookup "PERPS_INDEXER_RPC_URLS" env) of
           Just value -> Just $ splitRpcUrls $ T.pack value
           Nothing -> Nothing
+    , waTraceApiUrl =
+        T.pack
+          <$> firstJust
+            (lookupFlag "--trace-api-url" args)
+            (lookup "PERPS_INDEXER_TRACE_API_URL" env)
     , waAddresses =
         addressDefaults
           { paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
           , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
           , paCfdEngineLens = T.pack $ fromMaybe (T.unpack $ paCfdEngineLens addressDefaults) (lookup "PERPS_CFD_ENGINE_LENS" env)
+          , paCfdEngineSettlementSidecar =
+              T.pack $
+                fromMaybe
+                  (T.unpack $ paCfdEngineSettlementSidecar addressDefaults)
+                  (lookup "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR" env)
           , paMarginClearinghouse = T.pack $ fromMaybe (T.unpack $ paMarginClearinghouse addressDefaults) (lookup "PERPS_MARGIN_CLEARINGHOUSE" env)
+          , paPletherOracle = T.pack $ fromMaybe (T.unpack $ paPletherOracle addressDefaults) (lookup "PERPS_PLETHER_ORACLE" env)
           }
     }
   where

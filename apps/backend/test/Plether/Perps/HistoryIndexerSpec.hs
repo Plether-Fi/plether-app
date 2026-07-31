@@ -9,7 +9,8 @@ import Data.Text (Text)
 import Data.Word (Word8)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
-  ( ParsedPerpsLog (..)
+  ( BlockInfo (..)
+  , ParsedPerpsLog (..)
   , RpcLog (..)
   , TradeCosts (..)
   , decodeCloseTradeCosts
@@ -17,11 +18,31 @@ import Plether.Perps.HistoryIndexer
   , orderFailReasonName
   , parsePerpsLog
   , terminalStatus
+  , validateRpcLogBlockHash
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "validateRpcLogBlockHash" $ do
+    let logEntry = mkLog orderExecutedTopic [word 42] (word 101250000)
+        canonicalBlock =
+          BlockInfo
+            { biNumber = rlBlockNumber logEntry
+            , biHash = "0xBLOCK"
+            , biTimestamp = 1_785_437_841
+            }
+
+    it "accepts a log from the fetched canonical block" $
+      validateRpcLogBlockHash logEntry canonicalBlock
+        `shouldBe` Right ()
+
+    it "rejects a provider-fork log before it can be persisted" $
+      validateRpcLogBlockHash
+        logEntry
+        canonicalBlock {biHash = "0xdifferent"}
+        `shouldBe` Left "RPC log block hash does not match canonical block metadata"
+
   describe "parsePerpsLog" $ do
     it "parses OrderCommitted" $ do
       parsePerpsLog (mkLog orderCommittedTopic [word 42, addressTopic] (word 1))

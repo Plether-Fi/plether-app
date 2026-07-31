@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
 import { usePerpsIdentity } from '../perps-aa'
@@ -15,9 +15,18 @@ export interface PerpsOrderHistoryRow {
   status: string
   commitTxHash: Hex
   revealTxHash?: Hex
+  terminalBlockNumberRaw?: bigint
+  terminalBlockHash?: Hex
   failureReason?: string
   executionPriceRaw?: bigint
+  executionOraclePriceRaw?: bigint
+  executionOracleFrozen?: boolean
+  oracleMinPublishTimeRaw?: bigint
+  oracleMaxPublishTimeRaw?: bigint
+  oracleDerivationVersion?: number
   vpiUsdcRaw?: bigint
+  frozenCloseSpreadUsdcRaw?: bigint
+  executionEconomicsVersion?: number
   activitySizeDeltaRaw?: bigint
   activityPriceRaw?: bigint
   activityVpiUsdcRaw?: bigint
@@ -36,11 +45,22 @@ export interface PerpsTradeHistoryRow {
 interface PerpsHistoryData {
   orderHistory: PerpsOrderHistoryRow[]
   tradeHistory: PerpsTradeHistoryRow[]
+  ordersIndexedThroughBlockRaw?: bigint
+}
+
+interface PerpsHistorySnapshot extends PerpsHistoryData {
+  accountAddress?: string
+}
+
+const EMPTY_PERPS_HISTORY: PerpsHistorySnapshot = {
+  orderHistory: [],
+  tradeHistory: [],
 }
 
 interface BackendOrdersResponse {
   data?: {
     orders?: BackendOrderRow[]
+    indexedThroughBlock?: string
   }
 }
 
@@ -72,11 +92,19 @@ interface BackendOrderRow {
   commitTimestamp?: number
   terminalTxHash?: string
   terminalBlockNumber?: string
+  terminalBlockHash?: string
   terminalTimestamp?: number
   terminalStatus?: string
   failureReason?: string
   executionPrice?: string
+  executionOraclePrice?: string
+  executionOracleFrozen?: boolean
+  oracleMinPublishTime?: string
+  oracleMaxPublishTime?: string
+  oracleDerivationVersion?: number
   vpiUsdc?: string
+  frozenCloseSpreadUsdc?: string
+  executionEconomicsVersion?: number
   cleanupActor?: string
   activityType?: string
   activitySizeDelta?: string
@@ -117,8 +145,8 @@ function perpsApiUrl(path: string): URL {
   return new URL(`${normalizedBase}${path}`, window.location.origin)
 }
 
-function parseBigInt(value: string | undefined): bigint | undefined {
-  if (!value) return undefined
+function parseBigInt(value: string | number | undefined): bigint | undefined {
+  if (value === undefined || value === '') return undefined
   try {
     return BigInt(value)
   } catch {
@@ -182,7 +210,11 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
+  const executionOraclePriceRaw = parseBigInt(row.executionOraclePrice)
+  const oracleMinPublishTimeRaw = parseBigInt(row.oracleMinPublishTime)
+  const oracleMaxPublishTimeRaw = parseBigInt(row.oracleMaxPublishTime)
   const vpiUsdcRaw = parseBigInt(row.vpiUsdc)
+  const frozenCloseSpreadUsdcRaw = parseBigInt(row.frozenCloseSpreadUsdc)
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
   const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
@@ -198,9 +230,20 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     status: orderStatus(row),
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
+    terminalBlockNumberRaw: parseBigInt(row.terminalBlockNumber),
+    terminalBlockHash: asHex(row.terminalBlockHash),
     failureReason: row.failureReason,
     executionPriceRaw,
+    executionOraclePriceRaw,
+    executionOracleFrozen: typeof row.executionOracleFrozen === 'boolean'
+      ? row.executionOracleFrozen
+      : undefined,
+    oracleMinPublishTimeRaw,
+    oracleMaxPublishTimeRaw,
+    oracleDerivationVersion: row.oracleDerivationVersion,
     vpiUsdcRaw,
+    frozenCloseSpreadUsdcRaw,
+    executionEconomicsVersion: row.executionEconomicsVersion,
     activitySizeDeltaRaw,
     activityPriceRaw,
     activityVpiUsdcRaw,
@@ -345,73 +388,95 @@ async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryDa
       const mapped = mapActivityRow(row)
       return mapped ? [mapped] : []
     }),
+    ordersIndexedThroughBlockRaw: parseBigInt(
+      ordersResponse.data?.indexedThroughBlock
+    ),
   }
 }
 
 export function usePerpsHistory() {
   const { ownerAddress, accountAddress } = usePerpsIdentity()
   const isConnected = ownerAddress !== undefined
-  const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
-  const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
+  const [historySnapshot, setHistorySnapshot] =
+    useState<PerpsHistorySnapshot>(EMPTY_PERPS_HISTORY)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | undefined>()
+  const requestGenerationRef = useRef(0)
 
   const refetch = useCallback(async () => {
     if (!isConnected || !accountAddress) {
-      setOrderHistory([])
-      setTradeHistory([])
+      requestGenerationRef.current += 1
+      setHistorySnapshot(EMPTY_PERPS_HISTORY)
       setError(undefined)
       setIsLoading(false)
       return
     }
 
+    const requestGeneration = requestGenerationRef.current + 1
+    requestGenerationRef.current = requestGeneration
     setIsLoading(true)
     setError(undefined)
 
     try {
       const nextHistory = await fetchPerpsHistory(accountAddress)
-      setOrderHistory(nextHistory.orderHistory)
-      setTradeHistory(nextHistory.tradeHistory)
+      if (requestGenerationRef.current !== requestGeneration) return
+      setHistorySnapshot({
+        ...nextHistory,
+        accountAddress,
+      })
       setIsLoading(false)
     } catch (cause) {
+      if (requestGenerationRef.current !== requestGeneration) return
       setError(cause instanceof Error ? cause : new Error(String(cause)))
-      setOrderHistory([])
-      setTradeHistory([])
+      setHistorySnapshot(EMPTY_PERPS_HISTORY)
       setIsLoading(false)
     }
   }, [accountAddress, isConnected])
 
   useEffect(() => {
     if (!isConnected || !accountAddress) {
-      window.setTimeout(() => {
-        setOrderHistory([])
-        setTradeHistory([])
+      const requestGeneration = requestGenerationRef.current + 1
+      requestGenerationRef.current = requestGeneration
+      const resetTimeout = window.setTimeout(() => {
+        if (requestGenerationRef.current !== requestGeneration) return
+        setHistorySnapshot(EMPTY_PERPS_HISTORY)
         setError(undefined)
         setIsLoading(false)
       }, 0)
-      return undefined
+      return () => {
+        window.clearTimeout(resetTimeout)
+      }
     }
 
     let cancelled = false
     const canonicalAccountAddress = accountAddress
 
     async function loadHistory() {
+      const requestGeneration = requestGenerationRef.current + 1
+      requestGenerationRef.current = requestGeneration
       setIsLoading(true)
       setError(undefined)
 
       try {
         const nextHistory = await fetchPerpsHistory(canonicalAccountAddress)
 
-        if (!cancelled) {
-          setOrderHistory(nextHistory.orderHistory)
-          setTradeHistory(nextHistory.tradeHistory)
+        if (
+          !cancelled
+          && requestGenerationRef.current === requestGeneration
+        ) {
+          setHistorySnapshot({
+            ...nextHistory,
+            accountAddress: canonicalAccountAddress,
+          })
           setIsLoading(false)
         }
       } catch (cause) {
-        if (!cancelled) {
+        if (
+          !cancelled
+          && requestGenerationRef.current === requestGeneration
+        ) {
           setError(cause instanceof Error ? cause : new Error(String(cause)))
-          setOrderHistory([])
-          setTradeHistory([])
+          setHistorySnapshot(EMPTY_PERPS_HISTORY)
           setIsLoading(false)
         }
       }
@@ -428,11 +493,32 @@ export function usePerpsHistory() {
     }
   }, [accountAddress, isConnected])
 
+  const hasCurrentAccountSnapshot =
+    accountAddress !== undefined
+    && historySnapshot.accountAddress?.toLowerCase() === accountAddress.toLowerCase()
+  const orderHistory = hasCurrentAccountSnapshot
+    ? historySnapshot.orderHistory
+    : EMPTY_PERPS_HISTORY.orderHistory
+  const tradeHistory = hasCurrentAccountSnapshot
+    ? historySnapshot.tradeHistory
+    : EMPTY_PERPS_HISTORY.tradeHistory
+  const ordersIndexedThroughBlockRaw = hasCurrentAccountSnapshot
+    ? historySnapshot.ordersIndexedThroughBlockRaw
+    : undefined
+
   return useMemo(() => ({
     orderHistory,
     tradeHistory,
+    ordersIndexedThroughBlockRaw,
     isLoading,
     error,
     refetch,
-  }), [error, isLoading, orderHistory, refetch, tradeHistory])
+  }), [
+    error,
+    isLoading,
+    orderHistory,
+    ordersIndexedThroughBlockRaw,
+    refetch,
+    tradeHistory,
+  ])
 }

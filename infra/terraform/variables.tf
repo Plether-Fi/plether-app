@@ -260,6 +260,11 @@ variable "perps_cfd_engine" {
   default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
 }
 
+variable "perps_cfd_engine_settlement_sidecar" {
+  type    = string
+  default = "0x0b652c4D4610234e221403076C116292F935b424"
+}
+
 variable "perps_cfd_engine_lens" {
   type    = string
   default = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
