@@ -34,7 +34,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     fireEvent.mouseEnter(metric!)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(details).toHaveAttribute('aria-hidden', 'false')
-    expect(screen.getByText('Pool liquidity').closest('[aria-hidden]')).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByText('Pool liquidity')).toBeVisible()
     expect(screen.getByText('13% remaining')).toBeInTheDocument()
 
     fireEvent.mouseLeave(metric!)

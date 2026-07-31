@@ -205,7 +205,7 @@ function DirectionalLimitStat({
   return (
     <>
       <div
-        className="min-w-0 sm:col-span-2"
+        className="min-w-0 sm:col-span-2 xl:col-span-1"
         onMouseEnter={() => { setIsHovered(true) }}
         onMouseLeave={() => { setIsHovered(false) }}
       >
@@ -236,61 +236,54 @@ function DirectionalLimitStat({
         </dd>
       </div>
 
-      <div className={isExpanded ? 'col-span-full grid min-w-0' : 'contents'}>
-        <div
-          className={isExpanded
-            ? 'invisible col-start-1 row-start-1 grid min-w-0 grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] gap-x-3 gap-y-4 2xl:gap-x-4'
-            : 'contents'}
-          aria-hidden={isExpanded || undefined}
+      <div className="contents">
+        {trailingStats.map((trailingStat) => (
+          <InstrumentStat key={trailingStat.label} stat={trailingStat} />
+        ))}
+      </div>
+
+      <div
+        className={isExpanded
+          ? 'pointer-events-none absolute -inset-x-px top-full z-20 min-w-0 border-x border-b border-brand-border/30 bg-surface-panel px-3 pb-3 sm:px-5 sm:pb-4'
+          : 'hidden'}
+      >
+        <dt className="sr-only">{stat.label} details</dt>
+        <dd
+          id={detailsId}
+          aria-hidden={!isExpanded}
         >
-          {trailingStats.map((trailingStat) => (
-            <InstrumentStat key={trailingStat.label} stat={trailingStat} />
-          ))}
-        </div>
-
-        <div
-          className={isExpanded
-            ? 'pointer-events-none z-10 col-start-1 row-start-1 min-w-0 bg-surface-panel'
-            : 'hidden'}
-        >
-          <dt className="sr-only">{stat.label} details</dt>
-          <dd
-            id={detailsId}
-            aria-hidden={!isExpanded}
-          >
-            <div className="border-t border-brand-border/20 pt-3">
-              <div className="relative h-1.5 overflow-hidden rounded-full bg-app-bg/70">
-                <div
-                  className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
-                  style={{ width: `${progressPercent.toString()}%` }}
-                />
-              </div>
-              <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-content-secondary">
-                <span>{valueLabel} used</span>
-                <span>
-                  {displayUsagePercent === undefined
-                    ? '--'
-                    : `${Math.max(0, 100 - displayUsagePercent).toString()}% remaining`}
-                </span>
-              </div>
-
-              <div className="mt-3 grid grid-cols-2 gap-4 text-xs">
-                <div className="min-w-0">
-                  <div className="text-content-secondary">{sideLabel}</div>
-                  <div className="mt-0.5 font-semibold text-content-primary">{details.netExposure ?? '--'}</div>
-                </div>
-                <div className="min-w-0 text-right">
-                  <div className="text-content-secondary">Directional limit</div>
-                  <div className="mt-0.5 font-semibold text-content-primary">{details.limit ?? '--'}</div>
-                </div>
-              </div>
-
-              {constraintText ? (
-                <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>
-              ) : null}
+          <div className="pt-3">
+            <div className="relative h-1.5 overflow-hidden rounded-full bg-app-bg/70">
+              <div
+                className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
+                style={{ width: `${progressPercent.toString()}%` }}
+              />
             </div>
-          </dd>
-        </div>
+            <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-content-secondary">
+              <span>{valueLabel} used</span>
+              <span>
+                {displayUsagePercent === undefined
+                  ? '--'
+                  : `${Math.max(0, 100 - displayUsagePercent).toString()}% remaining`}
+              </span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-4 text-xs">
+              <div className="min-w-0">
+                <div className="text-content-secondary">{sideLabel}</div>
+                <div className="mt-0.5 font-semibold text-content-primary">{details.netExposure ?? '--'}</div>
+              </div>
+              <div className="min-w-0 text-right">
+                <div className="text-content-secondary">Directional limit</div>
+                <div className="mt-0.5 font-semibold text-content-primary">{details.limit ?? '--'}</div>
+              </div>
+            </div>
+
+            {constraintText ? (
+              <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>
+            ) : null}
+          </div>
+        </dd>
       </div>
     </>
   )
@@ -325,7 +318,7 @@ export function PerpsInstrumentPanel({
     : stats.slice(directionalLimitIndex + 1)
 
   return (
-    <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
+    <section className="relative z-10 overflow-visible border border-brand-border/30 bg-surface-panel">
       <div className={`flex flex-col gap-4 px-3 py-3 sm:px-5 sm:py-4 lg:flex-row ${
         hasDirectionalLimit ? 'lg:items-start' : 'lg:items-center'
       }`}>
