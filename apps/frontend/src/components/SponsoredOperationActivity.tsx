@@ -98,12 +98,12 @@ function isAwaitingSafeConfirmation(
     hasObservedSponsoredOperationInclusion(operation)
 }
 
-function isInProgressOperation(operation: SponsoredOperation): boolean {
-  return isAwaitingSafeConfirmation(operation) ||
-    (
-      !isSponsoredOperationTerminal(operation.status) &&
-      operation.status !== 'receipt-timeout'
-    )
+function isForegroundInProgressOperation(
+  operation: SponsoredOperation
+): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    !isSponsoredOperationTerminal(operation.status) &&
+    operation.status !== 'receipt-timeout'
 }
 
 function isAttentionOperation(operation: SponsoredOperation): boolean {
@@ -145,7 +145,7 @@ function isSubmissionUncertain(operation: SponsoredOperation): boolean {
 
 function operationStatusLabel(operation: SponsoredOperation): string {
   if (isAwaitingSafeConfirmation(operation)) {
-    return 'Included · awaiting safe confirmation'
+    return 'Included onchain'
   }
   if (!isSubmissionUncertain(operation)) {
     return sponsoredOperationStatusLabel(operation.status)
@@ -334,11 +334,11 @@ function OperationHistoryItem({
     ? 'View transaction on Blockscout'
     : includedTransactionUrl
       ? 'View included transaction on Blockscout'
-    : replacementUserOperationUrl
-      ? 'View replacement operation'
-      : submissionUncertain
-        ? 'Check operation on Blockscout'
-        : 'Track operation on Blockscout'
+      : replacementUserOperationUrl
+        ? 'View replacement operation'
+        : submissionUncertain
+          ? 'Check operation on Blockscout'
+          : 'Track operation on Blockscout'
   const reasonMessage = operationReasonMessage(operation)
   const canCancelLocally = canCancelSponsoredOperationLocally(operation)
   const canForceUnlockLegacy =
@@ -357,33 +357,35 @@ function OperationHistoryItem({
   const sponsorshipSummary = operation.status === 'outcome-unknown'
     ? 'Past onchain outcome unverified'
     : awaitingSafeConfirmation && operation.sponsorshipAccepted
-      ? 'Sponsored by Plether · awaiting safe confirmation'
-    : submissionUncertain && operation.sponsorshipAccepted
-    ? 'Gas sponsorship approved · Submission unconfirmed'
-    : wasSafelyConfirmed && operation.sponsorshipAccepted
       ? 'Sponsored by Plether · 0 ETH network gas'
-    : isSponsoredOperationTerminal(operation.status) &&
-          !wasSafelyConfirmed &&
-          (
-            operation.userOperationHash === undefined ||
-            operation.status === 'expired'
-          )
-        ? 'Not included · No network gas used'
-        : isSponsoredOperationTerminal(operation.status) &&
-            !wasSafelyConfirmed
-          ? 'Past onchain outcome unverified'
-        : operation.sponsorshipAccepted
-          ? 'Gas sponsorship approved'
-          : undefined
+      : submissionUncertain && operation.sponsorshipAccepted
+        ? 'Gas sponsorship approved · Submission unconfirmed'
+        : wasSafelyConfirmed && operation.sponsorshipAccepted
+          ? 'Sponsored by Plether · 0 ETH network gas'
+          : isSponsoredOperationTerminal(operation.status) &&
+              !wasSafelyConfirmed &&
+              (
+                operation.userOperationHash === undefined ||
+                operation.status === 'expired'
+              )
+            ? 'Not included · No network gas used'
+            : isSponsoredOperationTerminal(operation.status) &&
+                !wasSafelyConfirmed
+              ? 'Past onchain outcome unverified'
+              : operation.sponsorshipAccepted
+                ? 'Gas sponsorship approved'
+                : undefined
   const sponsorshipSummaryTone =
-    wasSafelyConfirmed && !submissionUncertain
+    (wasSafelyConfirmed || awaitingSafeConfirmation) && !submissionUncertain
       ? 'text-positive'
       : 'text-content-secondary'
   const itemTone = isAttentionOperation(operation)
     ? 'border-brand-orange/50'
-    : isInProgressOperation(operation)
-      ? 'border-[#FFAB96]/50'
-      : 'border-brand-border/30'
+    : awaitingSafeConfirmation
+      ? 'border-positive/40'
+      : isForegroundInProgressOperation(operation)
+        ? 'border-[#FFAB96]/50'
+        : 'border-brand-border/30'
 
   return (
     <article
@@ -403,7 +405,13 @@ function OperationHistoryItem({
           </time>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Badge variant={statusBadgeVariant(operation.status)}>
+          <Badge
+            variant={
+              awaitingSafeConfirmation
+                ? 'success'
+                : statusBadgeVariant(operation.status)
+            }
+          >
             {operationStatusLabel(operation)}
           </Badge>
           {sponsorshipSummary ? (
@@ -417,6 +425,12 @@ function OperationHistoryItem({
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (
         <p className="text-xs leading-5 text-content-secondary">
           The sponsored order commit is confirmed. Keeper execution is tracked separately in order history.
+        </p>
+      ) : null}
+
+      {awaitingSafeConfirmation ? (
+        <p className="border border-positive/30 bg-positive/10 p-3 text-xs leading-5 text-content-secondary">
+          The transaction is onchain. Safety verification continues in the background; no action is required.
         </p>
       ) : null}
 
@@ -516,7 +530,7 @@ function OperationHistoryItem({
             operation.includedTransactionHash ? (
               <HashActions
                 hash={operation.includedTransactionHash}
-                label="Included transaction (awaiting safe confirmation)"
+                label="Included transaction"
                 explorerUrl={includedTransactionUrl}
               />
             ) : null}
@@ -561,11 +575,11 @@ export function SponsoredOperationHistoryButton() {
     isUnreviewedAttentionOperation
   )
   const inProgressOperations = accountOperations.filter(
-    isInProgressOperation
+    isForegroundInProgressOperation
   )
-  const awaitingSafeConfirmationCount = inProgressOperations.filter(
+  const includedOperations = accountOperations.filter(
     isAwaitingSafeConfirmation
-  ).length
+  )
   const openedAttentionOperationIds = new Set(
     openedActivity?.identityKey === identityKey
       ? openedActivity.attentionOperationIds
@@ -582,7 +596,8 @@ export function SponsoredOperationHistoryButton() {
   const recentOperations = accountOperations.filter(
     (operation) =>
       !needsAttentionOperationIds.has(operation.id) &&
-      !isInProgressOperation(operation)
+      !isForegroundInProgressOperation(operation) &&
+      !isAwaitingSafeConfirmation(operation)
   )
   const [confirmationFeedback, setConfirmationFeedback] = useState<{
     identityKey: string
@@ -703,6 +718,7 @@ export function SponsoredOperationHistoryButton() {
     activeConfirmationFeedback?.phase === 'exiting'
   const unreviewedAttentionCount = unreviewedAttentionOperations.length
   const inProgressCount = inProgressOperations.length
+  const includedCount = includedOperations.length
   const attentionSummaryCount = openedActivity?.identityKey === identityKey
     ? needsAttentionOperations.length
     : 0
@@ -712,25 +728,34 @@ export function SponsoredOperationHistoryButton() {
       ? 'border-brand-orange text-brand-orange hover:bg-brand-orange/15'
       : inProgressCount > 0
         ? 'border-[#FFAB96] text-[#FFAB96] hover:bg-[#FFAB96]/15'
-        : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
+        : includedCount > 0
+          ? 'border-positive text-positive hover:bg-positive/15'
+          : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
   const buttonIcon = unreviewedAttentionCount > 0
     ? 'warning'
     : inProgressCount > 0
       ? 'progress_activity'
-      : 'history'
+      : includedCount > 0
+        ? 'check_circle'
+        : 'history'
   const buttonTitle = showConfirmationFeedback
     ? 'Transaction confirmed'
     : unreviewedAttentionCount > 0
       ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
       : inProgressCount > 0
         ? `${actionCountLabel(inProgressCount)} in progress`
-        : 'Trading Account activity'
+        : includedCount > 0
+          ? `${actionCountLabel(includedCount)} included onchain`
+          : 'Trading Account activity'
   const buttonStatusLabel = [
     unreviewedAttentionCount > 0
       ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
       : null,
     inProgressCount > 0
       ? `${actionCountLabel(inProgressCount)} in progress`
+      : null,
+    includedCount > 0
+      ? `${actionCountLabel(includedCount)} included onchain`
       : null,
   ].filter(Boolean).join('; ')
   const openActivityLabel = buttonStatusLabel
@@ -742,20 +767,36 @@ export function SponsoredOperationHistoryButton() {
   const statusSummary = attentionSummaryCount > 0
     ? {
         title: `${actionCountLabel(attentionSummaryCount)} ${attentionSummaryCount === 1 ? 'needs' : 'need'} attention`,
-        description: `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.${inProgressCount > 0 ? ` ${actionCountLabel(inProgressCount)} still in progress.` : ''}`,
+        description: [
+          `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.`,
+          inProgressCount > 0
+            ? `${actionCountLabel(inProgressCount)} still in progress.`
+            : null,
+          includedCount > 0
+            ? `${actionCountLabel(includedCount)} included onchain; safety verification continues in the background.`
+            : null,
+        ].filter(Boolean).join(' '),
         tone: 'border-brand-orange/40 bg-brand-orange/10',
       }
     : inProgressCount > 0
       ? {
           title: `${actionCountLabel(inProgressCount)} in progress`,
-          description: awaitingSafeConfirmationCount === inProgressCount
-            ? inProgressCount === 1
-              ? 'The action is included onchain and is waiting for safe confirmation.'
-              : `All ${actionCountLabel(inProgressCount)} are included onchain and waiting for safe confirmation.`
-            : 'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+          description: [
+            'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+            includedCount > 0
+              ? `${actionCountLabel(includedCount)} already included onchain; safety verification continues in the background.`
+              : null,
+          ].filter(Boolean).join(' '),
           tone: 'border-[#FFAB96]/40 bg-[#FFAB96]/10',
         }
-      : null
+      : includedCount > 0
+        ? {
+            title: `${actionCountLabel(includedCount)} included onchain`,
+            description:
+              'Safety verification continues in the background. No action is required.',
+            tone: 'border-positive/40 bg-positive/10',
+          }
+        : null
 
   if (
     !identity.isAaManifestConfigured ||
@@ -868,6 +909,21 @@ export function SponsoredOperationHistoryButton() {
                 In progress
               </h3>
               {inProgressOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {includedOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-included">
+              <h3 id="sponsored-activity-included" className="text-sm font-semibold uppercase tracking-wide text-positive">
+                Included onchain
+              </h3>
+              {includedOperations.map((operation) => (
                 <OperationHistoryItem
                   key={operation.id}
                   operation={operation}

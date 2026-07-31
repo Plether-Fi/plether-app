@@ -1,6 +1,6 @@
 import { useLayoutEffect } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within } from 'storybook/test'
+import { expect, userEvent, waitFor, within } from 'storybook/test'
 import type { Address, Hex } from 'viem'
 import { SponsoredOperationHistoryButton } from '../components/SponsoredOperationActivity'
 import {
@@ -171,6 +171,7 @@ const failedOperations = [
 
 const mixedOperations = [
   ...confirmedOperations,
+  ...pendingOperations,
   ...includedOperations,
   ...failedOperations,
 ]
@@ -278,11 +279,13 @@ export const SuccessFeedback: Story = {
     }, { timeout: 2_500 })
 
     expect(confirmationButton).toHaveClass('rounded-full')
-    expect(
-      within(confirmationButton).getByTestId(
-        'sponsored-operation-success-icon'
-      )
-    ).toBeVisible()
+    await waitFor(() => {
+      expect(
+        within(confirmationButton).getByTestId(
+          'sponsored-operation-success-icon'
+        )
+      ).toBeVisible()
+    })
   },
 }
 
@@ -293,24 +296,65 @@ export const Pending: Story = {
 }
 
 export const IncludedAwaitingSafeConfirmation: Story = {
-  name: 'Included · awaiting safe confirmation',
+  name: 'Included onchain (background verification)',
   render: () => (
     <WalletHeaderPreview operations={includedOperations} />
   ),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await userEvent.click(
-      await canvas.findByRole('button', {
-        name: 'Open Trading Account activity. 1 action in progress.',
-      })
+    const activityButton = await canvas.findByRole('button', {
+      name: 'Open Trading Account activity. 1 action included onchain.',
+    })
+    const activityIcon = activityButton.querySelector(
+      '.sponsored-activity-base-icon'
     )
+    expect(activityIcon).toHaveTextContent('check_circle')
+    expect(activityIcon).not.toHaveClass('animate-spin')
+
+    await userEvent.click(activityButton)
+
     const dialog = await within(document.body).findByRole('dialog')
+    expect(within(dialog).getByText('1 action included onchain')).toBeVisible()
     expect(within(dialog).getByText(
-      'Included · awaiting safe confirmation'
+      'Safety verification continues in the background. No action is required.'
     )).toBeVisible()
+    expect(within(dialog).getByRole('region', {
+      name: 'Included onchain',
+    })).toBeVisible()
+    expect(within(dialog).queryByRole('region', { name: 'In progress' }))
+      .not.toBeInTheDocument()
     expect(within(dialog).getByRole('link', {
       name: 'View included transaction on Blockscout',
     })).toBeVisible()
+  },
+}
+
+export const PendingAndIncluded: Story = {
+  name: 'Pending + included onchain',
+  render: () => (
+    <WalletHeaderPreview
+      operations={[...pendingOperations, ...includedOperations]}
+    />
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const activityButton = await canvas.findByRole('button', {
+      name:
+        'Open Trading Account activity. 1 action in progress; 1 action included onchain.',
+    })
+    const activityIcon = activityButton.querySelector(
+      '.sponsored-activity-base-icon'
+    )
+    expect(activityIcon).toHaveTextContent('progress_activity')
+    expect(activityIcon).toHaveClass('animate-spin')
+
+    await userEvent.click(activityButton)
+
+    const dialog = await within(document.body).findByRole('dialog')
+    expect(within(dialog).getByRole('region', { name: 'In progress' }))
+      .toBeVisible()
+    expect(within(dialog).getByRole('region', { name: 'Included onchain' }))
+      .toBeVisible()
   },
 }
 
@@ -334,7 +378,8 @@ export const ModalOpen: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(
       await canvas.findByRole('button', {
-        name: /open trading account activity\. 1 action needs attention; 1 action in progress/i,
+        name:
+          'Open Trading Account activity. 1 action needs attention; 1 action in progress; 1 action included onchain.',
       })
     )
 
