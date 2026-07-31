@@ -153,14 +153,14 @@ export function Perps() {
           value: usdcValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
         },
         {
-          label: 'Long open interest',
-          value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
-          tone: 'positive',
-        },
-        {
-          label: 'Short open interest',
-          value: usdcValue(perpsMarket.shortOpenInterest, perpsMarket.isLoading),
-          tone: 'negative',
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: perpsMarket.directionalLimit?.usagePercent,
+            side: perpsMarket.directionalLimit?.side,
+            netExposure: usdcValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
+            limit: usdcValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
+            isLoading: perpsMarket.isLoading,
+          },
         },
         {
           label: 'Pool liquidity',
@@ -183,10 +183,10 @@ export function Perps() {
     [
       perpsMarket.availableLiquidity,
       perpsMarket.costOfCarry,
+      perpsMarket.directionalLimit,
       dxyFreshnessTooltip,
       perpsMarket.isLoading,
       perpsMarket.isStatsLoading,
-      perpsMarket.longOpenInterest,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
       perpsMarket.priceChange24h,
@@ -196,7 +196,6 @@ export function Perps() {
       perpsMarket.raw.minOpenNotionalUsdc,
       perpsMarket.raw.minNewPositionNotionalUsdc,
       perpsMarket.raw.shortOpenCapacityUsdc,
-      perpsMarket.shortOpenInterest,
       perpsMarket.volume24h,
     ]
   )

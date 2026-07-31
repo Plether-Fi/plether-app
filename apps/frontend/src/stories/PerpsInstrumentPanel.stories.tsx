@@ -1,6 +1,10 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { userEvent, within } from 'storybook/test'
-import { PerpsInstrumentPanel } from '../components/PerpsInstrumentPanel'
+import {
+  PerpsInstrumentPanel,
+  type PerpsDirectionalLimitDetails,
+  type PerpsInstrumentStat,
+} from '../components/PerpsInstrumentPanel'
 import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 
@@ -42,6 +46,65 @@ function CostOfCarryTooltip() {
   )
 }
 
+const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
+  usagePercent: 87,
+  side: 'long',
+  netExposure: <TokenAmount amount="307.2M" />,
+  limit: <TokenAmount amount="353.1M" />,
+}
+
+function directionalLimitStat(details: PerpsDirectionalLimitDetails): PerpsInstrumentStat {
+  return {
+    label: 'Directional limit used',
+    directionalLimit: details,
+  }
+}
+
+function instrumentStats({
+  directionalLimit = LONG_HEAVY_87,
+  price = '1.0091',
+  priceChange = '-0.16%',
+  priceChangeTone = 'negative',
+  freshness = 'fresh',
+  freshnessTooltip = 'updated 24s ago',
+  volume = '2.4M',
+  liquidity = '6.3M',
+  costOfCarry = '5.24%',
+}: {
+  directionalLimit?: PerpsDirectionalLimitDetails
+  price?: string
+  priceChange?: string
+  priceChangeTone?: 'default' | 'positive' | 'negative'
+  freshness?: 'fresh' | 'market-closed' | 'stale' | 'checking'
+  freshnessTooltip?: string
+  volume?: string
+  liquidity?: string
+  costOfCarry?: string
+} = {}): PerpsInstrumentStat[] {
+  return [
+    { label: 'plDXY Perp price', value: price, freshness, freshnessTooltip },
+    { label: '24h change', value: priceChange, tone: priceChangeTone },
+    { label: '24h volume', value: <TokenAmount amount={volume} /> },
+    directionalLimitStat(directionalLimit),
+    {
+      label: 'Pool liquidity',
+      value: <TokenAmount amount={liquidity} />,
+      tooltip: <PoolLiquidityTooltip />,
+      tooltipDocsLink: DOCS_LINKS.poolLiquidity,
+      tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+      tooltipPosition: 'left',
+    },
+    {
+      label: 'Cost of carry',
+      value: costOfCarry,
+      tooltip: <CostOfCarryTooltip />,
+      tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+      tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+      tooltipPosition: 'left',
+    },
+  ]
+}
+
 const meta: Meta<typeof PerpsInstrumentPanel> = {
   title: 'Perps/Instrument Panel',
   component: PerpsInstrumentPanel,
@@ -53,29 +116,7 @@ const meta: Meta<typeof PerpsInstrumentPanel> = {
     icon: 'token',
     name: 'plDXY Perp',
     description: 'plDXY Perpetual',
-    stats: [
-      { label: 'plDXY Perp price', value: '1.0091', freshness: 'fresh', freshnessTooltip: 'updated 24s ago' },
-      { label: '24h change', value: '-0.16%', tone: 'negative' },
-      { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
-      { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
-      { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
-      {
-        label: 'Pool liquidity',
-        value: <TokenAmount amount="6.3M" />,
-        tooltip: <PoolLiquidityTooltip />,
-        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
-      },
-      {
-        label: 'Cost of carry',
-        value: '5.24%',
-        tooltip: <CostOfCarryTooltip />,
-        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
-      },
-    ],
+    stats: instrumentStats(),
   },
 }
 
@@ -94,58 +135,149 @@ export const Default: Story = {
 
 export const PositiveSession: Story = {
   args: {
-    stats: [
-      { label: 'plDXY Perp price', value: '1.0066', freshness: 'fresh', freshnessTooltip: 'updated 1m 12s ago' },
-      { label: '24h change', value: '+0.21%', tone: 'positive' },
-      { label: '24h volume', value: <TokenAmount amount="3.1M" /> },
-      { label: 'Long open interest', value: <TokenAmount amount="13.2M" />, tone: 'positive' },
-      { label: 'Short open interest', value: <TokenAmount amount="8.2M" />, tone: 'negative' },
-      {
-        label: 'Pool liquidity',
-        value: <TokenAmount amount="8.7M" />,
-        tooltip: <PoolLiquidityTooltip />,
-        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 58,
+        side: 'long',
+        netExposure: <TokenAmount amount="204.8M" />,
+        limit: <TokenAmount amount="353.1M" />,
       },
-      {
-        label: 'Cost of carry',
-        value: '4.87%',
-        tooltip: <CostOfCarryTooltip />,
-        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
-      },
-    ],
+      price: '1.0066',
+      priceChange: '+0.21%',
+      priceChangeTone: 'positive',
+      freshnessTooltip: 'updated 1m 12s ago',
+      volume: '3.1M',
+      liquidity: '8.7M',
+      costOfCarry: '4.87%',
+    }),
   },
   render: Default.render,
 }
 
 export const StaleOracle: Story = {
   args: {
-    stats: [
-      { label: 'plDXY Perp price', value: '1.0091', freshness: 'stale', freshnessTooltip: 'last validated update 4m 38s ago' },
-      { label: '24h change', value: '-0.16%', tone: 'negative' },
-      { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
-      { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
-      { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
-      {
-        label: 'Pool liquidity',
-        value: <TokenAmount amount="6.3M" />,
-        tooltip: <PoolLiquidityTooltip />,
-        tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
+    stats: instrumentStats({
+      freshness: 'stale',
+      freshnessTooltip: 'last validated update 4m 38s ago',
+    }),
+  },
+  render: Default.render,
+}
+
+export const DirectionalLimitDetailsVisible: Story = {
+  args: {
+    directionalLimitDetailsExpanded: true,
+  },
+  render: Default.render,
+}
+
+export const ShortHeavy: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 62,
+        side: 'short',
+        netExposure: <TokenAmount amount="218.9M" />,
+        limit: <TokenAmount amount="353.1M" />,
       },
-      {
-        label: 'Cost of carry',
-        value: '5.24%',
-        tooltip: <CostOfCarryTooltip />,
-        tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
-        tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-        tooltipPosition: 'left',
+    }),
+  },
+  render: Default.render,
+}
+
+export const Balanced: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 0,
+        side: 'balanced',
+        netExposure: <TokenAmount amount="0" />,
+        limit: <TokenAmount amount="353.1M" />,
       },
-    ],
+    }),
+  },
+  render: Default.render,
+}
+
+export const NearLimit: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 94,
+        side: 'long',
+        netExposure: <TokenAmount amount="331.9M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const LimitReached: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 100,
+        side: 'long',
+        netExposure: <TokenAmount amount="353.1M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const LimitReachedDetailsVisible: Story = {
+  args: {
+    directionalLimitDetailsExpanded: true,
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 100,
+        side: 'long',
+        netExposure: <TokenAmount amount="353.1M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const LimitExceeded: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 108,
+        side: 'long',
+        netExposure: <TokenAmount amount="381.3M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const LimitExceededDetailsVisible: Story = {
+  args: {
+    directionalLimitDetailsExpanded: true,
+    stats: instrumentStats({
+      directionalLimit: {
+        usagePercent: 108,
+        side: 'long',
+        netExposure: <TokenAmount amount="381.3M" />,
+        limit: <TokenAmount amount="353.1M" />,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const DirectionalLimitLoading: Story = {
+  args: {
+    stats: instrumentStats({
+      directionalLimit: {
+        isLoading: true,
+      },
+    }),
   },
   render: Default.render,
 }

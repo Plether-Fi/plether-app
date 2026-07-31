@@ -177,8 +177,15 @@ function MarketHeader() {
         },
         { label: 'Market state', value: 'Open', tone: 'positive' },
         { label: 'Oracle state', value: 'Fresh', tone: 'positive' },
-        { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
-        { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
+        {
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: 87,
+            side: 'long',
+            netExposure: <TokenAmount amount="3.07M" />,
+            limit: <TokenAmount amount="3.53M" />,
+          },
+        },
         { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
       ]}
     />
