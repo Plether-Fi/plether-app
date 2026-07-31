@@ -27,6 +27,7 @@ import { UserOperationReceiptNotSafeError } from '../runtimeContext'
 
 const authorizationMocks = vi.hoisted(() => ({
   clearDepositAuthorization: vi.fn(),
+  clearLegacyDepositAuthorization: vi.fn(),
 }))
 
 const analyticsMocks = vi.hoisted(() => ({
@@ -35,6 +36,8 @@ const analyticsMocks = vi.hoisted(() => ({
 
 vi.mock('../authorizationStore', () => ({
   clearDepositAuthorization: authorizationMocks.clearDepositAuthorization,
+  clearLegacyDepositAuthorization:
+    authorizationMocks.clearLegacyDepositAuthorization,
 }))
 
 vi.mock('../../analytics/perps', async (importOriginal) => {
@@ -60,6 +63,7 @@ const TRANSACTION_HASH = `0x${'66'.repeat(32)}` as Hex
 const INCLUDED_BLOCK_HASH = `0x${'77'.repeat(32)}` as Hex
 const REPLACEMENT_TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const REPLACEMENT_BLOCK_HASH = `0x${'99'.repeat(32)}` as Hex
+const AUTHORIZATION_NONCE = `0x${'ab'.repeat(32)}` as Hex
 const SPONSORSHIP_VALID_UNTIL = 1_784_869_349n
 
 function paymasterData(): Hex {
@@ -146,6 +150,37 @@ function receiptNotFoundError(): Error {
   return error
 }
 
+function statefulLockManager(): {
+  lockManager: LockManager
+  heldNames: Set<string>
+  request: ReturnType<typeof vi.fn>
+} {
+  const heldNames = new Set<string>()
+  const request = vi.fn(async (
+    name: string,
+    options: LockOptions,
+    callback: (lock: Lock | null) => Promise<unknown> | unknown
+  ) => {
+    if (options.ifAvailable && heldNames.has(name)) {
+      return await callback(null)
+    }
+    if (heldNames.has(name)) {
+      throw new Error(`test lock already held: ${name}`)
+    }
+    heldNames.add(name)
+    try {
+      return await callback({ name, mode: 'exclusive' } as Lock)
+    } finally {
+      heldNames.delete(name)
+    }
+  })
+  return {
+    lockManager: { request } as unknown as LockManager,
+    heldNames,
+    request,
+  }
+}
+
 function runtime(input: {
   signUserOperation?: PerpsAaSmartAccountRuntime['smartAccount']['signUserOperation']
   getUserOperationHash?: PerpsAaSmartAccountRuntime['smartAccount']['getUserOperationHash']
@@ -192,6 +227,7 @@ const action = {
 describe('executeSponsoredPerpsAction', () => {
   beforeEach(() => {
     authorizationMocks.clearDepositAuthorization.mockReset()
+    authorizationMocks.clearLegacyDepositAuthorization.mockReset()
     analyticsMocks.trackPerpsSponsoredOperation.mockReset()
     globalThis.localStorage.clear()
     vi.stubGlobal('navigator', {
@@ -289,291 +325,337 @@ describe('executeSponsoredPerpsAction', () => {
     })
   })
 
-  it('reports canonical inclusion before safe confirmation without unlocking the lane', async () => {
+  it('resolves at exact successful inclusion and leaves safe confirmation to recovery', async () => {
+    const includedReceipt = receipt()
+    const getUserOperationReceipt = vi.fn(async () => {
+      throw new UserOperationReceiptNotSafeError(includedReceipt)
+    })
+    const onIncluded = vi.fn()
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({ getUserOperationReceipt }),
+      onIncluded,
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(getUserOperationReceipt).toHaveBeenCalledOnce()
+    expect(onIncluded).toHaveBeenCalledOnce()
+    expect(onIncluded).toHaveBeenCalledWith({
+      userOperationHash: USER_OPERATION_HASH,
+      receipt: includedReceipt,
+      transactionHash: TRANSACTION_HASH,
+    })
+    const includedOperation =
+      useSponsoredOperationStore.getState().operations[0]
+    expect(includedOperation).toMatchObject({
+      status: 'confirming',
+      includedTransactionHash: TRANSACTION_HASH,
+      laneReleasedAfterSuccessfulInclusion: true,
+    })
+    expect(includedOperation?.transactionHash).toBeUndefined()
+    expect(includedOperation?.transactionHashVerified).toBeUndefined()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('compare-deletes the exact authorization nonce before releasing inclusion', async () => {
+    authorizationMocks.clearDepositAuthorization.mockImplementation(
+      (input: { expectedNonce?: Hex }) => {
+        expect(input.expectedNonce).toBe(AUTHORIZATION_NONCE)
+        expect(useSponsoredOperationStore.getState().operations[0])
+          .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+        expect(useSponsoredOperationStore.getState().activeLanes)
+          .not.toEqual({})
+      }
+    )
+    const includedReceipt = receipt()
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({
+        getUserOperationReceipt: vi.fn(async () => {
+          throw new UserOperationReceiptNotSafeError(includedReceipt)
+        }),
+      }),
+      authorizationTokenToClearOnConfirmation: TARGET,
+      authorizationNonceToClearOnConfirmation: AUTHORIZATION_NONCE,
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(authorizationMocks.clearDepositAuthorization)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        token: TARGET,
+        expectedNonce: AUTHORIZATION_NONCE,
+      }))
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({ laneReleasedAfterSuccessfulInclusion: true })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+  })
+
+  it('keeps unsafe inclusion locked when authorization cleanup fails', async () => {
     vi.useFakeTimers()
     try {
+      authorizationMocks.clearDepositAuthorization
+        .mockImplementationOnce(() => {
+          throw new Error('local storage unavailable')
+        })
+        .mockImplementation(() => true)
       const includedReceipt = receipt()
       const getUserOperationReceipt = vi.fn()
         .mockRejectedValueOnce(
           new UserOperationReceiptNotSafeError(includedReceipt)
         )
         .mockResolvedValue(includedReceipt)
-      const onIncluded = vi.fn()
-
+      let settled = false
       const execution = executeSponsoredPerpsAction({
         manifest: manifest(),
         ownerAddress: OWNER,
         action,
         runtime: runtime({ getUserOperationReceipt }),
-        onIncluded,
+        authorizationTokenToClearOnConfirmation: TARGET,
+        authorizationNonceToClearOnConfirmation: AUTHORIZATION_NONCE,
+      }).finally(() => {
+        settled = true
       })
 
       await vi.waitFor(() => {
-        expect(onIncluded).toHaveBeenCalledOnce()
+        expect(authorizationMocks.clearDepositAuthorization)
+          .toHaveBeenCalledOnce()
       })
-      expect(onIncluded).toHaveBeenCalledWith({
-        userOperationHash: USER_OPERATION_HASH,
-        receipt: includedReceipt,
-        transactionHash: TRANSACTION_HASH,
-      })
-      const includedOperation =
-        useSponsoredOperationStore.getState().operations[0]
-      expect(includedOperation).toMatchObject({
-        status: 'confirming',
-        includedTransactionHash: TRANSACTION_HASH,
-      })
-      expect(includedOperation?.transactionHash).toBeUndefined()
-      expect(includedOperation?.transactionHashVerified).toBeUndefined()
+      expect(settled).toBe(false)
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+      expect(useSponsoredOperationStore.getState().activeLanes)
+        .not.toEqual({})
 
       await vi.advanceTimersByTimeAsync(1_500)
       await expect(execution).resolves.toMatchObject({
         userOperationHash: USER_OPERATION_HASH,
         transactionHash: TRANSACTION_HASH,
       })
-      expect(onIncluded).toHaveBeenCalledOnce()
-      expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
-        status: 'confirmed',
-        transactionHash: TRANSACTION_HASH,
-        transactionHashVerified: true,
-      })
+      expect(useSponsoredOperationStore.getState().operations[0])
+        .toMatchObject({ status: 'confirmed' })
+      expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+      expect(authorizationMocks.clearDepositAuthorization)
+        .toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('keeps observed inclusion nonterminal when safe confirmation exceeds the interactive timeout', async () => {
+  it('releases durable and browser lanes so a second action submits before safe', async () => {
+    const locks = statefulLockManager()
+    vi.stubGlobal('navigator', { locks: locks.lockManager })
+    const firstSend = vi.fn(async () => USER_OPERATION_HASH)
+    const includedReceipt = receipt()
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({
+        sendUserOperation: firstSend,
+        getUserOperationReceipt: vi.fn(async () => {
+          throw new UserOperationReceiptNotSafeError(includedReceipt)
+        }),
+      }),
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+    await vi.waitFor(() => expect(locks.heldNames.size).toBe(0))
+
+    const secondReceipt = {
+      ...receipt(),
+      userOpHash: OTHER_USER_OPERATION_HASH,
+      nonce: 1n,
+      receipt: {
+        ...receipt().receipt,
+        transactionHash: REPLACEMENT_TRANSACTION_HASH,
+        blockNumber: 124n,
+        blockHash: REPLACEMENT_BLOCK_HASH,
+      },
+    } as ManagedUserOperationReceipt
+    const secondSend = vi.fn(async () => OTHER_USER_OPERATION_HASH)
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({
+        getUserOperationHash: vi.fn(() => OTHER_USER_OPERATION_HASH),
+        sendUserOperation: secondSend,
+        getUserOperationReceipt: vi.fn(async () => secondReceipt),
+      }),
+    })).resolves.toMatchObject({
+      userOperationHash: OTHER_USER_OPERATION_HASH,
+      transactionHash: REPLACEMENT_TRANSACTION_HASH,
+    })
+
+    expect(firstSend).toHaveBeenCalledOnce()
+    expect(secondSend).toHaveBeenCalledOnce()
+    expect(locks.request).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps vendor-only inclusion locked until exact chain evidence arrives', async () => {
     vi.useFakeTimers()
     try {
-      const includedReceipt = receipt()
+      const locks = statefulLockManager()
+      vi.stubGlobal('navigator', { locks: locks.lockManager })
       const getUserOperationReceipt = vi.fn(async () => {
-        throw new UserOperationReceiptNotSafeError(includedReceipt)
+        throw receiptNotFoundError()
       })
-      const onIncluded = vi.fn()
-      const execution = executeSponsoredPerpsAction({
+      const getUserOperationStatus = vi.fn(async () => ({
+        status: 'included' as const,
+        transactionHash: TRANSACTION_HASH,
+      }))
+      const firstExecution = executeSponsoredPerpsAction({
         manifest: manifest(),
         ownerAddress: OWNER,
         action,
-        runtime: runtime({ getUserOperationReceipt }),
-        onIncluded,
+        runtime: runtime({
+          getUserOperationReceipt,
+          getUserOperationStatus,
+        }),
       }).catch((error: unknown) => error)
 
       await vi.waitFor(() => {
-        expect(onIncluded).toHaveBeenCalledOnce()
+        expect(getUserOperationStatus).toHaveBeenCalled()
       })
       expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({
-          status: 'confirming',
-          includedTransactionHash: TRANSACTION_HASH,
-        })
+        .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+      expect(useSponsoredOperationStore.getState().activeLanes)
+        .not.toEqual({})
+
+      const secondRuntime = runtime({
+        getUserOperationHash: vi.fn(() => OTHER_USER_OPERATION_HASH),
+        sendUserOperation: vi.fn(async () => OTHER_USER_OPERATION_HASH),
+      })
+      await expect(executeSponsoredPerpsAction({
+        manifest: manifest(),
+        ownerAddress: OWNER,
+        action,
+        runtime: secondRuntime,
+      })).rejects.toBeInstanceOf(SponsoredOperationLockedError)
+      expect(secondRuntime.smartAccount.prepareUserOperation)
+        .not.toHaveBeenCalled()
 
       await vi.advanceTimersByTimeAsync(120_000)
-      await expect(execution).resolves.toMatchObject({
-        name: 'BundlerRequestError',
+      await expect(firstExecution).resolves.toMatchObject({
         terminalStatus: 'receipt-timeout',
       })
-      expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({
-          status: 'confirming',
-          includedTransactionHash: TRANSACTION_HASH,
-        })
-      expect(useSponsoredOperationStore.getState().operations[0]?.reason)
-        .toBeUndefined()
-      expect(() => {
-        useSponsoredOperationStore.getState().beginOperation({
-          id: 'operation-after-inclusion',
-          ownerAddress: OWNER,
-          accountAddress: ACCOUNT,
-          chainId: 421614,
-          accountMode: 'simple',
-          manifestVersion: manifest().version,
-          action: 'place-order',
-        })
-      }).toThrow(SponsoredOperationLockedError)
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('retains observed inclusion through a transient Pimlico receipt miss', async () => {
+  it('keeps an exact failed unsafe receipt locked until safe resolution', async () => {
     vi.useFakeTimers()
     try {
-      const includedReceipt = receipt()
-      const getUserOperationReceipt = vi.fn()
-        .mockRejectedValueOnce(
-          new UserOperationReceiptNotSafeError(includedReceipt)
-        )
-        .mockRejectedValueOnce(receiptNotFoundError())
-        .mockResolvedValue(includedReceipt)
-      const verifyObservedInclusion = vi.fn(
-        async () => 'canonical' as const
-      )
-      const onIncluded = vi.fn()
-      const execution = executeSponsoredPerpsAction({
-        manifest: manifest(),
-        ownerAddress: OWNER,
-        action,
-        runtime: runtime({
-          getUserOperationReceipt,
-          verifyObservedInclusion,
-        }),
-        onIncluded,
-      })
-
-      await vi.waitFor(() => {
-        expect(onIncluded).toHaveBeenCalledOnce()
-      })
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(verifyObservedInclusion).toHaveBeenCalledWith({
-        transactionHash: TRANSACTION_HASH,
-        blockNumber: 123n,
-        blockHash: INCLUDED_BLOCK_HASH,
-      })
-      expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({
-          status: 'confirming',
-          includedTransactionHash: TRANSACTION_HASH,
-          includedBlockNumber: '123',
-          includedBlockHash: INCLUDED_BLOCK_HASH,
-        })
-      expect(onIncluded).toHaveBeenCalledOnce()
-
-      await vi.advanceTimersByTimeAsync(1_500)
-      await expect(execution).resolves.toMatchObject({
-        userOperationHash: USER_OPERATION_HASH,
-        transactionHash: TRANSACTION_HASH,
-      })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('replaces observed inclusion only after direct canonical reorg proof', async () => {
-    vi.useFakeTimers()
-    try {
-      const firstReceipt = receipt()
-      const replacementReceipt = {
+      const failedReceipt = {
         ...receipt(),
+        success: false,
+        reason: 'execution reverted',
         receipt: {
           ...receipt().receipt,
-          transactionHash: REPLACEMENT_TRANSACTION_HASH,
-          blockNumber: 124n,
-          blockHash: REPLACEMENT_BLOCK_HASH,
+          status: 'reverted',
         },
       } as ManagedUserOperationReceipt
-      const getUserOperationReceipt = vi.fn()
-        .mockRejectedValueOnce(
-          new UserOperationReceiptNotSafeError(firstReceipt)
-        )
-        .mockRejectedValueOnce(receiptNotFoundError())
-        .mockRejectedValueOnce(
-          new UserOperationReceiptNotSafeError(replacementReceipt)
-        )
-        .mockResolvedValue(replacementReceipt)
-      const verifyObservedInclusion = vi.fn(
-        async () => 'reorged' as const
-      )
-      const onIncluded = vi.fn()
-      const execution = executeSponsoredPerpsAction({
-        manifest: manifest(),
-        ownerAddress: OWNER,
-        action,
-        runtime: runtime({
-          getUserOperationReceipt,
-          verifyObservedInclusion,
-        }),
-        onIncluded,
+      const getUserOperationReceipt = vi.fn(async () => {
+        throw new UserOperationReceiptNotSafeError(failedReceipt)
       })
-
-      await vi.waitFor(() => {
-        expect(onIncluded).toHaveBeenCalledOnce()
-      })
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(verifyObservedInclusion).toHaveBeenCalledWith({
-        transactionHash: TRANSACTION_HASH,
-        blockNumber: 123n,
-        blockHash: INCLUDED_BLOCK_HASH,
-      })
-      expect(
-        useSponsoredOperationStore.getState().operations[0]
-          ?.includedTransactionHash
-      ).toBeUndefined()
-
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(onIncluded).toHaveBeenCalledTimes(2)
-      expect(onIncluded).toHaveBeenLastCalledWith({
-        userOperationHash: USER_OPERATION_HASH,
-        receipt: replacementReceipt,
-        transactionHash: REPLACEMENT_TRANSACTION_HASH,
-      })
-      expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({
-          includedTransactionHash: REPLACEMENT_TRANSACTION_HASH,
-          includedBlockNumber: '124',
-          includedBlockHash: REPLACEMENT_BLOCK_HASH,
-        })
-
-      await vi.advanceTimersByTimeAsync(1_500)
-      await expect(execution).resolves.toMatchObject({
-        userOperationHash: USER_OPERATION_HASH,
-        transactionHash: REPLACEMENT_TRANSACTION_HASH,
-      })
-    } finally {
-      vi.useRealTimers()
-    }
-  })
-
-  it('retries a failed inclusion callback while canonical inclusion is polled', async () => {
-    vi.useFakeTimers()
-    try {
-      const includedReceipt = receipt()
-      const getUserOperationReceipt = vi.fn()
-        .mockRejectedValueOnce(
-          new UserOperationReceiptNotSafeError(includedReceipt)
-        )
-        .mockRejectedValueOnce(
-          new UserOperationReceiptNotSafeError(includedReceipt)
-        )
-        .mockResolvedValue(includedReceipt)
-      const callbackError = new Error('temporary receipt parser failure')
-      const onIncluded = vi.fn()
-        .mockImplementationOnce(() => {
-          throw callbackError
-        })
-
       const execution = executeSponsoredPerpsAction({
         manifest: manifest(),
         ownerAddress: OWNER,
         action,
         runtime: runtime({ getUserOperationReceipt }),
-        onIncluded,
-      })
+      }).catch((error: unknown) => error)
 
       await vi.waitFor(() => {
-        expect(onIncluded).toHaveBeenCalledOnce()
+        expect(getUserOperationReceipt).toHaveBeenCalled()
       })
       expect(useSponsoredOperationStore.getState().operations[0])
-        .toMatchObject({
-          status: 'confirming',
-          includedTransactionHash: TRANSACTION_HASH,
-        })
+        .not.toHaveProperty('laneReleasedAfterSuccessfulInclusion')
+      expect(useSponsoredOperationStore.getState().activeLanes)
+        .not.toEqual({})
 
-      await vi.advanceTimersByTimeAsync(1_500)
-      expect(onIncluded).toHaveBeenCalledTimes(2)
-      expect(onIncluded).toHaveBeenLastCalledWith({
-        userOperationHash: USER_OPERATION_HASH,
-        receipt: includedReceipt,
-        transactionHash: TRANSACTION_HASH,
-      })
-
-      await vi.advanceTimersByTimeAsync(1_500)
+      await vi.advanceTimersByTimeAsync(120_000)
       await expect(execution).resolves.toMatchObject({
-        userOperationHash: USER_OPERATION_HASH,
-        transactionHash: TRANSACTION_HASH,
+        terminalStatus: 'receipt-timeout',
       })
-      expect(onIncluded).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('does not let an optional inclusion callback retain the released lane', async () => {
+    const locks = statefulLockManager()
+    vi.stubGlobal('navigator', { locks: locks.lockManager })
+    const includedReceipt = receipt()
+    const callbackError = new Error('receipt consumer failed')
+    const secondReceipt = {
+      ...receipt(),
+      userOpHash: OTHER_USER_OPERATION_HASH,
+      nonce: 1n,
+      receipt: {
+        ...receipt().receipt,
+        transactionHash: REPLACEMENT_TRANSACTION_HASH,
+        blockNumber: 124n,
+        blockHash: REPLACEMENT_BLOCK_HASH,
+      },
+    } as ManagedUserOperationReceipt
+    const secondSend = vi.fn(async () => OTHER_USER_OPERATION_HASH)
+    let secondExecution:
+      ReturnType<typeof executeSponsoredPerpsAction> | undefined
+    const onIncluded = vi.fn(() => {
+      // Queue the next action from the consumer callback itself. If the first
+      // execution only releases its Web Lock in the outer finally block, this
+      // microtask races ahead of that continuation and deterministically sees
+      // a busy lane.
+      secondExecution = Promise.resolve().then(async () =>
+        await executeSponsoredPerpsAction({
+          manifest: manifest(),
+          ownerAddress: OWNER,
+          action,
+          runtime: runtime({
+            getUserOperationHash: vi.fn(() => OTHER_USER_OPERATION_HASH),
+            sendUserOperation: secondSend,
+            getUserOperationReceipt: vi.fn(async () => secondReceipt),
+          }),
+        })
+      )
+      throw callbackError
+    })
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({
+        getUserOperationReceipt: vi.fn(async () => {
+          throw new UserOperationReceiptNotSafeError(includedReceipt)
+        }),
+      }),
+      onIncluded,
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+    expect(onIncluded).toHaveBeenCalledOnce()
+    expect(secondExecution).toBeDefined()
+    await expect(secondExecution).resolves.toMatchObject({
+      userOperationHash: OTHER_USER_OPERATION_HASH,
+      transactionHash: REPLACEMENT_TRANSACTION_HASH,
+    })
+    expect(secondSend).toHaveBeenCalledOnce()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
   })
 
   it('preserves the last reconciliation error as the receipt timeout cause', async () => {
@@ -1109,6 +1191,7 @@ describe('executeSponsoredPerpsAction', () => {
       action,
       runtime: runtime(),
       authorizationTokenToClearOnConfirmation: TARGET,
+      authorizationNonceToClearOnConfirmation: '0x1234',
     })).resolves.toMatchObject({
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
@@ -1116,11 +1199,28 @@ describe('executeSponsoredPerpsAction', () => {
 
     expect(
       authorizationMocks.clearDepositAuthorization
-    ).toHaveBeenCalledTimes(1)
+    ).toHaveBeenCalled()
     expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
       status: 'confirmed',
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it('retires only the legacy cache for token-only safe metadata', async () => {
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime(),
+      authorizationTokenToClearOnConfirmation: TARGET,
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(authorizationMocks.clearLegacyDepositAuthorization)
+      .toHaveBeenCalledWith(expect.objectContaining({ token: TARGET }))
+    expect(authorizationMocks.clearDepositAuthorization).not.toHaveBeenCalled()
   })
 })

@@ -35,6 +35,12 @@ const OTHER_USER_OPERATION_HASH = `0x${'cc'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'bb'.repeat(32)}` as Hex
 const INCLUDED_BLOCK_HASH = `0x${'dd'.repeat(32)}` as Hex
 const MANIFEST_VERSION = 'perps-aa-arbitrum-sepolia-v1'
+const AUTHORIZATION_STORAGE_SUFFIX =
+  `421614:${OWNER.toLowerCase()}:${ACCOUNT.toLowerCase()}:${TOKEN.toLowerCase()}`
+const LEGACY_AUTHORIZATION_KEY =
+  `plether_perps_eip3009_v1:${AUTHORIZATION_STORAGE_SUFFIX}`
+const CURRENT_AUTHORIZATION_KEY =
+  `plether_perps_eip3009_v2:${AUTHORIZATION_STORAGE_SUFFIX}`
 
 function paymasterData(validUntil: bigint): Hex {
   return concatHex([
@@ -128,6 +134,7 @@ function beginHashOperation(input: {
   operation?: ManagedUserOperation
   action?: 'deposit' | 'place-order'
   authorizationToken?: Address
+  authorizationNonce?: Hex
 }): void {
   useSponsoredOperationStore.getState().beginOperation({
     id: input.id,
@@ -138,6 +145,7 @@ function beginHashOperation(input: {
     manifestVersion: input.manifestVersion ?? MANIFEST_VERSION,
     action: input.action ?? 'place-order',
     authorizationToken: input.authorizationToken,
+    authorizationNonce: input.authorizationNonce,
   })
   useSponsoredOperationStore.getState().recordUserOperationHash(
     input.id,
@@ -308,6 +316,7 @@ describe('SponsoredOperationRecovery', () => {
       id: 'recoverable-deposit',
       action: 'deposit',
       authorizationToken: TOKEN,
+      authorizationNonce: initialAuthorization.nonce,
     })
     const receipt = {
       actualGasCost: 1n,
@@ -352,6 +361,61 @@ describe('SponsoredOperationRecovery', () => {
     expect(nextAuthorization.nonce).not.toBe(initialAuthorization.nonce)
   })
 
+  it('retires legacy authorization only at safe confirmation without deleting v2', async () => {
+    globalThis.localStorage.setItem(
+      LEGACY_AUTHORIZATION_KEY,
+      JSON.stringify({ nonce: `0x${'11'.repeat(32)}` })
+    )
+    const newerAuthorization = getOrCreateDepositAuthorization({
+      chainId: 421614,
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      token: TOKEN,
+      amount: 25_000_000n,
+      nowSeconds: 1_000n,
+    })
+    beginHashOperation({
+      id: 'legacy-recoverable-deposit',
+      action: 'deposit',
+      authorizationToken: TOKEN,
+    })
+    const receipt = {
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint:
+        '0x3333333333333333333333333333333333333333',
+      logs: [],
+      nonce: 0n,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: USER_OPERATION_HASH,
+      receipt: {
+        transactionHash: TRANSACTION_HASH,
+        status: 'success',
+        blockNumber: 123n,
+        blockHash: INCLUDED_BLOCK_HASH,
+      },
+    } as ManagedUserOperationReceipt
+
+    render(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        receipt: vi.fn(async () => receipt),
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+
+    await waitFor(() => {
+      expect(
+        useSponsoredOperationStore.getState().operations[0]?.status
+      ).toBe('confirmed')
+    })
+    expect(globalThis.localStorage.getItem(LEGACY_AUTHORIZATION_KEY)).toBeNull()
+    expect(JSON.parse(
+      globalThis.localStorage.getItem(CURRENT_AUTHORIZATION_KEY) ?? '{}'
+    )).toMatchObject({ nonce: newerAuthorization.nonce })
+  })
+
   it('persists latest-chain inclusion through outages and confirms only at the safe head', async () => {
     const includedReceipt = {
       actualGasCost: 1n,
@@ -392,13 +456,12 @@ describe('SponsoredOperationRecovery', () => {
         .toMatchObject({
           status: 'confirming',
           includedTransactionHash: TRANSACTION_HASH,
+          laneReleasedAfterSuccessfulInclusion: true,
         })
     })
     expect(useSponsoredOperationStore.getState().operations[0]?.reason)
       .toBeUndefined()
-    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
-      [`${ACCOUNT.toLowerCase()}:default`]: 'included-awaiting-safe',
-    })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
 
     const verifyCanonicalInclusion = vi.fn(async () => 'canonical' as const)
     rendered.rerender(
@@ -455,7 +518,22 @@ describe('SponsoredOperationRecovery', () => {
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
   })
 
-  it('retracts unsafe inclusion only after direct canonical reorg proof', async () => {
+  it('retracts reorged inclusion without stealing a newer live lane', async () => {
+    let recoveryLockSettled = false
+    const recoveryLockRequest = vi.fn(async (
+      name: string,
+      _options: LockOptions,
+      callback: (lock: Lock | null) => Promise<unknown> | unknown
+    ) => {
+      try {
+        return await callback({ name, mode: 'exclusive' } as Lock)
+      } finally {
+        recoveryLockSettled = true
+      }
+    })
+    vi.stubGlobal('navigator', {
+      locks: { request: recoveryLockRequest } as unknown as LockManager,
+    })
     beginHashOperation({ id: 'reorged-inclusion' })
     expect(useSponsoredOperationStore.getState().recordObservedInclusion(
       'reorged-inclusion',
@@ -465,6 +543,34 @@ describe('SponsoredOperationRecovery', () => {
         blockHash: INCLUDED_BLOCK_HASH,
       }
     )).toBe(true)
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'reorged-inclusion',
+        {
+          transactionHash: TRANSACTION_HASH,
+          blockNumber: '123',
+          blockHash: INCLUDED_BLOCK_HASH,
+          success: true,
+        }
+      )).toBe(true)
+    useSponsoredOperationStore.getState().beginOperation({
+      id: 'live-operation',
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      accountMode: 'simple',
+      manifestVersion: MANIFEST_VERSION,
+      action: 'place-order',
+    })
+    createSponsoredOperationSignal('live-operation')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'live-operation',
+      OTHER_USER_OPERATION_HASH
+    )).toBe(true)
+    const laneHeadKey =
+      `${SPONSORED_OPERATION_LANE_HEAD_PREFIX}` +
+      `421614:${ACCOUNT.toLowerCase()}:default`
+    const liveLaneHead = globalThis.localStorage.getItem(laneHeadKey)
     const verifyObservedInclusion = vi.fn(async () => 'reorged' as const)
 
     render(
@@ -476,21 +582,139 @@ describe('SponsoredOperationRecovery', () => {
     )
 
     await waitFor(() => {
-      expect(useSponsoredOperationStore.getState().operations[0]?.status)
-        .toBe('receipt-timeout')
+      expect(useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'reorged-inclusion'))
+        .toMatchObject({
+          status: 'receipt-timeout',
+          retryable: false,
+          laneReleasedAfterSuccessfulInclusion: true,
+        })
     })
     expect(
-      useSponsoredOperationStore.getState().operations[0]
+      useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'reorged-inclusion')
         ?.includedTransactionHash
     ).toBeUndefined()
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
-      [`${ACCOUNT.toLowerCase()}:default`]: 'reorged-inclusion',
+      [`${ACCOUNT.toLowerCase()}:default`]: 'live-operation',
+    })
+    expect(globalThis.localStorage.getItem(laneHeadKey)).toBe(liveLaneHead)
+    expect(recoveryLockRequest.mock.calls.map(([name]) => name)).toContain(
+      'plether-perps-user-operation-recovery:' +
+      `421614:${ACCOUNT.toLowerCase()}:reorged-inclusion`
+    )
+    expect(recoveryLockRequest.mock.calls.map(([name]) => name)).not.toContain(
+      'plether-perps-user-operation:' +
+      `421614:${ACCOUNT.toLowerCase()}:default`
+    )
+    expect(verifyObservedInclusion).toHaveBeenCalledWith({
+      transactionHash: TRANSACTION_HASH,
+      blockNumber: 123n,
+      blockHash: INCLUDED_BLOCK_HASH,
+    })
+    await waitFor(() => expect(recoveryLockSettled).toBe(true))
+
+    useSponsoredOperationStore.setState({ operations: [], activeLanes: {} })
+    await useSponsoredOperationStore.persist.rehydrate()
+    expect(useSponsoredOperationStore.getState().operations
+      .find((operation) => operation.id === 'reorged-inclusion'))
+      .toMatchObject({
+        status: 'receipt-timeout',
+        laneReleasedAfterSuccessfulInclusion: true,
+      })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'live-operation',
+    })
+    releaseSponsoredOperationSignal('live-operation')
+  })
+
+  it('retracts a successful inclusion replaced by a failed unsafe receipt', async () => {
+    beginHashOperation({ id: 'failed-replacement' })
+    const successfulObservation = {
+      transactionHash: TRANSACTION_HASH,
+      blockNumber: '123',
+      blockHash: INCLUDED_BLOCK_HASH,
+    }
+    expect(useSponsoredOperationStore.getState().recordObservedInclusion(
+      'failed-replacement',
+      successfulObservation
+    )).toBe(true)
+    expect(useSponsoredOperationStore.getState()
+      .releaseLaneAfterSuccessfulInclusion(
+        'failed-replacement',
+        { ...successfulObservation, success: true }
+      )).toBe(true)
+
+    useSponsoredOperationStore.getState().beginOperation({
+      id: 'live-operation',
+      ownerAddress: OWNER,
+      accountAddress: ACCOUNT,
+      chainId: 421614,
+      accountMode: 'simple',
+      manifestVersion: MANIFEST_VERSION,
+      action: 'place-order',
+    })
+    createSponsoredOperationSignal('live-operation')
+    expect(useSponsoredOperationStore.getState().recordUserOperationHash(
+      'live-operation',
+      OTHER_USER_OPERATION_HASH
+    )).toBe(true)
+
+    const replacementTransactionHash = `0x${'ee'.repeat(32)}` as Hex
+    const replacementBlockHash = `0x${'ff'.repeat(32)}` as Hex
+    const failedReplacement = {
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint:
+        '0x3333333333333333333333333333333333333333',
+      logs: [],
+      nonce: 0n,
+      sender: ACCOUNT,
+      success: false,
+      reason: 'execution reverted',
+      userOpHash: USER_OPERATION_HASH,
+      receipt: {
+        transactionHash: replacementTransactionHash,
+        status: 'reverted',
+        blockNumber: 124n,
+        blockHash: replacementBlockHash,
+      },
+    } as ManagedUserOperationReceipt
+    const receipt = vi.fn(async () => {
+      throw new UserOperationReceiptNotSafeError(failedReplacement)
+    })
+    const verifyObservedInclusion = vi.fn(async () => 'reorged' as const)
+
+    render(
+      <PerpsAaRuntimeContext value={runtimeValue({
+        receipt,
+        verifyObservedInclusion,
+      })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+
+    await waitFor(() => {
+      expect(useSponsoredOperationStore.getState().operations
+        .find((operation) => operation.id === 'failed-replacement'))
+        .toMatchObject({
+          status: 'receipt-timeout',
+          retryable: false,
+          laneReleasedAfterSuccessfulInclusion: true,
+        })
+    })
+    expect(useSponsoredOperationStore.getState().operations
+      .find((operation) => operation.id === 'failed-replacement')
+      ?.includedTransactionHash).toBeUndefined()
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({
+      [`${ACCOUNT.toLowerCase()}:default`]: 'live-operation',
     })
     expect(verifyObservedInclusion).toHaveBeenCalledWith({
       transactionHash: TRANSACTION_HASH,
       blockNumber: 123n,
       blockHash: INCLUDED_BLOCK_HASH,
     })
+    releaseSponsoredOperationSignal('live-operation')
   })
 
   it('expires a hash-verified operation only after its safe-chain deadline', async () => {
@@ -659,11 +883,6 @@ describe('SponsoredOperationRecovery', () => {
       status: 'not_found' as const,
       transactionHash: null,
     }))
-    const rehydrate = vi.spyOn(
-      useSponsoredOperationStore.persist,
-      'rehydrate'
-    )
-
     render(
       <PerpsAaRuntimeContext value={runtimeValue({
         status,
@@ -677,7 +896,6 @@ describe('SponsoredOperationRecovery', () => {
     await waitFor(() => {
       expect(status).toHaveBeenCalledWith(USER_OPERATION_HASH)
     })
-    expect(rehydrate).not.toHaveBeenCalled()
     expect(
       useSponsoredOperationStore.getState().operations
         .find((operation) => operation.id === 'released-operation')

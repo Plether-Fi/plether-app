@@ -45,6 +45,7 @@ import {
 const OTHER_ACCOUNT =
   '0x3333333333333333333333333333333333333333' as Address
 const USER_OPERATION_HASH = `0x${'12'.repeat(32)}` as Hex
+const OTHER_USER_OPERATION_HASH = `0x${'34'.repeat(32)}` as Hex
 const TRANSACTION_HASH = `0x${'34'.repeat(32)}` as Hex
 
 function operation(input: {
@@ -56,6 +57,7 @@ function operation(input: {
   chainId?: number
   userOperationHash?: Hex
   includedTransactionHash?: Hex
+  laneReleasedAfterSuccessfulInclusion?: true
   transactionHash?: Hex
   reason?: SponsoredOperation['reason']
   sponsorshipAccepted?: boolean
@@ -79,6 +81,8 @@ function operation(input: {
       input.sponsorshipAccepted ?? input.status !== 'failed',
     userOperationHash: input.userOperationHash,
     includedTransactionHash: input.includedTransactionHash,
+    laneReleasedAfterSuccessfulInclusion:
+      input.laneReleasedAfterSuccessfulInclusion,
     inclusionObservedAt:
       input.includedTransactionHash === undefined
         ? undefined
@@ -324,12 +328,15 @@ describe('SponsoredOperationHistoryButton', () => {
           action: 'place-order',
           status: 'confirming',
           updatedAt: 100,
-          userOperationHash: USER_OPERATION_HASH,
+          userOperationHash: OTHER_USER_OPERATION_HASH,
           includedTransactionHash: TRANSACTION_HASH,
+          laneReleasedAfterSuccessfulInclusion: true,
           sponsorshipAccepted: true,
         }),
       ],
-      activeLanes: {},
+      activeLanes: {
+        [`${identityMocks.accountAddress.toLowerCase()}:default`]: 'pending',
+      },
     })
 
     render(<SponsoredOperationHistoryButton />)

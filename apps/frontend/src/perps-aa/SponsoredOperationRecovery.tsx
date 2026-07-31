@@ -1,51 +1,56 @@
 import { useEffect } from 'react'
-import { isAddressEqual, type Hex } from 'viem'
-import { clearDepositAuthorization } from './authorizationStore'
+import {
+  clearDepositAuthorization,
+  clearLegacyDepositAuthorization,
+} from './authorizationStore'
 import {
   hasSponsoredOperationSignal,
   hasObservedSponsoredOperationInclusion,
+  isSponsoredOperationLaneBlocking,
   isSponsoredOperationTerminal,
   restoreSponsoredOperationLane,
   SPONSORED_OPERATION_JOURNAL_PREFIX,
   SPONSORED_OPERATION_LANE_HEAD_PREFIX,
+  SPONSORED_OPERATION_LANE_RELEASE_PREFIX,
   SPONSORED_OPERATION_RESOLUTION_PREFIX,
   SPONSORED_OPERATION_STORAGE_NAME,
   type SponsoredOperation,
   useSponsoredOperationStore,
 } from './operationStore'
-import { acquireSponsoredOperationBrowserLane } from './laneLock'
-import { reconcilePimlicoUserOperation } from './operationReconciler'
-import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
-import { readPersistedManagedUserOperation } from './persistedUserOperation'
 import {
-  type ManagedUserOperation,
+  acquireSponsoredOperationBrowserLane,
+  acquireSponsoredOperationBrowserRecoveryLock,
+  type ReleaseSponsoredOperationBrowserLock,
+} from './laneLock'
+import { reconcilePimlicoUserOperation } from './operationReconciler'
+import { resolveProtocolOperation } from './protocolOperationResolution'
+import {
   type PerpsAaSmartAccountRuntime,
   usePerpsAaRuntime,
 } from './runtimeContext'
 
 const PROTOCOL_RECOVERY_CHECK_INTERVAL_MS = 60_000
 
-type ProtocolOperationResolution =
-  | {
-      status: 'confirmed' | 'execution-reverted'
-      transactionHash: Hex
-    }
-  | {
-      status: 'expired'
-    }
-  | {
-      status: 'outcome-unknown'
-      protocolNonceAdvanced: true
-    }
-
 function clearRecoveredAuthorization(operation: SponsoredOperation): void {
   if (!operation.authorizationToken) return
   try {
+    if (!operation.authorizationNonce) {
+      // Legacy v1 records did not persist nonce ownership. Only a safe receipt
+      // authorizes retiring that reuse-based cache; never touch the v2 entry.
+      clearLegacyDepositAuthorization({
+        chainId: operation.chainId,
+        ownerAddress: operation.ownerAddress,
+        accountAddress: operation.accountAddress,
+        token: operation.authorizationToken,
+      })
+      return
+    }
     clearDepositAuthorization({
       chainId: operation.chainId,
       ownerAddress: operation.ownerAddress,
       accountAddress: operation.accountAddress,
       token: operation.authorizationToken,
+      expectedNonce: operation.authorizationNonce,
     })
   } catch {
     // Chain confirmation is authoritative. A local cleanup failure must not
@@ -53,96 +58,27 @@ function clearRecoveredAuthorization(operation: SponsoredOperation): void {
   }
 }
 
-function verifiedPersistedUserOperation(
-  operation: SponsoredOperation,
-  runtime: PerpsAaSmartAccountRuntime,
-  userOperationHash: Hex
-): ManagedUserOperation | undefined {
-  if (operation.submissionMetadataVersion !== 1) {
-    return undefined
-  }
-  const signedOperation = readPersistedManagedUserOperation(
-    operation.signedUserOperation
-  )
-  if (
-    !signedOperation ||
-    !isAddressEqual(
-      signedOperation.sender,
-      operation.accountAddress
-    )
-  ) {
-    return undefined
-  }
-  const recomputedHash =
-    runtime.smartAccount.getUserOperationHash(signedOperation)
-  if (recomputedHash.toLowerCase() !== userOperationHash.toLowerCase()) {
-    return undefined
-  }
-  return signedOperation
-}
-
-async function resolveProtocolOperation(input: {
+function clearAuthorizationBeforeIncludedRelease(
   operation: SponsoredOperation
-  runtime: PerpsAaSmartAccountRuntime
-  userOperationHash: Hex
-}): Promise<ProtocolOperationResolution | undefined> {
-  if (input.runtime.getRecoverySnapshot === undefined) {
-    return undefined
-  }
-
+): boolean {
+  if (!operation.authorizationToken) return true
+  // Old persisted records did not bind the cache entry to an EIP-3009 nonce.
+  // Keep those operations serialized until safe confirmation rather than risk
+  // deleting an authorization created by a later deposit.
+  if (!operation.authorizationNonce) return false
   try {
-    const signedOperation = verifiedPersistedUserOperation(
-      input.operation,
-      input.runtime,
-      input.userOperationHash
-    )
-    const operationNonce = signedOperation?.nonce
-    const validUntil = signedOperation
-      ? pimlicoSponsorshipValidUntil(
-          signedOperation.paymaster,
-          signedOperation.paymasterData
-        )
-      : undefined
-
-    const snapshot = await input.runtime.getRecoverySnapshot(
-      input.userOperationHash,
-      operationNonce === undefined ? 0n : operationNonce >> 64n
-    )
-    if (snapshot.userOperationEvidence.kind === 'included') {
-      return {
-        status: snapshot.userOperationEvidence.success
-          ? 'confirmed'
-          : 'execution-reverted',
-        transactionHash:
-          snapshot.userOperationEvidence.transactionHash,
-      }
-    }
-    if (snapshot.userOperationEvidence.kind === 'not-safe-yet') {
-      return undefined
-    }
-
-    if (operationNonce !== undefined) {
-      if (snapshot.accountNonce > operationNonce) {
-        return {
-          status: 'outcome-unknown',
-          protocolNonceAdvanced: true,
-        }
-      }
-      if (
-        validUntil !== undefined &&
-        snapshot.blockTimestamp > validUntil &&
-        snapshot.accountNonce === operationNonce
-      ) {
-        return { status: 'expired' }
-      }
-      if (snapshot.accountNonce < operationNonce) return undefined
-    }
-
-    return undefined
+    clearDepositAuthorization({
+      chainId: operation.chainId,
+      ownerAddress: operation.ownerAddress,
+      accountAddress: operation.accountAddress,
+      token: operation.authorizationToken,
+      expectedNonce: operation.authorizationNonce,
+    })
+    // Nonce-owned cleanup cannot remove a newer v2 authorization. Reaching
+    // this point means the consumed nonce was durably retired.
+    return true
   } catch {
-    // Corrupt persisted metadata or an unavailable chain/index read cannot
-    // prove that rebuilding is safe.
-    return undefined
+    return false
   }
 }
 
@@ -199,6 +135,7 @@ export function SponsoredOperationRecovery() {
         event.key === SPONSORED_OPERATION_STORAGE_NAME ||
         event.key?.startsWith(SPONSORED_OPERATION_JOURNAL_PREFIX) ||
         event.key?.startsWith(SPONSORED_OPERATION_LANE_HEAD_PREFIX) ||
+        event.key?.startsWith(SPONSORED_OPERATION_LANE_RELEASE_PREFIX) ||
         event.key?.startsWith(SPONSORED_OPERATION_RESOLUTION_PREFIX)
       ) {
         void useSponsoredOperationStore.persist.rehydrate()
@@ -276,7 +213,7 @@ export function SponsoredOperationRecovery() {
                 })
               }
             } finally {
-              releaseBrowserLane()
+              await releaseBrowserLane()
             }
           }).catch(() => {
             // A held or unavailable Web Lock is not proof of abandonment.
@@ -310,48 +247,77 @@ export function SponsoredOperationRecovery() {
         }
 
         recovering.add(operation.id)
-        const laneWasReleased = operation.status === 'outcome-unknown'
-        const acquireRecoveryLane = laneWasReleased
-          ? Promise.resolve<(() => void) | undefined>(undefined)
-          : acquireSponsoredOperationBrowserLane({
+        const initiallyLaneBlocking =
+          isSponsoredOperationLaneBlocking(operation)
+        const acquireRecoveryLock = initiallyLaneBlocking
+          ? acquireSponsoredOperationBrowserLane({
               chainId: operation.chainId,
               accountAddress: operation.accountAddress,
               lane: operation.lane,
             })
-        void acquireRecoveryLane.then(async (releaseBrowserLane) => {
+          : acquireSponsoredOperationBrowserRecoveryLock({
+              chainId: operation.chainId,
+              accountAddress: operation.accountAddress,
+              operationId: operation.id,
+            })
+        void acquireRecoveryLock.then(async (initialReleaseBrowserLock) => {
+          let releaseBrowserLock:
+            ReleaseSponsoredOperationBrowserLock | undefined =
+            initialReleaseBrowserLock
+          let holdsSubmissionLane = initiallyLaneBlocking
           try {
-            if (!laneWasReleased) {
-              restoreSponsoredOperationLane({
-                chainId: operation.chainId,
-                accountAddress: operation.accountAddress,
-                lane: operation.lane,
-              })
-              await useSponsoredOperationStore.persist.rehydrate()
+            if (holdsSubmissionLane) {
               restoreSponsoredOperationLane({
                 chainId: operation.chainId,
                 accountAddress: operation.accountAddress,
                 lane: operation.lane,
               })
             }
+            await useSponsoredOperationStore.persist.rehydrate()
+            if (holdsSubmissionLane) {
+              restoreSponsoredOperationLane({
+                chainId: operation.chainId,
+                accountAddress: operation.accountAddress,
+                lane: operation.lane,
+              })
+            }
+
             const latestOperation =
               useSponsoredOperationStore.getState().operations
                 .find((item) => item.id === operation.id)
-            if (
-              !latestOperation ||
-              latestOperation.userOperationHash?.toLowerCase() !==
-                userOperationHash.toLowerCase() ||
+            const isStillRecoverable = (
+              candidate: SponsoredOperation | undefined
+            ): candidate is SponsoredOperation => Boolean(
+              candidate &&
+              candidate.userOperationHash?.toLowerCase() ===
+                userOperationHash.toLowerCase() &&
               (
-                laneWasReleased
-                  ? latestOperation.status !== 'outcome-unknown'
-                  : isSponsoredOperationTerminal(latestOperation.status)
-              ) ||
-              hasSponsoredOperationSignal(latestOperation.id) ||
-              !operationMatchesRuntime(
-                latestOperation,
-                runtime,
-                accountAddress
-              )
-            ) {
+                !isSponsoredOperationTerminal(candidate.status) ||
+                candidate.status === 'outcome-unknown'
+              ) &&
+              !hasSponsoredOperationSignal(candidate.id) &&
+              operationMatchesRuntime(candidate, runtime, accountAddress)
+            )
+            if (!isStillRecoverable(latestOperation)) return
+
+            const latestLaneBlocking =
+              isSponsoredOperationLaneBlocking(latestOperation)
+            if (!holdsSubmissionLane && latestLaneBlocking) {
+              // A reconciliation lock never authorizes work for a blocking
+              // operation. This should be impossible for the monotonic release
+              // marker, but fail closed if corrupted or legacy data says so.
+              return
+            }
+            if (holdsSubmissionLane && !latestLaneBlocking) {
+              // Hydration may reveal that another tab already persisted the
+              // successful-inclusion release. Do not perform any RPC while
+              // unnecessarily occupying the account submission lane.
+              await releaseBrowserLock()
+              releaseBrowserLock = undefined
+              holdsSubmissionLane = false
+              // The next scan will acquire the per-operation reconciliation
+              // lock. Returning avoids a hand-off window in which this tab
+              // could race a tab that already owns that lock.
               return
             }
 
@@ -365,25 +331,27 @@ export function SponsoredOperationRecovery() {
               const currentOperation =
                 useSponsoredOperationStore.getState().operations
                   .find((item) => item.id === latestOperation.id)
-              let retainsObservedInclusion =
+              const hadObservedInclusion =
                 currentOperation !== undefined &&
                 hasObservedSponsoredOperationInclusion(currentOperation)
-              if (
-                currentOperation &&
-                hasObservedSponsoredOperationInclusion(currentOperation) &&
+              const inclusionWasReorged =
+                hadObservedInclusion &&
                 await observedInclusionIsReorged(
                   currentOperation,
                   runtime
                 )
-              ) {
-                retainsObservedInclusion =
-                  !useSponsoredOperationStore
-                    .getState()
-                    .clearObservedInclusion(latestOperation.id)
-              }
+              const inclusionWasRetracted =
+                inclusionWasReorged &&
+                useSponsoredOperationStore
+                  .getState()
+                  .clearObservedInclusion(latestOperation.id)
               if (
-                !laneWasReleased &&
-                !retainsObservedInclusion
+                inclusionWasRetracted ||
+                (
+                  currentOperation !== undefined &&
+                  isSponsoredOperationLaneBlocking(currentOperation) &&
+                  !hadObservedInclusion
+                )
               ) {
                 useSponsoredOperationStore.getState().failOperation({
                   id: latestOperation.id,
@@ -395,28 +363,60 @@ export function SponsoredOperationRecovery() {
             }
 
             if (outcome?.kind === 'included') {
+              // A failed exact receipt is not a successful nonce-consumption
+              // boundary. Keep the lane blocked until the safe head makes the
+              // execution-reverted terminal result authoritative.
+              if (
+                !outcome.receipt.success ||
+                outcome.receipt.receipt.status !== 'success'
+              ) {
+                const currentOperation =
+                  useSponsoredOperationStore.getState().operations
+                    .find((item) => item.id === latestOperation.id)
+                const inclusionWasReorged =
+                  currentOperation !== undefined &&
+                  hasObservedSponsoredOperationInclusion(currentOperation) &&
+                  await observedInclusionIsReorged(
+                    currentOperation,
+                    runtime
+                  )
+                const inclusionWasRetracted =
+                  inclusionWasReorged &&
+                  useSponsoredOperationStore
+                    .getState()
+                    .clearObservedInclusion(latestOperation.id)
+                if (inclusionWasRetracted) {
+                  useSponsoredOperationStore.getState().failOperation({
+                    id: latestOperation.id,
+                    status: 'receipt-timeout',
+                    reason: 'BUNDLER_UNAVAILABLE',
+                    retryable: false,
+                  })
+                }
+                return
+              }
+              const observation = {
+                transactionHash: outcome.transactionHash,
+                blockNumber:
+                  outcome.receipt.receipt.blockNumber.toString(),
+                blockHash: outcome.receipt.receipt.blockHash,
+                success: true as const,
+              }
               const inclusionPersisted =
                 useSponsoredOperationStore
                   .getState()
                   .recordObservedInclusion(
                     latestOperation.id,
-                    {
-                      transactionHash: outcome.transactionHash,
-                      blockNumber:
-                        outcome.receipt.receipt.blockNumber.toString(),
-                      blockHash: outcome.receipt.receipt.blockHash,
-                    }
+                    observation
                   )
               if (!inclusionPersisted) {
                 const currentOperation =
                   useSponsoredOperationStore.getState().operations
                     .find((item) => item.id === latestOperation.id)
                 if (
-                  !laneWasReleased &&
-                  (
-                    !currentOperation ||
-                    !hasObservedSponsoredOperationInclusion(currentOperation)
-                  )
+                  currentOperation &&
+                  isSponsoredOperationLaneBlocking(currentOperation) &&
+                  !hasObservedSponsoredOperationInclusion(currentOperation)
                 ) {
                   useSponsoredOperationStore.getState().failOperation({
                     id: latestOperation.id,
@@ -425,11 +425,35 @@ export function SponsoredOperationRecovery() {
                     retryable: false,
                   })
                 }
+                return
+              }
+
+              const operationWithEvidence =
+                useSponsoredOperationStore.getState().operations
+                  .find((item) => item.id === latestOperation.id)
+              if (
+                !operationWithEvidence ||
+                !clearAuthorizationBeforeIncludedRelease(
+                  operationWithEvidence
+                )
+              ) {
+                return
+              }
+              const released = useSponsoredOperationStore
+                .getState()
+                .releaseLaneAfterSuccessfulInclusion(
+                  latestOperation.id,
+                  observation
+                )
+              if (released && holdsSubmissionLane) {
+                await releaseBrowserLock()
+                releaseBrowserLock = undefined
+                holdsSubmissionLane = false
               }
               return
             }
 
-            if (outcome?.kind === 'pending' && !laneWasReleased) {
+            if (outcome?.kind === 'pending') {
               const currentOperation =
                 useSponsoredOperationStore.getState().operations
                   .find((item) => item.id === latestOperation.id)
@@ -447,7 +471,17 @@ export function SponsoredOperationRecovery() {
                 useSponsoredOperationStore
                   .getState()
                   .clearObservedInclusion(latestOperation.id)
-              if (!hasObservedInclusion || inclusionWasRetracted) {
+              if (
+                inclusionWasRetracted ||
+                (
+                  currentOperation !== undefined &&
+                  isSponsoredOperationLaneBlocking(currentOperation) &&
+                  !hasObservedInclusion
+                )
+              ) {
+                // A proven reorg remains nonretryable attention but the
+                // monotonic successful-inclusion marker prevents this older
+                // nonce from reclaiming a lane now owned by newer work.
                 useSponsoredOperationStore.getState().failOperation({
                   id: latestOperation.id,
                   status: 'receipt-timeout',
@@ -484,13 +518,7 @@ export function SponsoredOperationRecovery() {
               return
             }
 
-            if (
-              outcome?.kind === 'terminal' &&
-              (
-                !laneWasReleased ||
-                outcome.terminalStatus === 'execution-reverted'
-              )
-            ) {
+            if (outcome?.kind === 'terminal') {
               nextProtocolCheckAt.delete(latestOperation.id)
               useSponsoredOperationStore.getState().failOperation({
                 id: latestOperation.id,
@@ -554,11 +582,12 @@ export function SponsoredOperationRecovery() {
                   : undefined,
             })
           } finally {
-            releaseBrowserLane?.()
+            await releaseBrowserLock?.()
           }
         }).catch(() => {
-          // A live submission in another tab owns the same browser lane. Any
-          // coordination or hydration failure remains fail-closed.
+          // Another tab owns either the live submission lane or this exact
+          // operation's reconciliation lock. Any coordination or hydration
+          // failure remains fail-closed.
         }).finally(() => {
           recovering.delete(operation.id)
         })

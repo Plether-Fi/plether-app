@@ -7,14 +7,20 @@ import {
   type Address,
   type Hex,
 } from 'viem'
-import { clearDepositAuthorization } from './authorizationStore'
+import {
+  clearDepositAuthorization,
+  clearLegacyDepositAuthorization,
+} from './authorizationStore'
 import {
   asSponsorRequestError,
   BundlerRequestError,
   SponsorRequestError,
   SponsoredPreflightError,
 } from './errors'
-import { acquireSponsoredOperationBrowserLane } from './laneLock'
+import {
+  acquireSponsoredOperationBrowserLane,
+  type ReleaseSponsoredOperationBrowserLock,
+} from './laneLock'
 import type { PerpsAaDeploymentManifest } from './manifest'
 import {
   beginSponsoredOperationTracking,
@@ -40,6 +46,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   action: PerpsActionPlan
   runtime: PerpsAaSmartAccountRuntime
   authorizationTokenToClearOnConfirmation?: Address
+  authorizationNonceToClearOnConfirmation?: Hex
   lane?: string
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
@@ -50,6 +57,17 @@ export interface ExecuteSponsoredPerpsActionResult {
   receipt: ManagedUserOperationReceipt
   transactionHash: Hex
 }
+
+type PimlicoWaitOutcome =
+  | {
+      kind: 'included'
+      receipt: ManagedUserOperationReceipt
+    }
+  | {
+      kind: 'confirmed'
+      receipt: ManagedUserOperationReceipt
+      inclusionReleased: boolean
+    }
 
 function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -88,14 +106,17 @@ async function waitForPimlicoOutcome(input: {
   userOperationHash: Hex
   signal: AbortSignal
   onTransactionHash: (hash: Hex) => void
-  onObservedInclusion?: (
+  onObservedInclusion: (
     observation: SponsoredOperationInclusionObservation
   ) => boolean
   onInclusionRetracted?: () => boolean
+  onSuccessfulInclusion: (
+    observation: SponsoredOperationInclusionObservation & { success: true }
+  ) => Promise<boolean>
   onIncluded?: (receipt: ManagedUserOperationReceipt) => void
   timeoutMs?: number
   pollIntervalMs?: number
-}): Promise<ManagedUserOperationReceipt> {
+}): Promise<PimlicoWaitOutcome> {
   const startedAt = Date.now()
   const timeoutMs = input.timeoutMs ?? 120_000
   const pollIntervalMs = input.pollIntervalMs ?? 1_500
@@ -104,37 +125,54 @@ async function waitForPimlicoOutcome(input: {
   let reportedInclusionHash: Hex | undefined
   let lastReconciliationError: unknown
 
-  const reportInclusion = (receipt: ManagedUserOperationReceipt) => {
+  const reportInclusion = async (
+    receipt: ManagedUserOperationReceipt
+  ): Promise<boolean> => {
+    // A not-yet-safe exact receipt can also prove execution failure. Keep the
+    // submission lane locked until that result reaches the safe head and can
+    // be recorded as an authoritative terminal outcome.
+    if (!receipt.success || receipt.receipt.status !== 'success') {
+      return false
+    }
     const transactionHash = receipt.receipt.transactionHash
-    const observation: SponsoredOperationInclusionObservation = {
+    const observation: SponsoredOperationInclusionObservation & {
+      success: true
+    } = {
       transactionHash,
       blockNumber: receipt.receipt.blockNumber.toString(),
       blockHash: receipt.receipt.blockHash,
+      success: true,
     }
     try {
-      if (
-        input.onObservedInclusion &&
-        !input.onObservedInclusion(observation)
-      ) {
+      if (!input.onObservedInclusion(observation)) {
         throw new Error(
           'The latest-chain inclusion could not be persisted for recovery'
         )
       }
       persistedInclusion = observation
+      if (!await input.onSuccessfulInclusion(observation)) {
+        throw new Error(
+          'The successful inclusion could not durably release its submission lane'
+        )
+      }
       if (
         reportedInclusionHash?.toLowerCase() !==
           transactionHash.toLowerCase()
       ) {
-        input.onIncluded?.(receipt)
+        try {
+          input.onIncluded?.(receipt)
+        } catch {
+          // The canonical successful receipt is already durable and its lane
+          // is released. An optional UI consumer cannot turn that fact into a
+          // retry or keep later account work blocked.
+        }
         reportedInclusionHash = transactionHash
       }
       lastReconciliationError = undefined
+      return true
     } catch (error) {
       lastReconciliationError = error
-      // Consumer callbacks must not interrupt safe-head reconciliation or
-      // release the sponsored-operation lane early. Retry while inclusion is
-      // still being polled so a transient parser or state error cannot leave
-      // the UI permanently behind canonical chain state.
+      return false
     }
   }
 
@@ -183,7 +221,9 @@ async function waitForPimlicoOutcome(input: {
         userOperationHash: input.userOperationHash,
       })
       if (outcome.kind === 'included') {
-        reportInclusion(outcome.receipt)
+        if (await reportInclusion(outcome.receipt)) {
+          return { kind: 'included', receipt: outcome.receipt }
+        }
       }
       if (outcome.kind === 'pending') {
         // Pimlico can temporarily miss a receipt it previously indexed.
@@ -198,8 +238,15 @@ async function waitForPimlicoOutcome(input: {
         input.onTransactionHash(outcome.transactionHash)
       }
       if (outcome.kind === 'confirmed') {
-        reportInclusion(outcome.receipt)
-        return outcome.receipt
+        // A safe successful receipt is terminal authority even if provisional
+        // evidence or the early-release marker cannot be persisted. The
+        // terminal transition below has its own durable lane release path.
+        const inclusionReleased = await reportInclusion(outcome.receipt)
+        return {
+          kind: 'confirmed',
+          receipt: outcome.receipt,
+          inclusionReleased,
+        }
       }
       if (outcome.kind === 'terminal') {
         throw new BundlerRequestError({
@@ -244,7 +291,7 @@ export async function executeSponsoredPerpsAction(
     walletFamily: input.runtime.walletFamily,
     walletVersion: input.runtime.walletVersion,
   }
-  let releaseBrowserLane: (() => void) | undefined
+  let releaseBrowserLane: ReleaseSponsoredOperationBrowserLock | undefined
   let tracker: ReturnType<typeof beginSponsoredOperationTracking> | undefined
 
   try {
@@ -321,6 +368,7 @@ export async function executeSponsoredPerpsAction(
       manifestVersion: input.manifest.version,
       action: input.action.kind,
       authorizationToken: input.authorizationTokenToClearOnConfirmation,
+      authorizationNonce: input.authorizationNonceToClearOnConfirmation,
       lane,
       walletFamily: input.runtime.walletFamily,
       walletVersion: input.runtime.walletVersion,
@@ -433,13 +481,42 @@ export async function executeSponsoredPerpsAction(
     }
 
     status('confirming')
-    const receipt = await waitForPimlicoOutcome({
+    const outcome = await waitForPimlicoOutcome({
       runtime: input.runtime,
       userOperationHash: localUserOperationHash,
       signal: activeTracker.signal,
       onTransactionHash: activeTracker.onTransactionHash,
       onObservedInclusion: activeTracker.onObservedInclusion,
       onInclusionRetracted: activeTracker.onInclusionRetracted,
+      onSuccessfulInclusion: async (observation) => {
+        if (input.authorizationTokenToClearOnConfirmation) {
+          // New EIP-3009 submissions always carry the authorization nonce.
+          // Legacy records without it stay lane-blocking until safe recovery
+          // because an unowned cleanup could erase a newer authorization.
+          if (!input.authorizationNonceToClearOnConfirmation) return false
+          clearDepositAuthorization({
+            chainId: input.manifest.chainId,
+            ownerAddress: input.ownerAddress,
+            accountAddress: input.runtime.smartAccount.accountAddress,
+            token: input.authorizationTokenToClearOnConfirmation,
+            expectedNonce: input.authorizationNonceToClearOnConfirmation,
+          })
+        }
+        const released = useSponsoredOperationStore
+          .getState()
+          .releaseLaneAfterSuccessfulInclusion(
+            activeTracker.id,
+            observation
+          )
+        if (released) {
+          // Release before the optional onIncluded consumer runs so a callback
+          // that starts the next action sees the durable lane state and the
+          // matching browser-wide lock state atomically.
+          await releaseBrowserLane?.()
+          releaseBrowserLane = undefined
+        }
+        return released
+      },
       onIncluded: (includedReceipt) => {
         input.onIncluded?.({
           userOperationHash: localUserOperationHash,
@@ -448,26 +525,45 @@ export async function executeSponsoredPerpsAction(
         })
       },
     })
-    status('confirmed')
-
-    if (input.authorizationTokenToClearOnConfirmation) {
-      try {
-        clearDepositAuthorization({
-          chainId: input.manifest.chainId,
-          ownerAddress: input.ownerAddress,
-          accountAddress: input.runtime.smartAccount.accountAddress,
-          token: input.authorizationTokenToClearOnConfirmation,
-        })
-      } catch {
-        // The operation is already authoritatively confirmed. Local cleanup
-        // must never downgrade it to an ambiguous state or invite a retry.
+    if (outcome.kind === 'confirmed') {
+      if (
+        input.authorizationTokenToClearOnConfirmation &&
+        !outcome.inclusionReleased
+      ) {
+        try {
+          if (input.authorizationNonceToClearOnConfirmation) {
+            clearDepositAuthorization({
+              chainId: input.manifest.chainId,
+              ownerAddress: input.ownerAddress,
+              accountAddress: input.runtime.smartAccount.accountAddress,
+              token: input.authorizationTokenToClearOnConfirmation,
+              expectedNonce:
+                input.authorizationNonceToClearOnConfirmation,
+            })
+          } else {
+            // Token-only metadata belongs to the old singleton cache. At the
+            // safe head retire only v1; deleting v2 here could erase a newer
+            // authorization created by another tab.
+            clearLegacyDepositAuthorization({
+              chainId: input.manifest.chainId,
+              ownerAddress: input.ownerAddress,
+              accountAddress: input.runtime.smartAccount.accountAddress,
+              token: input.authorizationTokenToClearOnConfirmation,
+            })
+          }
+        } catch {
+          // Safe chain confirmation remains authoritative. This best-effort
+          // cleanup runs before the terminal transition; storage failure must
+          // not downgrade the operation or invite an onchain retry.
+        }
       }
+      status('confirmed')
     }
 
     return {
       userOperationHash: localUserOperationHash,
-      receipt,
-      transactionHash: receipt.receipt.transactionHash,
+      receipt: outcome.receipt,
+      transactionHash: outcome.receipt.receipt.transactionHash,
     }
   } catch (error) {
     if (tracker) {
@@ -478,6 +574,6 @@ export async function executeSponsoredPerpsAction(
     throw error
   } finally {
     tracker?.release()
-    releaseBrowserLane?.()
+    await releaseBrowserLane?.()
   }
 }
