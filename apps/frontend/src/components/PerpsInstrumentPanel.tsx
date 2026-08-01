@@ -253,14 +253,17 @@ function DirectionalLimitStat({
       </div>
 
       <div
-        className={isExpanded
-          ? 'pointer-events-none absolute -inset-x-px top-full z-20 min-w-0 border-x border-b border-brand-border/30 bg-surface-panel px-3 pb-3 sm:px-5 sm:pb-4'
-          : 'hidden'}
+        className={`pointer-events-none absolute -inset-x-px top-full z-20 grid min-w-0 overflow-hidden border-x border-b bg-surface-panel px-3 transition-[grid-template-rows,opacity,transform,box-shadow,border-color,padding-bottom] duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none sm:px-5 ${
+          isExpanded
+            ? 'grid-rows-[1fr] translate-y-0 border-brand-border/30 pb-3 opacity-100 shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)] sm:pb-4'
+            : 'grid-rows-[0fr] -translate-y-1 border-transparent pb-0 opacity-0 shadow-none'
+        }`}
       >
         <dt className="sr-only">{stat.label} details</dt>
         <dd
           id={detailsId}
           aria-hidden={!isExpanded}
+          className="min-h-0 overflow-hidden"
         >
           <div className="pt-3">
             <div className="relative h-1.5 overflow-hidden rounded-full bg-app-bg/70">

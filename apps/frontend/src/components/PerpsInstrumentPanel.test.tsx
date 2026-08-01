@@ -25,16 +25,24 @@ describe('PerpsInstrumentPanel directional limit', () => {
 
     const trigger = screen.getByRole('button', { name: 'Directional limit used details' })
     const details = screen.getByText('Directional limit').closest('[aria-hidden]')
+    const overlay = details?.parentElement
     const metric = trigger.parentElement?.parentElement
     const coveredStats = screen.getByText('Pool liquidity').closest('[aria-hidden]')
 
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(details).toHaveAttribute('aria-hidden', 'true')
+    expect(overlay).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'shadow-none')
+    expect(overlay).not.toHaveClass('hidden')
     expect(coveredStats).toBeNull()
 
     fireEvent.mouseEnter(metric!)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(details).toHaveAttribute('aria-hidden', 'false')
+    expect(overlay).toHaveClass(
+      'grid-rows-[1fr]',
+      'opacity-100',
+      'shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)]'
+    )
     expect(screen.getByText('Pool liquidity')).toBeVisible()
     expect(screen.getByText('13% remaining')).toBeInTheDocument()
     expect(screen.getByText('Total LONG exposure')).toBeVisible()
@@ -43,6 +51,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
 
     fireEvent.mouseLeave(metric!)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(overlay).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'shadow-none')
     expect(screen.getByText('Pool liquidity').closest('[aria-hidden]')).toBeNull()
 
     fireEvent.focus(trigger)
