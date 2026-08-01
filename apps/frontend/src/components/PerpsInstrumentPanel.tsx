@@ -6,6 +6,7 @@ import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLi
 export interface PerpsDirectionalLimitDetails {
   usagePercent?: number
   side?: PerpsDirectionalLimitSide
+  totalExposure?: ReactNode
   netExposure?: ReactNode
   limit?: ReactNode
   isLoading?: boolean
@@ -57,6 +58,7 @@ const DEFAULT_STATS: PerpsInstrumentStat[] = [
     directionalLimit: {
       usagePercent: 87,
       side: 'long',
+      totalExposure: <TokenAmount amount="8.36M" />,
       netExposure: <TokenAmount amount="3.07M" />,
       limit: <TokenAmount amount="3.53M" />,
     },
@@ -157,6 +159,13 @@ function directionalBarClass(usagePercent: number | undefined): string {
   return 'bg-positive'
 }
 
+function totalExposureLabel(side: PerpsDirectionalLimitSide | undefined): string {
+  if (side === 'long') return 'Total LONG exposure'
+  if (side === 'short') return 'Total SHORT exposure'
+  if (side === 'balanced') return 'Exposure per side'
+  return 'Total exposure'
+}
+
 function directionalConstraintText(
   details: PerpsDirectionalLimitDetails,
   displayUsagePercent: number | undefined
@@ -194,6 +203,7 @@ function DirectionalLimitStat({
   const displayUsagePercent = hasUsage ? Math.max(0, Math.round(details.usagePercent ?? 0)) : undefined
   const progressPercent = hasUsage ? Math.min(100, Math.max(0, details.usagePercent ?? 0)) : 0
   const isExpanded = forceExpanded || isHovered || isFocused
+  const totalSideLabel = totalExposureLabel(details.side)
   const sideLabel = details.side === 'balanced' ? 'Net exposure' : `Net ${details.side?.toUpperCase() ?? ''} exposure`
   const valueLabel = details.isLoading
     ? '...'
@@ -268,16 +278,20 @@ function DirectionalLimitStat({
               </span>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-4 text-xs">
+            <dl className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3 sm:gap-4">
               <div className="min-w-0">
-                <div className="text-content-secondary">{sideLabel}</div>
-                <div className="mt-0.5 font-semibold text-content-primary">{details.netExposure ?? '--'}</div>
+                <dt className="text-content-secondary">{totalSideLabel}</dt>
+                <dd className="mt-0.5 font-semibold text-content-primary">{details.totalExposure ?? '--'}</dd>
               </div>
-              <div className="min-w-0 text-right">
-                <div className="text-content-secondary">Directional limit</div>
-                <div className="mt-0.5 font-semibold text-content-primary">{details.limit ?? '--'}</div>
+              <div className="min-w-0 sm:text-center">
+                <dt className="text-content-secondary">{sideLabel}</dt>
+                <dd className="mt-0.5 font-semibold text-content-primary">{details.netExposure ?? '--'}</dd>
               </div>
-            </div>
+              <div className="min-w-0 sm:text-right">
+                <dt className="text-content-secondary">Directional limit</dt>
+                <dd className="mt-0.5 font-semibold text-content-primary">{details.limit ?? '--'}</dd>
+              </div>
+            </dl>
 
             {constraintText ? (
               <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>

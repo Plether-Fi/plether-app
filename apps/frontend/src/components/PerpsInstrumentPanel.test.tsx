@@ -12,6 +12,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
             directionalLimit: {
               usagePercent: 87,
               side: 'long',
+              totalExposure: '882.9M USDC',
               netExposure: '307.2M USDC',
               limit: '353.1M USDC',
             },
@@ -36,6 +37,9 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(details).toHaveAttribute('aria-hidden', 'false')
     expect(screen.getByText('Pool liquidity')).toBeVisible()
     expect(screen.getByText('13% remaining')).toBeInTheDocument()
+    expect(screen.getByText('Total LONG exposure')).toBeVisible()
+    expect(screen.getByText('Net LONG exposure')).toBeVisible()
+    expect(screen.getByText('882.9M USDC')).toBeVisible()
 
     fireEvent.mouseLeave(metric!)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -46,5 +50,47 @@ describe('PerpsInstrumentPanel directional limit', () => {
 
     fireEvent.blur(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('labels only the total exposure for the current heavy side', () => {
+    const { rerender } = render(
+      <PerpsInstrumentPanel
+        directionalLimitDetailsExpanded
+        stats={[{
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: 62,
+            side: 'short',
+            totalExposure: '580.8M USDC',
+            netExposure: '225.4M USDC',
+            limit: '363.3M USDC',
+          },
+        }]}
+      />
+    )
+
+    expect(screen.getByText('Total SHORT exposure')).toBeVisible()
+    expect(screen.getByText('Net SHORT exposure')).toBeVisible()
+    expect(screen.queryByText('Total LONG exposure')).not.toBeInTheDocument()
+
+    rerender(
+      <PerpsInstrumentPanel
+        directionalLimitDetailsExpanded
+        stats={[{
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: 0,
+            side: 'balanced',
+            totalExposure: '529.8M USDC',
+            netExposure: '0 USDC',
+            limit: '353.1M USDC',
+          },
+        }]}
+      />
+    )
+
+    expect(screen.getByText('Exposure per side')).toBeVisible()
+    expect(screen.getByText('Net exposure')).toBeVisible()
+    expect(screen.queryByText('Total SHORT exposure')).not.toBeInTheDocument()
   })
 })

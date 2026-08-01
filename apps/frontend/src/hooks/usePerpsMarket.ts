@@ -285,6 +285,9 @@ export function usePerpsMarket() {
         ? {
             usagePercent: directionalLimit.usagePercent,
             side: directionalLimit.side,
+            totalExposure: formatCompactUsdc(
+              directionalLimit.side === 'short' ? bearOpenInterestUsdc : bullOpenInterestUsdc
+            ),
             netExposure: formatCompactUsdc(directionalLimit.netExposureUsdc),
             limit: formatCompactUsdc(directionalLimit.limitUsdc),
           }

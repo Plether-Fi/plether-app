@@ -49,6 +49,7 @@ function CostOfCarryTooltip() {
 const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
   usagePercent: 87,
   side: 'long',
+  totalExposure: <TokenAmount amount="882.9M" />,
   netExposure: <TokenAmount amount="307.2M" />,
   limit: <TokenAmount amount="353.1M" />,
 }
@@ -140,6 +141,7 @@ export const WideDesktop: Story = {
       directionalLimit: {
         usagePercent: 98,
         side: 'long',
+        totalExposure: <TokenAmount amount="875.8M" />,
         netExposure: <TokenAmount amount="346M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -192,6 +194,8 @@ export const HoverOverlayOnChart: Story = {
     await userEvent.hover(trigger)
 
     await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(canvas.getByText('Total LONG exposure')).toBeVisible()
+    await expect(canvas.getByText('Net LONG exposure')).toBeVisible()
     expect(panel.getBoundingClientRect().height).toBe(panelHeight)
     expect(chart.getBoundingClientRect().top).toBe(chartTop)
 
@@ -208,6 +212,16 @@ export const HoverOverlayOnChart: Story = {
     expect(overlayStyle.borderLeftWidth).toBe(panelStyle.borderLeftWidth)
     expect(overlayStyle.borderRightWidth).toBe(panelStyle.borderRightWidth)
     expect(overlayStyle.borderBottomWidth).toBe(panelStyle.borderBottomWidth)
+
+    const netMetric = canvas.getByText('Net LONG exposure').parentElement
+    const metricsRow = netMetric?.parentElement
+    if (!netMetric || !metricsRow) throw new Error('Directional limit metrics not found')
+
+    const netMetricRect = netMetric.getBoundingClientRect()
+    const metricsRowRect = metricsRow.getBoundingClientRect()
+    const netMetricCenter = netMetricRect.left + netMetricRect.width / 2
+    const metricsRowCenter = metricsRowRect.left + metricsRowRect.width / 2
+    expect(Math.abs(netMetricCenter - metricsRowCenter)).toBeLessThan(1)
   },
 }
 
@@ -217,6 +231,7 @@ export const PositiveSession: Story = {
       directionalLimit: {
         usagePercent: 58,
         side: 'long',
+        totalExposure: <TokenAmount amount="734.6M" />,
         netExposure: <TokenAmount amount="204.8M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -255,10 +270,19 @@ export const ShortHeavy: Story = {
       directionalLimit: {
         usagePercent: 62,
         side: 'short',
-        netExposure: <TokenAmount amount="218.9M" />,
-        limit: <TokenAmount amount="353.1M" />,
+        totalExposure: <TokenAmount amount="580.8M" />,
+        netExposure: <TokenAmount amount="225.4M" />,
+        limit: <TokenAmount amount="363.3M" />,
       },
     }),
+  },
+  render: Default.render,
+}
+
+export const ShortHeavyDetailsVisible: Story = {
+  args: {
+    ...ShortHeavy.args,
+    directionalLimitDetailsExpanded: true,
   },
   render: Default.render,
 }
@@ -269,10 +293,19 @@ export const Balanced: Story = {
       directionalLimit: {
         usagePercent: 0,
         side: 'balanced',
+        totalExposure: <TokenAmount amount="529.8M" />,
         netExposure: <TokenAmount amount="0" />,
         limit: <TokenAmount amount="353.1M" />,
       },
     }),
+  },
+  render: Default.render,
+}
+
+export const BalancedDetailsVisible: Story = {
+  args: {
+    ...Balanced.args,
+    directionalLimitDetailsExpanded: true,
   },
   render: Default.render,
 }
@@ -283,6 +316,7 @@ export const NearLimit: Story = {
       directionalLimit: {
         usagePercent: 94,
         side: 'long',
+        totalExposure: <TokenAmount amount="861.7M" />,
         netExposure: <TokenAmount amount="331.9M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -297,6 +331,7 @@ export const LimitReached: Story = {
       directionalLimit: {
         usagePercent: 100,
         side: 'long',
+        totalExposure: <TokenAmount amount="882.9M" />,
         netExposure: <TokenAmount amount="353.1M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -312,6 +347,7 @@ export const LimitReachedDetailsVisible: Story = {
       directionalLimit: {
         usagePercent: 100,
         side: 'long',
+        totalExposure: <TokenAmount amount="882.9M" />,
         netExposure: <TokenAmount amount="353.1M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -326,6 +362,7 @@ export const LimitExceeded: Story = {
       directionalLimit: {
         usagePercent: 108,
         side: 'long',
+        totalExposure: <TokenAmount amount="911.1M" />,
         netExposure: <TokenAmount amount="381.3M" />,
         limit: <TokenAmount amount="353.1M" />,
       },
@@ -341,6 +378,7 @@ export const LimitExceededDetailsVisible: Story = {
       directionalLimit: {
         usagePercent: 108,
         side: 'long',
+        totalExposure: <TokenAmount amount="911.1M" />,
         netExposure: <TokenAmount amount="381.3M" />,
         limit: <TokenAmount amount="353.1M" />,
       },

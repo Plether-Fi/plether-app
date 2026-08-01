@@ -157,6 +157,7 @@ export function Perps() {
           directionalLimit: {
             usagePercent: perpsMarket.directionalLimit?.usagePercent,
             side: perpsMarket.directionalLimit?.side,
+            totalExposure: usdcValue(perpsMarket.directionalLimit?.totalExposure, perpsMarket.isLoading),
             netExposure: usdcValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
             limit: usdcValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
             isLoading: perpsMarket.isLoading,
