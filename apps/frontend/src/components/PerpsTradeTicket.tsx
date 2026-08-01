@@ -104,6 +104,23 @@ interface ContractResult {
   error?: unknown
 }
 
+type TradePreviewRequest =
+  | {
+      kind: 'close'
+      account: `0x${string}`
+      sizeDelta: bigint
+      oraclePrice: bigint
+    }
+  | {
+      kind: 'open'
+      account: `0x${string}`
+      side: ReturnType<typeof directionToPerpsSide>
+      sizeDelta: bigint
+      marginDelta: bigint
+      oraclePrice: bigint
+      publishTime: bigint
+    }
+
 interface OpenPreviewView {
   valid: boolean
   invalidReason: number
@@ -223,11 +240,30 @@ interface PerpsTradeTicketProps {
 }
 
 const MOCK_PREVIEW_PRICE = 0.9909
+const TRADE_PREVIEW_DEBOUNCE_MS = 300
 const AVAILABLE_TO_TRADE_AMOUNT = '18 420'
 const CURRENT_POSITION_AMOUNT = '8 200'
 const ORDER_ID = '0x7f21...9c04'
 const COMMIT_TX = '0x4a6b9f1e7c2d8a5b3c9012f4e6d7c8b9a0f123456789abcdef0123456788e2'
 const EXECUTE_TX = '0xa91d6c4f83b27e10d55a4c0e29f8b6a73219d4e5c8b70af11223344556634bf'
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debouncedValue, setDebouncedValue] = useState(value)
+
+  useEffect(() => {
+    if (Object.is(value, debouncedValue)) return undefined
+
+    const timeout = globalThis.setTimeout(() => {
+      setDebouncedValue(value)
+    }, delayMs)
+
+    return () => {
+      globalThis.clearTimeout(timeout)
+    }
+  }, [debouncedValue, delayMs, value])
+
+  return debouncedValue
+}
 const SLIPPAGE_OPTIONS = [0, 0.05, 0.1, 0.25, Infinity]
 const DEFAULT_LIVE_SLIPPAGE = 0.1
 const DEFAULT_ORACLE_FROZEN_SLIPPAGE = 0
@@ -2277,20 +2313,69 @@ export function PerpsTradeTicket({
     oraclePriceRaw !== undefined &&
     oraclePriceRaw > 0n &&
     (isReducingCurrentPosition || previewPublishTime > 0n)
+  const previewRequestSide = isReducingCurrentPosition
+    ? 0
+    : directionToPerpsSide(effectiveOrderDirection)
+  const previewRequestMargin = isReducingCurrentPosition ? 0n : marginUsdc
+  const previewRequestPublishTime = isReducingCurrentPosition ? 0n : previewPublishTime
+  const tradePreviewRequest = useMemo<TradePreviewRequest | undefined>(() => {
+    if (!shouldReadTradePreview) return undefined
+
+    if (isReducingCurrentPosition) {
+      return {
+        kind: 'close',
+        account: address ?? zeroAddress,
+        sizeDelta: orderSizeDelta,
+        oraclePrice: oraclePriceRaw,
+      }
+    }
+
+    return {
+      kind: 'open',
+      account: address ?? zeroAddress,
+      side: previewRequestSide,
+      sizeDelta: orderSizeDelta,
+      marginDelta: previewRequestMargin,
+      oraclePrice: oraclePriceRaw,
+      publishTime: previewRequestPublishTime,
+    }
+  }, [
+    address,
+    isReducingCurrentPosition,
+    oraclePriceRaw,
+    orderSizeDelta,
+    previewRequestMargin,
+    previewRequestPublishTime,
+    previewRequestSide,
+    shouldReadTradePreview,
+  ])
+  const debouncedTradePreviewRequest = useDebouncedValue(
+    tradePreviewRequest,
+    TRADE_PREVIEW_DEBOUNCE_MS
+  )
+  // Opening review is an explicit preflight boundary: read its exact current
+  // inputs immediately, while free-form ticket edits remain debounced.
+  const isTradePreviewDebouncing = !isReviewOpen && tradePreviewRequest !== undefined &&
+    debouncedTradePreviewRequest !== tradePreviewRequest
+  const isTradePreviewQueryEnabled = tradePreviewRequest !== undefined && !isTradePreviewDebouncing
   const {
     data: tradePreviewData,
     isLoading: isTradePreviewLoading,
     isFetching: isTradePreviewFetching,
   } = useReadContracts({
-    contracts: shouldReadTradePreview
+    contracts: isTradePreviewQueryEnabled
       ? [
-          isReducingCurrentPosition
+          tradePreviewRequest.kind === 'close'
             ? {
                 chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
                 address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
                 abi: PERPS_CFD_ENGINE_LENS_ABI,
                 functionName: 'previewClose',
-                args: [address ?? zeroAddress, orderSizeDelta, oraclePriceRaw],
+                args: [
+                  tradePreviewRequest.account,
+                  tradePreviewRequest.sizeDelta,
+                  tradePreviewRequest.oraclePrice,
+                ],
               } as const
             : {
                 chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -2298,34 +2383,36 @@ export function PerpsTradeTicket({
                 abi: PERPS_CFD_ENGINE_LENS_ABI,
                 functionName: 'previewOpen',
                 args: [
-                  address ?? zeroAddress,
-                  directionToPerpsSide(effectiveOrderDirection),
-                  orderSizeDelta,
-                  marginUsdc,
-                  oraclePriceRaw,
-                  previewPublishTime,
+                  tradePreviewRequest.account,
+                  tradePreviewRequest.side,
+                  tradePreviewRequest.sizeDelta,
+                  tradePreviewRequest.marginDelta,
+                  tradePreviewRequest.oraclePrice,
+                  tradePreviewRequest.publishTime,
                 ],
               } as const,
         ]
       : [],
     query: {
-      enabled: shouldReadTradePreview,
+      enabled: isTradePreviewQueryEnabled,
       refetchInterval: 15_000,
     },
   })
+  const activeTradePreviewData = isTradePreviewQueryEnabled ? tradePreviewData : undefined
   const openPreview = !isReducingCurrentPosition
-    ? parseOpenPreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+    ? parseOpenPreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0))
       ?? (!enableLiveTrading ? openPreviewFixture : undefined)
     : undefined
   const closePreview = isReducingCurrentPosition
-    ? parseClosePreview(readResult(tradePreviewData as readonly ContractResult[] | undefined, 0))
+    ? parseClosePreview(readResult(activeTradePreviewData as readonly ContractResult[] | undefined, 0))
       ?? (!enableLiveTrading ? closePreviewFixture : undefined)
     : undefined
-  const tradePreviewFailure = readFailure(tradePreviewData as readonly ContractResult[] | undefined, 0)
+  const tradePreviewFailure = readFailure(activeTradePreviewData as readonly ContractResult[] | undefined, 0)
   const currentTradePreview = isReducingCurrentPosition ? closePreview : openPreview
   const isTradePreviewPending = shouldReadTradePreview && (
-    isTradePreviewLoading ||
-    (isTradePreviewFetching && currentTradePreview === undefined)
+    isTradePreviewDebouncing ||
+    (isTradePreviewQueryEnabled && isTradePreviewLoading) ||
+    (isTradePreviewQueryEnabled && isTradePreviewFetching && currentTradePreview === undefined)
   )
   const minOpenDxyExposureUsdc = minOpenNotionalUsdc === undefined
     ? undefined

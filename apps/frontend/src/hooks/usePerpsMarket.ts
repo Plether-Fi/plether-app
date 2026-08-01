@@ -17,6 +17,10 @@ import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
+const PERPS_DYNAMIC_REFETCH_INTERVAL_MS = 15_000
+const PERPS_CONFIG_STALE_TIME_MS = 5 * 60_000
+const PERPS_CONFIG_REFETCH_INTERVAL_MS = 5 * 60_000
+const PERPS_CONFIG_GC_TIME_MS = 30 * 60_000
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -142,7 +146,12 @@ export function usePerpsMarket() {
     isLoading: isMarketStatsLoading,
     refetch: refetchMarketStats,
   } = usePerpsMarketStats()
-  const { data, isLoading, error, refetch: refetchContracts } = useReadContracts({
+  const {
+    data: dynamicContractData,
+    isLoading: isDynamicContractsLoading,
+    error: dynamicContractsError,
+    refetch: refetchDynamicContracts,
+  } = useReadContracts({
     contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -170,12 +179,40 @@ export function usePerpsMarket() {
         functionName: 'sides',
         args: [1n],
       },
+    ],
+    query: {
+      refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
+    },
+  })
+  // This standalone query is intentionally identical in usePerpsAccount so wagmi
+  // shares one cached riskParams read across the Perps screen.
+  const {
+    data: riskParamsData,
+    isLoading: isRiskParamsLoading,
+    error: riskParamsError,
+    refetch: refetchRiskParams,
+  } = useReadContracts({
+    contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'riskParams',
       },
+    ],
+    query: {
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      refetchInterval: PERPS_CONFIG_REFETCH_INTERVAL_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
+    },
+  })
+  const {
+    data: configurationContractData,
+    isLoading: isConfigurationContractsLoading,
+    error: configurationContractsError,
+    refetch: refetchConfigurationContracts,
+  } = useReadContracts({
+    contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
@@ -190,18 +227,26 @@ export function usePerpsMarket() {
       },
     ],
     query: {
-      refetchInterval: 15_000,
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      refetchInterval: PERPS_CONFIG_REFETCH_INTERVAL_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
     },
   })
 
+  const isLoading =
+    isDynamicContractsLoading ||
+    isRiskParamsLoading ||
+    isConfigurationContractsLoading
+  const error = dynamicContractsError ?? riskParamsError ?? configurationContractsError
+
   return useMemo(() => {
-    const protocolStatus = readResult(data, 0)
-    const poolLiquidity = readResult(data, 1)
-    const bullSide = readResult(data, 2)
-    const bearSide = readResult(data, 3)
-    const riskParams = readResult(data, 4)
-    const executionFeeBps = readResult(data, 5) as bigint | undefined
-    const minOpenNotionalUsdc = readResult(data, 6) as bigint | undefined
+    const protocolStatus = readResult(dynamicContractData, 0)
+    const poolLiquidity = readResult(dynamicContractData, 1)
+    const bullSide = readResult(dynamicContractData, 2)
+    const bearSide = readResult(dynamicContractData, 3)
+    const riskParams = readResult(riskParamsData, 0)
+    const executionFeeBps = readResult(configurationContractData, 0) as bigint | undefined
+    const minOpenNotionalUsdc = readResult(configurationContractData, 1) as bigint | undefined
 
     const markPrice = tupleValue(protocolStatus, 1, 'lastMarkPrice') as bigint | undefined
     const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
@@ -302,8 +347,11 @@ export function usePerpsMarket() {
       isLoading,
       isStatsLoading: isBasketHistory24hLoading || isMarketStatsLoading,
       error,
+      refetchDynamic: refetchDynamicContracts,
       refetch: () => {
-        void refetchContracts()
+        void refetchDynamicContracts()
+        void refetchRiskParams()
+        void refetchConfigurationContracts()
         void refetchLatestBasket()
         void refetchBasketHistory24h()
         void refetchMarketStats()
@@ -311,7 +359,8 @@ export function usePerpsMarket() {
     }
   }, [
     basketHistory24h,
-    data,
+    configurationContractData,
+    dynamicContractData,
     error,
     isBasketHistory24hLoading,
     isLoading,
@@ -319,8 +368,11 @@ export function usePerpsMarket() {
     latestBasket,
     marketStats,
     refetchBasketHistory24h,
-    refetchContracts,
+    refetchConfigurationContracts,
+    refetchDynamicContracts,
     refetchLatestBasket,
     refetchMarketStats,
+    refetchRiskParams,
+    riskParamsData,
   ])
 }

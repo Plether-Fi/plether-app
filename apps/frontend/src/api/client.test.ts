@@ -164,3 +164,77 @@ describe('API request timeouts', () => {
     );
   });
 });
+
+describe('Perps query requests', () => {
+  it('forwards caller cancellation without recording an API failure', async () => {
+    const fetchMock = vi.fn((
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(init.signal?.reason);
+      });
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    const controller = new AbortController();
+
+    const pendingRequest = client.getPerpsBasketLatest(controller.signal);
+    controller.abort();
+
+    await expect(pendingRequest).rejects.toMatchObject({ name: 'AbortError' });
+    expect(analyticsMock.captureFrontendLog).not.toHaveBeenCalled();
+  });
+
+  it('forwards cancellation while an error response body is being decoded', async () => {
+    let rejectBody: ((reason?: unknown) => void) | undefined;
+    const fetchMock = vi.fn(async () => ({
+      ok: false,
+      status: 502,
+      statusText: 'Bad Gateway',
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+      json: () => new Promise<unknown>((_resolve, reject) => {
+        rejectBody = reject;
+      }),
+    }) as Response);
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    const controller = new AbortController();
+
+    const pendingRequest = client.getPerpsBasketLatest(controller.signal);
+    await vi.waitFor(() => expect(rejectBody).toBeDefined());
+    controller.abort();
+    rejectBody?.(controller.signal.reason);
+
+    await expect(pendingRequest).rejects.toMatchObject({ name: 'AbortError' });
+    expect(analyticsMock.captureFrontendLog).not.toHaveBeenCalled();
+  });
+
+  it('does not add a JSON content type to bodyless GET requests', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        timestamp: 1,
+        basketPrice: '100000000',
+        components: [],
+        generatedAt: 1,
+        source: 'test',
+      },
+      meta: {
+        blockNumber: 0,
+        chainId: 421614,
+        cached: false,
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+
+    await client.getPerpsBasketLatest();
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
+    expect(init?.credentials).toBe('omit');
+  });
+});

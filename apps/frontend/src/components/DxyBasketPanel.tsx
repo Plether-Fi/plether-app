@@ -20,6 +20,7 @@ import {
 } from '../api'
 import {
   DXY_BASKET_CHART_INTERVALS,
+  DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS,
   basketIntervalSecondsForChartInterval,
   basketRequestIntervalSecondsForChartInterval,
   basketRangeForChartInterval,
@@ -472,7 +473,11 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
-  const { data: changeData } = usePerpsBasketHistory('24h', 60, true)
+  const { data: changeData } = usePerpsBasketHistory(
+    '24h',
+    DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS,
+    true
+  )
   const { data: latestData } = usePerpsBasketLatest()
   const oracleMark = useMemo<OracleMarkPoint | undefined>(() => {
     if (oraclePriceRaw === undefined || oraclePublishTime === undefined) return undefined
