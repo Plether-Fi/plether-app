@@ -25,6 +25,17 @@
 * [Check and settle a trader claim](trading-on-plether-perps/check-and-settle-a-trader-claim.md)
 * [Trader troubleshooting](trading-on-plether-perps/trader-troubleshooting.md)
 
+## Providing liquidity on Plether
+
+* [Choose Senior or Junior](providing-liquidity/choose-senior-or-junior.md)
+* [Understand LP returns and share value](providing-liquidity/understand-lp-returns-and-share-value.md)
+* [LP risks and safeguards](providing-liquidity/lp-risks-and-safeguards.md)
+* [Deposit liquidity](providing-liquidity/deposit-liquidity.md)
+* [Manage a pending deposit](providing-liquidity/manage-a-pending-deposit.md)
+* [Read your LP position and pool health](providing-liquidity/read-your-lp-position-and-pool-health.md)
+* [Withdraw liquidity](providing-liquidity/withdraw-liquidity.md)
+* [LP troubleshooting](providing-liquidity/lp-troubleshooting.md)
+
 ## How Plether Works
 
 * [The Plether Perps market model](how-plether-works/the-plether-perps-market-model.md)
