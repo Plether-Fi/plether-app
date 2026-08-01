@@ -101,6 +101,16 @@ select:not(:disabled) {
   background: #FFC0B0;
 }
 
+.basket-components-rail {
+  scrollbar-width: none;
+}
+
+.basket-components-rail::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
+}
+
 .leverage-slider,
 .perps-leverage-slider {
   background: #FFAB96;
