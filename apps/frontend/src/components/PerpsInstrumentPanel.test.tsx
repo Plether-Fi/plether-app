@@ -1,6 +1,112 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PerpsInstrumentPanel } from './PerpsInstrumentPanel'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
+
+describe('PerpsInstrumentPanel price details', () => {
+  it('reveals an interactive full-width rail without putting collapsed content in the tab order', () => {
+    vi.useFakeTimers()
+
+    render(
+      <PerpsInstrumentPanel
+        stats={[
+          {
+            label: 'plDXY Perp price',
+            value: '1.0153',
+            hoverDetails: (
+              <button type="button">EUR/USD basket component</button>
+            ),
+          },
+          { label: '24h change', value: '-0.17%' },
+        ]}
+      />
+    )
+
+    const trigger = screen.getByRole('button', { name: 'plDXY Perp price basket components' })
+    const railAction = screen.getByText('EUR/USD basket component').closest('button')
+    const details = railAction?.closest('[aria-hidden]')
+    const overlay = details?.parentElement
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(details).toHaveAttribute('aria-hidden', 'true')
+    expect(details).toHaveAttribute('inert')
+    expect(overlay).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'pointer-events-none', 'shadow-none')
+
+    fireEvent.mouseEnter(trigger)
+
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    expect(details).toHaveAttribute('aria-hidden', 'false')
+    expect(details).not.toHaveAttribute('inert')
+    expect(overlay).toHaveClass(
+      'grid-rows-[1fr]',
+      'opacity-100',
+      'pointer-events-auto',
+      'shadow-[0_20px_32px_-16px_rgba(0,0,0,0.8)]'
+    )
+
+    fireEvent.mouseLeave(trigger)
+    fireEvent.mouseEnter(overlay!)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.mouseLeave(overlay!)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.focus(trigger)
+    fireEvent.blur(trigger)
+    fireEvent.focus(railAction!)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.blur(railAction!)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  it('keeps the price and directional overlays mutually exclusive', () => {
+    render(
+      <PerpsInstrumentPanel
+        stats={[
+          {
+            label: 'plDXY Perp price',
+            value: '1.0153',
+            hoverDetails: <div>EUR/USD</div>,
+          },
+          {
+            label: 'Directional limit used',
+            directionalLimit: {
+              usagePercent: 87,
+              side: 'long',
+              totalExposure: '882.9M USDC',
+              netExposure: '307.2M USDC',
+              limit: '353.1M USDC',
+            },
+          },
+        ]}
+      />
+    )
+
+    const priceTrigger = screen.getByRole('button', { name: 'plDXY Perp price basket components' })
+    const directionalTrigger = screen.getByRole('button', { name: 'Directional limit used details' })
+    const directionalMetric = directionalTrigger.parentElement?.parentElement
+
+    fireEvent.mouseEnter(priceTrigger)
+    expect(priceTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(directionalTrigger).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.mouseEnter(directionalMetric!)
+    expect(priceTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(directionalTrigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.mouseEnter(priceTrigger)
+    expect(priceTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(directionalTrigger).toHaveAttribute('aria-expanded', 'false')
+  })
+})
 
 describe('PerpsInstrumentPanel directional limit', () => {
   it('reveals the integrated limit details on hover and keyboard focus', () => {

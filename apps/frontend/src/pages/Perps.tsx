@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
+import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
@@ -142,6 +143,15 @@ export function Perps() {
           tooltipDocsLink: DOCS_LINKS.perpsPrice,
           tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'bottom',
+          hoverDetails: (
+            <DxyBasketComponentsRail
+              components={perpsMarket.latestBasket?.components}
+              priceChanges={perpsMarket.basketComponentPriceChanges}
+              isLoading={perpsMarket.isBasketComponentsLoading}
+              isError={perpsMarket.isBasketComponentsError}
+              nowSeconds={nowSeconds}
+            />
+          ),
         },
         {
           label: '24h change',
@@ -183,11 +193,15 @@ export function Perps() {
     },
     [
       perpsMarket.availableLiquidity,
+      perpsMarket.basketComponentPriceChanges,
       perpsMarket.costOfCarry,
       perpsMarket.directionalLimit,
       dxyFreshnessTooltip,
       perpsMarket.isLoading,
+      perpsMarket.isBasketComponentsError,
+      perpsMarket.isBasketComponentsLoading,
       perpsMarket.isStatsLoading,
+      perpsMarket.latestBasket,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
       perpsMarket.priceChange24h,
@@ -198,6 +212,7 @@ export function Perps() {
       perpsMarket.raw.minNewPositionNotionalUsdc,
       perpsMarket.raw.shortOpenCapacityUsdc,
       perpsMarket.volume24h,
+      nowSeconds,
     ]
   )
 

@@ -11,7 +11,10 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
-import { computeBasketDisplayPriceChange } from '../utils/dxyBasketChart'
+import {
+  computeBasketComponentPriceChanges,
+  computeBasketDisplayPriceChange,
+} from '../utils/dxyBasketChart'
 import { formatCompactNumber } from '../utils/formatters'
 import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
 
@@ -130,13 +133,15 @@ function protocolPhaseToMarketPhase(
 export function usePerpsMarket() {
   const {
     data: latestBasket,
+    isLoading: isLatestBasketLoading,
+    isError: isLatestBasketError,
     refetch: refetchLatestBasket,
   } = usePerpsBasketLatest()
   const {
     data: basketHistory24h,
     isLoading: isBasketHistory24hLoading,
     refetch: refetchBasketHistory24h,
-  } = usePerpsBasketHistory('24h', 60)
+  } = usePerpsBasketHistory('24h', 60, true)
   const {
     data: marketStats,
     isLoading: isMarketStatsLoading,
@@ -229,6 +234,10 @@ export function usePerpsMarket() {
       maxSkewRatio,
     })
     const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
+    const basketComponentPriceChanges = computeBasketComponentPriceChanges(
+      basketHistory24h?.data.points,
+      latestBasket?.data
+    )
     const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
     const longOpenCapacityUsdc = openCapacityUsdc({
       selectedOpenInterestUsdc: bullOpenInterestUsdc,
@@ -277,6 +286,9 @@ export function usePerpsMarket() {
       },
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       latestBasket: latestBasket?.data,
+      basketComponentPriceChanges,
+      isBasketComponentsLoading: isLatestBasketLoading,
+      isBasketComponentsError: isLatestBasketError,
       oracleFreshness,
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
@@ -317,6 +329,8 @@ export function usePerpsMarket() {
     data,
     error,
     isBasketHistory24hLoading,
+    isLatestBasketError,
+    isLatestBasketLoading,
     isLoading,
     isMarketStatsLoading,
     latestBasket,

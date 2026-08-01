@@ -16,7 +16,6 @@ import {
   usePerpsBasketLatest,
   type BasketHistory,
   type BasketLatest,
-  type BasketComponentPrice,
 } from '../api'
 import {
   DXY_BASKET_CHART_INTERVALS,
@@ -25,12 +24,11 @@ import {
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from './dxyBasketChartConfig'
-import { Alert, Skeleton, Tooltip } from './ui'
+import { Alert, Skeleton } from './ui'
 import {
   alignBasketPointsToOracleMark,
   buildCandles,
   computeBasketDisplayPriceChange,
-  computeBasketComponentPriceChanges,
   oracleNumberToDisplayDxyPrice,
   type ChartPoint,
   type OracleMarkPoint,
@@ -42,7 +40,6 @@ const NEGATIVE_LINE_COLOR = '#FF572D'
 const CHART_GRID_COLOR = 'rgba(255, 171, 150, 0.16)'
 const CHART_AXIS_COLOR = 'rgba(255, 171, 150, 0.32)'
 const CHART_TEXT_COLOR = '#D9CCD3'
-const COMPONENT_PRICE_FRESH_SECONDS = 10 * 60
 
 export type DxyBasketChartStyle = 'area' | 'candlestick'
 
@@ -57,52 +54,10 @@ function formatPrice(value: number): string {
   })
 }
 
-function formatCompactPrice(value: number): string {
-  return value.toLocaleString('en-US', {
-    minimumFractionDigits: 3,
-    maximumFractionDigits: 3,
-  })
-}
-
 function formatPercent(value: number | null | undefined): string {
   if (value == null) return '--'
   const sign = value > 0 ? '+' : ''
   return `${sign}${(value * 100).toFixed(2)}%`
-}
-
-function formatUpdateAge(ageSeconds: number): string {
-  if (!Number.isFinite(ageSeconds) || ageSeconds < 0) return 'unknown age'
-  if (ageSeconds < 60) return `${ageSeconds.toString()}s ago`
-
-  const minutes = Math.floor(ageSeconds / 60)
-  const seconds = ageSeconds % 60
-  if (minutes < 60) return seconds > 0 ? `${minutes.toString()}m ${seconds.toString()}s ago` : `${minutes.toString()}m ago`
-
-  const hours = Math.floor(minutes / 60)
-  const remainingMinutes = minutes % 60
-  if (hours < 24) return remainingMinutes > 0 ? `${hours.toString()}h ${remainingMinutes.toString()}m ago` : `${hours.toString()}h ago`
-
-  const days = Math.floor(hours / 24)
-  const remainingHours = hours % 24
-  return remainingHours > 0 ? `${days.toString()}d ${remainingHours.toString()}h ago` : `${days.toString()}d ago`
-}
-
-function freshnessTooltip(publishTime: number | undefined, nowSeconds: number): string | undefined {
-  if (!publishTime) return undefined
-  return `updated ${formatUpdateAge(Math.max(0, nowSeconds - publishTime))}`
-}
-
-function componentPrice(component: BasketComponentPrice): string {
-  return formatCompactPrice(toOraclePrice(component.price))
-}
-
-function componentWeight(component: BasketComponentPrice): string {
-  return `${(component.weightBps / 100).toFixed(1)}%`
-}
-
-function componentChangeClass(value: number): string {
-  if (Math.abs(value) < 0.00005) return 'text-content-secondary/70'
-  return value > 0 ? 'text-positive/75' : 'text-brand-orange/75'
 }
 
 export interface DxyBasketPanelViewProps {
@@ -126,24 +81,6 @@ interface DxyBasketChartProps {
 
 function areaTopColor(lineColor: string): string {
   return lineColor === DEFAULT_LINE_COLOR ? 'rgba(0, 255, 153, 0.24)' : 'rgba(255, 87, 45, 0.24)'
-}
-
-function ComponentFreshnessDot({ publishTime, nowSeconds }: { publishTime?: number; nowSeconds: number }) {
-  const tooltip = freshnessTooltip(publishTime, nowSeconds)
-  if (!tooltip) return null
-
-  const ageSeconds = Math.max(0, nowSeconds - (publishTime ?? nowSeconds))
-  const isFresh = ageSeconds <= COMPONENT_PRICE_FRESH_SECONDS
-
-  return (
-    <Tooltip content={tooltip} position="top">
-      <span
-        className={`h-2 w-2 shrink-0 rounded-full ${isFresh ? 'bg-positive' : 'bg-brand-orange'}`}
-        aria-label={isFresh ? 'Price fresh' : 'Price stale'}
-        tabIndex={0}
-      />
-    </Tooltip>
-  )
 }
 
 function DxyBasketChart({ areaData, candlestickData, chartStyle, lineColor }: DxyBasketChartProps) {
@@ -341,25 +278,9 @@ export function DxyBasketPanelView({
     : latest
       ? oracleNumberToDisplayDxyPrice(toOraclePrice(latest.basketPrice))
       : (chartPoints.at(-1)?.price ?? null)
-  const latestComponents = latest?.components ?? points.at(-1)?.components ?? []
-  const componentPriceChanges = useMemo(
-    () => computeBasketComponentPriceChanges(changeHistory?.points, latest),
-    [changeHistory?.points, latest]
-  )
-  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setNowSeconds(Math.floor(Date.now() / 1000))
-    }, 5_000)
-
-    return () => {
-      window.clearInterval(interval)
-    }
-  }, [])
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
@@ -426,37 +347,6 @@ export function DxyBasketPanelView({
             Waiting for the backend to ingest historical Pyth values.
           </Alert>
         )}
-
-        <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] gap-2">
-          {latestComponents.map((component) => {
-            const priceChange = componentPriceChanges[component.feedId || component.symbol]
-
-            return (
-              <div key={component.feedId} className="border border-brand-border/20 bg-app-bg px-3 py-2 min-h-[74px]">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />
-                    <span className="truncate text-sm font-semibold text-content-primary">{component.symbol}</span>
-                  </div>
-                  <span className="shrink-0 text-xs text-content-secondary">{componentWeight(component)}</span>
-                </div>
-                <div className="mt-2 flex min-w-0 items-baseline gap-2">
-                  <span className="text-lg font-semibold text-brand-peach">{componentPrice(component)}</span>
-                  {priceChange !== undefined ? (
-                    <span
-                      className={`shrink-0 text-[11px] font-medium ${componentChangeClass(priceChange)}`}
-                      title="24h change"
-                      aria-label={`24 hour change ${formatPercent(priceChange)}`}
-                    >
-                      {formatPercent(priceChange)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-xs text-content-secondary">{component.inverted ? `${component.feedSymbol} inv` : component.feedSymbol}</div>
-              </div>
-            )
-          })}
-        </div>
       </div>
     </section>
   )

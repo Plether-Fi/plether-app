@@ -1,5 +1,8 @@
+import type { ReactNode } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { expect, userEvent, within } from 'storybook/test'
+import { expect, userEvent, waitFor, within } from 'storybook/test'
+import type { BasketComponentPrice } from '../api'
+import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
 import {
   PerpsInstrumentPanel,
   type PerpsDirectionalLimitDetails,
@@ -54,6 +57,108 @@ const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
   limit: <TokenAmount amount="353.1M" />,
 }
 
+const BASKET_DETAILS_NOW = Date.UTC(2026, 7, 1, 10, 0, 0) / 1000
+
+const BASKET_COMPONENTS: BasketComponentPrice[] = [
+  {
+    symbol: 'EUR/USD',
+    feedSymbol: 'EUR/USD',
+    feedId: 'storybook-eur-usd',
+    price: '115300000',
+    rawPrice: '115300000',
+    confidence: '40355',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 24,
+    inverted: false,
+    weightBps: 5760,
+    basePrice: '117500000',
+  },
+  {
+    symbol: 'JPY/USD',
+    feedSymbol: 'USD/JPY',
+    feedId: 'storybook-usd-jpy',
+    price: '638000',
+    rawPrice: '15674000000',
+    confidence: '223',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 21,
+    inverted: true,
+    weightBps: 1360,
+    basePrice: '638000',
+  },
+  {
+    symbol: 'GBP/USD',
+    feedSymbol: 'GBP/USD',
+    feedId: 'storybook-gbp-usd',
+    price: '134800000',
+    rawPrice: '134800000',
+    confidence: '47180',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 18,
+    inverted: false,
+    weightBps: 1190,
+    basePrice: '134480000',
+  },
+  {
+    symbol: 'CAD/USD',
+    feedSymbol: 'USD/CAD',
+    feedId: 'storybook-usd-cad',
+    price: '71300000',
+    rawPrice: '140250000',
+    confidence: '24955',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 19,
+    inverted: true,
+    weightBps: 910,
+    basePrice: '72880000',
+  },
+  {
+    symbol: 'SEK/USD',
+    feedSymbol: 'USD/SEK',
+    feedId: 'storybook-usd-sek',
+    price: '10500000',
+    rawPrice: '952380000',
+    confidence: '3675',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 16,
+    inverted: true,
+    weightBps: 420,
+    basePrice: '10860000',
+  },
+  {
+    symbol: 'CHF/USD',
+    feedSymbol: 'USD/CHF',
+    feedId: 'storybook-usd-chf',
+    price: '123800000',
+    rawPrice: '80775000',
+    confidence: '43330',
+    exponent: -8,
+    publishTime: BASKET_DETAILS_NOW - 22,
+    inverted: true,
+    weightBps: 360,
+    basePrice: '126100000',
+  },
+]
+
+const BASKET_PRICE_CHANGES: Partial<Record<string, number>> = {
+  'storybook-eur-usd': 0.0018,
+  'storybook-usd-jpy': 0.0161,
+  'storybook-gbp-usd': 0.0023,
+  'storybook-usd-cad': -0.0003,
+  'storybook-usd-sek': 0.0014,
+  'storybook-usd-chf': 0.0009,
+}
+
+function BasketDetailsRail() {
+  return (
+    <DxyBasketComponentsRail
+      components={BASKET_COMPONENTS}
+      priceChanges={BASKET_PRICE_CHANGES}
+      nowSeconds={BASKET_DETAILS_NOW}
+    />
+  )
+}
+
 function directionalLimitStat(details: PerpsDirectionalLimitDetails): PerpsInstrumentStat {
   return {
     label: 'Directional limit used',
@@ -63,6 +168,7 @@ function directionalLimitStat(details: PerpsDirectionalLimitDetails): PerpsInstr
 
 function instrumentStats({
   directionalLimit = LONG_HEAVY_87,
+  priceDetails = <BasketDetailsRail />,
   price = '1.0091',
   priceChange = '-0.16%',
   priceChangeTone = 'negative',
@@ -73,6 +179,7 @@ function instrumentStats({
   costOfCarry = '5.24%',
 }: {
   directionalLimit?: PerpsDirectionalLimitDetails
+  priceDetails?: ReactNode
   price?: string
   priceChange?: string
   priceChangeTone?: 'default' | 'positive' | 'negative'
@@ -83,7 +190,13 @@ function instrumentStats({
   costOfCarry?: string
 } = {}): PerpsInstrumentStat[] {
   return [
-    { label: 'plDXY Perp price', value: price, freshness, freshnessTooltip },
+    {
+      label: 'plDXY Perp price',
+      value: price,
+      freshness,
+      freshnessTooltip,
+      hoverDetails: priceDetails,
+    },
     { label: '24h change', value: priceChange, tone: priceChangeTone },
     { label: '24h volume', value: <TokenAmount amount={volume} /> },
     directionalLimitStat(directionalLimit),
@@ -157,6 +270,135 @@ export const WideDesktop: Story = {
       <PerpsInstrumentPanel {...args} />
     </div>
   ),
+}
+
+export const PriceDetailsVisible: Story = {
+  args: {
+    priceDetailsExpanded: true,
+  },
+  render: Default.render,
+}
+
+export const PriceDetailsLoading: Story = {
+  args: {
+    priceDetailsExpanded: true,
+    stats: instrumentStats({
+      priceDetails: (
+        <DxyBasketComponentsRail
+          isLoading
+          nowSeconds={BASKET_DETAILS_NOW}
+        />
+      ),
+    }),
+  },
+  render: Default.render,
+}
+
+export const PriceDetailsUnavailable: Story = {
+  args: {
+    priceDetailsExpanded: true,
+    stats: instrumentStats({
+      priceDetails: (
+        <DxyBasketComponentsRail
+          isError
+          nowSeconds={BASKET_DETAILS_NOW}
+        />
+      ),
+    }),
+  },
+  render: Default.render,
+}
+
+export const PriceDetailsNarrowOverflow: Story = {
+  args: {
+    priceDetailsExpanded: true,
+  },
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-3">
+      <div className="w-[360px] max-w-full">
+        <PerpsInstrumentPanel {...args} />
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const rail = canvas.getByRole('list', { name: 'Basket components' })
+
+    await expect(rail).toHaveAttribute('tabindex', '0')
+    await expect(within(rail).getAllByRole('listitem')).toHaveLength(6)
+    expect(rail.scrollWidth).toBeGreaterThan(rail.clientWidth)
+
+    const nextButton = await canvas.findByRole('button', { name: 'Next basket components' })
+    const initialScrollLeft = rail.scrollLeft
+    await userEvent.click(nextButton)
+    await waitFor(() => {
+      expect(rail.scrollLeft).toBeGreaterThan(initialScrollLeft)
+    })
+    const previousButton = await canvas.findByRole('button', { name: 'Previous basket components' })
+    await expect(previousButton).toBeVisible()
+  },
+}
+
+export const PriceHoverOverlayOnChart: Story = {
+  args: WideDesktop.args,
+  render: (args) => (
+    <div className="min-h-screen bg-app-bg p-4 md:p-8">
+      <PerpsInstrumentPanel {...args} />
+      <div
+        data-testid="price-chart-surface"
+        className="mt-6 h-64 overflow-hidden border border-brand-border/30 bg-surface-panel p-4"
+      >
+        <div className="text-xs font-medium text-content-secondary">DXY basket chart</div>
+        <div className="mt-4 grid h-44 grid-rows-4 border-x border-brand-border/15">
+          {[0, 1, 2, 3].map((line) => (
+            <div key={line} className="border-t border-brand-border/15" />
+          ))}
+        </div>
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const trigger = canvas.getByRole('button', { name: 'plDXY Perp price basket components' })
+    const chart = canvas.getByTestId('price-chart-surface')
+    const panel = trigger.closest('section')
+    const detailsId = trigger.getAttribute('aria-controls')
+    const details = detailsId ? canvasElement.ownerDocument.getElementById(detailsId) : null
+    const overlay = details?.parentElement
+
+    if (!panel || !overlay) throw new Error('Price details overlay not found')
+
+    const panelHeight = panel.getBoundingClientRect().height
+    const chartTop = chart.getBoundingClientRect().top
+
+    await userEvent.hover(trigger)
+
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    const rail = await canvas.findByRole('list', { name: 'Basket components' })
+    await expect(within(rail).getAllByRole('listitem')).toHaveLength(6)
+    await waitFor(() => {
+      expect(overlay.getBoundingClientRect().height).toBeGreaterThan(70)
+    })
+
+    expect(panel.getBoundingClientRect().height).toBe(panelHeight)
+    expect(chart.getBoundingClientRect().top).toBe(chartTop)
+
+    const panelRect = panel.getBoundingClientRect()
+    const overlayRect = overlay.getBoundingClientRect()
+    const panelStyle = getComputedStyle(panel)
+    const overlayStyle = getComputedStyle(overlay)
+
+    expect(overlayRect.left).toBe(panelRect.left)
+    expect(overlayRect.right).toBe(panelRect.right)
+    expect(overlayRect.width).toBe(panelRect.width)
+    expect(overlayRect.top).toBe(panelRect.bottom - 1)
+    expect(overlayRect.bottom).toBeGreaterThan(chartTop)
+    expect(overlayStyle.backgroundColor).toBe(panelStyle.backgroundColor)
+    expect(overlayStyle.borderLeftWidth).toBe(panelStyle.borderLeftWidth)
+    expect(overlayStyle.borderRightWidth).toBe(panelStyle.borderRightWidth)
+    expect(overlayStyle.borderBottomWidth).toBe(panelStyle.borderBottomWidth)
+    expect(overlayStyle.boxShadow).not.toBe('none')
+  },
 }
 
 export const HoverOverlayOnChart: Story = {
