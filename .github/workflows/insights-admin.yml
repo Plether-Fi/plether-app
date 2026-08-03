@@ -102,7 +102,7 @@ jobs:
               def safe_arg:
                 type == "string"
                 and length <= 2000
-                and (test("[\\u0000-\\u001F\\u007F]") | not);
+                and (test("[\u0000-\u001F\u007F]") | not);
 
               type == "object"
               and .requestId == $request_id
@@ -122,7 +122,9 @@ jobs:
                 ($action == "review"
                   and ((.args | length) == 4 or (.args | length) == 5)
                   and (.args[1] | wallet)
-                  and (["pending", "eligible", "under_review", "ineligible"] | index(.args[2]) != null)
+                  and (.args[2] as $status
+                    | ["pending", "eligible", "under_review", "ineligible"]
+                    | index($status) != null)
                   and (.args[3] | nonempty(128))
                   and ((.args | length) == 4 or (.args[4] | nonempty(2000))))
                 or
