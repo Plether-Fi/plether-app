@@ -7,6 +7,8 @@ module Plether.AA.Pimlico
   , handlePimlicoProxy
   , parseRpcRequest
   , validateMethodParams
+  , isRecoveryReadAuthorized
+  , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
   , injectSponsorshipPolicy
@@ -139,7 +141,7 @@ data RateWindow = RateWindow
 data GasUsage = GasUsage
   { guStartedAt :: UTCTime
   , guActualGasCost :: Integer
-  , guSubmittedOperations :: Map.Map Text UTCTime
+  , guSubmittedOperations :: Map.Map Text (UTCTime, Text)
   , guSeenReceipts :: Map.Map Text UTCTime
   , guAlerted :: Bool
   }
@@ -191,6 +193,9 @@ data ProxyFailure = ProxyFailure
   , pfRetryable :: Bool
   }
   deriving stock (Eq, Show)
+
+recoveryReadAuthorizationTtl :: NominalDiffTime
+recoveryReadAuthorizationTtl = 24 * 60 * 60
 
 newPimlicoProxyState :: IO PimlicoProxyState
 newPimlicoProxyState = do
@@ -297,7 +302,20 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
         Left failure -> respondFailure (rrId rpcRequest) failure
         Right mUserOperation ->
           case mUserOperation of
-            Nothing -> relay rpcRequest
+            Nothing -> do
+              recoveryReadAuthorized <-
+                liftIO $
+                  isRecoveryReadAuthorized proxyState now trustedIp rpcRequest
+              if recoveryReadAuthorized
+                then relay rpcRequest
+                else
+                  respondFailure (rrId rpcRequest) $
+                    ProxyFailure
+                      status403
+                      (-32001)
+                      "Forbidden"
+                      "RECOVERY_HASH_NOT_AUTHORIZED"
+                      False
             Just parsed -> do
               accountAllowed <-
                 liftRateCheck
@@ -329,7 +347,11 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
             Left failure -> respondFailure (rrId request) failure
             Right (upstreamStatus, upstreamValue, retryAfter) -> do
               when (rrMethod request == SendUserOperation) $
-                liftRecordSubmittedOperation proxyState now upstreamValue
+                liftRecordSubmittedOperation
+                  proxyState
+                  now
+                  trustedIp
+                  upstreamValue
               when (rrMethod request == GetUserOperationReceipt) $
                 liftRecordReceiptCost proxyState aaCfg now request upstreamValue
               setHeader "Content-Type" "application/json"
@@ -424,6 +446,45 @@ validateMethodParams request =
         _ ->
           Left $
             invalidParams "method requires [userOperation, approved EntryPoint]"
+
+isRecoveryReadAuthorized
+  :: PimlicoProxyState
+  -> UTCTime
+  -> Text
+  -> RpcRequest
+  -> IO Bool
+isRecoveryReadAuthorized proxyState now trustedIp request =
+  case recoveryReadHash request of
+    Nothing -> pure True
+    Just userOperationHash ->
+      atomically $ do
+        current <- readTVar $ ppsGasUsage proxyState
+        let recentSubmissions =
+              Map.filter
+                (\(submittedAt, _) ->
+                  diffUTCTime now submittedAt < recoveryReadAuthorizationTtl
+                )
+                (guSubmittedOperations current)
+        writeTVar
+          (ppsGasUsage proxyState)
+          current {guSubmittedOperations = recentSubmissions}
+        pure $
+          maybe
+            False
+            ((== trustedIp) . snd)
+            (Map.lookup (T.toLower userOperationHash) recentSubmissions)
+
+recoveryReadHash :: RpcRequest -> Maybe Text
+recoveryReadHash request
+  | rrMethod request `elem`
+      [ GetUserOperationReceipt
+      , GetUserOperationByHash
+      , GetUserOperationStatus
+      ] =
+      case rrParams request of
+        [String userOperationHash] -> Just userOperationHash
+        _ -> Nothing
+  | otherwise = Nothing
 
 parseUserOperation
   :: PimlicoMethod
@@ -980,7 +1041,8 @@ recordReceiptCost proxyState aaCfg now request response =
               current <- readTVar $ ppsGasUsage proxyState
               let withinHour = diffUTCTime now (guStartedAt current) < 3600
                   recentSubmissions =
-                    Map.filter (\submittedAt -> diffUTCTime now submittedAt < 86400) $
+                    Map.filter
+                      (\(submittedAt, _) -> diffUTCTime now submittedAt < 86400) $
                       guSubmittedOperations current
                   recentReceipts =
                     Map.filter (\seenAt -> diffUTCTime now seenAt < 86400) $
@@ -1005,8 +1067,6 @@ recordReceiptCost proxyState aaCfg now request response =
                       next =
                         base
                           { guActualGasCost = total
-                          , guSubmittedOperations =
-                              Map.delete normalizedHash $ guSubmittedOperations base
                           , guSeenReceipts = Map.insert normalizedHash now (guSeenReceipts base)
                           , guAlerted = guAlerted base || shouldAlert
                           }
@@ -1024,9 +1084,10 @@ recordReceiptCost proxyState aaCfg now request response =
 recordSubmittedOperation
   :: PimlicoProxyState
   -> UTCTime
+  -> Text
   -> Value
   -> IO ()
-recordSubmittedOperation proxyState now response =
+recordSubmittedOperation proxyState now trustedIp response =
   case submittedUserOperationHash response of
     Nothing -> pure ()
     Just userOperationHash ->
@@ -1034,9 +1095,9 @@ recordSubmittedOperation proxyState now response =
         modifyTVar' (ppsGasUsage proxyState) $ \current ->
           current
             { guSubmittedOperations =
-                Map.insert userOperationHash now $
+                Map.insert userOperationHash (now, trustedIp) $
                   Map.filter
-                    (\submittedAt -> diffUTCTime now submittedAt < 86400)
+                    (\(submittedAt, _) -> diffUTCTime now submittedAt < 86400)
                     (guSubmittedOperations current)
             }
 
@@ -1413,7 +1474,8 @@ liftRecordReceiptCost state aaCfg now request response =
 liftRecordSubmittedOperation
   :: PimlicoProxyState
   -> UTCTime
+  -> Text
   -> Value
   -> ActionM ()
-liftRecordSubmittedOperation state now response =
-  liftIO $ recordSubmittedOperation state now response
+liftRecordSubmittedOperation state now trustedIp response =
+  liftIO $ recordSubmittedOperation state now trustedIp response

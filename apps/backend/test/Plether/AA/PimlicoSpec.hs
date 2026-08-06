@@ -8,12 +8,18 @@ import qualified Data.ByteString.Base16 as B16
 import Data.Either (isLeft, isRight)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Clock (addUTCTime)
+import Data.Time.Format (defaultTimeLocale, parseTimeOrError)
 import Plether.AA.Pimlico
-  ( RpcRequest (..)
+  ( PimlicoMethod (..)
+  , RpcRequest (..)
   , SmartCall (..)
   , decodeSmartAccountCalls
   , injectSponsorshipPolicy
+  , isRecoveryReadAuthorized
+  , newPimlicoProxyState
   , parseRpcRequest
+  , recordSubmittedOperation
   , validateActionSequence
   , validateMethodParams
   )
@@ -122,6 +128,77 @@ spec = do
         Left failure -> expectationFailure $ showFailure failure
         Right parsed ->
           validateMethodParams parsed `shouldSatisfy` isRight
+
+  describe "recovery read authorization" $ do
+    it "accepts only recent hashes from the original trusted client IP" $ do
+      proxyState <- newPimlicoProxyState
+      let now =
+            parseTimeOrError
+              True
+              defaultTimeLocale
+              "%Y-%m-%dT%H:%M:%SZ"
+              "2026-08-04T12:00:00Z"
+          userOperationHash = "0x" <> T.replicate 64 "a"
+          trustedIp = "203.0.113.10"
+          recoveryRequest requestMethod =
+            RpcRequest
+              Null
+              requestMethod
+              [String $ "0x" <> T.toUpper (T.drop 2 userOperationHash)]
+              KM.empty
+          recoveryMethods =
+            [ GetUserOperationReceipt
+            , GetUserOperationByHash
+            , GetUserOperationStatus
+            ]
+
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            now
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` False
+        )
+        recoveryMethods
+      recordSubmittedOperation
+        proxyState
+        now
+        trustedIp
+        (object ["result" .= userOperationHash])
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            now
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` True
+        )
+        recoveryMethods
+      isRecoveryReadAuthorized
+        proxyState
+        now
+        "203.0.113.11"
+        (recoveryRequest GetUserOperationReceipt)
+        `shouldReturn` False
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            (addUTCTime (24 * 60 * 60) now)
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` False
+        )
+        recoveryMethods
+      isRecoveryReadAuthorized
+        proxyState
+        now
+        trustedIp
+        (RpcRequest Null GetGasPrice [] KM.empty)
+        `shouldReturn` True
 
   describe "SimpleAccount calldata policy" $ do
     it "decodes the canonical v0.8 executeBatch encoding" $ do

@@ -10,6 +10,11 @@ import {
   migrateSponsoredOperationState,
   releaseSponsoredOperationSignal,
   restoreSponsoredOperationLane,
+  sponsoredOperationAutomaticRecoveryDelayMs,
+  sponsoredOperationAutomaticRecoveryIsDue,
+  sponsoredOperationAutomaticRecoveryIsExhausted,
+  SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS,
+  SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS,
   SPONSORED_OPERATION_JOURNAL_PREFIX,
   SPONSORED_OPERATION_LANE_HEAD_PREFIX,
   SPONSORED_OPERATION_LANE_RELEASE_PREFIX,
@@ -710,6 +715,63 @@ describe('sponsored operation store', () => {
     useSponsoredOperationStore.getState().cleanupOperations()
 
     expect(() => begin('operation-2')).not.toThrow()
+  })
+
+  it('backs automatic recovery off exponentially with a bounded delay', () => {
+    const now = Date.now()
+    begin('operation-1')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'operation-1',
+      `0x${'12'.repeat(32)}`
+    )
+    const operation = useSponsoredOperationStore.getState().operations[0]!
+
+    expect(sponsoredOperationAutomaticRecoveryIsDue(operation, now)).toBe(true)
+    expect(sponsoredOperationAutomaticRecoveryDelayMs(1)).toBe(5_000)
+    expect(sponsoredOperationAutomaticRecoveryDelayMs(2)).toBe(10_000)
+    expect(sponsoredOperationAutomaticRecoveryDelayMs(3)).toBe(20_000)
+    expect(sponsoredOperationAutomaticRecoveryDelayMs(100)).toBe(
+      SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS
+    )
+    expect(sponsoredOperationAutomaticRecoveryIsExhausted(
+      operation,
+      now + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+    )).toBe(true)
+    expect(sponsoredOperationAutomaticRecoveryIsDue(
+      operation,
+      now + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+    )).toBe(false)
+  })
+
+  it('migrates day-old hash recovery records to a durable unknown outcome', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-01T08:00:00.000Z'))
+    const userOperationHash = `0x${'12'.repeat(32)}` as Hex
+    begin('stale-timeout')
+    useSponsoredOperationStore.getState().recordUserOperationHash(
+      'stale-timeout',
+      userOperationHash
+    )
+    useSponsoredOperationStore.getState().failOperation({
+      id: 'stale-timeout',
+      status: 'receipt-timeout',
+      reason: 'BUNDLER_UNAVAILABLE',
+      retryable: false,
+    })
+
+    vi.advanceTimersByTime(24 * 60 * 60 * 1000 + 1)
+    useSponsoredOperationStore.getState().cleanupOperations()
+
+    expect(useSponsoredOperationStore.getState().operations[0]).toMatchObject({
+      status: 'outcome-unknown',
+      automaticRecoveryExpired: true,
+      retryable: false,
+    })
+    expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
+    expect(globalThis.localStorage.getItem(
+      `${SPONSORED_OPERATION_RESOLUTION_PREFIX}` +
+      `stale-timeout:${userOperationHash}:outcome-unknown`
+    )).toContain('"automaticRecoveryExpired":true')
   })
 
   it('keeps the account lane locked while a submitted operation receipt is uncertain', () => {

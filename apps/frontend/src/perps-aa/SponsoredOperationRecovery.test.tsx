@@ -12,6 +12,7 @@ import {
   createSponsoredOperationSignal,
   LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION,
   releaseSponsoredOperationSignal,
+  SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS,
   SPONSORED_OPERATION_LANE_HEAD_PREFIX,
   SPONSORED_OPERATION_RESOLUTION_PREFIX,
   useSponsoredOperationStore,
@@ -182,6 +183,7 @@ describe('SponsoredOperationRecovery', () => {
 
   afterEach(() => {
     releaseSponsoredOperationSignal('live-operation')
+    vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
 
@@ -303,6 +305,33 @@ describe('SponsoredOperationRecovery', () => {
     })
   })
 
+  it('persists backoff across a recovery runtime remount', async () => {
+    const status = vi.fn(async () => ({
+      status: 'not_found' as const,
+      transactionHash: null,
+    }))
+    beginHashOperation({ id: 'backed-off-operation' })
+    const rendered = render(
+      <PerpsAaRuntimeContext value={runtimeValue({ status })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+
+    await waitFor(() => {
+      expect(status).toHaveBeenCalledTimes(1)
+    })
+    expect(useSponsoredOperationStore.getState().operations[0])
+      .toMatchObject({ automaticRecoveryAttemptCount: 1 })
+
+    rendered.rerender(
+      <PerpsAaRuntimeContext value={runtimeValue({ status })}>
+        <SponsoredOperationRecovery />
+      </PerpsAaRuntimeContext>
+    )
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 0))
+    expect(status).toHaveBeenCalledTimes(1)
+  })
+
   it('clears a recovered EIP-3009 authorization after exact inclusion', async () => {
     const initialAuthorization = getOrCreateDepositAuthorization({
       chainId: 421614,
@@ -417,6 +446,8 @@ describe('SponsoredOperationRecovery', () => {
   })
 
   it('persists latest-chain inclusion through outages and confirms only at the safe head', async () => {
+    let recoveryNow = Date.now()
+    vi.spyOn(Date, 'now').mockImplementation(() => recoveryNow)
     const includedReceipt = {
       actualGasCost: 1n,
       actualGasUsed: 1n,
@@ -464,6 +495,7 @@ describe('SponsoredOperationRecovery', () => {
     expect(useSponsoredOperationStore.getState().activeLanes).toEqual({})
 
     const verifyCanonicalInclusion = vi.fn(async () => 'canonical' as const)
+    recoveryNow += SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS + 10
     rendered.rerender(
       <PerpsAaRuntimeContext value={runtimeValue({
         verifyObservedInclusion: verifyCanonicalInclusion,
@@ -484,6 +516,7 @@ describe('SponsoredOperationRecovery', () => {
         includedTransactionHash: TRANSACTION_HASH,
       })
 
+    recoveryNow += SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS + 10
     rendered.rerender(
       <PerpsAaRuntimeContext value={runtimeValue({
         receipt: unavailableLookup,
@@ -500,6 +533,7 @@ describe('SponsoredOperationRecovery', () => {
         includedTransactionHash: TRANSACTION_HASH,
       })
 
+    recoveryNow += SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS + 10
     rendered.rerender(
       <PerpsAaRuntimeContext value={runtimeValue({
         receipt: safeLookup,
@@ -883,19 +917,25 @@ describe('SponsoredOperationRecovery', () => {
       status: 'not_found' as const,
       transactionHash: null,
     }))
+    const getRecoverySnapshot = vi.fn(async () => ({
+      blockNumber: 123n,
+      blockTimestamp: 1_000n,
+      accountNonce: 7n,
+      userOperationEvidence: { kind: 'not-located' as const },
+    }))
     render(
       <PerpsAaRuntimeContext value={runtimeValue({
         status,
-        nonce: 7n,
-        chainTimestamp: 1_000n,
+        getRecoverySnapshot,
       })}>
         <SponsoredOperationRecovery />
       </PerpsAaRuntimeContext>
     )
 
     await waitFor(() => {
-      expect(status).toHaveBeenCalledWith(USER_OPERATION_HASH)
+      expect(getRecoverySnapshot).toHaveBeenCalledWith(USER_OPERATION_HASH, 0n)
     })
+    expect(status).not.toHaveBeenCalled()
     expect(
       useSponsoredOperationStore.getState().operations
         .find((operation) => operation.id === 'released-operation')

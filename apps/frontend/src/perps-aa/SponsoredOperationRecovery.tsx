@@ -9,6 +9,8 @@ import {
   isSponsoredOperationLaneBlocking,
   isSponsoredOperationTerminal,
   restoreSponsoredOperationLane,
+  sponsoredOperationAutomaticRecoveryIsDue,
+  sponsoredOperationAutomaticRecoveryIsExhausted,
   SPONSORED_OPERATION_JOURNAL_PREFIX,
   SPONSORED_OPERATION_LANE_HEAD_PREFIX,
   SPONSORED_OPERATION_LANE_RELEASE_PREFIX,
@@ -238,6 +240,23 @@ export function SponsoredOperationRecovery() {
       for (const operation of recoverable) {
         const userOperationHash = operation.userOperationHash
         if (!userOperationHash) continue
+        const wallClockNow = Date.now()
+        if (
+          operation.status !== 'outcome-unknown' &&
+          sponsoredOperationAutomaticRecoveryIsExhausted(
+            operation,
+            wallClockNow
+          )
+        ) {
+          store.exhaustAutomaticRecovery(operation.id, wallClockNow)
+          continue
+        }
+        if (
+          operation.status !== 'outcome-unknown' &&
+          !sponsoredOperationAutomaticRecoveryIsDue(operation, wallClockNow)
+        ) {
+          continue
+        }
         const now = globalThis.performance.now()
         if (
           operation.status === 'outcome-unknown' &&
@@ -300,6 +319,36 @@ export function SponsoredOperationRecovery() {
             )
             if (!isStillRecoverable(latestOperation)) return
 
+            const protocolOnly = latestOperation.status === 'outcome-unknown'
+            if (!protocolOnly) {
+              const attemptNow = Date.now()
+              if (
+                sponsoredOperationAutomaticRecoveryIsExhausted(
+                  latestOperation,
+                  attemptNow
+                )
+              ) {
+                useSponsoredOperationStore.getState().exhaustAutomaticRecovery(
+                  latestOperation.id,
+                  attemptNow
+                )
+                return
+              }
+              if (
+                !sponsoredOperationAutomaticRecoveryIsDue(
+                  latestOperation,
+                  attemptNow
+                ) ||
+                !useSponsoredOperationStore.getState()
+                  .recordAutomaticRecoveryAttempt(
+                    latestOperation.id,
+                    attemptNow
+                  )
+              ) {
+                return
+              }
+            }
+
             const latestLaneBlocking =
               isSponsoredOperationLaneBlocking(latestOperation)
             if (!holdsSubmissionLane && latestLaneBlocking) {
@@ -323,10 +372,12 @@ export function SponsoredOperationRecovery() {
 
             let outcome
             try {
-              outcome = await reconcilePimlicoUserOperation({
-                runtime,
-                userOperationHash,
-              })
+              if (!protocolOnly) {
+                outcome = await reconcilePimlicoUserOperation({
+                  runtime,
+                  userOperationHash,
+                })
+              }
             } catch {
               const currentOperation =
                 useSponsoredOperationStore.getState().operations
