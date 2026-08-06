@@ -67,7 +67,7 @@ describe('PerpsInstrumentPanel price details', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
-  it('keeps the price and directional overlays mutually exclusive', () => {
+  it('keeps the price, directional-limit, and pool-liquidity overlays mutually exclusive', () => {
     render(
       <PerpsInstrumentPanel
         stats={[
@@ -86,6 +86,13 @@ describe('PerpsInstrumentPanel price details', () => {
               limit: '353.1M USDC',
             },
           },
+          {
+            label: 'Pool liquidity',
+            value: '6.3M USDC',
+            hoverDetailsType: 'pool-liquidity',
+            hoverDetailsLabel: 'Pool liquidity details',
+            hoverDetails: <div>Capital waterfall</div>,
+          },
         ]}
       />
     )
@@ -93,18 +100,27 @@ describe('PerpsInstrumentPanel price details', () => {
     const priceTrigger = screen.getByRole('button', { name: 'plDXY Perp price basket components' })
     const directionalTrigger = screen.getByRole('button', { name: 'Directional limit used details' })
     const directionalMetric = directionalTrigger.parentElement?.parentElement
+    const poolTrigger = screen.getByRole('button', { name: 'Pool liquidity details' })
 
     fireEvent.mouseEnter(priceTrigger)
     expect(priceTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(directionalTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(poolTrigger).toHaveAttribute('aria-expanded', 'false')
 
     fireEvent.mouseEnter(directionalMetric!)
     expect(priceTrigger).toHaveAttribute('aria-expanded', 'false')
     expect(directionalTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(poolTrigger).toHaveAttribute('aria-expanded', 'false')
+
+    fireEvent.mouseEnter(poolTrigger)
+    expect(priceTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(directionalTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(poolTrigger).toHaveAttribute('aria-expanded', 'true')
 
     fireEvent.mouseEnter(priceTrigger)
     expect(priceTrigger).toHaveAttribute('aria-expanded', 'true')
     expect(directionalTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(poolTrigger).toHaveAttribute('aria-expanded', 'false')
   })
 })
 
@@ -151,6 +167,7 @@ describe('PerpsInstrumentPanel directional limit', () => {
     )
     expect(screen.getByText('Pool liquidity')).toBeVisible()
     expect(screen.getByText('13% remaining')).toBeInTheDocument()
+    expect(screen.getByRole('img', { name: '87% used; 13% remaining' })).toBeVisible()
     expect(screen.getByText('Total LONG exposure')).toBeVisible()
     expect(screen.getByText('Net LONG exposure')).toBeVisible()
     expect(screen.getByText('882.9M USDC')).toBeVisible()

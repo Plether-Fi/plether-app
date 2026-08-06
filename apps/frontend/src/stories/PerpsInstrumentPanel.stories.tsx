@@ -8,31 +8,12 @@ import {
   type PerpsDirectionalLimitDetails,
   type PerpsInstrumentStat,
 } from '../components/PerpsInstrumentPanel'
+import {
+  PerpsPoolLiquidityDetails,
+  type PerpsPoolLiquidityDetailsProps,
+} from '../components/PerpsPoolLiquidityDetails'
 import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
-
-function PoolLiquidityTooltip() {
-  return (
-    <div className="w-full space-y-2 text-left">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-content-secondary">Long capacity</span>
-        <span className="whitespace-nowrap font-semibold text-content-primary">953.33 USDC</span>
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-content-secondary">Short capacity</span>
-        <span className="whitespace-nowrap font-semibold text-content-primary">4 810.22 USDC</span>
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-content-secondary">Minimum order size</span>
-        <span className="whitespace-nowrap font-semibold text-content-primary">103.18 USDC</span>
-      </div>
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-        <span className="min-w-0 text-content-secondary">Minimum new position</span>
-        <span className="whitespace-nowrap font-semibold text-content-primary">1 031.8 USDC</span>
-      </div>
-    </div>
-  )
-}
 
 function CostOfCarryTooltip() {
   return (
@@ -55,6 +36,17 @@ const LONG_HEAVY_87: PerpsDirectionalLimitDetails = {
   totalExposure: <TokenAmount amount="882.9M" />,
   netExposure: <TokenAmount amount="307.2M" />,
   limit: <TokenAmount amount="353.1M" />,
+}
+
+const HEALTHY_POOL_CAPITAL: PerpsPoolLiquidityDetailsProps = {
+  longCapacity: <TokenAmount amount="2.8M" />,
+  shortCapacity: <TokenAmount amount="1.1M" />,
+  juniorPrincipal: <TokenAmount amount="3.2M" />,
+  seniorPrincipal: <TokenAmount amount="6.8M" />,
+  juniorSharePercent: 32,
+  seniorSharePercent: 68,
+  seniorStatus: 'at-high-water-mark',
+  docsLink: DOCS_LINKS.poolLiquidity,
 }
 
 const BASKET_DETAILS_NOW = Date.UTC(2026, 7, 1, 10, 0, 0) / 1000
@@ -176,6 +168,7 @@ function instrumentStats({
   freshnessTooltip = 'updated 24s ago',
   volume = '2.4M',
   liquidity = '6.3M',
+  poolCapital = HEALTHY_POOL_CAPITAL,
   costOfCarry = '5.24%',
 }: {
   directionalLimit?: PerpsDirectionalLimitDetails
@@ -187,6 +180,7 @@ function instrumentStats({
   freshnessTooltip?: string
   volume?: string
   liquidity?: string
+  poolCapital?: PerpsPoolLiquidityDetailsProps
   costOfCarry?: string
 } = {}): PerpsInstrumentStat[] {
   return [
@@ -203,10 +197,9 @@ function instrumentStats({
     {
       label: 'Pool liquidity',
       value: <TokenAmount amount={liquidity} />,
-      tooltip: <PoolLiquidityTooltip />,
-      tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-      tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-      tooltipPosition: 'left',
+      hoverDetailsType: 'pool-liquidity',
+      hoverDetailsLabel: 'Pool liquidity details',
+      hoverDetails: <PerpsPoolLiquidityDetails {...poolCapital} />,
     },
     {
       label: 'Cost of carry',
@@ -640,12 +633,48 @@ export const DirectionalLimitLoading: Story = {
   render: Default.render,
 }
 
-export const PoolLiquidityTooltipVisible: Story = {
-  render: Default.render,
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement)
-    await userEvent.hover(canvas.getByLabelText('Pool liquidity details'))
+export const PoolLiquidityDetailsVisible: Story = {
+  args: {
+    poolLiquidityDetailsExpanded: true,
   },
+  render: Default.render,
+}
+
+export const PoolLiquidityJuniorExhausted: Story = {
+  args: {
+    poolLiquidityDetailsExpanded: true,
+    stats: instrumentStats({
+      liquidity: '2.2M',
+      poolCapital: {
+        ...HEALTHY_POOL_CAPITAL,
+        juniorPrincipal: <TokenAmount amount="0" />,
+        juniorSharePercent: 0,
+        seniorSharePercent: 100,
+        isJuniorExhausted: true,
+      },
+    }),
+  },
+  render: Default.render,
+}
+
+export const PoolLiquiditySeniorImpaired: Story = {
+  args: {
+    poolLiquidityDetailsExpanded: true,
+    stats: instrumentStats({
+      liquidity: '1.7M',
+      poolCapital: {
+        ...HEALTHY_POOL_CAPITAL,
+        juniorPrincipal: <TokenAmount amount="0" />,
+        seniorPrincipal: <TokenAmount amount="5.9M" />,
+        juniorSharePercent: 0,
+        seniorSharePercent: 100,
+        seniorStatus: 'impaired',
+        seniorImpairment: <TokenAmount amount="900K" />,
+        isJuniorExhausted: true,
+      },
+    }),
+  },
+  render: Default.render,
 }
 
 export const CostOfCarryTooltipVisible: Story = {
