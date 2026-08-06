@@ -24,6 +24,8 @@ interface PerpsInstrumentStatBase {
   freshness?: PerpsOracleFreshness
   freshnessTooltip?: string
   hoverDetails?: ReactNode
+  hoverDetailsLabel?: string
+  hoverDetailsType?: 'price' | 'pool-liquidity'
   directionalLimit?: PerpsDirectionalLimitDetails
 }
 
@@ -48,6 +50,7 @@ export interface PerpsInstrumentPanelProps {
   description?: string
   stats?: PerpsInstrumentStat[]
   priceDetailsExpanded?: boolean
+  poolLiquidityDetailsExpanded?: boolean
   directionalLimitDetailsExpanded?: boolean
 }
 
@@ -300,6 +303,7 @@ function HoverDetailsStat({
   if (!stat.hoverDetails) return <InstrumentStat stat={stat} />
 
   const isExpanded = !isSuppressed && (forceExpanded || isPinned || isInteracting)
+  const detailsLabel = stat.hoverDetailsLabel ?? `${stat.label} basket components`
 
   return (
     <>
@@ -310,7 +314,7 @@ function HoverDetailsStat({
           <button
             type="button"
             className="min-w-0 max-w-full text-left"
-            aria-label={`${stat.label} basket components`}
+            aria-label={detailsLabel}
             aria-controls={detailsId}
             aria-expanded={isExpanded}
             onMouseEnter={openFromPointer}
@@ -326,7 +330,7 @@ function HoverDetailsStat({
 
       <InstrumentDetailsOverlay
         id={detailsId}
-        label={`${stat.label} basket components`}
+        label={detailsLabel}
         isExpanded={isExpanded}
         interactive
         overlayRef={overlayRef}
@@ -390,13 +394,11 @@ function directionalConstraintText(
 
 function DirectionalLimitStat({
   stat,
-  trailingStats,
   forceExpanded = false,
   isSuppressed = false,
   onActivate,
 }: {
   stat: PerpsInstrumentStat
-  trailingStats: PerpsInstrumentStat[]
   forceExpanded?: boolean
   isSuppressed?: boolean
   onActivate: () => void
@@ -419,6 +421,10 @@ function DirectionalLimitStat({
     : displayUsagePercent === undefined
       ? '--'
       : `${displayUsagePercent.toString()}%`
+  const usedLabel = `${valueLabel} used`
+  const remainingLabel = displayUsagePercent === undefined
+    ? 'Remaining unavailable'
+    : `${Math.max(0, 100 - displayUsagePercent).toString()}% remaining`
   const constraintText = directionalConstraintText(details, displayUsagePercent)
 
   return (
@@ -461,30 +467,32 @@ function DirectionalLimitStat({
         </dd>
       </div>
 
-      <div className="contents">
-        {trailingStats.map((trailingStat) => (
-          <InstrumentStat key={trailingStat.label} stat={trailingStat} />
-        ))}
-      </div>
-
       <InstrumentDetailsOverlay
         id={detailsId}
         label={`${stat.label} details`}
         isExpanded={isExpanded}
       >
-        <div className="relative h-1.5 overflow-hidden rounded-full bg-app-bg/70">
+        <div
+          className="flex h-6 w-full overflow-hidden bg-app-bg/70"
+          role="img"
+          aria-label={displayUsagePercent === undefined
+            ? 'Directional limit usage unavailable'
+            : `${usedLabel}; ${remainingLabel}`}
+        >
           <div
-            className={`h-full rounded-full transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
+            className={`flex min-w-0 items-center justify-center overflow-hidden text-[10px] font-semibold text-app-bg transition-[width] duration-200 motion-reduce:transition-none ${directionalBarClass(details.usagePercent)}`}
             style={{ width: `${progressPercent.toString()}%` }}
-          />
-        </div>
-        <div className="mt-1 flex items-center justify-between gap-3 text-[11px] text-content-secondary">
-          <span>{valueLabel} used</span>
-          <span>
-            {displayUsagePercent === undefined
-              ? '--'
-              : `${Math.max(0, 100 - displayUsagePercent).toString()}% remaining`}
-          </span>
+            title={usedLabel}
+          >
+            <span className="block w-full min-w-0 truncate px-2 text-center">{usedLabel}</span>
+          </div>
+          <div
+            className="flex min-w-0 items-center justify-center overflow-hidden text-[10px] font-semibold text-content-secondary transition-[width] duration-200 motion-reduce:transition-none"
+            style={{ width: `${(100 - progressPercent).toString()}%` }}
+            title={remainingLabel}
+          >
+            <span className="block w-full min-w-0 truncate px-2 text-center">{remainingLabel}</span>
+          </div>
         </div>
 
         <dl className="mt-3 grid grid-cols-1 gap-3 text-xs sm:grid-cols-3 sm:gap-4">
@@ -528,17 +536,11 @@ export function PerpsInstrumentPanel({
   description = 'Dollar Index Perpetual',
   stats = DEFAULT_STATS,
   priceDetailsExpanded = false,
+  poolLiquidityDetailsExpanded = false,
   directionalLimitDetailsExpanded = false,
 }: PerpsInstrumentPanelProps) {
-  const [activeDetails, setActiveDetails] = useState<'price' | 'directional' | undefined>(undefined)
+  const [activeDetails, setActiveDetails] = useState<'price' | 'pool-liquidity' | 'directional' | undefined>(undefined)
   const hasDirectionalLimit = stats.some((stat) => stat.directionalLimit !== undefined)
-  const directionalLimitIndex = stats.findIndex((stat) => stat.directionalLimit !== undefined)
-  const visibleStats = directionalLimitIndex === -1
-    ? stats
-    : stats.slice(0, directionalLimitIndex + 1)
-  const trailingStats = directionalLimitIndex === -1
-    ? []
-    : stats.slice(directionalLimitIndex + 1)
 
   return (
     <section className="relative z-10 overflow-visible border border-brand-border/30 bg-surface-panel">
@@ -556,26 +558,36 @@ export function PerpsInstrumentPanel({
         <div className="hidden h-14 w-px shrink-0 bg-brand-border/25 lg:block" />
 
         <dl className="grid flex-1 grid-cols-[repeat(auto-fit,minmax(min(8.5rem,100%),1fr))] gap-x-3 gap-y-4 2xl:gap-x-4">
-          {visibleStats.map((stat) => stat.directionalLimit ? (
-            <DirectionalLimitStat
-              key={stat.label}
-              stat={stat}
-              trailingStats={trailingStats}
-              forceExpanded={directionalLimitDetailsExpanded}
-              isSuppressed={activeDetails !== undefined && activeDetails !== 'directional'}
-              onActivate={() => { setActiveDetails('directional') }}
-            />
-          ) : stat.hoverDetails ? (
-            <HoverDetailsStat
-              key={stat.label}
-              stat={stat}
-              forceExpanded={priceDetailsExpanded}
-              isSuppressed={activeDetails !== undefined && activeDetails !== 'price'}
-              onActivate={() => { setActiveDetails('price') }}
-            />
-          ) : (
-            <InstrumentStat key={stat.label} stat={stat} />
-          ))}
+          {stats.map((stat) => {
+            if (stat.directionalLimit) {
+              return (
+                <DirectionalLimitStat
+                  key={stat.label}
+                  stat={stat}
+                  forceExpanded={directionalLimitDetailsExpanded}
+                  isSuppressed={activeDetails !== undefined && activeDetails !== 'directional'}
+                  onActivate={() => { setActiveDetails('directional') }}
+                />
+              )
+            }
+
+            if (stat.hoverDetails) {
+              const detailsType = stat.hoverDetailsType ?? 'price'
+              return (
+                <HoverDetailsStat
+                  key={stat.label}
+                  stat={stat}
+                  forceExpanded={detailsType === 'pool-liquidity'
+                    ? poolLiquidityDetailsExpanded
+                    : priceDetailsExpanded}
+                  isSuppressed={activeDetails !== undefined && activeDetails !== detailsType}
+                  onActivate={() => { setActiveDetails(detailsType) }}
+                />
+              )
+            }
+
+            return <InstrumentStat key={stat.label} stat={stat} />
+          })}
         </dl>
       </div>
     </section>
