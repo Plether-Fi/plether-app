@@ -33,6 +33,7 @@ import {
   type ChartPoint,
   type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
+import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -67,6 +68,7 @@ export interface DxyBasketPanelViewProps {
   oracleMark?: OracleMarkPoint
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
+  useAdvancedChart?: boolean
   isLoading?: boolean
   isError?: boolean
   onChartIntervalChange: (interval: DxyBasketChartInterval) => void
@@ -236,6 +238,7 @@ export function DxyBasketPanelView({
   oracleMark,
   chartInterval = '1m',
   chartStyle = 'candlestick',
+  useAdvancedChart = true,
   isLoading = false,
   isError = false,
   onChartIntervalChange,
@@ -282,6 +285,38 @@ export function DxyBasketPanelView({
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
 
+  const historyUnavailable = (
+    <Alert variant="warning" title="Basket history unavailable">
+      The API has not returned stored Pyth basket snapshots yet.
+    </Alert>
+  )
+  const noBasketSnapshots = (
+    <Alert variant="info" title="No basket snapshots">
+      Waiting for the backend to ingest historical Pyth values.
+    </Alert>
+  )
+  const fallbackChart = isError ? (
+    historyUnavailable
+  ) : isLoading ? (
+    <div className="h-[240px] sm:h-[320px]">
+      <Skeleton variant="rectangular" height="100%" className="w-full" />
+    </div>
+  ) : chartSeries.length > 0 ? (
+    <DxyBasketChart
+      areaData={chartSeries}
+      candlestickData={chartCandles}
+      chartStyle={chartStyle}
+      lineColor={lineColor}
+    />
+  ) : (
+    noBasketSnapshots
+  )
+  const chartStatusOverlay = isError
+    ? historyUnavailable
+    : !isLoading && chartSeries.length === 0
+      ? noBasketSnapshots
+      : undefined
+
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
       <div className="flex flex-col gap-4 border-b border-brand-border/20 px-3 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:justify-between">
@@ -327,25 +362,15 @@ export function DxyBasketPanelView({
       </div>
 
       <div className="p-3 sm:p-4 md:p-5">
-        {isError ? (
-          <Alert variant="warning" title="Basket history unavailable">
-            The API has not returned stored Pyth basket snapshots yet.
-          </Alert>
-        ) : isLoading ? (
-          <div className="h-[240px] sm:h-[320px]">
-            <Skeleton variant="rectangular" height="100%" className="w-full" />
-          </div>
-        ) : chartSeries.length > 0 ? (
-          <DxyBasketChart
-            areaData={chartSeries}
-            candlestickData={chartCandles}
-            chartStyle={chartStyle}
-            lineColor={lineColor}
+        {useAdvancedChart ? (
+          <TradingViewAdvancedChart
+            interval={chartInterval}
+            oracleMark={oracleMark}
+            fallback={fallbackChart}
+            statusOverlay={chartStatusOverlay}
           />
         ) : (
-          <Alert variant="info" title="No basket snapshots">
-            Waiting for the backend to ingest historical Pyth values.
-          </Alert>
+          fallbackChart
         )}
       </div>
     </section>

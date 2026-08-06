@@ -206,6 +206,7 @@ function DxyBasketStory({ initialInterval, market, chartStyle, state }: DxyBaske
           history={state === 'loading' || state === 'error' ? undefined : history}
           chartInterval={chartInterval}
           chartStyle={chartStyle}
+          useAdvancedChart={false}
           isLoading={state === 'loading'}
           isError={state === 'error'}
           onChartIntervalChange={setChartInterval}
