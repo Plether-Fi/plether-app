@@ -4,6 +4,20 @@ const ROUTES = {
 };
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
+const BASKET_HISTORY_PATH = '/api/perps/basket/history';
+const EDGE_ORIGIN_TIMING_METRIC = 'plether_edge_origin';
+
+function withEdgeOriginTiming(response, durationMs) {
+  const measuredDuration = Number.isFinite(durationMs)
+    ? Math.max(0, durationMs)
+    : 0;
+  const timedResponse = new Response(response.body, response);
+  timedResponse.headers.append(
+    'Server-Timing',
+    `${EDGE_ORIGIN_TIMING_METRIC};dur=${measuredDuration.toFixed(3)}`,
+  );
+  return timedResponse;
+}
 
 export default {
   async fetch(request, env) {
@@ -33,11 +47,20 @@ export default {
         headers.set('Host', backendUrl.hostname);
         headers.delete('Origin');
 
-        return fetch(backendUrl, {
+        const shouldMeasureOrigin = backendPath === BASKET_HISTORY_PATH;
+        const originFetchStartedAt = shouldMeasureOrigin
+          ? performance.now()
+          : null;
+        const response = await fetch(backendUrl, {
           method: request.method,
           headers,
           body: request.body,
         });
+        if (!shouldMeasureOrigin) return response;
+        return withEdgeOriginTiming(
+          response,
+          performance.now() - originFetchStartedAt,
+        );
       }
     }
 
