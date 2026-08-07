@@ -101,6 +101,15 @@ export interface TradingViewWidgetOptions {
   custom_css_url: string
   disabled_features: string[]
   enabled_features: string[]
+  favorites: {
+    intervals: TradingViewResolution[]
+  }
+  time_frames: {
+    text: string
+    resolution: TradingViewResolution
+    description: string
+    title?: string
+  }[]
   custom_font_family: string
   loading_screen: {
     backgroundColor: string
@@ -110,17 +119,22 @@ export interface TradingViewWidgetOptions {
 }
 
 export interface TradingViewWidget {
-  setSymbol: (
-    symbol: string,
-    interval: TradingViewResolution,
-    callback: () => void
-  ) => void
+  chartReady: () => Promise<void>
+  headerReady: () => Promise<void>
   activeChart: () => TradingViewChart
   remove: () => void
 }
 
+export interface TradingViewIntervalSubscription {
+  subscribe: (context: object | null, callback: (resolution: string) => void) => void
+  unsubscribe: (context: object | null, callback: (resolution: string) => void) => void
+}
+
 export interface TradingViewChart {
   resetData: () => void
+  resolution: () => string
+  setResolution: (resolution: TradingViewResolution) => Promise<boolean>
+  onIntervalChanged: () => TradingViewIntervalSubscription
 }
 
 export interface TradingViewNamespace {

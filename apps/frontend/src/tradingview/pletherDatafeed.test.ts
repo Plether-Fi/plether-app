@@ -4,6 +4,7 @@ import { apiQueryKeys, type BasketHistory, type BasketLatest } from '../api'
 import {
   PletherDxyDatafeed,
   basketPointsToTradingViewBars,
+  chartIntervalForTradingViewResolution,
   historyRangeForRequest,
   secondsForTradingViewResolution,
   tradingViewResolutionForInterval,
@@ -48,6 +49,11 @@ describe('Plether TradingView datafeed', () => {
     expect(tradingViewResolutionForInterval('5m')).toBe('5')
     expect(tradingViewResolutionForInterval('1h')).toBe('60')
     expect(tradingViewResolutionForInterval('1d')).toBe('1D')
+    expect(chartIntervalForTradingViewResolution('1')).toBe('1m')
+    expect(chartIntervalForTradingViewResolution('5')).toBe('5m')
+    expect(chartIntervalForTradingViewResolution('60')).toBe('1h')
+    expect(chartIntervalForTradingViewResolution('1D')).toBe('1d')
+    expect(chartIntervalForTradingViewResolution('15')).toBeUndefined()
     expect(secondsForTradingViewResolution('1D')).toBe(86_400)
   })
 

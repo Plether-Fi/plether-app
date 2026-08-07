@@ -6,9 +6,15 @@ import type { OracleMarkPoint } from '../utils/dxyBasketChart'
 import {
   PLDXY_TRADINGVIEW_SYMBOL,
   PletherDxyDatafeed,
+  TRADINGVIEW_RESOLUTIONS,
+  chartIntervalForTradingViewResolution,
   tradingViewResolutionForInterval,
 } from './pletherDatafeed'
-import type { TradingViewNamespace, TradingViewWidget } from './types'
+import type {
+  TradingViewIntervalSubscription,
+  TradingViewNamespace,
+  TradingViewWidget,
+} from './types'
 
 const APP_BACKGROUND = '#0D0A1C'
 const PANEL_BACKGROUND = '#171020'
@@ -16,6 +22,12 @@ const GRID_COLOR = 'rgba(255, 171, 150, 0.12)'
 const TEXT_COLOR = '#D9CCD3'
 const POSITIVE_COLOR = '#00FF99'
 const NEGATIVE_COLOR = '#FF572D'
+const TRADINGVIEW_TIME_FRAMES = [
+  { text: '1y', resolution: '1D', description: '1 Year' },
+  { text: '30d', title: '1m', resolution: '60', description: '1 Month' },
+  { text: '5d', resolution: '5', description: '5 Days' },
+  { text: '1d', resolution: '1', description: '1 Day' },
+] as const
 
 const libraryPromises = new Map<string, Promise<TradingViewNamespace>>()
 
@@ -65,6 +77,8 @@ export interface TradingViewAdvancedChartProps {
   oracleMark?: OracleMarkPoint
   fallback: ReactNode
   statusOverlay?: ReactNode
+  onIntervalChange?: (interval: DxyBasketChartInterval) => void
+  onReadyChange?: (ready: boolean) => void
 }
 
 export function TradingViewAdvancedChart({
@@ -72,6 +86,8 @@ export function TradingViewAdvancedChart({
   oracleMark,
   fallback,
   statusOverlay,
+  onIntervalChange,
+  onReadyChange,
 }: TradingViewAdvancedChartProps) {
   if (!advancedChartsEnabled()) return fallback
 
@@ -81,6 +97,8 @@ export function TradingViewAdvancedChart({
       oracleMark={oracleMark}
       fallback={fallback}
       statusOverlay={statusOverlay}
+      onIntervalChange={onIntervalChange}
+      onReadyChange={onReadyChange}
     />
   )
 }
@@ -90,18 +108,27 @@ function EnabledTradingViewAdvancedChart({
   oracleMark,
   fallback,
   statusOverlay,
+  onIntervalChange,
+  onReadyChange,
 }: TradingViewAdvancedChartProps) {
   const queryClient = useQueryClient()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetRef = useRef<TradingViewWidget | null>(null)
   const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
   const intervalRef = useRef(interval)
+  const readyRef = useRef(false)
   const oracleMarkRef = useRef(oracleMark)
+  const onIntervalChangeRef = useRef(onIntervalChange)
+  const onReadyChangeRef = useRef(onReadyChange)
   const [unavailable, setUnavailable] = useState(false)
 
   useEffect(() => {
-    intervalRef.current = interval
-  }, [interval])
+    onIntervalChangeRef.current = onIntervalChange
+  }, [onIntervalChange])
+
+  useEffect(() => {
+    onReadyChangeRef.current = onReadyChange
+  }, [onReadyChange])
 
   useEffect(() => {
     oracleMarkRef.current = oracleMark
@@ -112,6 +139,8 @@ function EnabledTradingViewAdvancedChart({
     if (!container) return
 
     let cancelled = false
+    let intervalSubscription: TradingViewIntervalSubscription | undefined
+    let handleIntervalChange: ((resolution: string) => void) | undefined
     const libraryPath = normalizeLibraryPath()
     const datafeed = new PletherDxyDatafeed({
       queryClient,
@@ -145,13 +174,15 @@ function EnabledTradingViewAdvancedChart({
           disabled_features: [
             'header_symbol_search',
             'symbol_search_hot_key',
-            'header_resolutions',
             'header_compare',
             'header_screenshot',
             'header_fullscreen_button',
-            'timeframes_toolbar',
           ],
           enabled_features: ['iframe_loading_compatibility_mode'],
+          favorites: {
+            intervals: TRADINGVIEW_RESOLUTIONS,
+          },
+          time_frames: TRADINGVIEW_TIME_FRAMES.map((timeFrame) => ({ ...timeFrame })),
           custom_font_family: 'Uncut Sans, ui-sans-serif, system-ui, sans-serif',
           loading_screen: {
             backgroundColor: APP_BACKGROUND,
@@ -173,13 +204,48 @@ function EnabledTradingViewAdvancedChart({
           },
         })
         widgetRef.current = widget
+        void Promise.all([widget.chartReady(), widget.headerReady()])
+          .then(() => {
+            if (cancelled) return
+
+            intervalSubscription = widget.activeChart().onIntervalChanged()
+            handleIntervalChange = (resolution) => {
+              const nextInterval = chartIntervalForTradingViewResolution(resolution)
+              if (!nextInterval || nextInterval === intervalRef.current) return
+
+              intervalRef.current = nextInterval
+              onIntervalChangeRef.current?.(nextInterval)
+            }
+            intervalSubscription.subscribe(null, handleIntervalChange)
+            readyRef.current = true
+
+            const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
+            if (widget.activeChart().resolution() !== desiredResolution) {
+              void widget.activeChart().setResolution(desiredResolution)
+            }
+            onReadyChangeRef.current?.(true)
+          })
+          .catch(() => {
+            if (!cancelled) {
+              onReadyChangeRef.current?.(false)
+              setUnavailable(true)
+            }
+          })
       })
       .catch(() => {
-        if (!cancelled) setUnavailable(true)
+        if (!cancelled) {
+          onReadyChangeRef.current?.(false)
+          setUnavailable(true)
+        }
       })
 
     return () => {
       cancelled = true
+      readyRef.current = false
+      if (intervalSubscription && handleIntervalChange) {
+        intervalSubscription.unsubscribe(null, handleIntervalChange)
+      }
+      onReadyChangeRef.current?.(false)
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeed.destroy()
@@ -192,14 +258,13 @@ function EnabledTradingViewAdvancedChart({
   }, [oracleMark])
 
   useEffect(() => {
+    intervalRef.current = interval
     const widget = widgetRef.current
-    if (!widget) return
+    if (!widget || !readyRef.current) return
 
-    widget.setSymbol(
-      PLDXY_TRADINGVIEW_SYMBOL,
-      tradingViewResolutionForInterval(interval),
-      () => undefined
-    )
+    const resolution = tradingViewResolutionForInterval(interval)
+    if (widget.activeChart().resolution() === resolution) return
+    void widget.activeChart().setResolution(resolution)
   }, [interval])
 
   if (unavailable) return fallback

@@ -55,12 +55,6 @@ function formatPrice(value: number): string {
   })
 }
 
-function formatPercent(value: number | null | undefined): string {
-  if (value == null) return '--'
-  const sign = value > 0 ? '+' : ''
-  return `${sign}${(value * 100).toFixed(2)}%`
-}
-
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
   changeHistory?: BasketHistory
@@ -276,11 +270,7 @@ export function DxyBasketPanelView({
     }))
   }, [chartBuckets])
 
-  const headerPrice = oracleMark
-    ? oracleNumberToDisplayDxyPrice(toOraclePrice(oracleMark.basketPrice))
-    : latest
-      ? oracleNumberToDisplayDxyPrice(toOraclePrice(latest.basketPrice))
-      : (chartPoints.at(-1)?.price ?? null)
+  const [advancedChartReady, setAdvancedChartReady] = useState(false)
   const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
@@ -318,62 +308,45 @@ export function DxyBasketPanelView({
       : undefined
 
   return (
-    <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
-      <div className="flex flex-col gap-4 border-b border-brand-border/20 px-3 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-content-secondary text-sm">
-            <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
-            <span>plDXY Perp Price</span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            {headerPrice == null && isLoading ? (
-              <Skeleton width={126} height={34} />
-            ) : (
-              <span className="text-2xl font-semibold leading-none text-content-primary sm:text-3xl">
-                {headerPrice == null ? '--' : formatPrice(headerPrice)}
-              </span>
-            )}
-            <span className={`text-sm font-semibold leading-none ${positiveChange ? 'text-positive' : 'text-brand-orange'}`}>
-              {formatPercent(changePct)}
-            </span>
+    <>
+      {!useAdvancedChart || !advancedChartReady ? (
+        <div className="mb-3 flex justify-end">
+          <div className="grid w-full grid-cols-4 border border-brand-border/30 bg-app-bg md:w-fit">
+            {DXY_BASKET_CHART_INTERVALS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                aria-label={item.ariaLabel}
+                aria-pressed={chartInterval === item.value}
+                className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 ${
+                  chartInterval === item.value
+                    ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
+                    : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
+                }`}
+                onClick={() => {
+                  onChartIntervalChange(item.value)
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
         </div>
+      ) : null}
 
-        <div className="grid w-full grid-cols-4 border border-brand-border/30 bg-app-bg md:w-fit">
-          {DXY_BASKET_CHART_INTERVALS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              aria-label={item.ariaLabel}
-              aria-pressed={chartInterval === item.value}
-              className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 ${
-                chartInterval === item.value
-                  ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
-                  : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
-              }`}
-              onClick={() => {
-                onChartIntervalChange(item.value)
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="p-3 sm:p-4 md:p-5">
-        {useAdvancedChart ? (
-          <TradingViewAdvancedChart
-            interval={chartInterval}
-            oracleMark={oracleMark}
-            fallback={fallbackChart}
-            statusOverlay={chartStatusOverlay}
-          />
-        ) : (
-          fallbackChart
-        )}
-      </div>
-    </section>
+      {useAdvancedChart ? (
+        <TradingViewAdvancedChart
+          interval={chartInterval}
+          oracleMark={oracleMark}
+          fallback={fallbackChart}
+          statusOverlay={chartStatusOverlay}
+          onIntervalChange={onChartIntervalChange}
+          onReadyChange={setAdvancedChartReady}
+        />
+      ) : (
+        fallbackChart
+      )}
+    </>
   )
 }
 

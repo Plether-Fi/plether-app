@@ -15,6 +15,7 @@ import {
   oracleNumberToDisplayDxyPrice,
   type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
+import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
 import type {
   TradingViewBar,
   TradingViewDatafeed,
@@ -122,7 +123,7 @@ function createApiDataSource(queryClient: QueryClient | undefined): PletherChart
 }
 
 export function tradingViewResolutionForInterval(
-  interval: '1m' | '5m' | '1h' | '1d'
+  interval: DxyBasketChartInterval
 ): TradingViewResolution {
   const resolutions: Record<typeof interval, TradingViewResolution> = {
     '1m': '1',
@@ -131,6 +132,18 @@ export function tradingViewResolutionForInterval(
     '1d': '1D',
   }
   return resolutions[interval]
+}
+
+export function chartIntervalForTradingViewResolution(
+  resolution: string
+): DxyBasketChartInterval | undefined {
+  const intervals: Partial<Record<TradingViewResolution, DxyBasketChartInterval>> = {
+    '1': '1m',
+    '5': '5m',
+    '60': '1h',
+    '1D': '1d',
+  }
+  return intervals[resolution as TradingViewResolution]
 }
 
 export function secondsForTradingViewResolution(resolution: TradingViewResolution): number {
