@@ -29,6 +29,7 @@ const BRAND_ORANGE = '#FF572D'
 const POSITIVE_COLOR = '#00FF99'
 const MARKET_STATUS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="5" /></svg>'
 const CHART_STYLE_OVERRIDES = {
+  volumePaneSize: 'small',
   'paneProperties.backgroundType': 'solid',
   'paneProperties.background': APP_BACKGROUND,
   'paneProperties.vertGridProperties.color': GRID_COLOR,
@@ -80,6 +81,14 @@ const CHART_STYLE_OVERRIDES = {
   'mainSeriesProperties.baselineStyle.bottomFillColor2': 'rgba(255, 87, 45, 0.28)',
   'mainSeriesProperties.baselineStyle.topLineColor': POSITIVE_COLOR,
   'mainSeriesProperties.baselineStyle.bottomLineColor': BRAND_ORANGE,
+} satisfies Record<string, string | number | boolean>
+const VOLUME_STUDY_OVERRIDES = {
+  'volume.volume.color.0': BRAND_ORANGE,
+  'volume.volume.color.1': POSITIVE_COLOR,
+  'volume.volume.transparency': 20,
+  'volume.volume ma.color': BRAND_PEACH,
+  'volume.volume ma.transparency': 35,
+  'volume.volume ma.linewidth': 1,
 } satisfies Record<string, string | number | boolean>
 const TRADINGVIEW_TIME_FRAMES = [
   { text: '1y', resolution: '1D', description: '1 Year' },
@@ -317,6 +326,7 @@ function EnabledTradingViewAdvancedChart({
             'header_fullscreen_button',
             'header_quick_search',
             'display_market_status',
+            'volume_force_overlay',
           ],
           enabled_features: [
             'hide_left_toolbar_by_default',
@@ -335,6 +345,7 @@ function EnabledTradingViewAdvancedChart({
           },
           overrides: { ...CHART_STYLE_OVERRIDES },
           settings_overrides: { ...CHART_STYLE_OVERRIDES },
+          studies_overrides: { ...VOLUME_STUDY_OVERRIDES },
         })
         widgetRef.current = widget
         void Promise.all([widget.chartReady(), widget.headerReady()])
@@ -411,7 +422,7 @@ function EnabledTradingViewAdvancedChart({
 
   return (
     <div
-      className="relative h-[360px] w-full overflow-hidden border border-brand-border/30 bg-app-bg sm:h-[460px]"
+      className="relative h-[450px] w-full overflow-hidden border border-brand-border/30 bg-app-bg sm:h-[580px]"
       role="region"
       aria-label="Interactive TradingView chart for the plDXY perpetual market"
     >

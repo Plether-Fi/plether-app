@@ -82,7 +82,8 @@ export interface TradingViewSymbolInfo {
   daily_multipliers: string[]
   supported_resolutions: TradingViewResolution[]
   data_status: 'streaming'
-  visible_plots_set: 'ohlc'
+  visible_plots_set: 'ohlc' | 'ohlcv'
+  volume_precision?: number
 }
 
 export interface TradingViewSearchResult {
@@ -182,6 +183,7 @@ export interface TradingViewWidgetOptions {
   }
   overrides: Record<string, string | number | boolean>
   settings_overrides: Record<string, string | number | boolean>
+  studies_overrides: Record<string, string | number | boolean>
 }
 
 export interface TradingViewWidget {

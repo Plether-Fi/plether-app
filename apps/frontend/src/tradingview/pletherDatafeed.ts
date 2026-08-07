@@ -37,6 +37,9 @@ export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
 ]
 export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '60', '1D']
 
+const MICRO_USDC_PER_USDC = 1_000_000n
+const LIVE_VOLUME_REFRESH_MS = 60_000
+
 const SYMBOL_INFO: TradingViewSymbolInfo = {
   name: 'plDXY.P',
   ticker: PLDXY_TRADINGVIEW_SYMBOL,
@@ -55,7 +58,8 @@ const SYMBOL_INFO: TradingViewSymbolInfo = {
   daily_multipliers: ['1'],
   supported_resolutions: TRADINGVIEW_RESOLUTIONS,
   data_status: 'streaming',
-  visible_plots_set: 'ohlc',
+  visible_plots_set: 'ohlcv',
+  volume_precision: 2,
 }
 
 const DATAFEED_CONFIGURATION: TradingViewDatafeedConfiguration = {
@@ -79,6 +83,10 @@ interface Subscription {
   timer: ReturnType<typeof setInterval>
   polling: boolean
   currentBar?: TradingViewBar
+}
+
+interface VolumeSnapshot {
+  byTime: Map<number, number>
 }
 
 export interface PletherDxyDatafeedOptions {
@@ -203,8 +211,10 @@ export function historyRangeForRequest(
 
 export function basketPointsToTradingViewBars(
   points: BasketHistoryPoint[],
-  resolution: TradingViewResolution
+  resolution: TradingViewResolution,
+  volumePoints: BasketHistoryPoint[] = points
 ): TradingViewBar[] {
+  const intervalSeconds = secondsForTradingViewResolution(resolution)
   const chartPoints = points
     .map((point) => ({
       timestamp: point.timestamp,
@@ -212,13 +222,46 @@ export function basketPointsToTradingViewBars(
     }))
     .filter((point) => point.timestamp > 0 && point.price > 0)
 
-  return buildCandles(chartPoints, secondsForTradingViewResolution(resolution)).map((candle) => ({
+  const volumeByTimestamp = new Map<number, bigint>()
+  const seenVolumeTimestamps = new Set<number>()
+  for (const point of volumePoints) {
+    if (point.timestamp <= 0 || seenVolumeTimestamps.has(point.timestamp)) continue
+
+    seenVolumeTimestamps.add(point.timestamp)
+    const bucketTimestamp = Math.floor(point.timestamp / intervalSeconds) * intervalSeconds
+    const currentVolume = volumeByTimestamp.get(bucketTimestamp) ?? 0n
+    volumeByTimestamp.set(
+      bucketTimestamp,
+      currentVolume + parseMicroUsdc(point.volumeUsdc)
+    )
+  }
+
+  return buildCandles(chartPoints, intervalSeconds).map((candle) => ({
     time: candle.timestamp * 1000,
     open: candle.open,
     high: candle.high,
     low: candle.low,
     close: candle.close,
+    volume: microUsdcToHumanUsdc(volumeByTimestamp.get(candle.timestamp) ?? 0n),
   }))
+}
+
+function parseMicroUsdc(value: string | undefined): bigint {
+  const normalized = value?.trim()
+  if (!normalized || !/^\d+$/.test(normalized)) return 0n
+
+  try {
+    return BigInt(normalized)
+  } catch {
+    return 0n
+  }
+}
+
+function microUsdcToHumanUsdc(value: bigint): number {
+  const whole = Number(value / MICRO_USDC_PER_USDC)
+  const fraction = Number(value % MICRO_USDC_PER_USDC) / Number(MICRO_USDC_PER_USDC)
+  const volume = whole + fraction
+  return Number.isFinite(volume) ? volume : 0
 }
 
 function errorMessage(error: unknown): string {
@@ -245,7 +288,8 @@ function barFromLivePoint(
   basketPrice: string,
   timestamp: number,
   resolution: TradingViewResolution,
-  previousBar: TradingViewBar | undefined
+  previousBar: TradingViewBar | undefined,
+  volume: number | undefined
 ): TradingViewBar | undefined {
   const price = oracleNumberToDisplayDxyPrice(Number(basketPrice) / 1e8)
   if (!Number.isFinite(price) || price <= 0 || timestamp <= 0) return undefined
@@ -260,6 +304,7 @@ function barFromLivePoint(
       high: Math.max(previousBar.high, price),
       low: Math.min(previousBar.low, price),
       close: price,
+      volume: volume ?? previousBar.volume ?? 0,
     }
   }
 
@@ -270,6 +315,7 @@ function barFromLivePoint(
     high: Math.max(open, price),
     low: Math.min(open, price),
     close: price,
+    volume: volume ?? 0,
   }
 }
 
@@ -279,6 +325,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly onHistoryGap: (() => void) | undefined
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
+  private readonly volumeSnapshots = new Map<TradingViewResolution, VolumeSnapshot>()
+  private readonly volumeRefreshes = new Map<TradingViewResolution, Promise<VolumeSnapshot>>()
+  private readonly liveVolumeRefreshedAt = new Map<TradingViewResolution, number>()
   private oracleMark?: OracleMarkPoint
 
   constructor(options: PletherDxyDatafeedOptions = {}) {
@@ -399,9 +448,18 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       this.dataSource.getLatest(),
     ])
     const points = alignBasketPointsToOracleMark(history.points, latest, this.oracleMark)
-    const bars = basketPointsToTradingViewBars(points, resolution)
+    const bars = basketPointsToTradingViewBars(points, resolution, history.points)
       .filter((bar) => bar.time < periodParams.to * 1000)
       .slice(-Math.max(1, periodParams.countBack))
+
+    this.rememberVolumeBars(resolution, bars)
+    const livePoint = this.oracleMark ?? latest
+    if (livePoint) {
+      const liveBarTime = this.barTimeForTimestamp(resolution, livePoint.timestamp)
+      if (bars.some((bar) => bar.time === liveBarTime)) {
+        this.liveVolumeRefreshedAt.set(resolution, Date.now())
+      }
+    }
 
     const lastBar = bars.at(-1)
     const previousLastBar = this.lastBars.get(resolution)
@@ -422,7 +480,14 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       if (!current) return
 
       const livePoint = this.oracleMark ?? latest
-      if (livePoint) this.emitLiveBar(current, livePoint.basketPrice, livePoint.timestamp)
+      if (livePoint) {
+        const barTime = this.barTimeForTimestamp(current.resolution, livePoint.timestamp)
+        const cachedVolume = this.volumeSnapshots
+          .get(current.resolution)
+          ?.byTime.get(barTime)
+        this.emitLiveBar(current, livePoint.basketPrice, livePoint.timestamp, cachedVolume)
+        this.queueLiveVolumeRefresh(listenerGuid, current.resolution, barTime)
+      }
     } catch {
       // Keep the last bar visible and retry on the next polling interval.
     } finally {
@@ -431,13 +496,19 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
   }
 
-  private emitLiveBar(subscription: Subscription, basketPrice: string, timestamp: number): void {
+  private emitLiveBar(
+    subscription: Subscription,
+    basketPrice: string,
+    timestamp: number,
+    volume?: number
+  ): void {
     const previousBar = subscription.currentBar
     const bar = barFromLivePoint(
       basketPrice,
       timestamp,
       subscription.resolution,
-      previousBar
+      previousBar,
+      volume
     )
     if (!bar) return
 
@@ -450,5 +521,71 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     subscription.currentBar = bar
     this.lastBars.set(subscription.resolution, bar)
     subscription.onTick(bar)
+  }
+
+  private rememberVolumeBars(
+    resolution: TradingViewResolution,
+    bars: TradingViewBar[]
+  ): void {
+    const previous = this.volumeSnapshots.get(resolution)
+    const byTime = new Map(previous?.byTime)
+    for (const bar of bars) {
+      if (bar.volume !== undefined) byTime.set(bar.time, bar.volume)
+    }
+    this.volumeSnapshots.set(resolution, { byTime })
+  }
+
+  private barTimeForTimestamp(
+    resolution: TradingViewResolution,
+    timestamp: number
+  ): number {
+    const intervalMilliseconds = secondsForTradingViewResolution(resolution) * 1000
+    return Math.floor((timestamp * 1000) / intervalMilliseconds) * intervalMilliseconds
+  }
+
+  private queueLiveVolumeRefresh(
+    listenerGuid: string,
+    resolution: TradingViewResolution,
+    barTime: number
+  ): void {
+    let refresh = this.volumeRefreshes.get(resolution)
+    if (!refresh) {
+      const refreshedAt = this.liveVolumeRefreshedAt.get(resolution)
+      if (refreshedAt !== undefined && Date.now() - refreshedAt < LIVE_VOLUME_REFRESH_MS) return
+
+      this.liveVolumeRefreshedAt.set(resolution, Date.now())
+      refresh = this.dataSource
+        .getHistory('24h', secondsForTradingViewResolution(resolution))
+        .then((history) => {
+          const byTime = new Map<number, number>()
+          for (const bar of basketPointsToTradingViewBars(history.points, resolution)) {
+            byTime.set(bar.time, bar.volume ?? 0)
+          }
+          const snapshot = { byTime }
+          this.volumeSnapshots.set(resolution, snapshot)
+          return snapshot
+        })
+        .catch(() => this.volumeSnapshots.get(resolution) ?? { byTime: new Map() })
+        .finally(() => {
+          this.volumeRefreshes.delete(resolution)
+        })
+
+      this.volumeRefreshes.set(resolution, refresh)
+    }
+
+    void refresh.then((snapshot) => {
+      const volume = snapshot.byTime.get(barTime)
+      if (volume === undefined) return
+
+      const subscription = this.subscriptions.get(listenerGuid)
+      if (subscription?.resolution !== resolution || subscription.currentBar?.time !== barTime) return
+      const currentBar = subscription.currentBar
+      if (currentBar.volume === volume) return
+
+      const correctedBar = { ...currentBar, volume }
+      subscription.currentBar = correctedBar
+      this.lastBars.set(resolution, correctedBar)
+      subscription.onTick(correctedBar)
+    })
   }
 }

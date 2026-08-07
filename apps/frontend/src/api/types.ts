@@ -150,6 +150,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
+  volumeUsdc?: string;
   components?: BasketComponentPrice[];
 }
 

@@ -1,5 +1,6 @@
 module Plether.Handlers.Perps
   ( getBasketHistory
+  , basketHistoryPointsWithVolume
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
@@ -44,8 +45,10 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( BasketHistorySnapshotRow (..)
   , BasketSnapshotRow (..)
+  , PerpsMarketVolumeBucketRow (..)
   , PythUpdatePayloadRow (..)
   , getBasketSnapshots
+  , getPerpsMarketVolumeBuckets
   , getLatestBasketSnapshot
   , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
@@ -72,10 +75,20 @@ getBasketHistory pool cfg params = do
       interval = max 60 (bhpIntervalSeconds params)
       maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
 
-  rows <- withDb pool $ \conn ->
-    getBasketSnapshots conn fromUnix nowUnix interval maxPoints (bhpIncludeComponents params)
+  (rows, volumeRows) <- withDb pool $ \conn -> do
+    snapshots <-
+      getBasketSnapshots conn fromUnix nowUnix interval maxPoints (bhpIncludeComponents params)
+    volumes <-
+      getPerpsMarketVolumeBuckets
+        conn
+        (cfgPerpsChainId cfg)
+        (cfgPerpsOrderRouter cfg)
+        fromUnix
+        nowUnix
+        interval
+    pure (snapshots, volumes)
 
-  let points = map rowToPoint rows
+  let points = basketHistoryPointsWithVolume interval rows volumeRows
       latest = case reverse rows of
         row : _ -> Just (bhsrBasketPrice row)
         [] -> Nothing
@@ -93,13 +106,27 @@ getBasketHistory pool cfg params = do
 
   pure $ Right $ mkResponse 0 (cfgChainId cfg) history
 
-rowToPoint :: BasketHistorySnapshotRow -> BasketHistoryPoint
-rowToPoint BasketHistorySnapshotRow {..} =
-  BasketHistoryPoint
-    { bhpTimestamp = bhsrTimestamp
-    , bhpBasketPrice = bhsrBasketPrice
-    , bhpComponents = bhsrComponents
-    }
+basketHistoryPointsWithVolume
+  :: Integer
+  -> [BasketHistorySnapshotRow]
+  -> [PerpsMarketVolumeBucketRow]
+  -> [BasketHistoryPoint]
+basketHistoryPointsWithVolume intervalSeconds rows volumeRows =
+  map rowToPoint rows
+  where
+    interval = max 1 intervalSeconds
+    volumeByBucket =
+      Map.fromList
+        [ (pmvbrBucket row, pmvbrVolumeUsdc row)
+        | row <- volumeRows
+        ]
+    rowToPoint BasketHistorySnapshotRow {..} =
+      BasketHistoryPoint
+        { bhpTimestamp = bhsrTimestamp
+        , bhpBasketPrice = bhsrBasketPrice
+        , bhpVolumeUsdc = Map.findWithDefault 0 (bhsrTimestamp `div` interval) volumeByBucket
+        , bhpComponents = bhsrComponents
+        }
 
 computeChange :: [BasketHistorySnapshotRow] -> Maybe Double
 computeChange rows =

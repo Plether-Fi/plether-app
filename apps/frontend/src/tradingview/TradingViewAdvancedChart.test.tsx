@@ -132,9 +132,14 @@ describe('TradingViewAdvancedChart', () => {
     await waitFor(() => {
       expect(widgetOptions).toBeDefined()
     })
+    expect(view.getByRole('region', { name: /interactive tradingview chart/i })).toHaveClass(
+      'h-[450px]',
+      'sm:h-[580px]'
+    )
     expect(widgetOptions?.disabled_features).not.toContain('header_resolutions')
     expect(widgetOptions?.disabled_features).not.toContain('timeframes_toolbar')
     expect(widgetOptions?.disabled_features).toContain('display_market_status')
+    expect(widgetOptions?.disabled_features).toContain('volume_force_overlay')
     expect(widgetOptions?.timeframe).toBe('5D')
     expect(widgetOptions?.enabled_features).toEqual(expect.arrayContaining([
       'hide_left_toolbar_by_default',
@@ -165,6 +170,7 @@ describe('TradingViewAdvancedChart', () => {
       foregroundColor: '#FFAB96',
     })
     expect(widgetOptions?.overrides).toMatchObject({
+      volumePaneSize: 'small',
       'paneProperties.background': '#250917',
       'paneProperties.crossHairProperties.color': '#FFAB96',
       'scalesProperties.lineColor': 'rgba(255, 171, 150, 0.22)',
@@ -184,6 +190,14 @@ describe('TradingViewAdvancedChart', () => {
       'mainSeriesProperties.baselineStyle.bottomLineColor': '#FF572D',
     })
     expect(widgetOptions?.settings_overrides).toEqual(widgetOptions?.overrides)
+    expect(widgetOptions?.studies_overrides).toEqual({
+      'volume.volume.color.0': '#FF572D',
+      'volume.volume.color.1': '#00FF99',
+      'volume.volume.transparency': 20,
+      'volume.volume ma.color': '#FFAB96',
+      'volume.volume ma.transparency': 35,
+      'volume.volume ma.linewidth': 1,
+    })
 
     await act(async () => {
       chartReady.resolve()

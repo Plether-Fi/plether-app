@@ -94,6 +94,8 @@ module Plether.Database.Schema
   , getPerpsOrdersByAccount
   , getPerpsOrderById
   , getPerpsActivityByAccount
+  , PerpsMarketVolumeBucketRow (..)
+  , getPerpsMarketVolumeBuckets
   , getPerpsMarketVolumeSince
   , getPerpsOrderAccountSide
   , insertPerpsExpiredCleanupActivityIfReady
@@ -1723,6 +1725,17 @@ instance FromRow PerpsActivityRow where
     <*> field
     <*> field
 
+data PerpsMarketVolumeBucketRow = PerpsMarketVolumeBucketRow
+  { pmvbrBucket :: Integer
+  , pmvbrVolumeUsdc :: Integer
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance FromRow PerpsMarketVolumeBucketRow where
+  fromRow = PerpsMarketVolumeBucketRow
+    <$> field
+    <*> (scientificToInteger <$> (field :: RowParser Scientific))
+
 numericIntegerField :: RowParser (Maybe Integer)
 numericIntegerField = fmap scientificToInteger <$> (field :: RowParser (Maybe Scientific))
 
@@ -2480,21 +2493,56 @@ getPerpsActivityByAccount conn chainId releaseRouter account limit cursor = do
       \AND (block_number < ? OR (block_number = ? AND log_index < ?)) \
       \ORDER BY block_number DESC, log_index DESC LIMIT ?"
 
+perpsMarketVolumeExpressionSql :: Query
+perpsMarketVolumeExpressionSql =
+  "ABS(size_delta) * price / 100000000000000000000"
+
+perpsMarketVolumeFilterSql :: Query
+perpsMarketVolumeFilterSql =
+  "FROM perps_account_activity \
+  \WHERE chain_id = ? \
+  \AND release_router = ? \
+  \AND timestamp >= ? \
+  \AND activity_type IN ('Open', 'Close', 'Liquidated') \
+  \AND size_delta IS NOT NULL \
+  \AND price IS NOT NULL"
+
+perpsMarketVolumeSinceSql :: Query
+perpsMarketVolumeSinceSql =
+  "SELECT FLOOR(COALESCE(SUM("
+    <> perpsMarketVolumeExpressionSql
+    <> "), 0)) "
+    <> perpsMarketVolumeFilterSql
+
+perpsMarketVolumeBucketsSql :: Query
+perpsMarketVolumeBucketsSql =
+  "SELECT timestamp / ? AS bucket, FLOOR(COALESCE(SUM("
+    <> perpsMarketVolumeExpressionSql
+    <> "), 0)) "
+    <> perpsMarketVolumeFilterSql
+    <> " AND timestamp <= ? GROUP BY bucket ORDER BY bucket ASC"
+
 getPerpsMarketVolumeSince :: Connection -> Integer -> Text -> Integer -> IO Integer
 getPerpsMarketVolumeSince conn chainId releaseRouter fromTimestamp = do
-  rows <- query conn
-    "SELECT FLOOR(COALESCE(SUM(ABS(size_delta) * price / 100000000000000000000), 0)) \
-    \FROM perps_account_activity \
-    \WHERE chain_id = ? \
-    \AND release_router = ? \
-    \AND timestamp >= ? \
-    \AND activity_type IN ('Open', 'Close', 'Liquidated') \
-    \AND size_delta IS NOT NULL \
-    \AND price IS NOT NULL"
+  rows <- query conn perpsMarketVolumeSinceSql
     (chainId, normalizeRouter releaseRouter, fromTimestamp)
   case rows of
     [Only (Just value)] -> pure $ scientificToInteger value
     _ -> pure 0
+
+getPerpsMarketVolumeBuckets
+  :: Connection
+  -> Integer -- chain ID
+  -> Text    -- release router
+  -> Integer -- from timestamp
+  -> Integer -- to timestamp
+  -> Integer -- interval seconds
+  -> IO [PerpsMarketVolumeBucketRow]
+getPerpsMarketVolumeBuckets conn chainId releaseRouter fromTimestamp toTimestamp intervalSeconds =
+  query
+    conn
+    perpsMarketVolumeBucketsSql
+    (max 1 intervalSeconds, chainId, normalizeRouter releaseRouter, fromTimestamp, toTimestamp)
 
 getPerpsOrderAccountSide :: Connection -> Integer -> Text -> Integer -> IO (Maybe (Text, Maybe Int))
 getPerpsOrderAccountSide conn chainId orderRouter orderId = do

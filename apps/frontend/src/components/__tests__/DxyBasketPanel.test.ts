@@ -29,10 +29,15 @@ const component: BasketComponentPrice = {
   basePrice: '100000000',
 }
 
-function historyPoint(timestamp: number, basketPrice: string): BasketHistoryPoint {
+function historyPoint(
+  timestamp: number,
+  basketPrice: string,
+  volumeUsdc = '0'
+): BasketHistoryPoint {
   return {
     timestamp,
     basketPrice,
+    volumeUsdc,
     components: [component],
   }
 }
@@ -164,12 +169,13 @@ describe('DXY basket chart display transform', () => {
 
   it('replaces the current history bucket with the live latest point', () => {
     const merged = mergeLatestBasketPoint(
-      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000', '123000000')],
       latestPoint(120, '96000000')
     )
 
     expect(merged).toHaveLength(2)
     expect(merged.at(-1)?.basketPrice).toBe('96000000')
+    expect(merged.at(-1)?.volumeUsdc).toBe('123000000')
     expect(merged.at(-1)?.components?.[0]?.publishTime).toBe(121)
   })
 
@@ -195,7 +201,7 @@ describe('DXY basket chart display transform', () => {
 
   it('replaces a backend sample from the same timestamp with the on-chain mark', () => {
     const aligned = alignBasketPointsToOracleMark(
-      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000', '456000000')],
       latestPoint(180, '96000000'),
       { timestamp: 120, basketPrice: '96500000' }
     )
@@ -203,5 +209,6 @@ describe('DXY basket chart display transform', () => {
     expect(aligned).toHaveLength(2)
     expect(aligned.at(-1)?.timestamp).toBe(120)
     expect(aligned.at(-1)?.basketPrice).toBe('96500000')
+    expect(aligned.at(-1)?.volumeUsdc).toBe('456000000')
   })
 })
