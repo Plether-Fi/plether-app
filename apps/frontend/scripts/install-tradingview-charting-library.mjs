@@ -1,4 +1,4 @@
-import { access, cp, rm } from 'node:fs/promises'
+import { access, cp, mkdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,15 +15,14 @@ if (!sourceArgument) {
 }
 
 const sourceRoot = path.resolve(sourceArgument)
-const requiredFiles = [
+const runtimeEntries = [
   'charting_library.standalone.js',
-  'charting_library.d.ts',
   'bundles',
 ]
 
 async function containsRuntimeAssets(directory) {
   try {
-    await Promise.all(requiredFiles.map((requiredFile) => access(path.join(directory, requiredFile))))
+    await Promise.all(runtimeEntries.map((entry) => access(path.join(directory, entry))))
     return true
   } catch {
     return false
@@ -34,11 +33,11 @@ const sourceDirectory = await containsRuntimeAssets(sourceRoot)
   ? sourceRoot
   : path.join(sourceRoot, 'charting_library')
 
-for (const requiredFile of requiredFiles) {
+for (const entry of runtimeEntries) {
   try {
-    await access(path.join(sourceDirectory, requiredFile))
+    await access(path.join(sourceDirectory, entry))
   } catch {
-    console.error(`TradingView library file is missing: ${path.join(sourceDirectory, requiredFile)}`)
+    console.error(`TradingView runtime entry is missing: ${path.join(sourceDirectory, entry)}`)
     process.exit(1)
   }
 }
@@ -51,7 +50,14 @@ if (sourceDirectory === targetDirectory) {
 }
 
 await rm(targetDirectory, { recursive: true, force: true })
-await cp(sourceDirectory, targetDirectory, { recursive: true, force: true })
+await mkdir(targetDirectory, { recursive: true })
+for (const entry of runtimeEntries) {
+  await cp(path.join(sourceDirectory, entry), path.join(targetDirectory, entry), {
+    recursive: true,
+    force: true,
+  })
+}
 
 console.log(`Installed TradingView Advanced Charts assets in ${targetDirectory}`)
+console.log(`Copied runtime entries only: ${runtimeEntries.join(', ')}`)
 console.log('The destination is ignored by Git and must never be committed.')

@@ -90,6 +90,20 @@ jobs:
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
         run: npm run build
 
+      - name: Validate TradingView runtime payload
+        working-directory: apps/frontend
+        run: |
+          test -s dist/charting_library/charting_library.standalone.js
+          test -d dist/charting_library/bundles
+          test -n "$(find dist/charting_library/bundles -type f -print -quit)"
+          test ! -e dist/charting_library/sameorigin.html
+          test ! -e dist/charting_library/charting_library.d.ts
+          test ! -e dist/charting_library/datafeed-api.d.ts
+          test ! -e dist/charting_library/package.json
+          test ! -e dist/charting_library/charting_library.cjs.js
+          test ! -e dist/charting_library/charting_library.esm.js
+          test ! -e dist/charting_library/charting_library.js
+
       - name: Validate testnet AA manifest
         if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
