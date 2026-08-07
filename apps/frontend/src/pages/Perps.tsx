@@ -251,7 +251,12 @@ export function Perps() {
 
         <div className="min-w-0 xl:float-right xl:w-[clamp(340px,28vw,380px)]">
           <div className="-mb-px">
-            <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+            <PerpsMarketStatePanel
+              currentPhase={perpsMarket.marketPhase}
+              currentDuration={marketSchedule.currentDuration}
+              nextPhase={marketSchedule.nextPhase}
+              nextDuration={marketSchedule.nextDuration}
+            />
           </div>
           <PerpsTradeTicket
             enableLiveTrading
@@ -303,6 +308,8 @@ export function Perps() {
           <DxyBasketPanel
             oraclePriceRaw={perpsMarket.raw.markPrice}
             oraclePublishTime={perpsMarket.oracleFreshnessTime}
+            marketPhase={perpsMarket.marketPhase}
+            marketCurrentDuration={marketSchedule.currentDuration}
           />
         </div>
 

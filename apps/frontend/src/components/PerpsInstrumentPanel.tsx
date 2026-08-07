@@ -1,4 +1,14 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react'
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type FocusEventHandler,
+  type MouseEventHandler,
+  type ReactNode,
+  type RefObject,
+} from 'react'
+import { DOCS_LINKS } from '../config/docs'
 import type { PerpsOracleFreshness } from '../utils/perps'
 import type { PerpsDirectionalLimitSide } from '../utils/perpsDirectionalLimit'
 import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
@@ -167,10 +177,10 @@ interface InstrumentDetailsOverlayProps {
   isExpanded: boolean
   interactive?: boolean
   overlayRef?: RefObject<HTMLDivElement | null>
-  onMouseEnter?: () => void
-  onMouseLeave?: () => void
-  onFocusCapture?: () => void
-  onBlurCapture?: () => void
+  onMouseEnter?: MouseEventHandler<HTMLDivElement>
+  onMouseLeave?: MouseEventHandler<HTMLDivElement>
+  onFocusCapture?: FocusEventHandler<HTMLDivElement>
+  onBlurCapture?: FocusEventHandler<HTMLDivElement>
   children: ReactNode
 }
 
@@ -405,15 +415,60 @@ function DirectionalLimitStat({
 }) {
   const details = stat.directionalLimit
   const detailsId = useId()
-  const [isHovered, setIsHovered] = useState(false)
-  const [isFocused, setIsFocused] = useState(false)
+  const closeTimerRef = useRef<number | undefined>(undefined)
+  const isPointerInsideRef = useRef(false)
+  const isFocusInsideRef = useRef(false)
+  const [isInteracting, setIsInteracting] = useState(false)
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current === undefined) return
+    window.clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = undefined
+  }
+
+  const openFromPointer = () => {
+    onActivate()
+    isPointerInsideRef.current = true
+    clearCloseTimer()
+    setIsInteracting(true)
+  }
+
+  const openFromFocus = () => {
+    onActivate()
+    isFocusInsideRef.current = true
+    clearCloseTimer()
+    setIsInteracting(true)
+  }
+
+  const scheduleClose = () => {
+    clearCloseTimer()
+    closeTimerRef.current = window.setTimeout(() => {
+      if (!isPointerInsideRef.current && !isFocusInsideRef.current) {
+        setIsInteracting(false)
+      }
+    }, HOVER_DETAILS_CLOSE_DELAY_MS)
+  }
+
+  const leaveFromPointer = () => {
+    isPointerInsideRef.current = false
+    scheduleClose()
+  }
+
+  const leaveFromFocus = () => {
+    isFocusInsideRef.current = false
+    scheduleClose()
+  }
+
+  useEffect(() => () => {
+    clearCloseTimer()
+  }, [])
 
   if (!details) return null
 
   const hasUsage = details.usagePercent !== undefined && Number.isFinite(details.usagePercent)
   const displayUsagePercent = hasUsage ? Math.max(0, Math.round(details.usagePercent ?? 0)) : undefined
   const progressPercent = hasUsage ? Math.min(100, Math.max(0, details.usagePercent ?? 0)) : 0
-  const isExpanded = !isSuppressed && (forceExpanded || isHovered || isFocused)
+  const isExpanded = !isSuppressed && (forceExpanded || isInteracting)
   const totalSideLabel = totalExposureLabel(details.side)
   const sideLabel = details.side === 'balanced' ? 'Net exposure' : `Net ${details.side?.toUpperCase() ?? ''} exposure`
   const valueLabel = details.isLoading
@@ -431,11 +486,8 @@ function DirectionalLimitStat({
     <>
       <div
         className="min-w-0 sm:col-span-2 xl:col-span-1"
-        onMouseEnter={() => {
-          onActivate()
-          setIsHovered(true)
-        }}
-        onMouseLeave={() => { setIsHovered(false) }}
+        onMouseEnter={openFromPointer}
+        onMouseLeave={leaveFromPointer}
       >
         <dt className="text-xs font-medium text-content-secondary">{stat.label}</dt>
         <dd>
@@ -445,11 +497,8 @@ function DirectionalLimitStat({
             aria-label={`${stat.label} details`}
             aria-controls={detailsId}
             aria-expanded={isExpanded}
-            onFocus={() => {
-              onActivate()
-              setIsFocused(true)
-            }}
-            onBlur={() => { setIsFocused(false) }}
+            onFocus={openFromFocus}
+            onBlur={leaveFromFocus}
           >
             <span className={`text-xl font-semibold 2xl:text-2xl ${
               displayUsagePercent !== undefined && displayUsagePercent >= 100
@@ -471,6 +520,11 @@ function DirectionalLimitStat({
         id={detailsId}
         label={`${stat.label} details`}
         isExpanded={isExpanded}
+        interactive
+        onMouseEnter={openFromPointer}
+        onMouseLeave={leaveFromPointer}
+        onFocusCapture={openFromFocus}
+        onBlurCapture={leaveFromFocus}
       >
         <div
           className="flex h-6 w-full overflow-hidden bg-app-bg/70"
@@ -513,6 +567,22 @@ function DirectionalLimitStat({
         {constraintText ? (
           <p className="mt-3 text-xs leading-5 text-content-secondary">{constraintText}</p>
         ) : null}
+
+        <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
+          <p className="min-w-0 flex-1">
+            Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs,
+            can change before execution, and other checks apply.
+          </p>
+          <a
+            href={DOCS_LINKS.virtualPriceImpact.href}
+            aria-label={`Read: ${DOCS_LINKS.virtualPriceImpact.title}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="shrink-0 font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+          >
+            Learn more
+          </a>
+        </div>
       </InstrumentDetailsOverlay>
     </>
   )

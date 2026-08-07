@@ -18,6 +18,7 @@ import {
   type BasketLatest,
 } from '../api'
 import {
+  DEFAULT_DXY_BASKET_CHART_INTERVAL,
   DXY_BASKET_CHART_INTERVALS,
   basketIntervalSecondsForChartInterval,
   basketRequestIntervalSecondsForChartInterval,
@@ -33,6 +34,8 @@ import {
   type ChartPoint,
   type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
+import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
+import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -54,19 +57,16 @@ function formatPrice(value: number): string {
   })
 }
 
-function formatPercent(value: number | null | undefined): string {
-  if (value == null) return '--'
-  const sign = value > 0 ? '+' : ''
-  return `${sign}${(value * 100).toFixed(2)}%`
-}
-
 export interface DxyBasketPanelViewProps {
   history?: BasketHistory
   changeHistory?: BasketHistory
   latest?: BasketLatest
   oracleMark?: OracleMarkPoint
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
+  useAdvancedChart?: boolean
   isLoading?: boolean
   isError?: boolean
   onChartIntervalChange: (interval: DxyBasketChartInterval) => void
@@ -234,8 +234,11 @@ export function DxyBasketPanelView({
   changeHistory,
   latest,
   oracleMark,
-  chartInterval = '1m',
+  marketPhase,
+  marketCurrentDuration,
+  chartInterval = DEFAULT_DXY_BASKET_CHART_INTERVAL,
   chartStyle = 'candlestick',
+  useAdvancedChart = true,
   isLoading = false,
   isError = false,
   onChartIntervalChange,
@@ -273,92 +276,104 @@ export function DxyBasketPanelView({
     }))
   }, [chartBuckets])
 
-  const headerPrice = oracleMark
-    ? oracleNumberToDisplayDxyPrice(toOraclePrice(oracleMark.basketPrice))
-    : latest
-      ? oracleNumberToDisplayDxyPrice(toOraclePrice(latest.basketPrice))
-      : (chartPoints.at(-1)?.price ?? null)
+  const [advancedChartReady, setAdvancedChartReady] = useState(false)
   const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
 
+  const historyUnavailable = (
+    <Alert variant="warning" title="Basket history unavailable">
+      The API has not returned stored Pyth basket snapshots yet.
+    </Alert>
+  )
+  const noBasketSnapshots = (
+    <Alert variant="info" title="No basket snapshots">
+      Waiting for the backend to ingest historical Pyth values.
+    </Alert>
+  )
+  const fallbackChart = isError ? (
+    historyUnavailable
+  ) : isLoading ? (
+    <div className="h-[240px] sm:h-[320px]">
+      <Skeleton variant="rectangular" height="100%" className="w-full" />
+    </div>
+  ) : chartSeries.length > 0 ? (
+    <DxyBasketChart
+      areaData={chartSeries}
+      candlestickData={chartCandles}
+      chartStyle={chartStyle}
+      lineColor={lineColor}
+    />
+  ) : (
+    noBasketSnapshots
+  )
+  const chartStatusOverlay = isError
+    ? historyUnavailable
+    : !isLoading && chartSeries.length === 0
+      ? noBasketSnapshots
+      : undefined
+
   return (
-    <section className="bg-surface-panel border border-brand-border/30 overflow-hidden">
-      <div className="flex flex-col gap-4 border-b border-brand-border/20 px-3 py-3 sm:px-5 sm:py-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <div className="flex items-center gap-2 text-content-secondary text-sm">
-            <span className="material-symbols-outlined text-base text-brand-peach">show_chart</span>
-            <span>plDXY Perp Price</span>
-          </div>
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-4 gap-y-1">
-            {headerPrice == null && isLoading ? (
-              <Skeleton width={126} height={34} />
-            ) : (
-              <span className="text-2xl font-semibold leading-none text-content-primary sm:text-3xl">
-                {headerPrice == null ? '--' : formatPrice(headerPrice)}
-              </span>
-            )}
-            <span className={`text-sm font-semibold leading-none ${positiveChange ? 'text-positive' : 'text-brand-orange'}`}>
-              {formatPercent(changePct)}
-            </span>
+    <>
+      {!useAdvancedChart || !advancedChartReady ? (
+        <div className="mb-3 flex justify-end">
+          <div className="grid w-full grid-cols-4 border border-brand-border/30 bg-app-bg md:w-fit">
+            {DXY_BASKET_CHART_INTERVALS.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                aria-label={item.ariaLabel}
+                aria-pressed={chartInterval === item.value}
+                className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 ${
+                  chartInterval === item.value
+                    ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
+                    : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
+                }`}
+                onClick={() => {
+                  onChartIntervalChange(item.value)
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
         </div>
+      ) : null}
 
-        <div className="grid w-full grid-cols-4 border border-brand-border/30 bg-app-bg md:w-fit">
-          {DXY_BASKET_CHART_INTERVALS.map((item) => (
-            <button
-              key={item.value}
-              type="button"
-              aria-label={item.ariaLabel}
-              aria-pressed={chartInterval === item.value}
-              className={`border px-2 py-2 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:px-4 ${
-                chartInterval === item.value
-                  ? 'border-[#FFAB96] bg-[#FFAB96] text-app-bg'
-                  : 'border-transparent text-content-secondary hover:bg-[#3B212D] hover:text-content-primary'
-              }`}
-              onClick={() => {
-                onChartIntervalChange(item.value)
-              }}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="p-3 sm:p-4 md:p-5">
-        {isError ? (
-          <Alert variant="warning" title="Basket history unavailable">
-            The API has not returned stored Pyth basket snapshots yet.
-          </Alert>
-        ) : isLoading ? (
-          <div className="h-[240px] sm:h-[320px]">
-            <Skeleton variant="rectangular" height="100%" className="w-full" />
-          </div>
-        ) : chartSeries.length > 0 ? (
-          <DxyBasketChart
-            areaData={chartSeries}
-            candlestickData={chartCandles}
-            chartStyle={chartStyle}
-            lineColor={lineColor}
-          />
-        ) : (
-          <Alert variant="info" title="No basket snapshots">
-            Waiting for the backend to ingest historical Pyth values.
-          </Alert>
-        )}
-      </div>
-    </section>
+      {useAdvancedChart ? (
+        <TradingViewAdvancedChart
+          interval={chartInterval}
+          oracleMark={oracleMark}
+          marketPhase={marketPhase}
+          marketCurrentDuration={marketCurrentDuration}
+          fallback={fallbackChart}
+          statusOverlay={chartStatusOverlay}
+          onIntervalChange={onChartIntervalChange}
+          onReadyChange={setAdvancedChartReady}
+        />
+      ) : (
+        fallbackChart
+      )}
+    </>
   )
 }
 
 export interface DxyBasketPanelProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
 }
 
-export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketPanelProps) {
-  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1m')
+export function DxyBasketPanel({
+  oraclePriceRaw,
+  oraclePublishTime,
+  marketPhase,
+  marketCurrentDuration,
+}: DxyBasketPanelProps) {
+  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>(
+    DEFAULT_DXY_BASKET_CHART_INTERVAL
+  )
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
@@ -379,6 +394,8 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
       changeHistory={changeData?.data}
       latest={latestData?.data}
       oracleMark={oracleMark}
+      marketPhase={marketPhase}
+      marketCurrentDuration={marketCurrentDuration}
       chartInterval={chartInterval}
       isLoading={isLoading}
       isError={isError}

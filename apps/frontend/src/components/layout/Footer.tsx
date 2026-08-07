@@ -21,6 +21,14 @@ export function Footer() {
             <a href="https://discord.gg/MDcUxNm6t" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Discord
             </a>
+            <a
+              href="https://www.tradingview.com/"
+              target="_blank"
+              rel="noopener"
+              className={footerLinkClass}
+            >
+              Charts by TradingView
+            </a>
             <Link to="/terms" className={footerLinkClass}>
               Terms of Service
             </Link>

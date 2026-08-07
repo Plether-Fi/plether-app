@@ -10,7 +10,15 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist', 'coverage', 'storybook-static', 'opensrc', 'e2e', 'vendor']),
+  globalIgnores([
+    'dist',
+    'coverage',
+    'storybook-static',
+    'opensrc',
+    'e2e',
+    'vendor',
+    'public/charting_library',
+  ]),
   {
     files: ['**/*.{ts,tsx}'],
     ignores: [

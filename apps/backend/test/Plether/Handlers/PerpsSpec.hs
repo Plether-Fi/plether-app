@@ -5,13 +5,34 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
-import Plether.Handlers.Perps (PythUpdateAdmission (..), decodePythUpdateForAdmission)
+import Plether.Database.Schema
+  ( BasketHistorySnapshotRow (..)
+  , PerpsMarketVolumeBucketRow (..)
+  )
+import Plether.Handlers.Perps
+  ( PythUpdateAdmission (..)
+  , basketHistoryPointsWithVolume
+  , decodePythUpdateForAdmission
+  )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
-import Plether.Types (ApiError (..), PythUpdateResponse (..))
+import Plether.Types
+  ( ApiError (..)
+  , BasketHistoryPoint (..)
+  , PythUpdateResponse (..)
+  )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "basketHistoryPointsWithVolume" $ do
+    it "matches activity volume by the requested interval bucket" $ do
+      let points = basketHistoryPointsWithVolume 60 basketRows volumeRows
+      map bhpVolumeUsdc points `shouldBe` [123_456, 789]
+
+    it "zero-fills candles without activity in their interval bucket" $ do
+      let points = basketHistoryPointsWithVolume 60 basketRows (take 1 volumeRows)
+      map bhpVolumeUsdc points `shouldBe` [123_456, 0]
+
   describe "decodePythUpdateForAdmission" $ do
     it "prepares strict six-feed latest payload admission inputs" $ do
       admission <-
@@ -71,6 +92,34 @@ spec = do
         10
         (hermesResponse ["0xnot-hex"] configuredFeedIds [100 .. 105])
         `shouldFailWith` "update data item 0 is invalid"
+
+basketRows :: [BasketHistorySnapshotRow]
+basketRows =
+  [ BasketHistorySnapshotRow
+      { bhsrTimestamp = 125
+      , bhsrIntervalSeconds = 5
+      , bhsrBasketPrice = 101_660_000
+      , bhsrComponents = Nothing
+      }
+  , BasketHistorySnapshotRow
+      { bhsrTimestamp = 181
+      , bhsrIntervalSeconds = 5
+      , bhsrBasketPrice = 101_670_000
+      , bhsrComponents = Nothing
+      }
+  ]
+
+volumeRows :: [PerpsMarketVolumeBucketRow]
+volumeRows =
+  [ PerpsMarketVolumeBucketRow
+      { pmvbrBucket = 2
+      , pmvbrVolumeUsdc = 123_456
+      }
+  , PerpsMarketVolumeBucketRow
+      { pmvbrBucket = 3
+      , pmvbrVolumeUsdc = 789
+      }
+  ]
 
 configuredFeedIds :: [Text]
 configuredFeedIds = bcFeedId <$> basketComponents
