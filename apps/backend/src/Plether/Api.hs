@@ -2,12 +2,20 @@ module Plether.Api
   ( app
   ) where
 
+import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
+import qualified Data.ByteString.Lazy as LBS
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
+import qualified Data.Text.Lazy as LT
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
@@ -22,12 +30,18 @@ import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import Plether.Handlers.Perps
-  ( getBasketHistory
+  ( BasketHistoryFetch (..)
+  , BasketHistoryTimings (..)
+  , basketHistoryServerTiming
+  , basketHistoryTimingMetrics
+  , durationMilliseconds
+  , getBasketHistoryTimed
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
   , getRevealPayload
   )
+import Plether.Logging (field, logInfoEvery)
 import Plether.Handlers.PerpsHistory
   ( getPerpsAccountActivity
   , getPerpsAccountOrders
@@ -76,6 +90,7 @@ import Web.Scotty
   , pathParam
   , post
   , queryParamMaybe
+  , raw
   , setHeader
   , status
   )
@@ -352,11 +367,14 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
           E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
 
   get "/api/perps/basket/history" $ do
+    handlerStartedAt <- liftIO getMonotonicTimeNSec
     params <- basketHistoryParams
     case mPool of
       Just pool -> do
-        result <- liftIO $ getBasketHistory pool cfg params
-        handleResult result
+        result <- liftIO $ getBasketHistoryTimed pool cfg params
+        case result of
+          Left err -> handleError err
+          Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
       Nothing ->
         handleServiceUnavailable $
           E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
@@ -494,6 +512,52 @@ handleResult = \case
     json response
   Left err -> handleError err
 
+handleBasketHistoryResult :: Word64 -> BasketHistoryParams -> BasketHistoryFetch -> ActionM ()
+handleBasketHistoryResult handlerStartedAt params fetch = do
+  encodeStartedAt <- liftIO getMonotonicTimeNSec
+  let body = Aeson.encode $ bhfResponse fetch
+  -- Aeson and the history merge are lazy. Force this exact body before ending
+  -- the stage so response encoding is not deferred into Warp's body streaming.
+  bodyBytes <- liftIO $ evaluate $ LBS.length body
+  encodeFinishedAt <- liftIO getMonotonicTimeNSec
+  -- plether_app is core application time through a fully materialized response.
+  -- The structured log flush and socket write happen after this measurement.
+  let timings =
+        BasketHistoryTimings
+          { bhtBackendTotalNs = encodeFinishedAt - handlerStartedAt
+          , bhtDbPoolWaitNs = bhfPoolWaitNs fetch
+          , bhtSnapshotQueryNs = bhfSnapshotQueryNs fetch
+          , bhtVolumeQueryNs = bhfVolumeQueryNs fetch
+          , bhtResponseEncodeNs = encodeFinishedAt - encodeStartedAt
+          }
+  liftIO $ logBasketHistoryTimings params fetch bodyBytes timings
+  setHeader "Content-Type" "application/json"
+  setHeader "Server-Timing" $ LT.fromStrict $ basketHistoryServerTiming timings
+  status status200
+  raw body
+
+logBasketHistoryTimings
+  :: BasketHistoryParams
+  -> BasketHistoryFetch
+  -> Int64
+  -> BasketHistoryTimings
+  -> IO ()
+logBasketHistoryTimings params fetch bodyBytes timings =
+  logInfoEvery
+    10
+    "perps_basket_history_timing"
+    "Perps basket history request completed"
+    $ [ field "range" $ bhpRange params
+      , field "interval_seconds" $ bhpIntervalSeconds params
+      , field "include_components" $ bhpIncludeComponents params
+      , field "snapshot_rows" $ bhfSnapshotRows fetch
+      , field "volume_rows" $ bhfVolumeRows fetch
+      , field "response_bytes" bodyBytes
+      ]
+        <> map
+          (\(metric, duration) -> field (Key.fromText $ metric <> "_ms") $ durationMilliseconds duration)
+          (basketHistoryTimingMetrics timings)
+
 handleError :: ApiError -> ActionM ()
 handleError err = do
   setHeader "Content-Type" "application/json"
@@ -569,6 +633,7 @@ corsMiddleware cfg = cors $ const $ Just policy
         { corsOrigins = Just (map encodeUtf8 origins, True)
         , corsMethods = ["GET", "POST", "OPTIONS"]
         , corsRequestHeaders = ["Content-Type", "Authorization"]
+        , corsExposedHeaders = Just ["Server-Timing"]
         }
 
     encodeUtf8 :: Text -> Data.ByteString.ByteString

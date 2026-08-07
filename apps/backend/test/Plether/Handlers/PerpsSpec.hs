@@ -10,8 +10,11 @@ import Plether.Database.Schema
   , PerpsMarketVolumeBucketRow (..)
   )
 import Plether.Handlers.Perps
-  ( PythUpdateAdmission (..)
+  ( BasketHistoryTimings (..)
+  , PythUpdateAdmission (..)
   , basketHistoryPointsWithVolume
+  , basketHistoryServerTiming
+  , basketHistoryTimingMetrics
   , decodePythUpdateForAdmission
   )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
@@ -24,6 +27,30 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "basket history request timings" $ do
+    it "renders stable Server-Timing metrics with millisecond precision" $ do
+      basketHistoryServerTiming sampleTimings
+        `shouldBe` "plether_app;dur=50.000, plether_db_pool_wait;dur=7.000, plether_db_snapshots;dur=18.234, plether_db_volume;dur=20.000, plether_response_encode;dur=2.500, plether_other;dur=2.266"
+
+    it "keeps the timing stages and unattributed remainder canonical" $ do
+      basketHistoryTimingMetrics sampleTimings
+        `shouldBe`
+          [ ("plether_app", 50_000_000)
+          , ("plether_db_pool_wait", 7_000_000)
+          , ("plether_db_snapshots", 18_234_000)
+          , ("plether_db_volume", 20_000_000)
+          , ("plether_response_encode", 2_500_000)
+          , ("plether_other", 2_266_000)
+          ]
+
+    it "renders sub-millisecond durations without scientific notation" $ do
+      basketHistoryServerTiming zeroStageTimings {bhtBackendTotalNs = 1_234_000}
+        `shouldBe` "plether_app;dur=1.234, plether_db_pool_wait;dur=0.000, plether_db_snapshots;dur=0.000, plether_db_volume;dur=0.000, plether_response_encode;dur=0.000, plether_other;dur=1.234"
+
+    it "clamps the unattributed remainder when measured stages exceed app time" $ do
+      last (basketHistoryTimingMetrics zeroStageTimings {bhtBackendTotalNs = 1, bhtDbPoolWaitNs = 2})
+        `shouldBe` ("plether_other", 0)
+
   describe "basketHistoryPointsWithVolume" $ do
     it "matches activity volume by the requested interval bucket" $ do
       let points = basketHistoryPointsWithVolume 60 basketRows volumeRows
@@ -92,6 +119,26 @@ spec = do
         10
         (hermesResponse ["0xnot-hex"] configuredFeedIds [100 .. 105])
         `shouldFailWith` "update data item 0 is invalid"
+
+sampleTimings :: BasketHistoryTimings
+sampleTimings =
+  BasketHistoryTimings
+    { bhtBackendTotalNs = 50_000_000
+    , bhtDbPoolWaitNs = 7_000_000
+    , bhtSnapshotQueryNs = 18_234_000
+    , bhtVolumeQueryNs = 20_000_000
+    , bhtResponseEncodeNs = 2_500_000
+    }
+
+zeroStageTimings :: BasketHistoryTimings
+zeroStageTimings =
+  BasketHistoryTimings
+    { bhtBackendTotalNs = 0
+    , bhtDbPoolWaitNs = 0
+    , bhtSnapshotQueryNs = 0
+    , bhtVolumeQueryNs = 0
+    , bhtResponseEncodeNs = 0
+    }
 
 basketRows :: [BasketHistorySnapshotRow]
 basketRows =
