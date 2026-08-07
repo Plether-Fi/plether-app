@@ -3,25 +3,84 @@ import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys } from '../api'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
 import type { OracleMarkPoint } from '../utils/dxyBasketChart'
+import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import {
   PLDXY_TRADINGVIEW_SYMBOL,
   PletherDxyDatafeed,
-  TRADINGVIEW_RESOLUTIONS,
+  TRADINGVIEW_FAVORITE_RESOLUTIONS,
   chartIntervalForTradingViewResolution,
   tradingViewResolutionForInterval,
 } from './pletherDatafeed'
 import type {
   TradingViewIntervalSubscription,
   TradingViewNamespace,
+  TradingViewCustomSymbolStatusAdapter,
   TradingViewWidget,
 } from './types'
+import { PLETHER_TRADINGVIEW_CUSTOM_THEMES } from './pletherTheme'
 
-const APP_BACKGROUND = '#0D0A1C'
-const PANEL_BACKGROUND = '#171020'
+const APP_BACKGROUND = '#250917'
+const PANEL_BACKGROUND = '#3B212D'
 const GRID_COLOR = 'rgba(255, 171, 150, 0.12)'
-const TEXT_COLOR = '#D9CCD3'
+const BORDER_COLOR = 'rgba(255, 171, 150, 0.22)'
+const TEXT_COLOR = '#D8CBD0'
+const BRAND_PEACH = '#FFAB96'
+const BRAND_ORANGE = '#FF572D'
 const POSITIVE_COLOR = '#00FF99'
-const NEGATIVE_COLOR = '#FF572D'
+const MARKET_STATUS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="5" /></svg>'
+const CHART_STYLE_OVERRIDES = {
+  'paneProperties.backgroundType': 'solid',
+  'paneProperties.background': APP_BACKGROUND,
+  'paneProperties.vertGridProperties.color': GRID_COLOR,
+  'paneProperties.horzGridProperties.color': GRID_COLOR,
+  'paneProperties.crossHairProperties.color': BRAND_PEACH,
+  'paneProperties.crossHairProperties.transparency': 65,
+  'paneProperties.separatorColor': BORDER_COLOR,
+  'paneProperties.legendProperties.showBackground': false,
+  'scalesProperties.lineColor': BORDER_COLOR,
+  'scalesProperties.textColor': TEXT_COLOR,
+  'scalesProperties.fontSize': 12,
+  'mainSeriesProperties.statusViewStyle.showExchange': false,
+  'mainSeriesProperties.priceLineColor': BRAND_PEACH,
+  'mainSeriesProperties.candleStyle.upColor': POSITIVE_COLOR,
+  'mainSeriesProperties.candleStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.candleStyle.borderUpColor': POSITIVE_COLOR,
+  'mainSeriesProperties.candleStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.candleStyle.wickUpColor': POSITIVE_COLOR,
+  'mainSeriesProperties.candleStyle.wickDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.hollowCandleStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.hollowCandleStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.hollowCandleStyle.wickDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.haStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.haStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.haStyle.wickDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.barStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.volCandlesStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.volCandlesStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.volCandlesStyle.wickDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.columnStyle.upColor': POSITIVE_COLOR,
+  'mainSeriesProperties.columnStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.renkoStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.renkoStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.renkoStyle.wickDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.pbStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.pbStyle.borderDownColor': BRAND_ORANGE,
+  'mainSeriesProperties.kagiStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.pnfStyle.downColor': BRAND_ORANGE,
+  'mainSeriesProperties.lineStyle.color': BRAND_PEACH,
+  'mainSeriesProperties.lineStyle.linewidth': 2,
+  'mainSeriesProperties.areaStyle.color1': 'rgba(255, 171, 150, 0.32)',
+  'mainSeriesProperties.areaStyle.color2': 'rgba(255, 171, 150, 0.04)',
+  'mainSeriesProperties.areaStyle.linecolor': BRAND_PEACH,
+  'mainSeriesProperties.areaStyle.linewidth': 2,
+  'mainSeriesProperties.baselineStyle.baselineColor': BORDER_COLOR,
+  'mainSeriesProperties.baselineStyle.topFillColor1': 'rgba(0, 255, 153, 0.28)',
+  'mainSeriesProperties.baselineStyle.topFillColor2': 'rgba(0, 255, 153, 0.04)',
+  'mainSeriesProperties.baselineStyle.bottomFillColor1': 'rgba(255, 87, 45, 0.04)',
+  'mainSeriesProperties.baselineStyle.bottomFillColor2': 'rgba(255, 87, 45, 0.28)',
+  'mainSeriesProperties.baselineStyle.topLineColor': POSITIVE_COLOR,
+  'mainSeriesProperties.baselineStyle.bottomLineColor': BRAND_ORANGE,
+} satisfies Record<string, string | number | boolean>
 const TRADINGVIEW_TIME_FRAMES = [
   { text: '1y', resolution: '1D', description: '1 Year' },
   { text: '30d', title: '1m', resolution: '60', description: '1 Month' },
@@ -30,6 +89,62 @@ const TRADINGVIEW_TIME_FRAMES = [
 ] as const
 
 const libraryPromises = new Map<string, Promise<TradingViewNamespace>>()
+
+interface PletherMarketStatus {
+  phase: PerpsMarketPhase
+  currentDuration?: string
+}
+
+function escapeTradingViewHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;')
+}
+
+function marketPhaseDescription(phase: PerpsMarketPhase): string {
+  switch (phase) {
+    case 'open':
+      return 'Plether trading is open.'
+    case 'close-only':
+      return 'Plether is currently in close-only mode.'
+    case 'closed':
+      return 'Plether trading is currently closed.'
+    case 'degraded':
+      return 'Plether is currently in degraded mode.'
+    case 'paused':
+      return 'Plether trading is currently paused.'
+  }
+}
+
+function applyPletherMarketStatus(
+  adapter: TradingViewCustomSymbolStatusAdapter,
+  status: PletherMarketStatus
+): void {
+  const isOpen = status.phase === 'open'
+  const title = isOpen ? 'Market open' : 'Market closed'
+  const color = isOpen ? POSITIVE_COLOR : BRAND_ORANGE
+  const content = [marketPhaseDescription(status.phase)]
+  const duration = status.currentDuration?.trim()
+
+  if (duration) {
+    content.push(
+      '<br/><br/>',
+      `It'll ${isOpen ? 'close' : 'open'} in ${escapeTradingViewHtml(duration)}.`
+    )
+  } else if (!isOpen) {
+    content.push('<br/><br/>', 'A reopening time is not available yet.')
+  }
+  content.push('<br/><br/>', 'Exchange timezone: UTC')
+
+  adapter.setIcon(MARKET_STATUS_ICON)
+  adapter.setColor(color)
+  adapter.setTooltip(title)
+  adapter.setDropDownContent([{ title, color, content }])
+  adapter.setVisible(true)
+}
 
 function normalizeLibraryPath(): string {
   const configuredPath = (import.meta.env.VITE_TRADINGVIEW_LIBRARY_PATH as string | undefined)?.trim()
@@ -75,6 +190,8 @@ function advancedChartsEnabled(): boolean {
 export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
   oracleMark?: OracleMarkPoint
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
   fallback: ReactNode
   statusOverlay?: ReactNode
   onIntervalChange?: (interval: DxyBasketChartInterval) => void
@@ -84,6 +201,8 @@ export interface TradingViewAdvancedChartProps {
 export function TradingViewAdvancedChart({
   interval,
   oracleMark,
+  marketPhase = 'open',
+  marketCurrentDuration,
   fallback,
   statusOverlay,
   onIntervalChange,
@@ -95,6 +214,8 @@ export function TradingViewAdvancedChart({
     <EnabledTradingViewAdvancedChart
       interval={interval}
       oracleMark={oracleMark}
+      marketPhase={marketPhase}
+      marketCurrentDuration={marketCurrentDuration}
       fallback={fallback}
       statusOverlay={statusOverlay}
       onIntervalChange={onIntervalChange}
@@ -106,6 +227,8 @@ export function TradingViewAdvancedChart({
 function EnabledTradingViewAdvancedChart({
   interval,
   oracleMark,
+  marketPhase = 'open',
+  marketCurrentDuration,
   fallback,
   statusOverlay,
   onIntervalChange,
@@ -115,6 +238,11 @@ function EnabledTradingViewAdvancedChart({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetRef = useRef<TradingViewWidget | null>(null)
   const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
+  const marketStatusAdapterRef = useRef<TradingViewCustomSymbolStatusAdapter | null>(null)
+  const marketStatusRef = useRef<PletherMarketStatus>({
+    phase: marketPhase,
+    currentDuration: marketCurrentDuration,
+  })
   const intervalRef = useRef(interval)
   const readyRef = useRef(false)
   const oracleMarkRef = useRef(oracleMark)
@@ -133,6 +261,14 @@ function EnabledTradingViewAdvancedChart({
   useEffect(() => {
     oracleMarkRef.current = oracleMark
   }, [oracleMark])
+
+  useEffect(() => {
+    const status = { phase: marketPhase, currentDuration: marketCurrentDuration }
+    marketStatusRef.current = status
+    if (marketStatusAdapterRef.current) {
+      applyPletherMarketStatus(marketStatusAdapterRef.current, status)
+    }
+  }, [marketCurrentDuration, marketPhase])
 
   useEffect(() => {
     const container = containerRef.current
@@ -167,8 +303,10 @@ function EnabledTradingViewAdvancedChart({
           library_path: libraryPath,
           locale: 'en',
           timezone: 'Etc/UTC',
+          timeframe: '5D',
           autosize: true,
           theme: 'dark',
+          custom_themes: PLETHER_TRADINGVIEW_CUSTOM_THEMES,
           toolbar_bg: PANEL_BACKGROUND,
           custom_css_url: '../tradingview-chart.css',
           disabled_features: [
@@ -177,31 +315,26 @@ function EnabledTradingViewAdvancedChart({
             'header_compare',
             'header_screenshot',
             'header_fullscreen_button',
+            'header_quick_search',
+            'display_market_status',
           ],
-          enabled_features: ['iframe_loading_compatibility_mode'],
+          enabled_features: [
+            'hide_left_toolbar_by_default',
+            'iframe_loading_compatibility_mode',
+            'move_logo_to_main_pane',
+            'remove_library_container_border',
+          ],
           favorites: {
-            intervals: TRADINGVIEW_RESOLUTIONS,
+            intervals: TRADINGVIEW_FAVORITE_RESOLUTIONS,
           },
           time_frames: TRADINGVIEW_TIME_FRAMES.map((timeFrame) => ({ ...timeFrame })),
           custom_font_family: 'Uncut Sans, ui-sans-serif, system-ui, sans-serif',
           loading_screen: {
             backgroundColor: APP_BACKGROUND,
-            foregroundColor: '#FFAB96',
+            foregroundColor: BRAND_PEACH,
           },
-          overrides: {
-            'paneProperties.backgroundType': 'solid',
-            'paneProperties.background': APP_BACKGROUND,
-            'paneProperties.vertGridProperties.color': GRID_COLOR,
-            'paneProperties.horzGridProperties.color': GRID_COLOR,
-            'scalesProperties.backgroundColor': APP_BACKGROUND,
-            'scalesProperties.textColor': TEXT_COLOR,
-            'mainSeriesProperties.candleStyle.upColor': POSITIVE_COLOR,
-            'mainSeriesProperties.candleStyle.downColor': NEGATIVE_COLOR,
-            'mainSeriesProperties.candleStyle.borderUpColor': POSITIVE_COLOR,
-            'mainSeriesProperties.candleStyle.borderDownColor': NEGATIVE_COLOR,
-            'mainSeriesProperties.candleStyle.wickUpColor': POSITIVE_COLOR,
-            'mainSeriesProperties.candleStyle.wickDownColor': NEGATIVE_COLOR,
-          },
+          overrides: { ...CHART_STYLE_OVERRIDES },
+          settings_overrides: { ...CHART_STYLE_OVERRIDES },
         })
         widgetRef.current = widget
         void Promise.all([widget.chartReady(), widget.headerReady()])
@@ -217,6 +350,11 @@ function EnabledTradingViewAdvancedChart({
               onIntervalChangeRef.current?.(nextInterval)
             }
             intervalSubscription.subscribe(null, handleIntervalChange)
+            const marketStatusAdapter = widget
+              .customSymbolStatus()
+              .symbol(widget.activeChart().symbol())
+            marketStatusAdapterRef.current = marketStatusAdapter
+            applyPletherMarketStatus(marketStatusAdapter, marketStatusRef.current)
             readyRef.current = true
 
             const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
@@ -246,6 +384,8 @@ function EnabledTradingViewAdvancedChart({
         intervalSubscription.unsubscribe(null, handleIntervalChange)
       }
       onReadyChangeRef.current?.(false)
+      marketStatusAdapterRef.current?.setVisible(false)
+      marketStatusAdapterRef.current = null
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeed.destroy()
@@ -270,32 +410,18 @@ function EnabledTradingViewAdvancedChart({
   if (unavailable) return fallback
 
   return (
-    <div className="space-y-2">
-      <div
-        className="relative h-[360px] w-full overflow-hidden bg-app-bg sm:h-[460px]"
-        role="region"
-        aria-label="Interactive TradingView chart for the plDXY perpetual market"
-      >
-        <div ref={containerRef} className="h-full w-full" />
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
-        {statusOverlay ? (
-          <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
-            <div className="pointer-events-auto w-full max-w-lg shadow-2xl">{statusOverlay}</div>
-          </div>
-        ) : null}
-      </div>
-      <p className="text-right text-xs text-content-secondary">
-        Advanced charts powered by{' '}
-        <a
-          href="https://www.tradingview.com/"
-          target="_blank"
-          rel="noopener"
-          className="font-medium text-content-primary underline underline-offset-4"
-        >
-          TradingView
-        </a>
-        .
-      </p>
+    <div
+      className="relative h-[360px] w-full overflow-hidden border border-brand-border/30 bg-app-bg sm:h-[460px]"
+      role="region"
+      aria-label="Interactive TradingView chart for the plDXY perpetual market"
+    >
+      <div ref={containerRef} className="h-full w-full" />
+      <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
+      {statusOverlay ? (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
+          <div className="pointer-events-auto w-full max-w-lg shadow-2xl">{statusOverlay}</div>
+        </div>
+      ) : null}
     </div>
   )
 }

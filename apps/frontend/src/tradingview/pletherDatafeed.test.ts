@@ -3,6 +3,7 @@ import { QueryClient } from '@tanstack/react-query'
 import { apiQueryKeys, type BasketHistory, type BasketLatest } from '../api'
 import {
   PletherDxyDatafeed,
+  TRADINGVIEW_RESOLUTIONS,
   basketPointsToTradingViewBars,
   chartIntervalForTradingViewResolution,
   historyRangeForRequest,
@@ -44,7 +45,7 @@ function dataSource(overrides: Partial<PletherChartDataSource> = {}): PletherCha
 }
 
 describe('Plether TradingView datafeed', () => {
-  it('maps the existing UI intervals to TradingView resolutions', () => {
+  it('maps the parent intervals and supports additional native minute resolutions', () => {
     expect(tradingViewResolutionForInterval('1m')).toBe('1')
     expect(tradingViewResolutionForInterval('5m')).toBe('5')
     expect(tradingViewResolutionForInterval('1h')).toBe('60')
@@ -54,6 +55,9 @@ describe('Plether TradingView datafeed', () => {
     expect(chartIntervalForTradingViewResolution('60')).toBe('1h')
     expect(chartIntervalForTradingViewResolution('1D')).toBe('1d')
     expect(chartIntervalForTradingViewResolution('15')).toBeUndefined()
+    expect(secondsForTradingViewResolution('3')).toBe(180)
+    expect(secondsForTradingViewResolution('15')).toBe(900)
+    expect(secondsForTradingViewResolution('30')).toBe(1_800)
     expect(secondsForTradingViewResolution('1D')).toBe(86_400)
   })
 
@@ -61,8 +65,11 @@ describe('Plether TradingView datafeed', () => {
     const now = 100 * 24 * 60 * 60
 
     expect(historyRangeForRequest(now - 60 * 60, now, 300, '1', now)).toBe('24h')
+    expect(historyRangeForRequest(now - 60 * 60, now, 300, '3', now)).toBe('7d')
     expect(historyRangeForRequest(now - 60 * 60, now, 60, '5', now)).toBe('7d')
     expect(historyRangeForRequest(now - 60 * 60, now, 2_000, '5', now)).toBe('7d')
+    expect(historyRangeForRequest(now - 60 * 60, now, 60, '15', now)).toBe('7d')
+    expect(historyRangeForRequest(now - 60 * 60, now, 60, '30', now)).toBe('7d')
     expect(historyRangeForRequest(now - 60 * 60, now, 60, '60', now)).toBe('30d')
     expect(historyRangeForRequest(now - 60 * 60, now, 300, '60', now)).toBe('30d')
     expect(historyRangeForRequest(now - 60 * 60, now, 10, '1D', now)).toBe('1y')
@@ -80,6 +87,9 @@ describe('Plether TradingView datafeed', () => {
     })
 
     expect(symbolInfo.visible_plots_set).toBe('ohlc')
+    expect(symbolInfo.supported_resolutions).toEqual(TRADINGVIEW_RESOLUTIONS)
+    expect(symbolInfo.intraday_multipliers).toEqual(['1', '5', '60'])
+    expect(symbolInfo.daily_multipliers).toEqual(['1'])
   })
 
   it('converts Pyth basket samples into reversed plDXY OHLC bars', () => {

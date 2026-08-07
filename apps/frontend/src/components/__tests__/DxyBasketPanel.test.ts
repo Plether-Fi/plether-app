@@ -9,6 +9,7 @@ import {
 } from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
 import {
+  DEFAULT_DXY_BASKET_CHART_INTERVAL,
   DXY_BASKET_CHART_INTERVALS,
   basketRangeForChartInterval,
   basketRequestIntervalSecondsForChartInterval,
@@ -47,6 +48,11 @@ function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
 }
 
 describe('DXY basket chart display transform', () => {
+  it('opens on the five-day chart view by default', () => {
+    expect(DEFAULT_DXY_BASKET_CHART_INTERVAL).toBe('5m')
+    expect(basketRangeForChartInterval(DEFAULT_DXY_BASKET_CHART_INTERVAL)).toBe('7d')
+  })
+
   it('uses the intended default history window for each chart interval', () => {
     expect(Object.fromEntries(DXY_BASKET_CHART_INTERVALS.map((item) => [item.label, item.range]))).toEqual({
       '1m': '24h',

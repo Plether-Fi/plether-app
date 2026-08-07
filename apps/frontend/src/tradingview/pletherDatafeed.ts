@@ -26,12 +26,21 @@ import type {
 } from './types'
 
 export const PLDXY_TRADINGVIEW_SYMBOL = 'PLETHER:PLDXY.P'
-export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = ['1', '5', '60', '1D']
+export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
+  '1',
+  '3',
+  '5',
+  '15',
+  '30',
+  '60',
+  '1D',
+]
+export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '60', '1D']
 
 const SYMBOL_INFO: TradingViewSymbolInfo = {
   name: 'plDXY.P',
   ticker: PLDXY_TRADINGVIEW_SYMBOL,
-  description: 'Plether plDXY Perpetual',
+  description: 'plDXY Perpetual',
   type: 'futures',
   session: '24x7',
   timezone: 'Etc/UTC',
@@ -41,7 +50,9 @@ const SYMBOL_INFO: TradingViewSymbolInfo = {
   pricescale: 10_000,
   minmov: 1,
   has_intraday: true,
+  intraday_multipliers: ['1', '5', '60'],
   has_daily: true,
+  daily_multipliers: ['1'],
   supported_resolutions: TRADINGVIEW_RESOLUTIONS,
   data_status: 'streaming',
   visible_plots_set: 'ohlc',
@@ -149,7 +160,10 @@ export function chartIntervalForTradingViewResolution(
 export function secondsForTradingViewResolution(resolution: TradingViewResolution): number {
   const seconds: Record<TradingViewResolution, number> = {
     '1': 60,
+    '3': 3 * 60,
     '5': 5 * 60,
+    '15': 15 * 60,
+    '30': 30 * 60,
     '60': 60 * 60,
     '1D': 24 * 60 * 60,
   }
@@ -165,7 +179,10 @@ export function historyRangeForRequest(
 ): BasketHistoryRange {
   const minimumSeconds: Record<TradingViewResolution, number> = {
     '1': 24 * 60 * 60,
+    '3': 7 * 24 * 60 * 60,
     '5': 7 * 24 * 60 * 60,
+    '15': 7 * 24 * 60 * 60,
+    '30': 7 * 24 * 60 * 60,
     '60': 30 * 24 * 60 * 60,
     '1D': 365 * 24 * 60 * 60,
   }

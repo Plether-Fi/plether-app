@@ -1,4 +1,43 @@
-export type TradingViewResolution = '1' | '5' | '60' | '1D'
+export type TradingViewResolution = '1' | '3' | '5' | '15' | '30' | '60' | '1D'
+
+export type TradingViewColorGradient = [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+]
+
+export interface TradingViewCustomThemeColors {
+  color1: TradingViewColorGradient
+  color2: TradingViewColorGradient
+  color3: TradingViewColorGradient
+  color4: TradingViewColorGradient
+  color5: TradingViewColorGradient
+  color6: TradingViewColorGradient
+  color7: TradingViewColorGradient
+  white: string
+  black: string
+}
+
+export interface TradingViewCustomThemes {
+  light: TradingViewCustomThemeColors
+  dark: TradingViewCustomThemeColors
+}
 
 export interface TradingViewBar {
   time: number
@@ -38,7 +77,9 @@ export interface TradingViewSymbolInfo {
   pricescale: number
   minmov: number
   has_intraday: boolean
+  intraday_multipliers: string[]
   has_daily: boolean
+  daily_multipliers: string[]
   supported_resolutions: TradingViewResolution[]
   data_status: 'streaming'
   visible_plots_set: 'ohlc'
@@ -55,6 +96,28 @@ export interface TradingViewSearchResult {
 
 export interface TradingViewHistoryMetadata {
   noData: boolean
+}
+
+export interface TradingViewCustomStatusDropDownContent {
+  title: string
+  color?: string
+  icon?: string
+  content: string[]
+}
+
+export interface TradingViewCustomSymbolStatusAdapter {
+  setVisible: (visible: boolean) => TradingViewCustomSymbolStatusAdapter
+  setIcon: (icon: string | null) => TradingViewCustomSymbolStatusAdapter
+  setColor: (color: string) => TradingViewCustomSymbolStatusAdapter
+  setTooltip: (tooltip: string | null) => TradingViewCustomSymbolStatusAdapter
+  setDropDownContent: (
+    content: TradingViewCustomStatusDropDownContent[] | null
+  ) => TradingViewCustomSymbolStatusAdapter
+}
+
+export interface TradingViewCustomSymbolStatusApi {
+  symbol: (symbolId: string) => TradingViewCustomSymbolStatusAdapter
+  hideAll: () => void
 }
 
 export interface TradingViewDatafeed {
@@ -95,8 +158,10 @@ export interface TradingViewWidgetOptions {
   library_path: string
   locale: string
   timezone: string
+  timeframe: string
   autosize: boolean
   theme: 'dark'
+  custom_themes: TradingViewCustomThemes
   toolbar_bg: string
   custom_css_url: string
   disabled_features: string[]
@@ -116,12 +181,14 @@ export interface TradingViewWidgetOptions {
     foregroundColor: string
   }
   overrides: Record<string, string | number | boolean>
+  settings_overrides: Record<string, string | number | boolean>
 }
 
 export interface TradingViewWidget {
   chartReady: () => Promise<void>
   headerReady: () => Promise<void>
   activeChart: () => TradingViewChart
+  customSymbolStatus: () => TradingViewCustomSymbolStatusApi
   remove: () => void
 }
 
@@ -133,6 +200,7 @@ export interface TradingViewIntervalSubscription {
 export interface TradingViewChart {
   resetData: () => void
   resolution: () => string
+  symbol: () => string
   setResolution: (resolution: TradingViewResolution) => Promise<boolean>
   onIntervalChanged: () => TradingViewIntervalSubscription
 }

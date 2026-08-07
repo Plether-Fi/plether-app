@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { DxyBasketPanelView, type DxyBasketChartStyle } from '../components/DxyBasketPanel'
 import {
+  DEFAULT_DXY_BASKET_CHART_INTERVAL,
   basketRangeForChartInterval,
   type DxyBasketChartInterval,
 } from '../components/dxyBasketChartConfig'
@@ -224,7 +225,7 @@ const meta: Meta<typeof DxyBasketStory> = {
     layout: 'fullscreen',
   },
   args: {
-    initialInterval: '1m',
+    initialInterval: DEFAULT_DXY_BASKET_CHART_INTERVAL,
     market: 'rally',
     chartStyle: 'candlestick',
     state: 'ready',

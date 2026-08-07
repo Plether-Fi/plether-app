@@ -18,6 +18,7 @@ import {
   type BasketLatest,
 } from '../api'
 import {
+  DEFAULT_DXY_BASKET_CHART_INTERVAL,
   DXY_BASKET_CHART_INTERVALS,
   basketIntervalSecondsForChartInterval,
   basketRequestIntervalSecondsForChartInterval,
@@ -34,6 +35,7 @@ import {
   type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
 import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
+import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -60,6 +62,8 @@ export interface DxyBasketPanelViewProps {
   changeHistory?: BasketHistory
   latest?: BasketLatest
   oracleMark?: OracleMarkPoint
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
   chartInterval?: DxyBasketChartInterval
   chartStyle?: DxyBasketChartStyle
   useAdvancedChart?: boolean
@@ -230,7 +234,9 @@ export function DxyBasketPanelView({
   changeHistory,
   latest,
   oracleMark,
-  chartInterval = '1m',
+  marketPhase,
+  marketCurrentDuration,
+  chartInterval = DEFAULT_DXY_BASKET_CHART_INTERVAL,
   chartStyle = 'candlestick',
   useAdvancedChart = true,
   isLoading = false,
@@ -338,6 +344,8 @@ export function DxyBasketPanelView({
         <TradingViewAdvancedChart
           interval={chartInterval}
           oracleMark={oracleMark}
+          marketPhase={marketPhase}
+          marketCurrentDuration={marketCurrentDuration}
           fallback={fallbackChart}
           statusOverlay={chartStatusOverlay}
           onIntervalChange={onChartIntervalChange}
@@ -353,10 +361,19 @@ export function DxyBasketPanelView({
 export interface DxyBasketPanelProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
+  marketPhase?: PerpsMarketPhase
+  marketCurrentDuration?: string
 }
 
-export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketPanelProps) {
-  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>('1m')
+export function DxyBasketPanel({
+  oraclePriceRaw,
+  oraclePublishTime,
+  marketPhase,
+  marketCurrentDuration,
+}: DxyBasketPanelProps) {
+  const [chartInterval, setChartInterval] = useState<DxyBasketChartInterval>(
+    DEFAULT_DXY_BASKET_CHART_INTERVAL
+  )
   const range = basketRangeForChartInterval(chartInterval)
   const intervalSeconds = basketRequestIntervalSecondsForChartInterval(chartInterval)
   const { data, isLoading, isError } = usePerpsBasketHistory(range, intervalSeconds)
@@ -377,6 +394,8 @@ export function DxyBasketPanel({ oraclePriceRaw, oraclePublishTime }: DxyBasketP
       changeHistory={changeData?.data}
       latest={latestData?.data}
       oracleMark={oracleMark}
+      marketPhase={marketPhase}
+      marketCurrentDuration={marketCurrentDuration}
       chartInterval={chartInterval}
       isLoading={isLoading}
       isError={isError}
