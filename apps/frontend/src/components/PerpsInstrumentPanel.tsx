@@ -415,17 +415,60 @@ function DirectionalLimitStat({
 }) {
   const details = stat.directionalLimit
   const detailsId = useId()
-  const metricRef = useRef<HTMLDivElement>(null)
-  const overlayRef = useRef<HTMLDivElement>(null)
-  const [isHovered, setIsHovered] = useState(false)
-  const [isFocused, setIsFocused] = useState(false)
+  const closeTimerRef = useRef<number | undefined>(undefined)
+  const isPointerInsideRef = useRef(false)
+  const isFocusInsideRef = useRef(false)
+  const [isInteracting, setIsInteracting] = useState(false)
+
+  const clearCloseTimer = () => {
+    if (closeTimerRef.current === undefined) return
+    window.clearTimeout(closeTimerRef.current)
+    closeTimerRef.current = undefined
+  }
+
+  const openFromPointer = () => {
+    onActivate()
+    isPointerInsideRef.current = true
+    clearCloseTimer()
+    setIsInteracting(true)
+  }
+
+  const openFromFocus = () => {
+    onActivate()
+    isFocusInsideRef.current = true
+    clearCloseTimer()
+    setIsInteracting(true)
+  }
+
+  const scheduleClose = () => {
+    clearCloseTimer()
+    closeTimerRef.current = window.setTimeout(() => {
+      if (!isPointerInsideRef.current && !isFocusInsideRef.current) {
+        setIsInteracting(false)
+      }
+    }, HOVER_DETAILS_CLOSE_DELAY_MS)
+  }
+
+  const leaveFromPointer = () => {
+    isPointerInsideRef.current = false
+    scheduleClose()
+  }
+
+  const leaveFromFocus = () => {
+    isFocusInsideRef.current = false
+    scheduleClose()
+  }
+
+  useEffect(() => () => {
+    clearCloseTimer()
+  }, [])
 
   if (!details) return null
 
   const hasUsage = details.usagePercent !== undefined && Number.isFinite(details.usagePercent)
   const displayUsagePercent = hasUsage ? Math.max(0, Math.round(details.usagePercent ?? 0)) : undefined
   const progressPercent = hasUsage ? Math.min(100, Math.max(0, details.usagePercent ?? 0)) : 0
-  const isExpanded = !isSuppressed && (forceExpanded || isHovered || isFocused)
+  const isExpanded = !isSuppressed && (forceExpanded || isInteracting)
   const totalSideLabel = totalExposureLabel(details.side)
   const sideLabel = details.side === 'balanced' ? 'Net exposure' : `Net ${details.side?.toUpperCase() ?? ''} exposure`
   const valueLabel = details.isLoading
@@ -438,25 +481,13 @@ function DirectionalLimitStat({
     ? 'Remaining unavailable'
     : `${Math.max(0, 100 - displayUsagePercent).toString()}% remaining`
   const constraintText = directionalConstraintText(details, displayUsagePercent)
-  const isInsideDetails = (target: EventTarget | null) => (
-    target instanceof Node && (
-      metricRef.current?.contains(target) === true ||
-      overlayRef.current?.contains(target) === true
-    )
-  )
 
   return (
     <>
       <div
-        ref={metricRef}
         className="min-w-0 sm:col-span-2 xl:col-span-1"
-        onMouseEnter={() => {
-          onActivate()
-          setIsHovered(true)
-        }}
-        onMouseLeave={(event) => {
-          if (!isInsideDetails(event.relatedTarget)) setIsHovered(false)
-        }}
+        onMouseEnter={openFromPointer}
+        onMouseLeave={leaveFromPointer}
       >
         <dt className="text-xs font-medium text-content-secondary">{stat.label}</dt>
         <dd>
@@ -466,13 +497,8 @@ function DirectionalLimitStat({
             aria-label={`${stat.label} details`}
             aria-controls={detailsId}
             aria-expanded={isExpanded}
-            onFocus={() => {
-              onActivate()
-              setIsFocused(true)
-            }}
-            onBlur={(event) => {
-              if (!isInsideDetails(event.relatedTarget)) setIsFocused(false)
-            }}
+            onFocus={openFromFocus}
+            onBlur={leaveFromFocus}
           >
             <span className={`text-xl font-semibold 2xl:text-2xl ${
               displayUsagePercent !== undefined && displayUsagePercent >= 100
@@ -495,21 +521,10 @@ function DirectionalLimitStat({
         label={`${stat.label} details`}
         isExpanded={isExpanded}
         interactive
-        overlayRef={overlayRef}
-        onMouseEnter={() => {
-          onActivate()
-          setIsHovered(true)
-        }}
-        onMouseLeave={(event) => {
-          if (!isInsideDetails(event.relatedTarget)) setIsHovered(false)
-        }}
-        onFocusCapture={() => {
-          onActivate()
-          setIsFocused(true)
-        }}
-        onBlurCapture={(event) => {
-          if (!isInsideDetails(event.relatedTarget)) setIsFocused(false)
-        }}
+        onMouseEnter={openFromPointer}
+        onMouseLeave={leaveFromPointer}
+        onFocusCapture={openFromFocus}
+        onBlurCapture={leaveFromFocus}
       >
         <div
           className="flex h-6 w-full overflow-hidden bg-app-bg/70"

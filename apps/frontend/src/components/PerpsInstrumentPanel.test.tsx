@@ -126,6 +126,8 @@ describe('PerpsInstrumentPanel price details', () => {
 
 describe('PerpsInstrumentPanel directional limit', () => {
   it('reveals the integrated limit details on hover and keyboard focus', () => {
+    vi.useFakeTimers()
+
     render(
       <PerpsInstrumentPanel
         stats={[
@@ -174,12 +176,21 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(screen.getByText(
       'Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs, can change before execution, and other checks apply.'
     )).toBeVisible()
-    expect(screen.getByRole('link', { name: 'Read: Virtual Price Impact' })).toHaveAttribute(
+    const learnMoreLink = screen.getByRole('link', { name: 'Read: Virtual Price Impact' })
+    expect(learnMoreLink).toHaveTextContent('Learn more')
+    expect(learnMoreLink).toHaveAttribute(
       'href',
       'https://docs.plether.com/how-plether-works/trading-costs-fees-carry-and-vpi#virtual-price-impact'
     )
 
     fireEvent.mouseLeave(metric!)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.mouseEnter(overlay!)
+    act(() => { vi.advanceTimersByTime(300) })
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.mouseLeave(overlay!)
+    act(() => { vi.advanceTimersByTime(300) })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
     expect(overlay).toHaveClass('grid-rows-[0fr]', 'opacity-0', 'shadow-none')
     expect(screen.getByText('Pool liquidity').closest('[aria-hidden]')).toBeNull()
@@ -187,12 +198,13 @@ describe('PerpsInstrumentPanel directional limit', () => {
     fireEvent.focus(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
 
-    const readMoreLink = screen.getByRole('link', { name: 'Read: Virtual Price Impact' })
-    fireEvent.blur(trigger, { relatedTarget: readMoreLink })
-    fireEvent.focus(readMoreLink)
+    fireEvent.blur(trigger, { relatedTarget: learnMoreLink })
+    fireEvent.focus(learnMoreLink)
+    act(() => { vi.advanceTimersByTime(300) })
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
 
-    fireEvent.blur(readMoreLink)
+    fireEvent.blur(learnMoreLink)
+    act(() => { vi.advanceTimersByTime(300) })
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
