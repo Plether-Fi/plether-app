@@ -171,6 +171,13 @@ describe('PerpsInstrumentPanel directional limit', () => {
     expect(screen.getByText('Total LONG exposure')).toBeVisible()
     expect(screen.getByText('Net LONG exposure')).toBeVisible()
     expect(screen.getByText('882.9M USDC')).toBeVisible()
+    expect(screen.getByText(
+      'Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs, can change before execution, and other checks apply.'
+    )).toBeVisible()
+    expect(screen.getByRole('link', { name: 'Read: Virtual Price Impact' })).toHaveAttribute(
+      'href',
+      'https://docs.plether.com/how-plether-works/trading-costs-fees-carry-and-vpi#virtual-price-impact'
+    )
 
     fireEvent.mouseLeave(metric!)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -180,7 +187,12 @@ describe('PerpsInstrumentPanel directional limit', () => {
     fireEvent.focus(trigger)
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
 
-    fireEvent.blur(trigger)
+    const readMoreLink = screen.getByRole('link', { name: 'Read: Virtual Price Impact' })
+    fireEvent.blur(trigger, { relatedTarget: readMoreLink })
+    fireEvent.focus(readMoreLink)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+    fireEvent.blur(readMoreLink)
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
   })
 
