@@ -31,6 +31,28 @@
 }
 
 /*
+ * Keep informational chart hints on a neutral surface. TradingView otherwise
+ * maps them to the primary palette, turning the whole hint brand peach.
+ */
+.theme-dark [style^='bottom:'] div:has(> [role='img']) {
+  background: #3b212d !important;
+  border: 1px solid rgba(255, 171, 150, 0.5);
+  color: #fff5f9 !important;
+}
+
+.theme-dark [style^='bottom:'] div:has(> [role='img']) > div {
+  color: #fff5f9 !important;
+}
+
+.theme-dark [style^='bottom:'] div:has(> [role='img']) > [role='img'] {
+  color: #d8cbd0 !important;
+}
+
+.theme-dark [style^='bottom:'] div:has(> [role='img']) > [role='img']:hover {
+  color: #ffab96 !important;
+}
+
+/*
  * TradingView does not expose dialog geometry through its theme API. These
  * selectors use semantic roles and form attributes so they do not depend on
  * generated CSS-module class names.

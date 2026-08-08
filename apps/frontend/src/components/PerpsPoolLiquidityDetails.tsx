@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { PerpsSeniorCapitalStatus } from '../utils/perpsPoolCapital'
-import type { TooltipDocsLink } from './ui'
+import { DocsLink, type TooltipDocsLink } from './ui'
 
 export interface PerpsPoolLiquidityDetailsProps {
   longCapacity?: ReactNode
@@ -168,15 +168,13 @@ export function PerpsPoolLiquidityDetails({
       <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
         <p>Opening capacity is estimated and may change before execution. Pool liquidity is not an LP withdrawal guarantee.</p>
         {docsLink ? (
-          <a
+          <DocsLink
             href={docsLink.href}
-            aria-label={`Read: ${docsLink.title}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+            title={docsLink.title}
+            className="shrink-0"
           >
             Learn more
-          </a>
+          </DocsLink>
         ) : null}
       </div>
     </div>

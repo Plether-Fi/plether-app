@@ -147,6 +147,7 @@ function BasketDetailsRail() {
       components={BASKET_COMPONENTS}
       priceChanges={BASKET_PRICE_CHANGES}
       nowSeconds={BASKET_DETAILS_NOW}
+      docsLink={DOCS_LINKS.direction}
     />
   )
 }

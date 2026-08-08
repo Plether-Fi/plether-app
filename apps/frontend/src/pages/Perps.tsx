@@ -123,6 +123,7 @@ export function Perps() {
               isLoading={perpsMarket.isBasketComponentsLoading}
               isError={perpsMarket.isBasketComponentsError}
               nowSeconds={nowSeconds}
+              docsLink={DOCS_LINKS.direction}
             />
           ),
         },
