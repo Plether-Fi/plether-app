@@ -26,10 +26,9 @@ npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backe
 
 ## TradingView Advanced Charts
 
-The plDXY Perpetual panel uses TradingView Advanced Charts when its licensed
-runtime assets are available. The existing Lightweight Charts implementation
-remains as a fallback for tests, Storybook, and environments without access to
-the proprietary package.
+The plDXY Perpetual panel uses TradingView Advanced Charts exclusively. If its
+licensed runtime assets are unavailable, the panel shows an explicit unavailable
+state instead of switching chart engines.
 
 Clone the private TradingView repository outside this public repository, then
 install the runtime assets locally:

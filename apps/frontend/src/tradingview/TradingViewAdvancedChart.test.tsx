@@ -23,15 +23,13 @@ function deferred() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   delete window.TradingView
 })
 
 describe('TradingViewAdvancedChart', () => {
   it('uses native controls and synchronizes their interval with the parent', async () => {
-    vi.stubEnv('MODE', 'development')
-    vi.stubEnv('VITE_TRADINGVIEW_CHARTS_ENABLED', 'true')
-
     const chartReady = deferred()
     const headerReady = deferred()
     const unsubscribe = vi.fn()
@@ -110,7 +108,6 @@ describe('TradingViewAdvancedChart', () => {
       defaultOptions: { queries: { retry: false } },
     })
     const onIntervalChange = vi.fn()
-    const onReadyChange = vi.fn()
     const chartElement = (
       interval: '1m' | '5m' | '1h' | '1d',
       marketPhase: 'open' | 'close-only' | 'closed' | 'degraded' | 'paused' = 'open',
@@ -121,9 +118,7 @@ describe('TradingViewAdvancedChart', () => {
           interval={interval}
           marketPhase={marketPhase}
           marketCurrentDuration={marketCurrentDuration}
-          fallback={<div>Fallback chart</div>}
           onIntervalChange={onIntervalChange}
-          onReadyChange={onReadyChange}
         />
       </QueryClientProvider>
     )
@@ -154,6 +149,7 @@ describe('TradingViewAdvancedChart', () => {
       { text: '1d', resolution: '1', description: '1 Day' },
     ])
     expect(widgetOptions?.toolbar_bg).toBe('#3B212D')
+    expect(widgetOptions?.custom_css_url).toBe('../tradingview-chart.css?v=20260808-2')
     expect(widgetOptions?.custom_themes.dark.color2).toMatchObject({
       3: '#FFF5F9',
       8: '#D8CBD0',
@@ -203,13 +199,11 @@ describe('TradingViewAdvancedChart', () => {
       chartReady.resolve()
       await Promise.resolve()
     })
-    expect(onReadyChange).not.toHaveBeenCalledWith(true)
 
     await act(async () => {
       headerReady.resolve()
       await Promise.resolve()
     })
-    expect(onReadyChange).toHaveBeenCalledWith(true)
     expect(statusSymbol).toHaveBeenCalledWith('PLETHER:PLDXY.P')
     expect(setColor).toHaveBeenLastCalledWith('#00FF99')
     expect(setTooltip).toHaveBeenLastCalledWith('Market open')
@@ -301,7 +295,34 @@ describe('TradingViewAdvancedChart', () => {
     expect(unsubscribe).toHaveBeenCalledWith(null, intervalCallback)
     expect(setVisible).toHaveBeenLastCalledWith(false)
     expect(remove).toHaveBeenCalledOnce()
-    expect(onReadyChange).toHaveBeenLastCalledWith(false)
+    queryClient.clear()
+  })
+
+  it('shows an explicit unavailable state when the licensed runtime cannot load', async () => {
+    vi.stubEnv('VITE_TRADINGVIEW_LIBRARY_PATH', '/missing-charting-library/')
+    const append = vi.spyOn(document.head, 'append').mockImplementation(() => {})
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval="5m" />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => {
+      expect(append).toHaveBeenCalledOnce()
+    })
+    const script = append.mock.calls[0][0] as HTMLScriptElement
+    act(() => {
+      script.dispatchEvent(new Event('error'))
+    })
+
+    expect(await view.findByText('TradingView chart unavailable')).toBeInTheDocument()
+    expect(view.queryByRole('img', { name: /price performance chart/i })).not.toBeInTheDocument()
+
+    view.unmount()
     queryClient.clear()
   })
 })

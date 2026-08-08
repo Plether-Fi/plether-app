@@ -14,7 +14,7 @@ export function DocsLink({ href, title, children, className = '' }: DocsLinkProp
       aria-label={`Read: ${title}`}
       target="_blank"
       rel="noopener noreferrer"
-      className={`cursor-pointer font-medium text-[#FFAB96] underline decoration-2 underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${className}`}
+      className={`cursor-pointer border-b border-transparent font-medium text-[#FFAB96] transition-colors hover:border-current hover:text-content-primary focus-visible:border-current focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] ${className}`}
     >
       {children}
     </a>
