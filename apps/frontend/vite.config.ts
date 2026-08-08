@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig, type ProxyOptions } from 'vite';
+import { defineConfig, loadEnv, type ProxyOptions } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 
@@ -11,6 +11,11 @@ import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
+const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
+const AA_BACKEND_PROXY_PATH = '/api/aa/pimlico';
+const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
+
+type RuntimeEnv = Record<string, string | undefined>;
 
 function parseHeadersFile(): Record<string, string> {
   const raw = fs.readFileSync(path.join(dirname, 'public/_headers'), 'utf-8');
@@ -22,9 +27,12 @@ function parseHeadersFile(): Record<string, string> {
   return headers;
 }
 
-function apiProxyConfig(): ProxyOptions {
-  const target = process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET;
-  const preserveProxyPath = process.env.VITE_API_PROXY_PRESERVE_PATH === '1';
+function apiProxyConfig(
+  env: RuntimeEnv,
+  authenticateAaProxy = false
+): ProxyOptions {
+  const target = env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET;
+  const preserveProxyPath = env.VITE_API_PROXY_PRESERVE_PATH === '1';
 
   return {
     target,
@@ -32,19 +40,44 @@ function apiProxyConfig(): ProxyOptions {
     rewrite: preserveProxyPath
       ? undefined
       : (proxyPath) => proxyPath.replace(/^\/api\/(?:spot|perps)\/v1/, '/api'),
+    configure: authenticateAaProxy
+      ? (proxy) => {
+          proxy.on('proxyReq', (proxyRequest, request) => {
+            proxyRequest.removeHeader(AA_PROXY_AUTH_HEADER);
+            const requestPath = request.url?.split('?', 1)[0];
+            if (
+              (
+                requestPath === AA_PROXY_PATH ||
+                requestPath === AA_BACKEND_PROXY_PATH
+              ) &&
+              env.AA_PROXY_ORIGIN_TOKEN
+            ) {
+              proxyRequest.removeHeader('CF-Connecting-IP');
+              proxyRequest.setHeader(
+                AA_PROXY_AUTH_HEADER,
+                env.AA_PROXY_ORIGIN_TOKEN
+              );
+              proxyRequest.setHeader(
+                'CF-Connecting-IP',
+                request.socket.remoteAddress ?? '127.0.0.1'
+              );
+            }
+          });
+        }
+      : undefined,
   };
 }
 
-function pythHermesProxyConfig(): ProxyOptions {
+function pythHermesProxyConfig(env: RuntimeEnv): ProxyOptions {
   return {
-    target: process.env.VITE_PYTH_HERMES_PROXY_TARGET ?? 'https://hermes.pyth.network',
+    target: env.VITE_PYTH_HERMES_PROXY_TARGET ?? 'https://hermes.pyth.network',
     changeOrigin: true,
     rewrite: (proxyPath) => proxyPath.replace(/^\/pyth-hermes/, ''),
   };
 }
 
-function buildCommit(): string {
-  const envCommit = process.env.VITE_BUILD_COMMIT ?? process.env.CF_PAGES_COMMIT_SHA;
+function buildCommit(env: RuntimeEnv): string {
+  const envCommit = env.VITE_BUILD_COMMIT ?? env.CF_PAGES_COMMIT_SHA;
   if (envCommit) return envCommit.slice(0, 12);
 
   try {
@@ -58,10 +91,16 @@ function buildCommit(): string {
 }
 
 // More info at: https://storybook.js.org/docs/next/writing-tests/integrations/vitest-addon
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  const env: RuntimeEnv = {
+    ...loadEnv(mode, dirname, ''),
+    ...process.env,
+  };
+
+  return {
   define: {
-    'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit()),
-    'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(process.env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),
+    'import.meta.env.VITE_BUILD_COMMIT': JSON.stringify(buildCommit(env)),
+    'import.meta.env.VITE_DEV_API_PROXY_TARGET': JSON.stringify(env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET),
   },
   plugins: [
     react(),
@@ -74,9 +113,9 @@ export default defineConfig({
   server: {
     headers: parseHeadersFile(),
     proxy: {
-      '/api/spot/v1': apiProxyConfig(),
-      '/api/perps/v1': apiProxyConfig(),
-      '/pyth-hermes': pythHermesProxyConfig(),
+      '/api/spot/v1': apiProxyConfig(env),
+      '/api/perps/v1': apiProxyConfig(env, true),
+      '/pyth-hermes': pythHermesProxyConfig(env),
     },
   },
   preview: { headers: parseHeadersFile() },
@@ -177,5 +216,6 @@ export default defineConfig({
         }
       }
     ]
-  }
+  },
+  };
 });

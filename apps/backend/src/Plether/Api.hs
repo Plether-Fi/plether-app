@@ -2,13 +2,21 @@ module Plether.Api
   ( app
   ) where
 
+import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
+import qualified Data.ByteString.Lazy as LBS
+import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
-import Network.HTTP.Types.Status (status200, status400, status429, status500, status503)
+import qualified Data.Text.Lazy as LT
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
+import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
 import Network.Wai (Middleware)
 import Network.Wai.Middleware.Cors
@@ -17,16 +25,23 @@ import Network.Wai.Middleware.Cors
   , simpleCorsResourcePolicy
   )
 import Plether.Cache (AppCache)
+import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.Config (Config (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import Plether.Handlers.Perps
-  ( getBasketHistory
+  ( BasketHistoryFetch (..)
+  , BasketHistoryTimings (..)
+  , basketHistoryServerTiming
+  , basketHistoryTimingMetrics
+  , durationMilliseconds
+  , getBasketHistoryTimed
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
   , getRevealPayload
   )
+import Plether.Logging (field, logInfoEvery)
 import Plether.Handlers.PerpsHistory
   ( getPerpsAccountActivity
   , getPerpsAccountOrders
@@ -52,6 +67,12 @@ import Plether.Handlers.History
   , getLeverageHistory
   , getLendingHistory
   )
+import Plether.Handlers.Insights
+  ( getCompetitionLeaderboardResponse
+  , getCompetitionWalletResponse
+  , getCurrentCompetitionResponse
+  , getInsightsDataStatusResponse
+  )
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
 import Plether.Types.History (HistoryParams (..))
@@ -69,6 +90,7 @@ import Web.Scotty
   , pathParam
   , post
   , queryParamMaybe
+  , raw
   , setHeader
   , status
   )
@@ -79,8 +101,8 @@ instance FromJSON TestnetFaucetRequest where
   parseJSON = withObject "TestnetFaucetRequest" $ \v ->
     TestnetFaucetRequest <$> v .: "address"
 
-app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> ScottyM ()
-app cache client perpsClient cfg mPool manager = do
+app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
+app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   middleware $ corsMiddleware cfg
 
   get "/api/health" $ do
@@ -98,6 +120,9 @@ app cache client perpsClient cfg mPool manager = do
           handleServiceUnavailable $
             E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"
       else handleError $ E.invalidAddress addr
+
+  post "/api/aa/pimlico" $
+    handlePimlicoProxy pimlicoProxyState cfg perpsClient manager
 
   get "/api/protocol/status" $ do
     result <- liftIO $ getProtocolStatus cache client cfg mPool
@@ -190,6 +215,59 @@ app cache client perpsClient cfg mPool manager = do
       (_, Nothing, _) -> handleError $ E.invalidAmount "principal must be a positive integer"
       (_, _, Nothing) -> handleError $ E.invalidAmount "leverage must be a positive integer"
       _ -> handleError $ E.invalidAmount "invalid parameters"
+
+  get "/api/insights/v1/competitions/current" $
+    case mPool of
+      Just pool -> liftIO (getCurrentCompetitionResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/competitions/:slug/leaderboard" $ do
+    slug <- pathParam "slug"
+    mLimit <- queryParamMaybe "limit"
+    mCursor <- queryParamMaybe "cursor"
+    mSearch <- queryParamMaybe "search"
+    case (traverse parseNonNegativeInt mLimit, traverse parseNonNegativeInt mCursor) of
+      (Just parsedLimit, Just parsedCursor) ->
+        case mPool of
+          Just pool -> do
+            result <-
+              liftIO $
+                getCompetitionLeaderboardResponse
+                  pool
+                  cfg
+                  slug
+                  mSearch
+                  (maybe 50 id parsedLimit)
+                  (maybe 0 id parsedCursor)
+            handleResult result
+          Nothing -> insightsUnavailable
+      (Nothing, _) -> handleError $ E.invalidAmount "limit must be a non-negative integer"
+      (_, Nothing) -> handleError $ E.invalidAmount "cursor must be a non-negative integer"
+
+  get "/api/insights/v1/competitions/:slug/wallets/:address" $ do
+    slug <- pathParam "slug"
+    addr <- pathParam "address"
+    mActivityLimit <- queryParamMaybe "activityLimit"
+    case traverse parseNonNegativeInt mActivityLimit of
+      Nothing -> handleError $ E.invalidAmount "activityLimit must be a non-negative integer"
+      Just parsedLimit ->
+        case mPool of
+          Just pool -> do
+            result <-
+              liftIO $
+                getCompetitionWalletResponse
+                  pool
+                  cfg
+                  slug
+                  addr
+                  (maybe 100 id parsedLimit)
+            handleResult result
+          Nothing -> insightsUnavailable
+
+  get "/api/insights/v1/status" $
+    case mPool of
+      Just pool -> liftIO (getInsightsDataStatusResponse pool cfg) >>= handleResult
+      Nothing -> insightsUnavailable
 
   case mPool of
     Just pool -> do
@@ -289,11 +367,14 @@ app cache client perpsClient cfg mPool manager = do
           E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
 
   get "/api/perps/basket/history" $ do
+    handlerStartedAt <- liftIO getMonotonicTimeNSec
     params <- basketHistoryParams
     case mPool of
       Just pool -> do
-        result <- liftIO $ getBasketHistory pool cfg params
-        handleResult result
+        result <- liftIO $ getBasketHistoryTimed pool cfg params
+        case result of
+          Left err -> handleError err
+          Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
       Nothing ->
         handleServiceUnavailable $
           E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
@@ -314,7 +395,7 @@ app cache client perpsClient cfg mPool manager = do
     case (parsePositiveInteger rawOrderId, mMinPublishTime >>= parsePositiveInteger, mMaxPublishTime >>= parsePositiveInteger, mPool) of
       (Just orderId, Just minPublishTime, Just maxPublishTime, Just pool)
         | minPublishTime <= maxPublishTime -> do
-            result <- liftIO $ getRevealPayload pool cfg orderId minPublishTime maxPublishTime
+            result <- liftIO $ getRevealPayload pool perpsClient cfg orderId minPublishTime maxPublishTime
             handleResult result
       (Nothing, _, _, _) ->
         handleError $ E.invalidAmount "orderId must be a positive integer"
@@ -332,7 +413,7 @@ app cache client perpsClient cfg mPool manager = do
     mPublishTime <- queryParamMaybe "publishTime"
     case traverse parsePositiveInteger mPublishTime of
       Just mTs -> do
-        result <- liftIO $ getPythUpdate cache manager cfg mTs
+        result <- liftIO $ getPythUpdate cache manager perpsClient cfg mTs
         handleResult result
       Nothing ->
         handleError $ E.invalidAmount "publishTime must be a positive integer"
@@ -340,7 +421,7 @@ app cache client perpsClient cfg mPool manager = do
   get "/api/perps/pyth/cached-latest" $ do
     case mPool of
       Just pool -> do
-        result <- liftIO $ getCachedLatestPythUpdate pool cfg
+        result <- liftIO $ getCachedLatestPythUpdate pool perpsClient cfg
         handleResult result
       Nothing ->
         handleServiceUnavailable $
@@ -431,6 +512,52 @@ handleResult = \case
     json response
   Left err -> handleError err
 
+handleBasketHistoryResult :: Word64 -> BasketHistoryParams -> BasketHistoryFetch -> ActionM ()
+handleBasketHistoryResult handlerStartedAt params fetch = do
+  encodeStartedAt <- liftIO getMonotonicTimeNSec
+  let body = Aeson.encode $ bhfResponse fetch
+  -- Aeson and the history merge are lazy. Force this exact body before ending
+  -- the stage so response encoding is not deferred into Warp's body streaming.
+  bodyBytes <- liftIO $ evaluate $ LBS.length body
+  encodeFinishedAt <- liftIO getMonotonicTimeNSec
+  -- plether_app is core application time through a fully materialized response.
+  -- The structured log flush and socket write happen after this measurement.
+  let timings =
+        BasketHistoryTimings
+          { bhtBackendTotalNs = encodeFinishedAt - handlerStartedAt
+          , bhtDbPoolWaitNs = bhfPoolWaitNs fetch
+          , bhtSnapshotQueryNs = bhfSnapshotQueryNs fetch
+          , bhtVolumeQueryNs = bhfVolumeQueryNs fetch
+          , bhtResponseEncodeNs = encodeFinishedAt - encodeStartedAt
+          }
+  liftIO $ logBasketHistoryTimings params fetch bodyBytes timings
+  setHeader "Content-Type" "application/json"
+  setHeader "Server-Timing" $ LT.fromStrict $ basketHistoryServerTiming timings
+  status status200
+  raw body
+
+logBasketHistoryTimings
+  :: BasketHistoryParams
+  -> BasketHistoryFetch
+  -> Int64
+  -> BasketHistoryTimings
+  -> IO ()
+logBasketHistoryTimings params fetch bodyBytes timings =
+  logInfoEvery
+    10
+    "perps_basket_history_timing"
+    "Perps basket history request completed"
+    $ [ field "range" $ bhpRange params
+      , field "interval_seconds" $ bhpIntervalSeconds params
+      , field "include_components" $ bhpIncludeComponents params
+      , field "snapshot_rows" $ bhfSnapshotRows fetch
+      , field "volume_rows" $ bhfVolumeRows fetch
+      , field "response_bytes" bodyBytes
+      ]
+        <> map
+          (\(metric, duration) -> field (Key.fromText $ metric <> "_ms") $ durationMilliseconds duration)
+          (basketHistoryTimingMetrics timings)
+
 handleError :: ApiError -> ActionM ()
 handleError err = do
   setHeader "Content-Type" "application/json"
@@ -439,6 +566,7 @@ handleError err = do
       E.RateLimited -> status429
       E.RpcError -> status503
       E.NetworkError -> status503
+      E.NotFound -> status404
       E.InternalError -> status500
       _ -> status400
   json err
@@ -468,6 +596,18 @@ parsePositiveInt txt = do
     then Just $ fromInteger value
     else Nothing
 
+parseNonNegativeInt :: Text -> Maybe Int
+parseNonNegativeInt txt = do
+  value <- parseAmount txt
+  if value <= fromIntegral (maxBound :: Int)
+    then Just $ fromInteger value
+    else Nothing
+
+insightsUnavailable :: ActionM ()
+insightsUnavailable =
+  handleServiceUnavailable $
+    E.internalError "DATABASE_URL is not configured; Plether Insights is unavailable"
+
 parseHistoryCursor :: Text -> Maybe (Integer, Integer)
 parseHistoryCursor txt =
   case T.splitOn ":" (T.strip txt) of
@@ -493,6 +633,7 @@ corsMiddleware cfg = cors $ const $ Just policy
         { corsOrigins = Just (map encodeUtf8 origins, True)
         , corsMethods = ["GET", "POST", "OPTIONS"]
         , corsRequestHeaders = ["Content-Type", "Authorization"]
+        , corsExposedHeaders = Just ["Server-Timing"]
         }
 
     encodeUtf8 :: Text -> Data.ByteString.ByteString

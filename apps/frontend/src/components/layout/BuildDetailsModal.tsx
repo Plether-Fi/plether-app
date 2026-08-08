@@ -9,6 +9,7 @@ import {
 } from '../../api'
 import { BUILD_COMMIT, DEV_API_PROXY_TARGET } from '../../config/buildInfo'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../../contracts/perpsAddresses'
+import { usePerpsIdentity } from '../../perps-aa'
 import { Modal } from '../ui/Modal'
 
 interface BuildDetailsModalProps {
@@ -58,9 +59,9 @@ function DetailTable({ rows }: { rows: DetailRows }) {
   const entries = Object.entries(rows) as [string, DetailValue][]
 
   return (
-    <dl className="grid grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+    <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-[minmax(7rem,0.45fr)_minmax(0,1fr)]">
       {entries.map(([label, value]) => (
-        <div key={label} className="contents">
+        <div key={label} className="grid min-w-0 grid-cols-1 gap-0.5 sm:contents">
           <dt className="text-content-secondary">{label}</dt>
           <dd className="min-w-0 break-all font-mono text-content-primary">{displayValue(value)}</dd>
         </div>
@@ -81,6 +82,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
   const chainId = useChainId()
   const protocolConfig = useProtocolConfig()
+  const perpsIdentity = usePerpsIdentity()
 
   const spotApiBaseUrl = getScopedApiBaseUrl('spot')
   const perpsApiBaseUrl = getScopedApiBaseUrl('perps')
@@ -150,6 +152,30 @@ export function BuildDetailsModal({ isOpen, onClose }: BuildDetailsModalProps) {
 
         <Section title="Perps Contracts">
           <DetailTable rows={{ Chain: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID, ...PERPS_ARBITRUM_SEPOLIA }} />
+        </Section>
+
+        <Section title="Perps Gas Sponsorship">
+          <DetailTable
+            rows={{
+              Required: true,
+              Configured: perpsIdentity.manifest !== null,
+              Status: perpsIdentity.status,
+              Enabled: perpsIdentity.sponsorshipEnabled,
+              'Manifest version': perpsIdentity.manifest?.version,
+              'Account mode': perpsIdentity.identity?.accountMode ??
+                perpsIdentity.manifest?.smartAccountMode,
+              'Account version': perpsIdentity.identity?.accountVersion ??
+                perpsIdentity.manifest?.smartAccountVersion,
+              'Account index': perpsIdentity.identity?.accountIndex ??
+                perpsIdentity.manifest?.smartAccountIndex,
+              'Owner Wallet': perpsIdentity.ownerAddress,
+              'Trading Account': perpsIdentity.accountAddress,
+              EntryPoint: perpsIdentity.manifest?.entryPoint,
+              Factory: perpsIdentity.manifest?.smartAccountFactory,
+              'Pimlico proxy': perpsIdentity.manifest?.pimlicoRpcUrl,
+              Error: perpsIdentity.error?.message,
+            }}
+          />
         </Section>
       </div>
     </Modal>

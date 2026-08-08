@@ -1,8 +1,8 @@
 # How Plether works in 5 minutes
 
-> **Traders take a view on the dollar. LPs underwrite it. Plether keeps the obligation measurable and accounts for everything in USDC.**
+> **Traders take a view on the dollar. LPs[^lp] underwrite it. Plether keeps the obligation measurable and accounts for everything in USDC[^usdc].**
 
-Plether is an oracle-priced perpetual market, not an order book.
+Plether is an oracle-priced[^oracle] perpetual market, not an order book.
 
 Traders are not matched against other traders. They open **LONG USD** or **SHORT USD** positions against a USDC liquidity pool called the **HousePool**.
 
@@ -24,7 +24,7 @@ Plether derives dollar exposure from six major currencies:
 * Swedish krona
 * Swiss franc
 
-Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired weights to produce a transparent basket-derived market.
+Pyth supplies the underlying exchange rates. Plether combines them using fixed, DXY-inspired[^dxy] weights to produce a transparent basket-derived market.
 
 It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
 
@@ -35,15 +35,17 @@ It is not raw DXY, a wrapped futures contract, or a claim on an offchain index.
 
 The raw oracle basket prices foreign currencies in dollars. It therefore falls when the dollar strengthens and rises when the dollar weakens. Plether expresses positions from the dollar’s perspective: LONG USD or SHORT USD.
 
+The interface displays the dollar-oriented complement of the bounded raw basket: `Displayed index = 2.00 − bounded raw basket`. The displayed index therefore rises when USD strengthens and falls when USD weakens.
+
 The market price has a hard upper bound. This limits the maximum possible payout and makes the protocol’s worst-case obligation calculable before accepting a trade.
 
 ### 2. Traders deposit margin
 
-Every position starts with USDC margin.
+Every position starts with USDC margin recorded under a Trading Account. The connected owner wallet authorizes that account’s actions.
 
-Margin absorbs losses and determines how far the market can move against a position before it becomes liquidatable. Adding more margin reduces effective leverage and moves the liquidation threshold farther away.
+Margin absorbs losses, while the account’s eligible reachable collateral determines how far the market can move before the position becomes liquidatable. Depositing more USDC into the Margin Account increases that buffer. Reassigning USDC already free in the same Margin Account to the position generally does not change immediate account-level liquidation health, although it can reduce the position’s carry base.
 
-Each address can hold one live direction at a time. A trader can:
+Each Trading Account can hold one live direction at a time. A trader can:
 
 * Open a position
 * Increase its size
@@ -53,20 +55,20 @@ Each address can hold one live direction at a time. A trader can:
 
 To switch from LONG USD to SHORT USD, or the other way around, the existing position must be closed first.
 
-Positions have no scheduled expiry. They remain open until the trader closes them or their remaining equity is no longer sufficient.
+Positions have no scheduled expiry. They remain open until the trader closes them or a keeper liquidates them after the account no longer satisfies its maintenance requirement.
 
 ### 3. Orders commit first and price later
 
-Plether does not execute an order in the same transaction in which it is submitted.
+Plether does not execute an order in the same operation in which it is committed.
 
 Instead:
 
-1. The trader submits a binding order.
-2. Required margin and a keeper execution bounty are reserved.
+1. The owner wallet authorizes the Trading Account action, and Plether submits the eligible sponsored operation.
+2. Any required margin and an execution reward are reserved.
 3. The order enters a global first-in, first-out queue.
-4. A permissionless keeper supplies the required Pyth data.
-5. While the FX market is live, execution uses the first eligible oracle update published after the order was committed.
-6. The protocol applies oracle confidence adjustments, price impact and the trader’s acceptable-price limit.
+4. A permissionless keeper[^keeper] submits execution and any Pyth update data required by the active market state.
+5. While the FX[^fx] market is live, execution uses the first eligible oracle update published after the order was committed.
+6. The protocol applies the active confidence policy, VPI[^vpi] and the trader’s acceptable-price limit. Frozen voluntary closes waive the adverse confidence price shift and use the separate frozen-close spread.
 7. The position executes or the order fails according to protocol rules.
 
 The trader cannot cancel an order after commitment.
@@ -84,23 +86,23 @@ A position has several separate economic components:
 | **Directional PnL** | Gains or loses value as the dollar moves relative to the basket          |
 | **Margin**          | Supports the position and absorbs losses                                 |
 | **Execution fee**   | Protocol fee charged when position size changes                          |
-| **Price impact**    | Adjusts execution according to HousePool depth and directional imbalance |
+| **Price impact**    | Applies a separate USDC charge or rebate based on HousePool imbalance     |
 | **Carry**           | Time-based cost for using LP-backed capital                              |
-| **Keeper bounty**   | Pays the keeper that processes the delayed order                         |
+| **Execution reward** | Pays the account that processes the delayed order                        |
 
 #### Price impact
 
 Plether uses virtual price impact to respond to directional imbalance.
 
-A trade that adds to the pool’s existing exposure can receive a worse execution price. A trade that reduces that exposure can receive a better price during normal market conditions.
+A trade that adds to the pool’s existing imbalance can pay a VPI charge. A trade that reduces that imbalance can receive a bounded VPI rebate. This signed VPI treatment also remains active for eligible frozen-market closes.
 
-This changes execution economics without allowing a trader to move the external oracle price.
+VPI changes the trade’s USDC economics. It does not change the oracle execution price recorded on the position or move the external oracle price.
 
 #### Carry instead of funding
 
 Plether does not transfer funding payments between LONG and SHORT traders.
 
-Carry is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
+Carry[^carry] is charged on the portion of a position economically financed by LP capital. It varies with utilization and accrues continuously over time.
 
 Both LONG USD and SHORT USD positions can pay carry simultaneously. Carry can also continue accruing while the FX oracle is stale or frozen.
 
@@ -108,20 +110,20 @@ When collected, realized carry becomes HousePool trading revenue.
 
 #### Liquidation
 
-When a position’s carry-adjusted equity falls to or below the applicable maintenance requirement, it becomes eligible for full liquidation.
+When the account’s carry-adjusted equity, calculated from eligible liquidation-reachable collateral, falls to or below the applicable maintenance requirement, its position becomes eligible for full liquidation.
 
-Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, the shortfall is absorbed by the HousePool.
+Available collateral pays the trading loss and liquidation bounty. Any positive residual remains attributable to the trader. If collateral cannot cover the full loss, an existing trader claim belonging to the same Trading Account can be netted against the terminal shortfall; any remainder becomes HousePool bad debt.
 
 ### 5. LPs provide the counterparty capital
 
-The HousePool holds the USDC that backs trader payouts. LPs enter through two tranches with different positions in the loss waterfall.
+The HousePool holds the USDC that backs trader payouts. LPs enter through two tranches[^tranche] with different positions in the loss waterfall.
 
 | Tranche    | Return profile                                      | Loss position                                 |
 | ---------- | --------------------------------------------------- | --------------------------------------------- |
 | **Senior** | Targets a coupon funded from available Junior value | Losses reach Senior after Junior is exhausted |
 | **Junior** | Receives residual upside after Senior obligations   | Absorbs losses first                          |
 
-The Senior target is not fixed or guaranteed. Senior capital can still be impaired.
+The Senior target rate is configurable, and the resulting coupon is not guaranteed. Senior capital can still be impaired.
 
 Junior takes more risk because it absorbs bad debt first. In return, it receives the residual economics after Senior has been accounted for.
 
@@ -138,7 +140,7 @@ LP entry and exit are not always immediate:
 
 The bounded market price lets Plether calculate the maximum aggregate payout for each direction.
 
-Before accepting a trade that increases risk, the protocol compares physically backed HousePool assets—after existing senior claims—with the worst-case directional liability after the trade.
+Before accepting a trade that increases risk, the protocol compares physically backed HousePool assets—after existing trader-claim liabilities—with the worst-case directional liability after the trade.
 
 If the pool cannot support that obligation, the trade is rejected.
 
@@ -146,7 +148,7 @@ This is **solvency before volume**. It does not mean that LP principal is guaran
 
 Plether does not forcibly reduce unrelated profitable positions to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
-If a profitable close cannot be paid immediately, the unpaid amount becomes a senior trader claim. The claim remains an obligation of the pool and can later be settled into the trader’s margin account when sufficient cash is available.
+Released position margin follows separately. The complete fresh HousePool-funded payout is either credited immediately or, when sufficient cash is unavailable, recorded in full as a senior trader claim. Plether never splits one fresh payout between an immediate credit and a new claim. The claim remains an obligation of the pool and can later be settled into the Trading Account’s Margin Account when sufficient cash is available.
 
 If a terminal settlement reveals insolvency, the protocol enters degraded mode. New risk is blocked while closes, liquidations and recapitalization remain available.
 
@@ -162,7 +164,7 @@ The dollar market does not trade like crypto. Plether changes behavior around FX
 | **Paused**              | New trader risk or LP deposits may be blocked while protective actions remain available                      |
 | **Degraded**            | New risk and affected withdrawals are blocked; closes, liquidations and recapitalization continue            |
 
-Frozen-market execution prioritizes risk reduction over normal live-price guarantees. It uses special pricing rules and an LP-protection surcharge.
+Frozen-market execution prioritizes risk reduction over normal live-price guarantees. Voluntary closes use special pricing rules and a fixed LP-owned frozen-close spread; liquidations keep their separate adverse-confidence policy and do not pay that spread.
 
 ### Five things to remember
 
@@ -172,12 +174,12 @@ Frozen-market execution prioritizes risk reduction over normal live-price guaran
 4. **Carry pays for LP-backed exposure; it is not trader-to-trader funding.**
 5. **Bounded liability makes risk measurable. It does not make trading or LPing risk-free.**
 
-### Where to go next
-
-* **Understanding the Plether dollar index**
-* **Trader quickstart**
-* **Liquidity provider quickstart**
-* **Fees, carry and price impact**
-* **Margin and liquidation**
-* **Market states and closures**
-* **Risk and security**
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.

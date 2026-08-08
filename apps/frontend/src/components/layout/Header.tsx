@@ -17,15 +17,15 @@ export function Header() {
   const homePath = shouldHidePerps ? '/spot' : '/'
 
   return (
-    <header className="border-b border-brand-border/30 bg-surface-panel py-4">
-      <div className="flex w-full min-w-0 items-center justify-between px-6 lg:px-8">
-        <div className="flex min-w-0 items-center gap-10">
+    <header className="border-b border-brand-border/30 bg-surface-panel py-3 sm:py-4">
+      <div className="flex w-full min-w-0 items-center justify-between gap-2 px-3 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 items-center gap-4 lg:gap-10">
           <Link to={homePath} className="flex shrink-0 items-center gap-2.5 px-1 py-0.5 transition-opacity hover:opacity-90">
             <img src="/logomark.svg" alt="Plether" className="h-8 w-8" />
-            <img src="/logotype.svg" alt="" aria-hidden="true" className="h-7 w-auto" />
+            <img src="/logotype.svg" alt="" aria-hidden="true" className="hidden h-7 w-auto min-[430px]:block" />
           </Link>
 
-          <nav className="hidden min-w-0 items-center gap-1 md:flex">
+          <nav className="hidden min-w-0 items-center gap-1 lg:flex">
             {visibleNavLinks.map(({ path, label }) => {
               const isActive = path === '/vaults'
                 ? location.pathname === '/vaults' || location.pathname.startsWith('/vaults/')
@@ -50,7 +50,7 @@ export function Header() {
           </nav>
         </div>
 
-        <div className="flex min-w-0 items-center gap-4 text-sm">
+        <div className="flex min-w-0 items-center justify-end gap-1.5 text-sm sm:gap-3 lg:gap-4">
           <PendingTxBadge />
           <ConnectButton />
         </div>

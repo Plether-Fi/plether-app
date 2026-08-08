@@ -4,20 +4,45 @@ module Plether.Perps.HistoryIndexerSpec (spec) where
 
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
+import Data.Aeson (object, (.=))
 import Data.Text (Text)
 import Data.Word (Word8)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
-  ( ParsedPerpsLog (..)
+  ( BlockInfo (..)
+  , ParsedPerpsLog (..)
   , RpcLog (..)
+  , TradeCosts (..)
+  , decodeCloseTradeCosts
+  , decodeOpenTradeCosts
   , orderFailReasonName
   , parsePerpsLog
   , terminalStatus
+  , validateRpcLogBlockHash
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "validateRpcLogBlockHash" $ do
+    let logEntry = mkLog orderExecutedTopic [word 42] (word 101250000)
+        canonicalBlock =
+          BlockInfo
+            { biNumber = rlBlockNumber logEntry
+            , biHash = "0xBLOCK"
+            , biTimestamp = 1_785_437_841
+            }
+
+    it "accepts a log from the fetched canonical block" $
+      validateRpcLogBlockHash logEntry canonicalBlock
+        `shouldBe` Right ()
+
+    it "rejects a provider-fork log before it can be persisted" $
+      validateRpcLogBlockHash
+        logEntry
+        canonicalBlock {biHash = "0xdifferent"}
+        `shouldBe` Left "RPC log block hash does not match canonical block metadata"
+
   describe "parsePerpsLog" $ do
     it "parses OrderCommitted" $ do
       parsePerpsLog (mkLog orderCommittedTopic [word 42, addressTopic] (word 1))
@@ -64,12 +89,20 @@ spec = do
           ParsedMarginActivity "Add margin" account 5_000_000 _ -> account == testAccount
           _ -> False
 
-      parsePerpsLog (mkLog depositTopic [addressTopic, otherAddressTopic] (word 100_000_000))
+      parsePerpsLog ((mkLog depositTopic [addressTopic, otherAddressTopic] (word 100_000_000)) {rlAddress = marginClearinghouse})
         `shouldBeParsedAs` \case
-          ParsedMarginActivity "Deposit" account 100_000_000 _ -> account == testAccount
+          ParsedMarginActivity "Deposit" account 100_000_000 payload ->
+            account == testAccount
+              && payload
+                == object
+                  [ "account" .= testAccount
+                  , "asset" .= testAsset
+                  , "contractAddress" .= testEmitter
+                  , "amountUsdc" .= ("100000000" :: Text)
+                  ]
           _ -> False
 
-      parsePerpsLog (mkLog withdrawTopic [addressTopic, otherAddressTopic] (word 25_000_000))
+      parsePerpsLog ((mkLog withdrawTopic [addressTopic, otherAddressTopic] (word 25_000_000)) {rlAddress = marginClearinghouse})
         `shouldBeParsedAs` \case
           ParsedMarginActivity "Withdraw" account 25_000_000 _ -> account == testAccount
           _ -> False
@@ -78,6 +111,28 @@ spec = do
     it "matches deployed OrderFailReason ordinals" $ do
       map orderFailReasonName [0 .. 5]
         `shouldBe` ["Expired", "CloseOnly", "SlippageExceeded", "EnginePanic", "AccountLiquidated", "EngineRevert"]
+
+  describe "trade cost previews" $ do
+    it "recovers an open fee from trade cost even when the preview is otherwise invalid" $ do
+      let vpi = -3_916_326_394
+          executionFee = 1_540_032_807
+          preview = words32 [0, 5, 2, 96_915_422, 3_972_620_599_900_312_417_020_777, 3_850_082_018_852, 137_483_749_999]
+            <> signedWord vpi
+            <> word 0
+            <> signedWord (vpi + executionFee)
+      decodeOpenTradeCosts preview
+        `shouldBe` Right (TradeCosts executionFee vpi)
+
+    it "decodes signed close VPI and execution fee" $ do
+      let vpi = -4_487_207_153
+          executionFee = 1_748_645_480
+          preview =
+            words32 [1, 0, 96_866_388, 4_513_034_696_886_011_329_166_042, 3_424_490_727]
+              <> signedWord vpi
+              <> word 0
+              <> word executionFee
+      decodeCloseTradeCosts preview
+        `shouldBe` Right (TradeCosts executionFee vpi)
 
 shouldBeParsedAs :: Maybe ParsedPerpsLog -> (ParsedPerpsLog -> Bool) -> Expectation
 shouldBeParsedAs parsed predicate =
@@ -88,7 +143,7 @@ shouldBeParsedAs parsed predicate =
 mkLog :: ByteString -> [ByteString] -> ByteString -> RpcLog
 mkLog topic indexedTopics eventData =
   RpcLog
-    { rlAddress = "0x4A0a6c028164A1254e10C3e39cc89Af45090069e"
+    { rlAddress = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , rlTopics = topic : indexedTopics
     , rlData = eventData
     , rlTxHash = "0xabc"
@@ -126,6 +181,15 @@ otherAddressTopic = word 0x55e007d79906572ccca8e75b1beb302787348d6e
 
 testAccount :: Text
 testAccount = "0x5a71a4094ec81165ada48aa4c27da48ec27e0d6b"
+
+testAsset :: Text
+testAsset = "0x55e007d79906572ccca8e75b1beb302787348d6e"
+
+testEmitter :: Text
+testEmitter = "0x731bb0939ce531728459394a277b28cbff8df049"
+
+marginClearinghouse :: Text
+marginClearinghouse = "0x731bb0939CE531728459394A277B28Cbff8df049"
 
 orderCommittedTopic :: ByteString
 orderCommittedTopic = keccak256Text "OrderCommitted(uint64,address,uint8)"

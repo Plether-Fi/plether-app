@@ -17,9 +17,12 @@ common warnings
 library
     import:           warnings
     exposed-modules:
+        Plether.AA.Pimlico
         Plether.Api
         Plether.Cache
         Plether.Config
+        Plether.Logging
+        Plether.RequestLogging
         Plether.Types
         Plether.Types.Api
         Plether.Types.Protocol
@@ -48,15 +51,21 @@ library
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter
         Plether.Ethereum.Contracts.Perps
+        Plether.Ethereum.Contracts.CfdEngineAccountLens
         Plether.Utils.Address
         Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
         Plether.Database.Schema
+        Plether.Database.Insights
+        Plether.Insights.Competition
+        Plether.Insights.SnapshotWorker
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
         Plether.Pyth.RevealPayload
+        Plether.Perps.ExecutionOracle
+        Plether.Perps.ExecutionTrace
         Plether.Perps.HistoryIndexer
         Plether.Types.History
         Plether.Indexer
@@ -64,8 +73,10 @@ library
         Plether.Indexer.Events
         Plether.Handlers.History
         Plether.Keeper
+        Plether.LiquidationWorker
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
+        Plether.Handlers.Insights
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -85,6 +96,7 @@ library
         mtl >= 2.3,
         transformers >= 0.6,
         containers >= 0.6,
+        async >= 2.2,
         stm >= 2.5,
         time >= 1.12,
         http-types >= 0.12,
@@ -129,6 +141,7 @@ executable plether-basket-worker
         base >= 4.17 && < 5,
         plether-api,
         aeson >= 2.1,
+        bytestring >= 0.11,
         text >= 2.0,
         http-client >= 0.7,
         http-client-tls >= 0.3
@@ -141,6 +154,19 @@ executable plether-basket-worker
 executable plether-keeper
     import:           warnings
     main-is:          Keeper.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable plether-liquidation-worker
+    import:           warnings
+    main-is:          LiquidationWorker.hs
     build-depends:
         base >= 4.17 && < 5,
         plether-api,
@@ -166,24 +192,63 @@ executable plether-perps-indexer
         OverloadedStrings
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-insights-worker
+    import:           warnings
+    main-is:          InsightsWorker.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        TypeApplications
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
+executable plether-insights-admin
+    import:           warnings
+    main-is:          InsightsAdmin.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N
+
 test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.AA.PimlicoSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
+        Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.PerpsSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
+        Plether.LoggingSpec
+        Plether.LiquidationWorkerSpec
+        Plether.Pyth.HermesSpec
         Plether.Pyth.RevealPayloadSpec
+        Plether.Perps.ExecutionOracleSpec
+        Plether.Perps.ExecutionTraceSpec
         Plether.Perps.HistoryIndexerSpec
+        Plether.Database.InsightsSpec
+        Plether.Insights.CompetitionSpec
+        Plether.Insights.SnapshotWorkerSpec
         Plether.Types.ProtocolSpec
         Plether.Types.PerpsSpec
     build-depends:
@@ -194,11 +259,46 @@ test-suite plether-api-test
         QuickCheck >= 2.14,
         aeson >= 2.1,
         bytestring >= 0.11,
+        containers >= 0.6,
+        directory >= 1.3,
+        postgresql-simple >= 0.7,
         text >= 2.0,
-        base16-bytestring >= 1.0
+        base16-bytestring >= 1.0,
+        time >= 1.12
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
     default-language: GHC2021
     default-extensions:
         OverloadedStrings
+
+test-suite plether-api-integration-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    other-modules:
+        Plether.Perps.CriticalPathFixture
+        Plether.Perps.CriticalPathSpec
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        hspec >= 2.11,
+        aeson >= 2.1,
+        bytestring >= 0.11,
+        text >= 2.0,
+        base16-bytestring >= 1.0,
+        http-client >= 0.7,
+        http-types >= 0.12,
+        postgresql-simple >= 0.7,
+        resource-pool >= 0.4,
+        scotty >= 0.22,
+        wai >= 3.2,
+        wai-extra >= 3.1,
+        warp >= 3.3
+    hs-source-dirs:   test-integration
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1

@@ -12,16 +12,19 @@ const latest: BasketLatest = {
 }
 
 describe('DxyBasketPanelView', () => {
-  it('keeps the header price visible while interval history is loading', () => {
+  it('does not duplicate the price summary above the chart', () => {
     render(
       <DxyBasketPanelView
         latest={latest}
         chartInterval="5m"
+        useAdvancedChart={false}
         isLoading
         onChartIntervalChange={() => {}}
       />
     )
 
-    expect(screen.getByText('1.0240')).toBeInTheDocument()
+    expect(screen.queryByText('plDXY Perp Price')).not.toBeInTheDocument()
+    expect(screen.queryByText('1.0240')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '5 minute interval' })).toBeInTheDocument()
   })
 })

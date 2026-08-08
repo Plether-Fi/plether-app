@@ -21,6 +21,7 @@ import Network.HTTP.Client
   ( Manager
   , httpLbs
   , parseRequest
+  , requestHeaders
   , responseBody
   , responseStatus
   , setQueryString
@@ -37,10 +38,12 @@ import Plether.Pyth.Basket
   , basketComponents
   , computeBasketSnapshot
   )
+import Plether.Logging (field, logErrorEvery, logInfo, logWarnEvery)
 import Text.Read (readMaybe)
 
 data BasketIngestorConfig = BasketIngestorConfig
   { bicBenchmarksUrl :: Text
+  , bicApiKey :: Maybe Text
   , bicBackfillDays :: Int
   , bicSampleIntervalSeconds :: Integer
   , bicPollSeconds :: Int
@@ -83,10 +86,19 @@ parsePythPrice feedId = withObject "PythPrice" $ \v -> do
       , pppPublishTime = publishTime
       }
 
-fetchBasketSnapshotAt :: Manager -> Text -> Integer -> Integer -> IO (Either Text (Integer, Value))
-fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
+fetchBasketSnapshotAt
+  :: Manager
+  -> Text
+  -> Maybe Text
+  -> Integer
+  -> Integer
+  -> IO (Either Text (Integer, Value))
+fetchBasketSnapshotAt manager benchmarksUrl apiKey intervalSeconds timestamp = do
   requestBase <- parseRequest $ T.unpack requestUrl
-  let request = setQueryString queryParams requestBase
+  let request =
+        setQueryString queryParams requestBase
+          { requestHeaders = authHeaders <> requestHeaders requestBase
+          }
   response <- httpLbs request manager
   let code = statusCode (responseStatus response)
   if code < 200 || code >= 300
@@ -105,6 +117,12 @@ fetchBasketSnapshotAt manager benchmarksUrl intervalSeconds timestamp = do
     queryParams =
       ("parsed", Just "true")
         : [("ids", Just (encodeUtf8 (bcFeedId component))) | component <- basketComponents]
+
+    authHeaders =
+      case apiKey of
+        Just key | not (T.null $ T.strip key) ->
+          [("Authorization", encodeUtf8 $ "Bearer " <> T.strip key)]
+        _ -> []
 
     decodeSnapshot :: LBS.ByteString -> Either Text (Integer, Value)
     decodeSnapshot body = do
@@ -148,21 +166,41 @@ runBasketBackfill manager pool cfg = do
       missing = filter (`Set.notMember` existing) [earliestTs, earliestTs + interval .. endTs]
 
   when (not (null missing)) $ do
-    putStrLn $
-      "Backfilling "
-        <> show (length missing)
-        <> " missing Pyth basket snapshots from "
-        <> show earliestTs
-        <> " to "
-        <> show endTs
+    logInfo
+      "pyth_history_backfill_started"
+      "Pyth basket history backfill started"
+      [ field "missing_snapshot_count" $ length missing
+      , field "from_timestamp" earliestTs
+      , field "to_timestamp" endTs
+      , field "sample_interval_seconds" interval
+      ]
     forM_ missing $ \ts -> do
-      result <- try @SomeException $ fetchBasketSnapshotAt manager (bicBenchmarksUrl cfg) interval ts
+      result <-
+        try @SomeException $
+          fetchBasketSnapshotAt
+            manager
+            (bicBenchmarksUrl cfg)
+            (bicApiKey cfg)
+            interval
+            ts
       case result of
         Left err ->
-          putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> displayException err
+          logWarnEvery
+            60
+            "pyth_history_snapshot_fetch_failed"
+            "Pyth basket history snapshot fetch failed"
+            [ field "snapshot_timestamp" ts
+            , field "error" $ displayException err
+            ]
         Right (Left err) ->
           do
-            putStrLn $ "Pyth basket fetch failed at " <> show ts <> ": " <> T.unpack err
+            logWarnEvery
+              60
+              "pyth_history_snapshot_fetch_failed"
+              "Pyth basket history snapshot fetch failed"
+              [ field "snapshot_timestamp" ts
+              , field "error" err
+              ]
             when ("429" `T.isInfixOf` err) $ threadDelay 60_000_000
         Right (Right (basketPrice, components)) ->
           withDb pool $ \conn ->
@@ -191,4 +229,8 @@ stripTrailingSlash = T.dropWhileEnd (== '/')
 
 logException :: SomeException -> IO ()
 logException err =
-  putStrLn $ "Pyth basket ingestor failed: " <> displayException err
+  logErrorEvery
+    60
+    "pyth_history_ingestor_failed"
+    "Pyth basket history ingestor failed"
+    [field "error" $ displayException err]

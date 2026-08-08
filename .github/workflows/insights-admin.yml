@@ -1,0 +1,274 @@
+name: Insights Admin
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Allowlisted Insights admin operation
+        required: true
+        type: choice
+        options:
+          - register
+          - review
+          - list
+          - finalize
+      request_id:
+        description: Opaque ID of the one-time SSM SecureString request
+        required: true
+        type: string
+      confirmation:
+        description: Type RUN <request_id> ON SEPOLIA
+        required: true
+        type: string
+
+concurrency:
+  group: insights-sepolia-admin
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  ECS_CLUSTER: plether-sepolia
+  ECS_SERVICE: plether-api
+  ECS_CONTAINER: plether-api
+  REQUEST_PARAMETER_PREFIX: /plether/sepolia/insights-admin/requests
+
+jobs:
+  run:
+    name: Run approved Sepolia operation
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: insights-sepolia-admin
+    permissions:
+      contents: read
+
+    steps:
+      - name: Validate public dispatch fields
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$REQUEST_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo "::error title=Invalid request ID::Use a 1-64 character opaque ID containing only letters, digits, dot, underscore, or hyphen."
+            exit 1
+          fi
+
+          if [ "$CONFIRMATION" != "RUN $REQUEST_ID ON SEPOLIA" ]; then
+            echo "::error title=Confirmation mismatch::The confirmation phrase does not match this Sepolia request."
+            exit 1
+          fi
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch, mask, and validate private request
+        id: request
+        env:
+          REQUEST_ID: ${{ inputs.request_id }}
+          EXPECTED_ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          umask 077
+
+          PARAMETER_NAME="$REQUEST_PARAMETER_PREFIX/$REQUEST_ID"
+          REQUEST_FILE="$RUNNER_TEMP/insights-admin-request.json"
+          OVERRIDES_FILE="$RUNNER_TEMP/insights-admin-overrides.json"
+
+          aws ssm get-parameter \
+            --name "$PARAMETER_NAME" \
+            --with-decryption \
+            --query 'Parameter.Value' \
+            --output text > "$REQUEST_FILE"
+
+          if ! COMPACT_REQUEST=$(jq -c . "$REQUEST_FILE"); then
+            echo "::error title=Invalid private request::The SecureString value is not valid JSON."
+            exit 1
+          fi
+          echo "::add-mask::$COMPACT_REQUEST"
+
+          if ! jq --exit-status \
+            --arg request_id "$REQUEST_ID" \
+            --arg action "$EXPECTED_ACTION" \
+            '
+              def nonempty($max):
+                type == "string" and length > 0 and length <= $max;
+              def wallet:
+                type == "string" and test("^0x[0-9A-Fa-f]{40}$");
+              def safe_arg:
+                type == "string"
+                and length <= 2000
+                and (test("[\\u0000-\\u001F\\u007F]") | not);
+
+              type == "object"
+              and .requestId == $request_id
+              and (.args | type == "array")
+              and (.args | length >= 1)
+              and ([.args[] | safe_arg] | all)
+              and .args[0] == $action
+              and (
+                ($action == "list" and (.args | length) == 1)
+                or
+                ($action == "register"
+                  and ((.args | length) == 3 or (.args | length) == 4)
+                  and (.args[1] | nonempty(200))
+                  and (.args[2] | wallet)
+                  and ((.args | length) == 3 or (.args[3] | nonempty(80))))
+                or
+                ($action == "review"
+                  and ((.args | length) == 4 or (.args | length) == 5)
+                  and (.args[1] | wallet)
+                  and (["pending", "eligible", "under_review", "ineligible"] | index(.args[2]) != null)
+                  and (.args[3] | nonempty(128))
+                  and ((.args | length) == 4 or (.args[4] | nonempty(2000))))
+                or
+                ($action == "finalize"
+                  and ((.args | length) == 2)
+                  and (.args[1] | nonempty(128)))
+              )
+            ' "$REQUEST_FILE" >/dev/null; then
+            echo "::error title=Rejected private request::The request ID or allowlisted command shape does not match this dispatch."
+            exit 1
+          fi
+
+          while IFS= read -r ENCODED_ARG; do
+            ARG=$(printf '%s' "$ENCODED_ARG" | base64 --decode)
+            [ -z "$ARG" ] || echo "::add-mask::$ARG"
+          done < <(jq -r '.args[] | @base64' "$REQUEST_FILE")
+
+          jq -n \
+            --arg container "$ECS_CONTAINER" \
+            --slurpfile request "$REQUEST_FILE" \
+            '{containerOverrides: [{
+              name: $container,
+              command: (["plether-insights-admin"] + $request[0].args)
+            }]}' > "$OVERRIDES_FILE"
+
+          echo "parameter_name=$PARAMETER_NAME" >> "$GITHUB_OUTPUT"
+          echo "overrides_file=$OVERRIDES_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve the deployed task and network
+        id: target
+        run: |
+          set -euo pipefail
+
+          SERVICE_FILE="$RUNNER_TEMP/insights-admin-service.json"
+          NETWORK_FILE="$RUNNER_TEMP/insights-admin-network.json"
+          TASK_DEFINITION_FILE="$RUNNER_TEMP/insights-admin-task-definition.json"
+
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" > "$SERVICE_FILE"
+
+          jq --exit-status \
+            '(.failures | length) == 0
+             and (.services | length) == 1
+             and .services[0].status == "ACTIVE"
+             and (.services[0].taskDefinition | type == "string")' \
+            "$SERVICE_FILE" >/dev/null
+
+          TASK_DEFINITION=$(jq -r '.services[0].taskDefinition' "$SERVICE_FILE")
+
+          jq '
+            .services[0].networkConfiguration.awsvpcConfiguration
+            | {awsvpcConfiguration: {
+                subnets: .subnets,
+                securityGroups: .securityGroups,
+                assignPublicIp: (.assignPublicIp // "DISABLED")
+              }}
+          ' "$SERVICE_FILE" > "$NETWORK_FILE"
+
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION" > "$TASK_DEFINITION_FILE"
+          jq --exit-status \
+            --arg container "$ECS_CONTAINER" \
+            '.taskDefinition.containerDefinitions | any(.name == $container)' \
+            "$TASK_DEFINITION_FILE" >/dev/null
+
+          echo "task_definition=$TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          echo "network_file=$NETWORK_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Run private admin task
+        id: task
+        env:
+          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
+          NETWORK_FILE: ${{ steps.target.outputs.network_file }}
+          OVERRIDES_FILE: ${{ steps.request.outputs.overrides_file }}
+        run: |
+          set -euo pipefail
+
+          RUN_RESULT="$RUNNER_TEMP/insights-admin-run-task.json"
+          aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "$TASK_DEFINITION" \
+            --network-configuration "file://$NETWORK_FILE" \
+            --overrides "file://$OVERRIDES_FILE" \
+            --started-by insights-admin > "$RUN_RESULT"
+
+          if [ "$(jq -r '.failures | length' "$RUN_RESULT")" != "0" ]; then
+            echo "::error title=ECS rejected admin task::Inspect AWS ECS privately for the failure reason."
+            exit 1
+          fi
+
+          TASK_ARN=$(jq -r '.tasks[0].taskArn // empty' "$RUN_RESULT")
+          if [ -z "$TASK_ARN" ]; then
+            echo "::error title=Admin task was not started::ECS returned no task ARN."
+            exit 1
+          fi
+
+          echo "task_arn=$TASK_ARN" >> "$GITHUB_OUTPUT"
+          echo "Started the private admin task; waiting for its exit status."
+
+      - name: Wait for the admin task
+        env:
+          TASK_ARN: ${{ steps.task.outputs.task_arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs wait tasks-stopped \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN"
+
+          STATUS_FILE="$RUNNER_TEMP/insights-admin-task-status.json"
+          aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" > "$STATUS_FILE"
+
+          EXIT_CODE=$(jq -r \
+            --arg container "$ECS_CONTAINER" \
+            '.tasks[0].containers[]
+             | select(.name == $container)
+             | .exitCode // empty' \
+            "$STATUS_FILE")
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error title=Insights admin operation failed::The private ECS task did not exit successfully. Inspect its restricted CloudWatch log; do not copy participant or review details into this run."
+            exit 1
+          fi
+
+          echo "The private Insights admin operation completed successfully."
+
+      - name: Consume one-time private request
+        env:
+          PARAMETER_NAME: ${{ steps.request.outputs.parameter_name }}
+        run: |
+          set -euo pipefail
+          aws ssm delete-parameter --name "$PARAMETER_NAME"
+          echo "The one-time request was consumed."
+
+      - name: Remove temporary request files
+        if: always()
+        run: |
+          rm -f \
+            "$RUNNER_TEMP/insights-admin-request.json" \
+            "$RUNNER_TEMP/insights-admin-overrides.json" \
+            "$RUNNER_TEMP/insights-admin-service.json" \
+            "$RUNNER_TEMP/insights-admin-network.json" \
+            "$RUNNER_TEMP/insights-admin-task-definition.json" \
+            "$RUNNER_TEMP/insights-admin-run-task.json" \
+            "$RUNNER_TEMP/insights-admin-task-status.json"

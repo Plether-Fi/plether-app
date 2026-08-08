@@ -1,10 +1,12 @@
 import { type ReactNode, useEffect, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
+import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
-import { Button, Input, Modal, TokenAmount, TokenLabel, Tooltip } from './ui'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { DOCS_LINKS } from '../config/docs'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
@@ -51,17 +53,21 @@ interface TradeRow {
 }
 
 interface PerpsAccountPanelProps {
+  initialTab?: PerpsAccountTab
+  initialPositionMarginModalOpen?: boolean
   position?: PerpsPosition
   pendingOrders?: PerpsPendingOrder[]
   orderHistory?: PerpsOrderHistoryRow[]
   tradeHistory?: PerpsTradeHistoryRow[]
   equityUsdc?: bigint
   freeBuyingPowerUsdc?: bigint
+  traderClaimBalanceUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
   historyError?: Error
   onAccountRefresh?: () => void
+  onClosePosition?: () => void
 }
 
 const ACCOUNT_TABS: AccountTab[] = [
@@ -222,35 +228,49 @@ function isPositionMarginInput(value: string): boolean {
 
 function AccountSummaryRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 text-sm">
-      <dt className="text-content-secondary">{label}</dt>
-      <dd className="text-right font-semibold text-content-primary">{value}</dd>
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-4 gap-y-1 text-sm">
+      <dt className="min-w-0 flex-1 text-content-secondary">{label}</dt>
+      <dd className="ml-auto max-w-full min-w-0 break-words text-right font-semibold text-content-primary">{value}</dd>
     </div>
   )
 }
+
+interface AccountMetricBaseProps {
+  label: string
+  value: ReactNode
+  tone?: PositionRow['tone']
+  action?: ReactNode
+}
+
+type AccountMetricProps = AccountMetricBaseProps & (
+  | {
+      tooltip?: undefined
+      tooltipDocsLink?: never
+    }
+  | {
+      tooltip: ReactNode
+      tooltipDocsLink: TooltipDocsLink
+    }
+)
 
 function AccountMetric({
   label,
   value,
   tone,
   tooltip,
+  tooltipDocsLink,
   action,
-}: {
-  label: string
-  value: ReactNode
-  tone?: PositionRow['tone']
-  tooltip?: ReactNode
-  action?: ReactNode
-}) {
+}: AccountMetricProps) {
   return (
     <div className="min-w-0">
-      <div className="flex min-h-5 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
-        <span>{label}</span>
+      <div className="flex min-h-5 min-w-0 items-center gap-1.5 text-xs font-medium uppercase text-content-secondary">
+        <span className="min-w-0 break-words">{label}</span>
         {tooltip ? (
           <Tooltip
             content={tooltip}
             position="left"
-            className="w-[420px] max-w-[calc(100vw-2rem)] whitespace-normal p-4 text-left leading-5"
+            className={INFO_TOOLTIP_PANEL_CLASS_NAME}
+            docsLink={tooltipDocsLink}
           >
             <span
               className="inline-flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-current text-[9px] font-semibold leading-none text-content-secondary/80 transition-colors hover:text-[#FFAB96]"
@@ -262,8 +282,8 @@ function AccountMetric({
           </Tooltip>
         ) : null}
       </div>
-      <div className="mt-2 flex items-center gap-2">
-        <div className={`text-xl font-semibold ${pnlToneClass(tone)}`}>{value}</div>
+      <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+        <div className={`min-w-0 break-words text-lg font-semibold [overflow-wrap:anywhere] sm:text-xl ${pnlToneClass(tone)}`}>{value}</div>
         {action}
       </div>
     </div>
@@ -285,6 +305,7 @@ function formatDuration(seconds: number): string {
 }
 
 function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
+  const { isAaManifestConfigured } = usePerpsIdentity()
   if (secondsToExpiry === undefined) {
     return (
       <div>
@@ -298,7 +319,11 @@ function OpenOrderStatus({ secondsToExpiry }: { secondsToExpiry?: number }) {
     return (
       <div>
         <div className="font-semibold text-brand-orange">Expired</div>
-        <div className="mt-1 text-xs text-content-secondary">Clean up to release reserved margin</div>
+        <div className="mt-1 text-xs text-content-secondary">
+          {isAaManifestConfigured
+            ? 'Keeper cleanup in progress'
+            : 'Clean up to release reserved margin'}
+        </div>
       </div>
     )
   }
@@ -336,17 +361,23 @@ function PositionView({
   freeBuyingPowerUsdc,
   isConnected,
   isLoading,
+  initialPositionMarginModalOpen,
   onAccountRefresh,
+  onClosePosition,
 }: {
   position?: PerpsPosition
   equityUsdc?: bigint
   freeBuyingPowerUsdc?: bigint
   isConnected?: boolean
   isLoading?: boolean
+  initialPositionMarginModalOpen?: boolean
   onAccountRefresh?: () => void
+  onClosePosition?: () => void
 }) {
   const { addPositionMargin } = usePerpsTrading()
-  const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(false)
+  const [isPositionMarginModalOpen, setIsPositionMarginModalOpen] = useState(
+    initialPositionMarginModalOpen ?? false
+  )
   const [positionMarginAmount, setPositionMarginAmount] = useState('')
   const [positionMarginStatus, setPositionMarginStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
   const [positionMarginError, setPositionMarginError] = useState<string | undefined>()
@@ -429,8 +460,8 @@ function PositionView({
   const currentPosition: PositionRow = {
     market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
-    size: <TokenAmount amount={formatPerpsUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} />,
-    entryNotional: <TokenAmount amount={formatPerpsUsdc(position.entryNotionalUsdc)} />,
+    size: <TokenAmount amount={formatPerpsSummaryUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} wrap />,
+    entryNotional: <TokenAmount amount={formatPerpsSummaryUsdc(position.entryNotionalUsdc)} wrap />,
     entry: formatDisplayDxyPrice(position.entryPrice),
     leverage: formatPositionLeverage(position),
     liquidationPrice: (
@@ -439,8 +470,8 @@ function PositionView({
         liquidationPrice={position.liquidationPrice}
       />
     ),
-    pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
-    costOfCarryUsdc: <TokenAmount amount={formatPerpsUsdc(position.pendingCarryUsdc)} />,
+    pnl: <TokenAmount amount={formatSignedPerpsSummaryUsdc(currentPnl)} wrap />,
+    costOfCarryUsdc: <TokenAmount amount={formatPerpsSummaryUsdc(position.pendingCarryUsdc)} wrap />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
   const editPositionMarginAction = (
@@ -460,41 +491,64 @@ function PositionView({
   )
 
   return (
-    <div className="border border-brand-border/20 bg-app-bg p-4">
+    <div className="border border-brand-border/20 bg-app-bg p-3 sm:p-4">
       <div className="mb-4">
         <div className="text-xs font-medium uppercase text-content-secondary">Current Position</div>
-        <div className="mt-2 flex items-center gap-3">
-          <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
-            {currentPosition.side}
-          </span>
-          <div className="mt-1 text-lg font-semibold text-content-primary">{currentPosition.market}</div>
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <span className={`border px-3 py-1 text-sm font-semibold ${positionSideBadgeClass(position.direction)}`}>
+              {currentPosition.side}
+            </span>
+            <div className="mt-1 text-lg font-semibold text-content-primary">{currentPosition.market}</div>
+          </div>
+          {onClosePosition ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="danger"
+              analyticsId="close_position_from_panel"
+              analyticsProperties={{ direction: position.direction }}
+              onClick={onClosePosition}
+            >
+              Close position
+            </Button>
+          ) : null}
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
-        <AccountMetric label="Entry notional" value={currentPosition.entryNotional} tooltip={entryNotionalTooltip} />
+        <AccountMetric
+          label="Entry notional"
+          value={currentPosition.entryNotional}
+          tooltip={entryNotionalTooltip}
+          tooltipDocsLink={DOCS_LINKS.entryNotional}
+        />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
         <AccountMetric
           label="Leverage"
           value={currentPosition.leverage}
           tooltip={leverageTooltip}
+          tooltipDocsLink={DOCS_LINKS.positionLeverage}
           action={editPositionMarginAction}
         />
         <AccountMetric
           label="Liquidation price"
           value={currentPosition.liquidationPrice}
           tooltip={liquidationTooltip}
+          tooltipDocsLink={DOCS_LINKS.liquidationPrice}
         />
         <AccountMetric
           label="Unrealized PnL"
           value={currentPosition.pnl}
           tone={currentPosition.tone}
           tooltip={unrealizedPnlTooltip}
+          tooltipDocsLink={DOCS_LINKS.unrealizedPnl}
         />
         <AccountMetric
           label="Cost of carry"
           value={currentPosition.costOfCarryUsdc}
           tooltip={pendingCarryTooltip}
+          tooltipDocsLink={DOCS_LINKS.positionCostOfCarry}
         />
       </div>
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
@@ -562,7 +616,7 @@ function PositionView({
             </div>
           ) : null}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button
               type="button"
               variant="secondary"
@@ -605,12 +659,19 @@ function OrdersView({
   cleanupError?: string
   onCleanupExpiredOrder?: (orderId: bigint) => void
 }) {
+  const { isAaManifestConfigured } = usePerpsIdentity()
   if (rows.length === 0) return <EmptyState label={includeStatus ? 'order history' : 'open orders'} />
 
   return (
     <div className="space-y-3">
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[760px] text-left">
+      <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
+      <div
+        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        role="region"
+        aria-label={includeStatus ? 'Order history table' : 'Open orders table'}
+        tabIndex={0}
+      >
+        <table className="w-full min-w-[680px] text-left sm:min-w-[760px]">
           <thead className="text-xs uppercase text-content-secondary">
             <tr className="border-b border-brand-border/20">
               {includeStatus ? <th className="py-3 font-medium">Order ID</th> : null}
@@ -633,7 +694,12 @@ function OrdersView({
                 ? undefined
                 : Number(row.expiryTime) - nowSeconds
               const isExpired = secondsToExpiry !== undefined && secondsToExpiry <= 0
-              const canCleanup = Boolean(row.orderId && isExpired && onCleanupExpiredOrder)
+              const canCleanup = Boolean(
+                !isAaManifestConfigured &&
+                row.orderId &&
+                isExpired &&
+                onCleanupExpiredOrder
+              )
 
               return (
                 <tr key={`${row.market}-${row.side}-${row.type}-${row.price}-${row.orderId?.toString() ?? 'mock'}`}>
@@ -667,7 +733,9 @@ function OrdersView({
                         </Button>
                       ) : (
                         <span className="text-xs text-content-secondary">
-                          Cancel unavailable
+                          {isAaManifestConfigured && isExpired
+                            ? 'Keeper processing'
+                            : 'Cancel unavailable'}
                         </span>
                       )}
                     </td>
@@ -691,33 +759,97 @@ function TradeHistoryView({ rows }: { rows: TradeRow[] }) {
   if (rows.length === 0) return <EmptyState label="transaction history" />
 
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] text-left">
-        <thead className="text-xs uppercase text-content-secondary">
-          <tr className="border-b border-brand-border/20">
-            <th className="py-3 font-medium">Time</th>
-            <th className="py-3 font-medium">Market</th>
-            <th className="py-3 font-medium">Action</th>
-            <th className="py-3 font-medium">Price</th>
-            <th className="py-3 font-medium">Size</th>
-            <th className="py-3 font-medium">Result</th>
-            <th className="py-3 text-right font-medium">Tx</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
-          {rows.map((row) => (
-            <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
-              <td className="py-4">{row.time}</td>
-              <td className="py-4 font-semibold">{row.market}</td>
-              <td className="py-4">{row.side}</td>
-              <td className="py-4">{row.price}</td>
-              <td className="py-4">{row.size}</td>
-              <td className="py-4">{row.pnl ?? '--'}</td>
-              <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
+    <div className="space-y-3">
+      <p className="text-xs text-content-secondary sm:hidden">Swipe horizontally to view all columns.</p>
+      <div
+        className="max-w-full touch-pan-x overflow-x-auto overscroll-x-contain pb-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96] [scrollbar-gutter:stable]"
+        role="region"
+        aria-label="Transaction history table"
+        tabIndex={0}
+      >
+        <table className="w-full min-w-[640px] text-left sm:min-w-[720px]">
+          <thead className="text-xs uppercase text-content-secondary">
+            <tr className="border-b border-brand-border/20">
+              <th className="py-3 font-medium">Time</th>
+              <th className="py-3 font-medium">Market</th>
+              <th className="py-3 font-medium">Action</th>
+              <th className="py-3 font-medium">Price</th>
+              <th className="py-3 font-medium">Size</th>
+              <th className="py-3 font-medium">Result</th>
+              <th className="py-3 text-right font-medium">Tx</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody className="divide-y divide-brand-border/10 text-sm text-content-primary">
+            {rows.map((row) => (
+              <tr key={`${row.time}-${row.side}-${row.txHash ?? 'no-tx'}`}>
+                <td className="py-4">{row.time}</td>
+                <td className="py-4 font-semibold">{row.market}</td>
+                <td className="py-4">{row.side}</td>
+                <td className="py-4">{row.price}</td>
+                <td className="py-4">{row.size}</td>
+                <td className="py-4">{row.pnl ?? '--'}</td>
+                <td className="py-3 text-right"><TxLink hash={row.txHash} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
+function TraderClaimCard({
+  amount,
+  onAccountRefresh,
+}: {
+  amount?: bigint
+  onAccountRefresh?: () => void
+}) {
+  const { settleTraderClaim } = usePerpsTrading()
+  const [status, setStatus] = useState<'idle' | 'pending' | 'failed'>('idle')
+  const [error, setError] = useState<string | undefined>()
+
+  if (amount === undefined || amount <= 0n) return null
+
+  async function handleSettleClaim() {
+    setStatus('pending')
+    setError(undefined)
+    try {
+      await settleTraderClaim()
+      setStatus('idle')
+      onAccountRefresh?.()
+    } catch (cause) {
+      setStatus('failed')
+      setError(cause instanceof Error ? cause.message : 'Claim settlement failed')
+    }
+  }
+
+  return (
+    <div className="border border-positive/30 bg-positive/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div className="text-xs font-medium uppercase text-content-secondary">Trader claim</div>
+          <div className="mt-1 text-lg font-semibold text-content-primary">
+            <TokenAmount amount={formatPerpsUsdc(amount)} /> USDC
+          </div>
+          <p className="mt-1 text-xs text-content-secondary">
+            Settle the claim into the Trading Account before withdrawing it.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          className={LIGHT_ORANGE_ACTION_BUTTON_CLASS}
+          isLoading={status === 'pending'}
+          onClick={() => {
+            void handleSettleClaim()
+          }}
+        >
+          Settle Claim
+        </Button>
+      </div>
+      {error ? (
+        <p className="mt-3 text-sm text-brand-orange">{error}</p>
+      ) : null}
     </div>
   )
 }
@@ -727,6 +859,7 @@ function AccountTabContent({
   position,
   equityUsdc,
   freeBuyingPowerUsdc,
+  traderClaimBalanceUsdc,
   pendingOrders,
   orderHistory,
   tradeHistory,
@@ -734,7 +867,9 @@ function AccountTabContent({
   isLoading,
   isHistoryLoading,
   historyError,
+  initialPositionMarginModalOpen,
   onAccountRefresh,
+  onClosePosition,
   nowSeconds,
   cleanupOrderId,
   cleanupError,
@@ -794,14 +929,22 @@ function AccountTabContent({
 
   if (activeTab === 'position') {
     return (
-      <PositionView
-        position={position ?? (isConnected === undefined ? mockPosition : undefined)}
-        equityUsdc={equityUsdc}
-        freeBuyingPowerUsdc={freeBuyingPowerUsdc}
-        isConnected={isConnected}
-        isLoading={isLoading}
-        onAccountRefresh={onAccountRefresh}
-      />
+      <div className="space-y-4">
+        <TraderClaimCard
+          amount={traderClaimBalanceUsdc}
+          onAccountRefresh={onAccountRefresh}
+        />
+        <PositionView
+          position={position ?? (isConnected === undefined ? mockPosition : undefined)}
+          equityUsdc={equityUsdc}
+          freeBuyingPowerUsdc={freeBuyingPowerUsdc}
+          isConnected={isConnected}
+          isLoading={isLoading}
+          initialPositionMarginModalOpen={initialPositionMarginModalOpen}
+          onAccountRefresh={onAccountRefresh}
+          onClosePosition={onClosePosition}
+        />
+      </div>
     )
   }
   if (activeTab === 'openOrders') {
@@ -826,7 +969,8 @@ function AccountTabContent({
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
-  const [activeTab, setActiveTab] = useState<PerpsAccountTab>('position')
+  const { isAaManifestConfigured } = usePerpsIdentity()
+  const [activeTab, setActiveTab] = useState<PerpsAccountTab>(props.initialTab ?? 'position')
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [cleanupOrderId, setCleanupOrderId] = useState<bigint | undefined>()
   const [cleanupError, setCleanupError] = useState<string | undefined>()
@@ -858,14 +1002,14 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
 
   return (
     <section className="bg-surface-panel border border-brand-border/30 overflow-visible">
-      <div className="border-b border-brand-border/20 px-4 pt-4">
-        <div className="flex gap-1 overflow-x-auto">
+      <div className="border-b border-brand-border/20 px-2 pt-2 sm:px-4 sm:pt-4">
+        <div className="grid grid-cols-2 gap-x-1 sm:flex sm:overflow-x-auto">
           {ACCOUNT_TABS.map((tab) => (
             <button
               key={tab.id}
               type="button"
               aria-pressed={activeTab === tab.id}
-              className={`shrink-0 px-4 py-3 text-sm font-semibold transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 ${
+              className={`min-w-0 px-2 py-2.5 text-xs font-semibold leading-5 transition-colors hover:underline hover:underline-offset-4 focus-visible:underline focus-visible:underline-offset-4 sm:shrink-0 sm:px-4 sm:py-3 sm:text-sm ${
                 activeTab === tab.id
                   ? 'border-b-2 border-[#FFAB96] text-[#FFAB96]'
                   : 'text-content-secondary hover:text-content-primary'
@@ -880,15 +1024,17 @@ export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
         </div>
       </div>
 
-      <div className="px-5 py-4">
+      <div className="px-3 py-3 sm:px-5 sm:py-4">
         <AccountTabContent
           activeTab={activeTab}
           nowSeconds={nowSeconds}
           cleanupOrderId={cleanupOrderId}
           cleanupError={cleanupError}
-          onCleanupExpiredOrder={(orderId) => {
-            void handleCleanupExpiredOrder(orderId)
-          }}
+          onCleanupExpiredOrder={isAaManifestConfigured
+            ? undefined
+            : (orderId) => {
+                void handleCleanupExpiredOrder(orderId)
+              }}
           {...props}
         />
       </div>

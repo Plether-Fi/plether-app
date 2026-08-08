@@ -6,12 +6,12 @@
 
 The Plether Dollar Index measures the dollar against a basket of major currencies.
 
-Instead of trading six FX pairs separately, traders can express one position:
+Instead of trading six FX[^fx] pairs separately, traders can express one position:
 
 * **LONG USD** when they expect the dollar to strengthen.
 * **SHORT USD** when they expect the dollar to weaken.
 
-The index is DXY-inspired, but it is not raw DXY. Plether uses the familiar six-currency composition and starting coefficients, then calculates its own normalized basket from Pyth price feeds.
+The index is DXY-inspired[^dxy], but it is not raw DXY. Plether uses the familiar six-currency composition and starting coefficients, then calculates its own normalized basket from Pyth price feeds.
 
 Same currencies. Different math.
 
@@ -30,7 +30,7 @@ The current basket contains:
 
 The coefficients total 100%.
 
-The euro has the largest influence at the basket’s reference level. If EUR moves while every other component remains unchanged, the basket initially responds more than it would to an equal move in SEK or CHF.
+The euro has the largest influence at the basket’s reference level. If EUR moves while every other component remains unchanged, the basket initially responds more than it would to an equal percentage move in SEK or CHF.
 
 These are **reference coefficients**, not permanently fixed effective weights. As currencies move away from their reference rates, their actual contribution to the basket changes.
 
@@ -49,9 +49,9 @@ Plether differs in several ways:
 * The resulting level is native to Plether rather than expressed in traditional index points.
 * The settlement price is bounded for protocol accounting.
 
-Plether and external dollar indices can move in the same general direction while producing different percentage returns.
+The dollar-oriented Plether level shown by the interface and external dollar indices can move in the same general direction while producing different percentage returns. The protocol’s raw foreign-currency basket moves in the opposite direction, as described below.
 
-That difference is **basis risk**. Anyone using Plether as a hedge should account for it.
+That difference is **basis risk[^basis-risk]**. Anyone using Plether as a hedge should account for it.
 
 ### Same currencies. Different math.
 
@@ -98,13 +98,13 @@ Plether’s arithmetic basket behaves differently. Its configured coefficients s
 | Component influence   | Drifts as normalized rates diverge      | Percentage sensitivity remains tied to formula weights |
 | Automatic reset       | None                                    | Constant-weight sensitivity is built into the formula  |
 | Large divergent moves | Outperforming components gain influence | Moves compound using fixed exponents                   |
-| PnL relationship      | Linear in the basket mark               | Nonlinear and multiplicative                           |
+| Component-to-index relationship | Linear in normalized component levels  | Nonlinear and multiplicative                           |
 
 The two calculations remain close when currency moves are small. They can diverge materially over longer periods or during large relative moves.
 
 ### Why effective weights drift
 
-The configured coefficients remain fixed inside the deployed oracle. EUR remains configured at 57.6%, JPY at 13.6%, and so on.
+The configured coefficients remain fixed inside the deployed oracle[^oracle]. EUR remains configured at 57.6%, JPY at 13.6%, and so on.
 
 Their **effective weights**, however, can change.
 
@@ -146,7 +146,7 @@ Plether’s arithmetic result is:
 
 `1.0576`
 
-The difference is small after a 10% move. It grows as component prices move farther apart.
+The difference is small after a 10% move. It can grow as component prices move farther apart.
 
 If EUR continues outperforming the rest of the basket, its effective weight continues increasing. Plether does not automatically rebalance it back to 57.6%.
 
@@ -172,6 +172,17 @@ Plether names positions from the trader’s economic exposure, not from the dire
 
 This is the central relationship behind every Plether position.
 
+The interface makes that relationship conventional by displaying the fixed complement of the bounded raw basket:
+
+`Displayed dollar index = 2.00 − bounded raw basket`
+
+| Dollar move     | Raw basket move | Displayed index move | Position that benefits |
+| --------------- | --------------- | -------------------- | ---------------------- |
+| USD strengthens | Basket falls    | Displayed index rises | **LONG USD**           |
+| USD weakens     | Basket rises    | Displayed index falls | **SHORT USD**          |
+
+The contracts account against the raw basket; the interface displays its dollar-oriented complement. Both representations describe the same position.
+
 ### Two simple position examples
 
 #### The dollar strengthens
@@ -183,7 +194,7 @@ Foreign currencies have lost 4% against USD on a weighted basis.
 * **LONG USD** profits.
 * **SHORT USD** loses.
 
-For a position of 10,000 index units—approximately 10,000 USDC of market exposure at a 1.00 entry—the directional PnL is approximately **400 USDC** before fees, carry, virtual price impact and oracle adjustments.
+For a position of 10,000 index units—approximately 10,000 USDC[^usdc] of market exposure at a 1.00 entry—the directional PnL[^pnl] is approximately **400 USDC** before fees, carry[^carry], virtual price impact and oracle adjustments.
 
 #### The dollar weakens
 
@@ -216,7 +227,7 @@ When Plether processes an oracle update, it:
 
 Pyth publishes a confidence range alongside every component price. Plether combines those values into a basket-level measure of uncertainty.
 
-Execution is adjusted toward the side adverse to the trader:
+During live markets, including the market-close runway before the oracle freezes, execution is adjusted toward the side adverse to the trader:
 
 * A LONG USD open receives a conservative entry.
 * A SHORT USD open receives a conservative entry.
@@ -226,25 +237,27 @@ Confidence is not an additional fee. It is a risk control.
 
 If uncertainty exceeds the configured limit, the protocol rejects the price instead of pretending it is precise.
 
-During live markets, delayed orders use the first eligible basket update published after commitment. The keeper cannot choose a later, more favorable update.
+Oracle-frozen voluntary closes are the exception to the adverse price shift: they retain confidence-width validation, use the validated unshifted basket price and are assessed the separate fixed frozen-close spread. A terminal full close can waive any uncollectible portion of that spread. Liquidations retain their own adverse-confidence policy.
+
+During live markets, delayed orders use the first eligible basket update published after commitment. The keeper[^keeper] cannot choose a later, more favorable update.
 
 ### The mark and execution economics can differ
 
 The raw basket mark is the normalized value produced by the oracle.
 
-A trader’s final execution economics can differ from that reference because of:
+A trader’s execution and final USDC economics can differ from that reference because of:
 
-* The adverse oracle-confidence adjustment
+* The active oracle-confidence policy
 * Virtual price impact
-* The trader’s acceptable-price limit
+* Whether the eligible oracle price satisfies the trader’s acceptable-price limit
 * The protocol execution fee
-* The keeper execution bounty
+* The execution reward
 
-These are separate components. A charted index level should not be interpreted as a guaranteed execution price.
+These are separate controls and economic effects. A charted index level should not be interpreted as a guaranteed execution price.
 
 ### Why the index is bounded
 
-Plether’s raw basket settlement mark is bounded between **0.00 and 2.00**.
+Plether clamps the raw basket to a settlement mark between **0.00 and 2.00**.
 
 `Settlement mark = min(Raw oracle basket, 2.00)`
 
@@ -283,7 +296,7 @@ The 2.00 cap is not:
 * A trader stop-loss
 * Protection from liquidation
 * A guarantee of immediate profit settlement
-* A guarantee that LP capital cannot be impaired
+* A guarantee that LP[^lp] capital cannot be impaired
 
 It is a settlement and solvency boundary.
 
@@ -299,7 +312,7 @@ If that happens:
 
 That divergence is part of the product’s basis risk. It is the trade-off that makes maximum liability knowable before a position is accepted.
 
-I would also remove the cap from any “live parameters” table. It belongs under **Protocol constants** alongside facts that define the product rather than tune it.
+The cap is a protocol constant rather than a live risk parameter. It defines the product and cannot be changed through ordinary parameter updates.
 
 ### Why the market follows FX hours
 
@@ -360,10 +373,12 @@ Users should rely on the active oracle configuration and deployment reference ra
 8. Pyth supplies the component prices; Plether calculates and bounds the basket.
 9. The basket provides broad dollar exposure, not an exact hedge for every local currency.
 
-### Where to go next
-
-* **Risks you should understand first**
-* **Trader quickstart**
-* **Fees, carry and virtual price impact**
-* **Market hours and closures**
-* **Oracle and execution pricing**
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^dxy]: The U.S. Dollar Index; Plether uses its six-currency composition as inspiration but does not track raw DXY.
+[^basis-risk]: The risk that a hedge and the exposure it is intended to offset do not move together.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.

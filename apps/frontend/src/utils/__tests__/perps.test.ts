@@ -4,10 +4,24 @@ import {
   confidenceAdjustedBasketPrice,
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
+  formatPerpsSummaryUsdc,
+  formatSignedPerpsSummaryUsdc,
   oraclePriceToDisplayDxyPrice,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
 } from '../perps'
+
+describe('perps summary USDC formatting', () => {
+  it('keeps fractional precision below 100 000 USDC', () => {
+    expect(formatPerpsSummaryUsdc(99_999_990_000n)).toBe('99 999.99')
+  })
+
+  it('uses whole USDC for six-figure and larger values', () => {
+    expect(formatPerpsSummaryUsdc(100_000_490_000n)).toBe('100 000')
+    expect(formatPerpsSummaryUsdc(4_073_013_780_000n)).toBe('4 073 014')
+    expect(formatSignedPerpsSummaryUsdc(-4_073_013_780_000n)).toBe('-4 073 014')
+  })
+})
 
 describe('DXY display price helpers', () => {
   it('reverses raw basket oracle price around the 2.0 cap', () => {

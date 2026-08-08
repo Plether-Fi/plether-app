@@ -1,0 +1,1084 @@
+import { useEffect, useRef, useState } from 'react'
+import {
+  canCancelSponsoredOperationLocally,
+  canForceUnlockLegacySponsoredOperation,
+  forceUnlockLegacySponsoredOperation,
+  getSponsoredOperationAttentionRevision,
+  hasObservedSponsoredOperationInclusion,
+  isSponsoredOperationAttentionStatus,
+  isSponsoredOperationTerminal,
+  sponsorReasonMessage,
+  SponsorRequestError,
+  cancelSponsoredOperationRequest,
+  type SponsoredOperation,
+  type SponsoredOperationStatus,
+  usePerpsIdentity,
+  useSponsoredOperationStore,
+} from '../perps-aa'
+import {
+  sponsoredOperationActionLabel,
+  sponsoredOperationStatusLabel,
+} from '../utils/sponsoredOperation'
+import { Badge, Modal } from './ui'
+
+const SUCCESS_FEEDBACK_DURATION_MS = 5_000
+const SUCCESS_EXIT_ANIMATION_MS = 240
+const SPONSORSHIP_FAILURE_REASONS = new Set([
+  'RESTART_ESTIMATION',
+  'RATE_LIMITED',
+  'SPONSOR_BUDGET_EXCEEDED',
+  'SIMULATION_FAILED',
+  'SPONSOR_UNAVAILABLE',
+  'POLICY_DENIED',
+  'PAYMASTER_PAUSED',
+  'ACCOUNT_NOT_TRUSTED',
+])
+
+function abbreviatedHash(hash: string): string {
+  return `${hash.slice(0, 10)}…${hash.slice(-8)}`
+}
+
+function blockscoutAddressUrl(
+  transactionExplorerUrlTemplate: string,
+  address: string
+): string | undefined {
+  try {
+    const url = new URL(
+      transactionExplorerUrlTemplate.replace(
+        '{transactionHash}',
+        `0x${'0'.repeat(64)}`
+      )
+    )
+    const transactionPathIndex = url.pathname.lastIndexOf('/tx/')
+    if (transactionPathIndex === -1) return undefined
+
+    url.pathname =
+      `${url.pathname.slice(0, transactionPathIndex)}/address/${address}`
+    url.search = ''
+    return url.toString()
+  } catch {
+    return undefined
+  }
+}
+
+function formatOperationTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  })
+}
+
+function validOperationTimestamp(
+  timestamp: number | undefined
+): number | undefined {
+  if (
+    timestamp === undefined ||
+    !Number.isFinite(timestamp) ||
+    timestamp < 0
+  ) {
+    return undefined
+  }
+  return timestamp
+}
+
+function operationStatusTimestamps(
+  operation: SponsoredOperation
+): SponsoredOperation['statusTimestamps'] | undefined {
+  return (operation as {
+    statusTimestamps?: SponsoredOperation['statusTimestamps']
+  }).statusTimestamps
+}
+
+function operationHeaderTimestamp(
+  operation: SponsoredOperation
+): { label: 'Started at' | 'Last updated'; timestamp: number } | undefined {
+  const createdAt = validOperationTimestamp(operation.createdAt)
+  if (createdAt !== undefined) {
+    return { label: 'Started at', timestamp: createdAt }
+  }
+
+  const earliestLifecycleTimestamp = Object.values(
+    operationStatusTimestamps(operation) ?? {}
+  )
+    .map(validOperationTimestamp)
+    .filter((timestamp): timestamp is number => timestamp !== undefined)
+    .sort((a, b) => a - b)
+    .at(0)
+  if (earliestLifecycleTimestamp !== undefined) {
+    return { label: 'Started at', timestamp: earliestLifecycleTimestamp }
+  }
+
+  const updatedAt = validOperationTimestamp(operation.updatedAt)
+  return updatedAt === undefined
+    ? undefined
+    : { label: 'Last updated', timestamp: updatedAt }
+}
+
+function operationSortTimestamp(operation: SponsoredOperation): number {
+  return operationHeaderTimestamp(operation)?.timestamp ?? 0
+}
+
+function isFailedStatus(status: SponsoredOperationStatus): boolean {
+  return [
+    'failed',
+    'execution-reverted',
+    'dropped',
+    'expired',
+  ].includes(status)
+}
+
+function isUnreviewedAttentionOperation(
+  operation: SponsoredOperation
+): boolean {
+  if (
+    isAwaitingSafeConfirmation(operation) ||
+    !isSponsoredOperationAttentionStatus(operation.status)
+  ) {
+    return false
+  }
+
+  return (operation.acknowledgedAttentionRevision ?? 0) <
+    getSponsoredOperationAttentionRevision(operation)
+}
+
+function isAwaitingSafeConfirmation(
+  operation: SponsoredOperation
+): boolean {
+  return !isSponsoredOperationTerminal(operation.status) &&
+    hasObservedSponsoredOperationInclusion(operation)
+}
+
+function isForegroundInProgressOperation(
+  operation: SponsoredOperation
+): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    !isSponsoredOperationTerminal(operation.status) &&
+    operation.status !== 'receipt-timeout'
+}
+
+function isAttentionOperation(operation: SponsoredOperation): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    isSponsoredOperationAttentionStatus(operation.status)
+}
+
+function actionCountLabel(count: number): string {
+  return `${count.toString()} ${count === 1 ? 'action' : 'actions'}`
+}
+
+function statusBadgeVariant(
+  status: SponsoredOperationStatus
+): 'default' | 'success' | 'warning' | 'danger' | 'info' {
+  if (status === 'confirmed') return 'success'
+  if (isFailedStatus(status)) return 'danger'
+  if (status === 'receipt-timeout') return 'warning'
+  if (status === 'awaiting-signature') return 'info'
+  return 'warning'
+}
+
+function isSubmissionUncertain(operation: SponsoredOperation): boolean {
+  if (
+    !operation.userOperationHash ||
+    isAwaitingSafeConfirmation(operation)
+  ) {
+    return false
+  }
+
+  return operation.status === 'receipt-timeout' ||
+    (
+      operation.reason !== undefined &&
+      (
+        operation.status === 'submitting' ||
+        operation.status === 'confirming'
+      )
+    )
+}
+
+function operationStatusLabel(operation: SponsoredOperation): string {
+  if (isAwaitingSafeConfirmation(operation)) {
+    return 'Included onchain'
+  }
+  if (!isSubmissionUncertain(operation)) {
+    return sponsoredOperationStatusLabel(operation.status)
+  }
+
+  return operation.status === 'receipt-timeout'
+    ? 'Submission status unknown'
+    : 'Checking submission status'
+}
+
+function operationReasonMessage(
+  operation: SponsoredOperation
+): string | undefined {
+  if (isAwaitingSafeConfirmation(operation)) return undefined
+  if (isSubmissionUncertain(operation)) {
+    return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+  }
+
+  switch (operation.status) {
+    case 'execution-reverted':
+      return 'The transaction was included but failed during onchain execution.'
+    case 'dropped':
+      return 'The bundler reported that this operation was dropped, but Plether could not independently verify its final onchain outcome.'
+    case 'replaced':
+      return 'The Trading Account nonce was consumed by another operation. Refresh account state before trying this action again.'
+    case 'expired':
+      return 'This operation expired before it was included onchain. It is safe to retry the action.'
+    case 'outcome-unknown':
+      return operation.forcedLegacyUnlock
+        ? 'You force-released this stale local lock. Plether cannot prove whether the old action executed or may still execute later. Close or reload every other Plether tab, then review your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+        : 'The old nonce can no longer land, but Plether could not prove which operation consumed it. Refresh and review your Trading Account before taking another action. Do not blindly retry it.'
+    case 'failed':
+      if (!operation.reason) return undefined
+      if (!SPONSORSHIP_FAILURE_REASONS.has(operation.reason)) {
+        return 'Plether could not prepare or submit this transaction. Your action was not sent.'
+      }
+      return sponsorReasonMessage(new SponsorRequestError({
+        reason: operation.reason,
+        message: operation.reason,
+        retryable: operation.retryable ?? false,
+      }))
+    default:
+      return undefined
+  }
+}
+
+function HashActions({
+  hash,
+  label,
+  explorerUrl,
+}: {
+  hash: string
+  label: string
+  explorerUrl?: string
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-xs">
+      <span className="text-content-secondary">{label}</span>
+      <span className="flex min-w-0 items-center justify-end gap-1">
+        <span className="min-w-0 truncate text-content-primary" title={hash}>
+          {abbreviatedHash(hash)}
+        </span>
+        <button
+          type="button"
+          aria-label={`Copy ${label} hash`}
+          title={`Copy ${label} hash`}
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
+          onClick={() => {
+            void navigator.clipboard.writeText(hash)
+          }}
+        >
+          <span className="material-symbols-outlined !text-[14px] !leading-none">
+            content_copy
+          </span>
+        </button>
+        {explorerUrl ? (
+          <a
+            aria-label={`Open ${label} in block explorer`}
+            title={`Open ${label} in block explorer`}
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
+          >
+            <span className="material-symbols-outlined !text-[14px] !leading-none">
+              open_in_new
+            </span>
+          </a>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
+function AddressRow({
+  address,
+  explorerUrl,
+  label,
+}: {
+  address: string
+  explorerUrl?: string
+  label: string
+}) {
+  return (
+    <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-3 text-sm">
+      <span className="text-content-secondary">{label}</span>
+      <span className="flex min-w-0 items-center justify-end gap-1">
+        <span className="min-w-0 truncate text-content-primary" title={address}>
+          {abbreviatedHash(address)}
+        </span>
+        <button
+          type="button"
+          aria-label={`Copy ${label} address`}
+          title={`Copy ${label} address`}
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
+          onClick={() => {
+            void navigator.clipboard.writeText(address)
+          }}
+        >
+          <span className="material-symbols-outlined !text-[14px] !leading-none">
+            content_copy
+          </span>
+        </button>
+        {explorerUrl ? (
+          <a
+            aria-label={`View ${label} on Blockscout`}
+            title={`View ${label} on Blockscout`}
+            href={explorerUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center text-content-secondary transition-colors hover:text-[#FFAB96]"
+          >
+            <span className="material-symbols-outlined !text-[14px] !leading-none">
+              open_in_new
+            </span>
+          </a>
+        ) : null}
+      </span>
+    </div>
+  )
+}
+
+function OperationHistoryItem({
+  operation,
+  manifest,
+}: {
+  operation: SponsoredOperation
+  manifest: ReturnType<typeof usePerpsIdentity>['manifest']
+}) {
+  const [legacyUnlockState, setLegacyUnlockState] = useState<
+    'idle' | 'working' | 'blocked'
+  >('idle')
+  const submissionUncertain = isSubmissionUncertain(operation)
+  const userOperationUrl = operation.userOperationHash && manifest
+    ? manifest.userOperationExplorerUrlTemplate.replace(
+        '{userOperationHash}',
+        operation.userOperationHash
+      )
+    : undefined
+  const transactionUrl = operation.transactionHash && manifest
+    ? manifest.transactionExplorerUrlTemplate.replace(
+        '{transactionHash}',
+        operation.transactionHash
+      )
+    : undefined
+  const includedTransactionUrl =
+    operation.includedTransactionHash && manifest
+      ? manifest.transactionExplorerUrlTemplate.replace(
+          '{transactionHash}',
+          operation.includedTransactionHash
+        )
+      : undefined
+  const replacementUserOperationUrl =
+    operation.replacementUserOperationHash && manifest
+      ? manifest.userOperationExplorerUrlTemplate.replace(
+          '{userOperationHash}',
+          operation.replacementUserOperationHash
+        )
+      : undefined
+  const primaryExplorerUrl =
+    transactionUrl ??
+    includedTransactionUrl ??
+    replacementUserOperationUrl ??
+    userOperationUrl
+  const primaryExplorerLabel = transactionUrl
+    ? 'View transaction on Blockscout'
+    : includedTransactionUrl
+      ? 'View included transaction on Blockscout'
+      : replacementUserOperationUrl
+        ? 'View replacement operation'
+        : submissionUncertain
+          ? 'Check operation on Blockscout'
+          : 'Track operation on Blockscout'
+  const reasonMessage = operationReasonMessage(operation)
+  const canCancelLocally = canCancelSponsoredOperationLocally(operation)
+  const canForceUnlockLegacy =
+    canForceUnlockLegacySponsoredOperation(operation)
+  const hasTechnicalDetails = Boolean(
+    operation.userOperationHash ??
+    operation.includedTransactionHash ??
+    operation.transactionHash ??
+    operation.replacementUserOperationHash
+  )
+  const wasSafelyConfirmed =
+    operation.transactionHash !== undefined &&
+    operation.transactionHashVerified === true
+  const awaitingSafeConfirmation =
+    isAwaitingSafeConfirmation(operation)
+  const headerTimestamp = operationHeaderTimestamp(operation)
+  const includedAt = operation.includedTransactionHash
+    ? validOperationTimestamp(operation.inclusionObservedAt)
+    : undefined
+  const safelyConfirmedAt = operation.status === 'confirmed'
+    ? validOperationTimestamp(
+        operationStatusTimestamps(operation)?.confirmed
+      )
+    : undefined
+  const sponsorshipSummary = operation.status === 'outcome-unknown'
+    ? 'Past onchain outcome unverified'
+    : awaitingSafeConfirmation && operation.sponsorshipAccepted
+      ? 'Sponsored by Plether · 0 ETH network gas'
+      : submissionUncertain && operation.sponsorshipAccepted
+        ? 'Gas sponsorship approved · Submission unconfirmed'
+        : wasSafelyConfirmed && operation.sponsorshipAccepted
+          ? 'Sponsored by Plether · 0 ETH network gas'
+          : isSponsoredOperationTerminal(operation.status) &&
+              !wasSafelyConfirmed &&
+              (
+                operation.userOperationHash === undefined ||
+                operation.status === 'expired'
+              )
+            ? 'Not included · No network gas used'
+            : isSponsoredOperationTerminal(operation.status) &&
+                !wasSafelyConfirmed
+              ? 'Past onchain outcome unverified'
+              : operation.sponsorshipAccepted
+                ? 'Gas sponsorship approved'
+                : undefined
+  const sponsorshipSummaryTone =
+    (wasSafelyConfirmed || awaitingSafeConfirmation) && !submissionUncertain
+      ? 'text-positive'
+      : 'text-content-secondary'
+  const itemTone = isAttentionOperation(operation)
+    ? 'border-brand-orange/50'
+    : awaitingSafeConfirmation
+      ? 'border-positive/40'
+      : isForegroundInProgressOperation(operation)
+        ? 'border-[#FFAB96]/50'
+        : 'border-brand-border/30'
+
+  return (
+    <article
+      className={`space-y-3 border bg-app-bg/30 p-4 ${itemTone}`}
+      data-operation-id={operation.id}
+    >
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h3 className="font-semibold text-content-primary">
+            {sponsoredOperationActionLabel(operation.action)}
+          </h3>
+          {headerTimestamp ? (
+            <span className="whitespace-nowrap text-xs text-content-secondary">
+              <span>{headerTimestamp.label}</span>{' '}
+              <time dateTime={new Date(headerTimestamp.timestamp).toISOString()}>
+                {formatOperationTime(headerTimestamp.timestamp)}
+              </time>
+            </span>
+          ) : null}
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Badge
+            variant={
+              awaitingSafeConfirmation
+                ? 'success'
+                : statusBadgeVariant(operation.status)
+            }
+          >
+            {operationStatusLabel(operation)}
+          </Badge>
+          {sponsorshipSummary ? (
+            <span className={`text-xs ${sponsorshipSummaryTone}`}>
+              {sponsorshipSummary}
+            </span>
+          ) : null}
+        </div>
+        {includedAt !== undefined || safelyConfirmedAt !== undefined ? (
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary">
+            {includedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Inclusion observed at</dt>
+                <dd>
+                  <time dateTime={new Date(includedAt).toISOString()}>
+                    {formatOperationTime(includedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+            {safelyConfirmedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Safely confirmed at</dt>
+                <dd>
+                  <time dateTime={new Date(safelyConfirmedAt).toISOString()}>
+                    {formatOperationTime(safelyConfirmedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
+      </div>
+
+      {operation.action === 'place-order' && operation.status === 'confirmed' ? (
+        <p className="text-xs leading-5 text-content-secondary">
+          The sponsored order commit is confirmed. Keeper execution is tracked separately in order history.
+        </p>
+      ) : null}
+
+      {awaitingSafeConfirmation ? (
+        <p className="border border-positive/30 bg-positive/10 p-3 text-xs leading-5 text-content-secondary">
+          The transaction is onchain. Safety verification continues in the background; no action is required.
+        </p>
+      ) : null}
+
+      {reasonMessage ? (
+        <p className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-xs leading-5 text-content-secondary">
+          {reasonMessage}
+          {operation.status === 'failed' && operation.retryable
+            ? ' Retry the same Trading Account action or contact support.'
+            : ''}
+        </p>
+      ) : null}
+
+      {primaryExplorerUrl || canCancelLocally || canForceUnlockLegacy ? (
+        <div className="flex flex-wrap items-center gap-3">
+          {primaryExplorerUrl ? (
+            <a
+              href={primaryExplorerUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-[#FFAB96] hover:underline hover:underline-offset-4"
+            >
+              {primaryExplorerLabel}
+              <span aria-hidden="true" className="material-symbols-outlined !text-[14px] !leading-none">
+                open_in_new
+              </span>
+            </a>
+          ) : null}
+          {canCancelLocally ? (
+            <button
+              type="button"
+              className="border border-brand-border/40 px-3 py-1.5 text-xs font-semibold text-content-secondary transition-colors hover:border-[#FFAB96] hover:text-[#FFAB96]"
+              onClick={() => {
+                cancelSponsoredOperationRequest(operation.id)
+              }}
+            >
+              Cancel local request
+            </button>
+          ) : null}
+          {canForceUnlockLegacy ? (
+            <>
+              <button
+                type="button"
+                disabled={legacyUnlockState === 'working'}
+                className="border border-brand-orange/50 px-3 py-1.5 text-xs font-semibold text-[#FFAB96] transition-colors hover:border-[#FFAB96] hover:text-content-primary disabled:cursor-wait disabled:opacity-60"
+                onClick={() => {
+                  const confirmed = globalThis.confirm(
+                    'Force-release this stale local lock? The old action may already have executed or may still execute later. Close or reload every other Plether tab, then check your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+                  )
+                  if (!confirmed) return
+
+                  setLegacyUnlockState('working')
+                  void forceUnlockLegacySponsoredOperation(operation.id)
+                    .then((unlocked) => {
+                      setLegacyUnlockState(unlocked ? 'idle' : 'blocked')
+                    })
+                }}
+              >
+                {legacyUnlockState === 'working'
+                  ? 'Checking lane…'
+                  : 'Force-release stale local lock'}
+              </button>
+              {legacyUnlockState === 'blocked' ? (
+                <span
+                  role="status"
+                  className="text-xs text-content-secondary"
+                >
+                  Another tab or status check is using this Trading Account.
+                  Close it or wait a moment, then try again.
+                </span>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {hasTechnicalDetails ? (
+        <details className="border-t border-brand-border/20 pt-3">
+          <summary className="cursor-pointer text-xs font-semibold text-content-secondary transition-colors hover:text-content-primary">
+            Technical details
+          </summary>
+          <div className="mt-3 space-y-2">
+            {operation.userOperationHash ? (
+              <HashActions
+                hash={operation.userOperationHash}
+                label="UserOperation"
+                explorerUrl={userOperationUrl}
+              />
+            ) : null}
+            {operation.transactionHash ? (
+              <HashActions
+                hash={operation.transactionHash}
+                label="Transaction"
+                explorerUrl={transactionUrl}
+              />
+            ) : null}
+            {!operation.transactionHash &&
+            operation.includedTransactionHash ? (
+              <HashActions
+                hash={operation.includedTransactionHash}
+                label="Included transaction"
+                explorerUrl={includedTransactionUrl}
+              />
+            ) : null}
+            {operation.replacementUserOperationHash ? (
+              <HashActions
+                hash={operation.replacementUserOperationHash}
+                label="Replacement UserOperation"
+                explorerUrl={replacementUserOperationUrl}
+              />
+            ) : null}
+          </div>
+        </details>
+      ) : null}
+    </article>
+  )
+}
+
+export function SponsoredOperationHistoryButton() {
+  const identity = usePerpsIdentity()
+  const operations = useSponsoredOperationStore((state) => state.operations)
+  const [openedActivity, setOpenedActivity] = useState<{
+    identityKey: string
+    attentionOperationIds: string[]
+  } | null>(null)
+  const identityKey = identity.accountAddress && identity.chainId !== undefined
+    ? `${identity.chainId.toString()}:${identity.accountAddress.toLowerCase()}`
+    : null
+  const accountAddress = identity.accountAddress?.toLowerCase()
+  const ownerAddress = identity.ownerAddress?.toLowerCase()
+  const accountOperations = accountAddress && identity.chainId !== undefined
+    ? operations
+        .filter((operation) =>
+          operation.accountAddress.toLowerCase() === accountAddress &&
+          operation.chainId === identity.chainId &&
+          (ownerAddress === undefined ||
+            operation.ownerAddress.toLowerCase() === ownerAddress)
+        )
+        .sort((a, b) =>
+          operationSortTimestamp(b) - operationSortTimestamp(a) ||
+          a.id.localeCompare(b.id)
+        )
+    : []
+  const attentionOperations = accountOperations.filter(isAttentionOperation)
+  const unreviewedAttentionOperations = attentionOperations.filter(
+    isUnreviewedAttentionOperation
+  )
+  const inProgressOperations = accountOperations.filter(
+    isForegroundInProgressOperation
+  )
+  const includedOperations = accountOperations.filter(
+    isAwaitingSafeConfirmation
+  )
+  const openedAttentionOperationIds = new Set(
+    openedActivity?.identityKey === identityKey
+      ? openedActivity.attentionOperationIds
+      : []
+  )
+  const needsAttentionOperations = attentionOperations.filter(
+    (operation) =>
+      openedAttentionOperationIds.has(operation.id) ||
+      isUnreviewedAttentionOperation(operation)
+  )
+  const needsAttentionOperationIds = new Set(
+    needsAttentionOperations.map((operation) => operation.id)
+  )
+  const recentOperations = accountOperations.filter(
+    (operation) =>
+      !needsAttentionOperationIds.has(operation.id) &&
+      !isForegroundInProgressOperation(operation) &&
+      !isAwaitingSafeConfirmation(operation)
+  )
+  const [confirmationFeedback, setConfirmationFeedback] = useState<{
+    identityKey: string
+    operationId: string
+    phase: 'visible' | 'exiting'
+    sequence: number
+  } | null>(null)
+  const confirmationTimeoutRef = useRef<number | null>(null)
+  const confirmationExitTimeoutRef = useRef<number | null>(null)
+  const confirmationSequenceRef = useRef(0)
+
+  useEffect(() => {
+    if (
+      identityKey === null ||
+      accountAddress === undefined ||
+      identity.chainId === undefined
+    ) {
+      return
+    }
+
+    const unsubscribe = useSponsoredOperationStore.subscribe(
+      (state, previousState) => {
+        const previousOperations = new Map(
+          previousState.operations.map((operation) => [operation.id, operation])
+        )
+        const newlyConfirmedOperation = state.operations
+          .filter((operation) =>
+            operation.accountAddress.toLowerCase() === accountAddress &&
+            operation.chainId === identity.chainId &&
+            (ownerAddress === undefined ||
+              operation.ownerAddress.toLowerCase() === ownerAddress) &&
+            operation.status === 'confirmed' &&
+            previousOperations.has(operation.id) &&
+            previousOperations.get(operation.id)?.status !== 'confirmed'
+          )
+          .sort((a, b) =>
+            (b.statusTimestamps.confirmed ?? b.updatedAt) -
+            (a.statusTimestamps.confirmed ?? a.updatedAt)
+          )
+          .at(0)
+
+        if (!newlyConfirmedOperation) return
+
+        if (confirmationTimeoutRef.current !== null) {
+          window.clearTimeout(confirmationTimeoutRef.current)
+        }
+        if (confirmationExitTimeoutRef.current !== null) {
+          window.clearTimeout(confirmationExitTimeoutRef.current)
+        }
+
+        confirmationSequenceRef.current += 1
+        const sequence = confirmationSequenceRef.current
+        const feedback = {
+          identityKey,
+          operationId: newlyConfirmedOperation.id,
+          phase: 'visible' as const,
+          sequence,
+        }
+        setConfirmationFeedback(feedback)
+        confirmationTimeoutRef.current = window.setTimeout(() => {
+          if (confirmationSequenceRef.current !== sequence) return
+
+          setConfirmationFeedback((currentFeedback) =>
+            currentFeedback?.identityKey === feedback.identityKey &&
+            currentFeedback.operationId === feedback.operationId &&
+            currentFeedback.sequence === sequence
+              ? { ...currentFeedback, phase: 'exiting' }
+              : currentFeedback
+          )
+          confirmationTimeoutRef.current = null
+          confirmationExitTimeoutRef.current = window.setTimeout(() => {
+            if (confirmationSequenceRef.current !== sequence) return
+
+            setConfirmationFeedback((currentFeedback) =>
+              currentFeedback?.identityKey === feedback.identityKey &&
+              currentFeedback.operationId === feedback.operationId &&
+              currentFeedback.sequence === sequence
+                ? null
+                : currentFeedback
+            )
+            confirmationExitTimeoutRef.current = null
+          }, SUCCESS_EXIT_ANIMATION_MS)
+        }, SUCCESS_FEEDBACK_DURATION_MS)
+      }
+    )
+
+    return () => {
+      unsubscribe()
+    }
+  }, [
+    accountAddress,
+    identity.chainId,
+    identityKey,
+    ownerAddress,
+  ])
+
+  useEffect(() => {
+    return () => {
+      if (confirmationTimeoutRef.current !== null) {
+        window.clearTimeout(confirmationTimeoutRef.current)
+        confirmationTimeoutRef.current = null
+      }
+      if (confirmationExitTimeoutRef.current !== null) {
+        window.clearTimeout(confirmationExitTimeoutRef.current)
+        confirmationExitTimeoutRef.current = null
+      }
+    }
+  }, [])
+
+  const activeConfirmationFeedback =
+    confirmationFeedback?.identityKey === identityKey
+      ? confirmationFeedback
+      : null
+  const showConfirmationFeedback = activeConfirmationFeedback !== null
+  const isConfirmationFeedbackVisible =
+    activeConfirmationFeedback?.phase === 'visible'
+  const isConfirmationFeedbackExiting =
+    activeConfirmationFeedback?.phase === 'exiting'
+  const unreviewedAttentionCount = unreviewedAttentionOperations.length
+  const inProgressCount = inProgressOperations.length
+  const includedCount = includedOperations.length
+  const attentionSummaryCount = openedActivity?.identityKey === identityKey
+    ? needsAttentionOperations.length
+    : 0
+  const buttonTone = isConfirmationFeedbackVisible
+    ? 'border-positive text-positive hover:bg-positive/15'
+    : unreviewedAttentionCount > 0
+      ? 'border-brand-orange text-brand-orange hover:bg-brand-orange/15'
+      : inProgressCount > 0
+        ? 'border-[#FFAB96] text-[#FFAB96] hover:bg-[#FFAB96]/15'
+        : includedCount > 0
+          ? 'border-positive text-positive hover:bg-positive/15'
+          : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
+  const buttonIcon = unreviewedAttentionCount > 0
+    ? 'warning'
+    : inProgressCount > 0
+      ? 'progress_activity'
+      : includedCount > 0
+        ? 'check_circle'
+        : 'history'
+  const buttonTitle = showConfirmationFeedback
+    ? 'Transaction confirmed'
+    : unreviewedAttentionCount > 0
+      ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
+      : inProgressCount > 0
+        ? `${actionCountLabel(inProgressCount)} in progress`
+        : includedCount > 0
+          ? `${actionCountLabel(includedCount)} included onchain`
+          : 'Trading Account activity'
+  const buttonStatusLabel = [
+    unreviewedAttentionCount > 0
+      ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
+      : null,
+    inProgressCount > 0
+      ? `${actionCountLabel(inProgressCount)} in progress`
+      : null,
+    includedCount > 0
+      ? `${actionCountLabel(includedCount)} included onchain`
+      : null,
+  ].filter(Boolean).join('; ')
+  const openActivityLabel = buttonStatusLabel
+    ? `Open Trading Account activity. ${buttonStatusLabel}.`
+    : 'Open Trading Account activity.'
+  const buttonLabel = showConfirmationFeedback
+    ? `Transaction confirmed. ${openActivityLabel}`
+    : openActivityLabel
+  const statusSummary = attentionSummaryCount > 0
+    ? {
+        title: `${actionCountLabel(attentionSummaryCount)} ${attentionSummaryCount === 1 ? 'needs' : 'need'} attention`,
+        description: [
+          `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.`,
+          inProgressCount > 0
+            ? `${actionCountLabel(inProgressCount)} still in progress.`
+            : null,
+          includedCount > 0
+            ? `${actionCountLabel(includedCount)} included onchain; safety verification continues in the background.`
+            : null,
+        ].filter(Boolean).join(' '),
+        tone: 'border-brand-orange/40 bg-brand-orange/10',
+      }
+    : inProgressCount > 0
+      ? {
+          title: `${actionCountLabel(inProgressCount)} in progress`,
+          description: [
+            'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+            includedCount > 0
+              ? `${actionCountLabel(includedCount)} already included onchain; safety verification continues in the background.`
+              : null,
+          ].filter(Boolean).join(' '),
+          tone: 'border-[#FFAB96]/40 bg-[#FFAB96]/10',
+        }
+      : includedCount > 0
+        ? {
+            title: `${actionCountLabel(includedCount)} included onchain`,
+            description:
+              'Safety verification continues in the background. No action is required.',
+            tone: 'border-positive/40 bg-positive/10',
+          }
+        : null
+
+  if (
+    !identity.isAaManifestConfigured ||
+    identity.status !== 'ready' ||
+    identityKey === null
+  ) {
+    return null
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={buttonLabel}
+        title={buttonTitle}
+        className={`relative inline-flex h-11 w-11 shrink-0 items-center justify-center overflow-visible rounded-full border transition-colors duration-200 motion-reduce:transition-none ${buttonTone}`}
+        onClick={() => {
+          useSponsoredOperationStore.getState().acknowledgeOperations(
+            unreviewedAttentionOperations.map((operation) => ({
+              id: operation.id,
+              attentionRevision:
+                getSponsoredOperationAttentionRevision(operation),
+            }))
+          )
+          setOpenedActivity({
+            identityKey,
+            attentionOperationIds: unreviewedAttentionOperations.map(
+              (operation) => operation.id
+            ),
+          })
+        }}
+      >
+        <span
+          aria-hidden="true"
+          className={`sponsored-activity-base-icon material-symbols-outlined relative z-10 !text-[20px] !leading-none ${buttonIcon === 'progress_activity' && !showConfirmationFeedback ? 'animate-spin motion-reduce:animate-none' : ''} ${isConfirmationFeedbackVisible ? 'sponsored-activity-base-icon-suppressed' : ''} ${isConfirmationFeedbackExiting ? 'sponsored-activity-base-icon-return' : ''}`}
+        >
+          {buttonIcon}
+        </span>
+        {showConfirmationFeedback ? (
+          <span
+            key={activeConfirmationFeedback.sequence}
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center"
+          >
+            <svg
+              data-testid="sponsored-operation-success-icon"
+              viewBox="0 0 20 20"
+              fill="none"
+              className={`h-5 w-5 overflow-visible ${isConfirmationFeedbackExiting ? 'sponsored-activity-success-icon-exit' : 'sponsored-activity-success-icon-enter'}`}
+            >
+              <path
+                className="sponsored-activity-success-check-path"
+                d="M4.5 10.25 8 13.75 15.5 6.25"
+                stroke="currentColor"
+                strokeWidth="2.25"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </span>
+        ) : null}
+        {isConfirmationFeedbackVisible ? (
+          <span
+            key={`success-ring-${activeConfirmationFeedback.sequence.toString()}`}
+            aria-hidden="true"
+            className="sponsored-activity-success-ring"
+          />
+        ) : null}
+      </button>
+
+      <Modal
+        isOpen={openedActivity?.identityKey === identityKey}
+        onClose={() => {
+          setOpenedActivity(null)
+        }}
+        title="Trading Account activity"
+        size="xl"
+        analyticsId="sponsored_operation_history"
+      >
+        <div className="space-y-5">
+          {statusSummary ? (
+            <div className={`border p-4 ${statusSummary.tone}`} aria-live="polite">
+              <div className="font-semibold text-content-primary">
+                {statusSummary.title}
+              </div>
+              <p className="mt-1 text-sm leading-5 text-content-secondary">
+                {statusSummary.description}
+              </p>
+            </div>
+          ) : null}
+
+          {needsAttentionOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-attention">
+              <h3 id="sponsored-activity-attention" className="text-sm font-semibold uppercase tracking-wide text-brand-orange">
+                Needs attention
+              </h3>
+              {needsAttentionOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {inProgressOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-progress">
+              <h3 id="sponsored-activity-progress" className="text-sm font-semibold uppercase tracking-wide text-[#FFAB96]">
+                In progress
+              </h3>
+              {inProgressOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {includedOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-included">
+              <h3 id="sponsored-activity-included" className="text-sm font-semibold uppercase tracking-wide text-positive">
+                Included onchain
+              </h3>
+              {includedOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {recentOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-recent">
+              <h3 id="sponsored-activity-recent" className="text-sm font-semibold uppercase tracking-wide text-content-secondary">
+                Recent activity
+              </h3>
+              {recentOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {accountOperations.length === 0 ? (
+            <div className="border border-dashed border-brand-border/40 p-8 text-center text-sm text-content-secondary">
+              No Trading Account activity saved on this device.
+            </div>
+          ) : null}
+
+          <details className="border border-brand-border/30 bg-app-bg/30 p-4">
+            <summary className="cursor-pointer text-sm font-semibold text-content-primary">
+              Account details
+            </summary>
+            <div className="mt-4 space-y-3 border-t border-brand-border/20 pt-4">
+              {identity.ownerAddress ? (
+                <AddressRow
+                  address={identity.ownerAddress}
+                  explorerUrl={identity.manifest
+                    ? blockscoutAddressUrl(
+                        identity.manifest.transactionExplorerUrlTemplate,
+                        identity.ownerAddress
+                      )
+                    : undefined}
+                  label="Owner Wallet"
+                />
+              ) : null}
+              {identity.accountAddress ? (
+                <AddressRow
+                  address={identity.accountAddress}
+                  explorerUrl={identity.manifest
+                    ? blockscoutAddressUrl(
+                        identity.manifest.transactionExplorerUrlTemplate,
+                        identity.accountAddress
+                      )
+                    : undefined}
+                  label="Trading Account"
+                />
+              ) : null}
+            </div>
+          </details>
+
+          <p className="text-xs leading-5 text-content-secondary">
+            This activity is saved on this device. Completed and unsuccessful actions are retained for up to 24 hours and may not appear on another device.
+          </p>
+        </div>
+      </Modal>
+    </>
+  )
+}

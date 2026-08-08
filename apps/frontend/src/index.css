@@ -55,6 +55,7 @@ html {
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background-color: #250917;
   font-family: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
 }
@@ -74,6 +75,7 @@ select:not(:disabled) {
 
 #root {
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 /* Safe area for mobile bottom nav */
@@ -97,6 +99,16 @@ select:not(:disabled) {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #FFC0B0;
+}
+
+.basket-components-rail {
+  scrollbar-width: none;
+}
+
+.basket-components-rail::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
 }
 
 .leverage-slider,
@@ -165,6 +177,64 @@ select:not(:disabled) {
   animation: perps-line-slide-out 1200ms ease-out both;
 }
 
+.sponsored-activity-base-icon {
+  transform-origin: center;
+  transition:
+    opacity 140ms ease-out,
+    transform 160ms ease-out;
+}
+
+.sponsored-activity-base-icon-suppressed {
+  opacity: 0;
+  transform: scale(0.82);
+}
+
+.sponsored-activity-base-icon-return {
+  animation: sponsored-activity-base-icon-return 220ms ease-out 20ms both;
+}
+
+.sponsored-activity-success-icon-enter {
+  animation: sponsored-activity-success-icon-enter 360ms cubic-bezier(0.2, 0.9, 0.25, 1.15) both;
+  transform-origin: center;
+}
+
+.sponsored-activity-success-icon-exit {
+  animation: sponsored-activity-success-icon-exit 160ms ease-in both;
+  transform-origin: center;
+}
+
+.sponsored-activity-success-check-path {
+  stroke-dasharray: 22;
+  animation: sponsored-activity-success-check-draw 300ms ease-out 70ms both;
+}
+
+.sponsored-activity-success-ring {
+  position: absolute;
+  inset: -1px;
+  pointer-events: none;
+  border: 1px solid currentColor;
+  border-radius: 9999px;
+  animation: sponsored-activity-success-ring 520ms ease-out both;
+}
+
+.perps-confetti-cannon {
+  position: absolute;
+  top: 1.25rem;
+}
+
+.perps-confetti-cannon-left {
+  left: 1.5rem;
+}
+
+.perps-confetti-cannon-middle {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.perps-confetti-cannon-right {
+  right: 1.5rem;
+}
+
 @keyframes perps-line-slide-in {
   from {
     transform: translate3d(0, 140%, 0);
@@ -183,9 +253,114 @@ select:not(:disabled) {
   }
 }
 
+@keyframes sponsored-activity-success-icon-enter {
+  0% {
+    opacity: 0;
+    transform: scale(0.45) rotate(-16deg);
+  }
+  65% {
+    opacity: 1;
+    transform: scale(1.12) rotate(3deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes sponsored-activity-success-icon-exit {
+  from {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.78) rotate(12deg);
+  }
+}
+
+@keyframes sponsored-activity-success-check-draw {
+  from {
+    stroke-dashoffset: 22;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes sponsored-activity-base-icon-return {
+  0% {
+    opacity: 0;
+    transform: scale(0.72) rotate(-10deg);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.06) rotate(2deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0);
+  }
+}
+
+@keyframes sponsored-activity-success-ring {
+  0% {
+    opacity: 0;
+    transform: scale(0.72);
+    box-shadow: 0 0 0 0 rgb(0 255 153 / 0.35);
+  }
+  25% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.45);
+    box-shadow: 0 0 0 6px rgb(0 255 153 / 0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .perps-line-swap-in,
   .perps-line-swap-out {
+    animation: none;
+  }
+
+  .perps-confetti-burst {
+    display: none;
+  }
+
+  .sponsored-activity-base-icon {
+    transition: none;
+  }
+
+  .sponsored-activity-base-icon-suppressed {
+    opacity: 0;
+    transform: none;
+  }
+
+  .sponsored-activity-base-icon-return {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+
+  .sponsored-activity-success-icon-enter {
+    animation: none;
+  }
+
+  .sponsored-activity-success-icon-exit {
+    opacity: 0;
+    transform: none;
+    animation: none;
+  }
+
+  .sponsored-activity-success-check-path {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+
+  .sponsored-activity-success-ring {
+    display: none;
     animation: none;
   }
 }

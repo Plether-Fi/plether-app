@@ -1,11 +1,32 @@
-import { describe, expect, it } from 'vitest';
+import { Result } from 'better-result';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  PlethApiClient,
   PlethApiError,
+  TESTNET_FAUCET_TIMEOUT_MESSAGE,
+  TESTNET_FAUCET_TIMEOUT_MS,
   apiScopeToApiPath,
   getScopedApiBaseUrl,
   isUpstreamApiError,
 } from './client';
+
+const analyticsMock = vi.hoisted(() => ({
+  captureFrontendLog: vi.fn(),
+}));
+
+vi.mock('../analytics/client', () => ({
+  captureFrontendLog: analyticsMock.captureFrontendLog,
+}));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 describe('apiScopeToApiPath', () => {
   it('pins spot to the spot API namespace', () => {
@@ -48,5 +69,98 @@ describe('isUpstreamApiError', () => {
   it('does not match user input errors', () => {
     expect(isUpstreamApiError(new PlethApiError('INVALID_ADDRESS', 'invalid address', 400))).toBe(false);
     expect(isUpstreamApiError(new PlethApiError('INVALID_AMOUNT', 'invalid amount', 400))).toBe(false);
+  });
+});
+
+describe('API request timeouts', () => {
+  it('allows a faucet claim to finish after the default 30-second API timeout', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(() =>
+      new Promise<Response>((resolve) => {
+        setTimeout(() => {
+          resolve(new Response(JSON.stringify({
+            data: {
+              address: '0x1111111111111111111111111111111111111111',
+              amount: '100000000000',
+              token: '0x2222222222222222222222222222222222222222',
+              txHash: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              status: 'minted',
+            },
+            meta: {
+              blockNumber: 1,
+              chainId: 421614,
+              cached: false,
+            },
+          }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }));
+        }, 31_000);
+      })
+    ));
+    const client = new PlethApiClient({
+      baseUrl: '/api',
+      timeout: 30_000,
+    });
+
+    const pendingClaim = client.claimTestnetFaucet(
+      '0x1111111111111111111111111111111111111111'
+    );
+    await vi.advanceTimersByTimeAsync(31_000);
+    const result = await pendingClaim;
+
+    expect(Result.isError(result)).toBe(false);
+    if (Result.isError(result)) return;
+    expect(result.value.data.status).toBe('minted');
+    expect(analyticsMock.captureFrontendLog).toHaveBeenCalledWith(
+      'info',
+      'frontend api request completed',
+      expect.objectContaining({
+        component: 'api_client',
+        operation: 'claim_testnet_faucet',
+        outcome: 'success',
+        duration_ms: 31_000,
+        timeout_ms: TESTNET_FAUCET_TIMEOUT_MS,
+      })
+    );
+  });
+
+  it('returns an actionable faucet message and structured timeout diagnostics', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((
+      _input: RequestInfo | URL,
+      init?: RequestInit
+    ) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(init.signal?.reason);
+      });
+    })));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+
+    const pendingClaim = client.claimTestnetFaucet(
+      '0x1111111111111111111111111111111111111111'
+    );
+    await vi.advanceTimersByTimeAsync(TESTNET_FAUCET_TIMEOUT_MS);
+    const result = await pendingClaim;
+
+    expect(Result.isError(result)).toBe(true);
+    if (!Result.isError(result)) return;
+    expect(result.error).toMatchObject({
+      code: 'NETWORK_ERROR',
+      message: TESTNET_FAUCET_TIMEOUT_MESSAGE,
+    });
+    expect(analyticsMock.captureFrontendLog).toHaveBeenCalledWith(
+      'error',
+      'frontend api request failed',
+      expect.objectContaining({
+        component: 'api_client',
+        operation: 'claim_testnet_faucet',
+        outcome: 'failure',
+        error_category: 'timeout',
+        reason_code: 'client_timeout',
+        duration_ms: TESTNET_FAUCET_TIMEOUT_MS,
+        timeout_ms: TESTNET_FAUCET_TIMEOUT_MS,
+      })
+    );
   });
 });

@@ -2,6 +2,7 @@ module Plether.Utils.Hex
   ( hexToInteger
   , intToHex
   , hexToByteString
+  , hexToByteStringEither
   ) where
 
 import Data.ByteString (ByteString)
@@ -29,8 +30,13 @@ intToHex n = T.pack $ go n ""
       | otherwise = toEnum (fromEnum 'a' + fromIntegral d - 10)
 
 hexToByteString :: Text -> ByteString
-hexToByteString txt =
+hexToByteString = either (const "") id . hexToByteStringEither
+
+hexToByteStringEither :: Text -> Either Text ByteString
+hexToByteStringEither txt =
   let stripped = if T.isPrefixOf "0x" txt || T.isPrefixOf "0X" txt then T.drop 2 txt else txt
-   in case B16.decode (TE.encodeUtf8 $ T.toLower stripped) of
-        Right bs -> bs
-        Left _ -> ""
+   in if T.null stripped
+        then Left "hex value is empty"
+        else case B16.decode (TE.encodeUtf8 $ T.toLower stripped) of
+          Right bs -> Right bs
+          Left err -> Left $ "invalid hex value: " <> T.pack err

@@ -3,6 +3,7 @@ import {
   formatAmount,
   formatUsd,
   formatPercent,
+  formatCompactNumber,
   formatAddress,
   parseAmount,
   getHealthFactorColor,
@@ -74,6 +75,18 @@ describe('formatPercent', () => {
   it('respects decimals parameter', () => {
     expect(formatPercent(12.3456, 1)).toBe('12.3%')
     expect(formatPercent(12.3456, 4)).toBe('12.3456%')
+  })
+})
+
+describe('formatCompactNumber', () => {
+  it('formats billions with up to two decimal places', () => {
+    expect(formatCompactNumber(1_210_300_000)).toBe('1.21B')
+    expect(formatCompactNumber(1_000_000_000)).toBe('1B')
+  })
+
+  it('preserves the existing million and thousand formats', () => {
+    expect(formatCompactNumber(2_400_000)).toBe('2.4M')
+    expect(formatCompactNumber(12_300)).toBe('12.3K')
   })
 })
 

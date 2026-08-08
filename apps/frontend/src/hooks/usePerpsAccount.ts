@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { zeroAddress } from 'viem'
-import { useAccount, useReadContracts } from 'wagmi'
+import { useReadContracts } from 'wagmi'
 import {
   ERC20_ABI,
   PERPS_CFD_ENGINE_ABI,
@@ -10,6 +10,7 @@ import {
   PERPS_PUBLIC_LENS_ABI,
 } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import { usePerpsIdentity } from '../perps-aa'
 import { formatDisplayDxyPrice, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, perpsSideToDirection, sizeDeltaToNotionalUsdc } from '../utils/perps'
 
 interface ContractResult {
@@ -266,8 +267,14 @@ function findLiquidationPrice({
 }
 
 export function usePerpsAccount(markPrice?: bigint) {
-  const { address, isConnected } = useAccount()
-  const account = address ?? zeroAddress
+  const {
+    ownerAddress,
+    accountAddress,
+    status: identityStatus,
+  } = usePerpsIdentity()
+  const isConnected = ownerAddress !== undefined
+  const account = accountAddress ?? zeroAddress
+  const owner = ownerAddress ?? zeroAddress
   const lastSuccessfulPositionRef = useRef<{
     account: string
     position: PerpsPosition
@@ -302,6 +309,13 @@ export function usePerpsAccount(markPrice?: bigint) {
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [account],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.usdc,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [owner],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -363,7 +377,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       },
     ],
     query: {
-      enabled: isConnected,
+      enabled: isConnected && accountAddress !== undefined,
       refetchInterval: 15_000,
     },
   })
@@ -382,7 +396,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       args: [order.orderId],
     } as const)),
     query: {
-      enabled: isConnected && basicPendingOrders.length > 0,
+      enabled: isConnected && accountAddress !== undefined && basicPendingOrders.length > 0,
       refetchInterval: 15_000,
     },
   })
@@ -390,19 +404,21 @@ export function usePerpsAccount(markPrice?: bigint) {
   const freshAccount = useMemo(() => {
     const accountView = readResult(data, 0)
     const position = parsePosition(readResult(data, 1), markPrice)
-    const walletUsdc = readResult(data, 3) as bigint | undefined
-    const marginAllowanceUsdc = readResult(data, 4) as bigint | undefined
-    const freeBuyingPowerUsdc = readResult(data, 5) as bigint | undefined
-    const maxPendingOrders = readResult(data, 6) as bigint | undefined
-    const maxOrderAge = readResult(data, 7) as bigint | undefined
-    const accountLedgerSnapshot = readResult(data, 8)
-    const riskParams = readResult(data, 9)
-    const capPrice = readResult(data, 10) as bigint | undefined
-    const isFadWindow = readResult(data, 11) as boolean | undefined
-    const enginePosition = readResult(data, 12)
+    const tradingAccountUsdc = readResult(data, 3) as bigint | undefined
+    const ownerWalletUsdc = readResult(data, 4) as bigint | undefined
+    const marginAllowanceUsdc = readResult(data, 5) as bigint | undefined
+    const freeBuyingPowerUsdc = readResult(data, 6) as bigint | undefined
+    const maxPendingOrders = readResult(data, 7) as bigint | undefined
+    const maxOrderAge = readResult(data, 8) as bigint | undefined
+    const accountLedgerSnapshot = readResult(data, 9)
+    const riskParams = readResult(data, 10)
+    const capPrice = readResult(data, 11) as bigint | undefined
+    const isFadWindow = readResult(data, 12) as boolean | undefined
+    const enginePosition = readResult(data, 13)
     const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
     const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'terminalReachableUsdc')
+    const traderClaimBalanceUsdc = readBigInt(accountLedgerSnapshot, 9, 'traderClaimBalanceUsdc')
     const snapshotUnrealizedPnlUsdc = readBigInt(accountLedgerSnapshot, 20, 'unrealizedPnlUsdc')
     const netEquityUsdc = readBigInt(accountLedgerSnapshot, 21, 'netEquityUsdc')
     const maintenanceMarginBps = isFadWindow
@@ -457,17 +473,23 @@ export function usePerpsAccount(markPrice?: bigint) {
       : Boolean(tupleValue(accountView, 4, 'hasOpenPosition'))
 
     return {
-      address: address,
+      address: accountAddress,
+      ownerAddress,
+      accountAddress,
+      identityStatus,
       isConnected,
       isLoading,
       isPendingOrderDetailsLoading: pendingOrderViewsLoading,
       error,
       refetch,
-      walletUsdc,
+      walletUsdc: ownerWalletUsdc,
+      ownerWalletUsdc,
+      tradingAccountUsdc,
       marginAllowanceUsdc,
       equityUsdc,
       freeBuyingPowerUsdc,
       withdrawableUsdc,
+      traderClaimBalanceUsdc,
       pendingOrderMarginUsdc: tupleValue(accountView, 2, 'pendingOrderMarginUsdc') as bigint | undefined,
       pendingExecutionBountyUsdc: tupleValue(accountView, 3, 'pendingExecutionBountyUsdc') as bigint | undefined,
       maxPendingOrders,
@@ -480,7 +502,9 @@ export function usePerpsAccount(markPrice?: bigint) {
       position: positionWithLiquidationPrice,
       pendingOrders,
       display: {
-        walletUsdc: formatPerpsUsdc(walletUsdc),
+        walletUsdc: formatPerpsUsdc(ownerWalletUsdc),
+        ownerWalletUsdc: formatPerpsUsdc(ownerWalletUsdc),
+        tradingAccountUsdc: formatPerpsUsdc(tradingAccountUsdc),
         availableToTrade: formatPerpsUsdc(freeBuyingPowerUsdc ?? withdrawableUsdc),
         equity: formatPerpsUsdc(equityUsdc),
         positionNotional: formatPerpsUsdc(positionWithLiquidationPrice?.estimatedNotionalUsdc),
@@ -488,7 +512,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
       },
     }
-  }, [address, basicPendingOrders, data, error, isConnected, isLoading, markPrice, pendingOrderViewsData, pendingOrderViewsLoading, refetch])
+  }, [accountAddress, basicPendingOrders, data, error, identityStatus, isConnected, isLoading, markPrice, ownerAddress, pendingOrderViewsData, pendingOrderViewsLoading, refetch])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return

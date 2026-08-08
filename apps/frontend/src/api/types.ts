@@ -150,6 +150,7 @@ export interface BasketComponentPrice {
 export interface BasketHistoryPoint {
   timestamp: number;
   basketPrice: string;
+  volumeUsdc?: string;
   components?: BasketComponentPrice[];
 }
 
@@ -191,8 +192,8 @@ export interface TestnetFaucetClaim {
   address: string;
   amount: string;
   token: string;
-  txHash: string;
-  status: 'minted' | 'already_claimed';
+  txHash: string | null;
+  status: 'minted' | 'already_claimed' | 'already_funded';
 }
 
 // =============================================================================

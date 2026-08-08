@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
+import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
 import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
+import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
-import { TokenAmount } from '../components/ui'
+import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount } from '../components/ui'
 import { useProtocolConfig } from '../api'
 import { usePerpsAccount, usePerpsHistory, usePerpsMarket } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { trackPerpsPageViewed } from '../analytics/perps'
+import { usePerpsIdentity } from '../perps-aa'
+import { DOCS_LINKS } from '../config/docs'
 
 function displayValue(value: string | undefined, isLoading: boolean): string {
   if (value) return value
@@ -44,11 +48,13 @@ function formatMarkAge(ageSeconds: number): string {
 }
 
 export function Perps() {
+  const perpsIdentity = usePerpsIdentity()
   const perpsMarket = usePerpsMarket()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
   const perpsHistory = usePerpsHistory()
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+  const [closePositionRequestId, setClosePositionRequestId] = useState(0)
   const trackedPageViewRef = useRef(false)
 
   useEffect(() => {
@@ -87,34 +93,6 @@ export function Perps() {
 
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
     () => {
-      const poolLiquidityTooltip = (
-        <div className="w-full space-y-2 text-left">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Long capacity</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Short capacity</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Minimum order size</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Minimum new position</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-        </div>
-      )
       const costOfCarryTooltip = (
         <div className="w-full space-y-3 text-left leading-5">
           <p>
@@ -134,6 +112,19 @@ export function Perps() {
           value: displayValue(perpsMarket.oraclePrice, perpsMarket.isLoading),
           freshness: perpsMarket.oracleFreshness,
           freshnessTooltip: dxyFreshnessTooltip,
+          tooltip: 'The oracle-derived dollar-oriented mark, not a guaranteed execution price. Final execution may differ because of oracle confidence; VPI, fees, and execution rewards are separate adjustments.',
+          tooltipDocsLink: DOCS_LINKS.perpsPrice,
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
+          tooltipPosition: 'bottom',
+          hoverDetails: (
+            <DxyBasketComponentsRail
+              components={perpsMarket.latestBasket?.components}
+              priceChanges={perpsMarket.basketComponentPriceChanges}
+              isLoading={perpsMarket.isBasketComponentsLoading}
+              isError={perpsMarket.isBasketComponentsError}
+              nowSeconds={nowSeconds}
+            />
+          ),
         },
         {
           label: '24h change',
@@ -145,122 +136,206 @@ export function Perps() {
           value: usdcValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
         },
         {
-          label: 'Long open interest',
-          value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
-          tone: 'positive',
-        },
-        {
-          label: 'Short open interest',
-          value: usdcValue(perpsMarket.shortOpenInterest, perpsMarket.isLoading),
-          tone: 'negative',
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: perpsMarket.directionalLimit?.usagePercent,
+            side: perpsMarket.directionalLimit?.side,
+            totalExposure: usdcValue(perpsMarket.directionalLimit?.totalExposure, perpsMarket.isLoading),
+            netExposure: usdcValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
+            limit: usdcValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
+            isLoading: perpsMarket.isLoading,
+          },
         },
         {
           label: 'Pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
-          tooltip: poolLiquidityTooltip,
-          tooltipClassName: 'w-[400px] whitespace-normal p-4',
-          tooltipPosition: 'left',
+          hoverDetailsType: 'pool-liquidity',
+          hoverDetailsLabel: 'Pool liquidity details',
+          hoverDetails: (
+            <PerpsPoolLiquidityDetails
+              longCapacity={(
+                <TokenAmount amount={capacityTooltipValue(
+                  perpsMarket.raw.longOpenCapacityUsdc,
+                  perpsMarket.raw.markPrice
+                )} />
+              )}
+              shortCapacity={(
+                <TokenAmount amount={capacityTooltipValue(
+                  perpsMarket.raw.shortOpenCapacityUsdc,
+                  perpsMarket.raw.markPrice
+                )} />
+              )}
+              juniorPrincipal={usdcValue(perpsMarket.poolCapital?.juniorPrincipal, perpsMarket.isLoading)}
+              seniorPrincipal={usdcValue(perpsMarket.poolCapital?.seniorPrincipal, perpsMarket.isLoading)}
+              juniorSharePercent={perpsMarket.poolCapital?.juniorSharePercent}
+              seniorSharePercent={perpsMarket.poolCapital?.seniorSharePercent}
+              seniorStatus={perpsMarket.poolCapital?.seniorStatus}
+              seniorImpairment={usdcValue(perpsMarket.poolCapital?.seniorImpairment, perpsMarket.isLoading)}
+              isJuniorExhausted={perpsMarket.poolCapital?.isJuniorExhausted}
+              isEmpty={perpsMarket.poolCapital?.isEmpty}
+              isLoading={perpsMarket.isLoading}
+              docsLink={DOCS_LINKS.poolLiquidity}
+            />
+          ),
         },
         {
           label: 'Cost of carry',
           value: displayValue(perpsMarket.costOfCarry, perpsMarket.isLoading),
           tooltip: costOfCarryTooltip,
-          tooltipClassName: 'w-[520px] whitespace-normal p-4',
+          tooltipDocsLink: DOCS_LINKS.marketCostOfCarry,
+          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'left',
         },
       ]
     },
     [
       perpsMarket.availableLiquidity,
+      perpsMarket.basketComponentPriceChanges,
       perpsMarket.costOfCarry,
+      perpsMarket.directionalLimit,
       dxyFreshnessTooltip,
       perpsMarket.isLoading,
+      perpsMarket.isBasketComponentsError,
+      perpsMarket.isBasketComponentsLoading,
       perpsMarket.isStatsLoading,
-      perpsMarket.longOpenInterest,
+      perpsMarket.latestBasket,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
+      perpsMarket.poolCapital,
       perpsMarket.priceChange24h,
       perpsMarket.priceChange24hTone,
       perpsMarket.raw.longOpenCapacityUsdc,
       perpsMarket.raw.markPrice,
-      perpsMarket.raw.minOpenNotionalUsdc,
-      perpsMarket.raw.minNewPositionNotionalUsdc,
       perpsMarket.raw.shortOpenCapacityUsdc,
-      perpsMarket.shortOpenInterest,
       perpsMarket.volume24h,
+      nowSeconds,
     ]
   )
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6">
-      <div className="flex flex-col gap-6 lg:w-3/4 min-w-0">
-        <PerpsInstrumentPanel stats={instrumentStats} />
-        <DxyBasketPanel
-          oraclePriceRaw={perpsMarket.raw.markPrice}
-          oraclePublishTime={perpsMarket.oracleFreshnessTime}
-        />
-        <PerpsAccountPanel
-          position={perpsAccount.position}
-          equityUsdc={perpsAccount.equityUsdc}
-          freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
-          pendingOrders={perpsAccount.pendingOrders}
-          orderHistory={perpsHistory.orderHistory}
-          tradeHistory={perpsHistory.tradeHistory}
-          isConnected={perpsAccount.isConnected}
-          isLoading={perpsAccount.isLoading}
-          isHistoryLoading={perpsHistory.isLoading}
-          historyError={perpsHistory.error}
-          onAccountRefresh={() => {
-            void perpsAccount.refetch()
-            perpsMarket.refetch()
-            void perpsHistory.refetch()
-          }}
-        />
-      </div>
-      <div className="flex flex-col gap-0 lg:w-1/4 min-w-0">
-        <div className="-mb-px">
-          <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+    <div className="space-y-4">
+      {perpsIdentity.isAaManifestConfigured && (
+        perpsIdentity.status === 'selection-required' ||
+        perpsIdentity.status === 'continuity-required' ||
+        perpsIdentity.status === 'blocked'
+      ) ? (
+        <div className="border border-brand-orange/40 bg-brand-orange/10 p-4 text-sm leading-5 text-content-primary">
+          <div className="font-semibold text-brand-orange">Trading Account action required</div>
+          <p className="mt-1 text-content-secondary">
+            {perpsIdentity.error?.message ??
+              (perpsIdentity.status === 'selection-required'
+                ? 'Your connected wallet will remain the owner and signature surface for a Plether Trading Account. Positions, margin, orders, and claims will belong to that Trading Account.'
+                : 'Plether updated its testnet deployment. Confirm the updated Trading Account configuration before continuing. The app will not fall back to the owner wallet.')}
+          </p>
+          {(perpsIdentity.status === 'selection-required' ||
+            perpsIdentity.status === 'continuity-required') &&
+          perpsIdentity.proposedIdentity ? (
+            <button
+              type="button"
+              className="mt-3 border border-[#FFAB96] bg-[#FFAB96] px-4 py-2 text-sm font-semibold text-[#250917] hover:bg-[#FF572D] hover:text-[#FFF5F9]"
+              onClick={() => {
+                perpsIdentity.confirmIdentityAfterContinuityCheck()
+              }}
+            >
+              {perpsIdentity.status === 'selection-required'
+                ? 'Use Plether Trading Account'
+                : 'Confirm updated Trading Account'}
+            </button>
+          ) : null}
         </div>
-        <PerpsTradeTicket
-          enableLiveTrading
-          oraclePriceRaw={perpsMarket.raw.markPrice}
-          oraclePublishTime={perpsMarket.oracleFreshnessTime}
-          oraclePriceDisplay={perpsMarket.oraclePrice}
-          latestBasket={perpsMarket.latestBasket}
-          adverseConfidenceMultiplierBps={protocolConfig.data?.data.constants.adverseConfidenceMultiplierBps}
-          oracleFrozen={perpsMarket.oracleFrozen}
-          oracleFreshness={perpsMarket.oracleFreshness}
-          oracleFreshnessTooltip={dxyFreshnessTooltip}
-          oracleBasketComponents={perpsMarket.raw.basketComponents}
-          availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
-          availableToTradeAmount={perpsAccount.display.availableToTrade}
-          portfolioValueRaw={perpsAccount.equityUsdc}
-          withdrawableUsdcRaw={perpsAccount.withdrawableUsdc}
-          walletUsdcRaw={perpsAccount.walletUsdc}
-          marginAllowanceUsdc={perpsAccount.marginAllowanceUsdc}
-          currentPosition={perpsAccount.position}
-          currentPositionSide={perpsAccount.position?.direction}
-          currentPositionAmount={perpsAccount.display.positionNotional}
-          pendingOrders={perpsAccount.pendingOrders}
-          orderHistory={perpsHistory.orderHistory}
-          pendingOrderCount={perpsAccount.pendingOrders.length}
-          maxPendingOrders={perpsAccount.maxPendingOrders}
-          firstPendingOrderId={perpsAccount.firstPendingOrderId}
-          firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
-          longOpenCapacityUsdc={perpsMarket.raw.longOpenCapacityUsdc}
-          shortOpenCapacityUsdc={perpsMarket.raw.shortOpenCapacityUsdc}
-          minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
-          minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
-          maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
-          executionFeeBps={perpsMarket.raw.executionFeeBps}
-          marketPhase={perpsMarket.marketPhase}
-          marketCurrentDuration={marketSchedule.currentDuration}
-          onAccountRefresh={() => {
-            void perpsAccount.refetch()
-            perpsMarket.refetch()
-            void perpsHistory.refetch()
-          }}
-        />
+      ) : null}
+      <div className="flex flex-col gap-4 sm:gap-6 xl:flow-root">
+        <div className="min-w-0 xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
+          <PerpsInstrumentPanel stats={instrumentStats} />
+        </div>
+
+        <div className="min-w-0 xl:float-right xl:w-[clamp(340px,28vw,380px)]">
+          <div className="-mb-px">
+            <PerpsMarketStatePanel
+              currentPhase={perpsMarket.marketPhase}
+              currentDuration={marketSchedule.currentDuration}
+              nextPhase={marketSchedule.nextPhase}
+              nextDuration={marketSchedule.nextDuration}
+            />
+          </div>
+          <PerpsTradeTicket
+            enableLiveTrading
+            oraclePriceRaw={perpsMarket.raw.markPrice}
+            oraclePublishTime={perpsMarket.oracleFreshnessTime}
+            oraclePriceDisplay={perpsMarket.oraclePrice}
+            latestBasket={perpsMarket.latestBasket}
+            adverseConfidenceMultiplierBps={protocolConfig.data?.data.constants.adverseConfidenceMultiplierBps}
+            oracleFrozen={perpsMarket.oracleFrozen}
+            oracleFreshness={perpsMarket.oracleFreshness}
+            oracleFreshnessTooltip={dxyFreshnessTooltip}
+            oracleBasketComponents={perpsMarket.raw.basketComponents}
+            availableToTradeRaw={perpsAccount.freeBuyingPowerUsdc ?? perpsAccount.withdrawableUsdc}
+            availableToTradeAmount={perpsAccount.display.availableToTrade}
+            portfolioValueRaw={perpsAccount.equityUsdc}
+            withdrawableUsdcRaw={perpsAccount.withdrawableUsdc}
+            walletUsdcRaw={perpsAccount.walletUsdc}
+            ownerWalletUsdcRaw={perpsAccount.ownerWalletUsdc}
+            tradingAccountUsdcRaw={perpsAccount.tradingAccountUsdc}
+            marginAllowanceUsdc={perpsAccount.marginAllowanceUsdc}
+            currentPosition={perpsAccount.position}
+            currentPositionSide={perpsAccount.position?.direction}
+            currentPositionAmount={perpsAccount.display.positionNotional}
+            closePositionRequestId={closePositionRequestId}
+            pendingOrders={perpsAccount.pendingOrders}
+            orderHistory={perpsHistory.orderHistory}
+            ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
+            pendingOrderCount={perpsAccount.pendingOrders.length}
+            maxPendingOrders={perpsAccount.maxPendingOrders}
+            firstPendingOrderId={perpsAccount.firstPendingOrderId}
+            firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}
+            longOpenCapacityUsdc={perpsMarket.raw.longOpenCapacityUsdc}
+            shortOpenCapacityUsdc={perpsMarket.raw.shortOpenCapacityUsdc}
+            minOpenNotionalUsdc={perpsMarket.raw.minOpenNotionalUsdc}
+            minNewPositionNotionalUsdc={perpsMarket.raw.minNewPositionNotionalUsdc}
+            maintenanceMarginBps={perpsMarket.raw.maintenanceMarginBps}
+            executionFeeBps={perpsMarket.raw.executionFeeBps}
+            marketPhase={perpsMarket.marketPhase}
+            marketCurrentDuration={marketSchedule.currentDuration}
+            onAccountRefresh={() => {
+              void perpsAccount.refetch()
+              perpsMarket.refetch()
+              void perpsHistory.refetch()
+            }}
+          />
+        </div>
+
+        <div className="min-w-0 xl:clear-left xl:float-left xl:mb-6 xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
+          <DxyBasketPanel
+            oraclePriceRaw={perpsMarket.raw.markPrice}
+            oraclePublishTime={perpsMarket.oracleFreshnessTime}
+            marketPhase={perpsMarket.marketPhase}
+            marketCurrentDuration={marketSchedule.currentDuration}
+          />
+        </div>
+
+        <div className="min-w-0 xl:clear-left xl:float-left xl:w-[calc(100%_-_clamp(340px,28vw,380px)_-_1.5rem)]">
+          <PerpsAccountPanel
+            position={perpsAccount.position}
+            equityUsdc={perpsAccount.equityUsdc}
+            freeBuyingPowerUsdc={perpsAccount.freeBuyingPowerUsdc}
+            traderClaimBalanceUsdc={perpsAccount.traderClaimBalanceUsdc}
+            pendingOrders={perpsAccount.pendingOrders}
+            orderHistory={perpsHistory.orderHistory}
+            tradeHistory={perpsHistory.tradeHistory}
+            isConnected={perpsAccount.isConnected}
+            isLoading={perpsAccount.isLoading}
+            isHistoryLoading={perpsHistory.isLoading}
+            historyError={perpsHistory.error}
+            onAccountRefresh={() => {
+              void perpsAccount.refetch()
+              perpsMarket.refetch()
+              void perpsHistory.refetch()
+            }}
+            onClosePosition={() => {
+              setClosePositionRequestId((requestId) => requestId + 1)
+            }}
+          />
+        </div>
       </div>
     </div>
   )

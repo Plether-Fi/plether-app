@@ -18,6 +18,9 @@ coverage
 bundle-stats.html
 *.tsbuildinfo
 
+# TradingView Advanced Charts proprietary assets (installed locally/deploy-time)
+apps/frontend/public/charting_library/
+
 # Local config
 *.local
 *.local.json
@@ -47,6 +50,8 @@ playwright-report/
 
 # Story screenshots
 screenshots/
+!apps/gitbook/.gitbook/assets/screenshots/
+!apps/gitbook/.gitbook/assets/screenshots/**
 
 # Vite cache
 .vite/

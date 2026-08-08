@@ -2,19 +2,11 @@
 
 The **Current Position** panel shows executed exposure and price performance. The **Margin Account** shows the collateral supporting that position.
 
-Plether evaluates liquidation with account-wide collateral. Free USDC and eligible margin committed to pending orders can support an open position alongside its assigned position margin.
+Plether evaluates liquidation with account-wide collateral. Free USDC[^usdc] and eligible margin committed to pending orders can support an open position alongside its assigned position margin.
 
 A useful reading order is:
 
-```
-Market state
-→ Current Position
-→ Portfolio value
-→ Maintenance margin
-→ Liquidation price
-→ Pending orders
-→ Available to Trade and Withdrawable
-```
+![Recommended reading order from market state through position, risk, pending orders and available balances.](../.gitbook/assets/diagrams/account-health-reading-order.svg)
 
 ### Check the market state first
 
@@ -22,11 +14,11 @@ Before relying on a position estimate, check:
 
 * Current Plether Dollar Index mark
 * Mark timestamp
-* Live, FAD or `oracleFrozen` state
+* Live, FAD[^fad] or `oracleFrozen` state
 * Protocol degraded-mode status
 * Pending orders on the account
 
-Current PnL and health use Plether’s latest stored mark. The health calculation can still display a result when that mark is stale, so the timestamp and oracle state matter.
+Current PnL[^pnl] and health use Plether’s latest stored mark. The health calculation can still display a result when that mark is stale, so the timestamp and oracle[^oracle] state matter.
 
 A new eligible observation may change PnL, maintenance margin and liquidation status.
 
@@ -34,24 +26,22 @@ During a FAD window, Plether applies the active FAD margin requirement. This can
 
 Degraded mode is a protocol-wide containment state. It blocks new exposure and position-backed withdrawals. Closes, liquidations, mark updates and recapitalization remain available.
 
-> **Screenshot placeholder:** Market header showing the Plether Dollar Index, last update time, FAD status, oracle state and degraded-mode warning.
-
 ### Read the Current Position panel
 
 The position panel contains:
 
 | Field                   | Meaning                                                               |
 | ----------------------- | --------------------------------------------------------------------- |
-| **Direction**           | Whether the position is LONG USD or SHORT USD                         |
+| **Direction**           | Whether the position is Long or Short plDXY Perp                      |
 | **plDXY Perp exposure** | Current dollar-oriented exposure at the displayed index               |
 | **Entry notional**      | Contract notional recorded at the average entry price                 |
 | **Entry price**         | Average execution price of the remaining position                     |
 | **Leverage**            | Current contract notional relative to assigned position margin        |
-| **Liquidation price**   | Estimated index level where account equity reaches maintenance margin |
+| **Liquidation price**   | Price-based boundary estimate; pending carry is shown separately      |
 | **Unrealized PnL**      | Price PnL between entry and the current mark                          |
-| **Cost of carry**       | Carry accrued since the last position checkpoint                      |
+| **Cost of carry**       | Persisted unpaid carry plus carry accrued since the last checkpoint   |
 
-> **Screenshot placeholder:** Current Position panel with all fields visible and the position-margin edit control highlighted.
+![Complete Current Position](../.gitbook/assets/screenshots/storybook-perps-account-panel--connected-position.png)
 
 ### Direction
 
@@ -102,7 +92,7 @@ Entry notional
 = q × Bentry
 ```
 
-Displayed exposure follows the public LONG USD and SHORT USD view. Contract notional is used for maintenance margin, leverage, execution fees and liquidation-bounty calculations.
+Displayed exposure follows the public LONG USD and SHORT USD view. Contract notional[^notional] is used for maintenance margin, leverage, execution fees and liquidation-bounty calculations.
 
 Entry notional stays unchanged between size-changing executions. An increase recalculates the average entry price. A partial reduction lowers the remaining entry notional proportionally while leaving the average entry price unchanged.
 
@@ -110,7 +100,7 @@ Entry notional stays unchanged between size-changing executions. An increase rec
 
 Entry price is the size-weighted average execution price of the remaining position.
 
-For an increase:
+For an increase, `size` means contract quantity rather than displayed USDC exposure:
 
 ```
 New average entry
@@ -137,7 +127,7 @@ It is used to estimate:
 * Current liquidation status
 * Withdrawal headroom
 
-The displayed mark is a valuation reference. Order execution occurs later through the FIFO queue and uses the eligible execution-time oracle observation.
+The displayed mark is a valuation reference. Order execution occurs later through the FIFO[^fifo] queue and uses the eligible execution-time oracle observation.
 
 Live and FAD-only executions may include the adverse Pyth confidence adjustment. Voluntary closes during `oracleFrozen` use the validated unshifted price and charge the separate frozen-close spread.
 
@@ -147,9 +137,9 @@ Unrealized PnL reflects price movement between entry and the current mark.
 
 It excludes:
 
-* Pending carry
+* Pending carry[^carry]
 * A future close execution fee
-* Future close VPI
+* Future close VPI[^vpi]
 * The frozen-close spread
 * The execution reward
 * A potential liquidation bounty
@@ -162,7 +152,7 @@ For the full calculation, see [**How PnL is calculated**](../how-plether-works/h
 
 ### Cost of carry
 
-**Cost of carry** shows unpaid carry accrued since the position’s last checkpoint.
+**Cost of carry** shows persisted unpaid carry from earlier checkpoints plus carry accrued since the position’s latest checkpoint.
 
 Pending carry:
 
@@ -208,7 +198,7 @@ Adding position margin:
 
 * Leaves position size unchanged
 * Reduces displayed position leverage
-* Reduces the LP-backed carry base
+* Reduces the LP-backed[^lp] carry base
 * Can lower future carry accrual
 
 This action reclassifies USDC already held in the account. Free USDC already contributes to account-wide liquidation health, so reclassification generally leaves immediate reachable collateral unchanged. Carry may be checkpointed during the transaction.
@@ -217,24 +207,20 @@ Depositing new USDC into the Margin Account adds collateral and increases accoun
 
 Direct removal of assigned position margin is unavailable. A reduction releases position margin proportionally, and a full close releases the remainder.
 
-> **Screenshot placeholder:** Edit Position Margin modal showing Available to Trade, current position margin and resulting position margin.
+![Edit Position Margin](../.gitbook/assets/screenshots/storybook-perps-account-panel--edit-position-margin.png)
 
 ### Read the Margin Account
 
-The account summary separates economic value, free collateral and currently withdrawable USDC.
+The `Margin Account` card in the trade ticket currently shows four values:
 
-| Field                        | Meaning                                                                |
-| ---------------------------- | ---------------------------------------------------------------------- |
-| **Portfolio value**          | Current account equity after PnL, carry and applicable VPI adjustments |
-| **Unrealized PnL**           | Price-only PnL of the open position                                    |
-| **Maintenance margin**       | Current equity requirement for avoiding liquidation                    |
-| **Available to Trade**       | Unencumbered Margin Account USDC                                       |
-| **Withdrawable**             | Amount currently permitted to leave the protocol                       |
-| **Pending-order margin**     | USDC committed to queued opens or increases                            |
-| **Pending execution reward** | USDC reserved for terminal order processing                            |
-| **Trader claim**             | Deferred HousePool payment awaiting settlement into the Margin Account |
+| Field                  | Meaning                                                                |
+| ---------------------- | ---------------------------------------------------------------------- |
+| **Portfolio value**    | Current account equity after PnL, carry and applicable VPI adjustments |
+| **Unrealized PnL**     | Price-only PnL of the open position                                    |
+| **Maintenance margin** | Current equity requirement for avoiding liquidation                    |
+| **Withdrawable**       | Amount currently permitted to leave the protocol                       |
 
-> **Screenshot placeholder:** Margin Account summary showing Portfolio value, Unrealized PnL, Maintenance margin, Available to Trade and Withdrawable.
+`Available to Trade` is a separate context row above the exposure input. Aggregate pending-order margin and execution-reward reserves are not shown as rows in the current card; use **Open Orders** to identify active commitments. Assigned position margin appears in `Edit Position Margin`, and a claim appears in a separate **Trader claim** card when one exists.
 
 ### Portfolio value
 
@@ -370,6 +356,8 @@ Once reserved, that USDC:
 
 A close uses free USDC first. When permitted by close-path risk checks, it can source the reward from assigned position margin.
 
+The current ticket still checks the quoted reward against `Available to Trade` before review. Position-margin sourcing is a protocol fallback rather than a selectable interface option.
+
 Position-margin sourcing lowers position margin and account health immediately while the full exposure remains open.
 
 A failed close still pays the execution reward. Review health again before submitting a replacement.
@@ -408,7 +396,7 @@ Use the active value shown by the interface rather than relying on a previously 
 
 ### Read account health
 
-Compare signed net equity with maintenance margin:
+The interface does not display a named health percentage. For a practical screen check, compare **Portfolio value** with **Maintenance margin**. The underlying relationship can be expressed using signed net equity:
 
 ```
 Health ratio
@@ -437,7 +425,7 @@ Liquidatable when
 net account equity ≤ maintenance margin
 ```
 
-There is no grace period after the condition is reached. An eligible keeper can submit a liquidation.
+There is no grace period after the condition is reached. An eligible keeper[^keeper] can submit a liquidation.
 
 The absolute buffer is:
 
@@ -463,13 +451,14 @@ The boundary is inclusive.
 The displayed price can change after:
 
 * A USDC deposit or withdrawal
-* Carry accrual or realization
+* Carry realization
 * A position increase or reduction
-* Adding assigned position margin
 * Reserving an execution reward
 * Execution of another pending order
 * Activation of the FAD margin rate
 * A new oracle mark
+
+The current frontend liquidation-price projection does not subtract the separately displayed pending `Cost of carry`. Accrued carry still reduces protocol equity and can make the account liquidatable before the projected price is reached. Near the boundary, compare **Portfolio value** with **Maintenance margin** rather than relying on liquidation price alone.
 
 #### “Not in range”
 
@@ -502,7 +491,7 @@ Before execution:
 * The execution reward is excluded from health.
 * Available to Trade is lower.
 
-The order preview shows a hypothetical post-execution position. Earlier FIFO orders, carry and the final execution price can change the result.
+The order preview estimates order-level price, margin and cost fields. Earlier FIFO orders, carry and the final execution price can change the result, and the current preview does not show a complete hypothetical post-execution account.
 
 #### Pending reduction or close
 
@@ -533,78 +522,78 @@ Assume the account contains:
 Margin Account balance:          3,000 USDC
 Position margin:                 1,500 USDC
 Committed-order margin:            500 USDC
-Execution-reward reserves:           1 USDC
+Execution-reward reserves:        0.20 USDC
 Trader claim:                      250 USDC
 
 Unrealized PnL:                   −600 USDC
 Pending carry:                      40 USDC
 VPI rebate clawback:                10 USDC
 Maintenance margin:                750 USDC
-Initial margin requirement:      1,500 USDC
+Initial margin requirement:      1,125 USDC
 ```
 
 Available to Trade is:
 
 ```
 Available to Trade
-= 3,000 − 1,500 − 500 − 1
-= 999 USDC
+= 3,000 − 1,500 − 500 − 0.20
+= 999.80 USDC
 ```
 
 Terminally reachable collateral excludes the execution reward:
 
 ```
 Terminally reachable collateral
-= 3,000 − 1
-= 2,999 USDC
+= 3,000 − 0.20
+= 2,999.80 USDC
 ```
 
 Portfolio value is:
 
 ```
 Portfolio value
-= 2,999 − 600 − 40 − 10
-= 2,349 USDC
+= 2,999.80 − 600 − 40 − 10
+= 2,349.80 USDC
 ```
 
 Health is:
 
 ```
 Health
-= 2,349 ÷ 750
-= 313.2%
+= 2,349.80 ÷ 750
+= 313.3%
 ```
 
 The current liquidation buffer is:
 
 ```
 Liquidation buffer
-= 2,349 − 750
-= 1,599 USDC
+= 2,349.80 − 750
+= 1,599.80 USDC
 ```
 
 If carry is collected from free USDC, free balance becomes:
 
 ```
 Free USDC after carry
-= 999 − 40
-= 959 USDC
+= 999.80 − 40
+= 959.80 USDC
 ```
 
 Initial-margin headroom is:
 
 ```
 Initial-margin headroom
-= 2,349 − 1,500
-= 849 USDC
+= 2,349.80 − 1,125
+= 1,224.80 USDC
 ```
 
 Assuming the mark is fresh and no protocol restriction applies:
 
 ```
 Withdrawable
-= lower of 959 and 849
-= 849 USDC
+= lower of 959.80 and 1,224.80
+= 959.80 USDC
 ```
 
 The separate `250 USDC` trader claim does not enter these calculations. Once settled into the Margin Account, it increases account collateral.
@@ -630,8 +619,19 @@ The separate `250 USDC` trader claim does not enter these calculations. Once set
 3. Review Unrealized PnL and Cost of carry.
 4. Compare Portfolio value with Maintenance margin.
 5. Check the liquidation price and distance.
-6. Review pending orders and reserved rewards.
+6. Review pending orders and remember that each one has a reserved execution reward.
 7. Read Available to Trade and Withdrawable separately.
 8. Account for continued exposure while a close is pending.
 9. Deposit additional USDC or reduce exposure before reaching the maintenance boundary.
 10. Recheck the account after every order reaches a terminal state.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^notional]: The face value of a position’s market exposure, not the amount of collateral posted.
+[^fifo]: First in, first out; orders at the front of the queue are processed before later orders.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.

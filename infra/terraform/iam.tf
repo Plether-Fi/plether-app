@@ -30,7 +30,10 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
         "ssm:GetParameters",
         "ssm:GetParameter"
       ]
-      Resource = "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*"
+      Resource = compact([
+        "arn:aws:ssm:${var.aws_region}:${data.aws_caller_identity.current.account_id}:parameter/plether/${var.environment}/*",
+        local.external_pyth_api_key_parameter_arn,
+      ])
     }]
   })
 }
@@ -44,6 +47,24 @@ resource "aws_iam_role" "ecs_task" {
       Action    = "sts:AssumeRole"
       Effect    = "Allow"
       Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "ecs_task_firelens_cloudwatch" {
+  name = "firelens-cloudwatch-logs"
+  role = aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "logs:CreateLogStream",
+        "logs:DescribeLogStreams",
+        "logs:PutLogEvents"
+      ]
+      Resource = "${aws_cloudwatch_log_group.ecs.arn}:*"
     }]
   })
 }

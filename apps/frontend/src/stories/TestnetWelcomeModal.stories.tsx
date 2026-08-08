@@ -16,6 +16,12 @@ const alreadyClaimedClaim: TestnetFaucetClaim = {
   status: 'already_claimed',
 }
 
+const alreadyFundedClaim: TestnetFaucetClaim = {
+  ...mintedClaim,
+  txHash: null,
+  status: 'already_funded',
+}
+
 const meta: Meta<typeof TestnetWelcomeModalView> = {
   title: 'Testnet/Welcome Modal',
   component: TestnetWelcomeModalView,
@@ -24,8 +30,11 @@ const meta: Meta<typeof TestnetWelcomeModalView> = {
   },
   args: {
     isOpen: true,
+    isWalletConnected: true,
+    isTradingAccountRecipient: true,
     walletAddress: mintedClaim.address,
     onClose: () => {},
+    onConnectWallet: () => {},
     onRequestFunds: () => {},
     onDeposit: () => {},
   },
@@ -52,6 +61,30 @@ export const RequestFunds: Story = {
   render: (args) => <ModalFrame {...args} />,
 }
 
+export const Disconnected: Story = {
+  args: {
+    isWalletConnected: false,
+    walletAddress: '',
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const PreparingTradingAccount: Story = {
+  args: {
+    walletAddress: '',
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const TradingAccountError: Story = {
+  args: {
+    walletAddress: '',
+    recipientError:
+      'The connected chain does not match the Arbitrum Sepolia sponsorship manifest.',
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
 export const MintedToWallet: Story = {
   args: {
     claim: mintedClaim,
@@ -62,6 +95,13 @@ export const MintedToWallet: Story = {
 export const AlreadyClaimed: Story = {
   args: {
     claim: alreadyClaimedClaim,
+  },
+  render: (args) => <ModalFrame {...args} />,
+}
+
+export const AlreadyFundedWithoutTransactionHash: Story = {
+  args: {
+    claim: alreadyFundedClaim,
   },
   render: (args) => <ModalFrame {...args} />,
 }

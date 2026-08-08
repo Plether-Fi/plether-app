@@ -11,7 +11,13 @@ import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../cont
 import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_PROTOCOL_PHASE } from '../contracts/perpsConstants'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import { formatDisplayDxyPrice, perpsOracleFreshnessFromTimestamp } from '../utils/perps'
-import { computeBasketDisplayPriceChange } from '../utils/dxyBasketChart'
+import {
+  computeBasketComponentPriceChanges,
+  computeBasketDisplayPriceChange,
+} from '../utils/dxyBasketChart'
+import { formatCompactNumber } from '../utils/formatters'
+import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
+import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
@@ -39,19 +45,9 @@ function tupleValue(value: unknown, index: number, key: string): unknown {
   return undefined
 }
 
-function compactNumber(value: number): string {
-  if (!Number.isFinite(value)) return '--'
-  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
-  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(/\.0$/, '')}K`
-
-  return value.toLocaleString('en-US', {
-    maximumFractionDigits: 2,
-  }).replaceAll(',', ' ')
-}
-
 function formatCompactUsdc(amount: bigint | undefined): string | undefined {
   if (amount === undefined) return undefined
-  return compactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
+  return formatCompactNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)))
 }
 
 function parseBigIntString(value: string | undefined): bigint | undefined {
@@ -138,13 +134,15 @@ function protocolPhaseToMarketPhase(
 export function usePerpsMarket() {
   const {
     data: latestBasket,
+    isLoading: isLatestBasketLoading,
+    isError: isLatestBasketError,
     refetch: refetchLatestBasket,
   } = usePerpsBasketLatest()
   const {
     data: basketHistory24h,
     isLoading: isBasketHistory24hLoading,
     refetch: refetchBasketHistory24h,
-  } = usePerpsBasketHistory('24h', 60)
+  } = usePerpsBasketHistory('24h', 60, true)
   const {
     data: marketStats,
     isLoading: isMarketStatsLoading,
@@ -219,6 +217,9 @@ export function usePerpsMarket() {
     const fadWindow = tupleValue(protocolStatus, 4, 'fadWindow') as boolean | undefined
     const poolAssetsUsdc = tupleValue(poolLiquidity, 0, 'totalAssetsUsdc') as bigint | undefined
     const freeUsdc = tupleValue(poolLiquidity, 1, 'freeUsdc') as bigint | undefined
+    const seniorPrincipalUsdc = tupleValue(poolLiquidity, 5, 'seniorPrincipalUsdc') as bigint | undefined
+    const juniorPrincipalUsdc = tupleValue(poolLiquidity, 6, 'juniorPrincipalUsdc') as bigint | undefined
+    const seniorHighWaterMarkUsdc = tupleValue(poolLiquidity, 7, 'seniorHighWaterMarkUsdc') as bigint | undefined
     const bullOpenInterest = tupleValue(bullSide, 1, 'openInterest') as bigint | undefined
     const bearOpenInterest = tupleValue(bearSide, 1, 'openInterest') as bigint | undefined
     const maxSkewRatio = tupleValue(riskParams, 1, 'maxSkewRatio') as bigint | undefined
@@ -230,7 +231,22 @@ export function usePerpsMarket() {
     const bountyBps = tupleValue(riskParams, 7, 'bountyBps') as bigint | undefined
     const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
     const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const directionalLimit = calculatePerpsDirectionalLimit({
+      longOpenInterestUsdc: bullOpenInterestUsdc,
+      shortOpenInterestUsdc: bearOpenInterestUsdc,
+      poolAssetsUsdc,
+      maxSkewRatio,
+    })
+    const poolCapital = calculatePerpsPoolCapital({
+      juniorPrincipalUsdc,
+      seniorPrincipalUsdc,
+      seniorHighWaterMarkUsdc,
+    })
     const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
+    const basketComponentPriceChanges = computeBasketComponentPriceChanges(
+      basketHistory24h?.data.points,
+      latestBasket?.data
+    )
     const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
     const longOpenCapacityUsdc = openCapacityUsdc({
       selectedOpenInterestUsdc: bullOpenInterestUsdc,
@@ -263,6 +279,9 @@ export function usePerpsMarket() {
         markPrice,
         poolAssetsUsdc,
         freeUsdc,
+        seniorPrincipalUsdc,
+        juniorPrincipalUsdc,
+        seniorHighWaterMarkUsdc,
         bullOpenInterest,
         bearOpenInterest,
         bullOpenInterestUsdc,
@@ -279,14 +298,36 @@ export function usePerpsMarket() {
       },
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       latestBasket: latestBasket?.data,
+      basketComponentPriceChanges,
+      isBasketComponentsLoading: isLatestBasketLoading,
+      isBasketComponentsError: isLatestBasketError,
       oracleFreshness,
       oracleFreshnessTime,
       longOpenInterest: formatCompactUsdc(bullOpenInterestUsdc),
       shortOpenInterest: formatCompactUsdc(bearOpenInterestUsdc),
+      directionalLimit: directionalLimit
+        ? {
+            usagePercent: directionalLimit.usagePercent,
+            side: directionalLimit.side,
+            totalExposure: formatCompactUsdc(
+              directionalLimit.side === 'short' ? bearOpenInterestUsdc : bullOpenInterestUsdc
+            ),
+            netExposure: formatCompactUsdc(directionalLimit.netExposureUsdc),
+            limit: formatCompactUsdc(directionalLimit.limitUsdc),
+          }
+        : undefined,
       priceChange24h: formatPercentChange(priceChange24hValue),
       priceChange24hTone: percentChangeTone(priceChange24hValue),
       volume24h: formatCompactUsdc(volume24hUsdc),
       availableLiquidity: formatCompactUsdc(freeUsdc),
+      poolCapital: poolCapital
+        ? {
+            ...poolCapital,
+            juniorPrincipal: formatCompactUsdc(juniorPrincipalUsdc),
+            seniorPrincipal: formatCompactUsdc(seniorPrincipalUsdc),
+            seniorImpairment: formatCompactUsdc(poolCapital.seniorImpairmentUsdc),
+          }
+        : undefined,
       costOfCarry: formatBpsAsPercent(baseCarryBps),
       executionFeeBps,
       marketPhase,
@@ -308,6 +349,8 @@ export function usePerpsMarket() {
     data,
     error,
     isBasketHistory24hLoading,
+    isLatestBasketError,
+    isLatestBasketLoading,
     isLoading,
     isMarketStatsLoading,
     latestBasket,

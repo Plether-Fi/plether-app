@@ -1,0 +1,162 @@
+.theme-dark:root {
+  --tv-color-platform-background: #3b212d;
+  --tv-color-pane-background: #250917;
+  --tv-color-toolbar-button-background-hover: #4a2937;
+  --tv-color-toolbar-button-background-expanded: #250917;
+  --tv-color-toolbar-button-background-active: #250917;
+  --tv-color-toolbar-button-background-active-hover: #4a2937;
+  --tv-color-toolbar-button-text: #d8cbd0;
+  --tv-color-toolbar-button-text-hover: #ffab96;
+  --tv-color-toolbar-button-text-active: #ffab96;
+  --tv-color-toolbar-button-text-active-hover: #fff5f9;
+  --tv-color-item-active-text: #ffab96;
+  --tv-color-toolbar-toggle-button-background-active: #250917;
+  --tv-color-toolbar-toggle-button-background-active-hover: #4a2937;
+  --tv-color-toolbar-divider-background: rgba(255, 171, 150, 0.2);
+  --tv-color-popup-background: #3b212d;
+  --tv-color-popup-element-text: #d8cbd0;
+  --tv-color-popup-element-text-hover: #fff5f9;
+  --tv-color-popup-element-background-hover: #4a2937;
+  --tv-color-popup-element-divider-background: rgba(255, 171, 150, 0.2);
+  --tv-color-popup-element-secondary-text: #d8cbd0;
+  --tv-color-popup-element-hint-text: #d8cbd0;
+  --tv-color-popup-element-text-active: #ffab96;
+  --tv-color-popup-element-background-active: #250917;
+  --tv-color-dialog-header-text: #fff5f9;
+  --tv-color-dialog-header-separator: rgba(255, 171, 150, 0.3);
+  --tv-color-scrollbar-thumb-background: rgba(255, 171, 150, 0.45);
+  --tv-color-list-item-button-background: #3b212d;
+  --tv-color-selected-list-item-button-background: #250917;
+  --tv-color-selected-list-item-button-text: #ffab96;
+}
+
+/*
+ * TradingView does not expose dialog geometry through its theme API. These
+ * selectors use semantic roles and form attributes so they do not depend on
+ * generated CSS-module class names.
+ */
+.theme-dark *:has(> [role='dialog']) {
+  background: #3b212d !important;
+  border: 1px solid rgba(255, 171, 150, 0.5) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.theme-dark [role='dialog'] {
+  color: #fff5f9;
+  font-family: 'Uncut Sans', ui-sans-serif, system-ui, sans-serif;
+}
+
+.theme-dark [role='dialog'] [role='tab'],
+.theme-dark [role='dialog'] [data-role='listbox'],
+.theme-dark [role='dialog'] [data-name='color-select'],
+.theme-dark [role='dialog'] button[name='cancel'],
+.theme-dark [role='dialog'] button[name='submit'] {
+  border-radius: 0 !important;
+}
+
+.theme-dark [role='dialog'] [role='tablist'][aria-orientation='vertical'] [role='tab'][aria-selected='true'] {
+  background: #250917 !important;
+  box-shadow: inset 2px 0 #ffab96;
+  color: #ffab96 !important;
+}
+
+.theme-dark [role='dialog'] [data-role='listbox'] {
+  background: #250917 !important;
+  border-color: rgba(255, 171, 150, 0.3) !important;
+  color: #fff5f9 !important;
+}
+
+.theme-dark [role='dialog'] [data-role='listbox']:focus-visible,
+.theme-dark [role='dialog'] [data-role='listbox'][aria-expanded='true'] {
+  border-color: #ffab96 !important;
+  outline: none !important;
+}
+
+.theme-dark [role='dialog'] input[type='checkbox'],
+.theme-dark [role='dialog'] input[type='radio'],
+.theme-dark [role='dialog'] input[type='range'] {
+  accent-color: #ffab96;
+}
+
+.theme-dark [role='dialog'] *:has(> input[role='searchbox']) {
+  background: #250917 !important;
+  border: 1px solid rgba(255, 171, 150, 0.3) !important;
+  box-sizing: border-box;
+}
+
+.theme-dark [role='dialog'] *:has(> input[role='searchbox']):focus-within {
+  border-color: #ffab96 !important;
+}
+
+.theme-dark [role='dialog'] input[role='searchbox'] {
+  caret-color: #ffab96;
+  color: #fff5f9 !important;
+}
+
+.theme-dark [role='dialog'] input[role='searchbox']::placeholder {
+  color: #d8cbd0 !important;
+  opacity: 0.5;
+}
+
+.theme-dark [role='dialog'] [data-name='color-select'] {
+  border-color: rgba(255, 171, 150, 0.3) !important;
+}
+
+.theme-dark [role='dialog'] [data-qa-id='close'] {
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: #d8cbd0 !important;
+}
+
+.theme-dark [role='dialog'] [data-qa-id='close']:hover {
+  background: transparent !important;
+  color: #ffab96 !important;
+}
+
+.theme-dark [role='dialog'] > div:has(button[name='cancel']) {
+  border-top-color: rgba(255, 171, 150, 0.3) !important;
+}
+
+.theme-dark [role='dialog'] button[name='cancel']:not(:disabled) {
+  background: #3b212d !important;
+  border-color: rgba(255, 171, 150, 0.3) !important;
+  color: #fff5f9 !important;
+}
+
+.theme-dark [role='dialog'] button[name='cancel']:not(:disabled):hover {
+  background: #4a2937 !important;
+  border-color: #ffab96 !important;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.theme-dark [role='dialog'] button[name='submit']:not(:disabled):hover {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* The chart settings dialog has a non-destructive confirmation action. */
+.theme-dark [role='dialog'][data-name='series-properties-dialog'] button[name='submit']:not(:disabled) {
+  background: #00ff99 !important;
+  border-color: #00ff99 !important;
+  color: #250917 !important;
+}
+
+.theme-dark [role='dialog'][data-name='series-properties-dialog'] button[name='submit']:not(:disabled):hover {
+  background: #00cc77 !important;
+  border-color: #00cc77 !important;
+}
+
+.theme-dark [role='dialog'] button[name='cancel']:focus-visible,
+.theme-dark [role='dialog'] button[name='submit']:focus-visible {
+  outline: 2px solid #ffab96 !important;
+  outline-offset: 2px;
+}
+
+.theme-dark [role='dialog'] button[name='cancel']:disabled,
+.theme-dark [role='dialog'] button[name='submit']:disabled {
+  cursor: not-allowed !important;
+  opacity: 0.5 !important;
+  text-decoration: none !important;
+}

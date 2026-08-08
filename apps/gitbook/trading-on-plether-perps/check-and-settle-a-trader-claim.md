@@ -1,6 +1,6 @@
 # Check and settle a trader claim
 
-A trader claim records USDC owed to your account when the HousePool cannot fund a fresh trader payout in full at execution.
+A trader claim records USDC[^usdc] owed to the **Trading Account** when the HousePool cannot fund a fresh trader payout in full at execution. The Trading Account owns the claim; its connected owner wallet authorizes settlement.
 
 Claims can arise from:
 
@@ -10,19 +10,11 @@ Claims can arise from:
 
 The position action still completes. Released position margin follows the normal account settlement path, while the unfunded HousePool payment is recorded separately as a trader claim.
 
-```
-Position settles
-→ Fresh payout cannot be funded in full
-→ Trader claim is recorded
-→ HousePool cash coverage returns
-→ Claim owner settles
-→ USDC is credited to the Margin Account
-→ Optional wallet withdrawal
-```
+![Trader-claim lifecycle from an underfunded payout through later sponsored settlement and optional withdrawal.](../.gitbook/assets/diagrams/trader-claim-lifecycle.svg)
 
 ### How a claim is created
 
-Plether calculates the fresh trader payout after applying the position’s realized PnL, execution fee, signed VPI, carry and any applicable frozen-close spread.
+Plether calculates the fresh trader payout after applying the position’s realized PnL[^pnl], execution fee, signed VPI[^vpi], carry[^carry] and any applicable frozen-close spread.
 
 Existing position margin remains separate from this calculation. The claim covers only the fresh payment that requires HousePool cash.
 
@@ -43,26 +35,18 @@ Cash available for fresh payouts:      300 USDC
 
 The `2,000 USDC` of position margin follows the normal account path. The complete `500 USDC` fresh payout becomes a trader claim.
 
-Additional unpaid payouts earned by the same account are added to its existing claim balance.
-
-> **Screenshot placeholder:** Completed reduction or close showing released margin and the separately recorded trader claim.
+Additional complete fresh payouts that cannot be funded immediately are recorded in full and added to the account’s existing claim balance.
 
 ### Check your claim
 
-Open the **Margin Account** and find **Trader claim**.
+Open the **Position** tab in the account panel and find the **Trader claim** card. The card appears only while the active Trading Account has a nonzero claim.
 
-The claim panel should show:
+The current card shows:
 
 * Claim balance
-* Settlement status
-* Settlement action, when available
+* **Settle Claim**
 
-The proposed statuses are:
-
-| Status                               | Meaning                                                         |
-| ------------------------------------ | --------------------------------------------------------------- |
-| **Waiting for settlement liquidity** | HousePool assets do not yet cover all outstanding trader claims |
-| **Available to settle**              | Aggregate trader claims are fully covered                       |
+The current interface does not display aggregate claim coverage or a separate availability status. The contract performs the coverage check when the sponsored operation is simulated and executed. If coverage is insufficient, settlement fails and the complete claim remains recorded.
 
 Before settlement, the claim remains separate from your usable account collateral.
 
@@ -77,9 +61,7 @@ Before settlement, the claim remains separate from your usable account collatera
 
 The claim remains denominated in USDC. It does not accrue interest or yield and has no expiry.
 
-Claims are included in the protocol’s liability and LP-withdrawal accounting while they remain outstanding.
-
-> **Screenshot placeholder:** Margin Account showing the Trader claim balance and settlement status.
+Claims are included in the protocol’s liability and LP-withdrawal[^lp] accounting while they remain outstanding.
 
 ### When a claim becomes available to settle
 
@@ -91,7 +73,7 @@ Recognized HousePool assets
 Total outstanding trader claims
 ```
 
-Recognized assets are the HousePool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL may differ from the amount used by the settlement check.
+Recognized assets are the HousePool assets admitted into protocol accounting and physically held by the pool. A displayed token balance or headline TVL[^tvl] may differ from the amount used by the settlement check.
 
 The test applies to aggregate claims rather than one account at a time.
 
@@ -120,9 +102,9 @@ The remaining claim stays fully covered.
 
 #### There is no claim queue
 
-Trader claims are recorded as balances for individual accounts. Creation time does not determine settlement priority.
+Trader claims are recorded as balances for individual Trading Accounts. Creation time does not determine settlement priority.
 
-While aggregate coverage is insufficient, settlement remains unavailable to every claimant. Once full coverage returns, any beneficiary can settle their complete balance.
+While aggregate coverage is insufficient, settlement remains unavailable to every claimant. Once full coverage returns, each Trading Account can settle its complete balance after its owner wallet authorizes the action.
 
 #### Settlement is all-or-nothing
 
@@ -132,42 +114,36 @@ If aggregate coverage is insufficient, the transaction reverts and the complete 
 
 ### How to settle your claim
 
-#### 1. Connect the account that owns the claim
+#### 1. Connect the owner wallet
 
-The transaction must be sent by the address associated with the claim.
+Connect the owner wallet that controls the claim-owning Trading Account, then confirm the active Trading Account address in the interface.
 
-A different wallet, keeper or relayer cannot settle it on your behalf.
+A different wallet cannot authorize settlement for that Trading Account. The sponsor and bundler[^bundler] can relay the authorized operation, but they cannot create the owner signature.
 
-#### 2. Check the settlement status
+#### 2. Review the claim card
 
-Confirm that the status is **Available to settle**.
+Confirm the active Trading Account and the complete claim balance shown on the card.
 
-Liquidity can change between loading the page and transaction confirmation. The contract performs the final coverage check when the transaction executes.
+The card does not pre-approve settlement or show aggregate HousePool coverage. Liquidity can change between loading the page and operation confirmation, and the contract performs the final check when the operation executes.
 
 #### 3. Select Settle Claim
 
-Review:
+The current card submits the complete claim balance; there is no amount field or separate settlement-review modal. The destination is the Trading Account’s Margin Account. Transferring the credited USDC to the owner wallet requires a separate withdrawal.
 
-* Claim-owning account
-* Full claim balance
-* Settlement destination: **Margin Account**
+#### 4. Authorize the sponsored operation
 
-The confirmation should make clear that the entire balance will be settled and that transferring the USDC to your wallet requires a separate withdrawal.
-
-> **Screenshot placeholder:** Settle Claim confirmation showing the full balance and Margin Account destination.
-
-#### 4. Confirm the transaction
-
-Claim settlement requires the network’s native gas token.
+The connected wallet signs the settlement authorization, and Plether submits the eligible sponsored Trading Account operation. The owner wallet does not need the network’s native gas token while settlement sponsorship is available.
 
 It does not require:
 
 * A USDC approval
 * A Pyth price update
 * An acceptable price
-* An execution fee or keeper reward
+* An execution fee or keeper[^keeper] reward
 
-The settlement path does not depend on a live FX oracle or an open trading session. FAD, an oracle closure, frozen-oracle mode or degraded mode do not independently block it when the cash-coverage requirement is satisfied.
+Sponsorship remains subject to availability and policy limits. A sponsorship or bundler failure does not change the claim balance; request a fresh operation after the displayed issue is resolved.
+
+The settlement path does not depend on a live FX[^fx] oracle[^oracle] or an open trading session. FAD[^fad], an oracle closure, frozen-oracle mode or degraded mode do not independently block it when the cash-coverage requirement is satisfied.
 
 #### 5. Check the result
 
@@ -178,15 +154,9 @@ After confirmation:
 * Available to Trade and Withdrawable should be recalculated.
 * Any carry associated with an open position should be updated.
 
-```
-HousePool
-→ Margin Clearinghouse
-→ Your Margin Account
-```
+![Funding path from the HousePool through the Margin Clearinghouse to the trader Margin Account.](../.gitbook/assets/diagrams/claim-settlement-funding-path.svg)
 
-The transaction does not transfer USDC directly to your wallet.
-
-> **Screenshot placeholder:** Successful settlement showing a zero claim balance and the corresponding Margin Account credit.
+The sponsored settlement operation does not transfer USDC directly to the owner wallet.
 
 ### Carry when you have an open position
 
@@ -228,7 +198,7 @@ With an open position or pending orders, Withdrawable may be lower because Pleth
 * Reserved execution rewards
 * Current market-state withdrawal requirements
 
-Claim settlement and wallet withdrawal are separate transactions.
+Claim settlement and wallet withdrawal are separate sponsored operations.
 
 ### A claim can be consumed before settlement
 
@@ -257,7 +227,7 @@ If your claim balance falls without a claim-settlement transaction, review the a
 
 ### Why settlement may be unavailable
 
-#### Waiting for settlement liquidity
+#### Settlement liquidity is insufficient
 
 Recognized HousePool assets remain below aggregate trader claims. Your complete claim stays recorded until coverage returns.
 
@@ -265,20 +235,20 @@ Recognized HousePool assets remain below aggregate trader claims. Your complete 
 
 Coverage was insufficient when the transaction executed. This can happen if onchain state changed after the page loaded.
 
-The claim remains unchanged. A reverted transaction may still consume network gas.
+The claim remains unchanged. For an eligible sponsored settlement, Plether pays any network gas consumed by the included operation rather than charging the owner wallet’s native-token balance.
 
 #### No trader claim
 
-The connected account currently has no claim. It may have been:
+The active Trading Account currently has no claim. It may have been:
 
 * Settled previously
 * Consumed during a terminal full close
 * Consumed during liquidation
-* Recorded under another account
+* Recorded under another Trading Account
 
 #### Account owner required
 
-Connect the wallet that owns the claim. Settlement must be submitted directly by the beneficiary account.
+Connect the owner wallet that controls the claim-owning Trading Account. The wallet authorizes settlement; the sponsored operation is submitted from the Trading Account.
 
 #### Wallet USDC did not increase
 
@@ -318,7 +288,7 @@ Recognized HousePool assets:        45,000 USDC
 
 Settlement remains unavailable because claims exceed recognized assets by `300 USDC`.
 
-Later, recognized assets rise to `45,300 USDC`. The claim becomes available.
+Later, recognized assets rise to `45,300 USDC`. The claim becomes serviceable, although the current claim card does not show that coverage status in advance.
 
 After the trader selects **Settle Claim**:
 
@@ -330,3 +300,15 @@ Outstanding claims remaining:       44,500 USDC
 ```
 
 The remaining claims continue to be fully covered.
+
+[^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
+[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
+[^pnl]: Profit and loss, the financial result of market-price movement on a position.
+[^carry]: The time-based cost charged on the portion of a position financed by LP capital.
+[^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
+[^tvl]: Total value locked, the headline value of assets deposited in a protocol.
+[^bundler]: A service that packages smart-account operations and submits them for onchain inclusion.
+[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
+[^fad]: Friday Afternoon Deleverage, Plether’s wider scheduled close-only window around the weekly FX closure.
+[^fx]: Foreign exchange, the market for trading one currency against another.
+[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
