@@ -11,7 +11,7 @@ import {
 import { DOCS_LINKS } from '../config/docs'
 import type { PerpsOracleFreshness } from '../utils/perps'
 import type { PerpsDirectionalLimitSide } from '../utils/perpsDirectionalLimit'
-import { INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
+import { DocsLink, INFO_TOOLTIP_PANEL_CLASS_NAME, TokenAmount, Tooltip, type TooltipDocsLink } from './ui'
 
 export interface PerpsDirectionalLimitDetails {
   usagePercent?: number
@@ -573,15 +573,13 @@ function DirectionalLimitStat({
             Market-wide LONG/SHORT imbalance, not an order quote. It affects VPI and trading costs,
             can change before execution, and other checks apply.
           </p>
-          <a
+          <DocsLink
             href={DOCS_LINKS.virtualPriceImpact.href}
-            aria-label={`Read: ${DOCS_LINKS.virtualPriceImpact.title}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="shrink-0 font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+            title={DOCS_LINKS.virtualPriceImpact.title}
+            className="shrink-0"
           >
             Learn more
-          </a>
+          </DocsLink>
         </div>
       </InstrumentDetailsOverlay>
     </>
