@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BasketComponentPrice } from '../api'
-import { Skeleton, Tooltip } from './ui'
+import { DocsLink, Skeleton, Tooltip, type TooltipDocsLink } from './ui'
 
 const COMPONENT_PRICE_FRESH_SECONDS = 10 * 60
 const COMPONENT_CARD_CLASS_NAME =
@@ -88,6 +88,7 @@ export interface DxyBasketComponentsRailProps {
   isLoading?: boolean
   isError?: boolean
   nowSeconds?: number
+  docsLink?: TooltipDocsLink
 }
 
 export function DxyBasketComponentsRail({
@@ -96,6 +97,7 @@ export function DxyBasketComponentsRail({
   isLoading = false,
   isError = false,
   nowSeconds: controlledNowSeconds,
+  docsLink,
 }: DxyBasketComponentsRailProps) {
   const railRef = useRef<HTMLDivElement>(null)
   const [liveNowSeconds, setLiveNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
@@ -188,75 +190,91 @@ export function DxyBasketComponentsRail({
   }
 
   return (
-    <div className="relative min-w-0">
-      <div
-        ref={railRef}
-        className={COMPONENT_RAIL_CLASS_NAME}
-        aria-label="Basket components"
-        role="list"
-        tabIndex={0}
-        onScroll={updateScrollState}
-        onKeyDown={(event) => {
-          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-          event.preventDefault()
-          scrollRail(event.key === 'ArrowLeft' ? -1 : 1)
-        }}
-      >
-        {components.map((component) => {
-          const key = componentKey(component)
-          const priceChange = priceChanges[key]
+    <div className="min-w-0">
+      <div className="relative min-w-0">
+        <div
+          ref={railRef}
+          className={COMPONENT_RAIL_CLASS_NAME}
+          aria-label="Basket components"
+          role="list"
+          tabIndex={0}
+          onScroll={updateScrollState}
+          onKeyDown={(event) => {
+            if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
+            event.preventDefault()
+            scrollRail(event.key === 'ArrowLeft' ? -1 : 1)
+          }}
+        >
+          {components.map((component) => {
+            const key = componentKey(component)
+            const priceChange = priceChanges[key]
 
-          return (
-            <article key={key} className={COMPONENT_CARD_CLASS_NAME} role="listitem">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-2">
-                  <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />
-                  <span className="truncate text-sm font-semibold text-content-primary">{component.symbol}</span>
+            return (
+              <article key={key} className={COMPONENT_CARD_CLASS_NAME} role="listitem">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <ComponentFreshnessDot publishTime={component.publishTime} nowSeconds={nowSeconds} />
+                    <span className="truncate text-sm font-semibold text-content-primary">{component.symbol}</span>
+                  </div>
+                  <span className="shrink-0 text-xs text-content-secondary">{componentWeight(component)}</span>
                 </div>
-                <span className="shrink-0 text-xs text-content-secondary">{componentWeight(component)}</span>
-              </div>
-              <div className="mt-2 flex min-w-0 items-baseline gap-2">
-                <span className="text-lg font-semibold text-brand-peach">{componentPrice(component)}</span>
-                {priceChange !== undefined ? (
-                  <span
-                    className={`shrink-0 text-[11px] font-medium ${componentChangeClass(priceChange)}`}
-                    title="24h change"
-                    aria-label={`24 hour change ${formatPercent(priceChange)}`}
-                  >
-                    {formatPercent(priceChange)}
-                  </span>
-                ) : null}
-              </div>
-            </article>
-          )
-        })}
+                <div className="mt-2 flex min-w-0 items-baseline gap-2">
+                  <span className="text-lg font-semibold text-brand-peach">{componentPrice(component)}</span>
+                  {priceChange !== undefined ? (
+                    <span
+                      className={`shrink-0 text-[11px] font-medium ${componentChangeClass(priceChange)}`}
+                      title="24h change"
+                      aria-label={`24 hour change ${formatPercent(priceChange)}`}
+                    >
+                      {formatPercent(priceChange)}
+                    </span>
+                  ) : null}
+                </div>
+              </article>
+            )
+          })}
+        </div>
+
+        {canScrollLeft ? (
+          <div className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-10 items-center bg-gradient-to-r from-surface-panel via-surface-panel/90 to-transparent pl-1">
+            <button
+              type="button"
+              className="pointer-events-auto flex h-7 w-7 items-center justify-center border border-brand-border/35 bg-app-bg/95 text-content-secondary shadow-[0_6px_16px_-8px_rgba(0,0,0,0.9)] transition-colors hover:border-brand-border/60 hover:text-content-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-content-secondary"
+              aria-label="Previous basket components"
+              onClick={() => { scrollRail(-1) }}
+            >
+              <span className="material-symbols-outlined !text-[18px] !leading-none" aria-hidden="true">chevron_left</span>
+            </button>
+          </div>
+        ) : null}
+
+        {canScrollRight ? (
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-10 items-center justify-end bg-gradient-to-l from-surface-panel via-surface-panel/90 to-transparent pr-1">
+            <button
+              type="button"
+              className="pointer-events-auto flex h-7 w-7 items-center justify-center border border-brand-border/35 bg-app-bg/95 text-content-secondary shadow-[0_6px_16px_-8px_rgba(0,0,0,0.9)] transition-colors hover:border-brand-border/60 hover:text-content-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-content-secondary"
+              aria-label="Next basket components"
+              onClick={() => { scrollRail(1) }}
+            >
+              <span className="material-symbols-outlined !text-[18px] !leading-none" aria-hidden="true">chevron_right</span>
+            </button>
+          </div>
+        ) : null}
       </div>
 
-      {canScrollLeft ? (
-        <div className="pointer-events-none absolute inset-y-0 left-0 z-10 flex w-10 items-center bg-gradient-to-r from-surface-panel via-surface-panel/90 to-transparent pl-1">
-          <button
-            type="button"
-            className="pointer-events-auto flex h-7 w-7 items-center justify-center border border-brand-border/35 bg-app-bg/95 text-content-secondary shadow-[0_6px_16px_-8px_rgba(0,0,0,0.9)] transition-colors hover:border-brand-border/60 hover:text-content-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-content-secondary"
-            aria-label="Previous basket components"
-            onClick={() => { scrollRail(-1) }}
-          >
-            <span className="material-symbols-outlined !text-[18px] !leading-none" aria-hidden="true">chevron_left</span>
-          </button>
-        </div>
-      ) : null}
-
-      {canScrollRight ? (
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 flex w-10 items-center justify-end bg-gradient-to-l from-surface-panel via-surface-panel/90 to-transparent pr-1">
-          <button
-            type="button"
-            className="pointer-events-auto flex h-7 w-7 items-center justify-center border border-brand-border/35 bg-app-bg/95 text-content-secondary shadow-[0_6px_16px_-8px_rgba(0,0,0,0.9)] transition-colors hover:border-brand-border/60 hover:text-content-primary focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-content-secondary"
-            aria-label="Next basket components"
-            onClick={() => { scrollRail(1) }}
-          >
-            <span className="material-symbols-outlined !text-[18px] !leading-none" aria-hidden="true">chevron_right</span>
-          </button>
-        </div>
-      ) : null}
+      <div className="mt-3 flex flex-wrap items-start justify-between gap-2 border-t border-brand-border/20 pt-3 text-[11px] leading-4 text-content-secondary">
+        <p className="min-w-0 flex-1">
+          These six Pyth FX feeds form the basket behind plDXY. Percentages are reference
+          coefficients, not live weights. Green means the foreign currency strengthened against
+          USD, which pushes the displayed dollar-oriented plDXY price down. Component values are
+          not execution quotes.
+        </p>
+        {docsLink ? (
+          <DocsLink href={docsLink.href} title={docsLink.title} className="shrink-0">
+            Learn more
+          </DocsLink>
+        ) : null}
+      </div>
     </div>
   )
 }

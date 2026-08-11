@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys } from '../api'
+import { Alert } from '../components/ui'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
 import type { OracleMarkPoint } from '../utils/dxyBasketChart'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
@@ -194,21 +195,13 @@ function loadTradingViewLibrary(libraryPath: string): Promise<TradingViewNamespa
   return promise
 }
 
-function advancedChartsEnabled(): boolean {
-  if (import.meta.env.MODE === 'test') return false
-  return (import.meta.env.VITE_TRADINGVIEW_CHARTS_ENABLED as string | undefined) !== 'false'
-}
-
 export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
   oracleMark?: OracleMarkPoint
   liquidationPrice?: number
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
-  fallback: ReactNode
-  statusOverlay?: ReactNode
   onIntervalChange?: (interval: DxyBasketChartInterval) => void
-  onReadyChange?: (ready: boolean) => void
 }
 
 export function TradingViewAdvancedChart({
@@ -217,38 +210,7 @@ export function TradingViewAdvancedChart({
   liquidationPrice,
   marketPhase = 'open',
   marketCurrentDuration,
-  fallback,
-  statusOverlay,
   onIntervalChange,
-  onReadyChange,
-}: TradingViewAdvancedChartProps) {
-  if (!advancedChartsEnabled()) return fallback
-
-  return (
-    <EnabledTradingViewAdvancedChart
-      interval={interval}
-      oracleMark={oracleMark}
-      liquidationPrice={liquidationPrice}
-      marketPhase={marketPhase}
-      marketCurrentDuration={marketCurrentDuration}
-      fallback={fallback}
-      statusOverlay={statusOverlay}
-      onIntervalChange={onIntervalChange}
-      onReadyChange={onReadyChange}
-    />
-  )
-}
-
-function EnabledTradingViewAdvancedChart({
-  interval,
-  oracleMark,
-  liquidationPrice,
-  marketPhase = 'open',
-  marketCurrentDuration,
-  fallback,
-  statusOverlay,
-  onIntervalChange,
-  onReadyChange,
 }: TradingViewAdvancedChartProps) {
   const queryClient = useQueryClient()
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -266,7 +228,6 @@ function EnabledTradingViewAdvancedChart({
   const oracleMarkRef = useRef(oracleMark)
   const liquidationPriceRef = useRef(liquidationPrice)
   const onIntervalChangeRef = useRef(onIntervalChange)
-  const onReadyChangeRef = useRef(onReadyChange)
   const [unavailable, setUnavailable] = useState(false)
 
   const syncLiquidationLine = useCallback((chart: TradingViewChart, price: number | undefined) => {
@@ -315,10 +276,6 @@ function EnabledTradingViewAdvancedChart({
   useEffect(() => {
     onIntervalChangeRef.current = onIntervalChange
   }, [onIntervalChange])
-
-  useEffect(() => {
-    onReadyChangeRef.current = onReadyChange
-  }, [onReadyChange])
 
   useEffect(() => {
     oracleMarkRef.current = oracleMark
@@ -377,7 +334,7 @@ function EnabledTradingViewAdvancedChart({
           theme: 'dark',
           custom_themes: PLETHER_TRADINGVIEW_CUSTOM_THEMES,
           toolbar_bg: PANEL_BACKGROUND,
-          custom_css_url: '../tradingview-chart.css',
+          custom_css_url: '../tradingview-chart.css?v=20260808-2',
           disabled_features: [
             'header_symbol_search',
             'symbol_search_hot_key',
@@ -433,18 +390,15 @@ function EnabledTradingViewAdvancedChart({
             if (widget.activeChart().resolution() !== desiredResolution) {
               void widget.activeChart().setResolution(desiredResolution)
             }
-            onReadyChangeRef.current?.(true)
           })
           .catch(() => {
             if (!cancelled) {
-              onReadyChangeRef.current?.(false)
               setUnavailable(true)
             }
           })
       })
       .catch(() => {
         if (!cancelled) {
-          onReadyChangeRef.current?.(false)
           setUnavailable(true)
         }
       })
@@ -456,7 +410,6 @@ function EnabledTradingViewAdvancedChart({
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
       }
-      onReadyChangeRef.current?.(false)
       marketStatusAdapterRef.current?.setVisible(false)
       marketStatusAdapterRef.current = null
       liquidationLineRef.current = null
@@ -481,8 +434,6 @@ function EnabledTradingViewAdvancedChart({
     void widget.activeChart().setResolution(resolution)
   }, [interval])
 
-  if (unavailable) return fallback
-
   return (
     <div
       className="relative h-[450px] w-full overflow-hidden border border-brand-border/30 bg-app-bg sm:h-[580px]"
@@ -491,9 +442,13 @@ function EnabledTradingViewAdvancedChart({
     >
       <div ref={containerRef} className="h-full w-full" />
       <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
-      {statusOverlay ? (
+      {unavailable ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
-          <div className="pointer-events-auto w-full max-w-lg shadow-2xl">{statusOverlay}</div>
+          <div className="pointer-events-auto w-full max-w-lg shadow-2xl">
+            <Alert variant="warning" title="TradingView chart unavailable">
+              The interactive market chart could not be loaded. Refresh the page or try again later.
+            </Alert>
+          </div>
         </div>
       ) : null}
     </div>
