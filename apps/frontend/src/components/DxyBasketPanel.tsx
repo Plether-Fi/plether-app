@@ -36,6 +36,7 @@ import {
 } from '../utils/dxyBasketChart'
 import { TradingViewAdvancedChart } from '../tradingview/TradingViewAdvancedChart'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
+import { oraclePriceToDisplayDxyPrice } from '../utils/perps'
 
 const CHART_HEIGHT = 320
 const DEFAULT_LINE_COLOR = '#00FF99'
@@ -62,6 +63,7 @@ export interface DxyBasketPanelViewProps {
   changeHistory?: BasketHistory
   latest?: BasketLatest
   oracleMark?: OracleMarkPoint
+  liquidationPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
   chartInterval?: DxyBasketChartInterval
@@ -234,6 +236,7 @@ export function DxyBasketPanelView({
   changeHistory,
   latest,
   oracleMark,
+  liquidationPriceRaw,
   marketPhase,
   marketCurrentDuration,
   chartInterval = DEFAULT_DXY_BASKET_CHART_INTERVAL,
@@ -277,6 +280,11 @@ export function DxyBasketPanelView({
   }, [chartBuckets])
 
   const [advancedChartReady, setAdvancedChartReady] = useState(false)
+  const liquidationPrice = useMemo(() => {
+    const displayPrice = oraclePriceToDisplayDxyPrice(liquidationPriceRaw)
+    if (displayPrice === undefined || displayPrice <= 0n) return undefined
+    return Number(displayPrice) / 1e8
+  }, [liquidationPriceRaw])
   const changePct = computeBasketDisplayPriceChange(changeHistory?.points, latest) ?? null
   const positiveChange = changePct == null || changePct >= 0
   const lineColor = positiveChange ? DEFAULT_LINE_COLOR : NEGATIVE_LINE_COLOR
@@ -344,6 +352,7 @@ export function DxyBasketPanelView({
         <TradingViewAdvancedChart
           interval={chartInterval}
           oracleMark={oracleMark}
+          liquidationPrice={liquidationPrice}
           marketPhase={marketPhase}
           marketCurrentDuration={marketCurrentDuration}
           fallback={fallbackChart}
@@ -361,6 +370,7 @@ export function DxyBasketPanelView({
 export interface DxyBasketPanelProps {
   oraclePriceRaw?: bigint
   oraclePublishTime?: number
+  liquidationPriceRaw?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
 }
@@ -368,6 +378,7 @@ export interface DxyBasketPanelProps {
 export function DxyBasketPanel({
   oraclePriceRaw,
   oraclePublishTime,
+  liquidationPriceRaw,
   marketPhase,
   marketCurrentDuration,
 }: DxyBasketPanelProps) {
@@ -394,6 +405,7 @@ export function DxyBasketPanel({
       changeHistory={changeData?.data}
       latest={latestData?.data}
       oracleMark={oracleMark}
+      liquidationPriceRaw={liquidationPriceRaw}
       marketPhase={marketPhase}
       marketCurrentDuration={marketCurrentDuration}
       chartInterval={chartInterval}

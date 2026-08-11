@@ -83,6 +83,8 @@ describe('TradingViewAdvancedChart', () => {
         return true
       }),
       onIntervalChanged: () => subscription,
+      createShape: vi.fn(async () => 'liquidation-line'),
+      removeEntity: vi.fn(),
     }
     const remove = vi.fn()
 
@@ -114,13 +116,15 @@ describe('TradingViewAdvancedChart', () => {
     const chartElement = (
       interval: '1m' | '5m' | '1h' | '1d',
       marketPhase: 'open' | 'close-only' | 'closed' | 'degraded' | 'paused' = 'open',
-      marketCurrentDuration?: string
+      marketCurrentDuration?: string,
+      showLiquidationLine = true
     ) => (
       <QueryClientProvider client={queryClient}>
         <TradingViewAdvancedChart
           interval={interval}
           marketPhase={marketPhase}
           marketCurrentDuration={marketCurrentDuration}
+          liquidationPrice={showLiquidationLine ? 1.0169 : undefined}
           fallback={<div>Fallback chart</div>}
           onIntervalChange={onIntervalChange}
           onReadyChange={onReadyChange}
@@ -221,6 +225,23 @@ describe('TradingViewAdvancedChart', () => {
       }) as TradingViewCustomStatusDropDownContent,
     ])
     expect(setVisible).toHaveBeenLastCalledWith(true)
+    expect(chart.createShape).toHaveBeenCalledWith(
+      { price: 1.0169 },
+      expect.objectContaining({
+        shape: 'horizontal_line',
+        text: 'Liquidation',
+        lock: true,
+        disableSelection: true,
+        disableSave: true,
+        disableUndo: true,
+        showInObjectsTree: false,
+        overrides: expect.objectContaining({
+          linecolor: '#F7D977',
+          linestyle: 2,
+          showPrice: true,
+        }),
+      })
+    )
 
     view.rerender(chartElement('1m', 'close-only', '1d 3h'))
     expect(setColor).toHaveBeenLastCalledWith('#FF572D')
@@ -296,6 +317,11 @@ describe('TradingViewAdvancedChart', () => {
       expect(chart.setResolution).toHaveBeenCalledWith('60')
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
+
+    view.rerender(chartElement('1h', 'open', undefined, false))
+    await waitFor(() => {
+      expect(chart.removeEntity).toHaveBeenCalledWith('liquidation-line')
+    })
 
     view.unmount()
     expect(unsubscribe).toHaveBeenCalledWith(null, intervalCallback)
