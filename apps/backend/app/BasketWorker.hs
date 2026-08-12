@@ -8,10 +8,22 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Maybe (fromMaybe)
 import qualified Data.Text as T
+import Database.PostgreSQL.Simple (withTransaction)
 import Network.HTTP.Client (Manager, newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Plether.Config (Config (..), loadConfig)
+import Plether.Config (Config (..), PerpsCandleWriteMode (..), loadConfig)
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database.Candles
+  ( BasketObservationInput (..)
+  , RollupCoverage (..)
+  , RollupKind (PriceRollup)
+  , advanceBasketPriceCoverage
+  , defaultBasketSeriesId
+  , ensureCurrentBasketDefinition
+  , getRollupCoverage
+  , recomputeBasketCandleHierarchy
+  , upsertBasketObservation
+  )
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
   , ensureBasketSnapshotSchema
@@ -44,9 +56,11 @@ import Plether.Pyth.Hermes
   , isPermanentHermesConfigurationError
   , resolveHermesApiKey
   )
-import Plether.Pyth.History (BasketIngestorConfig (..), runBasketBackfill)
+import Plether.Pyth.History (BasketIngestorConfig (..), basketObservationId, runBasketBackfill)
 import Plether.Pyth.RevealPayload
-  ( validateLatestPublishTimes
+  ( PythPayloadAdmission (..)
+  , classifyPythPayloadAdmission
+  , maxComponentPublishTimeDivergence
   , validatePublishTimes
   , validateRevealWindow
   )
@@ -131,6 +145,8 @@ main = do
                   , bicBackfillDays = backfillDays
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 0
+                  , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                  , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
 
 latestLoop :: Manager -> EthClient -> DbPool -> Config -> Int -> IO ()
@@ -252,20 +268,23 @@ cacheBasketUpdate
   -> HermesBasketUpdate
   -> IO (Either T.Text ())
 cacheBasketUpdate ethClient pool cfg historicalBounds update =
-  case promotePythPayloadSource (hbuSource update) of
-    Nothing -> pure $ Left $ "unsupported Hermes payload source: " <> hbuSource update
-    Just admittedSource ->
-      case validateCachePublishTimes cfg update of
-        Left err -> pure $ Left err
-        Right (minPublishTime, maxPublishTime) -> do
-          case decodeAdmissionInputs update of
+  case
+      ( promotePythPayloadSource $ hbuSource update
+      , classifyPythPayloadAdmission historicalBounds $ hbuSource update
+      )
+    of
+      (Nothing, _) -> pure $ Left $ "unsupported Hermes payload source: " <> hbuSource update
+      (_, Left err) -> pure $ Left err
+      (Just admittedSource, Right admissionMode) ->
+        case validateCachePublishTimes update of
+          Left err -> pure $ Left err
+          Right (minPublishTime, maxPublishTime) -> case decodeAdmissionInputs update of
             Left err -> pure $ Left err
             Right (updateData, feedIds) -> do
               admission <- admitCachePayload
                 ethClient
                 cfg
-                historicalBounds
-                update
+                admissionMode
                 updateData
                 feedIds
                 minPublishTime
@@ -283,47 +302,204 @@ cacheBasketUpdate ethClient pool cfg historicalBounds update =
                         Left $
                           "Pyth signed prices did not match Hermes metadata: " <> err
                     Right (signedBasketPrice, signedComponents) -> do
-                      let minuteBucket = (minPublishTime `div` 60) * 60
-                          signedPublishTimes = map pppPublishTime signedPoints
-                      withDb pool $ \conn -> do
-                        insertBasketSnapshotWithSource
-                          conn
-                          minuteBucket
-                          60
-                          signedBasketPrice
-                          (toJSON signedComponents)
-                          "pyth_hermes_latest"
-                        insertPythUpdatePayload
-                          conn
-                          minPublishTime
-                          maxPublishTime
-                          (toJSON signedPublishTimes)
-                          (toJSON $ hbuUpdateData update)
-                          (hbuFetchedAt update)
-                          admittedSource
-                      logInfoEvery
-                        300
-                        "basket_cache_progress"
-                        "Pyth basket update was decoded on-chain and cached"
-                        [ field "min_publish_time" minPublishTime
-                        , field "max_publish_time" maxPublishTime
-                        , field "minute_bucket" minuteBucket
-                        , field "source" admittedSource
-                        ]
-                      pure $ Right ()
+                      let latestSourcePoll = admissionMode == AdmitLatestPayload
+                      if
+                        latestSourcePoll
+                          && isStaleLatestUpdate
+                            (cfgPythLatestMaxAgeSeconds cfg)
+                            update
+                            minPublishTime
+                        then do
+                          -- A stale but signed latest response is expected when
+                          -- the underlying markets are closed. It proves that
+                          -- Hermes had no newer update as of the fetch time,
+                          -- but it must not be promoted as a new observation or
+                          -- reveal payload.
+                          when (candleWritesEnabled cfg) $ do
+                            withDb pool $ \conn -> withTransaction conn $ do
+                              -- Coverage is meaningful only for the exact
+                              -- compiled immutable definition. A stale/closed
+                              -- market poll must fail closed on configuration
+                              -- drift just like an admitted fresh observation;
+                              -- the coverage primitive performs that check.
+                              advanceBasketPriceCoverage
+                                conn
+                                defaultBasketSeriesId
+                                (hbuFetchedAt update)
+                                (cfgPerpsCandleLatenessSeconds cfg)
+                            emitPriceWriterHeartbeat
+                              pool
+                              cfg
+                              update
+                              minPublishTime
+                              maxPublishTime
+                              admittedSource
+                              "stale_latest_no_update"
+                              "A signed stale latest response completed a basket source watermark poll"
+                          pure $ Right ()
+                        else do
+                          let minuteBucket = (minPublishTime `div` 60) * 60
+                              signedPublishTimes = map pppPublishTime signedPoints
+                          withDb pool $ \conn -> withTransaction conn $ do
+                            -- Persist the full admitted observation before
+                            -- writing the legacy minute snapshot, which
+                            -- overwrites intra-minute information. The latest
+                            -- source watermark shares this transaction so
+                            -- neither rollup coverage nor dual-write data can
+                            -- advance independently.
+                            when (candleWritesEnabled cfg) $ do
+                              ensureCurrentBasketDefinition conn defaultBasketSeriesId
+                              changed <-
+                                upsertBasketObservation
+                                  conn
+                                  BasketObservationInput
+                                    { boiSeriesId = defaultBasketSeriesId
+                                    , boiObservationId = basketObservationId defaultBasketSeriesId signedPoints
+                                    , boiPublishTime = minPublishTime
+                                    , boiBasketPrice = signedBasketPrice
+                                    , boiComponentPrices = toJSON signedComponents
+                                    , boiSource = admittedSource
+                                    , boiSourcePriority = signedObservationPriority
+                                    }
+                              when changed $
+                                recomputeBasketCandleHierarchy
+                                  conn
+                                  defaultBasketSeriesId
+                                  minPublishTime
+                                  (cfgPerpsCandleLatenessSeconds cfg)
+                            when (candleWritesEnabled cfg && latestSourcePoll) $
+                              advanceBasketPriceCoverage
+                                conn
+                                defaultBasketSeriesId
+                                (hbuFetchedAt update)
+                                (cfgPerpsCandleLatenessSeconds cfg)
+                            insertBasketSnapshotWithSource
+                              conn
+                              minuteBucket
+                              60
+                              signedBasketPrice
+                              (toJSON signedComponents)
+                              admittedSource
+                            insertPythUpdatePayload
+                              conn
+                              minPublishTime
+                              maxPublishTime
+                              (toJSON signedPublishTimes)
+                              (toJSON $ hbuUpdateData update)
+                              (hbuFetchedAt update)
+                              admittedSource
+                          logInfoEvery
+                            300
+                            "basket_cache_progress"
+                            "Pyth basket update was decoded on-chain and cached"
+                            [ field "min_publish_time" minPublishTime
+                            , field "max_publish_time" maxPublishTime
+                            , field "minute_bucket" minuteBucket
+                            , field "source" admittedSource
+                            ]
+                          when (candleWritesEnabled cfg && latestSourcePoll) $
+                            emitPriceWriterHeartbeat
+                              pool
+                              cfg
+                              update
+                              minPublishTime
+                              maxPublishTime
+                              admittedSource
+                              "admitted_latest"
+                              "An admitted latest Pyth update completed a basket source watermark poll"
+                          pure $ Right ()
+
+signedObservationPriority :: Int
+signedObservationPriority = 100
+
+candleWritesEnabled :: Config -> Bool
+candleWritesEnabled cfg = cfgPerpsCandleWriteMode cfg == PerpsCandleWritesDual
+
+-- Keep operational reads outside the ingestion transaction. A monitoring
+-- query must never roll back an already validated observation or watermark;
+-- its own failure suppresses the heartbeat and is surfaced separately.
+emitPriceWriterHeartbeat
+  :: DbPool
+  -> Config
+  -> HermesBasketUpdate
+  -> Integer
+  -> Integer
+  -> T.Text
+  -> T.Text
+  -> T.Text
+  -> IO ()
+emitPriceWriterHeartbeat pool cfg update minPublishTime maxPublishTime source reason message = do
+  coverageResult <-
+    ( try $
+        withDb pool $ \conn ->
+          getRollupCoverage
+            conn
+            PriceRollup
+            (Just defaultBasketSeriesId)
+            Nothing
+            Nothing
+            60
+    ) :: IO (Either SomeException (Maybe RollupCoverage))
+  case coverageResult of
+    Left err ->
+      logErrorEvery
+        60
+        "basket_price_writer_heartbeat_failed"
+        "Basket price candle writer could not read its coverage heartbeat"
+        [field "error" $ displayException err]
+    Right priceCoverage ->
+      logInfoEvery
+        300
+        "basket_price_watermark_advanced"
+        message
+        [ field "checked_through" $ hbuFetchedAt update
+        , field "min_publish_time" minPublishTime
+        , field "max_publish_time" maxPublishTime
+        , field "source" source
+        , field "watermark_reason" reason
+        , field "writer_kind" ("price" :: T.Text)
+        , field "service" ("plether-basket-worker" :: T.Text)
+        , field "coverage_interval_seconds" (60 :: Integer)
+        , field "coverage_expected_lateness_seconds" $
+            cfgPerpsCandleLatenessSeconds cfg
+        , field "coverage_state" $ coverageState priceCoverage
+        , field "coverage_finalized_through" $ priceCoverage >>= rcFinalizedThrough
+        , field "coverage_lag_seconds" $
+            normalizedCoverageLag
+              (hbuFetchedAt update)
+              60
+              (cfgPerpsCandleLatenessSeconds cfg)
+              (priceCoverage >>= rcFinalizedThrough)
+        , field "coverage_error" $ priceCoverage >>= rcLastError
+        ]
+
+-- Coverage can legitimately be absent between the additive migration and the
+-- first backfill. Once present, an incomplete row is actionable, while lag is
+-- normalized by the base bucket so normal alignment never looks stale.
+coverageState :: Maybe RollupCoverage -> T.Text
+coverageState coverageResult = case coverageResult of
+  Nothing -> "uninitialized"
+  Just coverage
+    | rcComplete coverage -> "complete"
+    | otherwise -> "incomplete"
+
+normalizedCoverageLag :: Integer -> Integer -> Integer -> Maybe Integer -> Maybe Integer
+normalizedCoverageLag now interval expectedLateness =
+  fmap $ \finalizedThrough ->
+    max 0 (now - finalizedThrough - interval - max 0 expectedLateness)
 
 admitCachePayload
   :: EthClient
   -> Config
-  -> Maybe (Integer, Integer)
-  -> HermesBasketUpdate
+  -> PythPayloadAdmission
   -> [ByteString]
   -> [ByteString]
   -> Integer
   -> Integer
   -> IO (Either RpcError [PythPricePoint])
-admitCachePayload ethClient cfg historicalBounds update updateData feedIds minPublishTime maxPublishTime
-  | hbuSource update == "backend_hermes_latest" =
+admitCachePayload ethClient cfg admissionMode updateData feedIds minPublishTime maxPublishTime =
+  case admissionMode of
+    AdmitLatestPayload ->
       parsePythUpdateData
         ethClient
         (cfgPerpsPletherOracle cfg)
@@ -331,18 +507,14 @@ admitCachePayload ethClient cfg historicalBounds update updateData feedIds minPu
         feedIds
         minPublishTime
         maxPublishTime
-  | otherwise =
-      case historicalBounds of
-        Nothing ->
-          pure $ Left $ RpcJsonError "historical Pyth admission requires the on-chain order reveal bounds"
-        Just (routeMinPublishTime, routeMaxPublishTime) ->
-          parseUniquePythUpdateData
-            ethClient
-            (cfgPerpsPletherOracle cfg)
-            updateData
-            feedIds
-            routeMinPublishTime
-            routeMaxPublishTime
+    AdmitHistoricalPayload routeMinPublishTime routeMaxPublishTime ->
+      parseUniquePythUpdateData
+        ethClient
+        (cfgPerpsPletherOracle cfg)
+        updateData
+        feedIds
+        routeMinPublishTime
+        routeMaxPublishTime
 
 basketSnapshotFromSignedPrices
   :: HermesBasketUpdate
@@ -351,16 +523,34 @@ basketSnapshotFromSignedPrices
 basketSnapshotFromSignedPrices update signedPoints
   | map pppPublishTime signedPoints /= hbuPublishTimes update =
       Left "signed PriceFeed[] publish times differed from Hermes parsed publish times"
-  | otherwise = computeBasketSnapshot signedPoints
+  | otherwise = do
+      snapshot@(signedBasketPrice, signedComponents) <- computeBasketSnapshot signedPoints
+      if signedBasketPrice /= hbuBasketPrice update
+        then Left "signed basket price differed from Hermes parsed basket price"
+        else
+          if toJSON signedComponents /= hbuComponents update
+            then Left "signed component prices differed from Hermes parsed component prices"
+            else Right snapshot
 
-validateCachePublishTimes :: Config -> HermesBasketUpdate -> Either T.Text (Integer, Integer)
-validateCachePublishTimes cfg update
-  | hbuSource update == "backend_hermes_latest" =
-      validateLatestPublishTimes
-        (hbuFetchedAt update)
-        (cfgPythLatestMaxAgeSeconds cfg)
-        (hbuPublishTimes update)
-  | otherwise = validatePublishTimes (hbuPublishTimes update)
+validateCachePublishTimes :: HermesBasketUpdate -> Either T.Text (Integer, Integer)
+validateCachePublishTimes update = do
+  bounds@(_, maximumTs) <- validatePublishTimes $ hbuPublishTimes update
+  let futureSkew = maximumTs - hbuFetchedAt update
+  if isLatestUpdate update && futureSkew > maxComponentPublishTimeDivergence
+    then
+      Left $
+        "latest payload publish time is "
+          <> T.pack (show futureSkew)
+          <> "s in the future"
+    else Right bounds
+
+isLatestUpdate :: HermesBasketUpdate -> Bool
+isLatestUpdate update = hbuSource update == "backend_hermes_latest"
+
+isStaleLatestUpdate :: Integer -> HermesBasketUpdate -> Integer -> Bool
+isStaleLatestUpdate maximumAge update minimumTs =
+  isLatestUpdate update
+    && hbuFetchedAt update - minimumTs > max 0 maximumAge
 
 decodeAdmissionInputs :: HermesBasketUpdate -> Either T.Text ([ByteString], [ByteString])
 decodeAdmissionInputs update = do

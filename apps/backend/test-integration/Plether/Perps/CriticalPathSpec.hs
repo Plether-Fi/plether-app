@@ -37,7 +37,11 @@ import Network.Wai.Test
 import Plether.AA.Pimlico (newPimlicoProxyState)
 import Plether.Api (app)
 import Plether.Cache (newAppCache)
-import Plether.Config (Config (..))
+import Plether.Config
+  ( Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Schema
   ( deletePerpsHistoryFromBlock
@@ -539,6 +543,12 @@ testConfig databaseUrl rpcUrl =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
     , cfgPerpsRpcUrl = rpcUrl
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = testClearinghouse

@@ -1,6 +1,9 @@
 module Plether.Pyth.History
   ( BasketIngestorConfig (..)
+  , basketObservationId
+  , deriveBasketHistoryObservation
   , fetchBasketSnapshotAt
+  , legacyObservationId
   , runBasketBackfill
   , startBasketHistoryIngestor
   ) where
@@ -10,13 +13,17 @@ import Control.Exception (SomeException, catch, displayException, try)
 import Control.Monad (forM_, forever, when)
 import Data.Aeson (FromJSON (..), Value (..), eitherDecode, toJSON, withObject, (.:))
 import Data.Aeson.Types (Parser)
+import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
+import Data.List (sortOn)
 import qualified Data.Set as Set
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
+import qualified Data.Text.Encoding as TE
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Database.PostgreSQL.Simple (withTransaction)
 import Network.HTTP.Client
   ( Manager
   , httpLbs
@@ -27,18 +34,29 @@ import Network.HTTP.Client
   , setQueryString
   )
 import Network.HTTP.Types.Status (statusCode)
+import Plether.Config (PerpsCandleWriteMode (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.Candles
+  ( BasketObservationInput (..)
+  , defaultBasketSeriesId
+  , ensureCurrentBasketDefinition
+  , recomputeBasketCandleHierarchy
+  , upsertBasketObservation
+  )
 import Plether.Database.Schema
   ( getBasketSnapshotTimes
   , insertBasketSnapshot
   )
+import Plether.Indexer.Contracts (keccak256Text)
+import Plether.Logging (field, logErrorEvery, logInfo, logWarnEvery)
 import Plether.Pyth.Basket
   ( BasketComponent (..)
   , PythPricePoint (..)
   , basketComponents
   , computeBasketSnapshot
+  , normalizeFeedId
   )
-import Plether.Logging (field, logErrorEvery, logInfo, logWarnEvery)
+import Plether.Pyth.RevealPayload (validatePublishTimes)
 import Text.Read (readMaybe)
 
 data BasketIngestorConfig = BasketIngestorConfig
@@ -47,8 +65,75 @@ data BasketIngestorConfig = BasketIngestorConfig
   , bicBackfillDays :: Int
   , bicSampleIntervalSeconds :: Integer
   , bicPollSeconds :: Int
+  , bicCandleWriteMode :: PerpsCandleWriteMode
+  , bicCandleLatenessSeconds :: Integer
   }
   deriving stock (Show)
+
+-- | Stable, order-independent identity for a signed basket observation. The
+-- basket version is part of the digest so a future definition can never
+-- deduplicate against the current series accidentally.
+basketObservationId :: Text -> [PythPricePoint] -> Text
+basketObservationId basketVersion points =
+  "0x" <> TE.decodeUtf8 (B16.encode $ keccak256Text canonical)
+  where
+    canonical = T.intercalate "|" $ basketVersion : concatMap encodePoint ordered
+    ordered = sortOn (normalizeFeedId . pppFeedId) points
+    encodePoint point =
+      [ normalizeFeedId $ pppFeedId point
+      , T.pack $ show $ pppPrice point
+      , T.pack $ show $ pppConfidence point
+      , T.pack $ show $ pppExponent point
+      , T.pack $ show $ pppPublishTime point
+      ]
+
+-- Legacy samples identify the underlying source event, not the requested
+-- sampling slot. Repeated benchmark slots that resolve to the same six feed
+-- publish times therefore deduplicate, while a material correction at those
+-- same times updates the existing lower-priority observation.
+legacyObservationId :: Text -> [PythPricePoint] -> Text
+legacyObservationId basketVersion points =
+  "legacy:0x" <> TE.decodeUtf8 (B16.encode $ keccak256Text canonical)
+  where
+    canonical = T.intercalate "|" $ basketVersion : concatMap encodePoint ordered
+    ordered = sortOn (normalizeFeedId . pppFeedId) points
+    encodePoint point =
+      [ normalizeFeedId $ pppFeedId point
+      , T.pack $ show $ pppPublishTime point
+      ]
+
+deriveBasketHistoryObservation
+  :: Integer
+  -> Integer
+  -> [PythPricePoint]
+  -> Either Text (Integer, Integer, Value, [PythPricePoint])
+deriveBasketHistoryObservation requestedTimestamp benchmarkWindowSeconds points = do
+  if benchmarkWindowSeconds > 0
+    then pure ()
+    else Left "Pyth Benchmarks admission window must be positive"
+  if length points == length basketComponents
+    then pure ()
+    else Left "Pyth Benchmarks did not return exactly the configured six feeds"
+  (canonicalPublishTime, maximumPublishTime) <-
+    validatePublishTimes $ map pppPublishTime points
+  let windowEnd = requestedTimestamp + benchmarkWindowSeconds
+  -- Pyth Benchmarks defines the interval endpoint as inclusive, matching the
+  -- EVM parser contract: minPublishTime <= publishTime <= maxPublishTime.
+  -- Check both extrema so a divergent component cannot escape the requested
+  -- signed window merely because the canonical (minimum) time is admissible.
+  if
+    canonicalPublishTime >= requestedTimestamp
+      && maximumPublishTime <= windowEnd
+    then pure ()
+    else
+      Left $
+        "Pyth Benchmarks component publish times are outside requested window ["
+          <> T.pack (show requestedTimestamp)
+          <> ", "
+          <> T.pack (show windowEnd)
+          <> "]"
+  (basketPrice, components) <- computeBasketSnapshot points
+  pure (canonicalPublishTime, basketPrice, toJSON components, points)
 
 data BenchmarkResponse = BenchmarkResponse
   { brParsed :: [PythPricePoint]
@@ -92,7 +177,7 @@ fetchBasketSnapshotAt
   -> Maybe Text
   -> Integer
   -> Integer
-  -> IO (Either Text (Integer, Value))
+  -> IO (Either Text (Integer, Integer, Value, [PythPricePoint]))
 fetchBasketSnapshotAt manager benchmarksUrl apiKey intervalSeconds timestamp = do
   requestBase <- parseRequest $ T.unpack requestUrl
   let request =
@@ -124,7 +209,9 @@ fetchBasketSnapshotAt manager benchmarksUrl apiKey intervalSeconds timestamp = d
           [("Authorization", encodeUtf8 $ "Bearer " <> T.strip key)]
         _ -> []
 
-    decodeSnapshot :: LBS.ByteString -> Either Text (Integer, Value)
+    decodeSnapshot
+      :: LBS.ByteString
+      -> Either Text (Integer, Integer, Value, [PythPricePoint])
     decodeSnapshot body = do
       benchmarks <-
         case eitherDecode body of
@@ -142,12 +229,14 @@ fetchBasketSnapshotAt manager benchmarksUrl apiKey intervalSeconds timestamp = d
         Nothing -> Left "Pyth Benchmarks returned no complete six-feed basket snapshot"
         Just result -> Right result
 
-    firstCompleteSnapshot :: [BenchmarkResponse] -> Maybe (Integer, Value)
+    firstCompleteSnapshot
+      :: [BenchmarkResponse]
+      -> Maybe (Integer, Integer, Value, [PythPricePoint])
     firstCompleteSnapshot [] = Nothing
     firstCompleteSnapshot (benchmark : rest) =
-      case computeBasketSnapshot (brParsed benchmark) of
+      case deriveBasketHistoryObservation timestamp benchmarkWindow (brParsed benchmark) of
         Left _ -> firstCompleteSnapshot rest
-        Right (basketPrice, components) -> Just (basketPrice, toJSON components)
+        Right observation -> Just observation
 
 startBasketHistoryIngestor :: Manager -> DbPool -> BasketIngestorConfig -> IO ()
 startBasketHistoryIngestor manager pool cfg = forever $ do
@@ -202,8 +291,31 @@ runBasketBackfill manager pool cfg = do
               , field "error" err
               ]
             when ("429" `T.isInfixOf` err) $ threadDelay 60_000_000
-        Right (Right (basketPrice, components)) ->
-          withDb pool $ \conn ->
+        Right (Right (canonicalPublishTime, basketPrice, components, pricePoints)) ->
+          withDb pool $ \conn -> withTransaction conn $ do
+            when (bicCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+              ensureCurrentBasketDefinition conn defaultBasketSeriesId
+              changed <-
+                upsertBasketObservation
+                  conn
+                  BasketObservationInput
+                    { boiSeriesId = defaultBasketSeriesId
+                    , boiObservationId = legacyObservationId defaultBasketSeriesId pricePoints
+                    , boiPublishTime = canonicalPublishTime
+                    , boiBasketPrice = basketPrice
+                    , boiComponentPrices = components
+                    , boiSource = "legacy_sampled"
+                    , boiSourcePriority = legacyObservationPriority
+                    }
+              when changed $
+                recomputeBasketCandleHierarchy
+                  conn
+                  defaultBasketSeriesId
+                  canonicalPublishTime
+                  (bicCandleLatenessSeconds cfg)
+            -- The legacy table remains keyed by the requested sampling grid so
+            -- the existing raw-history API can detect completed backfill slots.
+            -- The observation ledger above carries the canonical source time.
             insertBasketSnapshot conn ts interval basketPrice components
       -- Public Pyth endpoints are IP-rate-limited. Keep historical backfills
       -- below one request per second so chart ingestion cannot starve order reveal.
@@ -226,6 +338,9 @@ parseIntish value = fromInteger <$> parseIntegerish value
 
 stripTrailingSlash :: Text -> Text
 stripTrailingSlash = T.dropWhileEnd (== '/')
+
+legacyObservationPriority :: Int
+legacyObservationPriority = 10
 
 logException :: SomeException -> IO ()
 logException err =

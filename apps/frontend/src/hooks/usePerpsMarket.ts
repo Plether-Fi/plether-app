@@ -143,11 +143,6 @@ export function usePerpsMarket() {
     refetch: refetchLatestBasket,
   } = usePerpsBasketLatest()
   const {
-    data: basketHistory24h,
-    isLoading: isBasketHistory24hLoading,
-    refetch: refetchBasketHistory24h,
-  } = usePerpsBasketHistory('24h', 60)
-  const {
     data: basketComponentHistory24h,
     isLoading: isBasketComponentHistory24hLoading,
     refetch: refetchBasketComponentHistory24h,
@@ -313,7 +308,13 @@ export function usePerpsMarket() {
       seniorPrincipalUsdc,
       seniorHighWaterMarkUsdc,
     })
-    const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
+    // The component-rich hourly response already carries the basket price at
+    // every point. Reuse it for the headline change instead of polling a
+    // second, duplicate 24-hour history endpoint once per client.
+    const priceChange24hValue = computeBasketDisplayPriceChange(
+      basketComponentHistory24h?.data.points,
+      latestBasket?.data
+    )
     const basketComponentPriceChanges = computeBasketComponentPriceChanges(
       basketComponentHistory24h?.data.points,
       latestBasket?.data
@@ -407,7 +408,7 @@ export function usePerpsMarket() {
       oracleFrozen: oracleFrozen ?? false,
       fadWindow: fadWindow ?? false,
       isLoading,
-      isStatsLoading: isBasketHistory24hLoading || isMarketStatsLoading,
+      isStatsLoading: isBasketComponentHistory24hLoading || isMarketStatsLoading,
       error,
       refetchDynamic: refetchDynamicContracts,
       refetch: () => {
@@ -415,18 +416,15 @@ export function usePerpsMarket() {
         void refetchEngineConfiguration()
         void refetchRouterConfiguration()
         void refetchLatestBasket()
-        void refetchBasketHistory24h()
         void refetchBasketComponentHistory24h()
         void refetchMarketStats()
       },
     }
   }, [
-    basketHistory24h,
     basketComponentHistory24h,
     dynamicContractData,
     engineConfigurationData,
     error,
-    isBasketHistory24hLoading,
     isBasketComponentHistory24hLoading,
     isLatestBasketError,
     isLatestBasketLoading,
@@ -434,7 +432,6 @@ export function usePerpsMarket() {
     isMarketStatsLoading,
     latestBasket,
     marketStats,
-    refetchBasketHistory24h,
     refetchBasketComponentHistory24h,
     refetchDynamicContracts,
     refetchEngineConfiguration,

@@ -93,6 +93,8 @@ main = do
                   , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
                   , picIndexerName = perpsIndexerName
                   , picMode = waMode args
+                  , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                  , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
           logInfo
             "perps_indexer_started"

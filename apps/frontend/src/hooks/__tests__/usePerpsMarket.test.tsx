@@ -1,5 +1,6 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { perpsBasketHistoryQueryPolicy } from '../../api/hooks'
 import { usePerpsMarket } from '../usePerpsMarket'
 
 const mocks = vi.hoisted(() => ({
@@ -10,7 +11,9 @@ const mocks = vi.hoisted(() => ({
   refetchBasketHistory: vi.fn(),
   refetchBasketComponentHistory: vi.fn(),
   refetchMarketStats: vi.fn(),
+  usePerpsBasketLatest: vi.fn(),
   usePerpsBasketHistory: vi.fn(),
+  usePerpsMarketStats: vi.fn(),
   useReadContracts: vi.fn(),
 }))
 
@@ -19,21 +22,20 @@ vi.mock('wagmi', () => ({
 }))
 
 vi.mock('../../api', () => ({
-  usePerpsBasketLatest: () => ({
-    data: undefined,
-    refetch: mocks.refetchLatestBasket,
-  }),
+  usePerpsBasketLatest: mocks.usePerpsBasketLatest,
   usePerpsBasketHistory: mocks.usePerpsBasketHistory,
-  usePerpsMarketStats: () => ({
-    data: undefined,
-    isLoading: false,
-    refetch: mocks.refetchMarketStats,
-  }),
+  usePerpsMarketStats: mocks.usePerpsMarketStats,
 }))
 
 describe('usePerpsMarket', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.usePerpsBasketLatest.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      isError: false,
+      refetch: mocks.refetchLatestBasket,
+    })
     mocks.usePerpsBasketHistory.mockImplementation((
       _range: string,
       _intervalSeconds: number,
@@ -45,6 +47,11 @@ describe('usePerpsMarket', () => {
         ? mocks.refetchBasketComponentHistory
         : mocks.refetchBasketHistory,
     }))
+    mocks.usePerpsMarketStats.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      refetch: mocks.refetchMarketStats,
+    })
     mocks.useReadContracts.mockImplementation((parameters: {
       contracts?: { functionName?: string }[]
     }) => {
@@ -123,8 +130,8 @@ describe('usePerpsMarket', () => {
       refetchOnReconnect: true,
     })
     expect(configurationCall?.query).not.toHaveProperty('refetchInterval')
-    expect(mocks.usePerpsBasketHistory).toHaveBeenCalledWith('24h', 60)
     expect(mocks.usePerpsBasketHistory).toHaveBeenCalledWith('24h', 3_600, true)
+    expect(mocks.usePerpsBasketHistory).toHaveBeenCalledTimes(1)
     expect(result.current.raw.executionFeeBps).toBe(15n)
     expect(result.current.raw.minOpenNotionalUsdc).toBe(1_000_000n)
     expect(result.current.raw.maintenanceMarginBps).toBe(500n)
@@ -145,8 +152,115 @@ describe('usePerpsMarket', () => {
     expect(mocks.refetchRiskParams).toHaveBeenCalledOnce()
     expect(mocks.refetchConfiguration).toHaveBeenCalledOnce()
     expect(mocks.refetchLatestBasket).toHaveBeenCalledOnce()
-    expect(mocks.refetchBasketHistory).toHaveBeenCalledOnce()
+    expect(mocks.refetchBasketHistory).not.toHaveBeenCalled()
     expect(mocks.refetchBasketComponentHistory).toHaveBeenCalledOnce()
     expect(mocks.refetchMarketStats).toHaveBeenCalledOnce()
+  })
+
+  it('uses a five-minute component-history cadence without an immediate error retry', () => {
+    expect(perpsBasketHistoryQueryPolicy('24h', 3_600, true)).toEqual({
+      staleTimeMs: 300_000,
+      refetchIntervalMs: 300_000,
+      errorRefetchIntervalMs: 300_000,
+      retryTransientFailure: false,
+    })
+    expect(perpsBasketHistoryQueryPolicy('7d', 300, false)).toEqual({
+      staleTimeMs: 60_000,
+      refetchIntervalMs: 60_000,
+      errorRefetchIntervalMs: 120_000,
+      retryTransientFailure: true,
+    })
+  })
+
+  it('reuses component history for the headline and per-component changes', () => {
+    const historicalTimestamp = 100_000
+    const latestTimestamp = historicalTimestamp + 24 * 60 * 60
+    const historicalComponent = {
+      symbol: 'EUR/USD',
+      feedSymbol: 'EUR/USD',
+      feedId: '0xfeed',
+      price: '100000000',
+      rawPrice: '100000',
+      confidence: '1',
+      exponent: -5,
+      publishTime: historicalTimestamp,
+      inverted: false,
+      weightBps: 10_000,
+      basePrice: '100000000',
+    }
+
+    mocks.usePerpsBasketLatest.mockReturnValue({
+      data: {
+        data: {
+          timestamp: latestTimestamp,
+          basketPrice: '96000000',
+          components: [{
+            ...historicalComponent,
+            price: '101000000',
+            publishTime: latestTimestamp,
+          }],
+          generatedAt: latestTimestamp,
+          source: 'database',
+        },
+      },
+      isLoading: false,
+      isError: false,
+      refetch: mocks.refetchLatestBasket,
+    })
+    mocks.usePerpsBasketHistory.mockImplementation((
+      _range: string,
+      _intervalSeconds: number,
+      includeComponents = false
+    ) => ({
+      data: {
+        data: {
+          points: includeComponents
+            ? [{
+                timestamp: historicalTimestamp,
+                basketPrice: '98000000',
+                components: [historicalComponent],
+              }]
+            : [{
+                timestamp: historicalTimestamp,
+                basketPrice: '98000000',
+              }],
+        },
+      },
+      isLoading: false,
+      refetch: includeComponents
+        ? mocks.refetchBasketComponentHistory
+        : mocks.refetchBasketHistory,
+    }))
+
+    const { result } = renderHook(() => usePerpsMarket())
+
+    expect(result.current.priceChange24h).toBe('+1.96%')
+    expect(result.current.basketComponentPriceChanges['0xfeed']).toBeCloseTo(0.01)
+  })
+
+  it('uses market stats rather than component history as authoritative 24h volume', () => {
+    mocks.usePerpsMarketStats.mockReturnValue({
+      data: { data: { volume24hUsdc: '123000000' } },
+      isLoading: false,
+      refetch: mocks.refetchMarketStats,
+    })
+    mocks.usePerpsBasketHistory.mockReturnValue({
+      data: {
+        data: {
+          points: [{
+            timestamp: 100_000,
+            basketPrice: '98000000',
+            volumeUsdc: '999999999999',
+            components: [],
+          }],
+        },
+      },
+      isLoading: false,
+      refetch: mocks.refetchBasketComponentHistory,
+    })
+
+    const { result } = renderHook(() => usePerpsMarket())
+
+    expect(result.current.volume24h).toBe('123')
   })
 })

@@ -3,6 +3,7 @@ module Plether.Pyth.Basket
   , BasketComponentPrice (..)
   , PythPricePoint (..)
   , basketComponents
+  , basketDisplayPriceCap
   , computeBasketSnapshot
   , invertPythPrice
   , normalizeFeedId
@@ -118,6 +119,12 @@ basketComponents =
       }
   ]
 
+-- The immutable v1 display transform is K - raw_price. Raw values at or above
+-- K have no valid positive display-domain representation and must never enter
+-- either the legacy snapshot store or the candle observation ledger.
+basketDisplayPriceCap :: Integer
+basketDisplayPriceCap = 200_000_000
+
 normalizeFeedId :: Text -> Text
 normalizeFeedId feedId =
   T.toLower $
@@ -129,7 +136,9 @@ computeBasketSnapshot :: [PythPricePoint] -> Either Text (Integer, [BasketCompon
 computeBasketSnapshot points = do
   priced <- traverse computeComponent basketComponents
   let basketPrice = sum (map fst priced)
-  pure (basketPrice, map snd priced)
+  if basketPrice <= 0 || basketPrice >= basketDisplayPriceCap
+    then Left "Pyth basket price is outside the immutable v1 display domain"
+    else pure (basketPrice, map snd priced)
   where
     pointsById :: Map Text PythPricePoint
     pointsById = Map.fromList [(normalizeFeedId (pppFeedId point), point) | point <- points]

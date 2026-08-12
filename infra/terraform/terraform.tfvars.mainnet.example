@@ -1,5 +1,7 @@
 aws_region          = "us-east-1"
 environment         = "mainnet"
+# Replace the example account ID with the account that owns the operations topic.
+operations_alarm_sns_topic_arn = "arn:aws:sns:us-east-1:123456789012:plether-mainnet-operations"
 posthog_project_token = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
 posthog_otlp_host     = "eu.i.posthog.com"
 rpc_url                        = "https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY"
@@ -19,9 +21,27 @@ indexer_start_block = "24427188"
 perps_chain_id      = "421614"
 perps_indexer_start_block = "273137426"
 consolidate_workers = true
-workers_desired_count = 0
+# At least one consolidated worker is required before enabling candle dual
+# writes; it owns both the basket source watermark and Perps volume indexer.
+workers_desired_count = 1
 liquidation_worker_desired_count = 0
 container_cpu       = 256
 container_memory    = 1024
 workers_container_memory = 1024
-db_instance_class   = "db.t4g.micro"
+db_instance_class          = "db.t4g.small"
+db_backup_retention_days   = 7
+db_max_allocated_storage   = 100
+db_deletion_protection     = true
+db_skip_final_snapshot     = false
+# Must be unique in this AWS region for the current DB lifecycle. Choose a new
+# suffix before recreating the instance so the prior final snapshot is retained.
+db_final_snapshot_identifier = "plether-mainnet-final-20260812-a"
+
+# Mainnet remains on legacy reads until dual-write soak, backfill, comparison,
+# and load-test gates have passed for every canonical resolution.
+perps_candle_write_mode        = "off"
+perps_candle_read_mode         = "legacy"
+perps_candle_read_intervals    = ""
+perps_candle_shadow_sample_bps = 0
+perps_candle_strict_coverage   = true
+perps_candle_lateness_seconds  = 120

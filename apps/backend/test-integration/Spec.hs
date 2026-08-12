@@ -1,6 +1,7 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
 import System.Environment (lookupEnv)
 import System.Exit (die)
@@ -12,7 +13,9 @@ main = do
   databaseUrl <- lookupEnv "PERPS_CRITICAL_PATH_DATABASE_URL"
   case databaseUrl of
     Just value ->
-      hspec $ criticalPathSpec $ T.pack value
+      hspec $ do
+        criticalPathSpec $ T.pack value
+        candleRollupSpec $ T.pack value
     Nothing
       | required ->
           die

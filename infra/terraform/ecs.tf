@@ -34,6 +34,20 @@ locals {
     { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
   ]
 
+  perps_candle_read_interval_tokens = regexall(
+    "[^,[:space:]]+",
+    var.perps_candle_read_intervals
+  )
+
+  perps_candle_environment = [
+    { name = "PERPS_CANDLE_WRITE_MODE", value = var.perps_candle_write_mode },
+    { name = "PERPS_CANDLE_READ_MODE", value = var.perps_candle_read_mode },
+    { name = "PERPS_CANDLE_READ_INTERVALS", value = var.perps_candle_read_intervals },
+    { name = "PERPS_CANDLE_SHADOW_SAMPLE_BPS", value = tostring(var.perps_candle_shadow_sample_bps) },
+    { name = "PERPS_CANDLE_STRICT_COVERAGE", value = tostring(var.perps_candle_strict_coverage) },
+    { name = "PERPS_CANDLE_LATENESS_SECONDS", value = tostring(var.perps_candle_lateness_seconds) },
+  ]
+
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
     {
       name      = "PYTH_API_KEY"
@@ -136,6 +150,8 @@ resource "aws_ecs_task_definition" "api" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
   runtime_platform {
     cpu_architecture        = "ARM64"
     operating_system_family = "LINUX"
@@ -186,7 +202,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment)
+    ], local.pyth_environment, local.perps_candle_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -232,7 +248,7 @@ resource "aws_ecs_service" "api" {
     container_port   = 3001
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.http, terraform_data.perps_candle_rollout_guard]
 
   lifecycle {
     ignore_changes = [task_definition]
@@ -398,6 +414,8 @@ resource "aws_ecs_task_definition" "basket_worker" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
   runtime_platform {
     cpu_architecture        = "ARM64"
     operating_system_family = "LINUX"
@@ -431,7 +449,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-    ], local.pyth_environment)
+    ], local.pyth_environment, local.perps_candle_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -450,6 +468,8 @@ resource "aws_ecs_service" "basket_worker" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -470,6 +490,8 @@ resource "aws_ecs_task_definition" "perps_indexer" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -495,7 +517,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       }
     ]
 
-    environment = [
+    environment = concat([
       { name = "CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -509,7 +531,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
       { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
-    ]
+    ], local.perps_candle_environment)
   }, local.otel_log_router_container])
 }
 
@@ -521,6 +543,8 @@ resource "aws_ecs_service" "perps_indexer" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -612,6 +636,8 @@ resource "aws_ecs_task_definition" "workers" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
 
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
   runtime_platform {
     cpu_architecture        = "ARM64"
     operating_system_family = "LINUX"
@@ -679,7 +705,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-      ], local.pyth_environment)
+      ], local.pyth_environment, local.perps_candle_environment)
     },
     {
       name             = "plether-oracle-worker"
@@ -726,7 +752,7 @@ resource "aws_ecs_task_definition" "workers" {
         }
       ]
 
-      environment = [
+      environment = concat([
         { name = "CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -739,7 +765,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
         { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
         { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
-      ]
+      ], local.perps_candle_environment)
     },
     {
       name             = "plether-insights-worker"
@@ -791,6 +817,8 @@ resource "aws_ecs_service" "workers" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id

@@ -237,4 +237,76 @@ describe('Perps query requests', () => {
     expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
     expect(init?.credentials).toBe('omit');
   });
+
+  it('requests fixed candle pages and the mutable current candle anonymously', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => new Response(JSON.stringify({
+      data: String(input).includes('/current')
+        ? {
+            intervalSeconds: 300,
+            seriesId: 'dxy-v1',
+            configurationHash: 'sha256:test-configuration',
+            displayPriceCap: '200000000',
+            datasetGeneration: 7,
+            coverageStart: 1_600_000_000,
+            coverageEnd: 1_700_000_000,
+            coverageComplete: true,
+            finalizedThrough: 1_700_000_000,
+            candle: null,
+          }
+        : {
+            intervalSeconds: 300,
+            cursor: 1_700_100_000,
+            seriesId: 'dxy-v1',
+            configurationHash: 'sha256:test-configuration',
+            displayPriceCap: '200000000',
+            previousCursor: 1_699_950_000,
+            hasEarlier: true,
+            coverageStart: 1_600_000_000,
+            coverageEnd: 1_700_100_000,
+            coverageComplete: true,
+            finalizedThrough: 1_700_000_000,
+            datasetGeneration: 7,
+            candles: [],
+          },
+      meta: { blockNumber: 0, chainId: 421614, cached: false },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    const controller = new AbortController();
+
+    await client.getPerpsBasketCandles(300, 1_700_100_000, controller.signal);
+    await client.getPerpsBasketCurrentCandle(300, controller.signal);
+
+    expect(fetchMock.mock.calls.map(([input]) => String(input))).toEqual([
+      '/api/perps/basket/candles?interval=300&cursor=1700100000',
+      '/api/perps/basket/candles/current?interval=300',
+    ]);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init).toMatchObject({ credentials: 'omit', signal: expect.any(AbortSignal) });
+      expect(new Headers((init as RequestInit | undefined)?.headers).has('Content-Type')).toBe(false);
+    }
+  });
+
+  it('can force candle generation recovery through HTTP revalidation', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {},
+      meta: { blockNumber: 0, chainId: 421614, cached: false },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+
+    await client.getPerpsBasketCandles(60, 90_000, undefined, true);
+    await client.getPerpsBasketCurrentCandle(60, undefined, true);
+
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init?.cache).toBe('no-cache');
+      expect(init?.credentials).toBe('omit');
+    }
+  });
 });

@@ -35,6 +35,9 @@ import type {
   BasketHistory,
   BasketLatest,
   BasketHistoryRange,
+  PerpsBasketCandlePage,
+  PerpsBasketCurrentCandle,
+  PerpsCandleIntervalSeconds,
   PerpsRevealPayload,
   PerpsMarketStats,
   TestnetFaucetClaim,
@@ -463,6 +466,44 @@ export class PlethApiClient {
       credentials: 'omit',
       signal,
     });
+  }
+
+  async getPerpsBasketCandles(
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    cursor: number,
+    signal?: AbortSignal,
+    revalidate = false
+  ): Promise<Result<ApiResponse<PerpsBasketCandlePage>, PlethApiError>> {
+    const params = new URLSearchParams({
+      interval: String(intervalSeconds),
+      cursor: String(cursor),
+    });
+    return fetchApi<PerpsBasketCandlePage>(
+      this.config,
+      `/perps/basket/candles?${params.toString()}`,
+      {
+        credentials: 'omit',
+        signal,
+        cache: revalidate ? 'no-cache' : undefined,
+      }
+    );
+  }
+
+  async getPerpsBasketCurrentCandle(
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    signal?: AbortSignal,
+    revalidate = false
+  ): Promise<Result<ApiResponse<PerpsBasketCurrentCandle>, PlethApiError>> {
+    const params = new URLSearchParams({ interval: String(intervalSeconds) });
+    return fetchApi<PerpsBasketCurrentCandle>(
+      this.config,
+      `/perps/basket/candles/current?${params.toString()}`,
+      {
+        credentials: 'omit',
+        signal,
+        cache: revalidate ? 'no-cache' : undefined,
+      }
+    );
   }
 
   async getPerpsMarketStats(signal?: AbortSignal): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {

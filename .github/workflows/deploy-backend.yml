@@ -19,6 +19,12 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  # Shared with candle-admin.yml; never replace the deployed writer mode while
+  # an approved candle mutation is still running.
+  group: plether-backend-mutation-${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
@@ -411,7 +417,7 @@ jobs:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
+        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials

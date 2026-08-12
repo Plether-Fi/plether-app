@@ -63,6 +63,8 @@ main = do
                   , bicBackfillDays = cfgPythBackfillDays cfg
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 15 * 60
+                  , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                  , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
             logInfo
               "pyth_history_ingestor_started"

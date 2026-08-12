@@ -1,5 +1,7 @@
 module Plether.Pyth.RevealPayload
-  ( maxComponentPublishTimeDivergence
+  ( PythPayloadAdmission (..)
+  , classifyPythPayloadAdmission
+  , maxComponentPublishTimeDivergence
   , validatePublishTimes
   , validateLatestPublishTimes
   , validateRevealWindow
@@ -8,6 +10,28 @@ module Plether.Pyth.RevealPayload
 import Data.List (foldl')
 import Data.Text (Text)
 import qualified Data.Text as T
+
+data PythPayloadAdmission
+  = AdmitLatestPayload
+  | AdmitHistoricalPayload Integer Integer
+  deriving stock (Eq, Show)
+
+-- Route and source are independent trust inputs. Requiring them to agree keeps
+-- a latest-labelled payload from taking the non-unique parser on a historical
+-- reveal route (and vice versa).
+classifyPythPayloadAdmission
+  :: Maybe (Integer, Integer)
+  -> Text
+  -> Either Text PythPayloadAdmission
+classifyPythPayloadAdmission Nothing "backend_hermes_latest" =
+  Right AdmitLatestPayload
+classifyPythPayloadAdmission (Just (minimumTs, maximumTs)) source
+  | source `elem` ["backend_hermes_historical", "backend_hermes_reveal_backfill"] =
+      Right $ AdmitHistoricalPayload minimumTs maximumTs
+classifyPythPayloadAdmission Nothing source =
+  Left $ "historical Pyth source requires on-chain order reveal bounds: " <> source
+classifyPythPayloadAdmission (Just _) source =
+  Left $ "latest Pyth source is not valid on a historical reveal route: " <> source
 
 maxComponentPublishTimeDivergence :: Integer
 maxComponentPublishTimeDivergence = 5

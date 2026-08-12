@@ -207,7 +207,88 @@ variable "api_hostname" {
 variable "operations_alarm_sns_topic_arn" {
   type        = string
   default     = ""
-  description = "Optional SNS topic ARN for AA gas-usage and keeper-health CloudWatch alarms."
+  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet."
+
+  validation {
+    condition = var.operations_alarm_sns_topic_arn == trimspace(var.operations_alarm_sns_topic_arn) && (
+      var.operations_alarm_sns_topic_arn == "" || can(
+        regex("^arn:(aws|aws-us-gov|aws-cn):sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+(\\.fifo)?$", var.operations_alarm_sns_topic_arn)
+      )
+    )
+    error_message = "operations_alarm_sns_topic_arn must be empty or a valid, whitespace-free SNS topic ARN with a 12-digit AWS account ID."
+  }
+}
+
+variable "perps_candle_write_mode" {
+  type        = string
+  default     = "off"
+  description = "Controls additive OHLCV rollup writes. Keep off until the candle schema is migrated, then enable dual writing per environment."
+
+  validation {
+    condition     = contains(["off", "dual"], var.perps_candle_write_mode)
+    error_message = "perps_candle_write_mode must be off or dual."
+  }
+}
+
+variable "perps_candle_read_mode" {
+  type        = string
+  default     = "legacy"
+  description = "Selects the Perps basket-history read source. Rollup mode remains coverage-gated in the backend; shadow is reserved and has no v1 runtime behavior."
+
+  validation {
+    condition     = contains(["legacy", "shadow", "rollup"], var.perps_candle_read_mode)
+    error_message = "perps_candle_read_mode must be legacy, shadow, or rollup."
+  }
+}
+
+variable "perps_candle_read_intervals" {
+  type        = string
+  default     = ""
+  description = "Comma-separated canonical candle intervals enabled for rollup reads during a canary. Empty keeps every rollup endpoint disabled."
+
+  validation {
+    condition = alltrue([
+      for token in regexall("[^,[:space:]]+", var.perps_candle_read_intervals) :
+      contains(["60", "180", "300", "900", "1800", "3600", "86400"], token)
+    ])
+    error_message = "perps_candle_read_intervals may contain only 60, 180, 300, 900, 1800, 3600, or 86400, separated by commas or whitespace."
+  }
+}
+
+variable "perps_candle_shadow_sample_bps" {
+  type        = number
+  default     = 0
+  description = "Reserved for a future bounded shadow comparator; this value has no v1 runtime effect and should remain zero."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_shadow_sample_bps) == var.perps_candle_shadow_sample_bps
+      && var.perps_candle_shadow_sample_bps >= 0
+      && var.perps_candle_shadow_sample_bps <= 10000
+    )
+    error_message = "perps_candle_shadow_sample_bps must be a whole number between 0 and 10000."
+  }
+}
+
+variable "perps_candle_strict_coverage" {
+  type        = bool
+  default     = true
+  description = "Require complete price and volume coverage before a rollup page may be served."
+}
+
+variable "perps_candle_lateness_seconds" {
+  type        = number
+  default     = 120
+  description = "Minimum source-watermark delay before a price candle is considered finalized, from 0 to 86400 seconds."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_lateness_seconds) == var.perps_candle_lateness_seconds
+      && var.perps_candle_lateness_seconds >= 0
+      && var.perps_candle_lateness_seconds <= 86400
+    )
+    error_message = "perps_candle_lateness_seconds must be a whole number between 0 and 86400."
+  }
 }
 
 variable "db_password" {
@@ -424,6 +505,11 @@ variable "workers_desired_count" {
   type        = number
   default     = 1
   description = "Desired task count for the consolidated workers service."
+
+  validation {
+    condition     = floor(var.workers_desired_count) == var.workers_desired_count && var.workers_desired_count >= 0
+    error_message = "workers_desired_count must be a non-negative whole number."
+  }
 }
 
 variable "container_cpu" {
@@ -449,4 +535,95 @@ variable "workers_container_memory" {
 variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"
+}
+
+variable "db_backup_retention_days" {
+  type        = number
+  default     = 7
+  description = "Automated RDS backup retention. Production rollup migrations require at least seven days."
+
+  validation {
+    condition = (
+      floor(var.db_backup_retention_days) == var.db_backup_retention_days
+      && var.db_backup_retention_days >= 1
+      && var.db_backup_retention_days <= 35
+    )
+    error_message = "db_backup_retention_days must be a whole number between 1 and 35."
+  }
+}
+
+variable "db_max_allocated_storage" {
+  type        = number
+  default     = 100
+  description = "RDS storage autoscaling ceiling in GiB."
+
+  validation {
+    condition     = floor(var.db_max_allocated_storage) == var.db_max_allocated_storage && var.db_max_allocated_storage >= 50
+    error_message = "db_max_allocated_storage must be a whole number of at least 50 GiB."
+  }
+}
+
+variable "db_deletion_protection" {
+  type        = bool
+  default     = true
+  description = "Protect the RDS instance from accidental deletion."
+}
+
+variable "db_skip_final_snapshot" {
+  type        = bool
+  default     = false
+  description = "Skip the final database snapshot during destruction. Keep false outside disposable environments."
+}
+
+variable "db_final_snapshot_identifier" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Region-unique identifier for this DB lifecycle's final snapshot. Required when final snapshots are enabled; choose a new value before recreating the DB so an earlier retained snapshot cannot block deletion."
+
+  validation {
+    condition = var.db_final_snapshot_identifier == null || try(
+      length(var.db_final_snapshot_identifier) <= 255
+      && can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.db_final_snapshot_identifier))
+      && !strcontains(var.db_final_snapshot_identifier, "--"),
+      false
+    )
+    error_message = "db_final_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
+  }
+}
+
+variable "rds_free_storage_alarm_bytes" {
+  type        = number
+  default     = 5368709120
+  description = "Free RDS storage threshold for the operational alarm (5 GiB by default)."
+
+  validation {
+    condition     = var.rds_free_storage_alarm_bytes > 0
+    error_message = "rds_free_storage_alarm_bytes must be greater than zero."
+  }
+}
+
+variable "rds_freeable_memory_alarm_bytes" {
+  type        = number
+  default     = 134217728
+  description = "Freeable RDS memory threshold for the operational alarm (128 MiB by default)."
+
+  validation {
+    condition     = var.rds_freeable_memory_alarm_bytes > 0
+    error_message = "rds_freeable_memory_alarm_bytes must be greater than zero."
+  }
+}
+
+variable "rds_database_connections_alarm_threshold" {
+  type        = number
+  default     = 60
+  description = "Database connection count that triggers an operational alarm."
+
+  validation {
+    condition = (
+      floor(var.rds_database_connections_alarm_threshold) == var.rds_database_connections_alarm_threshold
+      && var.rds_database_connections_alarm_threshold > 0
+    )
+    error_message = "rds_database_connections_alarm_threshold must be a positive whole number."
+  }
 }

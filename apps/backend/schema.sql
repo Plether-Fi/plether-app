@@ -1,3 +1,5 @@
+\set ON_ERROR_STOP on
+
 -- Plether Transaction History Schema
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -358,3 +360,181 @@ CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_scan
 CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending
     ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC)
     WHERE pending_tx_hash IS NOT NULL;
+
+-- Incrementally maintained Perps basket OHLCV read model. These five tables are
+-- safe to bootstrap before the Perps history indexer schema exists. Historical
+-- population and the concurrent perps_events/perps_account_activity backfill
+-- and block-rewind indexes are installed by `plether-candle-admin migrate` after
+-- ensurePerpsHistorySchema has created the source tables. Keeping CREATE INDEX
+-- CONCURRENTLY out of this fresh bootstrap prevents references to source tables
+-- that do not exist yet.
+
+CREATE TABLE IF NOT EXISTS perps_basket_definitions (
+    series_id TEXT PRIMARY KEY,
+    definition_version TEXT NOT NULL,
+    configuration_hash TEXT NOT NULL,
+    configuration JSONB NOT NULL,
+    effective_from BIGINT NOT NULL,
+    effective_to BIGINT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (configuration_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (effective_from >= 0),
+    CHECK (effective_to IS NULL OR effective_to > effective_from)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_definitions_effective
+    ON perps_basket_definitions(active, effective_from DESC);
+
+CREATE TABLE IF NOT EXISTS perps_basket_observations (
+    series_id TEXT NOT NULL REFERENCES perps_basket_definitions(series_id),
+    observation_id TEXT NOT NULL,
+    publish_time BIGINT NOT NULL,
+    basket_price BIGINT NOT NULL,
+    component_prices JSONB NOT NULL,
+    source TEXT NOT NULL,
+    source_priority INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (series_id, observation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_observations_series_time
+    ON perps_basket_observations(series_id, publish_time, source_priority DESC, observation_id);
+
+CREATE TABLE IF NOT EXISTS perps_basket_candles (
+    series_id TEXT NOT NULL REFERENCES perps_basket_definitions(series_id),
+    interval_seconds BIGINT NOT NULL,
+    bucket_start BIGINT NOT NULL,
+    raw_open_price BIGINT NOT NULL,
+    raw_high_price BIGINT NOT NULL,
+    raw_low_price BIGINT NOT NULL,
+    raw_close_price BIGINT NOT NULL,
+    first_observation_time BIGINT NOT NULL,
+    last_observation_time BIGINT NOT NULL,
+    sample_count INTEGER NOT NULL,
+    quality TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    finalized BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (series_id, interval_seconds, bucket_start),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    CHECK (bucket_start % interval_seconds = 0),
+    CHECK (sample_count > 0),
+    CHECK (revision > 0),
+    CHECK (quality IN ('observed', 'legacy_sampled', 'mixed')),
+    CHECK (raw_high_price >= GREATEST(raw_open_price, raw_close_price)),
+    CHECK (raw_low_price <= LEAST(raw_open_price, raw_close_price)),
+    CHECK (last_observation_time >= first_observation_time)
+);
+
+CREATE TABLE IF NOT EXISTS perps_market_volume_rollups (
+    chain_id BIGINT NOT NULL,
+    release_router TEXT NOT NULL,
+    interval_seconds BIGINT NOT NULL,
+    bucket_start BIGINT NOT NULL,
+    -- Exact ABS(size_delta) * price numerator; division happens only at API output.
+    volume_numerator NUMERIC(78,0) NOT NULL,
+    trade_count BIGINT NOT NULL,
+    first_source_block BIGINT NOT NULL,
+    last_source_block BIGINT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    finalized BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, release_router, interval_seconds, bucket_start),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    CHECK (bucket_start % interval_seconds = 0),
+    CHECK (volume_numerator >= 0),
+    CHECK (trade_count > 0),
+    CHECK (revision > 0),
+    CHECK (last_source_block >= first_source_block)
+);
+
+CREATE TABLE IF NOT EXISTS perps_rollup_coverage (
+    kind TEXT NOT NULL,
+    series_id TEXT NOT NULL DEFAULT '',
+    chain_id BIGINT NOT NULL DEFAULT 0,
+    release_router TEXT NOT NULL DEFAULT '',
+    interval_seconds BIGINT NOT NULL,
+    coverage_start BIGINT,
+    coverage_end BIGINT,
+    finalized_through BIGINT,
+    generation BIGINT NOT NULL DEFAULT 1,
+    complete BOOLEAN NOT NULL DEFAULT FALSE,
+    derivation_version TEXT NOT NULL,
+    last_error TEXT,
+    maintenance_from BIGINT,
+    maintenance_to BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (kind, series_id, chain_id, release_router, interval_seconds),
+    CHECK (kind IN ('price', 'volume')),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    -- Two 26-bit source generations are packed into one JS-safe API integer.
+    CHECK (generation > 0 AND generation < 67108864),
+    CHECK (
+        (kind = 'price' AND series_id <> '' AND chain_id = 0 AND release_router = '') OR
+        (kind = 'volume' AND series_id = '' AND chain_id > 0 AND release_router <> '')
+    ),
+    CHECK ((coverage_start IS NULL) = (coverage_end IS NULL)),
+    CHECK (coverage_start IS NULL OR coverage_start >= 0),
+    CHECK (coverage_end IS NULL OR coverage_end >= 0),
+    CHECK (finalized_through IS NULL OR finalized_through >= 0),
+    CHECK (coverage_start IS NULL OR coverage_start % interval_seconds = 0),
+    CHECK (coverage_end IS NULL OR coverage_end % interval_seconds = 0),
+    CHECK (finalized_through IS NULL OR finalized_through % interval_seconds = 0),
+    CHECK (coverage_start IS NULL OR coverage_end > coverage_start),
+    CHECK (finalized_through IS NULL OR coverage_start IS NULL OR finalized_through >= coverage_start),
+    CHECK (finalized_through IS NULL OR coverage_end IS NULL OR finalized_through <= coverage_end),
+    CONSTRAINT perps_rollup_coverage_maintenance_state_check CHECK (
+        (
+            last_error IS NOT DISTINCT FROM 'bounded_admin_repair' AND
+            NOT complete AND
+            maintenance_from IS NOT NULL AND
+            maintenance_to IS NOT NULL AND
+            maintenance_from >= 0 AND
+            maintenance_to > maintenance_from AND
+            maintenance_from % 60 = 0 AND
+            maintenance_to % 60 = 0
+        ) OR (
+            last_error IS DISTINCT FROM 'bounded_admin_repair' AND
+            maintenance_from IS NULL AND
+            maintenance_to IS NULL
+        )
+    )
+);
+
+-- Existing installations need the maintenance metadata added independently of
+-- CREATE TABLE IF NOT EXISTS. These statements are additive and idempotent.
+ALTER TABLE perps_rollup_coverage
+    ADD COLUMN IF NOT EXISTS maintenance_from BIGINT;
+ALTER TABLE perps_rollup_coverage
+    ADD COLUMN IF NOT EXISTS maintenance_to BIGINT;
+DO $maintenance_constraint$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'perps_rollup_coverage_maintenance_state_check'
+          AND conrelid = 'perps_rollup_coverage'::regclass
+    ) THEN
+        ALTER TABLE perps_rollup_coverage
+            ADD CONSTRAINT perps_rollup_coverage_maintenance_state_check CHECK (
+                (
+                    last_error IS NOT DISTINCT FROM 'bounded_admin_repair' AND
+                    NOT complete AND
+                    maintenance_from IS NOT NULL AND
+                    maintenance_to IS NOT NULL AND
+                    maintenance_from >= 0 AND
+                    maintenance_to > maintenance_from AND
+                    maintenance_from % 60 = 0 AND
+                    maintenance_to % 60 = 0
+                ) OR (
+                    last_error IS DISTINCT FROM 'bounded_admin_repair' AND
+                    maintenance_from IS NULL AND
+                    maintenance_to IS NULL
+                )
+            );
+    END IF;
+END
+$maintenance_constraint$;

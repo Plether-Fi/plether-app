@@ -84,6 +84,7 @@ export interface TradingViewSymbolInfo {
   data_status: 'streaming'
   visible_plots_set: 'ohlc' | 'ohlcv'
   volume_precision?: number
+  has_empty_bars?: boolean
 }
 
 export interface TradingViewSearchResult {

@@ -13,17 +13,54 @@ import Plether.Perps.HistoryIndexer
   , ParsedPerpsLog (..)
   , RpcLog (..)
   , TradeCosts (..)
+  , canCertifyIndexedRange
   , decodeCloseTradeCosts
   , decodeOpenTradeCosts
+  , isMarketVolumeActivity
   , orderFailReasonName
   , parsePerpsLog
   , terminalStatus
+  , validateIndexedBoundary
   , validateRpcLogBlockHash
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "canCertifyIndexedRange" $ do
+    it "allows the configured first range and the exact range after a cursor" $ do
+      canCertifyIndexedRange 1_000 0 1_000 1_099 `shouldBe` True
+      canCertifyIndexedRange 1_000 1_099 1_100 1_199 `shouldBe` True
+
+    it "does not certify a disjoint future backfill" $
+      canCertifyIndexedRange 1_000 1_099 1_200 1_299 `shouldBe` False
+
+    it "does not certify historical or overlapping replays" $ do
+      canCertifyIndexedRange 1_000 1_299 1_000 1_099 `shouldBe` False
+      canCertifyIndexedRange 1_000 1_099 1_050 1_199 `shouldBe` False
+
+    it "rejects an empty or reversed range" $
+      canCertifyIndexedRange 1_000 1_099 1_100 1_099 `shouldBe` False
+
+  describe "validateIndexedBoundary" $ do
+    let boundary =
+          BlockInfo
+            { biNumber = 1_099
+            , biHash = "0xABCDEF"
+            , biTimestamp = 1_785_437_841
+            }
+
+    it "accepts the persisted boundary block and normalized hash" $
+      validateIndexedBoundary 1_099 "abcdef" boundary `shouldBe` Right ()
+
+    it "rejects a different boundary block" $
+      validateIndexedBoundary 1_098 "0xabcdef" boundary
+        `shouldBe` Left "Canonical cursor boundary block number changed before commit"
+
+    it "rejects a provider or fork switch at the boundary" $
+      validateIndexedBoundary 1_099 "0xdifferent" boundary
+        `shouldBe` Left "Canonical cursor boundary block hash changed before commit"
+
   describe "validateRpcLogBlockHash" $ do
     let logEntry = mkLog orderExecutedTopic [word 42] (word 101250000)
         canonicalBlock =
@@ -111,6 +148,22 @@ spec = do
     it "matches deployed OrderFailReason ordinals" $ do
       map orderFailReasonName [0 .. 5]
         `shouldBe` ["Expired", "CloseOnly", "SlippageExceeded", "EnginePanic", "AccountLiquidated", "EngineRevert"]
+
+  describe "isMarketVolumeActivity" $ do
+    let payload = object []
+        position kind price size =
+          ParsedPositionActivity kind testAccount 0 price size Nothing Nothing payload
+
+    it "accepts only canonical notional-bearing lifecycle events" $ do
+      isMarketVolumeActivity (position "Open" (Just 101_000_000) (Just 1_000)) `shouldBe` True
+      isMarketVolumeActivity (position "Close" (Just 99_000_000) (Just 500)) `shouldBe` True
+      isMarketVolumeActivity (position "Liquidated" (Just 98_000_000) (Just 250)) `shouldBe` True
+
+    it "rejects incomplete and non-volume activity" $ do
+      isMarketVolumeActivity (position "Open" Nothing (Just 1_000)) `shouldBe` False
+      isMarketVolumeActivity (position "Close" (Just 99_000_000) Nothing) `shouldBe` False
+      isMarketVolumeActivity (position "Unknown" (Just 99_000_000) (Just 500)) `shouldBe` False
+      isMarketVolumeActivity (ParsedMarginActivity "Deposit" testAccount 100 payload) `shouldBe` False
 
   describe "trade cost previews" $ do
     it "recovers an open fee from trade cost even when the preview is otherwise invalid" $ do

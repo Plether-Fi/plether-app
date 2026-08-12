@@ -22,14 +22,15 @@ RUN cabal update && cabal build --only-dependencies
 COPY apps/backend/app/ app/
 COPY apps/backend/src/ src/
 COPY apps/backend/test/ test/
-RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-insights-worker exe:plether-insights-admin && \
+RUN cabal build exe:plether-api exe:plether-basket-worker exe:plether-keeper exe:plether-liquidation-worker exe:plether-perps-indexer exe:plether-insights-worker exe:plether-insights-admin exe:plether-candle-admin && \
     cp "$(cabal list-bin plether-api)" /build/plether-api-bin && \
     cp "$(cabal list-bin plether-basket-worker)" /build/plether-basket-worker-bin && \
     cp "$(cabal list-bin plether-keeper)" /build/plether-keeper-bin && \
     cp "$(cabal list-bin plether-liquidation-worker)" /build/plether-liquidation-worker-bin && \
     cp "$(cabal list-bin plether-perps-indexer)" /build/plether-perps-indexer-bin && \
     cp "$(cabal list-bin plether-insights-worker)" /build/plether-insights-worker-bin && \
-    cp "$(cabal list-bin plether-insights-admin)" /build/plether-insights-admin-bin
+    cp "$(cabal list-bin plether-insights-admin)" /build/plether-insights-admin-bin && \
+    cp "$(cabal list-bin plether-candle-admin)" /build/plether-candle-admin-bin
 
 FROM node:22-bookworm-slim AS oracle-worker
 
@@ -51,6 +52,7 @@ COPY --from=builder /build/plether-liquidation-worker-bin /usr/local/bin/plether
 COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perps-indexer
 COPY --from=builder /build/plether-insights-worker-bin /usr/local/bin/plether-insights-worker
 COPY --from=builder /build/plether-insights-admin-bin /usr/local/bin/plether-insights-admin
+COPY --from=builder /build/plether-candle-admin-bin /usr/local/bin/plether-candle-admin
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json

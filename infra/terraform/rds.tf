@@ -10,17 +10,38 @@ resource "aws_db_instance" "postgres" {
   instance_class = var.db_instance_class
 
   allocated_storage     = 20
-  max_allocated_storage = 50
+  max_allocated_storage = var.db_max_allocated_storage
   storage_encrypted     = false
 
   db_name  = "plether"
   username = var.db_username
   password = var.db_password
 
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  vpc_security_group_ids = [aws_security_group.rds.id]
-  publicly_accessible    = false
-  skip_final_snapshot    = true
+  db_subnet_group_name      = aws_db_subnet_group.main.name
+  vpc_security_group_ids    = [aws_security_group.rds.id]
+  publicly_accessible       = false
+  deletion_protection       = var.db_deletion_protection
+  skip_final_snapshot       = var.db_skip_final_snapshot
+  final_snapshot_identifier = var.db_skip_final_snapshot ? null : var.db_final_snapshot_identifier
 
-  backup_retention_period = 0
+  backup_retention_period = var.db_backup_retention_days
+
+  lifecycle {
+    precondition {
+      condition = var.db_skip_final_snapshot || try(
+        length(trimspace(var.db_final_snapshot_identifier)) > 0,
+        false
+      )
+      error_message = "db_final_snapshot_identifier must be set to a region-unique value when db_skip_final_snapshot is false. Use a new value before each recreated DB lifecycle."
+    }
+
+    precondition {
+      condition = var.environment != "mainnet" || (
+        var.db_backup_retention_days >= 7
+        && var.db_deletion_protection
+        && !var.db_skip_final_snapshot
+      )
+      error_message = "Mainnet requires at least seven days of RDS backups, deletion protection, and a final snapshot on deletion."
+    }
+  }
 }

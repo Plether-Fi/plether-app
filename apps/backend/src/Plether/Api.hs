@@ -13,12 +13,14 @@ import Data.Int (Int64)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
+import Data.Text.Encoding.Error (lenientDecode)
 import qualified Data.Text.Lazy as LT
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware)
+import Network.Wai (Middleware, queryString)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -26,16 +28,24 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.Config (Config (..))
+import Plether.Config (Config (..), perpsCandleRollupReadEnabled)
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import Plether.Handlers.Perps
   ( BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
+  , BasketCandleFetch (..)
+  , BasketCandleTimings (..)
+  , basketCandleServerTiming
+  , basketCandleTimingMetrics
+  , coverageLagSeconds
   , basketHistoryServerTiming
   , basketHistoryTimingMetrics
   , durationMilliseconds
   , getBasketHistoryTimed
+  , getBasketCandlePageTimed
+  , getBasketCurrentCandleTimed
+  , isBoundedComponentHistoryRequest
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
@@ -76,7 +86,14 @@ import Plether.Handlers.Insights
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
 import Plether.Types.History (HistoryParams (..))
-import Plether.Types.Perps (BasketHistoryParams (..), defaultBasketHistoryParams)
+import Plether.Types.Perps
+  ( BasketHistoryParams (..)
+  , defaultBasketHistoryParams
+  , isAlignedBasketCandleCursor
+  , hasExactBasketCandleQueryKeys
+  , isBasketCandleCursorWithinFutureBound
+  , isCanonicalBasketCandleInterval
+  )
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
@@ -91,6 +108,7 @@ import Web.Scotty
   , post
   , queryParamMaybe
   , raw
+  , request
   , setHeader
   , status
   )
@@ -369,15 +387,100 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   get "/api/perps/basket/history" $ do
     handlerStartedAt <- liftIO getMonotonicTimeNSec
     params <- basketHistoryParams
-    case mPool of
-      Just pool -> do
-        result <- liftIO $ getBasketHistoryTimed pool cfg params
-        case result of
-          Left err -> handleError err
-          Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
-      Nothing ->
-        handleServiceUnavailable $
-          E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
+    if not $ isBoundedComponentHistoryRequest params
+      then
+        handleError $
+          E.invalidAmount "component history is restricted to range=24h and interval=3600"
+      else case mPool of
+        Just pool -> do
+          result <- liftIO $ getBasketHistoryTimed pool cfg params
+          case result of
+            Left err -> handleError err
+            Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
+
+  get "/api/perps/basket/candles" $ do
+    handlerStartedAt <- liftIO getMonotonicTimeNSec
+    queryKeys <- currentQueryKeys
+    if not $ hasExactBasketCandleQueryKeys ["interval", "cursor"] queryKeys
+      then
+        handleError $
+          E.invalidAmount "exactly one interval and one cursor query parameter are required"
+      else do
+        now <- floor <$> liftIO getPOSIXTime
+        mInterval <- queryParamMaybe "interval"
+        mCursor <- queryParamMaybe "cursor"
+        case (mInterval >>= parsePositiveInteger, mCursor >>= parsePositiveInteger, mPool) of
+          (Just interval, Just cursor, Just pool)
+            | not (isCanonicalBasketCandleInterval interval) ->
+                handleError $
+                  E.invalidAmount
+                    "interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400"
+            | not $
+                perpsCandleRollupReadEnabled
+                  (cfgPerpsCandleReadMode cfg)
+                  (cfgPerpsCandleStrictCoverage cfg)
+                  (cfgPerpsCandleReadIntervals cfg)
+                  interval ->
+                handleError $
+                  E.notFound "Strict candle rollup reads are not enabled for this interval"
+            | not (isAlignedBasketCandleCursor interval cursor) ->
+                handleError $
+                  E.invalidAmount
+                    "cursor must be a positive Unix timestamp aligned to interval * 500"
+            | not (isBasketCandleCursorWithinFutureBound now interval cursor) ->
+                handleError $
+                  E.invalidAmount "cursor is too far ahead of the backend clock"
+            | otherwise -> do
+                result <- liftIO $ getBasketCandlePageTimed pool cfg interval cursor
+                case result of
+                  Left err -> handleError err
+                  Right fetch ->
+                    handleBasketCandleResult handlerStartedAt "historical" interval fetch
+          (Nothing, _, _) ->
+            handleError $ E.invalidAmount "interval must be a positive integer"
+          (_, Nothing, _) ->
+            handleError $ E.invalidAmount "cursor must be a positive integer"
+          (_, _, Nothing) ->
+            handleServiceUnavailable $
+              E.internalError "DATABASE_URL is not configured; perps basket candles are unavailable"
+
+  get "/api/perps/basket/candles/current" $ do
+    handlerStartedAt <- liftIO getMonotonicTimeNSec
+    queryKeys <- currentQueryKeys
+    if not $ hasExactBasketCandleQueryKeys ["interval"] queryKeys
+      then
+        handleError $
+          E.invalidAmount "exactly one interval query parameter is required"
+      else do
+        mInterval <- queryParamMaybe "interval"
+        case (mInterval >>= parsePositiveInteger, mPool) of
+          (Just interval, Just pool)
+            | not (isCanonicalBasketCandleInterval interval) ->
+                handleError $
+                  E.invalidAmount
+                    "interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400"
+            | not $
+                perpsCandleRollupReadEnabled
+                  (cfgPerpsCandleReadMode cfg)
+                  (cfgPerpsCandleStrictCoverage cfg)
+                  (cfgPerpsCandleReadIntervals cfg)
+                  interval ->
+                handleError $
+                  E.notFound "Strict candle rollup reads are not enabled for this interval"
+            | otherwise -> do
+                result <- liftIO $ getBasketCurrentCandleTimed pool cfg interval
+                case result of
+                  Left err -> handleError err
+                  Right fetch ->
+                    handleBasketCandleResult handlerStartedAt "current" interval fetch
+          (Nothing, _) ->
+            handleError $ E.invalidAmount "interval must be a positive integer"
+          (_, Nothing) ->
+            handleServiceUnavailable $
+              E.internalError "DATABASE_URL is not configured; current perps basket candle is unavailable"
 
   get "/api/perps/basket/latest" $ do
     case mPool of
@@ -536,6 +639,74 @@ handleBasketHistoryResult handlerStartedAt params fetch = do
   status status200
   raw body
 
+handleBasketCandleResult
+  :: (ToJSON a)
+  => Word64
+  -> Text
+  -> Integer
+  -> BasketCandleFetch a
+  -> ActionM ()
+handleBasketCandleResult handlerStartedAt requestKind interval fetch = do
+  encodeStartedAt <- liftIO getMonotonicTimeNSec
+  let body = Aeson.encode $ bcfResponse fetch
+  bodyBytes <- liftIO $ evaluate $ LBS.length body
+  encodeFinishedAt <- liftIO getMonotonicTimeNSec
+  let timings =
+        BasketCandleTimings
+          { bctBackendTotalNs = encodeFinishedAt - handlerStartedAt
+          , bctDbPoolWaitNs = bcfPoolWaitNs fetch
+          , bctQueryNs = bcfQueryNs fetch
+          , bctResponseEncodeNs = encodeFinishedAt - encodeStartedAt
+          }
+  liftIO $ logBasketCandleTimings requestKind interval fetch bodyBytes timings
+  setHeader "Content-Type" "application/json"
+  setHeader "Server-Timing" $ LT.fromStrict $ basketCandleServerTiming timings
+  status status200
+  raw body
+
+logBasketCandleTimings
+  :: Text
+  -> Integer
+  -> BasketCandleFetch a
+  -> Int64
+  -> BasketCandleTimings
+  -> IO ()
+logBasketCandleTimings requestKind interval fetch bodyBytes timings = do
+  now <- floor <$> getPOSIXTime
+  let finalizedThrough = bcfFinalizedThrough fetch
+      -- A coarse interval's finalized watermark is intentionally bucket
+      -- aligned, so its absolute age can approach the full interval without
+      -- indicating ingestion lag. Alarm on delay beyond that expected bucket
+      -- age instead of making daily candles permanently breach a five-minute
+      -- threshold.
+      lagSeconds = max 0 $ coverageLagSeconds now finalizedThrough - interval
+  logInfoEvery
+    10
+    "perps_candle_request_timing"
+    "Perps basket candle request completed"
+    $ [ field "request_kind" requestKind
+      , field "interval_seconds" interval
+      , field "read_source" $ bcfReadSource fetch
+      , field "rows" $ bcfRowCount fetch
+      , field "dataset_generation" $ bcfDatasetGeneration fetch
+      , field "response_bytes" bodyBytes
+      , field "query_ms" $ durationMilliseconds $ bcfQueryNs fetch
+      ]
+        <> map
+          (\(metric, duration) -> field (Key.fromText $ metric <> "_ms") $ durationMilliseconds duration)
+          (basketCandleTimingMetrics timings)
+  logInfoEvery
+    60
+    "perps_candle_coverage"
+    "Perps candle rollup coverage observed"
+    [ field "interval_seconds" interval
+    , field "read_source" $ bcfReadSource fetch
+    , field "coverage_available" $ maybe False (const True) finalizedThrough
+    , field "lag_seconds" lagSeconds
+    , field "dataset_generation" $ bcfDatasetGeneration fetch
+    , field "complete" True
+    ]
+
 logBasketHistoryTimings
   :: BasketHistoryParams
   -> BasketHistoryFetch
@@ -550,6 +721,7 @@ logBasketHistoryTimings params fetch bodyBytes timings =
     $ [ field "range" $ bhpRange params
       , field "interval_seconds" $ bhpIntervalSeconds params
       , field "include_components" $ bhpIncludeComponents params
+      , field "read_source" $ bhfReadSource fetch
       , field "snapshot_rows" $ bhfSnapshotRows fetch
       , field "volume_rows" $ bhfVolumeRows fetch
       , field "response_bytes" bodyBytes
@@ -576,6 +748,14 @@ handleServiceUnavailable err = do
   setHeader "Content-Type" "application/json"
   status status503
   json err
+
+currentQueryKeys :: ActionM [Text]
+currentQueryKeys = do
+  req <- request
+  pure $
+    map
+      (Data.Text.Encoding.decodeUtf8With lenientDecode . fst)
+      (queryString req)
 
 parseAmount :: Text -> Maybe Integer
 parseAmount txt =

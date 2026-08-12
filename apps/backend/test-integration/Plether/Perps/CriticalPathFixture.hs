@@ -77,6 +77,7 @@ import Network.Wai
   )
 import Network.Wai.Handler.Warp (testWithApplication)
 import Numeric (showHex)
+import Plether.Config (PerpsCandleWriteMode (PerpsCandleWritesOff))
 import Plether.Ethereum.Abi
   ( encodeAddress
   , encodeCall
@@ -218,6 +219,8 @@ testIndexerConfig chain =
     , picPollIntervalMicros = 1_000_000
     , picIndexerName = perpsIndexerName
     , picMode = PerpsIndexerOnce
+    , picCandleWriteMode = PerpsCandleWritesOff
+    , picCandleLatenessSeconds = 120
     }
 
 fixtureApplication
