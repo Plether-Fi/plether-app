@@ -32,6 +32,9 @@ db_instance_class          = "db.t4g.small"
 # Re-size from measured mainnet demand before first creation; allocated storage
 # cannot be reduced in place.
 db_allocated_storage       = 20
+# Desired final/new-instance type. Preserve a live gp2 value until any pending
+# retention/PITR activation completes, then plan gp3 separately.
+db_storage_type            = "gp3"
 db_backup_retention_days   = 7
 db_max_allocated_storage   = 100
 db_deletion_protection     = true

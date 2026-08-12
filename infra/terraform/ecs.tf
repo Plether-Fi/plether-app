@@ -110,6 +110,11 @@ locals {
     name              = "otel-log-router"
     image             = "${aws_ecr_repository.otel_log_router.repository_url}:latest"
     essential         = true
+    mountPoints       = []
+    portMappings      = []
+    systemControls    = []
+    user              = "0"
+    volumesFrom       = []
     memoryReservation = 128
     stopTimeout       = 120
 
@@ -149,6 +154,8 @@ resource "aws_ecs_task_definition" "api" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -164,8 +171,13 @@ resource "aws_ecs_task_definition" "api" {
 
     portMappings = [{
       containerPort = 3001
+      hostPort      = 3001
       protocol      = "tcp"
     }]
+
+    mountPoints    = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -264,6 +276,8 @@ resource "aws_ecs_task_definition" "keeper" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -275,6 +289,11 @@ resource "aws_ecs_task_definition" "keeper" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-keeper"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -336,6 +355,8 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -347,6 +368,11 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-liquidation-worker"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -414,6 +440,8 @@ resource "aws_ecs_task_definition" "basket_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -427,6 +455,11 @@ resource "aws_ecs_task_definition" "basket_worker" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -491,6 +524,8 @@ resource "aws_ecs_task_definition" "perps_indexer" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -504,6 +539,11 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-perps-indexer", "--loop"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -566,6 +606,8 @@ resource "aws_ecs_task_definition" "insights_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -579,6 +621,11 @@ resource "aws_ecs_task_definition" "insights_worker" {
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -636,6 +683,8 @@ resource "aws_ecs_task_definition" "workers" {
   memory                   = var.workers_container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
@@ -651,6 +700,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["plether-keeper"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -686,6 +740,11 @@ resource "aws_ecs_task_definition" "workers" {
       command          = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
       logConfiguration = local.posthog_log_configuration
 
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+
       secrets = concat([
         {
           name      = "RPC_URL"
@@ -715,6 +774,11 @@ resource "aws_ecs_task_definition" "workers" {
       command          = ["node", "/app/oracle/scripts/perps-oracle-worker.mjs", "--loop"]
       logConfiguration = local.posthog_log_configuration
 
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+
       secrets = [
         {
           name      = "ARBITRUM_SEPOLIA_RPC_URL"
@@ -741,6 +805,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["plether-perps-indexer", "--loop"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -774,6 +843,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {

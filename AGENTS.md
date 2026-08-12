@@ -37,6 +37,18 @@ If the network-enabled checks confirm that authentication is genuinely unavailab
 gh auth login --hostname github.com --git-protocol ssh --web --scopes workflow
 ```
 
+### AWS CLI authentication
+
+Use the named AWS CLI profile `plether` for deployments and Terraform verification. Set `AWS_PROFILE=plether` on Terraform commands so the provider uses the same authenticated session. Before AWS work, verify the active identity with:
+
+```bash
+aws --profile plether sts get-caller-identity
+```
+
+Never infer that `plether` credentials expired from the default AWS profile or from a connection, DNS, or timeout error in a restricted sandbox. If the named-profile check encounters a connectivity problem, rerun that exact check with network access outside the restricted sandbox. Request authentication help only when the network-enabled `plether` check reaches AWS and returns an explicit credential error.
+
+Do not blindly run `aws login --profile plether`. This repository's pinned Terraform AWS provider does not consume the CLI's newer `login_session` configuration directly, and the current `plether` profile uses the shared credentials file. Follow the profile's configured authentication method; migrating it to AWS login requires a compatible `credential_process` bridge or a provider upgrade and removal of credentials that would take precedence. A browser may be used only when the chosen CLI authentication method itself requires interaction; use the AWS CLI and Terraform, not a browser, to deploy or inspect AWS resources.
+
 ### Sepolia
 
 A push to `master` targets mainnet in the deployment workflows. Sepolia therefore requires explicit manual workflow dispatches from `master`.
