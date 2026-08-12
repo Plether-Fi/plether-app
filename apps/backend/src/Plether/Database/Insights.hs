@@ -3,6 +3,8 @@ module Plether.Database.Insights
   , CompetitionSeedMetadata (..)
   , CompetitionSeedMismatch (..)
   , ParticipantRow (..)
+  , BulkParticipantAppendResult (..)
+  , RosterSnapshotVerification (..)
   , SnapshotKind (..)
   , AccountSnapshotInput (..)
   , LeaderboardRow (..)
@@ -15,8 +17,12 @@ module Plether.Database.Insights
   , isLegacyPaymentDeadlineOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
+  , getCompetitionParticipantTraderReferenceByAlias
   , stageCompetitionParticipantWalletRemap
   , applyCompetitionParticipantWalletRemaps
+  , bulkApplyCompetitionParticipantWalletRemaps
+  , bulkAppendCompetitionParticipants
+  , verifyCompetitionRosterSnapshots
   , setParticipantEligibility
   , finalizeCompetition
   , listCompetitionParticipants
@@ -36,6 +42,7 @@ module Plether.Database.Insights
   , leaderboardQuerySql
   , leaderboardOrderBySql
   , insightsDataStatusQuerySql
+  , rosterSnapshotVerificationQuerySql
   , snapshotBatchAccessIndexSql
   , walletActivityQuerySql
   , snapshotKindText
@@ -213,6 +220,27 @@ instance FromRow ParticipantRow where
     <*> field
     <*> field
     <*> field
+
+data BulkParticipantAppendResult = BulkParticipantAppendResult
+  { bparPreviousCount :: Integer
+  , bparInputCount :: Integer
+  , bparExistingAliasCount :: Integer
+  , bparInsertedCount :: Integer
+  , bparRemappedCount :: Integer
+  , bparFinalCount :: Integer
+  }
+  deriving stock (Show, Eq)
+
+data RosterSnapshotVerification = RosterSnapshotVerification
+  { rsvParticipantCount :: Integer
+  , rsvSnapshottedWalletCount :: Integer
+  , rsvStartSnapshotCount :: Integer
+  , rsvMissingStartSnapshotCount :: Integer
+  , rsvOpenPositionCount :: Integer
+  , rsvPendingOrderCount :: Integer
+  , rsvBankrollMismatchCount :: Integer
+  }
+  deriving stock (Show, Eq)
 
 data SnapshotKind
   = SnapshotStart
@@ -487,6 +515,10 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ ON insights_competition_participants(competition_slug, trader_reference) \
     \ WHERE trader_reference IS NOT NULL"
   _ <- execute_ conn
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_participants_alias_key \
+    \ ON insights_competition_participants(competition_slug, LOWER(BTRIM(alias))) \
+    \ WHERE alias IS NOT NULL AND BTRIM(alias) <> ''"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_participant_wallet_remaps (\
     \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
     \ trader_reference TEXT NOT NULL,\
@@ -497,6 +529,20 @@ ensureInsightsSchema conn chainId releaseRouter usdcAddress marginClearinghouseA
     \ applied_by TEXT,\
     \ PRIMARY KEY (competition_slug, trader_reference),\
     \ UNIQUE (competition_slug, new_wallet)\
+    \ )"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS insights_roster_correction_audit (\
+    \ id BIGSERIAL PRIMARY KEY,\
+    \ competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,\
+    \ request_id TEXT NOT NULL,\
+    \ previous_count BIGINT NOT NULL,\
+    \ input_count BIGINT NOT NULL,\
+    \ existing_alias_count BIGINT NOT NULL,\
+    \ inserted_count BIGINT NOT NULL,\
+    \ remapped_count BIGINT NOT NULL,\
+    \ final_count BIGINT NOT NULL,\
+    \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \ UNIQUE (competition_slug, request_id)\
     \ )"
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_account_snapshots (\
@@ -919,6 +965,27 @@ upsertCompetitionParticipant conn slug traderReference wallet alias =
                 pure $ Right ()
       _ -> pure $ Left "Competition registration state is ambiguous"
 
+getCompetitionParticipantTraderReferenceByAlias
+  :: Connection
+  -> Text
+  -> Text
+  -> IO (Either Text Text)
+getCompetitionParticipantTraderReferenceByAlias conn slug alias = do
+  let normalizedAlias = T.strip alias
+  rows <- query conn
+    "SELECT trader_reference FROM insights_competition_participants\
+    \ WHERE competition_slug = ? AND LOWER(BTRIM(alias)) = LOWER(?)"
+    (slug, normalizedAlias)
+    :: IO [Only (Maybe Text)]
+  pure $ case rows of
+    [] -> Left "Public alias is not registered for this competition"
+    [Only Nothing] -> Left "Public alias has no private TRADER_REFERENCE"
+    [Only (Just traderReference)]
+      | T.null (T.strip traderReference) ->
+          Left "Public alias has an empty private TRADER_REFERENCE"
+      | otherwise -> Right $ T.strip traderReference
+    _ -> Left "Public alias is not unique for this competition"
+
 stageCompetitionParticipantWalletRemap
   :: Connection
   -> Text
@@ -1048,6 +1115,379 @@ applyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy =
                       (Only slug)
                     pure $ Right ()
               _ -> pure $ Left "Participant wallet remap validation state is ambiguous"
+
+bulkApplyCompetitionParticipantWalletRemaps
+  :: Connection
+  -> Text
+  -> Integer
+  -> Text
+  -> [(Text, Text, Text)]
+  -> IO (Either Text Integer)
+bulkApplyCompetitionParticipantWalletRemaps conn slug expectedCount appliedBy mappings =
+  withTransaction conn $ do
+    let normalizedAppliedBy = T.strip appliedBy
+        normalizedMappings =
+          [ (T.toCaseFold $ T.strip alias, normalizeAddress oldWallet, normalizeAddress newWallet)
+          | (alias, oldWallet, newWallet) <- mappings
+          ]
+    mutable <- competitionIsMutableForUpdate conn slug
+    if not mutable
+      then pure $ Left "The competition is missing or finalized; wallet remaps are locked"
+      else if expectedCount <= 0
+        then pure $ Left "EXPECTED_COUNT must be positive"
+        else if T.null normalizedAppliedBy
+          then pure $ Left "APPLIED_BY must not be empty"
+          else if fromIntegral (length normalizedMappings) /= expectedCount
+            then pure $ Left "Bulk roster entry count does not match EXPECTED_COUNT"
+            else do
+              _ <- execute_ conn
+                "CREATE TEMP TABLE insights_bulk_wallet_remaps (\
+                \ alias_key TEXT PRIMARY KEY,\
+                \ old_wallet VARCHAR(42) NOT NULL,\
+                \ new_wallet VARCHAR(42) NOT NULL UNIQUE\
+                \ ) ON COMMIT DROP"
+              _ <- executeMany conn
+                "INSERT INTO insights_bulk_wallet_remaps (alias_key, old_wallet, new_wallet)\
+                \ VALUES (?, ?, ?)"
+                normalizedMappings
+              lockedParticipants <- query conn
+                "SELECT wallet FROM insights_competition_participants\
+                \ WHERE competition_slug = ? FOR UPDATE"
+                (Only slug)
+                :: IO [Only Text]
+              counts <- query conn
+                "SELECT\
+                \ (SELECT COUNT(*) FROM insights_competition_participants WHERE competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_bulk_wallet_remaps),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants p\
+                \   JOIN insights_bulk_wallet_remaps m ON LOWER(BTRIM(p.alias)) = m.alias_key\
+                \   WHERE p.competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants p\
+                \   JOIN insights_bulk_wallet_remaps m ON LOWER(BTRIM(p.alias)) = m.alias_key\
+                \     AND LOWER(p.wallet) = m.old_wallet\
+                \   WHERE p.competition_slug = ?),\
+                \ (SELECT COUNT(DISTINCT new_wallet) FROM insights_bulk_wallet_remaps),\
+                \ (SELECT COUNT(*) FROM insights_competition_participants\
+                \   WHERE competition_slug = ? AND (trader_reference IS NULL OR BTRIM(trader_reference) = '')),\
+                \ (SELECT COUNT(*) FROM insights_manual_adjustments WHERE competition_slug = ?),\
+                \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?)"
+                (slug, slug, slug, slug, slug, slug)
+                :: IO [(Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer)]
+              case counts of
+                [(participantCount, inputCount, aliasMatchCount, oldWalletMatchCount, destinationCount, missingReferenceCount, adjustmentCount, auditCount)]
+                  | fromIntegral (length lockedParticipants) /= expectedCount ->
+                      pure $ Left "The locked participant count does not match EXPECTED_COUNT"
+                  | participantCount /= expectedCount ->
+                      pure $ Left "EXPECTED_COUNT does not match the registered participant count"
+                  | inputCount /= expectedCount ->
+                      pure $ Left "The bulk roster is incomplete"
+                  | aliasMatchCount /= expectedCount ->
+                      pure $ Left "The bulk aliases do not match the complete registered roster"
+                  | oldWalletMatchCount /= expectedCount ->
+                      pure $ Left "One or more bulk OLD_WALLET values do not match the current roster"
+                  | destinationCount /= expectedCount ->
+                      pure $ Left "The bulk destination wallet set contains duplicates"
+                  | missingReferenceCount /= 0 ->
+                      pure $ Left "One or more registered aliases have no private TRADER_REFERENCE"
+                  | adjustmentCount /= 0 ->
+                      pure $ Left "Wallet remapping is blocked after manual adjustments exist"
+                  | auditCount /= 0 ->
+                      pure $ Left "Wallet remapping is blocked after eligibility review has started"
+                  | otherwise -> do
+                      changedRows <- query conn
+                        "SELECT COUNT(*) FROM insights_competition_participants p\
+                        \ JOIN insights_bulk_wallet_remaps m\
+                        \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                        \ WHERE p.competition_slug = ? AND LOWER(p.wallet) <> m.new_wallet"
+                        (Only slug)
+                        :: IO [Only Integer]
+                      changedCount <- case changedRows of
+                        [Only count] -> pure count
+                        _ -> fail "Bulk wallet remap summary state is ambiguous"
+                      _ <- execute conn
+                        "DELETE FROM insights_participant_wallet_remaps\
+                        \ WHERE competition_slug = ?"
+                        (Only slug)
+                      inserted <- execute conn
+                        "INSERT INTO insights_participant_wallet_remaps\
+                        \ (competition_slug, trader_reference, old_wallet, new_wallet)\
+                        \ SELECT p.competition_slug, p.trader_reference, m.old_wallet, m.new_wallet\
+                        \ FROM insights_competition_participants p\
+                        \ JOIN insights_bulk_wallet_remaps m\
+                        \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                        \ WHERE p.competition_slug = ?"
+                        (Only slug)
+                      if inserted /= fromIntegral expectedCount
+                        then fail "The validated bulk remap set changed before insertion"
+                        else do
+                          _ <- execute conn
+                            "CREATE TEMP TABLE insights_roster_replacement ON COMMIT DROP AS\
+                            \ SELECT p.competition_slug, m.new_wallet AS wallet, p.trader_reference, p.alias,\
+                            \ p.eligibility_status, p.eligibility_reason, p.integrity_flags, p.registered_at,\
+                            \ p.reviewed_at, p.created_at, NOW() AS updated_at\
+                            \ FROM insights_competition_participants p\
+                            \ JOIN insights_bulk_wallet_remaps m\
+                            \ ON LOWER(BTRIM(p.alias)) = m.alias_key AND LOWER(p.wallet) = m.old_wallet\
+                            \ WHERE p.competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute conn
+                            "DELETE FROM insights_competition_participants WHERE competition_slug = ?"
+                            (Only slug)
+                          _ <- execute_ conn
+                            "INSERT INTO insights_competition_participants\
+                            \ (competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                            \ integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                            \ SELECT competition_slug, wallet, trader_reference, alias, eligibility_status, eligibility_reason,\
+                            \ integrity_flags, registered_at, reviewed_at, created_at, updated_at\
+                            \ FROM insights_roster_replacement"
+                          _ <- execute conn
+                            "UPDATE insights_participant_wallet_remaps SET applied_at = NOW(), applied_by = ?\
+                            \ WHERE competition_slug = ? AND applied_at IS NULL"
+                            (normalizedAppliedBy, slug)
+                          _ <- execute conn
+                            "UPDATE insights_competitions SET updated_at = NOW() WHERE slug = ?"
+                            (Only slug)
+                          pure $ Right changedCount
+                _ -> pure $ Left "Bulk participant wallet remap validation state is ambiguous"
+
+bulkAppendCompetitionParticipants
+  :: Connection
+  -> Text
+  -> Integer
+  -> Text
+  -> [(Text, Text, Text)]
+  -> IO (Either Text BulkParticipantAppendResult)
+bulkAppendCompetitionParticipants conn slug expectedExistingCount requestId entries =
+  withTransaction conn $ do
+    let normalizedRequestId = T.strip requestId
+        normalizedEntries =
+          [ ( T.strip alias
+            , T.toCaseFold $ T.strip alias
+            , T.strip traderReference
+            , normalizeAddress tradingAccount
+            )
+          | (alias, traderReference, tradingAccount) <- entries
+          ]
+        aliasKeys = [aliasKey | (_, aliasKey, _, _) <- normalizedEntries]
+        traderReferences = [reference | (_, _, reference, _) <- normalizedEntries]
+        tradingAccounts = [wallet | (_, _, _, wallet) <- normalizedEntries]
+        allUnique values = length (nub values) == length values
+    mutable <- competitionIsMutableForUpdate conn slug
+    if not mutable
+      then pure $ Left "The competition is missing or finalized; roster corrections are locked"
+      else if expectedExistingCount <= 0
+        then pure $ Left "EXPECTED_EXISTING_COUNT must be positive"
+        else if T.null normalizedRequestId
+          then pure $ Left "REQUEST_ID must not be empty"
+          else if null normalizedEntries
+            then pure $ Left "At least one bulk participant entry is required"
+            else if any (T.null . (\(alias, _, _, _) -> alias)) normalizedEntries
+              then pure $ Left "Bulk participant aliases must not be empty"
+              else if any (T.null . (\(_, _, reference, _) -> reference)) normalizedEntries
+                then pure $ Left "Bulk participant trader references must not be empty"
+                else if any (not . isValidAddress) tradingAccounts
+                  then pure $ Left "Bulk participant Trading Accounts must be valid Ethereum addresses"
+                  else if not $ allUnique aliasKeys
+                    then pure $ Left "Bulk participant aliases must be unique"
+                    else if not $ allUnique traderReferences
+                      then pure $ Left "Bulk participant trader references must be unique"
+                      else if not $ allUnique tradingAccounts
+                        then pure $ Left "Bulk participant Trading Accounts must be unique"
+                        else do
+                          _ <- execute_ conn
+                            "CREATE TEMP TABLE insights_bulk_participant_append (\
+                            \ alias TEXT NOT NULL,\
+                            \ alias_key TEXT PRIMARY KEY,\
+                            \ trader_reference TEXT NOT NULL UNIQUE,\
+                            \ new_wallet VARCHAR(42) NOT NULL UNIQUE\
+                            \ ) ON COMMIT DROP"
+                          _ <- executeMany conn
+                            "INSERT INTO insights_bulk_participant_append\
+                            \ (alias, alias_key, trader_reference, new_wallet)\
+                            \ VALUES (?, ?, ?, ?)"
+                            normalizedEntries
+                          lockedParticipants <- query conn
+                            "SELECT wallet FROM insights_competition_participants\
+                            \ WHERE competition_slug = ? FOR UPDATE"
+                            (Only slug)
+                            :: IO [Only Text]
+                          counts <- query conn
+                            "SELECT\
+                            \ (SELECT COUNT(*) FROM insights_competition_participants WHERE competition_slug = ?),\
+                            \ (SELECT COUNT(*) FROM insights_bulk_participant_append),\
+                            \ (SELECT COUNT(*) FROM insights_competition_participants p\
+                            \   JOIN insights_bulk_participant_append i\
+                            \   ON LOWER(BTRIM(p.alias)) = i.alias_key\
+                            \   WHERE p.competition_slug = ?),\
+                            \ (SELECT COUNT(*) FROM insights_competition_participants\
+                            \   WHERE competition_slug = ? AND (alias IS NULL OR BTRIM(alias) = '')),\
+                            \ (SELECT COUNT(*) FROM (\
+                            \   SELECT LOWER(BTRIM(alias)) FROM insights_competition_participants\
+                            \   WHERE competition_slug = ? GROUP BY LOWER(BTRIM(alias)) HAVING COUNT(*) > 1\
+                            \ ) duplicate_aliases),\
+                            \ (SELECT COUNT(*) FROM insights_competition_participants\
+                            \   WHERE competition_slug = ? AND (trader_reference IS NULL OR BTRIM(trader_reference) = '')),\
+                            \ (SELECT COUNT(*) FROM insights_manual_adjustments WHERE competition_slug = ?),\
+                            \ (SELECT COUNT(*) FROM insights_eligibility_audit WHERE competition_slug = ?)"
+                            (slug, slug, slug, slug, slug, slug, slug)
+                            :: IO [(Integer, Integer, Integer, Integer, Integer, Integer, Integer, Integer)]
+                          case counts of
+                            [(participantCount, inputCount, existingAliasCount, invalidAliasCount, duplicateAliasCount, missingReferenceCount, adjustmentCount, eligibilityAuditCount)]
+                              | fromIntegral (length lockedParticipants) /= expectedExistingCount ->
+                                  pure $ Left "The locked participant count does not match EXPECTED_EXISTING_COUNT"
+                              | participantCount /= expectedExistingCount ->
+                                  pure $ Left "EXPECTED_EXISTING_COUNT does not match the registered participant count"
+                              | inputCount /= fromIntegral (length normalizedEntries) ->
+                                  pure $ Left "The bulk participant input changed during validation"
+                              | invalidAliasCount /= 0 ->
+                                  pure $ Left "One or more existing participants has no public alias"
+                              | duplicateAliasCount /= 0 ->
+                                  pure $ Left "Existing participant aliases are not unique"
+                              | missingReferenceCount /= 0 ->
+                                  pure $ Left "One or more existing participants has no private TRADER_REFERENCE"
+                              | adjustmentCount /= 0 ->
+                                  pure $ Left "Bulk roster correction is blocked after manual adjustments exist"
+                              | eligibilityAuditCount /= 0 ->
+                                  pure $ Left "Bulk roster correction is blocked after eligibility review has started"
+                              | otherwise -> do
+                                  _ <- execute_ conn
+                                    "CREATE TEMP TABLE insights_bulk_roster_replacement (\
+                                    \ competition_slug TEXT NOT NULL,\
+                                    \ wallet VARCHAR(42) NOT NULL,\
+                                    \ trader_reference TEXT NOT NULL,\
+                                    \ alias TEXT NOT NULL,\
+                                    \ eligibility_status TEXT NOT NULL,\
+                                    \ eligibility_reason TEXT,\
+                                    \ integrity_flags JSONB NOT NULL,\
+                                    \ registered_at TIMESTAMPTZ NOT NULL,\
+                                    \ reviewed_at TIMESTAMPTZ,\
+                                    \ created_at TIMESTAMPTZ NOT NULL,\
+                                    \ updated_at TIMESTAMPTZ NOT NULL\
+                                    \ ) ON COMMIT DROP"
+                                  _ <- execute conn
+                                    "INSERT INTO insights_bulk_roster_replacement\
+                                    \ (competition_slug, wallet, trader_reference, alias, eligibility_status,\
+                                    \ eligibility_reason, integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                                    \ SELECT p.competition_slug, COALESCE(i.new_wallet, p.wallet), p.trader_reference,\
+                                    \ COALESCE(i.alias, p.alias), p.eligibility_status, p.eligibility_reason,\
+                                    \ p.integrity_flags, p.registered_at, p.reviewed_at, p.created_at,\
+                                    \ CASE WHEN i.alias_key IS NULL THEN p.updated_at ELSE NOW() END\
+                                    \ FROM insights_competition_participants p\
+                                    \ LEFT JOIN insights_bulk_participant_append i\
+                                    \ ON LOWER(BTRIM(p.alias)) = i.alias_key\
+                                    \ WHERE p.competition_slug = ?"
+                                    (Only slug)
+                                  _ <- execute conn
+                                    "INSERT INTO insights_bulk_roster_replacement\
+                                    \ (competition_slug, wallet, trader_reference, alias, eligibility_status,\
+                                    \ eligibility_reason, integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                                    \ SELECT ?, i.new_wallet, i.trader_reference, i.alias, 'pending', NULL,\
+                                    \ '[]'::jsonb, NOW(), NULL, NOW(), NOW()\
+                                    \ FROM insights_bulk_participant_append i\
+                                    \ WHERE NOT EXISTS (\
+                                    \   SELECT 1 FROM insights_competition_participants p\
+                                    \   WHERE p.competition_slug = ? AND LOWER(BTRIM(p.alias)) = i.alias_key\
+                                    \ )"
+                                    (slug, slug)
+                                  remappedRows <- query conn
+                                    "SELECT COUNT(*) FROM insights_competition_participants p\
+                                    \ JOIN insights_bulk_participant_append i\
+                                    \ ON LOWER(BTRIM(p.alias)) = i.alias_key\
+                                    \ WHERE p.competition_slug = ? AND LOWER(p.wallet) <> i.new_wallet"
+                                    (Only slug)
+                                    :: IO [Only Integer]
+                                  replacementCounts <- query_ conn
+                                    "SELECT COUNT(*), COUNT(DISTINCT LOWER(wallet)),\
+                                    \ COUNT(DISTINCT LOWER(BTRIM(alias))), COUNT(DISTINCT trader_reference),\
+                                    \ COUNT(*) FILTER (WHERE BTRIM(alias) = '' OR BTRIM(trader_reference) = '')\
+                                    \ FROM insights_bulk_roster_replacement"
+                                    :: IO [(Integer, Integer, Integer, Integer, Integer)]
+                                  case (remappedRows, replacementCounts) of
+                                    ([Only remappedCount], [(finalCount, walletCount, aliasCount, referenceCount, invalidIdentityCount)]) -> do
+                                      let insertedCount = inputCount - existingAliasCount
+                                          expectedFinalCount = participantCount + insertedCount
+                                          result =
+                                            BulkParticipantAppendResult
+                                              { bparPreviousCount = participantCount
+                                              , bparInputCount = inputCount
+                                              , bparExistingAliasCount = existingAliasCount
+                                              , bparInsertedCount = insertedCount
+                                              , bparRemappedCount = remappedCount
+                                              , bparFinalCount = finalCount
+                                              }
+                                      if finalCount /= expectedFinalCount
+                                        then pure $ Left "The replacement roster count is inconsistent"
+                                        else if walletCount /= finalCount
+                                          then pure $ Left "The final Trading Account set contains duplicates"
+                                          else if aliasCount /= finalCount
+                                            then pure $ Left "The final alias set contains duplicates"
+                                            else if referenceCount /= finalCount
+                                              then pure $ Left "The final trader reference set contains duplicates"
+                                              else if invalidIdentityCount /= 0
+                                                then pure $ Left "The final roster contains an empty alias or trader reference"
+                                                else if insertedCount == 0 && remappedCount == 0
+                                                  then pure $ Right result
+                                                  else do
+                                                    _ <- execute conn
+                                                      "DELETE FROM insights_participant_wallet_remaps\
+                                                      \ WHERE competition_slug = ?"
+                                                      (Only slug)
+                                                    _ <- execute conn
+                                                      "INSERT INTO insights_participant_wallet_remaps\
+                                                      \ (competition_slug, trader_reference, old_wallet, new_wallet,\
+                                                      \ staged_at, applied_at, applied_by)\
+                                                      \ SELECT p.competition_slug, p.trader_reference, p.wallet, i.new_wallet,\
+                                                      \ NOW(), NOW(), ?\
+                                                      \ FROM insights_competition_participants p\
+                                                      \ JOIN insights_bulk_participant_append i\
+                                                      \ ON LOWER(BTRIM(p.alias)) = i.alias_key\
+                                                      \ WHERE p.competition_slug = ? AND LOWER(p.wallet) <> i.new_wallet"
+                                                      (normalizedRequestId, slug)
+                                                    _ <- execute conn
+                                                      "DELETE FROM insights_account_snapshots WHERE competition_slug = ?"
+                                                      (Only slug)
+                                                    _ <- execute conn
+                                                      "DELETE FROM insights_snapshot_batches WHERE competition_slug = ?"
+                                                      (Only slug)
+                                                    _ <- execute conn
+                                                      "DELETE FROM insights_competition_participants WHERE competition_slug = ?"
+                                                      (Only slug)
+                                                    inserted <- execute_ conn
+                                                      "INSERT INTO insights_competition_participants\
+                                                      \ (competition_slug, wallet, trader_reference, alias, eligibility_status,\
+                                                      \ eligibility_reason, integrity_flags, registered_at, reviewed_at, created_at, updated_at)\
+                                                      \ SELECT competition_slug, wallet, trader_reference, alias, eligibility_status,\
+                                                      \ eligibility_reason, integrity_flags, registered_at, reviewed_at, created_at, updated_at\
+                                                      \ FROM insights_bulk_roster_replacement"
+                                                    if inserted /= fromIntegral finalCount
+                                                      then fail "The validated bulk participant roster changed before insertion"
+                                                      else do
+                                                        _ <- execute conn
+                                                          "INSERT INTO insights_roster_correction_audit\
+                                                          \ (competition_slug, request_id, previous_count, input_count,\
+                                                          \ existing_alias_count, inserted_count, remapped_count, final_count)\
+                                                          \ VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                                                          ( slug
+                                                          , normalizedRequestId
+                                                          , participantCount
+                                                          , inputCount
+                                                          , existingAliasCount
+                                                          , insertedCount
+                                                          , remappedCount
+                                                          , finalCount
+                                                          )
+                                                        _ <- execute conn
+                                                          "UPDATE insights_competitions SET updated_at = NOW() WHERE slug = ?"
+                                                          (Only slug)
+                                                        pure $ Right result
+                                    _ -> pure $ Left "Bulk participant replacement validation state is ambiguous"
+                            _ -> pure $ Left "Bulk participant database validation state is ambiguous"
 
 setParticipantEligibility
   :: Connection
@@ -1445,6 +1885,85 @@ getInsightsDataStatus :: Connection -> Text -> IO (Maybe InsightsDataStatusRow)
 getInsightsDataStatus conn slug = do
   rows <- query conn insightsDataStatusQuerySql (Only slug)
   pure $ firstRow rows
+
+verifyCompetitionRosterSnapshots
+  :: Connection
+  -> Text
+  -> Integer
+  -> IO (Either Text RosterSnapshotVerification)
+verifyCompetitionRosterSnapshots conn slug expectedCount
+  | expectedCount <= 0 = pure $ Left "EXPECTED_COUNT must be positive"
+  | otherwise = do
+      status <- getInsightsDataStatus conn slug
+      invariantRows <- query conn
+        rosterSnapshotVerificationQuerySql
+        (slug, expectedCount)
+        :: IO [(Integer, Integer, Integer, Integer)]
+      pure $ case (status, invariantRows) of
+        (Just InsightsDataStatusRow {..}, [(missingStartCount, openPositionCount, pendingOrderCount, bankrollMismatchCount)]) ->
+          let verification =
+                RosterSnapshotVerification
+                  { rsvParticipantCount = idsrParticipantCount
+                  , rsvSnapshottedWalletCount = idsrSnapshottedWalletCount
+                  , rsvStartSnapshotCount = idsrStartSnapshotCount
+                  , rsvMissingStartSnapshotCount = missingStartCount
+                  , rsvOpenPositionCount = openPositionCount
+                  , rsvPendingOrderCount = pendingOrderCount
+                  , rsvBankrollMismatchCount = bankrollMismatchCount
+                  }
+              blockers =
+                [ label <> "=" <> T.pack (show actual) <> ", expected=" <> T.pack (show expected)
+                | (label, actual, expected) <-
+                    [ ("participantCount", idsrParticipantCount, expectedCount)
+                    , ("snapshottedWalletCount", idsrSnapshottedWalletCount, expectedCount)
+                    , ("startSnapshotCount", idsrStartSnapshotCount, expectedCount)
+                    , ("missingStartSnapshotCount", missingStartCount, 0)
+                    , ("openPositionCount", openPositionCount, 0)
+                    , ("pendingOrderCount", pendingOrderCount, 0)
+                    , ("bankrollMismatchCount", bankrollMismatchCount, 0)
+                    ]
+                , actual /= expected
+                ]
+           in if null blockers
+                then Right verification
+                else Left $ "Roster snapshot verification failed: " <> T.intercalate "; " blockers
+        _ -> Left "Roster snapshot verification state is unavailable"
+
+-- The baseline bankroll rule is a ceiling, not an equality check. Accounts
+-- may be empty before their official allocation is deposited, but an account
+-- already holding more than the published allocation must fail verification.
+rosterSnapshotVerificationQuerySql :: Query
+rosterSnapshotVerificationQuerySql =
+  "WITH target AS (\
+        \ SELECT slug, start_block, starting_balance_usdc, account_lens_address\
+        \ FROM insights_competitions WHERE slug = ?\
+        \ ), canonical_start_batch AS (\
+        \ SELECT b.block_number, b.block_hash, b.chain_id, b.release_router\
+        \ FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
+        \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL\
+        \ AND b.block_number = t.start_block - 1 AND b.participant_count = ?\
+        \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
+        \ ORDER BY b.published_at DESC LIMIT 1\
+        \ ), participant_start_state AS (\
+        \ SELECT p.wallet, t.starting_balance_usdc, s.wallet AS snapshot_wallet,\
+        \ s.has_open_position, s.terminal_reachable_usdc, s.trader_claims_usdc,\
+        \ COALESCE(NULLIF(s.raw_data->>'pendingOrderCount', '')::numeric, -1) AS pending_orders\
+        \ FROM insights_competition_participants p\
+        \ JOIN target t ON t.slug = p.competition_slug\
+        \ LEFT JOIN canonical_start_batch b ON TRUE\
+        \ LEFT JOIN insights_account_snapshots s\
+        \ ON s.competition_slug = p.competition_slug AND s.wallet = p.wallet\
+        \ AND s.snapshot_kind = 'start' AND s.block_number = b.block_number\
+        \ AND LOWER(s.block_hash) = LOWER(b.block_hash) AND s.chain_id = b.chain_id\
+        \ AND s.release_router = b.release_router\
+        \ )\
+        \ SELECT\
+        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL),\
+        \ COUNT(*) FILTER (WHERE COALESCE(has_open_position, TRUE)),\
+        \ COUNT(*) FILTER (WHERE pending_orders <> 0),\
+        \ COUNT(*) FILTER (WHERE snapshot_wallet IS NULL OR\
+        \   terminal_reachable_usdc + trader_claims_usdc > starting_balance_usdc)\
+        \ FROM participant_start_state"
 
 -- A published batch is the completeness marker for its participant set. The
 -- maximum published count also preserves the old across-history wallet-count

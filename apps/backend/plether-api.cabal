@@ -18,6 +18,7 @@ library
     import:           warnings
     exposed-modules:
         Plether.AA.Pimlico
+        Plether.AA.SimpleAccount
         Plether.Api
         Plether.Cache
         Plether.Config
@@ -59,6 +60,7 @@ library
         Plether.Database.Schema
         Plether.Database.Insights
         Plether.Insights.Competition
+        Plether.Insights.BulkRoster
         Plether.Insights.SnapshotWorker
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
@@ -211,7 +213,11 @@ executable plether-insights-admin
     build-depends:
         base >= 4.17 && < 5,
         plether-api,
-        text >= 2.0
+        text >= 2.0,
+        bytestring >= 0.11,
+        base64-bytestring >= 1.2,
+        containers >= 0.6,
+        zlib >= 0.7
     hs-source-dirs:   app
     default-language: GHC2021
     default-extensions:
@@ -226,6 +232,7 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.AA.SimpleAccountSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
@@ -247,6 +254,7 @@ test-suite plether-api-test
         Plether.Perps.ExecutionTraceSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Database.InsightsSpec
+        Plether.Insights.BulkRosterSpec
         Plether.Insights.CompetitionSpec
         Plether.Insights.SnapshotWorkerSpec
         Plether.Types.ProtocolSpec
