@@ -9,7 +9,7 @@ resource "aws_db_instance" "postgres" {
   engine_version = "16"
   instance_class = var.db_instance_class
 
-  allocated_storage     = 20
+  allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
   storage_encrypted     = false
 
@@ -27,6 +27,11 @@ resource "aws_db_instance" "postgres" {
   backup_retention_period = var.db_backup_retention_days
 
   lifecycle {
+    precondition {
+      condition     = var.db_max_allocated_storage >= ceil(var.db_allocated_storage * 110 / 100)
+      error_message = "db_max_allocated_storage must be at least 10 percent greater than db_allocated_storage for RDS storage autoscaling."
+    }
+
     precondition {
       condition = var.db_skip_final_snapshot || try(
         length(trimspace(var.db_final_snapshot_identifier)) > 0,

@@ -537,6 +537,16 @@ variable "db_instance_class" {
   default = "db.t4g.micro"
 }
 
+variable "db_allocated_storage" {
+  type        = number
+  description = "RDS baseline allocated storage in GiB. RDS can grow this through autoscaling but cannot shrink it in place; set it explicitly from the live instance before planning."
+
+  validation {
+    condition     = floor(var.db_allocated_storage) == var.db_allocated_storage && var.db_allocated_storage >= 20
+    error_message = "db_allocated_storage must be a whole number of at least 20 GiB."
+  }
+}
+
 variable "db_backup_retention_days" {
   type        = number
   default     = 7

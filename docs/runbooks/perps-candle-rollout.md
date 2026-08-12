@@ -143,6 +143,26 @@ for subsequent configuration gates; the deployment workflow deliberately
 reuses the registered task-definition environment and does not inject these new
 variables itself.
 
+Before generating the complete plan, read the live RDS instance class,
+allocated and maximum storage, pending modifications, backup retention, and
+deletion protection. Set `db_instance_class` and `db_allocated_storage`
+explicitly to values no smaller than the live instance. Reject a plan that
+replaces or deletes the database, reduces its class or storage, changes an
+unrelated network or secret resource, or includes an unexplained pending RDS
+modification. RDS storage autoscaling can make the live allocation larger than
+an old Terraform baseline. While autoscaling is enabled, the pinned AWS
+provider suppresses any live allocation above the configured baseline,
+including manual or other out-of-band increases. Compare the live value
+explicitly, update the baseline instead of attempting a downgrade, and do not
+add a broad `ignore_changes` rule that would also hide intentional capacity
+changes.
+
+The Terraform operator must be able to describe CloudWatch alarms and to put,
+delete, list tags for, tag, and untag only the target environment's
+`plether-<environment>-*` alarms. A refresh that cannot read existing alarm
+tags is incomplete; fix the operator permission instead of planning with
+refresh disabled.
+
 Expected values:
 
 ```text
@@ -159,6 +179,9 @@ Pass criteria:
 - the Terraform plan/apply succeeds with the safe candle values, and the active
   API, basket writer, and Perps indexer task definitions all expose exactly that
   configuration;
+- the plan contains no database replacement, deletion, class downgrade, or
+  allocated-storage downgrade, and the live RDS capacity and pending
+  modifications were recorded before apply;
 - backend deployment succeeds and `/api/health` returns 200;
 - all stable API service tasks use one task-definition revision, one API image
   repository, and one deployed `sha256` image digest;
