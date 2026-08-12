@@ -567,6 +567,30 @@ jobs:
           container-name: otel-log-router
           image: ${{ needs.build.outputs.log_router_image }}
 
+      - name: Ensure API health check grace period
+        if: matrix.service_name == 'plether-api' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
+          ECS_SERVICE: ${{ matrix.service_name }}
+          ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS: "300"
+        run: |
+          set -euo pipefail
+
+          applied_grace_period="$(
+            aws ecs update-service \
+              --cluster "$ECS_CLUSTER" \
+              --service "$ECS_SERVICE" \
+              --health-check-grace-period-seconds "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" \
+              --query 'service.healthCheckGracePeriodSeconds' \
+              --output text \
+              --no-cli-pager
+          )"
+
+          if [ "$applied_grace_period" != "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" ]; then
+            echo "::error title=ECS health-check grace update failed::Expected ${ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS}s, got ${applied_grace_period}s."
+            exit 1
+          fi
+
       - name: Deploy to ECS
         if: steps.task-definition-status.outputs.exists == 'true'
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
