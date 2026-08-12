@@ -1,6 +1,8 @@
 module Plether.Config
   ( Config (..)
   , AaConfig (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
   , Addresses (..)
   , Deployment (..)
   , loadConfig
@@ -10,6 +12,11 @@ module Plether.Config
   , defaultPythLatestMaxAgeSeconds
   , maxPythLatestMaxAgeSeconds
   , validatePythLatestMaxAgeSeconds
+  , parsePerpsCandleReadIntervals
+  , parsePerpsCandleReadMode
+  , parsePerpsCandleWriteMode
+  , perpsCandleRollupReadEnabled
+  , validatePerpsCandleModeCombination
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
@@ -20,6 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Plether.Utils.Address (isValidAddress)
+import Plether.Types.Perps (canonicalBasketCandleIntervals)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -38,6 +46,12 @@ data Config = Config
   , cfgPythSampleIntervalSeconds :: Integer
   , cfgPythLatestMaxAgeSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
+  , cfgPerpsCandleWriteMode :: PerpsCandleWriteMode
+  , cfgPerpsCandleReadMode :: PerpsCandleReadMode
+  , cfgPerpsCandleReadIntervals :: [Integer]
+  , cfgPerpsCandleShadowSampleBps :: Int
+  , cfgPerpsCandleStrictCoverage :: Bool
+  , cfgPerpsCandleLatenessSeconds :: Integer
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
@@ -57,6 +71,17 @@ data Config = Config
   , cfgKeeperFeeBufferBps :: Integer
   }
   deriving stock (Show)
+
+data PerpsCandleWriteMode
+  = PerpsCandleWritesOff
+  | PerpsCandleWritesDual
+  deriving stock (Eq, Show)
+
+data PerpsCandleReadMode
+  = PerpsCandleReadsLegacy
+  | PerpsCandleReadsShadow
+  | PerpsCandleReadsRollup
+  deriving stock (Eq, Show)
 
 data AaConfig = AaConfig
   { aaProxyOriginToken :: Text
@@ -193,6 +218,12 @@ loadConfig = do
       pythSampleIntervalStr <- fromMaybe "60" <$> lookupEnv "PYTH_SAMPLE_INTERVAL_SECONDS"
       pythLatestMaxAgeStr <- fromMaybe (show defaultPythLatestMaxAgeSeconds) <$> lookupEnv "PYTH_LATEST_MAX_AGE_SECONDS"
       pythIngestionStr <- fromMaybe "false" <$> lookupEnv "PYTH_INGESTION_ENABLED"
+      candleWriteModeStr <- fromMaybe "off" <$> lookupEnv "PERPS_CANDLE_WRITE_MODE"
+      candleReadModeStr <- fromMaybe "legacy" <$> lookupEnv "PERPS_CANDLE_READ_MODE"
+      candleReadIntervalsStr <- fromMaybe "" <$> lookupEnv "PERPS_CANDLE_READ_INTERVALS"
+      candleShadowSampleBpsStr <- fromMaybe "0" <$> lookupEnv "PERPS_CANDLE_SHADOW_SAMPLE_BPS"
+      candleStrictCoverageStr <- fromMaybe "true" <$> lookupEnv "PERPS_CANDLE_STRICT_COVERAGE"
+      candleLatenessSecondsStr <- fromMaybe "120" <$> lookupEnv "PERPS_CANDLE_LATENESS_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
@@ -285,10 +316,56 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig) of
-        (Left err, _) -> pure $ Left err
-        (_, Left err) -> pure $ Left err
-        (Right pythLatestMaxAgeSeconds, Right resolvedAaConfig) -> do
+          candleConfig = do
+            writeMode <- parsePerpsCandleWriteMode candleWriteModeStr
+            readMode <- parsePerpsCandleReadMode candleReadModeStr
+            readIntervals <- parsePerpsCandleReadIntervals candleReadIntervalsStr
+            shadowSampleBps <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_SHADOW_SAMPLE_BPS"
+                0
+                10_000
+                candleShadowSampleBpsStr
+            strictCoverage <-
+              maybe
+                (Left "PERPS_CANDLE_STRICT_COVERAGE must be a boolean")
+                Right
+                (parseBoolStrict candleStrictCoverageStr)
+            latenessSeconds <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_LATENESS_SECONDS"
+                0
+                86_400
+                candleLatenessSecondsStr
+            validatePerpsCandleModeCombination
+              writeMode
+              readMode
+              readIntervals
+              strictCoverage
+            pure
+              ( writeMode
+              , readMode
+              , readIntervals
+              , shadowSampleBps
+              , strictCoverage
+              , fromIntegral latenessSeconds
+              )
+
+      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig) of
+        (Left err, _, _) -> pure $ Left err
+        (_, Left err, _) -> pure $ Left err
+        (_, _, Left err) -> pure $ Left err
+        ( Right pythLatestMaxAgeSeconds
+          , Right resolvedAaConfig
+          , Right
+              ( candleWriteMode
+                , candleReadMode
+                , candleReadIntervals
+                , candleShadowSampleBps
+                , candleStrictCoverage
+                , candleLatenessSeconds
+                )
+          ) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
             Left err -> pure $ Left $ "Failed to load addresses: " <> err
@@ -310,6 +387,12 @@ loadConfig = do
                 , cfgPythSampleIntervalSeconds = max 60 pythSampleIntervalSeconds
                 , cfgPythLatestMaxAgeSeconds = pythLatestMaxAgeSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
+                , cfgPerpsCandleWriteMode = candleWriteMode
+                , cfgPerpsCandleReadMode = candleReadMode
+                , cfgPerpsCandleReadIntervals = candleReadIntervals
+                , cfgPerpsCandleShadowSampleBps = candleShadowSampleBps
+                , cfgPerpsCandleStrictCoverage = candleStrictCoverage
+                , cfgPerpsCandleLatenessSeconds = candleLatenessSeconds
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
@@ -365,6 +448,84 @@ parseBoolStrict value =
     "no" -> Just False
     "off" -> Just False
     _ -> Nothing
+
+parsePerpsCandleWriteMode :: String -> Either String PerpsCandleWriteMode
+parsePerpsCandleWriteMode raw =
+  case T.toLower $ T.strip $ T.pack raw of
+    "off" -> Right PerpsCandleWritesOff
+    "dual" -> Right PerpsCandleWritesDual
+    _ -> Left "PERPS_CANDLE_WRITE_MODE must be one of off or dual"
+
+parsePerpsCandleReadMode :: String -> Either String PerpsCandleReadMode
+parsePerpsCandleReadMode raw =
+  case T.toLower $ T.strip $ T.pack raw of
+    "legacy" -> Right PerpsCandleReadsLegacy
+    "shadow" -> Right PerpsCandleReadsShadow
+    "rollup" -> Right PerpsCandleReadsRollup
+    _ -> Left "PERPS_CANDLE_READ_MODE must be one of legacy, shadow, or rollup"
+
+parsePerpsCandleReadIntervals :: String -> Either String [Integer]
+parsePerpsCandleReadIntervals raw =
+  traverse parseInterval tokens
+  where
+    tokens =
+      filter (not . null)
+        $ map T.unpack
+        $ concatMap T.words
+        $ T.splitOn ","
+        $ T.strip
+        $ T.pack raw
+    parseInterval token =
+      case readMaybe token of
+        Just interval | interval `elem` canonicalBasketCandleIntervals -> Right interval
+        _ ->
+          Left
+            "PERPS_CANDLE_READ_INTERVALS may contain only 60, 180, 300, 900, 1800, 3600, or 86400"
+
+-- | Rollup HTTP reads are fail-closed. Shadow mode is reserved (and therefore
+-- never enables a public rollup route); an empty allowlist exposes nothing.
+perpsCandleRollupReadEnabled :: PerpsCandleReadMode -> Bool -> [Integer] -> Integer -> Bool
+perpsCandleRollupReadEnabled mode strictCoverage allowlistedIntervals interval =
+  mode == PerpsCandleReadsRollup
+    && strictCoverage
+    && interval `elem` canonicalBasketCandleIntervals
+    && interval `elem` allowlistedIntervals
+
+-- | A public rollup read requires the corresponding live writers. Without
+-- this invariant, a reorg processed while writes are disabled could leave
+-- previously complete rollups and coverage metadata available to the API.
+validatePerpsCandleModeCombination
+  :: PerpsCandleWriteMode
+  -> PerpsCandleReadMode
+  -> [Integer]
+  -> Bool
+  -> Either String ()
+validatePerpsCandleModeCombination writeMode readMode readIntervals strictCoverage
+  | not (null readIntervals)
+      && writeMode /= PerpsCandleWritesDual =
+      Left
+        "PERPS_CANDLE_WRITE_MODE must be dual before any rollup interval is allowlisted"
+  | readMode == PerpsCandleReadsRollup && not strictCoverage =
+      Left
+        "PERPS_CANDLE_STRICT_COVERAGE must be true when PERPS_CANDLE_READ_MODE is rollup"
+  | otherwise = Right ()
+
+parseBoundedWholeNumber :: String -> Int -> Int -> String -> Either String Int
+parseBoundedWholeNumber name lower upper raw =
+  case readMaybe normalized of
+    Just value
+      | show value == normalized
+      , value >= lower
+      , value <= upper -> Right value
+    _ ->
+      Left $
+        name
+          <> " must be a whole number between "
+          <> show lower
+          <> " and "
+          <> show upper
+  where
+    normalized = T.unpack $ T.strip $ T.pack raw
 
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =

@@ -101,6 +101,11 @@ spec = do
       deriveExecutionOracleSnapshot (drop 1 $ neutralPricePoints [1 .. 6])
         `shouldSatisfy` isLeft
 
+    it "rejects a signed basket outside the immutable display domain" $ do
+      let outlier point = point {pppPrice = pppPrice point * 1_000_000}
+      computeBasketSnapshot (map outlier $ neutralPricePoints [1 .. 6])
+        `shouldSatisfy` isLeft
+
   describe "executionOraclePublishTimeBounds" $ do
     it "selects the first unique Pyth observation strictly after commit" $
       executionOraclePublishTimeBounds 1_785_437_833
@@ -129,7 +134,13 @@ neutralPricePoints publishTimes =
     point component publishTime =
       PythPricePoint
         { pppFeedId = bcFeedId component
-        , pppPrice = 100_000_000
+        -- Use each component's configured base in the feed's native direction
+        -- so the fixture produces the neutral 1.00 basket and remains inside
+        -- the immutable display-price domain.
+        , pppPrice =
+            if bcInverted component
+              then (10 ^ (16 :: Int) + bcBasePrice component `div` 2) `div` bcBasePrice component
+              else bcBasePrice component
         , pppConfidence = 1
         , pppExponent = -8
         , pppPublishTime = publishTime

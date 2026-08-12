@@ -580,7 +580,19 @@ insertBasketSnapshotWithSource conn timestamp intervalSeconds basketPrice compon
     \ON CONFLICT (timestamp, interval_seconds) DO UPDATE SET \
     \basket_price = EXCLUDED.basket_price, \
     \component_prices = EXCLUDED.component_prices, \
-    \source = EXCLUDED.source"
+    \source = EXCLUDED.source \
+    \WHERE (CASE EXCLUDED.source \
+    \  WHEN 'backend_hermes_latest_v2' THEN 30 \
+    \  WHEN 'pyth_hermes_latest' THEN 30 \
+    \  WHEN 'backend_hermes_historical_v2' THEN 20 \
+    \  WHEN 'backend_hermes_reveal_v2' THEN 20 \
+    \  ELSE 10 END) >= \
+    \ (CASE perps_basket_snapshots.source \
+    \  WHEN 'backend_hermes_latest_v2' THEN 30 \
+    \  WHEN 'pyth_hermes_latest' THEN 30 \
+    \  WHEN 'backend_hermes_historical_v2' THEN 20 \
+    \  WHEN 'backend_hermes_reveal_v2' THEN 20 \
+    \  ELSE 10 END)"
     (timestamp, intervalSeconds, basketPrice, encode components, source)
   pure ()
 

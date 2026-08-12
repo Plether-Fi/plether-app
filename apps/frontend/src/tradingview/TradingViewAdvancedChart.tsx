@@ -10,6 +10,7 @@ import {
   PletherDxyDatafeed,
   TRADINGVIEW_FAVORITE_RESOLUTIONS,
   chartIntervalForTradingViewResolution,
+  isPerpsCandleApiEnabled,
   tradingViewResolutionForInterval,
 } from './pletherDatafeed'
 import type {
@@ -304,12 +305,25 @@ export function TradingViewAdvancedChart({
     let intervalSubscription: TradingViewIntervalSubscription | undefined
     let handleIntervalChange: ((resolution: string) => void) | undefined
     const libraryPath = normalizeLibraryPath()
+    const useCandleApi = isPerpsCandleApiEnabled()
     const datafeed = new PletherDxyDatafeed({
       queryClient,
       oracleMark: oracleMarkRef.current,
-      onHistoryGap: () => {
+      useCandleApi,
+      onHistoryGap: (intervalSeconds) => {
+        const candleQueryKey = apiQueryKeys.perps.basketCandlesAll()
         void queryClient.invalidateQueries({
-          queryKey: apiQueryKeys.perps.basketHistoryAll(),
+          queryKey: useCandleApi
+            ? candleQueryKey
+            : apiQueryKeys.perps.basketHistoryAll(),
+          predicate: useCandleApi && intervalSeconds !== undefined
+            ? (query) => {
+                const suffix = query.queryKey.slice(candleQueryKey.length)
+                return suffix[0] === intervalSeconds || (
+                  suffix[0] === 'current' && suffix[1] === intervalSeconds
+                )
+              }
+            : undefined,
         }).finally(() => {
           widgetRef.current?.activeChart().resetData()
         })

@@ -56,6 +56,7 @@ library
         Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
+        Plether.Database.Candles
         Plether.Database.Schema
         Plether.Database.Insights
         Plether.Insights.Competition
@@ -142,6 +143,7 @@ executable plether-basket-worker
         plether-api,
         aeson >= 2.1,
         bytestring >= 0.11,
+        postgresql-simple >= 0.7,
         text >= 2.0,
         http-client >= 0.7,
         http-client-tls >= 0.3
@@ -220,12 +222,30 @@ executable plether-insights-admin
         RecordWildCards
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-candle-admin
+    import:           warnings
+    main-is:          CandleAdmin.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        postgresql-simple >= 0.7,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+        TypeApplications
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
+
 test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
         Plether.Ethereum.AbiSpec
@@ -242,6 +262,7 @@ test-suite plether-api-test
         Plether.LoggingSpec
         Plether.LiquidationWorkerSpec
         Plether.Pyth.HermesSpec
+        Plether.Pyth.HistorySpec
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
@@ -277,6 +298,7 @@ test-suite plether-api-integration-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:
+        Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
     build-depends:

@@ -2,6 +2,16 @@ module Plether.Types.Perps
   ( BasketHistory (..)
   , BasketHistoryParams (..)
   , BasketHistoryPoint (..)
+  , BasketCandle (..)
+  , BasketCandlePage (..)
+  , BasketCurrentCandle (..)
+  , canonicalBasketCandleIntervals
+  , basketCandlePageSize
+  , basketCandlePageSpan
+  , isCanonicalBasketCandleInterval
+  , isAlignedBasketCandleCursor
+  , isBasketCandleCursorWithinFutureBound
+  , hasExactBasketCandleQueryKeys
   , BasketLatest (..)
   , PythUpdateResponse (..)
   , RevealPayloadResponse (..)
@@ -14,6 +24,151 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock.POSIX (POSIXTime)
 import GHC.Generics (Generic)
+
+-- | Candle resolutions supported by the persisted rollup read model. Keeping
+-- this list closed makes storage, pagination and edge-cache keys deterministic.
+canonicalBasketCandleIntervals :: [Integer]
+canonicalBasketCandleIntervals = [60, 180, 300, 900, 1800, 3600, 86_400]
+
+basketCandlePageSize :: Integer
+basketCandlePageSize = 500
+
+isCanonicalBasketCandleInterval :: Integer -> Bool
+isCanonicalBasketCandleInterval interval = interval `elem` canonicalBasketCandleIntervals
+
+basketCandlePageSpan :: Integer -> Maybe Integer
+basketCandlePageSpan interval
+  | isCanonicalBasketCandleInterval interval = Just $ interval * basketCandlePageSize
+  | otherwise = Nothing
+
+isAlignedBasketCandleCursor :: Integer -> Integer -> Bool
+isAlignedBasketCandleCursor interval cursor =
+  case basketCandlePageSpan interval of
+    Just pageSpan -> cursor > 0 && cursor `mod` pageSpan == 0
+    Nothing -> False
+
+-- | Allow the fixed page containing the backend clock plus one page for modest
+-- browser/backend clock skew, matching the edge proxy. The single-page grace
+-- remains a strict bound against arbitrary future-window scans.
+isBasketCandleCursorWithinFutureBound :: Integer -> Integer -> Integer -> Bool
+isBasketCandleCursorWithinFutureBound now interval cursor =
+  case basketCandlePageSpan interval of
+    Just pageSpan
+      | now >= 0
+      , isAlignedBasketCandleCursor interval cursor ->
+          let containingPageEnd = ((now + pageSpan - 1) `div` pageSpan) * pageSpan
+           in cursor <= containingPageEnd + pageSpan
+    _ -> False
+
+hasExactBasketCandleQueryKeys :: [Text] -> [Text] -> Bool
+hasExactBasketCandleQueryKeys required actual =
+  length required == length actual
+    && all (\key -> count key actual == 1) required
+    && all (`elem` required) actual
+  where
+    count key = length . filter (== key)
+
+-- | Public candle fields intentionally remain in the canonical/raw oracle
+-- domain. Consumers applying a decreasing display transform must swap high
+-- and low. Integer values are encoded as decimal strings to remain lossless in
+-- JavaScript.
+data BasketCandle = BasketCandle
+  { bcTimestamp :: Integer
+  , bcRawOpenPrice :: Integer
+  , bcRawHighPrice :: Integer
+  , bcRawLowPrice :: Integer
+  , bcRawClosePrice :: Integer
+  , bcVolumeUsdc :: Maybe Integer
+  , bcTradeCount :: Maybe Integer
+  , bcSampleCount :: Integer
+  , bcQuality :: Text
+  , bcRevision :: Integer
+  , bcPriceComplete :: Bool
+  , bcVolumeComplete :: Bool
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON BasketCandle where
+  toJSON BasketCandle {..} =
+    object
+      [ "timestamp" .= bcTimestamp
+      , "rawOpenPrice" .= show bcRawOpenPrice
+      , "rawHighPrice" .= show bcRawHighPrice
+      , "rawLowPrice" .= show bcRawLowPrice
+      , "rawClosePrice" .= show bcRawClosePrice
+      , "volumeUsdc" .= fmap show bcVolumeUsdc
+      , "tradeCount" .= bcTradeCount
+      , "sampleCount" .= bcSampleCount
+      , "quality" .= bcQuality
+      , "revision" .= bcRevision
+      , "priceComplete" .= bcPriceComplete
+      , "volumeComplete" .= bcVolumeComplete
+      , "complete" .= (bcPriceComplete && bcVolumeComplete)
+      ]
+
+data BasketCandlePage = BasketCandlePage
+  { bcpIntervalSeconds :: Integer
+  , bcpCursor :: Integer
+  , bcpSeriesId :: Text
+  , bcpConfigurationHash :: Text
+  , bcpDisplayPriceCap :: Integer
+  , bcpPreviousCursor :: Maybe Integer
+  , bcpHasEarlier :: Bool
+  , bcpCoverageStart :: Maybe Integer
+  , bcpCoverageEnd :: Maybe Integer
+  , bcpFinalizedThrough :: Maybe Integer
+  , bcpDatasetGeneration :: Integer
+  , bcpCoverageComplete :: Bool
+  , bcpCandles :: [BasketCandle]
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON BasketCandlePage where
+  toJSON BasketCandlePage {..} =
+    object
+      [ "intervalSeconds" .= bcpIntervalSeconds
+      , "cursor" .= bcpCursor
+      , "seriesId" .= bcpSeriesId
+      , "configurationHash" .= bcpConfigurationHash
+      , "displayPriceCap" .= show bcpDisplayPriceCap
+      , "previousCursor" .= bcpPreviousCursor
+      , "hasEarlier" .= bcpHasEarlier
+      , "coverageStart" .= bcpCoverageStart
+      , "coverageEnd" .= bcpCoverageEnd
+      , "finalizedThrough" .= bcpFinalizedThrough
+      , "datasetGeneration" .= bcpDatasetGeneration
+      , "coverageComplete" .= bcpCoverageComplete
+      , "candles" .= bcpCandles
+      ]
+
+data BasketCurrentCandle = BasketCurrentCandle
+  { bccIntervalSeconds :: Integer
+  , bccSeriesId :: Text
+  , bccConfigurationHash :: Text
+  , bccDisplayPriceCap :: Integer
+  , bccDatasetGeneration :: Integer
+  , bccCoverageStart :: Maybe Integer
+  , bccCoverageEnd :: Maybe Integer
+  , bccFinalizedThrough :: Maybe Integer
+  , bccCoverageComplete :: Bool
+  , bccCandle :: Maybe BasketCandle
+  }
+  deriving stock (Eq, Show, Generic)
+
+instance ToJSON BasketCurrentCandle where
+  toJSON BasketCurrentCandle {..} =
+    object
+      [ "intervalSeconds" .= bccIntervalSeconds
+      , "seriesId" .= bccSeriesId
+      , "configurationHash" .= bccConfigurationHash
+      , "displayPriceCap" .= show bccDisplayPriceCap
+      , "datasetGeneration" .= bccDatasetGeneration
+      , "coverageStart" .= bccCoverageStart
+      , "coverageEnd" .= bccCoverageEnd
+      , "finalizedThrough" .= bccFinalizedThrough
+      , "coverageComplete" .= bccCoverageComplete
+      , "candle" .= bccCandle
+      ]
 
 data BasketHistoryParams = BasketHistoryParams
   { bhpRange :: Text

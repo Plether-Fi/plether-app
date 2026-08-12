@@ -1,4 +1,4 @@
-import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../api'
+import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest, PerpsBasketCandle } from '../api'
 
 export interface ChartPoint {
   timestamp: number
@@ -18,9 +18,82 @@ export interface OracleMarkPoint {
   basketPrice: string
 }
 
+const RAW_ORACLE_PRICE_SCALE = 100_000_000n
+const LEGACY_RAW_ORACLE_PRICE_CAP = 2n * RAW_ORACLE_PRICE_SCALE
+const MAX_SAFE_ORACLE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER)
+
+export function parsePerpsDisplayPriceCap(value: string): bigint | undefined {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined
+
+  try {
+    const displayPriceCap = BigInt(value)
+    return displayPriceCap <= MAX_SAFE_ORACLE_INTEGER ? displayPriceCap : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function parseRawOraclePrice(value: string, displayPriceCap: bigint): bigint | undefined {
+  if (!/^\d+$/.test(value)) return undefined
+
+  try {
+    const rawPrice = BigInt(value)
+    return rawPrice > 0n && rawPrice < displayPriceCap ? rawPrice : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function rawOraclePriceToDisplay(rawPrice: bigint, displayPriceCap: bigint): number {
+  return Number(displayPriceCap - rawPrice) / Number(RAW_ORACLE_PRICE_SCALE)
+}
+
+/**
+ * Converts a raw-domain backend OHLC candle to displayed plDXY OHLC.
+ * The raw-to-display transform is decreasing, so raw low becomes display high
+ * and raw high becomes display low.
+ */
+export function perpsBasketCandleToChartCandle(
+  candle: PerpsBasketCandle,
+  displayPriceCapValue: string
+): ChartCandle | undefined {
+  if (!Number.isSafeInteger(candle.timestamp) || candle.timestamp <= 0) return undefined
+
+  const displayPriceCap = parsePerpsDisplayPriceCap(displayPriceCapValue)
+  if (displayPriceCap === undefined) return undefined
+
+  const rawOpen = parseRawOraclePrice(candle.rawOpenPrice, displayPriceCap)
+  const rawHigh = parseRawOraclePrice(candle.rawHighPrice, displayPriceCap)
+  const rawLow = parseRawOraclePrice(candle.rawLowPrice, displayPriceCap)
+  const rawClose = parseRawOraclePrice(candle.rawClosePrice, displayPriceCap)
+  if (
+    rawOpen === undefined ||
+    rawHigh === undefined ||
+    rawLow === undefined ||
+    rawClose === undefined ||
+    rawLow > rawOpen ||
+    rawLow > rawClose ||
+    rawOpen > rawHigh ||
+    rawClose > rawHigh
+  ) {
+    return undefined
+  }
+
+  return {
+    timestamp: candle.timestamp,
+    open: rawOraclePriceToDisplay(rawOpen, displayPriceCap),
+    high: rawOraclePriceToDisplay(rawLow, displayPriceCap),
+    low: rawOraclePriceToDisplay(rawHigh, displayPriceCap),
+    close: rawOraclePriceToDisplay(rawClose, displayPriceCap),
+  }
+}
+
 export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
-  return Math.max(0, 2 - rawOraclePrice)
+  return Math.max(
+    0,
+    Number(LEGACY_RAW_ORACLE_PRICE_CAP) / Number(RAW_ORACLE_PRICE_SCALE) - rawOraclePrice
+  )
 }
 
 function basketDisplayPrice(point: BasketHistoryPoint): number {

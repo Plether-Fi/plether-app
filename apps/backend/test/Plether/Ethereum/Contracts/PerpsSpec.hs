@@ -61,6 +61,18 @@ spec = do
         `shouldSatisfy` isDecodeError
       parsePriceFeedUpdatesUniqueCall payload [feedId] 20 10 `shouldSatisfy` isDecodeError
 
+    it "accepts an exact inclusive Pyth publish-time bound" $ do
+      let feedId = BS.replicate 32 0x11
+      call <-
+        expectRight $
+          parsePriceFeedUpdatesUniqueCall
+            [BS.singleton 0x01]
+            [feedId]
+            20
+            20
+      word call 2 `shouldBe` 20
+      word call 3 `shouldBe` 20
+
     it "encodes executeOrder(uint64,bytes[]) with an empty array" $ do
       executeOrderCall 7 []
         `shouldEncodeTo` "0xc700abdc000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000"

@@ -172,6 +172,65 @@ export interface BasketLatest {
   source: string;
 }
 
+export type PerpsCandleIntervalSeconds = 60 | 180 | 300 | 900 | 1800 | 3600 | 86400;
+export type PerpsBasketCandleQuality = 'observed' | 'legacy_sampled' | 'mixed';
+
+/**
+ * A backend-aggregated candle in the contract's raw oracle-price domain.
+ * Consumers displaying plDXY must invert the prices and swap high/low.
+ */
+export interface PerpsBasketCandle {
+  timestamp: number;
+  rawOpenPrice: string;
+  rawHighPrice: string;
+  rawLowPrice: string;
+  rawClosePrice: string;
+  /** Null means the volume source has not proved coverage for this bucket. */
+  volumeUsdc: string | null;
+  /** Null means trade-count coverage is unknown, which is distinct from zero. */
+  tradeCount: number | null;
+  sampleCount: number;
+  quality: PerpsBasketCandleQuality;
+  revision: number;
+  priceComplete: boolean;
+  volumeComplete: boolean;
+  complete: boolean;
+}
+
+export interface PerpsBasketCandlePage {
+  intervalSeconds: PerpsCandleIntervalSeconds;
+  /** Exclusive end of this fixed 500-bucket page. */
+  cursor: number;
+  /** Immutable basket-series identity for every candle in this response. */
+  seriesId: string;
+  /** Hash of the immutable basket configuration used by this series. */
+  configurationHash: string;
+  /** Raw oracle-domain value representing a displayed price of zero. */
+  displayPriceCap: string;
+  /** Exclusive end cursor for the next older page, or null at coverage start. */
+  previousCursor: number | null;
+  hasEarlier: boolean;
+  coverageStart: number | null;
+  coverageEnd: number | null;
+  coverageComplete: boolean;
+  finalizedThrough: number | null;
+  datasetGeneration: number;
+  candles: PerpsBasketCandle[];
+}
+
+export interface PerpsBasketCurrentCandle {
+  intervalSeconds: PerpsCandleIntervalSeconds;
+  seriesId: string;
+  configurationHash: string;
+  displayPriceCap: string;
+  datasetGeneration: number;
+  coverageStart: number | null;
+  coverageEnd: number | null;
+  coverageComplete: boolean;
+  finalizedThrough: number | null;
+  candle: PerpsBasketCandle | null;
+}
+
 export interface PerpsRevealPayload {
   orderId: string;
   updateData: string[];

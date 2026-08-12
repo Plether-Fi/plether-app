@@ -16,6 +16,9 @@ module Plether.Perps.HistoryIndexer
   , decodeCloseTradeCosts
   , orderFailReasonName
   , terminalStatus
+  , isMarketVolumeActivity
+  , canCertifyIndexedRange
+  , validateIndexedBoundary
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
@@ -33,9 +36,12 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -45,7 +51,16 @@ import Network.HTTP.Client
   , responseBody
   , responseTimeoutMicro
   )
+import Plether.Config (PerpsCandleWriteMode (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.Candles
+  ( RollupCoverage (..)
+  , RollupKind (VolumeRollup)
+  , advanceMarketVolumeCoverage
+  , getRollupCoverage
+  , invalidateMarketVolumeFromBlock
+  , recomputeMarketVolumeHierarchyBatch
+  )
 import Plether.Database.Schema
   ( PerpsExecutionEvidenceRow (..)
   , deletePerpsHistoryFromBlock
@@ -120,6 +135,8 @@ data PerpsIndexerConfig = PerpsIndexerConfig
   , picPollIntervalMicros :: Int
   , picIndexerName :: Text
   , picMode :: PerpsIndexerMode
+  , picCandleWriteMode :: PerpsCandleWriteMode
+  , picCandleLatenessSeconds :: Integer
   }
   deriving stock (Show)
 
@@ -228,7 +245,49 @@ runPerpsIndexer manager pool cfg =
             "Perps indexer iteration failed"
             [field "error" $ show err]
           threadDelay (picPollIntervalMicros cfg * 2)
-        Right indexed ->
+        Right indexed -> do
+          -- A successful poll is the volume-writer liveness primitive. Emit it
+          -- even when the indexer is already caught up: quiet chains and
+          -- zero-trade ranges must not look like a dead candle writer.
+          when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+            coverageResult <-
+              try @SomeException $
+                withDb pool $ \conn ->
+                  getRollupCoverage
+                    conn
+                    VolumeRollup
+                    Nothing
+                    (Just $ picChainId cfg)
+                    (Just $ paOrderRouter $ picAddresses cfg)
+                    60
+            case coverageResult of
+              Left err ->
+                logErrorEvery
+                  60
+                  "perps_volume_writer_heartbeat_failed"
+                  "Perps volume candle writer could not read its coverage heartbeat"
+                  [field "error" $ show err]
+              Right volumeCoverage -> do
+                now <- round <$> getPOSIXTime
+                logInfoEvery
+                  300
+                  "perps_volume_writer_heartbeat"
+                  "Perps volume candle writer completed an indexer poll"
+                  [ field "writer_kind" ("volume" :: Text)
+                  , field "service" ("plether-perps-indexer" :: Text)
+                  , field "processed_range" indexed
+                  , field "coverage_interval_seconds" (60 :: Integer)
+                  , field "coverage_expected_lateness_seconds" (0 :: Integer)
+                  , field "coverage_state" $ coverageState volumeCoverage
+                  , field "coverage_finalized_through" $ volumeCoverage >>= rcFinalizedThrough
+                  , field "coverage_lag_seconds" $
+                      normalizedCoverageLag
+                        now
+                        60
+                        0
+                        (volumeCoverage >>= rcFinalizedThrough)
+                  , field "coverage_error" $ volumeCoverage >>= rcLastError
+                  ]
           when (not indexed) $ threadDelay (picPollIntervalMicros cfg)
 
     runEvidenceLoop = forever $ do
@@ -255,6 +314,16 @@ runPerpsIndexer manager pool cfg =
           let endBlock = min toBlock (fromBlock + picBatchSize cfg - 1)
           _ <- runOneRange manager pool cfg (Just fromBlock) (Just endBlock)
           runBackfill (endBlock + 1) toBlock
+
+    coverageState = \case
+      Nothing -> "uninitialized" :: Text
+      Just coverage
+        | rcComplete coverage -> "complete"
+        | otherwise -> "incomplete"
+
+    normalizedCoverageLag now interval expectedLateness =
+      fmap $ \finalizedThrough ->
+        max 0 (now - finalizedThrough - interval - max 0 expectedLateness)
 
 runOneRange :: Manager -> DbPool -> PerpsIndexerConfig -> Maybe Integer -> Maybe Integer -> IO Bool
 runOneRange manager pool cfg explicitFrom explicitTo = do
@@ -310,7 +379,7 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
         (fail "Canonical end block changed while validating the fetched log range")
 
-      forM_ validatedLogs $ \(logEntry, blockInfo) -> do
+      enrichedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
         mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
         let parsedLog = parsePerpsLog logEntry
         tradeCosts <- case parsedLog of
@@ -330,21 +399,98 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
                   ]
                 pure Nothing
           _ -> pure Nothing
-        processLog pool cfg blockInfo mTxFrom tradeCosts logEntry
-      withDb pool $ \conn -> do
-        (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-        when (endBlock >= currentCursor) $
+        pure (logEntry, blockInfo, mTxFrom, tradeCosts)
+      -- Persist the whole canonical range, its volume rollups, and the cursor
+      -- in one transaction. A failure cannot advance the cursor past missing
+      -- events or leave rollups only partly rebuilt.
+      certifiedCanonicalContinuity <- withDb pool $ \conn -> withTransaction conn $ do
+        (currentCursor, currentCursorHash) <-
+          getPerpsIndexerLastBlock
+            conn
+            (picChainId cfg)
+            (picIndexerName cfg)
+            (paOrderRouter $ picAddresses cfg)
+        let certifiesCanonicalContinuity =
+              canCertifyIndexedRange
+                (picStartBlock cfg)
+                currentCursor
+                startBlock
+                endBlock
+        -- Close the gap between the initial cursor verification and commit.
+        -- A certifying append with a persisted boundary hash must still be on
+        -- that same canonical chain immediately before the first write.
+        when certifiesCanonicalContinuity $
+          forM_ currentCursorHash $ \persistedHash -> do
+            boundaryInfo <- requireRpc "eth_getBlockByNumber(cursor-boundary)" $
+              getBlockByNumber manager (picRpcUrls cfg) reqIdRef (startBlock - 1)
+            case validateIndexedBoundary (startBlock - 1) persistedHash boundaryInfo of
+              Left err -> fail $ T.unpack err
+              Right () -> pure ()
+        affectedVolumeTimes <- fmap catMaybes $ forM enrichedLogs $ \(logEntry, blockInfo, mTxFrom, tradeCosts) ->
+          processLog conn cfg blockInfo mTxFrom tradeCosts logEntry
+        -- Rollups are recomputed from the canonical activity table after all
+        -- writes in this range. The batch primitive deduplicates both minutes
+        -- and their overlapping parent buckets, bounding write amplification
+        -- while preserving idempotence when an RPC provider replays a range.
+        let affectedVolumeMinutes =
+              Set.toAscList $
+                Set.fromList $
+                  map (\timestamp -> (timestamp `div` 60) * 60) affectedVolumeTimes
+        when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+          recomputeMarketVolumeHierarchyBatch
+            conn
+            (picChainId cfg)
+            (paOrderRouter $ picAddresses cfg)
+            affectedVolumeMinutes
+            (picCandleLatenessSeconds cfg)
+          -- Only a range contiguous with the persisted block cursor proves
+          -- that every intervening block was inspected. Explicit historical
+          -- or disjoint replays may repair canonical rows and rollups, but
+          -- must not certify skipped blocks as zero-volume.
+          when certifiesCanonicalContinuity $
+            advanceMarketVolumeCoverage
+              conn
+              (picChainId cfg)
+              (paOrderRouter $ picAddresses cfg)
+              (biTimestamp endInfo)
+              0
+        when certifiesCanonicalContinuity $
           setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) endBlock (Just $ biHash endInfo)
+        pure certifiesCanonicalContinuity
       logInfoEvery
         300
         "perps_indexer_progress"
-        "Perps history indexer advanced"
+        "Perps history indexer processed a block range"
         [ field "from_block" startBlock
         , field "to_block" endBlock
         , field "safe_head_block" safeBlock
         , field "event_count" $ length orderedLogs
+        , field "canonical_progress_certified" certifiedCanonicalContinuity
+        , field "indexed_through_timestamp" $ biTimestamp endInfo
         ]
       pure True
+
+-- A processed block range may advance canonical state only when it begins at
+-- the exact next block implied by the persisted cursor. The configured start
+-- block is the trusted lower boundary for a fresh or rewound indexer. This
+-- intentionally treats overlapping and disjoint explicit replays as
+-- non-certifying even though their rows can still be written idempotently.
+canCertifyIndexedRange :: Integer -> Integer -> Integer -> Integer -> Bool
+canCertifyIndexedRange configuredStart storedCursor rangeFrom rangeTo =
+  rangeFrom == expectedFrom && rangeTo >= rangeFrom
+  where
+    expectedFrom
+      | storedCursor < configuredStart = configuredStart
+      | otherwise = storedCursor + 1
+
+validateIndexedBoundary :: Integer -> Text -> BlockInfo -> Either Text ()
+validateIndexedBoundary expectedBlock persistedHash blockInfo = do
+  unless
+    (biNumber blockInfo == expectedBlock)
+    (Left "Canonical cursor boundary block number changed before commit")
+  unless
+    (normalizeHex (biHash blockInfo) == normalizeHex persistedHash)
+    (Left "Canonical cursor boundary block hash changed before commit")
 
 validateRpcLogBlockHash :: RpcLog -> BlockInfo -> Either Text ()
 validateRpcLogBlockHash logEntry blockInfo = do
@@ -364,13 +510,11 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
     Right blockInfo | normalizeHex (biHash blockInfo) == normalizeHex storedHash -> pure ()
     Right _ -> rewind
     Left err ->
-      logWarnEvery
-        60
-        "perps_indexer_cursor_verification_failed"
-        "Perps indexer could not verify its cursor block hash"
-        [ field "cursor_block" lastBlock
-        , field "error" err
-        ]
+      fail $
+        "Perps indexer could not verify canonical cursor block "
+          <> show lastBlock
+          <> ": "
+          <> show err
   where
     rewind = do
       -- A mismatch at the cursor proves that some ancestor may also have been
@@ -384,8 +528,26 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
         [ field "mismatch_block" lastBlock
         , field "rewind_to_block" newCursor
         ]
-      withDb pool $ \conn -> do
+      withDb pool $ \conn -> withTransaction conn $ do
+        affectedVolumeMinutes <-
+          if picCandleWriteMode cfg == PerpsCandleWritesDual
+            then
+              invalidateMarketVolumeFromBlock
+                conn
+                (picChainId cfg)
+                (paOrderRouter $ picAddresses cfg)
+                rewindBlock
+            else pure []
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
+        -- Rebuild while the dataset is still coverage-gated. A minute may now
+        -- be empty because its sole trade was orphaned; recomputing it also
+        -- reconstructs affected parent buckets from retained pre-rewind rows.
+        recomputeMarketVolumeHierarchyBatch
+          conn
+          (picChainId cfg)
+          (paOrderRouter $ picAddresses cfg)
+          affectedVolumeMinutes
+          (picCandleLatenessSeconds cfg)
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
 
 enrichPendingExecutionEvidence
@@ -669,17 +831,17 @@ executionOraclePayloadDerivationVersion = 1
 executionEconomicsDerivationVersion = 1
 
 processLog
-  :: DbPool
+  :: Connection
   -> PerpsIndexerConfig
   -> BlockInfo
   -> Maybe Text
   -> Maybe TradeCosts
   -> RpcLog
-  -> IO ()
-processLog pool cfg blockInfo txFrom tradeCosts logEntry =
+  -> IO (Maybe Integer)
+processLog conn cfg blockInfo txFrom tradeCosts logEntry =
   case parsePerpsLog logEntry of
-    Nothing -> pure ()
-    Just parsed -> withDb pool $ \conn -> do
+    Nothing -> pure Nothing
+    Just parsed -> do
       let eventName = parsedEventName parsed
           account = parsedAccount parsed
           orderId = parsedOrderId parsed
@@ -733,6 +895,18 @@ processLog pool cfg blockInfo txFrom tradeCosts logEntry =
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
+      pure $
+        if isMarketVolumeActivity parsed
+          then Just $ biTimestamp blockInfo
+          else Nothing
+
+-- Keep this predicate aligned with the canonical volume query. Only position
+-- lifecycle events that contain both notional inputs contribute to OHLCV.
+isMarketVolumeActivity :: ParsedPerpsLog -> Bool
+isMarketVolumeActivity = \case
+  ParsedPositionActivity kind _ _ (Just _) (Just _) _ _ _ ->
+    kind `elem` ["Open", "Close", "Liquidated"]
+  _ -> False
 
 parsePerpsLog :: RpcLog -> Maybe ParsedPerpsLog
 parsePerpsLog logEntry =
