@@ -29,6 +29,9 @@ container_cpu       = 256
 container_memory    = 1024
 workers_container_memory = 1024
 db_instance_class          = "db.t4g.small"
+# Re-size from measured mainnet demand before first creation; allocated storage
+# cannot be reduced in place.
+db_allocated_storage       = 20
 db_backup_retention_days   = 7
 db_max_allocated_storage   = 100
 db_deletion_protection     = true
