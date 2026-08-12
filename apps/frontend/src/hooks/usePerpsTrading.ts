@@ -68,12 +68,29 @@ interface ExecuteOrderResult {
 const PERPS_CONTRACT_ADDRESSES = new Set(
   Object.values(PERPS_ARBITRUM_SEPOLIA).map((address) => address.toLowerCase())
 )
+const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
+  'allowance',
+  'balanceOf',
+  'getAccountLedgerSnapshot',
+  'getFreeBuyingPowerUsdc',
+  'getPendingOrderView',
+  'getPendingOrders',
+  'getPoolLiquidityView',
+  'getPosition',
+  'getProtocolStatus',
+  'getTraderAccount',
+  'isFadWindow',
+  'positions',
+  'previewClose',
+  'previewOpen',
+  'sides',
+])
 
 function isPerpsContractAddress(value: unknown): boolean {
   return typeof value === 'string' && PERPS_CONTRACT_ADDRESSES.has(value.toLowerCase())
 }
 
-function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
+function isPerpsDynamicContractQuery(queryKey: readonly unknown[]): boolean {
   const [queryType, parameters] = queryKey
   if (queryType !== 'readContract' && queryType !== 'readContracts') return false
   if (typeof parameters !== 'object' || parameters === null) return false
@@ -81,7 +98,8 @@ function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
   const queryParameters = parameters as {
     chainId?: unknown
     address?: unknown
-    contracts?: { address?: unknown }[]
+    functionName?: unknown
+    contracts?: { address?: unknown; functionName?: unknown }[]
   }
   if (
     queryParameters.chainId !== undefined &&
@@ -89,11 +107,18 @@ function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
   ) {
     return false
   }
-  if (isPerpsContractAddress(queryParameters.address)) return true
+  if (
+    isPerpsContractAddress(queryParameters.address) &&
+    typeof queryParameters.functionName === 'string' &&
+    PERPS_DYNAMIC_READ_FUNCTIONS.has(queryParameters.functionName)
+  ) return true
   if (!Array.isArray(queryParameters.contracts)) return false
 
   return queryParameters.contracts.some(
-    (contract) => isPerpsContractAddress(contract.address)
+    (contract) =>
+      isPerpsContractAddress(contract.address) &&
+      typeof contract.functionName === 'string' &&
+      PERPS_DYNAMIC_READ_FUNCTIONS.has(contract.functionName)
   )
 }
 
@@ -373,7 +398,7 @@ export function usePerpsTrading() {
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
-      predicate: (query) => isPerpsContractQuery(query.queryKey),
+      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey),
     })
   }, [queryClient])
 
@@ -813,7 +838,6 @@ export function usePerpsTrading() {
             expectedCommit
           )
           diagnosticHash = includedCommit.hash
-          invalidatePerpsReads()
           onIncluded?.(includedCommit)
         },
       })

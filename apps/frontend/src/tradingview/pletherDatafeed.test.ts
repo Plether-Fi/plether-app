@@ -83,6 +83,9 @@ describe('Plether TradingView datafeed', () => {
     expect(historyRangeForRequest(now - 60 * 60, now, 10, '1D', now)).toBe('1y')
     expect(historyRangeForRequest(now - 60 * 60, now, 100, '1D', now)).toBe('1y')
     expect(
+      historyRangeForRequest(now - 60 * 24 * 60 * 60, now - 59 * 24 * 60 * 60, 100, '1', now)
+    ).toBe('7d')
+    expect(
       historyRangeForRequest(now - 60 * 24 * 60 * 60, now - 59 * 24 * 60 * 60, 24, '60', now)
     ).toBe('1y')
   })
@@ -97,7 +100,7 @@ describe('Plether TradingView datafeed', () => {
     expect(symbolInfo.visible_plots_set).toBe('ohlcv')
     expect(symbolInfo.volume_precision).toBe(2)
     expect(symbolInfo.supported_resolutions).toEqual(TRADINGVIEW_RESOLUTIONS)
-    expect(symbolInfo.intraday_multipliers).toEqual(['1', '5', '60'])
+    expect(symbolInfo.intraday_multipliers).toEqual(['1', '3', '5', '15', '30', '60'])
     expect(symbolInfo.daily_multipliers).toEqual(['1'])
   })
 
@@ -160,12 +163,210 @@ describe('Plether TradingView datafeed', () => {
     expect(bars.map((bar) => bar.time)).toEqual([60_000, 120_000])
   })
 
+  it('delivers chart bars asynchronously without exposing retained mutable objects', async () => {
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getLatest: async () => latest }),
+      pollIntervalMs: 60_000,
+    })
+    let synchronous = true
+
+    try {
+      const bars = await new Promise<TradingViewBar[]>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 181, countBack: 100, firstDataRequest: true },
+          (result) => {
+            expect(synchronous).toBe(false)
+            resolve(result)
+          },
+          reject
+        )
+        synchronous = false
+      })
+      const lastBar = bars.at(-1)
+      expect(lastBar).toBeDefined()
+      if (lastBar) lastBar.close = 999
+
+      const liveBar = await new Promise<TradingViewBar>((resolve) => {
+        feed.subscribeBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          resolve,
+          'mutable-bar-listener',
+          () => undefined
+        )
+      })
+      expect(liveBar.close).toBe(1.05)
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('aborts an in-flight subscription request when the listener unsubscribes', async () => {
+    let requestSignal: AbortSignal | undefined
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getLatest: (signal) => new Promise((_resolve, reject) => {
+          requestSignal = signal
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+      }),
+      pollIntervalMs: 60_000,
+    })
+
+    try {
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        () => undefined,
+        'cancelled-listener',
+        () => undefined
+      )
+      await vi.waitFor(() => expect(requestSignal).toBeDefined())
+
+      feed.unsubscribeBars('cancelled-listener')
+
+      expect(requestSignal?.aborted).toBe(true)
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('cancels a listener locally without aborting a shared React Query request', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const pendingResponse = deferredValue<Response>()
+    const latestResponse = {
+      data: latest,
+      meta: { blockNumber: 1, cached: false, chainId: 421_614 },
+    }
+    let transportSignal: AbortSignal | undefined
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input, init) => {
+      transportSignal = init?.signal as AbortSignal | undefined
+      return pendingResponse.promise
+    })
+    const feed = new PletherDxyDatafeed({ queryClient, pollIntervalMs: 60_000 })
+
+    try {
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        () => undefined,
+        'shared-query-listener',
+        () => undefined
+      )
+      await vi.waitFor(() => expect(transportSignal).toBeDefined())
+
+      const sharedConsumer = queryClient.fetchQuery({
+        queryKey: apiQueryKeys.perps.basketLatest(),
+        queryFn: async (): Promise<typeof latestResponse> => {
+          throw new Error('The in-flight query should be reused')
+        },
+        retry: false,
+      })
+
+      feed.unsubscribeBars('shared-query-listener')
+
+      expect(transportSignal?.aborted).toBe(false)
+      pendingResponse.resolve(new Response(JSON.stringify(latestResponse), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+
+      await expect(sharedConsumer).resolves.toEqual(latestResponse)
+      expect(queryClient.getQueryState(apiQueryKeys.perps.basketLatest())?.status).toBe('success')
+    } finally {
+      pendingResponse.resolve(new Response(JSON.stringify(latestResponse), {
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      feed.destroy()
+      queryClient.clear()
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('does not start a historical request while the document is hidden', async () => {
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    const getHistory = vi.fn(async () => history)
+    const getLatest = vi.fn(async () => latest)
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getHistory, getLatest }),
+    })
+
+    try {
+      const message = await new Promise<string>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 181, countBack: 100, firstDataRequest: true },
+          () => reject(new Error('Hidden requests must not return bars')),
+          resolve
+        )
+      })
+
+      expect(message).toContain('hidden')
+      expect(getHistory).not.toHaveBeenCalled()
+      expect(getLatest).not.toHaveBeenCalled()
+    } finally {
+      feed.destroy()
+      visibilitySpy.mockRestore()
+    }
+  })
+
+  it('aborts an in-flight historical request when the document becomes hidden', async () => {
+    let visibilityState: DocumentVisibilityState = 'visible'
+    const visibilitySpy = vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+      () => visibilityState
+    )
+    let historySignal: AbortSignal | undefined
+    let latestSignal: AbortSignal | undefined
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getHistory: (_range, _intervalSeconds, signal) => new Promise((_resolve, reject) => {
+          historySignal = signal
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+        getLatest: (signal) => new Promise((_resolve, reject) => {
+          latestSignal = signal
+          signal?.addEventListener('abort', () => reject(signal.reason), { once: true })
+        }),
+      }),
+    })
+
+    try {
+      const errorMessage = new Promise<string>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 181, countBack: 100, firstDataRequest: true },
+          () => reject(new Error('An aborted history request must not return bars')),
+          resolve
+        )
+      })
+      await vi.waitFor(() => {
+        expect(historySignal).toBeDefined()
+        expect(latestSignal).toBeDefined()
+      })
+
+      visibilityState = 'hidden'
+      document.dispatchEvent(new Event('visibilitychange'))
+
+      await expect(errorMessage).resolves.toBeTruthy()
+      expect(historySignal?.aborted).toBe(true)
+      expect(latestSignal?.aborted).toBe(true)
+    } finally {
+      feed.destroy()
+      visibilitySpy.mockRestore()
+    }
+  })
+
   it('reuses React Query basket data instead of issuing duplicate initial requests', async () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
     const meta = { blockNumber: 1, cached: false, chainId: 421_614 }
-    queryClient.setQueryData(apiQueryKeys.perps.basketHistory('1y', 60), {
+    queryClient.setQueryData(apiQueryKeys.perps.basketHistory('7d', 60), {
       data: history,
       meta,
     })
@@ -262,6 +463,42 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
+  it('resets cached REST bars when the authoritative oracle mark is older', async () => {
+    const newerLatest = { ...latest, timestamp: 360 }
+    const onResetCacheNeeded = vi.fn()
+    const onHistoryGap = vi.fn()
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getLatest: async () => newerLatest }),
+      pollIntervalMs: 60_000,
+      onHistoryGap,
+    })
+
+    try {
+      const ticks: TradingViewBar[] = []
+      await new Promise<void>((resolve) => {
+        feed.subscribeBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          (bar) => {
+            ticks.push(bar)
+            resolve()
+          },
+          'older-oracle-listener',
+          onResetCacheNeeded
+        )
+      })
+
+      feed.setOracleMark({ timestamp: 180, basketPrice: '94000000' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(onResetCacheNeeded).toHaveBeenCalledOnce()
+      expect(onHistoryGap).toHaveBeenCalledOnce()
+      expect(ticks).toHaveLength(1)
+    } finally {
+      feed.destroy()
+    }
+  })
+
   it('updates live bucket volume cumulatively without adding repeated polling values', async () => {
     let now = 0
     let historyRequest = 0
@@ -317,6 +554,100 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
+  it('keeps a shared volume refresh alive when its initiating listener unsubscribes', async () => {
+    const pendingHistory = deferredValue<BasketHistory>()
+    let historySignal: AbortSignal | undefined
+    const getLatest = vi.fn(async () => latest)
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({
+        getHistory: (_range, _intervalSeconds, signal) => {
+          historySignal = signal
+          return pendingHistory.promise
+        },
+        getLatest,
+      }),
+      pollIntervalMs: 60_000,
+    })
+    const volumeHistory: BasketHistory = {
+      ...history,
+      points: [{ timestamp: 180, basketPrice: '95000000', volumeUsdc: '10500000' }],
+    }
+
+    try {
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        () => undefined,
+        'volume-owner',
+        () => undefined
+      )
+      await vi.waitFor(() => expect(historySignal).toBeDefined())
+
+      let resolveFollowerReady!: () => void
+      let resolveFollowerVolume!: () => void
+      const followerReady = new Promise<void>((resolve) => {
+        resolveFollowerReady = resolve
+      })
+      const followerVolume = new Promise<void>((resolve) => {
+        resolveFollowerVolume = resolve
+      })
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        (bar) => {
+          resolveFollowerReady()
+          if (bar.volume === 10.5) resolveFollowerVolume()
+        },
+        'volume-follower',
+        () => undefined
+      )
+      await followerReady
+
+      feed.unsubscribeBars('volume-owner')
+
+      expect(historySignal?.aborted).toBe(false)
+      pendingHistory.resolve(volumeHistory)
+      await followerVolume
+    } finally {
+      pendingHistory.resolve(volumeHistory)
+      feed.destroy()
+    }
+  })
+
+  it('retries a live volume refresh promptly after a failed refresh', async () => {
+    let historyRequest = 0
+    const getHistory = vi.fn(async (): Promise<BasketHistory> => {
+      historyRequest += 1
+      if (historyRequest === 1) throw new Error('temporary history failure')
+      return {
+        ...history,
+        points: [{ timestamp: 180, basketPrice: '95000000', volumeUsdc: '10500000' }],
+      }
+    })
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getHistory, getLatest: async () => latest }),
+      pollIntervalMs: 1,
+    })
+
+    try {
+      await new Promise<void>((resolve) => {
+        feed.subscribeBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          (bar) => {
+            if (bar.volume === 10.5) resolve()
+          },
+          'failed-volume-listener',
+          () => undefined
+        )
+      })
+
+      expect(getHistory).toHaveBeenCalledTimes(2)
+    } finally {
+      feed.destroy()
+    }
+  })
+
   it('keeps live prices flowing during volume refresh and never reapplies a stale price', async () => {
     const historyRequest = deferredValue<BasketHistory>()
     const feed = new PletherDxyDatafeed({
@@ -354,6 +685,7 @@ describe('Plether TradingView datafeed', () => {
       expect(bars.at(-1)?.close).toBe(1.05)
 
       feed.setOracleMark({ timestamp: 180, basketPrice: '94000000' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
       expect(bars.at(-1)?.close).toBe(1.06)
 
       historyRequest.resolve({

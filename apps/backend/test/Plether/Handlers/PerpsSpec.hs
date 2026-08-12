@@ -15,6 +15,7 @@ import Plether.Handlers.Perps
   , basketHistoryPointsWithVolume
   , basketHistoryServerTiming
   , basketHistoryTimingMetrics
+  , boundedBasketHistoryInterval
   , decodePythUpdateForAdmission
   )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
@@ -27,6 +28,18 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "boundedBasketHistoryInterval" $ do
+    it "preserves supported chart response shapes" $ do
+      boundedBasketHistoryInterval (24 * 60 * 60) 60 `shouldBe` 60
+      boundedBasketHistoryInterval (7 * 24 * 60 * 60) 60 `shouldBe` 60
+      boundedBasketHistoryInterval (365 * 24 * 60 * 60) 3600 `shouldBe` 3600
+
+    it "downsamples oversized direct history requests" $ do
+      let yearSeconds = 365 * 24 * 60 * 60
+          interval = boundedBasketHistoryInterval yearSeconds 60
+      interval `shouldSatisfy` (> 60)
+      (yearSeconds `div` interval) + 4 `shouldSatisfy` (<= 12_000)
+
   describe "basket history request timings" $ do
     it "renders stable Server-Timing metrics with millisecond precision" $ do
       basketHistoryServerTiming sampleTimings

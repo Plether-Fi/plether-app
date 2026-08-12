@@ -29,7 +29,7 @@ function workerEnv() {
 }
 
 describe('Cloudflare API proxy history caching and Server-Timing', () => {
-  it('caches public history briefly and preserves an origin response', async () => {
+  it('caches anonymous public history briefly and preserves an origin response', async () => {
     const originResponse = new Response('history payload', {
       headers: {
         'Content-Type': 'application/json',
@@ -38,15 +38,7 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
     });
     const fetchMock = mockOriginFetch(originResponse, 37.4564);
 
-    const response = await worker.fetch(
-      new Request(REQUEST_URL, {
-        headers: {
-          Authorization: 'Bearer browser-token',
-          Cookie: 'session=browser-session',
-        },
-      }),
-      workerEnv(),
-    );
+    const response = await worker.fetch(new Request(REQUEST_URL), workerEnv());
 
     assert.equal(fetchMock.mock.callCount(), 1);
     assert.equal(
@@ -137,6 +129,33 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
     assert.equal(
       response.headers.get('Server-Timing'),
       'plether_edge_origin;dur=18.500',
+    );
+  });
+
+  it('does not share-cache credential-bearing history requests', async () => {
+    const originResponse = new Response('{"ok":true}');
+    const fetchMock = mockOriginFetch(originResponse, 14.25);
+
+    const response = await worker.fetch(
+      new Request(REQUEST_URL, {
+        headers: {
+          Authorization: 'Bearer backend-token',
+          Cookie: 'session=backend-session',
+        },
+      }),
+      workerEnv(),
+    );
+
+    const fetchOptions = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(fetchOptions.cf, undefined);
+    assert.equal(
+      fetchOptions.headers.get('Authorization'),
+      'Bearer backend-token',
+    );
+    assert.equal(fetchOptions.headers.get('Cookie'), 'session=backend-session');
+    assert.equal(
+      response.headers.get('Server-Timing'),
+      'plether_edge_origin;dur=14.250',
     );
   });
 

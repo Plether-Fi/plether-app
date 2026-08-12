@@ -289,8 +289,21 @@ async function fetchApi<T>(
   const timeoutMs = policy.timeoutMs ?? config.timeout ?? DEFAULT_CONFIG.timeout;
   const startedAt = Date.now();
   const controller = new AbortController();
+  const headers = new Headers(options?.headers);
+  if (options?.body !== undefined && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  const timeoutReason = new DOMException('Request timed out', 'TimeoutError');
+  const abortFromCaller = () => {
+    controller.abort(options?.signal?.reason);
+  };
+  if (options?.signal?.aborted) {
+    abortFromCaller();
+  } else {
+    options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
+  }
   const timeoutId = setTimeout(() => {
-    controller.abort();
+    controller.abort(timeoutReason);
   }, timeoutMs);
 
   try {
@@ -306,13 +319,14 @@ async function fetchApi<T>(
       referrer: options?.referrer,
       referrerPolicy: options?.referrerPolicy,
       signal: controller.signal,
-      headers: Object.assign({ 'Content-Type': 'application/json' }, options?.headers),
+      headers,
     });
-
-    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const apiError = await parseErrorResponse(response, url);
+      if (controller.signal.aborted) {
+        throw controller.signal.reason;
+      }
 
       logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
       config.onError?.(apiError);
@@ -320,7 +334,11 @@ async function fetchApi<T>(
     }
 
     if (!isJsonResponse(response)) {
-      const apiError = createNonJsonApiError(response, url, await readResponsePreview(response));
+      const preview = await readResponsePreview(response);
+      if (controller.signal.aborted) {
+        throw controller.signal.reason;
+      }
+      const apiError = createNonJsonApiError(response, url, preview);
 
       logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs);
       config.onError?.(apiError);
@@ -331,8 +349,12 @@ async function fetchApi<T>(
     logApiSuccess(policy, Date.now() - startedAt, timeoutMs);
     return Result.ok(data);
   } catch (err) {
-    clearTimeout(timeoutId);
-    const didTimeout = controller.signal.aborted;
+    const didTimeout = controller.signal.reason === timeoutReason;
+    // Preserve caller-driven cancellation so TanStack Query can discard work
+    // that is no longer observed instead of caching it as an API failure.
+    if (options?.signal?.aborted && !didTimeout) {
+      throw err;
+    }
 
     const apiError = new PlethApiError(
       'NETWORK_ERROR',
@@ -346,6 +368,9 @@ async function fetchApi<T>(
     logApiFailure(apiError, policy, Date.now() - startedAt, timeoutMs, didTimeout);
     config.onError?.(apiError);
     return Result.err(apiError);
+  } finally {
+    clearTimeout(timeoutId);
+    options?.signal?.removeEventListener('abort', abortFromCaller);
   }
 }
 
@@ -417,7 +442,8 @@ export class PlethApiClient {
   async getPerpsBasketHistory(
     range: BasketHistoryRange = '7d',
     intervalSeconds = 60 * 60,
-    includeComponents = false
+    includeComponents = false,
+    signal?: AbortSignal
   ): Promise<Result<ApiResponse<BasketHistory>, PlethApiError>> {
     const params = new URLSearchParams({
       range,
@@ -427,16 +453,23 @@ export class PlethApiClient {
 
     return fetchApi<BasketHistory>(
       this.config,
-      `/perps/basket/history?${params.toString()}`
+      `/perps/basket/history?${params.toString()}`,
+      { credentials: 'omit', signal }
     );
   }
 
-  async getPerpsBasketLatest(): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
-    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest');
+  async getPerpsBasketLatest(signal?: AbortSignal): Promise<Result<ApiResponse<BasketLatest>, PlethApiError>> {
+    return fetchApi<BasketLatest>(this.config, '/perps/basket/latest', {
+      credentials: 'omit',
+      signal,
+    });
   }
 
-  async getPerpsMarketStats(): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {
-    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats');
+  async getPerpsMarketStats(signal?: AbortSignal): Promise<Result<ApiResponse<PerpsMarketStats>, PlethApiError>> {
+    return fetchApi<PerpsMarketStats>(this.config, '/perps/market/stats', {
+      credentials: 'omit',
+      signal,
+    });
   }
 
   async getPerpsRevealPayload(

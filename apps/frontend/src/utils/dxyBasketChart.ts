@@ -41,22 +41,23 @@ function findHistoricalComponent(
   targetTimestamp: number,
   latestTimestamp: number
 ): BasketComponentPrice | undefined {
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    const point = points[index]
-    if (point.timestamp >= latestTimestamp || point.timestamp > targetTimestamp) continue
-
-    const component = point.components?.find((item) => componentKey(item) === key)
-    if (component) return component
-  }
+  let nearestComponent: BasketComponentPrice | undefined
+  let nearestDistance = Number.POSITIVE_INFINITY
 
   for (const point of points) {
     if (point.timestamp >= latestTimestamp) continue
 
     const component = point.components?.find((item) => componentKey(item) === key)
-    if (component) return component
+    if (!component) continue
+
+    const distance = Math.abs(point.timestamp - targetTimestamp)
+    if (distance < nearestDistance) {
+      nearestComponent = component
+      nearestDistance = distance
+    }
   }
 
-  return undefined
+  return nearestComponent
 }
 
 export function computeBasketDisplayPriceChange(

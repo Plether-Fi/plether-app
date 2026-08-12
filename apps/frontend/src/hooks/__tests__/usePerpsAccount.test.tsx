@@ -10,8 +10,14 @@ type ContractResult =
 
 const mocks = vi.hoisted(() => ({
   primaryData: [] as ContractResult[],
+  configurationData: [] as ContractResult[],
+  immutableData: [] as ContractResult[],
+  riskParamsData: [] as ContractResult[],
   pendingDetailsLoading: false,
-  refetch: vi.fn(),
+  refetchDynamic: vi.fn(),
+  refetchConfiguration: vi.fn(),
+  refetchRiskParams: vi.fn(),
+  refetchImmutable: vi.fn(),
   useReadContracts: vi.fn(),
 }))
 
@@ -19,27 +25,23 @@ vi.mock('wagmi', () => ({
   useReadContracts: mocks.useReadContracts,
 }))
 
-vi.mock('../../perps-aa', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../perps-aa')>()
-  return {
-    ...actual,
-    usePerpsIdentity: () => ({
-      status: 'ready',
-      ownerAddress: ACCOUNT,
-      accountAddress: ACCOUNT,
-      chainId: 421614,
-      isAaManifestConfigured: true,
-      sponsorshipEnabled: true,
-      manifest: null,
-      identity: null,
-      proposedIdentity: null,
-      changedIdentityFields: [],
-      error: null,
-      confirmIdentityAfterContinuityCheck: () => false,
-      reloadIdentity: () => undefined,
-    }),
-  }
-})
+vi.mock('../../perps-aa', () => ({
+  usePerpsIdentity: () => ({
+    status: 'ready',
+    ownerAddress: ACCOUNT,
+    accountAddress: ACCOUNT,
+    chainId: 421614,
+    isAaManifestConfigured: true,
+    sponsorshipEnabled: true,
+    manifest: null,
+    identity: null,
+    proposedIdentity: null,
+    changedIdentityFields: [],
+    error: null,
+    confirmIdentityAfterContinuityCheck: () => false,
+    reloadIdentity: () => undefined,
+  }),
+}))
 
 function success(result: unknown): ContractResult {
   return { status: 'success', result }
@@ -88,11 +90,7 @@ function primaryData({
     success(5_000_000_000n),
     success(5_000_000_000n),
     success(1_500_000_000n),
-    success(10n),
-    success(300n),
     failure('ledger snapshot unavailable'),
-    failure('risk params unavailable'),
-    failure('cap price unavailable'),
     success(false),
     failure('engine position unavailable'),
   ]
@@ -102,26 +100,133 @@ describe('usePerpsAccount', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.primaryData = primaryData()
+    mocks.configurationData = [
+      success(1_000_000n),
+      success(10n),
+      success(300n),
+    ]
+    mocks.immutableData = [failure('cap price unavailable')]
+    mocks.riskParamsData = [failure('risk params unavailable'), success(15n)]
     mocks.pendingDetailsLoading = true
     mocks.useReadContracts.mockImplementation((parameters: {
       contracts?: { functionName?: string }[]
     }) => {
-      const isPrimaryAccountBatch = parameters.contracts?.[0]?.functionName === 'getTraderAccount'
+      const firstFunctionName = parameters.contracts?.[0]?.functionName
 
-      return isPrimaryAccountBatch
-        ? {
-            data: mocks.primaryData,
-            isLoading: false,
-            error: undefined,
-            refetch: mocks.refetch,
-          }
-        : {
-            data: undefined,
-            isLoading: mocks.pendingDetailsLoading,
-            error: undefined,
-            refetch: vi.fn(),
-          }
+      if (firstFunctionName === 'getTraderAccount') {
+        return {
+          data: mocks.primaryData,
+          isLoading: false,
+          error: undefined,
+          refetch: mocks.refetchDynamic,
+        }
+      }
+
+      if (firstFunctionName === 'riskParams') {
+        return {
+          data: mocks.riskParamsData,
+          isLoading: false,
+          error: undefined,
+          refetch: mocks.refetchRiskParams,
+        }
+      }
+
+      if (firstFunctionName === 'minOpenNotionalUsdc') {
+        return {
+          data: mocks.configurationData,
+          isLoading: false,
+          error: undefined,
+          refetch: mocks.refetchConfiguration,
+        }
+      }
+
+      if (firstFunctionName === 'CAP_PRICE') {
+        return {
+          data: mocks.immutableData,
+          isLoading: false,
+          error: undefined,
+          refetch: mocks.refetchImmutable,
+        }
+      }
+
+      return {
+        data: undefined,
+        isLoading: mocks.pendingDetailsLoading,
+        error: undefined,
+        refetch: vi.fn(),
+      }
     })
+  })
+
+  it('polls dynamic account state but refreshes timelocked config only on lifecycle boundaries', async () => {
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+    const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)
+    const dynamicCall = calls.find((call) => call.contracts?.[0]?.functionName === 'getTraderAccount')
+    const riskParamsCall = calls.find((call) => call.contracts?.[0]?.functionName === 'riskParams')
+    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalUsdc')
+    const immutableCall = calls.find((call) => call.contracts?.[0]?.functionName === 'CAP_PRICE')
+
+    expect(dynamicCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'getTraderAccount',
+      'getPosition',
+      'getPendingOrders',
+      'balanceOf',
+      'balanceOf',
+      'allowance',
+      'getFreeBuyingPowerUsdc',
+      'getAccountLedgerSnapshot',
+      'isFadWindow',
+      'positions',
+    ])
+    expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
+    expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'riskParams',
+      'executionFeeBps',
+    ])
+    expect(riskParamsCall?.query).toMatchObject({
+      staleTime: 300_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    })
+    expect(riskParamsCall?.query).not.toHaveProperty('refetchInterval')
+    expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'minOpenNotionalUsdc',
+      'maxPendingOrders',
+      'maxOrderAge',
+    ])
+    expect(configurationCall?.query).toMatchObject({
+      staleTime: 300_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    })
+    expect(configurationCall?.query).not.toHaveProperty('refetchInterval')
+    expect(immutableCall?.query).toMatchObject({
+      staleTime: Number.POSITIVE_INFINITY,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    })
+    expect(result.current.maxPendingOrders).toBe(10n)
+    expect(result.current.maxOrderAge).toBe(300n)
+
+    await act(async () => {
+      await result.current.refetchDynamic()
+    })
+
+    expect(mocks.refetchDynamic).toHaveBeenCalledOnce()
+    expect(mocks.refetchRiskParams).not.toHaveBeenCalled()
+    expect(mocks.refetchConfiguration).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await result.current.refetch()
+    })
+
+    expect(mocks.refetchDynamic).toHaveBeenCalledTimes(2)
+    expect(mocks.refetchRiskParams).toHaveBeenCalledOnce()
+    expect(mocks.refetchConfiguration).toHaveBeenCalledOnce()
+    expect(mocks.refetchImmutable).not.toHaveBeenCalled()
   })
 
   it('keeps position data visible while pending-order details load', () => {

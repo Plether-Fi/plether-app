@@ -275,6 +275,7 @@ describe('usePerpsTrading', () => {
       userOperationHash: USER_OPERATION_HASH,
       orderId: 42n,
     })
+    expect(mocks.invalidateQueries).toHaveBeenCalledOnce()
     expect(mocks.parseEventLogs).toHaveBeenCalledWith(
       expect.objectContaining({
         logs: [{
@@ -400,9 +401,21 @@ describe('usePerpsTrading', () => {
     expect(invalidateOptions.predicate({
       queryKey: ['readContracts', {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        contracts: [{ address: PERPS_ARBITRUM_SEPOLIA.cfdEngine }],
+        contracts: [{
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+          functionName: 'positions',
+        }],
       }],
     })).toBe(true)
+    expect(invalidateOptions.predicate({
+      queryKey: ['readContracts', {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        contracts: [{
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+          functionName: 'riskParams',
+        }],
+      }],
+    })).toBe(false)
     expect(invalidateOptions.predicate({
       queryKey: ['readContract', {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,

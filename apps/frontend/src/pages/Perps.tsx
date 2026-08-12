@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
 import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
-import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
+import { PerpsAccountPanel, type PerpsAccountTab } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
@@ -52,10 +52,17 @@ export function Perps() {
   const perpsMarket = usePerpsMarket()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
-  const perpsHistory = usePerpsHistory()
+  const [isTransactionHistoryActive, setIsTransactionHistoryActive] = useState(false)
+  const perpsHistory = usePerpsHistory({
+    activityEnabled: isTransactionHistoryActive,
+  })
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [closePositionRequestId, setClosePositionRequestId] = useState(0)
   const trackedPageViewRef = useRef(false)
+
+  const handleAccountTabChange = useCallback((activeTab: PerpsAccountTab) => {
+    setIsTransactionHistoryActive(activeTab === 'tradeHistory')
+  }, [])
 
   useEffect(() => {
     if (trackedPageViewRef.current) return
@@ -298,8 +305,8 @@ export function Perps() {
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
             onAccountRefresh={() => {
-              void perpsAccount.refetch()
-              perpsMarket.refetch()
+              void perpsAccount.refetchDynamic()
+              void perpsMarket.refetchDynamic()
               void perpsHistory.refetch()
             }}
           />
@@ -326,11 +333,14 @@ export function Perps() {
             tradeHistory={perpsHistory.tradeHistory}
             isConnected={perpsAccount.isConnected}
             isLoading={perpsAccount.isLoading}
-            isHistoryLoading={perpsHistory.isLoading}
-            historyError={perpsHistory.error}
+            isOrderHistoryLoading={perpsHistory.isOrderHistoryLoading}
+            isTradeHistoryLoading={perpsHistory.isTradeHistoryLoading}
+            orderHistoryError={perpsHistory.orderHistoryError}
+            tradeHistoryError={perpsHistory.tradeHistoryError}
+            onActiveTabChange={handleAccountTabChange}
             onAccountRefresh={() => {
-              void perpsAccount.refetch()
-              perpsMarket.refetch()
+              void perpsAccount.refetchDynamic()
+              void perpsMarket.refetchDynamic()
               void perpsHistory.refetch()
             }}
             onClosePosition={() => {

@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address } from 'viem'
 import {
   PerpsIdentityProvider,
@@ -52,6 +52,11 @@ function validManifest(): Record<string, unknown> {
 describe('PerpsIdentityProvider', () => {
   beforeEach(() => {
     globalThis.localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('blocks perps when the sponsorship manifest is not configured', () => {
@@ -284,5 +289,83 @@ describe('PerpsIdentityProvider', () => {
     await waitFor(() => {
       expect(result.current.status).toBe('ready')
     })
+  })
+
+  it('refreshes every 30 seconds only while visible and revalidates on return', async () => {
+    vi.useFakeTimers()
+    let visibilityState: DocumentVisibilityState = 'visible'
+    vi.spyOn(document, 'visibilityState', 'get').mockImplementation(
+      () => visibilityState
+    )
+
+    const fetchManifest = vi.fn(async () => new Response(
+      JSON.stringify(validManifest()),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    ))
+    const accountAddressResolver: PerpsAccountAddressResolver = vi.fn(
+      async () => ({
+        accountAddress,
+        accountVersion: 'permissionless-simple-v0.8',
+        accountIndex: '0',
+        entryPoint: PERPS_ENTRY_POINT_V08,
+        entryPointVersion: '0.8',
+        factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
+      })
+    )
+
+    function wrapper({ children }: { children: ReactNode }) {
+      return (
+        <PerpsIdentityProvider
+          ownerAddress={ownerAddress}
+          chainId={421614}
+          manifestUrl="/perps-aa-manifest.json"
+          accountAddressResolver={accountAddressResolver}
+          fetch={fetchManifest}
+        >
+          {children}
+        </PerpsIdentityProvider>
+      )
+    }
+
+    const { result } = renderHook(() => usePerpsIdentity(), { wrapper })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(result.current.status).toBe('ready')
+    expect(fetchManifest).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000)
+    })
+    expect(fetchManifest).toHaveBeenCalledTimes(2)
+
+    visibilityState = 'hidden'
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000)
+    })
+    expect(fetchManifest).toHaveBeenCalledTimes(2)
+
+    visibilityState = 'visible'
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(fetchManifest).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(29_999)
+    })
+    expect(fetchManifest).toHaveBeenCalledTimes(3)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1)
+    })
+    expect(fetchManifest).toHaveBeenCalledTimes(4)
   })
 })

@@ -1396,6 +1396,22 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('No position data')).not.toBeInTheDocument()
   })
 
+  it('reports when transaction history becomes active and inactive', () => {
+    const onActiveTabChange = vi.fn()
+    render(<PerpsAccountPanel onActiveTabChange={onActiveTabChange} />)
+
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('position')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transaction History' }))
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('tradeHistory')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Order History' }))
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('orderHistory')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(3)
+  })
+
   it('hides manual finalization during the automatic finalization grace period', async () => {
     vi.useFakeTimers()
     const onAccountRefresh = vi.fn()

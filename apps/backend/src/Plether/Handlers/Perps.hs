@@ -7,6 +7,7 @@ module Plether.Handlers.Perps
   , basketHistoryTimingMetrics
   , durationMilliseconds
   , basketHistoryPointsWithVolume
+  , boundedBasketHistoryInterval
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
@@ -82,6 +83,21 @@ data BasketHistoryFetch = BasketHistoryFetch
   }
   deriving stock (Show)
 
+maxBasketHistoryPoints :: Integer
+maxBasketHistoryPoints = 12_000
+
+-- Preserve every normal chart shape (the largest is seven days of minute
+-- bars) while preventing direct callers from requesting hundreds of thousands
+-- of snapshots, for example one year at a one-minute interval.
+boundedBasketHistoryInterval :: Integer -> Integer -> Integer
+boundedBasketHistoryInterval rangeSeconds requestedInterval =
+  max normalizedInterval minimumBoundedInterval
+  where
+    normalizedInterval = max 60 requestedInterval
+    targetBuckets = max 1 (maxBasketHistoryPoints - 4)
+    minimumBoundedInterval =
+      (max 0 rangeSeconds + targetBuckets - 1) `div` targetBuckets
+
 data BasketHistoryTimings = BasketHistoryTimings
   { bhtBackendTotalNs :: Word64
   , bhtDbPoolWaitNs :: Word64
@@ -146,9 +162,10 @@ getBasketHistoryTimed
 getBasketHistoryTimed pool cfg params = do
   now <- getPOSIXTime
   let nowUnix = round now
-      fromUnix = nowUnix - basketRangeSeconds (bhpRange params)
-      interval = max 60 (bhpIntervalSeconds params)
-      maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
+      rangeSeconds = basketRangeSeconds (bhpRange params)
+      fromUnix = nowUnix - rangeSeconds
+      interval = boundedBasketHistoryInterval rangeSeconds (bhpIntervalSeconds params)
+      maxPoints = fromIntegral $ min maxBasketHistoryPoints ((rangeSeconds `div` interval) + 4)
 
   poolStartedAt <- getMonotonicTimeNSec
   (rows, volumeRows, poolWaitNs, snapshotQueryNs, volumeQueryNs, snapshotRows, volumeRowsCount) <- withDb pool $ \conn -> do

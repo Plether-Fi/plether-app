@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
 import { usePerpsIdentity } from '../perps-aa'
@@ -8,7 +8,7 @@ import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsSummaryUsdc, forma
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
-type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
+export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
 interface AccountTab {
   id: PerpsAccountTab
@@ -65,9 +65,14 @@ interface PerpsAccountPanelProps {
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
+  isOrderHistoryLoading?: boolean
+  isTradeHistoryLoading?: boolean
   historyError?: Error
+  orderHistoryError?: Error
+  tradeHistoryError?: Error
   onAccountRefresh?: () => void
   onClosePosition?: () => void
+  onActiveTabChange?: (activeTab: PerpsAccountTab) => void
 }
 
 const ACCOUNT_TABS: AccountTab[] = [
@@ -866,7 +871,11 @@ function AccountTabContent({
   isConnected,
   isLoading,
   isHistoryLoading,
+  isOrderHistoryLoading,
+  isTradeHistoryLoading,
   historyError,
+  orderHistoryError,
+  tradeHistoryError,
   initialPositionMarginModalOpen,
   onAccountRefresh,
   onClosePosition,
@@ -959,22 +968,32 @@ function AccountTabContent({
     )
   }
   if (activeTab === 'orderHistory') {
-    if (historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
-    if (isHistoryLoading) return <LoadingState label="order history" />
+    if (orderHistoryError ?? historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
+    if (isOrderHistoryLoading ?? isHistoryLoading) return <LoadingState label="order history" />
     return <OrdersView rows={liveOrderHistory ?? ORDER_HISTORY} includeStatus />
   }
-  if (historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
-  if (isHistoryLoading) return <LoadingState label="transaction history" />
+  if (tradeHistoryError ?? historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
+  if (isTradeHistoryLoading ?? isHistoryLoading) return <LoadingState label="transaction history" />
   return <TradeHistoryView rows={liveTradeHistory ?? TRADE_HISTORY} />
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   const { isAaManifestConfigured } = usePerpsIdentity()
+  const { onActiveTabChange } = props
   const [activeTab, setActiveTab] = useState<PerpsAccountTab>(props.initialTab ?? 'position')
+  const onActiveTabChangeRef = useRef(onActiveTabChange)
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [cleanupOrderId, setCleanupOrderId] = useState<bigint | undefined>()
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const { cleanupExpiredOrder } = usePerpsTrading()
+
+  useEffect(() => {
+    onActiveTabChangeRef.current = onActiveTabChange
+  }, [onActiveTabChange])
+
+  useEffect(() => {
+    onActiveTabChangeRef.current?.(activeTab)
+  }, [activeTab])
 
   useEffect(() => {
     if (!props.pendingOrders?.length) return undefined

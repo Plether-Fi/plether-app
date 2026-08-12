@@ -18,9 +18,13 @@ import {
 import { formatCompactNumber } from '../utils/formatters'
 import { calculatePerpsDirectionalLimit } from '../utils/perpsDirectionalLimit'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
+import { DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS } from '../components/dxyBasketChartConfig'
 
 const WAD = 10n ** 18n
 const ORACLE_FRESH_SECONDS = 60
+const PERPS_DYNAMIC_REFETCH_INTERVAL_MS = 15_000
+const PERPS_CONFIG_STALE_TIME_MS = 5 * 60_000
+const PERPS_CONFIG_GC_TIME_MS = Number.POSITIVE_INFINITY
 
 interface ContractResult {
   status: 'failure' | 'success'
@@ -142,13 +146,27 @@ export function usePerpsMarket() {
     data: basketHistory24h,
     isLoading: isBasketHistory24hLoading,
     refetch: refetchBasketHistory24h,
-  } = usePerpsBasketHistory('24h', 60, true)
+  } = usePerpsBasketHistory('24h', 60)
+  const {
+    data: basketComponentHistory24h,
+    isLoading: isBasketComponentHistory24hLoading,
+    refetch: refetchBasketComponentHistory24h,
+  } = usePerpsBasketHistory(
+    '24h',
+    DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS,
+    true
+  )
   const {
     data: marketStats,
     isLoading: isMarketStatsLoading,
     refetch: refetchMarketStats,
   } = usePerpsMarketStats()
-  const { data, isLoading, error, refetch: refetchContracts } = useReadContracts({
+  const {
+    data: dynamicContractData,
+    isLoading: isDynamicContractsLoading,
+    error: dynamicContractsError,
+    refetch: refetchDynamicContracts,
+  } = useReadContracts({
     contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -176,6 +194,20 @@ export function usePerpsMarket() {
         functionName: 'sides',
         args: [1n],
       },
+    ],
+    query: {
+      refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
+    },
+  })
+  // Engine configuration changes atomically behind a 48-hour timelock. Keep
+  // this query identical in usePerpsAccount so wagmi shares one cached read.
+  const {
+    data: engineConfigurationData,
+    isLoading: isEngineConfigurationLoading,
+    error: engineConfigurationError,
+    refetch: refetchEngineConfiguration,
+  } = useReadContracts({
+    contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
@@ -188,26 +220,65 @@ export function usePerpsMarket() {
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'executionFeeBps',
       },
+    ],
+    query: {
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    },
+  })
+  // Router configuration is finalized atomically by its own timelocked admin.
+  // The matching account hook uses this exact batch and therefore shares it.
+  const {
+    data: routerConfigurationData,
+    isLoading: isRouterConfigurationLoading,
+    error: routerConfigurationError,
+    refetch: refetchRouterConfiguration,
+  } = useReadContracts({
+    contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'minOpenNotionalUsdc',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'maxPendingOrders',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'maxOrderAge',
+      },
     ],
     query: {
-      refetchInterval: 15_000,
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     },
   })
 
+  const isLoading =
+    isDynamicContractsLoading ||
+    isEngineConfigurationLoading ||
+    isRouterConfigurationLoading
+  const error =
+    dynamicContractsError ?? engineConfigurationError ?? routerConfigurationError
+
   return useMemo(() => {
-    const protocolStatus = readResult(data, 0)
-    const poolLiquidity = readResult(data, 1)
-    const bullSide = readResult(data, 2)
-    const bearSide = readResult(data, 3)
-    const riskParams = readResult(data, 4)
-    const executionFeeBps = readResult(data, 5) as bigint | undefined
-    const minOpenNotionalUsdc = readResult(data, 6) as bigint | undefined
+    const protocolStatus = readResult(dynamicContractData, 0)
+    const poolLiquidity = readResult(dynamicContractData, 1)
+    const bullSide = readResult(dynamicContractData, 2)
+    const bearSide = readResult(dynamicContractData, 3)
+    const riskParams = readResult(engineConfigurationData, 0)
+    const executionFeeBps = readResult(engineConfigurationData, 1) as bigint | undefined
+    const minOpenNotionalUsdc = readResult(routerConfigurationData, 0) as bigint | undefined
 
     const markPrice = tupleValue(protocolStatus, 1, 'lastMarkPrice') as bigint | undefined
     const lastMarkTime = tupleValue(protocolStatus, 2, 'lastMarkTime') as bigint | number | undefined
@@ -244,7 +315,7 @@ export function usePerpsMarket() {
     })
     const priceChange24hValue = computeBasketDisplayPriceChange(basketHistory24h?.data.points, latestBasket?.data)
     const basketComponentPriceChanges = computeBasketComponentPriceChanges(
-      basketHistory24h?.data.points,
+      basketComponentHistory24h?.data.points,
       latestBasket?.data
     )
     const volume24hUsdc = parseBigIntString(marketStats?.data.volume24hUsdc)
@@ -299,7 +370,8 @@ export function usePerpsMarket() {
       oraclePrice: formatDisplayDxyPrice(markPrice) === '--' ? undefined : formatDisplayDxyPrice(markPrice),
       latestBasket: latestBasket?.data,
       basketComponentPriceChanges,
-      isBasketComponentsLoading: isLatestBasketLoading,
+      isBasketComponentsLoading:
+        isLatestBasketLoading || isBasketComponentHistory24hLoading,
       isBasketComponentsError: isLatestBasketError,
       oracleFreshness,
       oracleFreshnessTime,
@@ -337,18 +409,25 @@ export function usePerpsMarket() {
       isLoading,
       isStatsLoading: isBasketHistory24hLoading || isMarketStatsLoading,
       error,
+      refetchDynamic: refetchDynamicContracts,
       refetch: () => {
-        void refetchContracts()
+        void refetchDynamicContracts()
+        void refetchEngineConfiguration()
+        void refetchRouterConfiguration()
         void refetchLatestBasket()
         void refetchBasketHistory24h()
+        void refetchBasketComponentHistory24h()
         void refetchMarketStats()
       },
     }
   }, [
     basketHistory24h,
-    data,
+    basketComponentHistory24h,
+    dynamicContractData,
+    engineConfigurationData,
     error,
     isBasketHistory24hLoading,
+    isBasketComponentHistory24hLoading,
     isLatestBasketError,
     isLatestBasketLoading,
     isLoading,
@@ -356,8 +435,12 @@ export function usePerpsMarket() {
     latestBasket,
     marketStats,
     refetchBasketHistory24h,
-    refetchContracts,
+    refetchBasketComponentHistory24h,
+    refetchDynamicContracts,
+    refetchEngineConfiguration,
     refetchLatestBasket,
     refetchMarketStats,
+    refetchRouterConfiguration,
+    routerConfigurationData,
   ])
 }

@@ -80,6 +80,12 @@ function unwrapResult<T>(result: Result<ApiResponse<T>, PlethApiError>): ApiResp
   return result.value;
 }
 
+function retryTransientFailureOnce(failureCount: number, error: unknown): boolean {
+  const status = (error as { status?: number }).status;
+  if (status !== undefined && status >= 400 && status < 500) return false;
+  return failureCount < 1;
+}
+
 // =============================================================================
 // Protocol Hooks
 // =============================================================================
@@ -109,18 +115,25 @@ export function usePerpsBasketHistory(
 ) {
   return useQuery({
     queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds, includeComponents),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketHistory(range, intervalSeconds, includeComponents)),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsBasketHistory(
+      range,
+      intervalSeconds,
+      includeComponents,
+      signal
+    )),
     staleTime: 60 * 1000,
-    refetchInterval: 60 * 1000,
+    refetchInterval: (query) => query.state.status === 'error' ? 2 * 60 * 1000 : 60 * 1000,
+    retry: retryTransientFailureOnce,
   });
 }
 
 export function usePerpsBasketLatest() {
   return useQuery({
     queryKey: apiQueryKeys.perps.basketLatest(),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketLatest()),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsBasketLatest(signal)),
     staleTime: 5 * 1000,
-    refetchInterval: 5 * 1000,
+    refetchInterval: (query) => query.state.status === 'error' ? 15 * 1000 : 5 * 1000,
+    retry: retryTransientFailureOnce,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }
@@ -128,9 +141,10 @@ export function usePerpsBasketLatest() {
 export function usePerpsMarketStats() {
   return useQuery({
     queryKey: apiQueryKeys.perps.marketStats(),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsMarketStats()),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsMarketStats(signal)),
     staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
+    refetchInterval: (query) => query.state.status === 'error' ? 60 * 1000 : 30 * 1000,
+    retry: retryTransientFailureOnce,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }

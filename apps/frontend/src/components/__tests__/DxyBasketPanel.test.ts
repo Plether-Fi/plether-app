@@ -9,6 +9,7 @@ import {
 } from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
 import {
+  DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS,
   DEFAULT_DXY_BASKET_CHART_INTERVAL,
 } from '../dxyBasketChartConfig'
 
@@ -52,6 +53,10 @@ function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
 describe('DXY basket chart display transform', () => {
   it('opens on the five-day chart view by default', () => {
     expect(DEFAULT_DXY_BASKET_CHART_INTERVAL).toBe('5m')
+  })
+
+  it('uses hourly component snapshots for the 24h comparison payload', () => {
+    expect(DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS).toBe(60 * 60)
   })
 
   it('plots raw basket prices as reversed DXY display prices', () => {
@@ -133,6 +138,29 @@ describe('DXY basket chart display transform', () => {
     )
 
     expect(changes[component.feedId]).toBeCloseTo(0.01, 8)
+  })
+
+  it('uses the hourly component sample nearest the 24h comparison point', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '102000000' }]
+    const targetTimestamp = latest.timestamp - 24 * 60 * 60
+    const changes = computeBasketComponentPriceChanges(
+      [
+        {
+          timestamp: targetTimestamp - 50 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '99000000' }],
+        },
+        {
+          timestamp: targetTimestamp + 10 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100000000' }],
+        },
+      ],
+      latest
+    )
+
+    expect(changes[component.feedId]).toBeCloseTo(0.02, 8)
   })
 
   it('does not compute component price changes without historical component data', () => {

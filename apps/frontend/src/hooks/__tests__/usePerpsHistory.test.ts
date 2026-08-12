@@ -1,3 +1,5 @@
+import { createElement, type ReactNode } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePerpsHistory, waitForPerpsOrderTerminal } from '../usePerpsHistory'
@@ -10,6 +12,21 @@ const identityMocks = vi.hoisted(() => ({
 vi.mock('../../perps-aa', () => ({
   usePerpsIdentity: () => identityMocks,
 }))
+
+function createQueryWrapper() {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        gcTime: 0,
+        retry: false,
+      },
+    },
+  })
+
+  return function QueryWrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children)
+  }
+}
 
 beforeEach(() => {
   identityMocks.ownerAddress = undefined
@@ -109,7 +126,9 @@ describe('waitForPerpsOrderTerminal', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result, rerender } = renderHook(() => usePerpsHistory())
+    const { result, rerender } = renderHook(() => usePerpsHistory(), {
+      wrapper: createQueryWrapper(),
+    })
 
     await waitFor(() => {
       expect(result.current.ordersIndexedThroughBlockRaw).toBe(190_002_400n)
@@ -125,25 +144,23 @@ describe('waitForPerpsOrderTerminal', () => {
     })
   })
 
-  it('does not let an older history request overwrite a newer indexed snapshot', async () => {
-    const accountAddress = '0x10cf39340e1a5307e45f1de989ce7b21915ef377'
-    identityMocks.ownerAddress = accountAddress
-    identityMocks.accountAddress = accountAddress
-    let resolveFirstOrders: ((response: Response) => void) | undefined
-    let orderRequestCount = 0
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+  it('cancels the old account request and keeps the new indexed snapshot', async () => {
+    const firstAccountAddress = '0x10cf39340e1a5307e45f1de989ce7b21915ef377'
+    const secondAccountAddress = '0x20cf39340e1a5307e45f1de989ce7b21915ef388'
+    identityMocks.ownerAddress = firstAccountAddress
+    identityMocks.accountAddress = firstAccountAddress
+    let firstRequestSignal: AbortSignal | undefined
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
       const url = String(input)
-      if (!url.includes('/orders')) {
-        return new Response(JSON.stringify({ data: { activity: [] } }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-
-      orderRequestCount += 1
-      if (orderRequestCount === 1) {
-        return await new Promise<Response>((resolve) => {
-          resolveFirstOrders = resolve
+      if (url.includes(firstAccountAddress)) {
+        firstRequestSignal = init?.signal as AbortSignal | undefined
+        return await new Promise<Response>((_resolve, reject) => {
+          firstRequestSignal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'))
+          }, { once: true })
         })
       }
       return new Response(JSON.stringify({
@@ -158,28 +175,85 @@ describe('waitForPerpsOrderTerminal', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const { result } = renderHook(() => usePerpsHistory())
+    const { result, rerender } = renderHook(() => usePerpsHistory(), {
+      wrapper: createQueryWrapper(),
+    })
+    await waitFor(() => {
+      expect(firstRequestSignal).toBeDefined()
+    })
+
+    identityMocks.ownerAddress = secondAccountAddress
+    identityMocks.accountAddress = secondAccountAddress
+    rerender()
+
+    await waitFor(() => {
+      expect(firstRequestSignal?.aborted).toBe(true)
+      expect(result.current.ordersIndexedThroughBlockRaw).toBe(190_002_500n)
+    })
+  })
+
+  it('loads activity only while the transaction-history consumer enables it', async () => {
+    const accountAddress = '0x10cf39340e1a5307e45f1de989ce7b21915ef377'
+    identityMocks.ownerAddress = accountAddress
+    identityMocks.accountAddress = accountAddress
+    let orderRequestCount = 0
+    let activityRequestCount = 0
+    let activityRequestSignal: AbortSignal | undefined
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      const url = String(input)
+      if (url.includes('/orders')) {
+        orderRequestCount += 1
+        return new Response(JSON.stringify({
+          data: {
+            orders: [],
+            indexedThroughBlock: '190002500',
+          },
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      activityRequestCount += 1
+      activityRequestSignal = init?.signal as AbortSignal | undefined
+      return await new Promise<Response>((_resolve, reject) => {
+        activityRequestSignal?.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted', 'AbortError'))
+        }, { once: true })
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result, rerender } = renderHook(
+      ({ activityEnabled }) => usePerpsHistory({ activityEnabled }),
+      {
+        initialProps: { activityEnabled: false },
+        wrapper: createQueryWrapper(),
+      }
+    )
+
     await waitFor(() => {
       expect(orderRequestCount).toBe(1)
     })
+    expect(activityRequestCount).toBe(0)
 
+    rerender({ activityEnabled: true })
+    await waitFor(() => {
+      expect(activityRequestCount).toBe(1)
+    })
+
+    rerender({ activityEnabled: false })
+    await waitFor(() => {
+      expect(activityRequestSignal?.aborted).toBe(true)
+    })
     await act(async () => {
       await result.current.refetch()
     })
-    expect(result.current.ordersIndexedThroughBlockRaw).toBe(190_002_500n)
 
-    await act(async () => {
-      resolveFirstOrders?.(new Response(JSON.stringify({
-        data: {
-          orders: [],
-          indexedThroughBlock: '190002450',
-        },
-      }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }))
-    })
-
-    expect(result.current.ordersIndexedThroughBlockRaw).toBe(190_002_500n)
+    expect(orderRequestCount).toBe(2)
+    expect(activityRequestCount).toBe(1)
   })
 })
