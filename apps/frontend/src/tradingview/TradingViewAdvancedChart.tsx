@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { apiQueryKeys } from '../api'
 import { Alert } from '../components/ui'
@@ -16,6 +16,8 @@ import type {
   TradingViewIntervalSubscription,
   TradingViewNamespace,
   TradingViewCustomSymbolStatusAdapter,
+  TradingViewChart,
+  TradingViewEntityId,
   TradingViewWidget,
 } from './types'
 import { PLETHER_TRADINGVIEW_CUSTOM_THEMES } from './pletherTheme'
@@ -28,6 +30,7 @@ const TEXT_COLOR = '#D8CBD0'
 const BRAND_PEACH = '#FFAB96'
 const BRAND_ORANGE = '#FF572D'
 const POSITIVE_COLOR = '#00FF99'
+const LIQUIDATION_COLOR = '#F7D977'
 const MARKET_STATUS_ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><circle cx="10" cy="10" r="5" /></svg>'
 const CHART_STYLE_OVERRIDES = {
   volumePaneSize: 'small',
@@ -195,6 +198,7 @@ function loadTradingViewLibrary(libraryPath: string): Promise<TradingViewNamespa
 export interface TradingViewAdvancedChartProps {
   interval: DxyBasketChartInterval
   oracleMark?: OracleMarkPoint
+  liquidationPrice?: number
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
   onIntervalChange?: (interval: DxyBasketChartInterval) => void
@@ -203,6 +207,7 @@ export interface TradingViewAdvancedChartProps {
 export function TradingViewAdvancedChart({
   interval,
   oracleMark,
+  liquidationPrice,
   marketPhase = 'open',
   marketCurrentDuration,
   onIntervalChange,
@@ -212,6 +217,8 @@ export function TradingViewAdvancedChart({
   const widgetRef = useRef<TradingViewWidget | null>(null)
   const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
   const marketStatusAdapterRef = useRef<TradingViewCustomSymbolStatusAdapter | null>(null)
+  const liquidationLineRef = useRef<TradingViewEntityId | null>(null)
+  const liquidationLineRevisionRef = useRef(0)
   const marketStatusRef = useRef<PletherMarketStatus>({
     phase: marketPhase,
     currentDuration: marketCurrentDuration,
@@ -219,8 +226,52 @@ export function TradingViewAdvancedChart({
   const intervalRef = useRef(interval)
   const readyRef = useRef(false)
   const oracleMarkRef = useRef(oracleMark)
+  const liquidationPriceRef = useRef(liquidationPrice)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
+
+  const syncLiquidationLine = useCallback((chart: TradingViewChart, price: number | undefined) => {
+    const revision = ++liquidationLineRevisionRef.current
+    const previousLine = liquidationLineRef.current
+    liquidationLineRef.current = null
+    if (previousLine !== null) chart.removeEntity(previousLine)
+
+    if (price === undefined || !Number.isFinite(price) || price <= 0) return
+
+    void chart.createShape(
+      { price },
+      {
+        shape: 'horizontal_line',
+        text: 'Liquidation',
+        lock: true,
+        disableSelection: true,
+        disableSave: true,
+        disableUndo: true,
+        showInObjectsTree: false,
+        zOrder: 'top',
+        overrides: {
+          linecolor: LIQUIDATION_COLOR,
+          linestyle: 2,
+          linewidth: 2,
+          showPrice: true,
+          textcolor: LIQUIDATION_COLOR,
+          fontsize: 12,
+          bold: true,
+          horzLabelsAlign: 'right',
+          vertLabelsAlign: 'middle',
+        },
+      }
+    ).then((lineId) => {
+      if (revision !== liquidationLineRevisionRef.current) {
+        if (readyRef.current) chart.removeEntity(lineId)
+        return
+      }
+      if (!readyRef.current) return
+      liquidationLineRef.current = lineId
+    }).catch(() => {
+      // The account panel still exposes the liquidation price if a chart drawing cannot be created.
+    })
+  }, [])
 
   useEffect(() => {
     onIntervalChangeRef.current = onIntervalChange
@@ -229,6 +280,13 @@ export function TradingViewAdvancedChart({
   useEffect(() => {
     oracleMarkRef.current = oracleMark
   }, [oracleMark])
+
+  useEffect(() => {
+    liquidationPriceRef.current = liquidationPrice
+    const widget = widgetRef.current
+    if (!widget || !readyRef.current) return
+    syncLiquidationLine(widget.activeChart(), liquidationPrice)
+  }, [liquidationPrice, syncLiquidationLine])
 
   useEffect(() => {
     const status = { phase: marketPhase, currentDuration: marketCurrentDuration }
@@ -326,6 +384,7 @@ export function TradingViewAdvancedChart({
             marketStatusAdapterRef.current = marketStatusAdapter
             applyPletherMarketStatus(marketStatusAdapter, marketStatusRef.current)
             readyRef.current = true
+            syncLiquidationLine(widget.activeChart(), liquidationPriceRef.current)
 
             const desiredResolution = tradingViewResolutionForInterval(intervalRef.current)
             if (widget.activeChart().resolution() !== desiredResolution) {
@@ -347,17 +406,19 @@ export function TradingViewAdvancedChart({
     return () => {
       cancelled = true
       readyRef.current = false
+      liquidationLineRevisionRef.current += 1
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
       }
       marketStatusAdapterRef.current?.setVisible(false)
       marketStatusAdapterRef.current = null
+      liquidationLineRef.current = null
       widgetRef.current?.remove()
       widgetRef.current = null
       datafeed.destroy()
       if (datafeedRef.current === datafeed) datafeedRef.current = null
     }
-  }, [queryClient])
+  }, [queryClient, syncLiquidationLine])
 
   useEffect(() => {
     datafeedRef.current?.setOracleMark(oracleMark)

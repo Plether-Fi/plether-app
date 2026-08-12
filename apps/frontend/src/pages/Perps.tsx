@@ -309,6 +309,7 @@ export function Perps() {
           <DxyBasketPanel
             oraclePriceRaw={perpsMarket.raw.markPrice}
             oraclePublishTime={perpsMarket.oracleFreshnessTime}
+            liquidationPriceRaw={perpsAccount.position?.liquidationPrice}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
           />

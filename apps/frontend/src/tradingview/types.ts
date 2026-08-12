@@ -194,6 +194,35 @@ export interface TradingViewWidget {
   remove: () => void
 }
 
+export type TradingViewEntityId = string
+
+export interface TradingViewShapePoint {
+  time?: number
+  price?: number
+}
+
+export interface TradingViewCreateShapeOptions {
+  shape: 'horizontal_line'
+  text?: string
+  lock?: boolean
+  disableSelection?: boolean
+  disableSave?: boolean
+  disableUndo?: boolean
+  showInObjectsTree?: boolean
+  zOrder?: 'top' | 'bottom'
+  overrides?: {
+    linecolor?: string
+    linestyle?: number
+    linewidth?: number
+    showPrice?: boolean
+    textcolor?: string
+    fontsize?: number
+    bold?: boolean
+    horzLabelsAlign?: string
+    vertLabelsAlign?: string
+  }
+}
+
 export interface TradingViewIntervalSubscription {
   subscribe: (context: object | null, callback: (resolution: string) => void) => void
   unsubscribe: (context: object | null, callback: (resolution: string) => void) => void
@@ -205,6 +234,11 @@ export interface TradingViewChart {
   symbol: () => string
   setResolution: (resolution: TradingViewResolution) => Promise<boolean>
   onIntervalChanged: () => TradingViewIntervalSubscription
+  createShape: (
+    point: TradingViewShapePoint,
+    options: TradingViewCreateShapeOptions
+  ) => Promise<TradingViewEntityId>
+  removeEntity: (entityId: TradingViewEntityId) => void
 }
 
 export interface TradingViewNamespace {
