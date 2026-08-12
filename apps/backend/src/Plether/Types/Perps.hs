@@ -41,6 +41,7 @@ basketRangeSeconds range =
 data BasketHistoryPoint = BasketHistoryPoint
   { bhpTimestamp :: Integer
   , bhpBasketPrice :: Integer
+  , bhpVolumeUsdc :: Integer
   , bhpComponents :: Maybe Value
   }
   deriving stock (Show, Generic)
@@ -50,6 +51,7 @@ instance ToJSON BasketHistoryPoint where
     object $
       [ "timestamp" .= bhpTimestamp
       , "basketPrice" .= show bhpBasketPrice
+      , "volumeUsdc" .= show bhpVolumeUsdc
       ]
         <> maybe [] (\components -> ["components" .= components]) bhpComponents
 

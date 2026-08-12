@@ -24,6 +24,42 @@ npm run perps:oracle-worker -- --once  # Update the perps mark from backend-cach
 npm run perps:oracle-worker -- --loop  # Keep updating the perps mark from backend cache
 ```
 
+## TradingView Advanced Charts
+
+The plDXY Perpetual panel uses TradingView Advanced Charts exclusively. If its
+licensed runtime assets are unavailable, the panel shows an explicit unavailable
+state instead of switching chart engines.
+
+Clone the private TradingView repository outside this public repository, then
+install the runtime assets locally:
+
+```bash
+git clone --depth 1 --branch v32.0.0 git@github.com:tradingview/charting_library.git /tmp/tradingview-charting_library
+npm run tradingview:install -- /tmp/tradingview-charting_library
+npm run dev
+```
+
+`public/charting_library/` is intentionally ignored by Git. Never commit,
+publish as source, or attach those files to a public CI artifact. Production
+deployments fetch version `v32.0.0` (pinned to commit
+`f2a61ba473ec254b69f9c1377c67e4b81eff853b`) with the read-only
+`TRADINGVIEW_GITHUB_TOKEN` GitHub Actions secret and copy only the runtime
+assets into the deployed site.
+
+Before enabling Advanced Charts in production:
+
+- have counsel review the public Terms of Service and the rights to redistribute
+  the market data displayed by the chart;
+- have counsel confirm that the proprietary runtime can be loaded alongside
+  this AGPL-licensed frontend under the intended deployment model, or document
+  an approved licensing exception or isolation strategy;
+- publish the required announcement about the licensed TradingView integration, or
+  obtain TradingView's written approval for an alternative promotional
+  placement that includes a contextual backlink;
+- keep both the chart's built-in attribution and the site-wide "Charts by
+  TradingView" link visible; and
+- ensure TradingView can access the public implementation for compliance review.
+
 ## Managed gas sponsorship
 
 The Arbitrum Sepolia integration currently uses a deterministic

@@ -20,8 +20,7 @@ interface ContractResult {
 
 const PERPS_DYNAMIC_REFETCH_INTERVAL_MS = 15_000
 const PERPS_CONFIG_STALE_TIME_MS = 5 * 60_000
-const PERPS_CONFIG_REFETCH_INTERVAL_MS = 5 * 60_000
-const PERPS_CONFIG_GC_TIME_MS = 30 * 60_000
+const PERPS_CONFIG_GC_TIME_MS = Number.POSITIVE_INFINITY
 
 export interface PerpsPendingOrder {
   orderId: bigint
@@ -367,13 +366,13 @@ export function usePerpsAccount(markPrice?: bigint) {
       refetchInterval: PERPS_DYNAMIC_REFETCH_INTERVAL_MS,
     },
   })
-  // Keep this contract/query key aligned with usePerpsMarket so both hooks share
-  // the same cached riskParams read.
+  // Engine configuration changes atomically behind a 48-hour timelock. Keep
+  // this batch aligned with usePerpsMarket so both hooks share one cached read.
   const {
-    data: riskParamsData,
-    isLoading: isRiskParamsLoading,
-    error: riskParamsError,
-    refetch: refetchRiskParams,
+    data: engineConfigurationData,
+    isLoading: isEngineConfigurationLoading,
+    error: engineConfigurationError,
+    refetch: refetchEngineConfiguration,
   } = useReadContracts({
     contracts: [
       {
@@ -382,21 +381,35 @@ export function usePerpsAccount(markPrice?: bigint) {
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'riskParams',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'executionFeeBps',
+      },
     ],
     query: {
       enabled: isConnected && accountAddress !== undefined,
       staleTime: PERPS_CONFIG_STALE_TIME_MS,
-      refetchInterval: PERPS_CONFIG_REFETCH_INTERVAL_MS,
       gcTime: PERPS_CONFIG_GC_TIME_MS,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     },
   })
+  // Router configuration is finalized atomically by its own timelocked admin.
   const {
-    data: configurationContractData,
-    isLoading: isConfigurationContractsLoading,
-    error: configurationContractsError,
-    refetch: refetchConfigurationContracts,
+    data: routerConfigurationData,
+    isLoading: isRouterConfigurationLoading,
+    error: routerConfigurationError,
+    refetch: refetchRouterConfiguration,
   } = useReadContracts({
     contracts: [
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        abi: PERPS_ORDER_ROUTER_ABI,
+        functionName: 'minOpenNotionalUsdc',
+      },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
@@ -409,6 +422,22 @@ export function usePerpsAccount(markPrice?: bigint) {
         abi: PERPS_ORDER_ROUTER_ABI,
         functionName: 'maxOrderAge',
       },
+    ],
+    query: {
+      enabled: isConnected && accountAddress !== undefined,
+      staleTime: PERPS_CONFIG_STALE_TIME_MS,
+      gcTime: PERPS_CONFIG_GC_TIME_MS,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    },
+  })
+  // CAP_PRICE is an immutable constructor value for this engine deployment.
+  const {
+    data: immutableContractData,
+    isLoading: isImmutableContractLoading,
+    error: immutableContractError,
+  } = useReadContracts({
+    contracts: [
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
@@ -418,24 +447,30 @@ export function usePerpsAccount(markPrice?: bigint) {
     ],
     query: {
       enabled: isConnected && accountAddress !== undefined,
-      staleTime: PERPS_CONFIG_STALE_TIME_MS,
-      refetchInterval: PERPS_CONFIG_REFETCH_INTERVAL_MS,
-      gcTime: PERPS_CONFIG_GC_TIME_MS,
+      staleTime: Number.POSITIVE_INFINITY,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     },
   })
 
   const isLoading =
     isDynamicContractsLoading ||
-    isRiskParamsLoading ||
-    isConfigurationContractsLoading
-  const error = dynamicContractsError ?? riskParamsError ?? configurationContractsError
+    isEngineConfigurationLoading ||
+    isRouterConfigurationLoading ||
+    isImmutableContractLoading
+  const error =
+    dynamicContractsError ??
+    engineConfigurationError ??
+    routerConfigurationError ??
+    immutableContractError
   const refetch = useCallback(
     () => Promise.all([
       refetchDynamicContracts(),
-      refetchRiskParams(),
-      refetchConfigurationContracts(),
+      refetchEngineConfiguration(),
+      refetchRouterConfiguration(),
     ]),
-    [refetchConfigurationContracts, refetchDynamicContracts, refetchRiskParams]
+    [refetchDynamicContracts, refetchEngineConfiguration, refetchRouterConfiguration]
   )
 
   const basicPendingOrders = useMemo(
@@ -467,10 +502,10 @@ export function usePerpsAccount(markPrice?: bigint) {
     const accountLedgerSnapshot = readResult(dynamicContractData, 7)
     const isFadWindow = readResult(dynamicContractData, 8) as boolean | undefined
     const enginePosition = readResult(dynamicContractData, 9)
-    const riskParams = readResult(riskParamsData, 0)
-    const maxPendingOrders = readResult(configurationContractData, 0) as bigint | undefined
-    const maxOrderAge = readResult(configurationContractData, 1) as bigint | undefined
-    const capPrice = readResult(configurationContractData, 2) as bigint | undefined
+    const riskParams = readResult(engineConfigurationData, 0)
+    const maxPendingOrders = readResult(routerConfigurationData, 1) as bigint | undefined
+    const maxOrderAge = readResult(routerConfigurationData, 2) as bigint | undefined
+    const capPrice = readResult(immutableContractData, 0) as bigint | undefined
     const withdrawableUsdc = tupleValue(accountView, 1, 'withdrawableUsdc') as bigint | undefined
     const equityUsdc = tupleValue(accountView, 0, 'equityUsdc') as bigint | undefined
     const terminalReachableUsdc = readBigInt(accountLedgerSnapshot, 12, 'terminalReachableUsdc')
@@ -569,7 +604,7 @@ export function usePerpsAccount(markPrice?: bigint) {
         pnl: formatSignedPerpsUsdc(positionWithLiquidationPrice?.unrealizedPnlUsdc),
       },
     }
-  }, [accountAddress, basicPendingOrders, configurationContractData, dynamicContractData, error, identityStatus, isConnected, isLoading, markPrice, ownerAddress, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refetchDynamicContracts, riskParamsData])
+  }, [accountAddress, basicPendingOrders, dynamicContractData, engineConfigurationData, error, identityStatus, immutableContractData, isConnected, isLoading, markPrice, ownerAddress, pendingOrderViewsData, pendingOrderViewsLoading, refetch, refetchDynamicContracts, routerConfigurationData])
 
   useEffect(() => {
     if (!isConnected || freshAccount.position === undefined) return

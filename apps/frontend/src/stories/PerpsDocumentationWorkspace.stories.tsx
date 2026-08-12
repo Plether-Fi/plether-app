@@ -62,6 +62,7 @@ function MarketHeader({ freshness = 'fresh' }: { freshness?: 'fresh' | 'market-c
           directionalLimit: {
             usagePercent: 87,
             side: 'long',
+            totalExposure: <TokenAmount amount="8.36M" />,
             netExposure: <TokenAmount amount="3.07M" />,
             limit: <TokenAmount amount="3.53M" />,
           },

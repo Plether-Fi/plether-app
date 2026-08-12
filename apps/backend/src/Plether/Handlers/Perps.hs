@@ -1,5 +1,13 @@
 module Plether.Handlers.Perps
   ( getBasketHistory
+  , getBasketHistoryTimed
+  , BasketHistoryFetch (..)
+  , BasketHistoryTimings (..)
+  , basketHistoryServerTiming
+  , basketHistoryTimingMetrics
+  , durationMilliseconds
+  , basketHistoryPointsWithVolume
+  , boundedBasketHistoryInterval
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
@@ -8,14 +16,15 @@ module Plether.Handlers.Perps
   , decodePythUpdateForAdmission
   ) where
 
-import Data.Aeson (FromJSON (..), Value, eitherDecode, withObject, (.:))
-import qualified Data.Aeson as Aeson
+import Control.Exception (evaluate)
 import Control.Concurrent.STM
   ( atomically
   , modifyTVar'
   , readTVar
   , writeTVar
   )
+import Data.Aeson (FromJSON (..), Value, eitherDecode, withObject, (.:))
+import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as BS8
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -27,6 +36,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
 import Data.Time.Clock.POSIX (POSIXTime, getPOSIXTime)
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Client
   ( Manager
   , httpLbs
@@ -44,8 +55,10 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( BasketHistorySnapshotRow (..)
   , BasketSnapshotRow (..)
+  , PerpsMarketVolumeBucketRow (..)
   , PythUpdatePayloadRow (..)
   , getBasketSnapshots
+  , getPerpsMarketVolumeBuckets
   , getLatestBasketSnapshot
   , getLatestPythUpdatePayload
   , getPythUpdatePayloadForWindow
@@ -60,22 +73,134 @@ import Plether.Pyth.Hermes (resolveHermesApiKey)
 import Plether.Pyth.RevealPayload (validateLatestPublishTimes, validatePublishTimes)
 import Plether.Utils.Hex (hexToByteStringEither)
 
+data BasketHistoryFetch = BasketHistoryFetch
+  { bhfResponse :: ApiResponse BasketHistory
+  , bhfPoolWaitNs :: Word64
+  , bhfSnapshotQueryNs :: Word64
+  , bhfVolumeQueryNs :: Word64
+  , bhfSnapshotRows :: Int
+  , bhfVolumeRows :: Int
+  }
+  deriving stock (Show)
+
+maxBasketHistoryPoints :: Integer
+maxBasketHistoryPoints = 12_000
+
+-- Preserve every normal chart shape (the largest is seven days of minute
+-- bars) while preventing direct callers from requesting hundreds of thousands
+-- of snapshots, for example one year at a one-minute interval.
+boundedBasketHistoryInterval :: Integer -> Integer -> Integer
+boundedBasketHistoryInterval rangeSeconds requestedInterval =
+  max normalizedInterval minimumBoundedInterval
+  where
+    normalizedInterval = max 60 requestedInterval
+    targetBuckets = max 1 (maxBasketHistoryPoints - 4)
+    minimumBoundedInterval =
+      (max 0 rangeSeconds + targetBuckets - 1) `div` targetBuckets
+
+data BasketHistoryTimings = BasketHistoryTimings
+  { bhtBackendTotalNs :: Word64
+  , bhtDbPoolWaitNs :: Word64
+  , bhtSnapshotQueryNs :: Word64
+  , bhtVolumeQueryNs :: Word64
+  , bhtResponseEncodeNs :: Word64
+  }
+  deriving stock (Eq, Show)
+
+basketHistoryTimingMetrics :: BasketHistoryTimings -> [(Text, Word64)]
+basketHistoryTimingMetrics timings =
+  [ ("plether_app", bhtBackendTotalNs timings)
+  , ("plether_db_pool_wait", bhtDbPoolWaitNs timings)
+  , ("plether_db_snapshots", bhtSnapshotQueryNs timings)
+  , ("plether_db_volume", bhtVolumeQueryNs timings)
+  , ("plether_response_encode", bhtResponseEncodeNs timings)
+  , ("plether_other", unattributedDuration timings)
+  ]
+
+basketHistoryServerTiming :: BasketHistoryTimings -> Text
+basketHistoryServerTiming =
+  T.intercalate ", "
+    . map (\(metric, duration) -> metric <> ";dur=" <> renderDurationMilliseconds duration)
+    . basketHistoryTimingMetrics
+
+durationMilliseconds :: Word64 -> Double
+durationMilliseconds durationNs = fromIntegral durationNs / 1_000_000
+
+renderDurationMilliseconds :: Word64 -> Text
+renderDurationMilliseconds durationNs =
+  let durationMicros = durationNs `div` 1_000
+      (wholeMilliseconds, fractionalMicros) = durationMicros `divMod` 1_000
+   in T.pack (show wholeMilliseconds)
+        <> "."
+        <> T.justifyRight 3 '0' (T.pack $ show fractionalMicros)
+
+unattributedDuration :: BasketHistoryTimings -> Word64
+unattributedDuration BasketHistoryTimings {..} =
+  bhtBackendTotalNs
+    - min
+      bhtBackendTotalNs
+      ( bhtDbPoolWaitNs
+          + bhtSnapshotQueryNs
+          + bhtVolumeQueryNs
+          + bhtResponseEncodeNs
+      )
+
 getBasketHistory
   :: DbPool
   -> Config
   -> BasketHistoryParams
   -> IO (Either ApiError (ApiResponse BasketHistory))
 getBasketHistory pool cfg params = do
+  result <- getBasketHistoryTimed pool cfg params
+  pure $ bhfResponse <$> result
+
+getBasketHistoryTimed
+  :: DbPool
+  -> Config
+  -> BasketHistoryParams
+  -> IO (Either ApiError BasketHistoryFetch)
+getBasketHistoryTimed pool cfg params = do
   now <- getPOSIXTime
   let nowUnix = round now
-      fromUnix = nowUnix - basketRangeSeconds (bhpRange params)
-      interval = max 60 (bhpIntervalSeconds params)
-      maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
+      rangeSeconds = basketRangeSeconds (bhpRange params)
+      fromUnix = nowUnix - rangeSeconds
+      interval = boundedBasketHistoryInterval rangeSeconds (bhpIntervalSeconds params)
+      maxPoints = fromIntegral $ min maxBasketHistoryPoints ((rangeSeconds `div` interval) + 4)
 
-  rows <- withDb pool $ \conn ->
-    getBasketSnapshots conn fromUnix nowUnix interval maxPoints (bhpIncludeComponents params)
+  poolStartedAt <- getMonotonicTimeNSec
+  (rows, volumeRows, poolWaitNs, snapshotQueryNs, volumeQueryNs, snapshotRows, volumeRowsCount) <- withDb pool $ \conn -> do
+    connectionReadyAt <- getMonotonicTimeNSec
+    let poolWaitNs = connectionReadyAt - poolStartedAt
 
-  let points = map rowToPoint rows
+    snapshotQueryStartedAt <- getMonotonicTimeNSec
+    snapshots <-
+      getBasketSnapshots conn fromUnix nowUnix interval maxPoints (bhpIncludeComponents params)
+    snapshotRows <- evaluate $ length snapshots
+    snapshotQueryFinishedAt <- getMonotonicTimeNSec
+
+    volumeQueryStartedAt <- getMonotonicTimeNSec
+    volumes <-
+      getPerpsMarketVolumeBuckets
+        conn
+        (cfgPerpsChainId cfg)
+        (cfgPerpsOrderRouter cfg)
+        fromUnix
+        nowUnix
+        interval
+    volumeRowsCount <- evaluate $ length volumes
+    volumeQueryFinishedAt <- getMonotonicTimeNSec
+
+    pure
+      ( snapshots
+      , volumes
+      , poolWaitNs
+      , snapshotQueryFinishedAt - snapshotQueryStartedAt
+      , volumeQueryFinishedAt - volumeQueryStartedAt
+      , snapshotRows
+      , volumeRowsCount
+      )
+
+  let points = basketHistoryPointsWithVolume interval rows volumeRows
       latest = case reverse rows of
         row : _ -> Just (bhsrBasketPrice row)
         [] -> Nothing
@@ -91,15 +216,38 @@ getBasketHistory pool cfg params = do
           , bhPoints = points
           }
 
-  pure $ Right $ mkResponse 0 (cfgChainId cfg) history
+  pure $
+    Right $
+      BasketHistoryFetch
+        { bhfResponse = mkResponse 0 (cfgChainId cfg) history
+        , bhfPoolWaitNs = poolWaitNs
+        , bhfSnapshotQueryNs = snapshotQueryNs
+        , bhfVolumeQueryNs = volumeQueryNs
+        , bhfSnapshotRows = snapshotRows
+        , bhfVolumeRows = volumeRowsCount
+        }
 
-rowToPoint :: BasketHistorySnapshotRow -> BasketHistoryPoint
-rowToPoint BasketHistorySnapshotRow {..} =
-  BasketHistoryPoint
-    { bhpTimestamp = bhsrTimestamp
-    , bhpBasketPrice = bhsrBasketPrice
-    , bhpComponents = bhsrComponents
-    }
+basketHistoryPointsWithVolume
+  :: Integer
+  -> [BasketHistorySnapshotRow]
+  -> [PerpsMarketVolumeBucketRow]
+  -> [BasketHistoryPoint]
+basketHistoryPointsWithVolume intervalSeconds rows volumeRows =
+  map rowToPoint rows
+  where
+    interval = max 1 intervalSeconds
+    volumeByBucket =
+      Map.fromList
+        [ (pmvbrBucket row, pmvbrVolumeUsdc row)
+        | row <- volumeRows
+        ]
+    rowToPoint BasketHistorySnapshotRow {..} =
+      BasketHistoryPoint
+        { bhpTimestamp = bhsrTimestamp
+        , bhpBasketPrice = bhsrBasketPrice
+        , bhpVolumeUsdc = Map.findWithDefault 0 (bhsrTimestamp `div` interval) volumeByBucket
+        , bhpComponents = bhsrComponents
+        }
 
 computeChange :: [BasketHistorySnapshotRow] -> Maybe Double
 computeChange rows =

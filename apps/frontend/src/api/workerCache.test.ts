@@ -67,7 +67,10 @@ describe('Perps public edge-cache allowlist', () => {
     expect(getPublicPerpsCachePolicy(history)).toMatchObject({ freshSeconds: 60 })
     for (const query of [
       'range=24h&interval=60',
+      'range=24h&interval=180',
       'range=7d&interval=300',
+      'range=7d&interval=900',
+      'range=30d&interval=1800',
       'range=30d&interval=3600',
       'range=1y&interval=86400',
       'range=24h&interval=3600&includeComponents=true',
@@ -106,6 +109,9 @@ describe('Perps public edge-cache allowlist', () => {
     ))).toBeUndefined()
     expect(getPublicPerpsCachePolicy(new Request(
       'https://app.example/api/perps/v1/perps/basket/history?range=1y&interval=60&includeComponents=true'
+    ))).toBeUndefined()
+    expect(getPublicPerpsCachePolicy(new Request(
+      'https://app.example/api/perps/v1/perps/basket/history?range=24h&interval=300&includeComponents=true'
     ))).toBeUndefined()
   })
 

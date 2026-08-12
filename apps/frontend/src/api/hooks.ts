@@ -37,8 +37,9 @@ export const apiQueryKeys = {
   perps: {
     all: () => ['perps', PERPS_API_SCOPE] as const,
     basketLatest: () => [...apiQueryKeys.perps.all(), 'basketLatest'] as const,
+    basketHistoryAll: () => [...apiQueryKeys.perps.all(), 'basketHistory'] as const,
     basketHistory: (range: BasketHistoryRange, intervalSeconds: number, includeComponents = false) =>
-      [...apiQueryKeys.perps.all(), 'basketHistory', range, intervalSeconds, includeComponents] as const,
+      [...apiQueryKeys.perps.basketHistoryAll(), range, intervalSeconds, includeComponents] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
   },
   user: {

@@ -11,11 +11,13 @@ type ContractResult =
 const mocks = vi.hoisted(() => ({
   primaryData: [] as ContractResult[],
   configurationData: [] as ContractResult[],
+  immutableData: [] as ContractResult[],
   riskParamsData: [] as ContractResult[],
   pendingDetailsLoading: false,
   refetchDynamic: vi.fn(),
   refetchConfiguration: vi.fn(),
   refetchRiskParams: vi.fn(),
+  refetchImmutable: vi.fn(),
   useReadContracts: vi.fn(),
 }))
 
@@ -99,11 +101,12 @@ describe('usePerpsAccount', () => {
     vi.clearAllMocks()
     mocks.primaryData = primaryData()
     mocks.configurationData = [
+      success(1_000_000n),
       success(10n),
       success(300n),
-      failure('cap price unavailable'),
     ]
-    mocks.riskParamsData = [failure('risk params unavailable')]
+    mocks.immutableData = [failure('cap price unavailable')]
+    mocks.riskParamsData = [failure('risk params unavailable'), success(15n)]
     mocks.pendingDetailsLoading = true
     mocks.useReadContracts.mockImplementation((parameters: {
       contracts?: { functionName?: string }[]
@@ -128,12 +131,21 @@ describe('usePerpsAccount', () => {
         }
       }
 
-      if (firstFunctionName === 'maxPendingOrders') {
+      if (firstFunctionName === 'minOpenNotionalUsdc') {
         return {
           data: mocks.configurationData,
           isLoading: false,
           error: undefined,
           refetch: mocks.refetchConfiguration,
+        }
+      }
+
+      if (firstFunctionName === 'CAP_PRICE') {
+        return {
+          data: mocks.immutableData,
+          isLoading: false,
+          error: undefined,
+          refetch: mocks.refetchImmutable,
         }
       }
 
@@ -146,12 +158,13 @@ describe('usePerpsAccount', () => {
     })
   })
 
-  it('polls dynamic account state frequently and revalidates configuration slowly', async () => {
+  it('polls dynamic account state but refreshes timelocked config only on lifecycle boundaries', async () => {
     const { result } = renderHook(() => usePerpsAccount(98_000_000n))
     const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)
     const dynamicCall = calls.find((call) => call.contracts?.[0]?.functionName === 'getTraderAccount')
     const riskParamsCall = calls.find((call) => call.contracts?.[0]?.functionName === 'riskParams')
-    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'maxPendingOrders')
+    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalUsdc')
+    const immutableCall = calls.find((call) => call.contracts?.[0]?.functionName === 'CAP_PRICE')
 
     expect(dynamicCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'getTraderAccount',
@@ -166,20 +179,34 @@ describe('usePerpsAccount', () => {
       'positions',
     ])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
+    expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'riskParams',
+      'executionFeeBps',
+    ])
     expect(riskParamsCall?.query).toMatchObject({
       staleTime: 300_000,
-      refetchInterval: 300_000,
-      gcTime: 1_800_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     })
+    expect(riskParamsCall?.query).not.toHaveProperty('refetchInterval')
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'minOpenNotionalUsdc',
       'maxPendingOrders',
       'maxOrderAge',
-      'CAP_PRICE',
     ])
     expect(configurationCall?.query).toMatchObject({
       staleTime: 300_000,
-      refetchInterval: 300_000,
-      gcTime: 1_800_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
+    })
+    expect(configurationCall?.query).not.toHaveProperty('refetchInterval')
+    expect(immutableCall?.query).toMatchObject({
+      staleTime: Number.POSITIVE_INFINITY,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
     })
     expect(result.current.maxPendingOrders).toBe(10n)
     expect(result.current.maxOrderAge).toBe(300n)
@@ -199,6 +226,7 @@ describe('usePerpsAccount', () => {
     expect(mocks.refetchDynamic).toHaveBeenCalledTimes(2)
     expect(mocks.refetchRiskParams).toHaveBeenCalledOnce()
     expect(mocks.refetchConfiguration).toHaveBeenCalledOnce()
+    expect(mocks.refetchImmutable).not.toHaveBeenCalled()
   })
 
   it('keeps position data visible while pending-order details load', () => {

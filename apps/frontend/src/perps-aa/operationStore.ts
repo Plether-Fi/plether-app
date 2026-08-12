@@ -52,6 +52,11 @@ export interface SponsoredOperation {
   signedUserOperation?: PersistedManagedUserOperationV1
   submissionMetadataVersion?: 1
   hashRecordedAt?: number
+  automaticRecoveryStartedAt?: number
+  lastAutomaticRecoveryAttemptAt?: number
+  automaticRecoveryAttemptCount?: number
+  automaticRecoveryExhaustedAt?: number
+  automaticRecoveryExpired?: true
   forcedLegacyUnlock?: boolean
   protocolNonceAdvanced?: true
   legacyManualUnlockEligible?: boolean
@@ -145,6 +150,8 @@ interface SponsoredOperationState {
   clearObservedInclusion: (id: string) => boolean
   recordTransactionHash: (id: string, hash: Hex) => void
   incrementRetry: (id: string) => void
+  recordAutomaticRecoveryAttempt: (id: string, attemptedAt: number) => boolean
+  exhaustAutomaticRecovery: (id: string, exhaustedAt: number) => void
   acknowledgeOperations: (operations: {
     id: string
     attentionRevision: number
@@ -177,6 +184,13 @@ export const DEFAULT_SPONSORED_OPERATION_LANE = 'default'
 export const LEGACY_AMBIGUOUS_OPERATION_MANIFEST_VERSION =
   'perps-aa-arbitrum-sepolia-20260717-v1'
 export const SPONSORED_OPERATION_STORAGE_VERSION = 1
+export const SPONSORED_OPERATION_AUTOMATIC_RECOVERY_INITIAL_DELAY_MS = 5_000
+export const SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS =
+  5 * 60 * 1000
+export const SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS =
+  30 * 60 * 1000
+export const SPONSORED_OPERATION_STALE_RECOVERY_AGE_MS =
+  24 * 60 * 60 * 1000
 
 function laneKey(
   accountAddress: Address,
@@ -206,6 +220,62 @@ export function isSponsoredOperationTerminal(
     'expired',
     'outcome-unknown',
   ].includes(status)
+}
+
+function sponsoredOperationAutomaticRecoveryStartedAt(
+  operation: SponsoredOperation
+): number {
+  return operation.automaticRecoveryStartedAt ??
+    operation.statusTimestamps['receipt-timeout'] ??
+    operation.hashRecordedAt ??
+    operation.createdAt
+}
+
+export function sponsoredOperationAutomaticRecoveryDelayMs(
+  completedAttemptCount: number
+): number {
+  const exponent = Math.max(0, Math.min(completedAttemptCount - 1, 16))
+  return Math.min(
+    SPONSORED_OPERATION_AUTOMATIC_RECOVERY_INITIAL_DELAY_MS * (2 ** exponent),
+    SPONSORED_OPERATION_AUTOMATIC_RECOVERY_MAX_DELAY_MS
+  )
+}
+
+export function sponsoredOperationAutomaticRecoveryIsDue(
+  operation: SponsoredOperation,
+  now: number
+): boolean {
+  if (
+    operation.automaticRecoveryExhaustedAt !== undefined ||
+    now - sponsoredOperationAutomaticRecoveryStartedAt(operation) >=
+      SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+  ) {
+    return false
+  }
+  if (operation.lastAutomaticRecoveryAttemptAt === undefined) return true
+  return now - operation.lastAutomaticRecoveryAttemptAt >=
+    sponsoredOperationAutomaticRecoveryDelayMs(
+      operation.automaticRecoveryAttemptCount ?? 1
+    )
+}
+
+export function sponsoredOperationAutomaticRecoveryIsExhausted(
+  operation: SponsoredOperation,
+  now: number
+): boolean {
+  return operation.automaticRecoveryExhaustedAt !== undefined ||
+    now - sponsoredOperationAutomaticRecoveryStartedAt(operation) >=
+      SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+}
+
+function sponsoredOperationRecoveryIsStale(
+  operation: SponsoredOperation,
+  now: number
+): boolean {
+  return operation.userOperationHash !== undefined &&
+    !isSponsoredOperationTerminal(operation.status) &&
+    now - sponsoredOperationAutomaticRecoveryStartedAt(operation) >=
+      SPONSORED_OPERATION_STALE_RECOVERY_AGE_MS
 }
 
 /**
@@ -550,7 +620,8 @@ function operationResolutionEvidenceScore(
     operation.status === 'outcome-unknown' &&
     (
       operation.forcedLegacyUnlock === true ||
-      operation.protocolNonceAdvanced === true
+      operation.protocolNonceAdvanced === true ||
+      operation.automaticRecoveryExpired === true
     )
   ) {
     return 2
@@ -617,6 +688,33 @@ function mergeOperationRecord(
       preferred.submissionMetadataVersion ??
       other.submissionMetadataVersion,
     hashRecordedAt: preferred.hashRecordedAt ?? other.hashRecordedAt,
+    automaticRecoveryStartedAt:
+      preferred.automaticRecoveryStartedAt === undefined
+        ? other.automaticRecoveryStartedAt
+        : other.automaticRecoveryStartedAt === undefined
+          ? preferred.automaticRecoveryStartedAt
+          : Math.min(
+              preferred.automaticRecoveryStartedAt,
+              other.automaticRecoveryStartedAt
+            ),
+    lastAutomaticRecoveryAttemptAt: Math.max(
+      preferred.lastAutomaticRecoveryAttemptAt ?? 0,
+      other.lastAutomaticRecoveryAttemptAt ?? 0
+    ) || undefined,
+    automaticRecoveryAttemptCount: Math.max(
+      preferred.automaticRecoveryAttemptCount ?? 0,
+      other.automaticRecoveryAttemptCount ?? 0
+    ) || undefined,
+    automaticRecoveryExhaustedAt: Math.max(
+      preferred.automaticRecoveryExhaustedAt ?? 0,
+      other.automaticRecoveryExhaustedAt ?? 0
+    ) || undefined,
+    ...(
+      preferred.automaticRecoveryExpired === true ||
+      other.automaticRecoveryExpired === true
+        ? { automaticRecoveryExpired: true as const }
+        : {}
+    ),
     includedTransactionHash:
       preferredInclusionEvidence.includedTransactionHash,
     includedBlockNumber:
@@ -771,6 +869,7 @@ interface SponsoredOperationResolutionV1 {
   resolvedAt: number
   forcedLegacyUnlock?: true
   protocolNonceAdvanced?: true
+  automaticRecoveryExpired?: true
   legacyInboxIdentity?: true
   transactionHash?: Hex
   transactionHashVerified?: true
@@ -1152,6 +1251,7 @@ function applyOperationResolution(
     status: resolution.status,
     forcedLegacyUnlock: resolution.forcedLegacyUnlock,
     protocolNonceAdvanced: resolution.protocolNonceAdvanced,
+    automaticRecoveryExpired: resolution.automaticRecoveryExpired,
     legacyInboxIdentity:
       resolution.legacyInboxIdentity ?? operation.legacyInboxIdentity,
     transactionHash:
@@ -1235,6 +1335,9 @@ function writeSponsoredOperationResolution(
         : {}),
       ...(operation.protocolNonceAdvanced === true
         ? { protocolNonceAdvanced: true as const }
+        : {}),
+      ...(operation.automaticRecoveryExpired === true
+        ? { automaticRecoveryExpired: true as const }
         : {}),
       ...(operation.legacyInboxIdentity === true
         ? { legacyInboxIdentity: true as const }
@@ -2777,6 +2880,59 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
           }))
         },
 
+        recordAutomaticRecoveryAttempt: (id, attemptedAt) => {
+          const currentOperation = get().operations.find(
+            (operation) => operation.id === id
+          )
+          if (
+            currentOperation?.userOperationHash === undefined ||
+            isSponsoredOperationTerminal(currentOperation.status) ||
+            currentOperation.automaticRecoveryExhaustedAt !== undefined
+          ) {
+            return false
+          }
+
+          const now = Math.max(attemptedAt, currentOperation.updatedAt + 1)
+          set((state) => ({
+            operations: updateOperation(state.operations, id, (operation) => ({
+              ...operation,
+              automaticRecoveryStartedAt:
+                operation.automaticRecoveryStartedAt ??
+                sponsoredOperationAutomaticRecoveryStartedAt(operation),
+              lastAutomaticRecoveryAttemptAt: now,
+              automaticRecoveryAttemptCount:
+                (operation.automaticRecoveryAttemptCount ?? 0) + 1,
+              updatedAt: now,
+            })),
+          }))
+          return true
+        },
+
+        exhaustAutomaticRecovery: (id, exhaustedAt) => {
+          const currentOperation = get().operations.find(
+            (operation) => operation.id === id
+          )
+          if (
+            currentOperation?.userOperationHash === undefined ||
+            isSponsoredOperationTerminal(currentOperation.status) ||
+            currentOperation.automaticRecoveryExhaustedAt !== undefined
+          ) {
+            return
+          }
+
+          const now = Math.max(exhaustedAt, currentOperation.updatedAt + 1)
+          set((state) => ({
+            operations: updateOperation(state.operations, id, (operation) => ({
+              ...operation,
+              automaticRecoveryStartedAt:
+                operation.automaticRecoveryStartedAt ??
+                sponsoredOperationAutomaticRecoveryStartedAt(operation),
+              automaticRecoveryExhaustedAt: now,
+              updatedAt: now,
+            })),
+          }))
+        },
+
         acknowledgeOperations: (operations) => {
           if (operations.length === 0) return
 
@@ -2902,12 +3058,35 @@ export const useSponsoredOperationStore = create<SponsoredOperationState>()(
         },
 
         cleanupOperations: () => {
-          const terminalCutoff = Date.now() - 24 * 60 * 60 * 1000
+          const now = Date.now()
+          const terminalCutoff = now - 24 * 60 * 60 * 1000
           const state = get()
           const activeOperationIds = new Set(
             Object.values(state.activeLanes)
           )
-          const operations = state.operations.filter((operation) => {
+          const migratedOperations = state.operations.map((operation) => {
+            if (!sponsoredOperationRecoveryIsStale(operation, now)) {
+              return operation
+            }
+            const status: SponsoredOperationStatus = 'outcome-unknown'
+            return {
+              ...operation,
+              status,
+              reason: undefined,
+              retryable: false,
+              replacementUserOperationHash: undefined,
+              automaticRecoveryExpired: true as const,
+              automaticRecoveryExhaustedAt:
+                operation.automaticRecoveryExhaustedAt ?? now,
+              updatedAt: now,
+              attentionRevision: failureAttentionRevision(operation, status),
+              statusTimestamps: {
+                ...operation.statusTimestamps,
+                [status]: now,
+              },
+            }
+          })
+          const operations = migratedOperations.filter((operation) => {
             if (isSponsoredOperationTerminal(operation.status)) {
               return operation.updatedAt > terminalCutoff
             }

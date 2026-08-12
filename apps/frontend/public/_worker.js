@@ -4,8 +4,18 @@ const ROUTES = {
 };
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
+const BASKET_HISTORY_PATH = '/api/perps/basket/history';
+const BASKET_HISTORY_CACHE_TTL_SECONDS = 30;
 const EDGE_CACHE_STORED_AT_HEADER = 'X-Plether-Edge-Cached-At';
 const EDGE_CACHE_STATUS_HEADER = 'X-Plether-Edge-Cache';
+const EDGE_ORIGIN_TIMING_METRIC = 'plether_edge_origin';
+const EDGE_CACHE_TIMING_METRIC = 'plether_edge_cache';
+const CACHE_SERVED_STATUSES = new Set([
+  'HIT',
+  'REVALIDATED',
+  'STALE',
+  'UPDATING',
+]);
 
 const PUBLIC_PERPS_CACHE_POLICIES = {
   '/api/perps/v1/perps/basket/latest': {
@@ -23,12 +33,52 @@ const PUBLIC_PERPS_CACHE_POLICIES = {
 };
 const PUBLIC_HISTORY_QUERY_KEYS = new Set(['range', 'interval', 'includeComponents']);
 const PUBLIC_HISTORY_VARIANTS = new Set([
+  // Live-volume refreshes use a 24-hour window at the active resolution.
   '24h:60:false',
+  '24h:180:false',
+  '24h:300:false',
+  '24h:900:false',
+  '24h:1800:false',
+  '24h:3600:false',
+  '24h:86400:false',
+  // Main TradingView history requests are resolution-capped in the datafeed.
+  '7d:60:false',
+  '7d:180:false',
   '7d:300:false',
+  '7d:900:false',
+  '7d:1800:false',
+  '30d:300:false',
+  '30d:900:false',
+  '30d:1800:false',
   '30d:3600:false',
+  '1y:3600:false',
   '1y:86400:false',
+  // Component-rich snapshots are only needed for the 24-hour comparison rail.
   '24h:3600:true',
 ]);
+
+function withEdgeFetchTiming(response, durationMs) {
+  const measuredDuration = Number.isFinite(durationMs)
+    ? Math.max(0, durationMs)
+    : 0;
+  const timedResponse = new Response(response.body, response);
+  const cloudflareCacheStatus = response.headers
+    .get('CF-Cache-Status')
+    ?.toUpperCase();
+  const workerCacheStatus = response.headers
+    .get(EDGE_CACHE_STATUS_HEADER)
+    ?.toUpperCase();
+  const servedFromCache =
+    CACHE_SERVED_STATUSES.has(cloudflareCacheStatus) ||
+    CACHE_SERVED_STATUSES.has(workerCacheStatus);
+
+  if (servedFromCache) timedResponse.headers.delete('Server-Timing');
+  timedResponse.headers.append(
+    'Server-Timing',
+    `${servedFromCache ? EDGE_CACHE_TIMING_METRIC : EDGE_ORIGIN_TIMING_METRIC};dur=${measuredDuration.toFixed(3)}`,
+  );
+  return timedResponse;
+}
 
 function hasHeader(request, name) {
   const value = request.headers.get(name);
@@ -217,19 +267,46 @@ export default {
           }
           headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
         }
+
         headers.set('Host', backendUrl.hostname);
         headers.delete('Origin');
 
-        const fetchBackend = () => fetch(backendUrl, {
+        const isBasketHistory = backendPath === BASKET_HISTORY_PATH;
+        const cachePolicy = getPublicPerpsCachePolicy(request, url);
+        const requestCacheControl = request.headers.get('Cache-Control') ?? '';
+        const shouldCacheHistoryAtCloudflare =
+          isBasketHistory &&
+          cachePolicy !== undefined &&
+          !/\b(?:no-store|no-cache)\b/i.test(requestCacheControl);
+        const fetchOptions = {
           method: request.method,
           headers,
           body: request.body,
-        });
-        const cachePolicy = getPublicPerpsCachePolicy(request, url);
+        };
+        if (shouldCacheHistoryAtCloudflare) {
+          fetchOptions.cf = {
+            cacheEverything: true,
+            cacheTtlByStatus: {
+              '200-299': BASKET_HISTORY_CACHE_TTL_SECONDS,
+              '300-599': -1,
+            },
+          };
+        }
 
-        return cachePolicy
-          ? fetchPublicResponse(request, url, cachePolicy, fetchBackend, context)
-          : fetchBackend();
+        const fetchBackend = () => fetch(backendUrl, fetchOptions);
+        const fetchStartedAt = isBasketHistory ? performance.now() : null;
+        const response = cachePolicy
+          ? await fetchPublicResponse(
+              request,
+              url,
+              cachePolicy,
+              fetchBackend,
+              context,
+            )
+          : await fetchBackend();
+
+        if (fetchStartedAt === null) return response;
+        return withEdgeFetchTiming(response, performance.now() - fetchStartedAt);
       }
     }
 

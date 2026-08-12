@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   refetchConfiguration: vi.fn(),
   refetchLatestBasket: vi.fn(),
   refetchBasketHistory: vi.fn(),
+  refetchBasketComponentHistory: vi.fn(),
   refetchMarketStats: vi.fn(),
+  usePerpsBasketHistory: vi.fn(),
   useReadContracts: vi.fn(),
 }))
 
@@ -21,11 +23,7 @@ vi.mock('../../api', () => ({
     data: undefined,
     refetch: mocks.refetchLatestBasket,
   }),
-  usePerpsBasketHistory: () => ({
-    data: undefined,
-    isLoading: false,
-    refetch: mocks.refetchBasketHistory,
-  }),
+  usePerpsBasketHistory: mocks.usePerpsBasketHistory,
   usePerpsMarketStats: () => ({
     data: undefined,
     isLoading: false,
@@ -36,6 +34,17 @@ vi.mock('../../api', () => ({
 describe('usePerpsMarket', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mocks.usePerpsBasketHistory.mockImplementation((
+      _range: string,
+      _intervalSeconds: number,
+      includeComponents = false
+    ) => ({
+      data: undefined,
+      isLoading: false,
+      refetch: includeComponents
+        ? mocks.refetchBasketComponentHistory
+        : mocks.refetchBasketHistory,
+    }))
     mocks.useReadContracts.mockImplementation((parameters: {
       contracts?: { functionName?: string }[]
     }) => {
@@ -46,21 +55,25 @@ describe('usePerpsMarket', () => {
           ? mocks.refetchRiskParams
           : mocks.refetchConfiguration
       const data = firstFunctionName === 'riskParams'
-        ? [{
-            status: 'success',
-            result: {
-              maxSkewRatio: 500_000_000_000_000_000n,
-              maintMarginBps: 500n,
-              fadMarginBps: 1_000n,
-              baseCarryBps: 25n,
-              minBountyUsdc: 100_000n,
-              bountyBps: 50n,
+        ? [
+            {
+              status: 'success',
+              result: {
+                maxSkewRatio: 500_000_000_000_000_000n,
+                maintMarginBps: 500n,
+                fadMarginBps: 1_000n,
+                baseCarryBps: 25n,
+                minBountyUsdc: 100_000n,
+                bountyBps: 50n,
+              },
             },
-          }]
-        : firstFunctionName === 'executionFeeBps'
+            { status: 'success', result: 15n },
+          ]
+        : firstFunctionName === 'minOpenNotionalUsdc'
           ? [
-              { status: 'success', result: 15n },
               { status: 'success', result: 1_000_000n },
+              { status: 'success', result: 10n },
+              { status: 'success', result: 300n },
             ]
           : undefined
 
@@ -73,12 +86,12 @@ describe('usePerpsMarket', () => {
     })
   })
 
-  it('polls dynamic market state frequently and revalidates configuration slowly', () => {
+  it('polls dynamic market state but refreshes timelocked config only on lifecycle boundaries', () => {
     const { result } = renderHook(() => usePerpsMarket())
     const calls = mocks.useReadContracts.mock.calls.map(([parameters]) => parameters)
     const dynamicCall = calls.find((call) => call.contracts?.[0]?.functionName === 'getProtocolStatus')
     const riskParamsCall = calls.find((call) => call.contracts?.[0]?.functionName === 'riskParams')
-    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'executionFeeBps')
+    const configurationCall = calls.find((call) => call.contracts?.[0]?.functionName === 'minOpenNotionalUsdc')
 
     expect(dynamicCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
       'getProtocolStatus',
@@ -87,20 +100,31 @@ describe('usePerpsMarket', () => {
       'sides',
     ])
     expect(dynamicCall?.query).toMatchObject({ refetchInterval: 15_000 })
+    expect(riskParamsCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
+      'riskParams',
+      'executionFeeBps',
+    ])
     expect(riskParamsCall?.query).toMatchObject({
       staleTime: 300_000,
-      refetchInterval: 300_000,
-      gcTime: 1_800_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     })
+    expect(riskParamsCall?.query).not.toHaveProperty('refetchInterval')
     expect(configurationCall?.contracts.map((contract: { functionName: string }) => contract.functionName)).toEqual([
-      'executionFeeBps',
       'minOpenNotionalUsdc',
+      'maxPendingOrders',
+      'maxOrderAge',
     ])
     expect(configurationCall?.query).toMatchObject({
       staleTime: 300_000,
-      refetchInterval: 300_000,
-      gcTime: 1_800_000,
+      gcTime: Number.POSITIVE_INFINITY,
+      refetchOnWindowFocus: true,
+      refetchOnReconnect: true,
     })
+    expect(configurationCall?.query).not.toHaveProperty('refetchInterval')
+    expect(mocks.usePerpsBasketHistory).toHaveBeenCalledWith('24h', 60)
+    expect(mocks.usePerpsBasketHistory).toHaveBeenCalledWith('24h', 3_600, true)
     expect(result.current.raw.executionFeeBps).toBe(15n)
     expect(result.current.raw.minOpenNotionalUsdc).toBe(1_000_000n)
     expect(result.current.raw.maintenanceMarginBps).toBe(500n)
@@ -122,6 +146,7 @@ describe('usePerpsMarket', () => {
     expect(mocks.refetchConfiguration).toHaveBeenCalledOnce()
     expect(mocks.refetchLatestBasket).toHaveBeenCalledOnce()
     expect(mocks.refetchBasketHistory).toHaveBeenCalledOnce()
+    expect(mocks.refetchBasketComponentHistory).toHaveBeenCalledOnce()
     expect(mocks.refetchMarketStats).toHaveBeenCalledOnce()
   })
 })

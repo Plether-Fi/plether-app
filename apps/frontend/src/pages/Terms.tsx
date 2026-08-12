@@ -3,7 +3,7 @@ export function Terms() {
     <div className="max-w-3xl mx-auto space-y-8 text-sm text-content-secondary">
       <div>
         <h1 className="text-2xl font-bold text-content-primary mb-2">Terms of Service</h1>
-        <p className="text-xs text-content-secondary/70">Last updated: March 2026</p>
+        <p className="text-xs text-content-secondary/70">Last updated: August 2026</p>
       </div>
 
       <section className="space-y-3">
@@ -77,7 +77,17 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-content-primary">8. Modifications</h2>
+        <h2 className="text-lg font-semibold text-content-primary">8. Prohibited Use</h2>
+        <p>
+          You may not use, copy, redistribute, or otherwise exploit any part of the content made
+          available through the Interface for commercial purposes unless you first obtain all
+          licenses required for that use. You must not use the Interface or its content in any way
+          that violates applicable laws or regulations.
+        </p>
+      </section>
+
+      <section className="space-y-3">
+        <h2 className="text-lg font-semibold text-content-primary">9. Modifications</h2>
         <p>
           We reserve the right to modify these Terms at any time. Changes will be effective
           upon posting to the Interface. Your continued use of the Interface after changes
@@ -86,7 +96,7 @@ export function Terms() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold text-content-primary">9. Governing Law</h2>
+        <h2 className="text-lg font-semibold text-content-primary">10. Governing Law</h2>
         <p>
           These Terms shall be governed by and construed in accordance with the laws of the
           jurisdiction in which Plether Labs Limited is incorporated, without regard to

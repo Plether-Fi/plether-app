@@ -115,12 +115,13 @@ export function mergeLatestBasketPoint(
 ): BasketHistoryPoint[] {
   if (!latest) return historyPoints
 
+  const lastPoint = historyPoints.at(-1)
   const livePoint: BasketHistoryPoint = {
     timestamp: latest.timestamp,
     basketPrice: latest.basketPrice,
+    volumeUsdc: latest.timestamp === lastPoint?.timestamp ? lastPoint.volumeUsdc : '0',
     components: latest.components,
   }
-  const lastPoint = historyPoints.at(-1)
   if (!lastPoint) return [livePoint]
   if (latest.timestamp < lastPoint.timestamp) return historyPoints
   if (latest.timestamp === lastPoint.timestamp) {
@@ -139,9 +140,11 @@ export function alignBasketPointsToOracleMark(
   if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
 
   const components = latest?.components ?? points.at(-1)?.components
+  const replacedPoint = points.find((point) => point.timestamp === oracleMark.timestamp)
   const markPoint: BasketHistoryPoint = {
     timestamp: oracleMark.timestamp,
     basketPrice: oracleMark.basketPrice,
+    volumeUsdc: replacedPoint?.volumeUsdc ?? '0',
     ...(components ? { components } : {}),
   }
 

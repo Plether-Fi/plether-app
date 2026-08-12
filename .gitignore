@@ -18,6 +18,9 @@ coverage
 bundle-stats.html
 *.tsbuildinfo
 
+# TradingView Advanced Charts proprietary assets (installed locally/deploy-time)
+apps/frontend/public/charting_library/
+
 # Local config
 *.local
 *.local.json

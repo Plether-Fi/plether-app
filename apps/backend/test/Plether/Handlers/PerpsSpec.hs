@@ -5,13 +5,74 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.Text (Text)
 import qualified Data.Text as T
-import Plether.Handlers.Perps (PythUpdateAdmission (..), decodePythUpdateForAdmission)
+import Plether.Database.Schema
+  ( BasketHistorySnapshotRow (..)
+  , PerpsMarketVolumeBucketRow (..)
+  )
+import Plether.Handlers.Perps
+  ( BasketHistoryTimings (..)
+  , PythUpdateAdmission (..)
+  , basketHistoryPointsWithVolume
+  , basketHistoryServerTiming
+  , basketHistoryTimingMetrics
+  , boundedBasketHistoryInterval
+  , decodePythUpdateForAdmission
+  )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
-import Plether.Types (ApiError (..), PythUpdateResponse (..))
+import Plether.Types
+  ( ApiError (..)
+  , BasketHistoryPoint (..)
+  , PythUpdateResponse (..)
+  )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "boundedBasketHistoryInterval" $ do
+    it "preserves supported chart response shapes" $ do
+      boundedBasketHistoryInterval (24 * 60 * 60) 60 `shouldBe` 60
+      boundedBasketHistoryInterval (7 * 24 * 60 * 60) 60 `shouldBe` 60
+      boundedBasketHistoryInterval (365 * 24 * 60 * 60) 3600 `shouldBe` 3600
+
+    it "downsamples oversized direct history requests" $ do
+      let yearSeconds = 365 * 24 * 60 * 60
+          interval = boundedBasketHistoryInterval yearSeconds 60
+      interval `shouldSatisfy` (> 60)
+      (yearSeconds `div` interval) + 4 `shouldSatisfy` (<= 12_000)
+
+  describe "basket history request timings" $ do
+    it "renders stable Server-Timing metrics with millisecond precision" $ do
+      basketHistoryServerTiming sampleTimings
+        `shouldBe` "plether_app;dur=50.000, plether_db_pool_wait;dur=7.000, plether_db_snapshots;dur=18.234, plether_db_volume;dur=20.000, plether_response_encode;dur=2.500, plether_other;dur=2.266"
+
+    it "keeps the timing stages and unattributed remainder canonical" $ do
+      basketHistoryTimingMetrics sampleTimings
+        `shouldBe`
+          [ ("plether_app", 50_000_000)
+          , ("plether_db_pool_wait", 7_000_000)
+          , ("plether_db_snapshots", 18_234_000)
+          , ("plether_db_volume", 20_000_000)
+          , ("plether_response_encode", 2_500_000)
+          , ("plether_other", 2_266_000)
+          ]
+
+    it "renders sub-millisecond durations without scientific notation" $ do
+      basketHistoryServerTiming zeroStageTimings {bhtBackendTotalNs = 1_234_000}
+        `shouldBe` "plether_app;dur=1.234, plether_db_pool_wait;dur=0.000, plether_db_snapshots;dur=0.000, plether_db_volume;dur=0.000, plether_response_encode;dur=0.000, plether_other;dur=1.234"
+
+    it "clamps the unattributed remainder when measured stages exceed app time" $ do
+      last (basketHistoryTimingMetrics zeroStageTimings {bhtBackendTotalNs = 1, bhtDbPoolWaitNs = 2})
+        `shouldBe` ("plether_other", 0)
+
+  describe "basketHistoryPointsWithVolume" $ do
+    it "matches activity volume by the requested interval bucket" $ do
+      let points = basketHistoryPointsWithVolume 60 basketRows volumeRows
+      map bhpVolumeUsdc points `shouldBe` [123_456, 789]
+
+    it "zero-fills candles without activity in their interval bucket" $ do
+      let points = basketHistoryPointsWithVolume 60 basketRows (take 1 volumeRows)
+      map bhpVolumeUsdc points `shouldBe` [123_456, 0]
+
   describe "decodePythUpdateForAdmission" $ do
     it "prepares strict six-feed latest payload admission inputs" $ do
       admission <-
@@ -71,6 +132,54 @@ spec = do
         10
         (hermesResponse ["0xnot-hex"] configuredFeedIds [100 .. 105])
         `shouldFailWith` "update data item 0 is invalid"
+
+sampleTimings :: BasketHistoryTimings
+sampleTimings =
+  BasketHistoryTimings
+    { bhtBackendTotalNs = 50_000_000
+    , bhtDbPoolWaitNs = 7_000_000
+    , bhtSnapshotQueryNs = 18_234_000
+    , bhtVolumeQueryNs = 20_000_000
+    , bhtResponseEncodeNs = 2_500_000
+    }
+
+zeroStageTimings :: BasketHistoryTimings
+zeroStageTimings =
+  BasketHistoryTimings
+    { bhtBackendTotalNs = 0
+    , bhtDbPoolWaitNs = 0
+    , bhtSnapshotQueryNs = 0
+    , bhtVolumeQueryNs = 0
+    , bhtResponseEncodeNs = 0
+    }
+
+basketRows :: [BasketHistorySnapshotRow]
+basketRows =
+  [ BasketHistorySnapshotRow
+      { bhsrTimestamp = 125
+      , bhsrIntervalSeconds = 5
+      , bhsrBasketPrice = 101_660_000
+      , bhsrComponents = Nothing
+      }
+  , BasketHistorySnapshotRow
+      { bhsrTimestamp = 181
+      , bhsrIntervalSeconds = 5
+      , bhsrBasketPrice = 101_670_000
+      , bhsrComponents = Nothing
+      }
+  ]
+
+volumeRows :: [PerpsMarketVolumeBucketRow]
+volumeRows =
+  [ PerpsMarketVolumeBucketRow
+      { pmvbrBucket = 2
+      , pmvbrVolumeUsdc = 123_456
+      }
+  , PerpsMarketVolumeBucketRow
+      { pmvbrBucket = 3
+      , pmvbrVolumeUsdc = 789
+      }
+  ]
 
 configuredFeedIds :: [Text]
 configuredFeedIds = bcFeedId <$> basketComponents

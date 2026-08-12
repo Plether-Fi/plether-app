@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { DocsLink } from './DocsLink'
 
 export interface TooltipDocsLink {
   href: string
@@ -185,16 +186,14 @@ export function Tooltip({
           >
             <div>{content}</div>
             {docsLink ? (
-              <a
+              <DocsLink
                 href={docsLink.href}
-                aria-label={`Read: ${docsLink.title}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-block cursor-pointer font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+                title={docsLink.title}
+                className="mt-2 inline-block"
               >
                 <span>Read: </span>
                 <span className="italic">{docsLink.title}</span>
-              </a>
+              </DocsLink>
             ) : null}
           </div>,
           document.body
