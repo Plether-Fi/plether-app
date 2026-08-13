@@ -1,9 +1,11 @@
 module Plether.Types.PerpsSpec (spec) where
 
 import Data.Aeson (object, toJSON, (.=))
+import Data.Either (isLeft)
 import Plether.Types.Perps
   ( BasketCandle (..)
   , BasketCurrentCandle (..)
+  , BasketHistoryParams (..)
   , BasketHistoryPoint (..)
   , basketCandlePageSpan
   , basketRangeSeconds
@@ -11,6 +13,7 @@ import Plether.Types.Perps
   , hasExactBasketCandleQueryKeys
   , isAlignedBasketCandleCursor
   , isBasketCandleCursorWithinFutureBound
+  , parseBasketHistoryQueryParams
   )
 import Test.Hspec
 
@@ -19,6 +22,80 @@ spec = do
   describe "basketRangeSeconds" $ do
     it "supports one year basket history ranges" $ do
       basketRangeSeconds "1y" `shouldBe` 365 * 24 * 60 * 60
+
+  describe "basket history query validation" $ do
+    it "accepts the exact required keys in either order" $ do
+      parseBasketHistoryQueryParams
+        ["interval", "range"]
+        (Just "30d")
+        (Just "3600")
+        Nothing
+        `shouldBe` Right
+          BasketHistoryParams
+            { bhpRange = "30d"
+            , bhpIntervalSeconds = 3600
+            , bhpIncludeComponents = False
+            }
+
+    it "accepts only canonical optional component booleans" $ do
+      parseBasketHistoryQueryParams
+        ["includeComponents", "range", "interval"]
+        (Just "24h")
+        (Just "3600")
+        (Just "true")
+        `shouldBe` Right
+          BasketHistoryParams
+            { bhpRange = "24h"
+            , bhpIntervalSeconds = 3600
+            , bhpIncludeComponents = True
+            }
+      parseBasketHistoryQueryParams
+        ["range", "interval", "includeComponents"]
+        (Just "7d")
+        (Just "300")
+        (Just "false")
+        `shouldBe` Right
+          BasketHistoryParams
+            { bhpRange = "7d"
+            , bhpIntervalSeconds = 300
+            , bhpIncludeComponents = False
+            }
+
+    it "rejects missing, duplicate, and unknown query keys" $ do
+      let rejects keys =
+            parseBasketHistoryQueryParams keys (Just "30d") (Just "3600") Nothing
+              `shouldSatisfy` isLeft
+      rejects ["range"]
+      rejects ["range", "interval", "range"]
+      rejects ["range", "interval", "extra"]
+      parseBasketHistoryQueryParams
+        ["range", "interval", "includeComponents", "includeComponents"]
+        (Just "24h")
+        (Just "3600")
+        (Just "true")
+        `shouldSatisfy` isLeft
+
+    it "rejects missing or noncanonical range values" $ do
+      let rejects range =
+            parseBasketHistoryQueryParams ["range", "interval"] range (Just "3600") Nothing
+              `shouldSatisfy` isLeft
+      mapM_ rejects [Nothing, Just "", Just "week", Just "30D", Just " 30d"]
+
+    it "rejects missing, zero, signed, fractional, padded, and nonnumeric intervals" $ do
+      let rejects interval =
+            parseBasketHistoryQueryParams ["range", "interval"] (Just "30d") interval Nothing
+              `shouldSatisfy` isLeft
+      mapM_ rejects [Nothing, Just "", Just "0", Just "-1", Just "+60", Just "60.0", Just " 60", Just "60 ", Just "abc"]
+
+    it "rejects missing or noncanonical component booleans" $ do
+      let rejects value =
+            parseBasketHistoryQueryParams
+              ["range", "interval", "includeComponents"]
+              (Just "24h")
+              (Just "3600")
+              value
+              `shouldSatisfy` isLeft
+      mapM_ rejects [Nothing, Just "", Just "1", Just "yes", Just "TRUE", Just " true"]
 
   describe "BasketHistoryPoint JSON" $
     it "always serializes candle volume as a lossless decimal string" $ do

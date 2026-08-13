@@ -638,7 +638,7 @@ the backend alert is a receipt-based secondary signal.
 | `GET /api/perps/accounts/:address/orders` | Indexed Perps order history |
 | `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
 | `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
-| `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration |
+| `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration; both query parameters are required exactly once |
 | `GET /api/perps/basket/candles?interval=&cursor=` | Finalized OHLCV rollups in a fixed 500-bucket window ending at the exclusive cursor |
 | `GET /api/perps/basket/candles/current?interval=` | Mutable current OHLCV candle and dataset generation |
 
@@ -661,6 +661,10 @@ When strict rollup reads are enabled for an effective interval, the legacy
 snapshot/volume scan. Oversized requests snap upward to the smallest canonical
 resolution that keeps the response bounded (for example, 30-day minute requests
 use five-minute rollups and one-year minute requests use hourly rollups).
+The route accepts canonical `range` values (`24h`, `7d`, `30d`, or `1y`) and a
+positive decimal `interval`, each exactly once. `includeComponents` may appear
+at most once and must be exactly `true` or `false`; missing, duplicate, unknown,
+or malformed query parameters return `400` before database access.
 Component-bearing history remains on the legacy source because candle rollups
 do not store per-component point metadata, and is therefore accepted only for
 the UI's bounded `range=24h`, `interval=3600`,
