@@ -329,11 +329,20 @@ Then deploy the backend and verify every API and worker task is running the
 Terraform-produced configuration. Leave read mode, interval allowlist, and
 frontend flag unchanged.
 
-Soak for at least one full trading day and through one indexer batch boundary.
-Exercise duplicate ingestion, then run one controlled replay over a previously
-indexed finalized range. Block bounds are inclusive and may cover at most 5,000
-blocks; begin with a materially smaller range. `scope` must be `none`, both
-timestamp fields must be blank, and replay is prohibited outside Sepolia.
+Use an evidence-based Sepolia soak instead of a fixed wall-clock delay. Before
+replay, record at least three consecutive healthy five-minute observation
+periods after the dual-write deployment reaches steady state. Across that
+window require current price and volume writer heartbeats, at least three
+certified Perps indexer batch advances, every Sepolia alarm in `OK`, stable ECS
+task identities, an available RDS instance with no pending modifications, and
+no writer-failure, reorg, API-error, or RDS-pressure signal. Restart the
+observation window after any task replacement or failed criterion.
+
+Once that evidence is present, exercise duplicate ingestion by running one
+controlled replay over a previously indexed finalized range. Block bounds are
+inclusive and may cover at most 5,000 blocks; begin with a materially smaller
+range. `scope` must be `none`, both timestamp fields must be blank, and replay
+is prohibited outside Sepolia.
 
 ```bash
 run_candle_admin sepolia replay none \
@@ -391,7 +400,11 @@ Pass criteria:
 
 Start with a bounded recent window so the first useful chart ranges become
 available quickly. Unix timestamps are inclusive at `from_timestamp` and
-exclusive at `to_timestamp`, and must align to whole minutes.
+exclusive at `to_timestamp`, and must align to whole minutes. The first tranche
+must contain at least one fully aligned bucket for every canonical interval.
+Because `86400` is canonical and aligns to UTC midnight, use a range that spans
+at least one complete UTC day; an arbitrary trailing 24-hour window is not
+sufficient.
 
 ```bash
 run_candle_admin sepolia backfill all \
@@ -402,6 +415,17 @@ run_candle_admin sepolia backfill all \
 Extend toward inception in repeated runs. Coverage must only be published for
 contiguous completed chunks. A failed or cancelled task can be rerun with the
 same inputs; range replacement and recomputation are idempotent.
+
+Immediately before dispatch, derive the price upper bound from the latest
+successful `basket_price_watermark_advanced.checked_through` heartbeat and the
+volume upper bound from a certified
+`perps_indexer_progress.indexed_through_timestamp`. The price tranche must
+finish close enough to the live writer watermark that the first post-backfill
+poll remains within `max(300, 2 * PERPS_CANDLE_LATENESS_SECONDS)`; otherwise the
+writer correctly invalidates the newly published coverage with
+`price_watermark_gap`. Use separate price and volume runs when their safe upper
+bounds differ. Re-read both bounds after the run and treat the first live
+heartbeat as part of publication success, not as optional soak evidence.
 
 After each tranche:
 
@@ -414,6 +438,8 @@ run_candle_admin sepolia verify none \
 
 Pass criteria for every canonical interval:
 
+- the interval has a non-empty aligned verification range and an explicit
+  complete coverage row; an empty aligned range is not a successful check;
 - expected and actual non-empty bucket counts match;
 - open, high, low, close, sample count, exact volume numerator, trade count,
   and source-block bounds reconcile with canonical source rows;
@@ -427,6 +453,8 @@ Pass criteria for every canonical interval:
   independent operational checks against worker/indexer logs and RPC/DB
   cursor evidence; `candle-admin verify` reconciles source rows but cannot
   prove those external progress bounds by itself;
+- the first live price heartbeat after publication still reports
+  `coverage_state=complete`, an empty `coverage_error`, and an acceptable lag;
 - no partial tranche is exposed as complete coverage.
 
 ## Gate 5: deterministic reconciliation and soak
@@ -445,11 +473,14 @@ run_candle_admin sepolia verify none \
   -f to_timestamp=TO_UNIX
 ```
 
-Continue dual writes for at least one full trading day and through another
-Perps indexer batch boundary. Then extend `TO_UNIX` through the newly finalized
-range and run the same `verify` command again. Also run `status` and preserve
-the two verification run IDs, source bounds, dataset generations, and RDS/API
-metrics in the change record.
+Continue dual writes through three consecutive healthy five-minute observation
+periods and at least three additional certified Perps indexer batch advances.
+Require the same stable-service, writer-heartbeat, alarm, RDS, and API evidence
+as Gate 3, restarting the observation window after any failed criterion or task
+replacement. Then extend `TO_UNIX` through the newly finalized range and run
+the same `verify` command again. Also run `status` and preserve the two
+verification run IDs, source bounds, dataset generations, and RDS/API metrics
+in the change record.
 
 Repeat the Gate 3 protected replay once over the same bounded finalized block
 range, or over another explicitly recorded range of at most 5,000 inclusive

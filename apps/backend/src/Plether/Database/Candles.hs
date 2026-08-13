@@ -814,39 +814,41 @@ advanceBasketPriceCoverage conn seriesId checkedThrough latenessSeconds = do
   ensureCurrentBasketDefinition conn seriesId
   lockDataset conn "price" seriesId 0
   let maximumPollGap = max 300 (max 0 latenessSeconds * 2)
-  anchors <- query conn
-    "SELECT coverage_end, complete, last_error, maintenance_from, maintenance_to \
+  coverageRows <- query conn
+    "SELECT interval_seconds, coverage_end, complete \
     \FROM perps_rollup_coverage \
     \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = '' \
-    \AND interval_seconds = 60 FOR UPDATE"
-    (Only seriesId) :: IO [(Maybe Integer, Bool, Maybe Text, Maybe Integer, Maybe Integer)]
-  let underBoundedAdminRepair = case anchors of
-        [(_, False, Just "bounded_admin_repair", Just maintenanceFrom, Just maintenanceTo)] ->
-          maintenanceFrom >= 0
-            && maintenanceFrom < maintenanceTo
-            && maintenanceFrom `mod` 60 == 0
-            && maintenanceTo `mod` 60 == 0
+    \FOR UPDATE"
+    (Only seriesId) :: IO [(Integer, Maybe Integer, Bool)]
+  let anchors =
+        [ (coverageEnd, complete)
+        | (60, coverageEnd, complete) <- coverageRows
+        ]
+  let healthy = case anchors of
+        [(Just anchorEnd, True)] -> checkedThrough <= anchorEnd + maximumPollGap
         _ -> False
-      healthy = case anchors of
-        [(Just anchorEnd, True, _, _, _)] -> checkedThrough <= anchorEnd + maximumPollGap
-        _ -> False
-  if underBoundedAdminRepair
-    then pure ()
-    else
-      if healthy
-        then forM_ canonicalCandleIntervals $ \interval ->
-          advanceExistingCoverage
-            conn PriceRollup (Just seriesId) Nothing Nothing interval
-            checkedThrough (alignDown checkedThrough interval) latenessSeconds
-        else do
-          assertGenerationCapacity conn PriceRollup (Just seriesId) Nothing Nothing
-          _ <- execute conn
-            "UPDATE perps_rollup_coverage SET complete = FALSE, \
-            \ generation = generation + 1, last_error = 'price_watermark_gap', \
-            \ maintenance_from = NULL, maintenance_to = NULL, updated_at = NOW() \
-            \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = ''"
-            (Only seriesId)
-          pure ()
+      -- Once every published interval is already disabled, later polls cannot
+      -- prove the missing range. Preserve that actionable state and its dataset
+      -- identity until an administrator republishes coverage. Check the whole
+      -- dataset: a missing/incomplete minute anchor must not leave a complete
+      -- coarser interval readable.
+      alreadyIncomplete =
+        not (null coverageRows)
+          && all (\(_, _, complete) -> not complete) coverageRows
+  if healthy
+    then forM_ canonicalCandleIntervals $ \interval ->
+      advanceExistingCoverage
+        conn PriceRollup (Just seriesId) Nothing Nothing interval
+        checkedThrough (alignDown checkedThrough interval) latenessSeconds
+    else unless alreadyIncomplete $ do
+      assertGenerationCapacity conn PriceRollup (Just seriesId) Nothing Nothing
+      _ <- execute conn
+        "UPDATE perps_rollup_coverage SET complete = FALSE, \
+        \ generation = generation + 1, last_error = 'price_watermark_gap', \
+        \ maintenance_from = NULL, maintenance_to = NULL, updated_at = NOW() \
+        \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = ''"
+        (Only seriesId)
+      pure ()
 
 recomputeMarketVolumeHierarchy :: Connection -> Integer -> Text -> Integer -> Integer -> IO ()
 recomputeMarketVolumeHierarchy conn chainId releaseRouter timestamp latenessSeconds =

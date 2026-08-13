@@ -33,6 +33,7 @@ import Plether.Database.Candles
   , backfillLegacyBasketSnapshots
   , backfillMarketVolume
   , canonicalCandleIntervals
+  , defaultBasketSeriesId
   , ensureCandleSchema
   , ensureCurrentBasketDefinition
   , getBasketCandlePage
@@ -57,6 +58,9 @@ import Plether.Database.Schema
   , insertPerpsActivity
   , insertPerpsEvent
   )
+import System.Environment (getEnvironment)
+import System.Exit (ExitCode (..))
+import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
 import Test.Hspec
   ( Spec
   , anyException
@@ -773,6 +777,111 @@ candleRollupSpec databaseUrl =
               bcrVolumeComplete row `shouldBe` True
             Nothing -> fail "Expected the finalized candle after watermark advance"
 
+    it "invalidates an excessive price watermark gap only once" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          let coverageStart = baseTime
+              coverageEnd = baseTime + 86_400
+              initialGeneration = 7
+              checkedThrough = coverageEnd + 301
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage
+              connection
+              interval
+              coverageStart
+              coverageEnd
+              coverageEnd
+              initialGeneration
+              True
+
+          advanceBasketPriceCoverage
+            connection testSeries checkedThrough 120
+
+          invalidated <-
+            mapM (requirePriceCoverage connection) canonicalCandleIntervals
+          forM_ invalidated $ \coverage -> do
+            rcComplete coverage `shouldBe` False
+            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcLastError coverage `shouldBe` Just "price_watermark_gap"
+            rcCoverageStart coverage `shouldBe` Just coverageStart
+            rcCoverageEnd coverage `shouldBe` Just coverageEnd
+            rcFinalizedThrough coverage `shouldBe` Just coverageEnd
+
+          advanceBasketPriceCoverage
+            connection testSeries (checkedThrough + 300) 120
+
+          repeated <-
+            mapM (requirePriceCoverage connection) canonicalCandleIntervals
+          repeated `shouldBe` invalidated
+
+    it "invalidates complete coarser coverage despite a minute repair marker" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          let coverageStart = baseTime
+              coverageEnd = baseTime + 86_400
+              initialGeneration = 9
+              checkedThrough = coverageEnd + 301
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage
+              connection
+              interval
+              coverageStart
+              coverageEnd
+              coverageEnd
+              initialGeneration
+              True
+          void $
+            execute
+              connection
+              "UPDATE perps_rollup_coverage SET complete = FALSE, \
+              \last_error = 'bounded_admin_repair', maintenance_from = ?, maintenance_to = ? \
+              \WHERE kind = 'price' AND series_id = ? AND interval_seconds = 60"
+              (coverageStart, coverageEnd, testSeries)
+
+          advanceBasketPriceCoverage
+            connection testSeries checkedThrough 120
+
+          invalidated <-
+            mapM (requirePriceCoverage connection) canonicalCandleIntervals
+          forM_ invalidated $ \coverage -> do
+            rcComplete coverage `shouldBe` False
+            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcLastError coverage `shouldBe` Just "price_watermark_gap"
+
+    it "rejects a trailing 24-hour verification range without a full UTC day" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let verificationFrom = baseTime + 13 * 3_600 + 53 * 60
+            verificationTo = verificationFrom + 86_400
+        seedCandleAdminSources pool verificationFrom
+
+        (exitCode, stdout, stderr) <-
+          runCandleAdmin databaseUrl
+            [ "verify"
+            , "--from", show verificationFrom
+            , "--to", show verificationTo
+            ]
+
+        exitCode `shouldSatisfy` (/= ExitSuccess)
+        (stdout <> stderr)
+          `shouldContain` "Requested range does not contain a full aligned bucket for every canonical interval"
+
+    it "verifies a range containing one full UTC day" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let verificationFrom = baseTime
+            verificationTo = baseTime + 86_400
+        seedCandleAdminVerificationRange pool verificationFrom verificationTo
+
+        (exitCode, _, _) <-
+          runCandleAdmin databaseUrl
+            [ "verify"
+            , "--from", show verificationFrom
+            , "--to", show verificationTo
+            ]
+
+        exitCode `shouldBe` ExitSuccess
+
     it "refuses a price watermark when the immutable basket definition conflicts" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
@@ -1227,6 +1336,100 @@ withCandleDatabase databaseUrl action =
     cleanupCandleRows pool
     action pool `finally` cleanupCandleRows pool
 
+withCandleAdminDatabase :: Text -> (DbPool -> IO a) -> IO a
+withCandleAdminDatabase databaseUrl action =
+  withCandleDatabase databaseUrl $ \pool -> do
+    cleanupCandleAdminRows pool
+    action pool `finally` cleanupCandleAdminRows pool
+
+seedCandleAdminSources :: DbPool -> Integer -> IO ()
+seedCandleAdminSources pool rangeStart =
+  withDb pool $ \connection -> do
+    let sourceTimestamp = rangeStart + 60
+    ensureCurrentBasketDefinition connection defaultBasketSeriesId
+    changed <-
+      upsertBasketObservation connection $
+        BasketObservationInput
+          { boiSeriesId = defaultBasketSeriesId
+          , boiObservationId = "candle-admin-verification-price"
+          , boiPublishTime = sourceTimestamp
+          , boiBasketPrice = 100
+          , boiComponentPrices = componentPayload
+          , boiSource = "signed_pyth"
+          , boiSourcePriority = 100
+          }
+    changed `shouldBe` True
+    insertActivity
+      connection "candle-admin-verification-volume" sourceTimestamp 1_100 2 10 "Open"
+    insertRawEvent
+      connection "candle-admin-verification-source-bound" sourceTimestamp 1_100
+
+seedCandleAdminVerificationRange :: DbPool -> Integer -> Integer -> IO ()
+seedCandleAdminVerificationRange pool rangeStart rangeEnd = do
+  seedCandleAdminSources pool rangeStart
+  withDb pool $ \connection ->
+    withTransaction connection $ do
+      _ <-
+        backfillLegacyBasketSnapshots
+          connection defaultBasketSeriesId rangeStart rangeEnd
+      _ <-
+        backfillMarketVolume
+          connection testChainId testRouter rangeStart rangeEnd
+      forM_ canonicalCandleIntervals $ \interval -> do
+        upsertRollupCoverage connection $
+          RollupCoverage
+            { rcKind = PriceRollup
+            , rcSeriesId = Just defaultBasketSeriesId
+            , rcChainId = Nothing
+            , rcReleaseRouter = Nothing
+            , rcIntervalSeconds = interval
+            , rcCoverageStart = Just rangeStart
+            , rcCoverageEnd = Just rangeEnd
+            , rcFinalizedThrough = Just rangeEnd
+            , rcGeneration = 7
+            , rcComplete = True
+            , rcDerivationVersion = "v1"
+            , rcLastError = Nothing
+            , rcMaintenanceFrom = Nothing
+            , rcMaintenanceTo = Nothing
+            }
+        upsertRollupCoverage connection $
+          RollupCoverage
+            { rcKind = VolumeRollup
+            , rcSeriesId = Nothing
+            , rcChainId = Just testChainId
+            , rcReleaseRouter = Just testRouter
+            , rcIntervalSeconds = interval
+            , rcCoverageStart = Just rangeStart
+            , rcCoverageEnd = Just rangeEnd
+            , rcFinalizedThrough = Just rangeEnd
+            , rcGeneration = 7
+            , rcComplete = True
+            , rcDerivationVersion = "v1"
+            , rcLastError = Nothing
+            , rcMaintenanceFrom = Nothing
+            , rcMaintenanceTo = Nothing
+            }
+
+runCandleAdmin :: Text -> [String] -> IO (ExitCode, String, String)
+runCandleAdmin databaseUrl arguments = do
+  inheritedEnvironment <- getEnvironment
+  let overrides =
+        [ ("DATABASE_URL", Text.unpack databaseUrl)
+        , ("PERPS_CHAIN_ID", show testChainId)
+        , ("PERPS_ORDER_ROUTER", Text.unpack testRouter)
+        , ("PERPS_CANDLE_LATENESS_SECONDS", "0")
+        ]
+      overriddenNames = map fst overrides
+      command =
+        (proc "plether-candle-admin" arguments)
+          { env =
+              Just $
+                overrides
+                  <> filter ((`notElem` overriddenNames) . fst) inheritedEnvironment
+          }
+  readCreateProcessWithExitCode command ""
+
 assertDedicatedDatabase :: DbPool -> IO ()
 assertDedicatedDatabase pool =
   withDb pool $ \connection -> do
@@ -1302,6 +1505,31 @@ cleanupCandleRows pool =
           , previousLatestSnapshotSource
           , historicalSnapshotSource
           )
+
+cleanupCandleAdminRows :: DbPool -> IO ()
+cleanupCandleAdminRows pool =
+  withDb pool $ \connection ->
+    withTransaction connection $ do
+      void $
+        execute
+          connection
+          "DELETE FROM perps_rollup_coverage WHERE series_id = ?"
+          (Only defaultBasketSeriesId)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_basket_candles WHERE series_id = ?"
+          (Only defaultBasketSeriesId)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_basket_observations WHERE series_id = ?"
+          (Only defaultBasketSeriesId)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_basket_definitions WHERE series_id = ?"
+          (Only defaultBasketSeriesId)
 
 candleRelationOids :: Connection -> IO [Integer]
 candleRelationOids connection = do

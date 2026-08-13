@@ -261,6 +261,7 @@ test-suite plether-api-test
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
+        Plether.RequestLoggingSpec
         Plether.LiquidationWorkerSpec
         Plether.Pyth.HermesSpec
         Plether.Pyth.HistorySpec
@@ -314,11 +315,14 @@ test-suite plether-api-integration-test
         http-client >= 0.7,
         http-types >= 0.12,
         postgresql-simple >= 0.7,
+        process >= 1.6,
         resource-pool >= 0.4,
         scotty >= 0.22,
         wai >= 3.2,
         wai-extra >= 3.1,
         warp >= 3.3
+    build-tool-depends:
+        plether-api:plether-candle-admin
     hs-source-dirs:   test-integration
     default-language: GHC2021
     default-extensions:
