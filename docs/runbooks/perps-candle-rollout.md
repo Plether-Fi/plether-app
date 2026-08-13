@@ -53,6 +53,23 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   first; changing retention from zero to a positive value takes the database
   offline while RDS creates the first automated backup. Never use a targeted
   or `-refresh=false` Terraform apply for these stages.
+- For a supervised Sepolia storage conversion that must start before the next
+  maintenance window, set `db_apply_immediately=true` only in the newly
+  refreshed saved `gp3` plan and require an empty pending-modification set
+  immediately before applying it. The exact plan may contain only the RDS
+  `storage_type` change from `gp2` to `gp3`, provider intent changing
+  `apply_immediately` from `false` to `true`, and rollout-guard bookkeeping;
+  require zero creates and zero destroys, and reject class, allocation, network,
+  secret, retention, or protection changes. This switch is rejected outside the
+  safeguarded Sepolia `gp3` path. Terraform records operator intent but AWS does
+  not expose `apply_immediately` as persistent instance state. After storage
+  optimization finishes, restore it to `false` through another complete saved
+  plan containing only that flag and rollout-guard bookkeeping; the provider
+  still sends an RDS modify request with immediate mode disabled, so wait for
+  `available` and an empty pending set before the cleanup apply. Then require a
+  fresh final no-op plan. Terraform can return while RDS is still optimizing
+  storage; completion still requires RDS `available`, `gp3`, an empty pending-
+  modification set, and the three healthy observation periods.
 - Mainnet Terraform must have a non-empty
   `operations_alarm_sns_topic_arn`, and the topic subscription must be
   confirmed and tested before backfill; the configuration now fails closed

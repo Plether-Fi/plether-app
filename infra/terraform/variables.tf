@@ -557,6 +557,12 @@ variable "db_storage_type" {
   }
 }
 
+variable "db_apply_immediately" {
+  type        = bool
+  default     = false
+  description = "Apply pending RDS modifications immediately during a supervised Sepolia maintenance operation. Keep false for routine plans."
+}
+
 variable "db_backup_retention_days" {
   type        = number
   default     = 7

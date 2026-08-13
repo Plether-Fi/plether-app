@@ -13,6 +13,7 @@ resource "aws_db_instance" "postgres" {
   max_allocated_storage = var.db_max_allocated_storage
   storage_type          = var.db_storage_type
   storage_encrypted     = false
+  apply_immediately     = var.db_apply_immediately
 
   db_name  = "plether"
   username = var.db_username
@@ -48,6 +49,18 @@ resource "aws_db_instance" "postgres" {
         && !var.db_skip_final_snapshot
       )
       error_message = "Mainnet requires at least seven days of RDS backups, deletion protection, and a final snapshot on deletion."
+    }
+
+    precondition {
+      condition = !var.db_apply_immediately || (
+        var.environment == "sepolia"
+        && var.db_storage_type == "gp3"
+        && var.db_backup_retention_days >= 7
+        && var.db_deletion_protection
+        && !var.db_skip_final_snapshot
+        && try(length(trimspace(var.db_final_snapshot_identifier)) > 0, false)
+      )
+      error_message = "Immediate RDS modification is allowed only for a supervised Sepolia gp3 conversion with at least seven days of backups, deletion protection, and final snapshots enabled."
     }
   }
 }
