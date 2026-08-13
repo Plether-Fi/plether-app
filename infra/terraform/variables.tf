@@ -547,6 +547,16 @@ variable "db_allocated_storage" {
   }
 }
 
+variable "db_storage_type" {
+  type        = string
+  description = "RDS storage volume type. Set this explicitly to gp2 or gp3 so plans cannot silently rely on the provider default."
+
+  validation {
+    condition     = contains(["gp2", "gp3"], var.db_storage_type)
+    error_message = "db_storage_type must be either gp2 or gp3."
+  }
+}
+
 variable "db_backup_retention_days" {
   type        = number
   default     = 7

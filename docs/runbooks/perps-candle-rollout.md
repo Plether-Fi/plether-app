@@ -34,13 +34,25 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   and deregister the temporary revision in cleanup. A commit-tagged deployed
   definition is not itself sufficient evidence that the one-off task pulled
   the deployed image.
-- Before mainnet migration or backfill, confirm the RDS automated-backup
-  retention, deletion protection, final-snapshot configuration, free storage,
-  CPU credits, and freeable memory. Create and retain a manual RDS snapshot.
-- Apply the RDS safety settings in a scheduled maintenance window before the
-  candle migration. In particular, changing backup retention from zero to a
-  positive value can briefly interrupt the database. Confirm API health,
-  automated backups/PITR, and the manual snapshot after that Terraform apply.
+- Before migration or backfill, record the RDS storage type, provisioned IOPS
+  and throughput, `BurstBalance`, pending modifications, backup retention,
+  deletion protection, final-snapshot configuration, free storage, CPU
+  credits, and freeable memory.
+- Stage RDS safeguards without overlap: (1) in a healthy maintenance window,
+  create and verify a retained manual snapshot, accounting for the brief I/O
+  suspension a Single-AZ snapshot can cause; (2) keep `db_storage_type` pinned
+  to the live type while activating the pending positive backup-retention/PITR
+  setting, wait for `available`, verify a restorable backup, and require an
+  empty pending-modification set; (3) only then change `db_storage_type` from
+  `gp2` to `gp3` in a newly refreshed, complete saved Terraform plan and apply
+  that exact plan; (4) wait for storage optimization to finish, then record
+  three consecutive healthy five-minute observation periods before running any
+  candle admin action.
+- `ApplyImmediately` (`apply_immediately`) activates every pending RDS change,
+  not just the intended one. Review the complete pending-modification set
+  first; changing retention from zero to a positive value takes the database
+  offline while RDS creates the first automated backup. Never use a targeted
+  or `-refresh=false` Terraform apply for these stages.
 - Mainnet Terraform must have a non-empty
   `operations_alarm_sns_topic_arn`, and the topic subscription must be
   confirmed and tested before backfill; the configuration now fails closed
@@ -143,19 +155,24 @@ for subsequent configuration gates; the deployment workflow deliberately
 reuses the registered task-definition environment and does not inject these new
 variables itself.
 
-Before generating the complete plan, read the live RDS instance class,
-allocated and maximum storage, pending modifications, backup retention, and
-deletion protection. Set `db_instance_class` and `db_allocated_storage`
-explicitly to values no smaller than the live instance. Reject a plan that
-replaces or deletes the database, reduces its class or storage, changes an
+Before generating the complete plan, read and record the live RDS instance
+class, allocated and maximum storage, storage type, provisioned IOPS and
+throughput, `BurstBalance`, instance/storage-optimization status, pending
+modifications, backup retention, and deletion protection. Set
+`db_instance_class`, `db_allocated_storage`, and `db_storage_type` explicitly
+from live state before the first transition plan; do not copy a desired-final
+example over an existing instance. Reject a plan that replaces or deletes the
+database, reduces its class or storage, regresses `gp3` to `gp2`, changes an
 unrelated network or secret resource, or includes an unexplained pending RDS
-modification. RDS storage autoscaling can make the live allocation larger than
-an old Terraform baseline. While autoscaling is enabled, the pinned AWS
-provider suppresses any live allocation above the configured baseline,
-including manual or other out-of-band increases. Compare the live value
-explicitly, update the baseline instead of attempting a downgrade, and do not
-add a broad `ignore_changes` rule that would also hide intentional capacity
-changes.
+modification. Refresh all state, review the complete plan, save it, and apply
+that exact saved plan; do not use `-target` or `-refresh=false`. RDS storage
+autoscaling can make the live allocation larger than an old Terraform
+baseline. While autoscaling is
+enabled, the pinned AWS provider suppresses any live allocation above the
+configured baseline, including manual or other out-of-band increases. Compare
+the live value explicitly, update the baseline instead of attempting a
+downgrade, and do not add a broad `ignore_changes` rule that would also hide
+intentional capacity changes.
 
 The Terraform operator must be able to describe CloudWatch alarms and to put,
 delete, list tags for, tag, and untag only the target environment's
@@ -182,6 +199,11 @@ Pass criteria:
 - the plan contains no database replacement, deletion, class downgrade, or
   allocated-storage downgrade, and the live RDS capacity and pending
   modifications were recorded before apply;
+- any retention/PITR activation and `gp2` to `gp3` conversion followed the
+  staged sequence above; storage optimization is complete and three
+  consecutive five-minute periods passed with storage-pressure alarms OK,
+  average read/write latency below 20 ms, API p95 below 750 ms, no increased
+  5xx rate, and both health and legacy-history requests succeeding;
 - backend deployment succeeds and `/api/health` returns 200;
 - all stable API service tasks use one task-definition revision, one API image
   repository, and one deployed `sha256` image digest;
@@ -190,6 +212,12 @@ Pass criteria:
 - API and worker error rates remain at baseline.
 
 ## Gate 2: estimate and migrate
+
+Do not dispatch any candle admin action, including `estimate` or `status`,
+while a `gp2` volume has exhausted `BurstBalance` or RDS reports storage
+optimization in progress. Let burst balance recover or complete the `gp3`
+sequence in Gate 1, then require its three consecutive healthy five-minute
+observation periods.
 
 Estimate work before changing the database:
 
@@ -414,9 +442,10 @@ Pass criteria:
 
 Repeat every gate for mainnet; do not copy Sepolia coverage or assume Sepolia
 capacity measurements apply. Before Gate 2, capture the manual snapshot ID,
-available storage, estimated growth, and rollback owner in the change record.
-Before each gate, verify the deployed `master` SHA and ensure no duplicate
-workflow run targets it.
+available storage, storage type, provisioned IOPS and throughput,
+`BurstBalance`, storage-optimization status, estimated growth, and rollback
+owner in the change record. Before each gate, verify the deployed `master` SHA
+and ensure no duplicate workflow run targets it.
 
 Use smaller backfill chunks or a larger throttle when production RDS has less
 headroom. Mainnet read and frontend flags stay off until complete price and

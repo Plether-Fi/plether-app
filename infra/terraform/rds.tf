@@ -11,6 +11,7 @@ resource "aws_db_instance" "postgres" {
 
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
+  storage_type          = var.db_storage_type
   storage_encrypted     = false
 
   db_name  = "plether"

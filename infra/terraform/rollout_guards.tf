@@ -8,6 +8,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
     consolidate_workers            = var.consolidate_workers
     workers_desired_count          = var.workers_desired_count
     operations_alarm_sns_topic_arn = var.operations_alarm_sns_topic_arn
+    db_storage_type                = var.db_storage_type
     db_backup_retention_days       = var.db_backup_retention_days
     db_deletion_protection         = var.db_deletion_protection
     db_skip_final_snapshot         = var.db_skip_final_snapshot
