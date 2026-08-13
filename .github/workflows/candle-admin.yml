@@ -707,8 +707,8 @@ jobs:
                 name: $container,
                 command: (["plether-candle-admin", $action]
                   + scoped
-                  + optional("--from", $from)
-                  + optional("--to", $to)
+                  + optional("--from"; $from)
+                  + optional("--to"; $to)
                   + chunked
                   + ["--statement-timeout-ms", $statement_timeout,
                      "--lock-timeout-ms", $lock_timeout,
