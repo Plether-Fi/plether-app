@@ -24,6 +24,7 @@ module Plether.Database.Candles
   , getActiveBasketSeriesId
   , getActiveBasketDefinitionIdentity
   , getBasketCandlePage
+  , getBasketCandlePageSnapshot
   , getBasketCandleRange
   , getCurrentBasketCandle
   , backfillLegacyBasketSnapshots
@@ -118,6 +119,41 @@ data CandlePage = CandlePage
   , cpFinalizedThrough :: Maybe Integer
   , cpDatasetGeneration :: Integer
   , cpCoverageComplete :: Bool
+  }
+  deriving stock (Eq, Show)
+
+-- One row from the native page snapshot query. Definition and coverage fields
+-- repeat for each candle so the public read can be served by one PostgreSQL
+-- statement (and therefore one MVCC snapshot) without a surrounding
+-- multi-statement transaction. Candle columns are nullable only because an
+-- empty page is represented by the LEFT JOIN's single metadata row.
+data BasketCandlePageSnapshotRow = BasketCandlePageSnapshotRow
+  { bcpsrDefinitionPresent :: Bool
+  , bcpsrSeriesId :: Maybe Text
+  , bcpsrConfigurationHash :: Maybe Text
+  , bcpsrDisplayPriceCap :: Maybe Integer
+  , bcpsrEffectiveFrom :: Maybe Integer
+  , bcpsrEffectiveTo :: Maybe Integer
+  , bcpsrMetadataPresent :: Bool
+  , bcpsrCoverageStart :: Maybe Integer
+  , bcpsrCoverageEnd :: Maybe Integer
+  , bcpsrFinalizedThrough :: Maybe Integer
+  , bcpsrDatasetGeneration :: Maybe Integer
+  , bcpsrCoverageComplete :: Maybe Bool
+  , bcpsrEarlierBucket :: Maybe Integer
+  , bcpsrCandlePresent :: Bool
+  , bcpsrBucketStart :: Maybe Integer
+  , bcpsrRawOpenPrice :: Maybe Integer
+  , bcpsrRawHighPrice :: Maybe Integer
+  , bcpsrRawLowPrice :: Maybe Integer
+  , bcpsrRawClosePrice :: Maybe Integer
+  , bcpsrSampleCount :: Maybe Int
+  , bcpsrQuality :: Maybe Text
+  , bcpsrRevision :: Maybe Integer
+  , bcpsrPriceComplete :: Maybe Bool
+  , bcpsrVolumeNumerator :: Maybe Scientific
+  , bcpsrTradeCount :: Maybe Integer
+  , bcpsrVolumeComplete :: Maybe Bool
   }
   deriving stock (Eq, Show)
 
@@ -1021,6 +1057,220 @@ getBasketCandlePage conn seriesId chainId releaseRouter interval cursor = do
   emptyPage =
     CandlePage [] Nothing False Nothing Nothing Nothing 0 False
 
+-- Read the active definition, combined coverage, page rows, and earlier-page
+-- sentinel in one PostgreSQL statement. A statement has one MVCC snapshot, so
+-- this is coherent without the repeatable-read transaction required by the
+-- older multi-query composition above.
+getBasketCandlePageSnapshot
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO (Maybe BasketDefinitionIdentity, CandlePage)
+getBasketCandlePageSnapshot
+  conn definitionAt chainId releaseRouter interval cursor = do
+    rows <- query conn basketCandlePageSnapshotSql
+      ( definitionAt
+      , chainId
+      , normalizeRouter releaseRouter
+      , interval
+      , cursor
+      , currentDerivationVersion
+      )
+    either (fail . ("Invalid native candle page snapshot: " <>)) pure $
+      decodeBasketCandlePageSnapshot interval rows
+
+decodeBasketCandlePageSnapshot
+  :: Integer
+  -> [BasketCandlePageSnapshotRow]
+  -> Either String (Maybe BasketDefinitionIdentity, CandlePage)
+decodeBasketCandlePageSnapshot _ [] =
+  Left "query returned no singleton row"
+decodeBasketCandlePageSnapshot interval rows@(firstRow : _)
+  | not $ all (sameBasketCandlePageSnapshotHeader firstRow) rows =
+      Left "query returned inconsistent repeated metadata"
+  | otherwise = do
+      definition <- decodeSnapshotDefinition firstRow
+      page <- decodeSnapshotPage interval firstRow rows
+      pure (definition, page)
+
+decodeSnapshotDefinition
+  :: BasketCandlePageSnapshotRow
+  -> Either String (Maybe BasketDefinitionIdentity)
+decodeSnapshotDefinition BasketCandlePageSnapshotRow {..}
+  | not bcpsrDefinitionPresent =
+      if allNothing
+        [ (() <$ bcpsrSeriesId)
+        , (() <$ bcpsrConfigurationHash)
+        , (() <$ bcpsrDisplayPriceCap)
+        , (() <$ bcpsrEffectiveFrom)
+        , (() <$ bcpsrEffectiveTo)
+        ]
+        then Right Nothing
+        else Left "definition absence flag has populated fields"
+  | otherwise =
+      case
+          ( bcpsrSeriesId
+          , bcpsrConfigurationHash
+          , bcpsrDisplayPriceCap
+          , bcpsrEffectiveFrom
+          )
+        of
+        (Just seriesId, Just configurationHash, Just displayPriceCap, Just effectiveFrom) ->
+          Right $ Just BasketDefinitionIdentity
+            { bdiSeriesId = seriesId
+            , bdiConfigurationHash = configurationHash
+            , bdiDisplayPriceCap = displayPriceCap
+            , bdiEffectiveFrom = effectiveFrom
+            , bdiEffectiveTo = bcpsrEffectiveTo
+            }
+        _ -> Left "definition presence flag has missing required fields"
+
+decodeSnapshotPage
+  :: Integer
+  -> BasketCandlePageSnapshotRow
+  -> [BasketCandlePageSnapshotRow]
+  -> Either String CandlePage
+decodeSnapshotPage interval firstRow rows
+  | not $ bcpsrMetadataPresent firstRow = do
+      candles <- traverse decodeSnapshotCandle rows
+      if allNothing
+          [ (() <$ bcpsrCoverageStart firstRow)
+          , (() <$ bcpsrCoverageEnd firstRow)
+          , (() <$ bcpsrFinalizedThrough firstRow)
+          , (() <$ bcpsrDatasetGeneration firstRow)
+          , (() <$ bcpsrCoverageComplete firstRow)
+          , (() <$ bcpsrEarlierBucket firstRow)
+          ]
+          && allNothing candles
+        then Right emptyPage
+        else Left "metadata absence flag has populated page fields"
+  | otherwise =
+      case
+          ( bcpsrCoverageStart firstRow
+          , bcpsrCoverageEnd firstRow
+          , bcpsrFinalizedThrough firstRow
+          , bcpsrDatasetGeneration firstRow
+          , bcpsrCoverageComplete firstRow
+          )
+        of
+        ( Just coverageStart
+          , Just coverageEnd
+          , Just finalizedThrough
+          , Just datasetGeneration
+          , Just coverageComplete
+          ) -> do
+            candles <- catMaybes <$> traverse decodeSnapshotCandle rows
+            let pageSpan = interval * 500
+                previousCursor =
+                  (\bucket -> (bucket `div` pageSpan + 1) * pageSpan)
+                    <$> bcpsrEarlierBucket firstRow
+            Right CandlePage
+              { cpCandles = candles
+              , cpPreviousCursor = previousCursor
+              , cpHasEarlier = maybe False (const True) $ bcpsrEarlierBucket firstRow
+              , cpCoverageStart = Just coverageStart
+              , cpCoverageEnd = Just coverageEnd
+              , cpFinalizedThrough = Just finalizedThrough
+              , cpDatasetGeneration = datasetGeneration
+              , cpCoverageComplete = coverageComplete
+              }
+        _ -> Left "metadata presence flag has missing required fields"
+ where
+  emptyPage = CandlePage [] Nothing False Nothing Nothing Nothing 0 False
+
+decodeSnapshotCandle
+  :: BasketCandlePageSnapshotRow
+  -> Either String (Maybe BasketCandleRow)
+decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
+  | not bcpsrCandlePresent =
+      if allNothing candleFields
+        then Right Nothing
+        else Left "candle absence flag has populated fields"
+  | otherwise =
+      case
+          ( bcpsrBucketStart
+          , bcpsrRawOpenPrice
+          , bcpsrRawHighPrice
+          , bcpsrRawLowPrice
+          , bcpsrRawClosePrice
+          , bcpsrSampleCount
+          , bcpsrQuality
+          , bcpsrRevision
+          , bcpsrPriceComplete
+          , bcpsrVolumeNumerator
+          , bcpsrTradeCount
+          , bcpsrVolumeComplete
+          )
+        of
+        ( Just bucketStart
+          , Just rawOpenPrice
+          , Just rawHighPrice
+          , Just rawLowPrice
+          , Just rawClosePrice
+          , Just sampleCount
+          , Just quality
+          , Just revision
+          , Just priceComplete
+          , Just volumeNumerator
+          , Just tradeCount
+          , Just volumeComplete
+          ) ->
+            Right $ Just BasketCandleRow
+              { bcrBucketStart = bucketStart
+              , bcrRawOpenPrice = rawOpenPrice
+              , bcrRawHighPrice = rawHighPrice
+              , bcrRawLowPrice = rawLowPrice
+              , bcrRawClosePrice = rawClosePrice
+              , bcrSampleCount = sampleCount
+              , bcrQuality = parseCandleQuality quality
+              , bcrRevision = revision
+              , bcrPriceComplete = priceComplete
+              , bcrVolumeNumerator = Just $ scientificToInteger volumeNumerator
+              , bcrTradeCount = Just tradeCount
+              , bcrVolumeComplete = volumeComplete
+              }
+        _ -> Left "candle presence flag has missing required fields"
+ where
+  candleFields =
+    [ (() <$ bcpsrBucketStart)
+    , (() <$ bcpsrRawOpenPrice)
+    , (() <$ bcpsrRawHighPrice)
+    , (() <$ bcpsrRawLowPrice)
+    , (() <$ bcpsrRawClosePrice)
+    , (() <$ bcpsrSampleCount)
+    , (() <$ bcpsrQuality)
+    , (() <$ bcpsrRevision)
+    , (() <$ bcpsrPriceComplete)
+    , (() <$ bcpsrVolumeNumerator)
+    , (() <$ bcpsrTradeCount)
+    , (() <$ bcpsrVolumeComplete)
+    ]
+
+sameBasketCandlePageSnapshotHeader
+  :: BasketCandlePageSnapshotRow
+  -> BasketCandlePageSnapshotRow
+  -> Bool
+sameBasketCandlePageSnapshotHeader left right =
+  bcpsrDefinitionPresent left == bcpsrDefinitionPresent right
+    && bcpsrSeriesId left == bcpsrSeriesId right
+    && bcpsrConfigurationHash left == bcpsrConfigurationHash right
+    && bcpsrDisplayPriceCap left == bcpsrDisplayPriceCap right
+    && bcpsrEffectiveFrom left == bcpsrEffectiveFrom right
+    && bcpsrEffectiveTo left == bcpsrEffectiveTo right
+    && bcpsrMetadataPresent left == bcpsrMetadataPresent right
+    && bcpsrCoverageStart left == bcpsrCoverageStart right
+    && bcpsrCoverageEnd left == bcpsrCoverageEnd right
+    && bcpsrFinalizedThrough left == bcpsrFinalizedThrough right
+    && bcpsrDatasetGeneration left == bcpsrDatasetGeneration right
+    && bcpsrCoverageComplete left == bcpsrCoverageComplete right
+    && bcpsrEarlierBucket left == bcpsrEarlierBucket right
+
+allNothing :: [Maybe value] -> Bool
+allNothing = all $ maybe True (const False)
+
 getBasketCandleRange
   :: Connection
   -> Text
@@ -1469,6 +1719,36 @@ instance FromRow BasketCandleRow where
     pure $ BasketCandleRow bucketStart openPrice highPrice lowPrice closePrice sampleCount
       quality revision priceComplete volume trades volumeComplete
 
+instance FromRow BasketCandlePageSnapshotRow where
+  fromRow =
+    BasketCandlePageSnapshotRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
 parseCandleQuality :: Text -> CandleQuality
 parseCandleQuality = \case
   "observed" -> CandleObserved
@@ -1784,6 +2064,92 @@ replaceVolumeParent conn chainId releaseRouter interval bucketStart latenessSeco
     , bucketStart, bucketStart, interval, max 0 latenessSeconds
     )
   pure ()
+
+basketCandlePageSnapshotSql :: Query
+basketCandlePageSnapshotSql =
+  "WITH input AS MATERIALIZED (\
+  \ SELECT ?::bigint AS definition_at, ?::bigint AS chain_id, \
+  \ ?::text AS release_router, ?::bigint AS interval_seconds, \
+  \ ?::bigint AS cursor, ?::text AS derivation_version\
+  \), definition AS MATERIALIZED (\
+  \ SELECT d.series_id, d.configuration_hash, \
+  \  (d.configuration ->> 'priceCap')::bigint AS display_price_cap, \
+  \  d.effective_from, d.effective_to \
+  \ FROM perps_basket_definitions d CROSS JOIN input i \
+  \ WHERE d.active AND d.effective_from <= i.definition_at \
+  \ AND (d.effective_to IS NULL OR d.effective_to > i.definition_at) \
+  \ ORDER BY d.effective_from DESC, d.series_id ASC LIMIT 1\
+  \), combined AS MATERIALIZED (\
+  \ SELECT GREATEST(price.coverage_start, volume.coverage_start) AS coverage_start, \
+  \  LEAST(price.coverage_end, volume.coverage_end) AS coverage_end, \
+  \  LEAST(price.finalized_through, volume.finalized_through) AS finalized_through, \
+  \  price.generation * 67108864 + volume.generation AS dataset_generation, \
+  \  price.complete AND volume.complete \
+  \   AND price.generation > 0 AND price.generation < 67108864 \
+  \   AND volume.generation > 0 AND volume.generation < 67108864 \
+  \   AND price.derivation_version = volume.derivation_version \
+  \   AND price.derivation_version = i.derivation_version AS coverage_complete \
+  \ FROM definition d CROSS JOIN input i \
+  \ JOIN perps_rollup_coverage price \
+  \  ON price.kind = 'price' AND price.series_id = d.series_id \
+  \  AND price.chain_id = 0 AND price.release_router = '' \
+  \  AND price.interval_seconds = i.interval_seconds \
+  \ JOIN perps_rollup_coverage volume \
+  \  ON volume.kind = 'volume' AND volume.series_id = '' \
+  \  AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
+  \  AND volume.interval_seconds = price.interval_seconds \
+  \ WHERE price.coverage_start IS NOT NULL AND volume.coverage_start IS NOT NULL \
+  \ AND price.coverage_end IS NOT NULL AND volume.coverage_end IS NOT NULL \
+  \ AND price.finalized_through IS NOT NULL AND volume.finalized_through IS NOT NULL\
+  \), bounds AS MATERIALIZED (\
+  \ SELECT metadata.*, \
+  \  GREATEST(i.cursor - i.interval_seconds * 500, metadata.coverage_start) \
+  \   AS effective_start, \
+  \  LEAST(i.cursor, metadata.coverage_end, metadata.finalized_through) \
+  \   AS effective_end \
+  \ FROM combined metadata CROSS JOIN input i\
+  \) SELECT \
+  \ (definition.series_id IS NOT NULL), definition.series_id, \
+  \ definition.configuration_hash, definition.display_price_cap, \
+  \ definition.effective_from, definition.effective_to, \
+  \ (bounds.coverage_start IS NOT NULL), bounds.coverage_start, bounds.coverage_end, \
+  \ bounds.finalized_through, bounds.dataset_generation, bounds.coverage_complete, \
+  \ earlier.bucket_start, (candle.bucket_start IS NOT NULL), \
+  \ candle.bucket_start, candle.raw_open_price, candle.raw_high_price, \
+  \ candle.raw_low_price, candle.raw_close_price, candle.sample_count, \
+  \ candle.quality, candle.revision, candle.price_complete, \
+  \ candle.volume_numerator, candle.trade_count, candle.volume_complete \
+  \FROM (SELECT 1) singleton \
+  \LEFT JOIN definition ON TRUE \
+  \LEFT JOIN bounds ON TRUE \
+  \LEFT JOIN LATERAL (\
+  \ SELECT prior.bucket_start FROM perps_basket_candles prior CROSS JOIN input i \
+  \ WHERE prior.series_id = definition.series_id \
+  \ AND prior.interval_seconds = i.interval_seconds \
+  \ AND prior.bucket_start >= bounds.coverage_start \
+  \ AND prior.bucket_start < bounds.effective_start \
+  \ ORDER BY prior.bucket_start DESC LIMIT 1\
+  \) earlier ON bounds.coverage_start IS NOT NULL \
+  \LEFT JOIN LATERAL (\
+  \ SELECT price.bucket_start, price.raw_open_price, price.raw_high_price, \
+  \  price.raw_low_price, price.raw_close_price, price.sample_count, price.quality, \
+  \  price.revision, price.finalized AS price_complete, \
+  \  COALESCE(volume.volume_numerator, 0::numeric) AS volume_numerator, \
+  \  COALESCE(volume.trade_count, 0) AS trade_count, \
+  \  COALESCE(volume.finalized, TRUE) AS volume_complete \
+  \ FROM perps_basket_candles price CROSS JOIN input i \
+  \ LEFT JOIN perps_market_volume_rollups volume \
+  \  ON volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
+  \  AND volume.interval_seconds = price.interval_seconds \
+  \  AND volume.bucket_start = price.bucket_start \
+  \ WHERE bounds.coverage_complete AND bounds.effective_start < bounds.effective_end \
+  \ AND price.series_id = definition.series_id \
+  \ AND price.interval_seconds = i.interval_seconds \
+  \ AND price.bucket_start >= bounds.effective_start \
+  \ AND price.bucket_start < bounds.effective_end \
+  \ ORDER BY price.bucket_start ASC LIMIT 500\
+  \) candle ON TRUE \
+  \ORDER BY candle.bucket_start ASC NULLS LAST"
 
 candleRowsSql :: Query
 candleRowsSql =
