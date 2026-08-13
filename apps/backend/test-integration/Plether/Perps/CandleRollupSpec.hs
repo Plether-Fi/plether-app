@@ -882,6 +882,221 @@ candleRollupSpec databaseUrl =
 
         exitCode `shouldBe` ExitSuccess
 
+    it "preserves live price watermarks when admin backfill extends only backward" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let backfillFrom = baseTime - 86_400
+            coverageStart = baseTime
+            finalizedThrough = baseTime + 86_400
+            liveCoverageEnd = baseTime + 172_800
+            initialGeneration = 7
+            checkedThrough = liveCoverageEnd + 60
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection defaultBasketSeriesId
+          insertCandleAdminPriceObservation
+            connection "candle-admin-backward-oldest" (backfillFrom + 5)
+          insertCandleAdminPriceObservation
+            connection "candle-admin-backward-boundary" (coverageStart - 1)
+          putCandleAdminPriceCoverage
+            connection
+            coverageStart
+            liveCoverageEnd
+            finalizedThrough
+            initialGeneration
+
+        (exitCode, _, _) <-
+          runCandleAdmin databaseUrl
+            [ "backfill"
+            , "price"
+            , "--from", show backfillFrom
+            , "--to", show coverageStart
+            , "--chunk-seconds", "86400"
+            , "--throttle-ms", "0"
+            ]
+        exitCode `shouldBe` ExitSuccess
+
+        withDb pool $ \connection -> do
+          published <-
+            mapM
+              (requirePriceCoverageForSeries connection defaultBasketSeriesId)
+              canonicalCandleIntervals
+          forM_ published $ \coverage -> do
+            rcCoverageStart coverage `shouldBe` Just backfillFrom
+            rcCoverageEnd coverage `shouldBe` Just liveCoverageEnd
+            rcFinalizedThrough coverage `shouldBe` Just finalizedThrough
+            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcComplete coverage `shouldBe` True
+
+          -- The next successful poll is only one minute beyond the live
+          -- watermark. Rewinding coverage_end to finalized_through would make
+          -- this look like a one-day gap and disable the whole price dataset.
+          advanceBasketPriceCoverage
+            connection defaultBasketSeriesId checkedThrough 0
+          afterPoll <-
+            mapM
+              (requirePriceCoverageForSeries connection defaultBasketSeriesId)
+              canonicalCandleIntervals
+          forM_ afterPoll $ \coverage -> do
+            rcComplete coverage `shouldBe` True
+            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcLastError coverage `shouldBe` Nothing
+
+    it "preserves coverage_end while publishing inside the unfinalized tail" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let coverageStart = baseTime
+            finalizedWatermark = baseTime + 90_000
+            liveWatermark = baseTime + 180_000
+            publishedThrough = finalizedWatermark + 3_600
+            initialGeneration = 11
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection defaultBasketSeriesId
+          insertCandleAdminPriceObservation
+            connection "candle-admin-forward-tail-oldest" (finalizedWatermark + 5)
+          insertCandleAdminPriceObservation
+            connection "candle-admin-forward-tail-newest" (publishedThrough - 1)
+          putCandleAdminPriceCoverage
+            connection coverageStart liveWatermark finalizedWatermark initialGeneration
+
+        (exitCode, _, _) <-
+          runCandleAdmin databaseUrl
+            [ "backfill"
+            , "price"
+            , "--from", show finalizedWatermark
+            , "--to", show publishedThrough
+            , "--chunk-seconds", "3600"
+            , "--throttle-ms", "0"
+            ]
+        exitCode `shouldBe` ExitSuccess
+
+        withDb pool $ \connection ->
+          forM_ canonicalCandleIntervals $ \interval -> do
+            coverage <-
+              requirePriceCoverageForSeries
+                connection defaultBasketSeriesId interval
+            rcCoverageStart coverage
+              `shouldBe` Just (alignUpForTest coverageStart interval)
+            rcCoverageEnd coverage
+              `shouldBe` Just (alignDownForTest liveWatermark interval)
+            rcFinalizedThrough coverage
+              `shouldBe` Just
+                ( max
+                    (alignDownForTest finalizedWatermark interval)
+                    (alignDownForTest publishedThrough interval)
+                )
+            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcComplete coverage `shouldBe` True
+
+    it "creates missing coarse coverage from the merged minute envelope" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let coverageStart = baseTime + 15 * 3_600
+            backfillFrom = coverageStart - 172_800
+            finalizedWatermark = coverageStart + 3_600
+            liveWatermark = coverageStart + 5_400
+            dailyStart = baseTime - 86_400
+            dailyEnd = baseTime
+            initialGeneration = 15
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection defaultBasketSeriesId
+          insertCandleAdminPriceObservation
+            connection "candle-admin-missing-coarse-oldest" (backfillFrom + 5)
+          insertCandleAdminPriceObservation
+            connection "candle-admin-missing-coarse-boundary" (coverageStart - 1)
+          forM_ (init canonicalCandleIntervals) $ \interval ->
+            upsertRollupCoverage connection $
+              RollupCoverage
+                { rcKind = PriceRollup
+                , rcSeriesId = Just defaultBasketSeriesId
+                , rcChainId = Nothing
+                , rcReleaseRouter = Nothing
+                , rcIntervalSeconds = interval
+                , rcCoverageStart = Just $ alignUpForTest coverageStart interval
+                , rcCoverageEnd = Just $ alignDownForTest liveWatermark interval
+                , rcFinalizedThrough = Just $ alignDownForTest finalizedWatermark interval
+                , rcGeneration = initialGeneration
+                , rcComplete = True
+                , rcDerivationVersion = "v1"
+                , rcLastError = Nothing
+                , rcMaintenanceFrom = Nothing
+                , rcMaintenanceTo = Nothing
+                }
+
+        (exitCode, _, _) <-
+          runCandleAdmin databaseUrl
+            [ "backfill"
+            , "price"
+            , "--from", show backfillFrom
+            , "--to", show coverageStart
+            , "--chunk-seconds", "86400"
+            , "--throttle-ms", "0"
+            ]
+        exitCode `shouldBe` ExitSuccess
+
+        withDb pool $ \connection -> do
+          daily <-
+            requirePriceCoverageForSeries
+              connection defaultBasketSeriesId 86_400
+          rcCoverageStart daily `shouldBe` Just dailyStart
+          rcCoverageEnd daily `shouldBe` Just dailyEnd
+          rcFinalizedThrough daily `shouldBe` Just dailyEnd
+          rcGeneration daily `shouldBe` initialGeneration + 2
+          rcComplete daily `shouldBe` True
+
+    it "keeps mixed multi-chunk forward and backward publication contiguous" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let backfillFrom = baseTime - 172_800
+            coverageStart = baseTime
+            finalizedWatermark = baseTime + 172_800
+            liveWatermark = finalizedWatermark + 90_000
+            forwardTo = finalizedWatermark + 172_800
+            initialGeneration = 19
+            publishedGeneration = initialGeneration + 4
+            checkedThrough = forwardTo + 60
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection defaultBasketSeriesId
+          insertCandleAdminPriceObservation
+            connection "candle-admin-mixed-oldest" (backfillFrom + 5)
+          insertCandleAdminPriceObservation
+            connection "candle-admin-mixed-newest" (forwardTo - 1)
+          putCandleAdminPriceCoverage
+            connection coverageStart liveWatermark finalizedWatermark initialGeneration
+
+        (exitCode, _, _) <-
+          runCandleAdmin databaseUrl
+            [ "backfill"
+            , "price"
+            , "--from", show backfillFrom
+            , "--to", show forwardTo
+            , "--chunk-seconds", "86400"
+            , "--throttle-ms", "0"
+            ]
+        exitCode `shouldBe` ExitSuccess
+
+        withDb pool $ \connection -> do
+          published <-
+            mapM
+              (requirePriceCoverageForSeries connection defaultBasketSeriesId)
+              canonicalCandleIntervals
+          forM_ published $ \coverage -> do
+            let interval = rcIntervalSeconds coverage
+            rcCoverageStart coverage
+              `shouldBe` Just (alignUpForTest backfillFrom interval)
+            rcCoverageEnd coverage
+              `shouldBe` Just (alignDownForTest forwardTo interval)
+            rcFinalizedThrough coverage
+              `shouldBe` Just (alignDownForTest forwardTo interval)
+            rcGeneration coverage `shouldBe` publishedGeneration
+            rcComplete coverage `shouldBe` True
+
+          advanceBasketPriceCoverage
+            connection defaultBasketSeriesId checkedThrough 0
+          afterPoll <-
+            mapM
+              (requirePriceCoverageForSeries connection defaultBasketSeriesId)
+              canonicalCandleIntervals
+          forM_ afterPoll $ \coverage -> do
+            rcComplete coverage `shouldBe` True
+            rcGeneration coverage `shouldBe` publishedGeneration
+            rcLastError coverage `shouldBe` Nothing
+
     it "refuses a price watermark when the immutable basket definition conflicts" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
@@ -1342,6 +1557,49 @@ withCandleAdminDatabase databaseUrl action =
     cleanupCandleAdminRows pool
     action pool `finally` cleanupCandleAdminRows pool
 
+insertCandleAdminPriceObservation :: Connection -> Text -> Integer -> IO ()
+insertCandleAdminPriceObservation connection observationId publishTime = do
+  changed <-
+    upsertBasketObservation connection $
+      BasketObservationInput
+        { boiSeriesId = defaultBasketSeriesId
+        , boiObservationId = observationId
+        , boiPublishTime = publishTime
+        , boiBasketPrice = 100
+        , boiComponentPrices = componentPayload
+        , boiSource = "signed_pyth"
+        , boiSourcePriority = 100
+        }
+  changed `shouldBe` True
+
+putCandleAdminPriceCoverage
+  :: Connection
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+putCandleAdminPriceCoverage
+  connection coverageStart coverageEnd finalizedThrough generation =
+    forM_ canonicalCandleIntervals $ \interval ->
+      upsertRollupCoverage connection $
+        RollupCoverage
+          { rcKind = PriceRollup
+          , rcSeriesId = Just defaultBasketSeriesId
+          , rcChainId = Nothing
+          , rcReleaseRouter = Nothing
+          , rcIntervalSeconds = interval
+          , rcCoverageStart = Just $ alignUpForTest coverageStart interval
+          , rcCoverageEnd = Just $ alignDownForTest coverageEnd interval
+          , rcFinalizedThrough = Just $ alignDownForTest finalizedThrough interval
+          , rcGeneration = generation
+          , rcComplete = True
+          , rcDerivationVersion = "v1"
+          , rcLastError = Nothing
+          , rcMaintenanceFrom = Nothing
+          , rcMaintenanceTo = Nothing
+          }
+
 seedCandleAdminSources :: DbPool -> Integer -> IO ()
 seedCandleAdminSources pool rangeStart =
   withDb pool $ \connection -> do
@@ -1419,6 +1677,7 @@ runCandleAdmin databaseUrl arguments = do
         , ("PERPS_CHAIN_ID", show testChainId)
         , ("PERPS_ORDER_ROUTER", Text.unpack testRouter)
         , ("PERPS_CANDLE_LATENESS_SECONDS", "0")
+        , ("PERPS_CANDLE_WRITE_MODE", "dual")
         ]
       overriddenNames = map fst overrides
       command =
@@ -1800,10 +2059,14 @@ putVolumeCoverageVersion
       }
 
 requirePriceCoverage :: Connection -> Integer -> IO RollupCoverage
-requirePriceCoverage connection interval = do
+requirePriceCoverage connection =
+  requirePriceCoverageForSeries connection testSeries
+
+requirePriceCoverageForSeries :: Connection -> Text -> Integer -> IO RollupCoverage
+requirePriceCoverageForSeries connection seriesId interval = do
   coverage <-
     getRollupCoverage
-      connection PriceRollup (Just testSeries) Nothing Nothing interval
+      connection PriceRollup (Just seriesId) Nothing Nothing interval
   coverage `shouldSatisfy` maybe False (const True)
   case coverage of
     Just value -> pure value
@@ -1847,6 +2110,14 @@ historicalSnapshotSource = "backend_hermes_historical_v2"
 -- span (60 * 500), simplifying exact parent/page assertions.
 baseTime :: Integer
 baseTime = 1_699_920_000
+
+alignDownForTest :: Integer -> Integer -> Integer
+alignDownForTest timestamp interval = timestamp - timestamp `mod` interval
+
+alignUpForTest :: Integer -> Integer -> Integer
+alignUpForTest timestamp interval =
+  let remainder = timestamp `mod` interval
+   in if remainder == 0 then timestamp else timestamp + interval - remainder
 
 pageSpan60 :: Integer
 pageSpan60 = 60 * 500
