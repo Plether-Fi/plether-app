@@ -21,9 +21,12 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
 - Never enable public rollup reads with
   `PERPS_CANDLE_STRICT_COVERAGE=false`.
 - Run database mutations only through `.github/workflows/candle-admin.yml`
-  from `master`. The `candle-admin-sepolia` and `candle-admin-mainnet`
-  GitHub environments must require an independent reviewer, prevent self
-  review, disable administrator bypass, and allow only `master`.
+  from `master`. Both `candle-admin-sepolia` and `candle-admin-mainnet` must
+  have at least one required reviewer, require an explicit approval, disable
+  administrator bypass, and allow only `master`. During the supervised Sepolia
+  rollout, its sole administrator may self-approve when no independent reviewer
+  is available, so `prevent_self_review` must be false there. Mainnet must still
+  require an independent reviewer with `prevent_self_review` set to true.
 - Backfill and repair are accepted only while every deployed candle writer is
   in `PERPS_CANDLE_WRITE_MODE=dual`. The admin workflow and backend deployment
   share one environment-specific concurrency group so a deployment cannot
@@ -137,6 +140,27 @@ gh run watch RUN_ID \
   --repo Plether-Fi/plether-app \
   --exit-status
 ```
+
+For the supervised Sepolia rollout, approve the pending deployment with `gh`;
+do not use the Actions web UI. First read the pending environment and copy its
+numeric ID, then submit the explicit approval (replace `ENVIRONMENT_ID`):
+
+```bash
+gh api \
+  repos/Plether-Fi/plether-app/actions/runs/RUN_ID/pending_deployments \
+  --jq '.[] | {environment_id: .environment.id, environment: .environment.name}'
+
+gh api \
+  --method POST \
+  repos/Plether-Fi/plether-app/actions/runs/RUN_ID/pending_deployments \
+  -F 'environment_ids[]=ENVIRONMENT_ID' \
+  -f state=approved \
+  -f comment='Supervised Sepolia candle rollout approval'
+```
+
+This is a required-reviewer approval, not administrator bypass. It is accepted
+only for `candle-admin-sepolia`, whose policy deliberately sets
+`prevent_self_review=false`; the mainnet environment must keep it true.
 
 The environment-scoped AWS identity used by this workflow must be able to
 describe the stable service and its tasks, register and deregister the
@@ -456,6 +480,14 @@ Pass criteria:
   component-history compatibility payload.
 
 ## Mainnet promotion
+
+The Sepolia self-approval exception is temporary rollout policy, not the
+steady-state administration policy. After Gate 7, provision an independent
+Sepolia reviewer, merge a follow-up change that restores
+`prevent_self_review=true` enforcement for Sepolia, and update
+`candle-admin-sepolia` to match. Until that cleanup is complete, record the
+exception explicitly in every Sepolia candle-admin change. Never extend the
+exception to mainnet.
 
 Repeat every gate for mainnet; do not copy Sepolia coverage or assume Sepolia
 capacity measurements apply. Before Gate 2, capture the manual snapshot ID,
