@@ -88,11 +88,11 @@ import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
 import Plether.Types.History (HistoryParams (..))
 import Plether.Types.Perps
   ( BasketHistoryParams (..)
-  , defaultBasketHistoryParams
   , isAlignedBasketCandleCursor
   , hasExactBasketCandleQueryKeys
   , isBasketCandleCursorWithinFutureBound
   , isCanonicalBasketCandleInterval
+  , parseBasketHistoryQueryParams
   )
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
@@ -386,20 +386,22 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
 
   get "/api/perps/basket/history" $ do
     handlerStartedAt <- liftIO getMonotonicTimeNSec
-    params <- basketHistoryParams
-    if not $ isBoundedComponentHistoryRequest params
-      then
-        handleError $
-          E.invalidAmount "component history is restricted to range=24h and interval=3600"
-      else case mPool of
-        Just pool -> do
-          result <- liftIO $ getBasketHistoryTimed pool cfg params
-          case result of
-            Left err -> handleError err
-            Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
-        Nothing ->
-          handleServiceUnavailable $
-            E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
+    parsedParams <- basketHistoryParams
+    case parsedParams of
+      Left reason -> handleError $ E.invalidAmount reason
+      Right params
+        | not $ isBoundedComponentHistoryRequest params ->
+            handleError $
+              E.invalidAmount "component history is restricted to range=24h and interval=3600"
+        | otherwise -> case mPool of
+            Just pool -> do
+              result <- liftIO $ getBasketHistoryTimed pool cfg params
+              case result of
+                Left err -> handleError err
+                Right fetch -> handleBasketHistoryResult handlerStartedAt params fetch
+            Nothing ->
+              handleServiceUnavailable $
+                E.internalError "DATABASE_URL is not configured; perps basket history is unavailable"
 
   get "/api/perps/basket/candles" $ do
     handlerStartedAt <- liftIO getMonotonicTimeNSec
@@ -569,43 +571,18 @@ perpsHistoryLimit = do
            then Just $ read $ T.unpack stripped
            else Nothing
 
-basketHistoryParams :: ActionM BasketHistoryParams
+basketHistoryParams :: ActionM (Either Text BasketHistoryParams)
 basketHistoryParams = do
+  queryKeys <- currentQueryKeys
   mRange <- queryParamMaybe "range"
   mInterval <- queryParamMaybe "interval"
   mIncludeComponents <- queryParamMaybe "includeComponents"
-  pure
-    defaultBasketHistoryParams
-      { bhpRange = maybe (bhpRange defaultBasketHistoryParams) normalizeRange mRange
-      , bhpIntervalSeconds = maybe (bhpIntervalSeconds defaultBasketHistoryParams) (max 60 . parseIntegerOr 60) mInterval
-      , bhpIncludeComponents = maybe (bhpIncludeComponents defaultBasketHistoryParams) parseBool mIncludeComponents
-      }
-  where
-    normalizeRange :: Text -> Text
-    normalizeRange range =
-      case T.toLower (T.strip range) of
-        "24h" -> "24h"
-        "30d" -> "30d"
-        "1y" -> "1y"
-        _ -> "7d"
-
-    parseIntegerOr :: Integer -> Text -> Integer
-    parseIntegerOr def txt = maybe def id (readMaybeInteger txt)
-
-    parseBool :: Text -> Bool
-    parseBool value =
-      case T.toLower (T.strip value) of
-        "1" -> True
-        "true" -> True
-        "yes" -> True
-        _ -> False
-
-    readMaybeInteger :: Text -> Maybe Integer
-    readMaybeInteger txt =
-      let stripped = T.strip txt
-       in if T.all (\c -> c >= '0' && c <= '9') stripped && not (T.null stripped)
-            then Just $ read $ T.unpack stripped
-            else Nothing
+  pure $
+    parseBasketHistoryQueryParams
+      queryKeys
+      mRange
+      mInterval
+      mIncludeComponents
 
 handleResult :: (ToJSON a) => Either ApiError a -> ActionM ()
 handleResult = \case

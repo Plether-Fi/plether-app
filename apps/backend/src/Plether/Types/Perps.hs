@@ -12,6 +12,7 @@ module Plether.Types.Perps
   , isAlignedBasketCandleCursor
   , isBasketCandleCursorWithinFutureBound
   , hasExactBasketCandleQueryKeys
+  , parseBasketHistoryQueryParams
   , BasketLatest (..)
   , PythUpdateResponse (..)
   , RevealPayloadResponse (..)
@@ -175,7 +176,55 @@ data BasketHistoryParams = BasketHistoryParams
   , bhpIntervalSeconds :: Integer
   , bhpIncludeComponents :: Bool
   }
-  deriving stock (Show)
+  deriving stock (Eq, Show)
+
+-- | Parse the compatibility history endpoint's deliberately small public
+-- query surface. Requiring exact keys and canonical values keeps malformed
+-- requests from being silently rewritten into a different database query.
+parseBasketHistoryQueryParams
+  :: [Text]
+  -> Maybe Text
+  -> Maybe Text
+  -> Maybe Text
+  -> Either Text BasketHistoryParams
+parseBasketHistoryQueryParams queryKeys mRange mInterval mIncludeComponents = do
+  includeComponents <-
+    if hasExactBasketCandleQueryKeys ["range", "interval"] queryKeys
+      then Right False
+      else
+        if hasExactBasketCandleQueryKeys ["range", "interval", "includeComponents"] queryKeys
+          then
+            case mIncludeComponents of
+              Just "true" -> Right True
+              Just "false" -> Right False
+              _ -> Left "includeComponents must be true or false"
+          else
+            Left
+              "exactly one range and one interval query parameter and at most one includeComponents query parameter are required"
+  range <-
+    case mRange of
+      Just value | value `elem` ["24h", "7d", "30d", "1y"] -> Right value
+      _ -> Left "range must be one of 24h, 7d, 30d, or 1y"
+  interval <-
+    case mInterval >>= readPositiveInteger of
+      Just value -> Right value
+      Nothing -> Left "interval must be a positive integer"
+  Right
+    BasketHistoryParams
+      { bhpRange = range
+      , bhpIntervalSeconds = interval
+      , bhpIncludeComponents = includeComponents
+      }
+ where
+  readPositiveInteger value =
+    let stripped = T.strip value
+     in if stripped == value
+          && not (T.null value)
+          && T.all (\c -> c >= '0' && c <= '9') value
+          then
+            let parsed = read $ T.unpack value
+             in if parsed > 0 then Just parsed else Nothing
+          else Nothing
 
 defaultBasketHistoryParams :: BasketHistoryParams
 defaultBasketHistoryParams =
