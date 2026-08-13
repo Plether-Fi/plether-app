@@ -329,11 +329,20 @@ Then deploy the backend and verify every API and worker task is running the
 Terraform-produced configuration. Leave read mode, interval allowlist, and
 frontend flag unchanged.
 
-Soak for at least one full trading day and through one indexer batch boundary.
-Exercise duplicate ingestion, then run one controlled replay over a previously
-indexed finalized range. Block bounds are inclusive and may cover at most 5,000
-blocks; begin with a materially smaller range. `scope` must be `none`, both
-timestamp fields must be blank, and replay is prohibited outside Sepolia.
+Use an evidence-based Sepolia soak instead of a fixed wall-clock delay. Before
+replay, record at least three consecutive healthy five-minute observation
+periods after the dual-write deployment reaches steady state. Across that
+window require current price and volume writer heartbeats, at least three
+certified Perps indexer batch advances, every Sepolia alarm in `OK`, stable ECS
+task identities, an available RDS instance with no pending modifications, and
+no writer-failure, reorg, API-error, or RDS-pressure signal. Restart the
+observation window after any task replacement or failed criterion.
+
+Once that evidence is present, exercise duplicate ingestion by running one
+controlled replay over a previously indexed finalized range. Block bounds are
+inclusive and may cover at most 5,000 blocks; begin with a materially smaller
+range. `scope` must be `none`, both timestamp fields must be blank, and replay
+is prohibited outside Sepolia.
 
 ```bash
 run_candle_admin sepolia replay none \
@@ -445,11 +454,14 @@ run_candle_admin sepolia verify none \
   -f to_timestamp=TO_UNIX
 ```
 
-Continue dual writes for at least one full trading day and through another
-Perps indexer batch boundary. Then extend `TO_UNIX` through the newly finalized
-range and run the same `verify` command again. Also run `status` and preserve
-the two verification run IDs, source bounds, dataset generations, and RDS/API
-metrics in the change record.
+Continue dual writes through three consecutive healthy five-minute observation
+periods and at least three additional certified Perps indexer batch advances.
+Require the same stable-service, writer-heartbeat, alarm, RDS, and API evidence
+as Gate 3, restarting the observation window after any failed criterion or task
+replacement. Then extend `TO_UNIX` through the newly finalized range and run
+the same `verify` command again. Also run `status` and preserve the two
+verification run IDs, source bounds, dataset generations, and RDS/API metrics
+in the change record.
 
 Repeat the Gate 3 protected replay once over the same bounded finalized block
 range, or over another explicitly recorded range of at most 5,000 inclusive
