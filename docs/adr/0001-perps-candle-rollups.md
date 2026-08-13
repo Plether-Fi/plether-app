@@ -254,15 +254,28 @@ identical range while every relevant interval still carries that consistent
 maintenance identity; a concurrent reorg, watermark invalidation, different
 range, or any other incomplete state aborts publication and fails closed.
 
-The GitHub workflow snapshots the stable API service's task definition, network
-configuration, image repository, and unanimous running-task image digest. It
-registers a temporary derived task-definition revision in a dedicated admin
-family, preserves the deployed execution settings and all sidecars, and changes
-only the API image to `repository@sha256:digest`. The workflow launches that
-exact revision with a unique ECS `startedBy` identity, persists and validates
-the task ARN before exposing step outputs, verifies that the started API
-container reports the expected digest, recovers and stops an unfinished task
-after failure or cancellation, and always deregisters the temporary revision.
+Controlled duplicate-ingestion testing uses the Perps indexer's separate
+bounded replay mode, never its legacy `--backfill` invocation. Replay is
+Sepolia-only, requires explicit inclusive block bounds of at most 5,000 blocks,
+and executes in one transaction with statement, lock, application, and workflow
+deadlines. It disables remote evidence enrichment and does not advance or
+rewind the canonical cursor, advance coverage, or certify canonical progress.
+The protected workflow accepts replay only when exactly one stable indexer
+topology (consolidated XOR standalone) is running in dual-write mode.
+
+For ordinary candle administration, the GitHub workflow snapshots the stable
+API service's task definition, network configuration, image repository, and
+unanimous running-task image digest. It preserves the deployed execution
+settings and all sidecars and changes only the API image to
+`repository@sha256:digest`. For replay, it snapshots the selected stable writer
+service, pins the unanimous running Perps indexer digest, rejects dependencies
+on excluded containers, and derives a task containing only the unchanged
+indexer definition and its exact FireLens sidecar. The workflow registers the
+derived revision in a dedicated admin family and launches that exact revision
+with a unique ECS `startedBy` identity. It persists and validates the task ARN
+before exposing outputs, verifies the selected container's digest, recovers and
+stops an unfinished task after failure or cancellation, and always deregisters
+the temporary revision.
 An application deadline remains effective even if the runner itself is lost.
 This prevents a mutable registry tag from changing what an approved
 administration run executes or leaving an unbounded mutator behind. The admin
@@ -296,7 +309,7 @@ Safe defaults are writes off and legacy reads. The rollout order is:
 
 1. deploy compatible code with rollup writes and reads disabled;
 2. apply the additive migration;
-3. enable dual writes and soak;
+3. enable dual writes, perform a protected bounded Sepolia replay, and soak;
 4. backfill newest-first and verify coverage and reconciliation;
 5. repeat deterministic source-to-rollup reconciliation after a dual-write
    soak;
@@ -365,7 +378,9 @@ rollup mode must execute no raw snapshot or account-activity scans.
 
 - Writers perform additional transactional work and storage grows with the
   observation ledger and seven resolutions.
-- Migration requires a potentially long, throttled database backfill.
+- Migration's concurrent source-table index builds can be long and can wait on
+  catalog locks, so they use bounded statement and lock timeouts. Candle data
+  backfill remains a separate rollout action.
 - Finalization, coverage, generation, and reorg semantics add operational
   complexity.
 - Historical OHLC quality remains limited to sampled closes before the

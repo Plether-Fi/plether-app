@@ -105,7 +105,10 @@ defaultOptions action =
     , aoTo = Nothing
     , aoChunkSeconds = 86_400
     , aoStatementTimeoutMs = 1_800_000
-    , aoLockTimeoutMs = 5_000
+    , aoLockTimeoutMs =
+        case action of
+          Migrate -> 60_000
+          _ -> 5_000
     , aoThrottleMs = 250
     , aoMaxRuntimeSeconds = 21_600
     }
@@ -1501,7 +1504,7 @@ requiresDualWriteMode = \case
 
 reportsBackfillFailure :: AdminAction -> Bool
 reportsBackfillFailure = \case
-  Migrate -> True
+  Migrate -> False
   Backfill _ -> True
   Verify -> True
   Repair _ -> True

@@ -20,21 +20,27 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   corresponding gate below passes.
 - Never enable public rollup reads with
   `PERPS_CANDLE_STRICT_COVERAGE=false`.
-- Run database mutations only through `.github/workflows/candle-admin.yml`
+- Run database mutations and controlled indexer replay only through
+  `.github/workflows/candle-admin.yml`
   from `master`. Both `candle-admin-sepolia` and `candle-admin-mainnet` must
   have at least one required reviewer, require an explicit approval, disable
   administrator bypass, and allow only `master`. During the supervised Sepolia
   rollout, its sole administrator may self-approve when no independent reviewer
   is available, so `prevent_self_review` must be false there. Mainnet must still
   require an independent reviewer with `prevent_self_review` set to true.
-- Backfill and repair are accepted only while every deployed candle writer is
-  in `PERPS_CANDLE_WRITE_MODE=dual`. The admin workflow and backend deployment
-  share one environment-specific concurrency group so a deployment cannot
-  change write mode while either operation is reconciling canonical sources.
-- The admin workflow must resolve the stable API service's deployed image
-  digest, register a temporary task-definition revision whose API image is
-  `repository@sha256:digest`, verify the started task reports that same digest,
-  and deregister the temporary revision in cleanup. A commit-tagged deployed
+- Backfill, repair, and controlled replay are accepted only while the relevant
+  deployed candle writers are in `PERPS_CANDLE_WRITE_MODE=dual`. Replay also
+  requires exactly one Perps indexer topology: consolidated XOR standalone.
+  The admin workflow and backend deployment share one environment-specific
+  concurrency group so a deployment cannot change write mode or topology
+  while an operation is reconciling canonical sources.
+- For candle-admin operations, the workflow must resolve the stable API
+  service's deployed image digest and preserve its task definition. For replay,
+  it must resolve the sole stable Perps indexer topology, pin the unanimous
+  running indexer digest, and derive a task containing only that indexer and
+  its exact FireLens sidecar; dependencies on excluded containers are rejected.
+  In both cases it verifies the started task reports the pinned digest and
+  deregisters the temporary revision in cleanup. A commit-tagged deployed
   definition is not itself sufficient evidence that the one-off task pulled
   the deployed image.
 - Before migration or backfill, record the RDS storage type, provisioned IOPS
@@ -77,9 +83,10 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   `operations_alarm_sns_topic_arn`, and the topic subscription must be
   confirmed and tested before backfill; the configuration now fails closed
   when the ARN is absent.
-- Stop a backfill when an RDS pressure alarm fires, API p95 exceeds 750 ms for
-  three periods, API 5xx errors increase, or replication/storage health is
-  uncertain. A stopped chunk is safe to retry.
+- Stop a backfill or replay when an RDS pressure alarm fires, API p95 exceeds
+  750 ms for three periods, API 5xx errors increase, or replication/storage
+  health is uncertain. A stopped backfill chunk or idempotent replay range is
+  safe to retry.
 - Each one-off task has an application-enforced absolute runtime and a shorter
   workflow deadline. The workflow assigns a unique ECS `startedBy` identity,
   persists the task ARN immediately, recovers it by that identity if the
@@ -114,7 +121,6 @@ run_candle_admin() {
     -f scope="$scope" \
     -f chunk_seconds=86400 \
     -f statement_timeout_ms=1800000 \
-    -f lock_timeout_ms=5000 \
     -f throttle_ms=250 \
     -f confirmation="RUN ${action:u} ON ${environment:u}" \
     "$@"
@@ -122,8 +128,9 @@ run_candle_admin() {
 ```
 
 The function uses zsh uppercase expansion. With another shell, pass the
-workflow fields directly. After every dispatch, locate and watch the exact
-run:
+workflow fields directly. An omitted `lock_timeout_ms` defaults to `60000` for
+`migrate` and `5000` for every other action; use an explicit field only for an
+intentional override. After every dispatch, locate and watch the exact run:
 
 ```bash
 gh run list \
@@ -163,18 +170,31 @@ only for `candle-admin-sepolia`, whose policy deliberately sets
 `prevent_self_review=false`; the mainnet environment must keep it true.
 
 The environment-scoped AWS identity used by this workflow must be able to
-describe the stable service and its tasks, register and deregister the
+describe the stable services and their tasks, register and deregister the
 dedicated `plether-<environment>-candle-admin` task-definition family, run and
-stop tasks, and pass only the API task and execution roles. The workflow copies
-the deployed definition's execution fields and every container definition,
-changes only the `plether-api` image, and never prints environment variables,
-secret values, or the generated definition JSON.
+stop tasks, and pass the selected task and execution roles. The workflow
+itself validates that the copied role ARNs are exactly
+`plether-<environment>-ecs-task` and
+`plether-<environment>-ecs-execution`; this validation constrains the task it
+will launch, not the AWS identity's ambient IAM permissions. During the
+supervised Sepolia rollout, the existing privileged static deployment
+credential remains an explicitly accepted temporary exception. Do not extend
+that exception to mainnet: provision a narrowly scoped environment credential
+before mainnet candle administration, and migrate both environments to OIDC as
+the durable follow-up. Ordinary candle administration copies the API
+definition's execution fields and every container, changing only the
+`plether-api` image. Replay copies the selected writer definition's execution
+fields but retains only `plether-perps-indexer` and the exact
+`otel-log-router` FireLens sidecar, pinning both to their unanimous running
+digests. The workflow never prints environment variables, secret values, or
+generated definition JSON.
 
-The workflow passes an application deadline of 19,800 seconds, leaving thirty
-minutes of the six-hour job budget for task/image verification and cleanup.
-`plether-candle-admin` also accepts `--max-runtime-seconds` for local emergency
-operation, but production mutations must continue to use the protected
-workflow.
+The workflow passes candle administration an application deadline of 19,800
+seconds. Replay has a stricter 1,800-second application deadline and a
+2,700-second task deadline, leaving fifteen minutes for a clean ECS stop and
+task-definition cleanup. The executables accept runtime options for local
+diagnosis, but production mutations and replay must continue to use the
+protected workflow.
 
 ## Gate 1: compatible deployment
 
@@ -278,6 +298,12 @@ run_candle_admin sepolia migrate none
 run_candle_admin sepolia status none
 ```
 
+When no override is supplied, `migrate` uses a 60-second PostgreSQL lock
+timeout so the concurrent index builders can wait through brief catalog lock
+contention without waiting indefinitely. This action builds schema and indexes;
+it does not run the candle data backfill. A migration failure must be recorded
+as a migration failure, not as a backfill failure.
+
 The API or Perps indexer must have initialized `perps_events` and
 `perps_account_activity` before this gate. The migration fails with an explicit
 prerequisite error otherwise. It also detects the invalid catalog entries
@@ -304,7 +330,27 @@ Terraform-produced configuration. Leave read mode, interval allowlist, and
 frontend flag unchanged.
 
 Soak for at least one full trading day and through one indexer batch boundary.
-Exercise duplicate ingestion and, on Sepolia, a controlled indexer replay.
+Exercise duplicate ingestion, then run one controlled replay over a previously
+indexed finalized range. Block bounds are inclusive and may cover at most 5,000
+blocks; begin with a materially smaller range. `scope` must be `none`, both
+timestamp fields must be blank, and replay is prohibited outside Sepolia.
+
+```bash
+run_candle_admin sepolia replay none \
+  -f from_block=FROM_BLOCK \
+  -f to_block=TO_BLOCK
+```
+
+The protected workflow requires the exact confirmation `RUN REPLAY ON
+SEPOLIA`, one stable dual-write indexer topology (consolidated XOR standalone),
+and one unanimous running indexer image digest. Its derived ECS task runs only
+`plether-perps-indexer` plus the exact FireLens sidecar, with both running image
+digests pinned and verified. Replay is one bounded database transaction with a
+30-minute application deadline; it neither
+advances nor rewinds the canonical cursor, does not advance or certify candle
+coverage, and disables external evidence enrichment. The legacy
+`plether-perps-indexer --backfill --from ... --to ...` path is prohibited for
+rollout operations and must not be invoked manually.
 
 Pass criteria:
 
@@ -315,7 +361,8 @@ Pass criteria:
 - zero-trade batches advance the canonical volume coverage watermark;
 - finalized corrections increment row revision and dataset generation;
 - live appends do not churn the closed-page dataset generation;
-- a reorg marks volume coverage incomplete until repair/replay republishes it.
+- a reorg marks volume coverage incomplete until canonical recovery or repair
+  republishes it; controlled replay alone never certifies coverage;
 - the basket worker emits `basket_price_watermark_advanced` at most every five
   minutes for both admitted and signed-stale latest polls, with
   `checked_through`, `min_publish_time`, `max_publish_time`, `source`, and
@@ -330,7 +377,15 @@ Pass criteria:
   boundaries;
 - the indexer emits `perps_indexer_progress` with
   `canonical_progress_certified=true` and `indexed_through_timestamp` when a
-  contiguous canonical batch advances its cursor.
+  contiguous canonical batch advances its cursor;
+- the replay emits `perps_indexer_replay_started` and
+  `perps_indexer_replay_complete` (and
+  `perps_indexer_replay_failed` on failure), with the exact inclusive block
+  bounds and `canonical_progress_certified=false`; preserve its task ARN and
+  pinned image digest in the change record, while the canonical indexer cursor
+  and coverage certification remain unchanged;
+- repeating the same replay range leaves canonical history, rollup counts, and
+  values unchanged.
 
 ## Gate 4: newest-first backfill
 
@@ -396,6 +451,12 @@ range and run the same `verify` command again. Also run `status` and preserve
 the two verification run IDs, source bounds, dataset generations, and RDS/API
 metrics in the change record.
 
+Repeat the Gate 3 protected replay once over the same bounded finalized block
+range, or over another explicitly recorded range of at most 5,000 inclusive
+blocks, and rerun `verify`. Do not replace it with the legacy indexer
+`--backfill` mode. Preserve the replay workflow run ID, ECS task ARN, selected
+writer topology, pinned image digest, bounds, and structured completion event.
+
 `PERPS_CANDLE_READ_MODE=shadow` and
 `PERPS_CANDLE_SHADOW_SAMPLE_BPS` remain reserved compatibility settings for a
 future bounded comparator. They perform no comparison or traffic switch in v1
@@ -409,8 +470,9 @@ Pass criteria:
   metadata;
 - coverage remains complete, finalized watermarks advance monotonically, and
   all intervals retain one consistent dataset generation through the soak;
-- duplicate ingestion or a controlled Sepolia replay does not change canonical
-  counts or values;
+- duplicate ingestion or the protected Sepolia replay does not change
+  canonical counts or values, advance/rewind the canonical cursor, or certify
+  coverage;
 - p95/p99 and RDS load stay within the acceptance criteria in ADR 0001.
 
 ## Gate 6: backend interval canary

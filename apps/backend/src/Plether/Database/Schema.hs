@@ -101,10 +101,22 @@ module Plether.Database.Schema
   , insertPerpsExpiredCleanupActivityIfReady
   , getPerpsIndexerStatus
   , getPerpsIndexerLastBlock
+  , PerpsReplayHistorySnapshot (..)
+  , getPerpsReplayHistorySnapshot
+  , lockPerpsReplayOrders
+  , assertPerpsReplayEventExact
+  , assertPerpsReplayOrderCommittedExact
+  , assertPerpsReplayOrderTerminalExact
+  , assertPerpsReplayActivityExact
+  , assertPerpsReplayExpiredCleanupExact
+  , assertPerpsReplayExpiredCleanupIfReadyExact
+  , configurePerpsReplayTransaction
+  , lockPerpsIndexerTransaction
   , setPerpsIndexerState
   , deletePerpsHistoryFromBlock
   ) where
 
+import Control.Monad (unless)
 import Data.Aeson (Value, encode, object, (.=))
 import qualified Data.ByteString.Lazy as LBS
 import Data.Scientific (Scientific, base10Exponent, coefficient)
@@ -113,6 +125,7 @@ import qualified Data.Text as T
 import Data.Int (Int64)
 import Database.PostgreSQL.Simple
   ( Connection
+  , In (..)
   , Only (..)
   , Query
   , execute
@@ -1779,6 +1792,306 @@ instance FromRow PerpsIndexerStatusRow where
     <*> field
     <*> field
 
+-- Stable semantic rows touched by bounded duplicate ingestion. Surrogate IDs
+-- and volatile created/updated timestamps are excluded; every field that the
+-- replay write path can insert or update is retained in PostgreSQL's canonical
+-- JSON text representation and deterministic order.
+data PerpsReplayHistorySnapshot = PerpsReplayHistorySnapshot
+  { prhsEvents :: [Text]
+  , prhsOrders :: [Text]
+  , prhsActivity :: [Text]
+  }
+  deriving stock (Eq, Show)
+
+-- Acquire affected order rows in deterministic order after the indexer and
+-- volume locks. This prevents the independent evidence worker from mutating
+-- enrichment columns between replay's semantic before/after snapshots.
+lockPerpsReplayOrders :: Connection -> Integer -> Text -> [Integer] -> IO ()
+lockPerpsReplayOrders _ _ _ [] = pure ()
+lockPerpsReplayOrders conn chainId releaseRouter orderIds = do
+  rows <- query conn
+    "SELECT order_id FROM perps_orders \
+    \WHERE chain_id = ? AND order_router = ? AND order_id IN ? \
+    \ORDER BY order_id FOR UPDATE"
+    (chainId, normalizeRouter releaseRouter, In orderIds) :: IO [Only Integer]
+  -- Missing rows are deliberately allowed here; the semantic snapshot will
+  -- detect an insertion and force rollback.
+  rows `seq` pure ()
+
+assertExactlyOneReplayRow :: Text -> [Only Integer] -> IO ()
+assertExactlyOneReplayRow label rows =
+  unless (length rows == 1) $
+    fail $ "Bounded replay semantic assertion failed for " <> T.unpack label
+
+assertPerpsReplayEventExact
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Int
+  -> Value
+  -> IO ()
+assertPerpsReplayEventExact conn chainId releaseRouter contractAddress eventName txHash blockNumber blockHash txIndex logIndex timestamp account orderId side payload = do
+  rows <- query conn
+    "SELECT 1::BIGINT FROM perps_events WHERE chain_id = ? AND tx_hash = ? AND log_index = ? \
+    \AND release_router = ? AND contract_address = ? AND event_name = ? AND block_number = ? \
+    \AND block_hash = ? AND tx_index = ? AND timestamp = ? \
+    \AND account IS NOT DISTINCT FROM ? AND order_id IS NOT DISTINCT FROM ? \
+    \AND side IS NOT DISTINCT FROM ? AND data = ?::jsonb"
+    ( chainId
+    , T.toLower txHash
+    , logIndex
+    , normalizeRouter releaseRouter
+    , T.toLower contractAddress
+    , eventName
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , timestamp
+    , fmap T.toLower account
+    , orderId
+    , side
+    , encode payload
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "event" rows
+
+assertPerpsReplayOrderCommittedExact
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Int
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO ()
+assertPerpsReplayOrderCommittedExact conn chainId orderRouter orderId account side txHash blockNumber timestamp = do
+  rows <- query conn
+    "SELECT 1::BIGINT FROM perps_orders WHERE chain_id = ? AND order_router = ? AND order_id = ? \
+    \AND account = ? AND side = ? AND commit_tx_hash = ? AND commit_block_number = ? \
+    \AND commit_timestamp = ?"
+    ( chainId
+    , normalizeRouter orderRouter
+    , orderId
+    , T.toLower account
+    , side
+    , T.toLower txHash
+    , blockNumber
+    , timestamp
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "committed order" rows
+
+assertPerpsReplayOrderTerminalExact
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO ()
+assertPerpsReplayOrderTerminalExact conn chainId orderRouter orderId status failureReason executionPrice cleanupActor txHash blockNumber timestamp = do
+  rows <- query conn
+    "SELECT 1::BIGINT FROM perps_orders WHERE chain_id = ? AND order_router = ? AND order_id = ? \
+    \AND terminal_status = ? AND failure_reason IS NOT DISTINCT FROM ? \
+    \AND execution_price IS NOT DISTINCT FROM ? AND cleanup_actor IS NOT DISTINCT FROM ? \
+    \AND terminal_tx_hash = ? AND terminal_block_number = ? AND terminal_timestamp = ?"
+    ( chainId
+    , normalizeRouter orderRouter
+    , orderId
+    , status
+    , failureReason
+    , executionPrice
+    , fmap T.toLower cleanupActor
+    , T.toLower txHash
+    , blockNumber
+    , timestamp
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "terminal order" rows
+
+assertPerpsReplayActivityExact
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Int
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Value
+  -> IO ()
+assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventKey account activityType actor orderId side price sizeDelta amountUsdc pnlUsdc txHash blockNumber blockHash txIndex logIndex timestamp payload = do
+  rows <- query conn
+    "SELECT 1::BIGINT FROM perps_account_activity WHERE event_key = ? \
+    \AND chain_id = ? AND release_router = ? AND contract_address = ? AND account = ? \
+    \AND actor IS NOT DISTINCT FROM ? AND activity_type = ? AND order_id IS NOT DISTINCT FROM ? \
+    \AND side IS NOT DISTINCT FROM ? AND price IS NOT DISTINCT FROM ? \
+    \AND size_delta IS NOT DISTINCT FROM ? AND amount_usdc IS NOT DISTINCT FROM ? \
+    \AND pnl_usdc IS NOT DISTINCT FROM ? AND tx_hash = ? AND block_number = ? \
+    \AND block_hash = ? AND tx_index = ? AND log_index = ? AND timestamp = ? AND data = ?::jsonb"
+    ( eventKey
+    , chainId
+    , normalizeRouter releaseRouter
+    , normalizeRouter contractAddress
+    , T.toLower account
+    , fmap T.toLower actor
+    , activityType
+    , orderId
+    , side
+    , price
+    , sizeDelta
+    , amountUsdc
+    , pnlUsdc
+    , T.toLower txHash
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , logIndex
+    , timestamp
+    , encode payload
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "account activity" rows
+
+assertPerpsReplayExpiredCleanupExact :: Connection -> Integer -> Text -> Integer -> IO ()
+assertPerpsReplayExpiredCleanupExact conn chainId orderRouter orderId =
+  assertPerpsReplayExpiredCleanupWithRequirement conn chainId orderRouter orderId True
+
+assertPerpsReplayExpiredCleanupIfReadyExact :: Connection -> Integer -> Text -> Integer -> IO ()
+assertPerpsReplayExpiredCleanupIfReadyExact conn chainId orderRouter orderId =
+  assertPerpsReplayExpiredCleanupWithRequirement conn chainId orderRouter orderId False
+
+assertPerpsReplayExpiredCleanupWithRequirement
+  :: Connection -> Integer -> Text -> Integer -> Bool -> IO ()
+assertPerpsReplayExpiredCleanupWithRequirement conn chainId orderRouter orderId requireExpired = do
+  rows <- query conn
+    "WITH order_state AS (\
+    \ SELECT account, side, cleanup_actor, terminal_status, terminal_tx_hash, terminal_block_number \
+    \ FROM perps_orders WHERE chain_id = ? AND order_router = ? AND order_id = ?), \
+    \expected AS (\
+    \ SELECT o.account, o.side, o.cleanup_actor, e.contract_address, e.tx_hash, e.block_number, \
+    \ e.block_hash, e.tx_index, e.log_index, e.timestamp \
+    \ FROM order_state o JOIN perps_events e ON e.chain_id = ? \
+    \ AND e.release_router = ? AND e.order_id = ? AND e.event_name = 'OrderFailed' \
+    \ AND e.tx_hash = o.terminal_tx_hash AND e.block_number = o.terminal_block_number \
+    \ WHERE o.terminal_status = 'Expired / Cleaned up' AND o.account IS NOT NULL \
+    \ AND o.side IS NOT NULL AND o.cleanup_actor IS NOT NULL \
+    \ ORDER BY e.log_index DESC LIMIT 1), \
+    \exact_cleanup AS (\
+    \ SELECT 1 FROM expected e JOIN perps_account_activity a ON \
+    \ a.event_key = LOWER(e.tx_hash) || ':' || e.log_index::text || ':cleanup:' || ?::text \
+    \ WHERE a.chain_id = ? AND a.release_router = ? AND a.contract_address = LOWER(e.contract_address) \
+    \ AND a.account = LOWER(e.account) AND a.actor = LOWER(e.cleanup_actor) \
+    \ AND a.activity_type = 'Cleaned up expired order' AND a.order_id = ? \
+    \ AND a.side = e.side AND a.price IS NULL AND a.size_delta IS NULL \
+    \ AND a.amount_usdc IS NULL AND a.pnl_usdc IS NULL AND a.tx_hash = LOWER(e.tx_hash) \
+    \ AND a.block_number = e.block_number AND a.block_hash = LOWER(e.block_hash) \
+    \ AND a.tx_index = e.tx_index AND a.log_index = e.log_index AND a.timestamp = e.timestamp \
+    \ AND a.data = jsonb_build_object('orderId', ?::text, 'reason', 'Expired', 'actor', e.cleanup_actor)) \
+    \SELECT 1::BIGINT WHERE (NOT ? AND EXISTS (\
+    \ SELECT 1 FROM order_state WHERE terminal_status <> 'Expired / Cleaned up')) \
+    \ OR EXISTS (SELECT 1 FROM exact_cleanup)"
+    ( chainId
+    , normalizeRouter orderRouter
+    , orderId
+    , chainId
+    , normalizeRouter orderRouter
+    , orderId
+    , orderId
+    , chainId
+    , normalizeRouter orderRouter
+    , orderId
+    , orderId
+    , requireExpired
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "expired cleanup activity" rows
+
+getPerpsReplayHistorySnapshot
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> [Integer]
+  -> IO PerpsReplayHistorySnapshot
+getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock orderIds = do
+  let router = normalizeRouter releaseRouter
+  events <- query conn
+    "SELECT row_to_json(snapshot)::text FROM (\
+    \ SELECT chain_id, release_router, contract_address, event_name, tx_hash, block_number, \
+    \ block_hash, tx_index, log_index, timestamp, account, order_id, side, data \
+    \ FROM perps_events WHERE chain_id = ? AND release_router = ? \
+    \ AND block_number BETWEEN ? AND ? ORDER BY block_number, tx_index, log_index) snapshot"
+    (chainId, router, fromBlock, toBlock) :: IO [Only Text]
+  orders <-
+    if null orderIds
+      then pure []
+      else
+        query conn
+          "SELECT row_to_json(snapshot)::text FROM (\
+          \ SELECT chain_id, order_router, order_id, account, side, commit_tx_hash, commit_block_number, \
+          \ commit_timestamp, terminal_tx_hash, terminal_block_number, terminal_timestamp, terminal_status, \
+          \ failure_reason, execution_price, execution_vpi_usdc, execution_frozen_close_spread_usdc, \
+          \ execution_economics_version, execution_oracle_price, execution_oracle_frozen, \
+          \ oracle_min_publish_time, oracle_max_publish_time, oracle_derivation_version, \
+          \ execution_evidence_last_attempt_at, cleanup_actor \
+          \ FROM perps_orders WHERE chain_id = ? AND order_router = ? AND order_id IN ? \
+          \ ORDER BY order_id) snapshot"
+          (chainId, router, In orderIds) :: IO [Only Text]
+  activity <-
+    if null orderIds
+      then
+        query conn
+          "SELECT row_to_json(snapshot)::text FROM (\
+          \ SELECT chain_id, release_router, contract_address, event_key, account, actor, activity_type, \
+          \ order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, \
+          \ tx_index, log_index, timestamp, data FROM perps_account_activity \
+          \ WHERE chain_id = ? AND release_router = ? AND block_number BETWEEN ? AND ? \
+          \ ORDER BY block_number, tx_index, log_index, event_key) snapshot"
+          (chainId, router, fromBlock, toBlock)
+      else
+        query conn
+          "SELECT row_to_json(snapshot)::text FROM (\
+          \ SELECT chain_id, release_router, contract_address, event_key, account, actor, activity_type, \
+          \ order_id, side, price, size_delta, amount_usdc, pnl_usdc, tx_hash, block_number, block_hash, \
+          \ tx_index, log_index, timestamp, data FROM perps_account_activity \
+          \ WHERE chain_id = ? AND release_router = ? \
+          \ AND (block_number BETWEEN ? AND ? OR order_id IN ?) \
+          \ ORDER BY block_number, tx_index, log_index, event_key) snapshot"
+          (chainId, router, fromBlock, toBlock, In orderIds)
+    :: IO [Only Text]
+  pure $
+    PerpsReplayHistorySnapshot
+      { prhsEvents = map fromOnly events
+      , prhsOrders = map fromOnly orders
+      , prhsActivity = map fromOnly activity
+      }
+
 ensurePerpsHistorySchema :: Connection -> IO ()
 ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
@@ -2610,6 +2923,40 @@ getPerpsIndexerLastBlock conn chainId indexerName releaseRouter = do
   pure $ case statusRow of
     Just row -> (pisLastIndexedBlock row, pisLastIndexedBlockHash row)
     Nothing -> (0, Nothing)
+
+-- Replay limits are transaction-local so a pooled connection cannot leak an
+-- administrative timeout into the long-running worker after rollback/commit.
+-- This must run after BEGIN and before waiting for either advisory lock.
+configurePerpsReplayTransaction :: Connection -> Int -> Int -> IO ()
+configurePerpsReplayTransaction conn statementTimeoutMs lockTimeoutMs = do
+  statementRows <-
+    query
+      conn
+      "SELECT set_config('statement_timeout', ?, TRUE)"
+      (Only $ T.pack (show statementTimeoutMs) <> "ms")
+      :: IO [Only Text]
+  lockRows <-
+    query
+      conn
+      "SELECT set_config('lock_timeout', ?, TRUE)"
+      (Only $ T.pack (show lockTimeoutMs) <> "ms")
+      :: IO [Only Text]
+  unless (length statementRows == 1 && length lockRows == 1) $
+    fail "Could not configure the bounded Perps replay transaction timeouts"
+
+-- The live indexer, its reorg recovery, and bounded replay all take this lock
+-- first. Dataset-specific candle locks come afterwards, giving every writer a
+-- single lock order and preventing a replay from racing cursor advancement.
+lockPerpsIndexerTransaction :: Connection -> Integer -> Text -> Text -> IO ()
+lockPerpsIndexerTransaction conn chainId indexerName releaseRouter = do
+  rows <-
+    query
+      conn
+      "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(?, ?))) locked"
+      ("perps-indexer:" <> scopedIndexerName indexerName releaseRouter, chainId)
+      :: IO [Only Integer]
+  unless (length rows == 1) $
+    fail "Could not acquire the Perps indexer transaction lock"
 
 setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Maybe Text -> IO ()
 setPerpsIndexerState conn chainId indexerName releaseRouter blockNumber blockHash = do

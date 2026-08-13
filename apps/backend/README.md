@@ -142,13 +142,18 @@ indexer has initialized its history schema, run `plether-candle-admin migrate`;
 the command validates both prerequisite tables and builds and verifies four
 indexes concurrently: bounded-time backfill access plus block-number access for
 reorg discovery and deletion on both history tables.
+The protected workflow defaults `migrate` to a 60-second lock timeout; this
+schema/index operation is distinct from candle data backfill.
 
-Production backfill and repair run only through the protected
-`candle-admin.yml` workflow. They require `PERPS_CANDLE_WRITE_MODE=dual`, refuse
-an empty canonical source domain, and enforce lock, statement, and absolute
-runtime limits. The admin and backend deployment workflows share an
-environment-specific concurrency group so a deployment cannot change write
-mode during a mutation.
+Production backfill, repair, and controlled indexer replay run only through the
+protected `candle-admin.yml` workflow. They require
+`PERPS_CANDLE_WRITE_MODE=dual` and enforce lock, statement, and absolute runtime
+limits; backfill and repair also refuse an empty canonical source domain. The
+admin and backend deployment workflows share an environment-specific
+concurrency group so a deployment cannot change write mode during a mutation.
+Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
+runs from a stable deployed indexer digest without moving its canonical cursor
+or coverage certification.
 
 ## Local Perps Stack
 
@@ -267,16 +272,25 @@ CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-perps-indexer -- --once
 
-# Backfill a known range.
-RPC_URL="$ARB_SEPOLIA_RPC_URL" \
-CHAIN_ID=421614 \
-DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-cabal run plether-perps-indexer -- --backfill --from 123 --to 456
+# Production replay is dispatched only through the protected workflow from
+# master, with exact inclusive block bounds and scope=none.
+gh workflow run candle-admin.yml \
+  --repo Plether-Fi/plether-app \
+  --ref master \
+  -f environment=sepolia \
+  -f action=replay \
+  -f scope=none \
+  -f from_block=123 \
+  -f to_block=456 \
+  -f confirmation='RUN REPLAY ON SEPOLIA'
 ```
 
 Notes:
 
 - The indexer only writes finalized/safe history. Default finality delay is `1` block.
+- Never use the legacy `--backfill --from ... --to ...` invocation for an
+  operational replay. It lacks the protected workflow's range, topology,
+  digest, deadline, cancellation, and cleanup guardrails.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
 - Exact execution economics use `debug_traceTransaction`; on Arbitrum Sepolia the
   indexer falls back to the public Blockscout raw-trace API. Override or disable

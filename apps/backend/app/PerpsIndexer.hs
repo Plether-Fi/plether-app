@@ -5,7 +5,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
-import Plether.Config (Config (..), loadConfig)
+import Plether.Config (Config (..), PerpsCandleWriteMode (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Schema (ensurePerpsHistorySchema)
 import Plether.Logging (field, logError, logInfo)
@@ -17,7 +17,9 @@ import Plether.Perps.HistoryIndexer
   , perpsIndexerName
   , runPerpsIndexer
   )
+import qualified Plether.Perps.IndexerOptions as IndexerOptions
 import System.Environment (getArgs, lookupEnv)
+import System.Exit (exitFailure)
 import Text.Read (readMaybe)
 
 data WorkerArgs = WorkerArgs
@@ -44,15 +46,42 @@ defaultPollSeconds = 12
 main :: IO ()
 main = do
   cliArgs <- getArgs
-  envArgs <- loadEnvArgs
-  eConfig <- loadConfig
-  case eConfig of
-    Left err ->
+  case IndexerOptions.parsePerpsIndexerInvocation cliArgs of
+    Left err -> do
       logError
-        "perps_indexer_configuration_invalid"
-        "Perps indexer configuration is invalid"
+        "perps_indexer_cli_invalid"
+        "Perps indexer command-line arguments are invalid"
         [field "error" err]
-    Right cfg ->
+      exitFailure
+    Right invocation -> do
+      envArgs <- loadEnvArgs
+      deploymentEnvironment <- fmap T.pack <$> lookupEnv "DEPLOYMENT_ENVIRONMENT"
+      eConfig <- loadConfig
+      case eConfig of
+        Left err -> do
+          logError
+            "perps_indexer_configuration_invalid"
+            "Perps indexer configuration is invalid"
+            [field "error" err]
+          exitFailure
+        Right cfg ->
+          case validateReplayDeployment invocation deploymentEnvironment (cfgPerpsCandleWriteMode cfg) envArgs of
+            Left err -> do
+              logError
+                "perps_indexer_replay_configuration_invalid"
+                "Bounded Perps replay configuration is invalid"
+                [field "error" err]
+              exitFailure
+            Right () -> runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg
+
+runConfiguredIndexer
+  :: IndexerOptions.PerpsIndexerInvocation
+  -> Maybe Text
+  -> [(String, String)]
+  -> [String]
+  -> Config
+  -> IO ()
+runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
       let configuredAddresses =
             defaultPerpsAddresses
               { paOrderRouter = cfgPerpsOrderRouter cfg
@@ -60,17 +89,27 @@ main = do
               , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
               , paPletherOracle = cfgPerpsPletherOracle cfg
               }
-          args = parseWorkerArgs configuredAddresses envArgs cliArgs
+          parsedArgs = parseWorkerArgs configuredAddresses envArgs cliArgs
+          args =
+            parsedArgs
+              { waMode =
+                  case invocation of
+                    IndexerOptions.PerpsIndexerLoop -> waMode parsedArgs
+                    IndexerOptions.PerpsIndexerReplay replayOptions -> PerpsIndexerReplay replayOptions
+              }
        in case cfgDatabaseUrl cfg of
-        Nothing ->
+        Nothing -> do
           logError
             "perps_indexer_database_missing"
             "Perps indexer requires a database"
             []
+          exitFailure
         Just dbUrl -> do
           manager <- newManager tlsManagerSettings
           pool <- newDbPool dbUrl
-          withDb pool ensurePerpsHistorySchema
+          case invocation of
+            IndexerOptions.PerpsIndexerLoop -> withDb pool ensurePerpsHistorySchema
+            IndexerOptions.PerpsIndexerReplay _ -> pure ()
           let rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
               startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
               traceApiUrl = case waTraceApiUrl args of
@@ -95,6 +134,7 @@ main = do
                   , picMode = waMode args
                   , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
                   , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+                  , picDeploymentEnvironment = deploymentEnvironment
                   }
           logInfo
             "perps_indexer_started"
@@ -109,11 +149,56 @@ main = do
             ]
           runPerpsIndexer manager pool indexerCfg
 
+validateReplayDeployment
+  :: IndexerOptions.PerpsIndexerInvocation
+  -> Maybe Text
+  -> PerpsCandleWriteMode
+  -> [(String, String)]
+  -> Either Text ()
+validateReplayDeployment IndexerOptions.PerpsIndexerLoop _ _ _ = Right ()
+validateReplayDeployment (IndexerOptions.PerpsIndexerReplay _) deploymentEnvironment candleWriteMode env
+  | deploymentEnvironment /= Just "sepolia" =
+      Left "Bounded Perps replay is restricted to DEPLOYMENT_ENVIRONMENT=sepolia"
+  | candleWriteMode /= PerpsCandleWritesDual
+      || lookup "PERPS_CANDLE_WRITE_MODE" env /= Just "dual" =
+      Left "Bounded Perps replay requires PERPS_CANDLE_WRITE_MODE=dual"
+  | otherwise = do
+      requireUnsignedEnv "PERPS_CHAIN_ID" 1 9_223_372_036_854_775_807 env
+      requireUnsignedEnv "PERPS_INDEXER_START_BLOCK" 0 9_223_372_036_854_775_807 env
+      requireUnsignedEnv "PERPS_INDEXER_CONFIRMATIONS" 0 10_000 env
+      requireOptionalUnsignedEnv "PERPS_INDEXER_BATCH_SIZE" 1 5_000 env
+      requireOptionalUnsignedEnv "PERPS_INDEXER_POLL_SECONDS" 1 3_600 env
+
+requireUnsignedEnv
+  :: String -> Integer -> Integer -> [(String, String)] -> Either Text ()
+requireUnsignedEnv name lower upper env =
+  case lookup name env of
+    Just raw
+      | not (null raw)
+          && all isAsciiDigit raw
+          && maybe False (\value -> value >= lower && value <= upper) (readMaybe raw) -> Right ()
+    _ ->
+      Left $
+        T.pack name
+          <> " must be present as an unsigned decimal integer in the supported range"
+
+requireOptionalUnsignedEnv
+  :: String -> Integer -> Integer -> [(String, String)] -> Either Text ()
+requireOptionalUnsignedEnv name lower upper env =
+  case lookup name env of
+    Nothing -> Right ()
+    Just _ -> requireUnsignedEnv name lower upper env
+
+isAsciiDigit :: Char -> Bool
+isAsciiDigit character = character >= '0' && character <= '9'
+
 loadEnvArgs :: IO [(String, String)]
 loadEnvArgs = do
   pairs <- traverse readEnv
     [ "PERPS_INDEXER_RPC_URLS"
     , "PERPS_INDEXER_TRACE_API_URL"
+    , "PERPS_CHAIN_ID"
+    , "PERPS_CANDLE_WRITE_MODE"
     , "PERPS_INDEXER_START_BLOCK"
     , "PERPS_INDEXER_CONFIRMATIONS"
     , "PERPS_INDEXER_BATCH_SIZE"
@@ -169,10 +254,7 @@ parseWorkerArgs addressDefaults env args =
 
 parseMode :: [String] -> PerpsIndexerMode
 parseMode args =
-  case (lookupFlag "--from" args >>= readMaybe, lookupFlag "--to" args >>= readMaybe) of
-    (Just fromBlock, Just toBlock) | "--backfill" `elem` args -> PerpsIndexerBackfill fromBlock toBlock
-    _ | "--once" `elem` args -> PerpsIndexerOnce
-    _ -> PerpsIndexerLoop
+  if "--once" `elem` args then PerpsIndexerOnce else PerpsIndexerLoop
 
 readFlag :: (Read a) => String -> a -> [String] -> a
 readFlag name fallback args =
