@@ -88,12 +88,32 @@ data SourceBounds = SourceBounds
   }
   deriving (Eq, Show)
 
+data BackfillOrder
+  = OldestFirst
+  | NewestFirst
+  deriving (Eq, Show)
+
+data BackfillRange = BackfillRange
+  { brBounds :: SourceBounds
+  , brOrder :: BackfillOrder
+  }
+  deriving (Eq, Show)
+
 data RepairMaintenance = RepairMaintenance
   { rmKind :: RollupKind
   , rmPublicationCoverage :: [RollupCoverage]
   , rmGeneration :: Integer
   , rmRepairFrom :: Integer
   , rmRepairTo :: Integer
+  }
+  deriving (Eq, Show)
+
+data MergedCoverageRange = MergedCoverageRange
+  { mcrCoverageStart :: Integer
+  , mcrPublishedEnd :: Integer
+  , mcrFallbackCoverageEnd :: Integer
+  , mcrFallbackFinalizedThrough :: Integer
+  , mcrMergeTrustedEnvelope :: Bool
   }
   deriving (Eq, Show)
 
@@ -290,7 +310,7 @@ runBackfill conn runtime options kind isRepair = do
       unless isRepair $ prepareBackfillCoverage conn runtime kind availableBounds
       ranges <-
         if isRepair
-          then pure [availableBounds]
+          then pure [BackfillRange availableBounds NewestFirst]
           else resumeRanges conn runtime kind availableBounds
       case ranges of
         [] -> do
@@ -301,7 +321,7 @@ runBackfill conn runtime options kind isRepair = do
             "Requested candle range is already covered"
             [field "kind" $ rollupKindName kind, field "affected_base_buckets" (0 :: Integer)]
         _ -> do
-          let chunks = concatMap (newestFirstChunks $ aoChunkSeconds options) ranges
+          let chunks = concatMap (orderedChunks $ aoChunkSeconds options) ranges
           affectedCounts <- forM chunks $ \(chunkFrom, chunkTo) -> do
             affected <-
               if isRepair
@@ -312,8 +332,8 @@ runBackfill conn runtime options kind isRepair = do
             when (aoThrottleMs options > 0) $
               threadDelay $ aoThrottleMs options * 1_000
             pure affected
-          let processedFrom = minimum $ map sbFrom ranges
-              processedTo = maximum $ map sbTo ranges
+          let processedFrom = minimum $ map (sbFrom . brBounds) ranges
+              processedTo = maximum $ map (sbTo . brBounds) ranges
           finalCoverage <- getCoverage conn runtime kind 60
           emitCoverage conn kind 60 finalCoverage $ Just $ sum affectedCounts
           logInfo
@@ -374,19 +394,26 @@ publishCoverage conn runtime kind fromTimestamp toTimestamp generation = do
       existingGenerations = [rcGeneration row | Just row <- coverages]
       publicationGeneration =
         fromMaybe (max 1 $ maximumOr 1 existingGenerations) generation
-  let (mergedFrom, mergedTo) = mergeCoverageRange currentCoverage fromTimestamp toTimestamp
+  let merged = mergeCoverageRange currentCoverage fromTimestamp toTimestamp
   forM_ (zip canonicalCandleIntervals coverages) $ \(interval, existing) -> do
-    let intervalFrom = alignUp mergedFrom interval
-        intervalTo = alignDown mergedTo interval
-    when (intervalFrom < intervalTo) $ do
-      finalizeCoveredRows conn runtime kind interval intervalFrom intervalTo
+    let intervalFrom = alignUp (mcrCoverageStart merged) interval
+        (intervalEnd, intervalFinalizedThrough) =
+          intervalCoverageEnvelope merged interval existing
+    -- A coarse interval is publishable only after at least one whole bucket is
+    -- finalized. coverage_end alone can be one aligned bucket ahead; exposing
+    -- that zero-final envelope as complete would violate the trusted shape
+    -- used by subsequent resumptions.
+    when (intervalFrom < intervalFinalizedThrough) $ do
+      finalizeCoveredRows
+        conn runtime kind interval intervalFrom intervalFinalizedThrough
       upsertRollupCoverage conn $
         coverageRecord
           runtime
           kind
           interval
           intervalFrom
-          intervalTo
+          intervalEnd
+          intervalFinalizedThrough
           (Just publicationGeneration)
           existing
 
@@ -460,10 +487,12 @@ coverageRecord
   -> Integer
   -> Integer
   -> Integer
+  -> Integer
   -> Maybe Integer
   -> Maybe RollupCoverage
   -> RollupCoverage
-coverageRecord runtime kind interval fromTimestamp toTimestamp generation existing =
+coverageRecord
+  runtime kind interval fromTimestamp coverageEnd finalizedThrough generation existing =
   RollupCoverage
     { rcKind = kind
     , rcSeriesId = case kind of PriceRollup -> Just defaultBasketSeriesId; VolumeRollup -> Nothing
@@ -471,8 +500,8 @@ coverageRecord runtime kind interval fromTimestamp toTimestamp generation existi
     , rcReleaseRouter = case kind of PriceRollup -> Nothing; VolumeRollup -> Just $ arReleaseRouter runtime
     , rcIntervalSeconds = interval
     , rcCoverageStart = Just fromTimestamp
-    , rcCoverageEnd = Just toTimestamp
-    , rcFinalizedThrough = Just toTimestamp
+    , rcCoverageEnd = Just coverageEnd
+    , rcFinalizedThrough = Just finalizedThrough
     , rcGeneration = fromMaybe (maybe 1 (max 1 . rcGeneration) existing) generation
     , rcComplete = True
     , rcDerivationVersion = candleDerivationVersion
@@ -481,32 +510,76 @@ coverageRecord runtime kind interval fromTimestamp toTimestamp generation existi
     , rcMaintenanceTo = Nothing
     }
 
-mergeCoverageRange :: Maybe RollupCoverage -> Integer -> Integer -> (Integer, Integer)
+mergeCoverageRange :: Maybe RollupCoverage -> Integer -> Integer -> MergedCoverageRange
 mergeCoverageRange existing fromTimestamp toTimestamp =
-  case trustedCoverageRange existing of
-    Just (oldFrom, oldTo)
-      | oldFrom <= toTimestamp && oldTo >= fromTimestamp ->
-          (min oldFrom fromTimestamp, max oldTo toTimestamp)
-    _ -> (fromTimestamp, toTimestamp)
+  case (existing, trustedCoverageRange existing) of
+    (Just RollupCoverage {rcCoverageEnd = Just oldCoverageEnd}, Just (oldFrom, oldFinalizedThrough))
+      | oldFrom <= toTimestamp && oldFinalizedThrough >= fromTimestamp ->
+          -- Merge each interval against its exact envelope below. The trusted
+          -- read range ends at finalized_through, while coverage_end can carry
+          -- a newer checked/indexed watermark that must never move backward.
+          MergedCoverageRange
+            (min oldFrom fromTimestamp)
+            toTimestamp
+            (max oldCoverageEnd toTimestamp)
+            (max oldFinalizedThrough toTimestamp)
+            True
+    _ ->
+      MergedCoverageRange
+        fromTimestamp
+        toTimestamp
+        toTimestamp
+        toTimestamp
+        False
+
+intervalCoverageEnvelope
+  :: MergedCoverageRange
+  -> Integer
+  -> Maybe RollupCoverage
+  -> (Integer, Integer)
+intervalCoverageEnvelope merged interval existing
+  | mcrMergeTrustedEnvelope merged =
+      case (existing, trustedCoverageRange existing) of
+        ( Just RollupCoverage
+            { rcCoverageEnd = Just coverageEnd
+            , rcFinalizedThrough = Just finalizedThrough
+            }
+          , Just _
+          ) ->
+            ( max coverageEnd alignedPublishedEnd
+            , max finalizedThrough alignedPublishedEnd
+            )
+        _ -> alignedEnvelope
+  | otherwise = alignedEnvelope
+ where
+  alignedPublishedEnd = alignDown (mcrPublishedEnd merged) interval
+  alignedEnvelope =
+    ( alignDown (mcrFallbackCoverageEnd merged) interval
+    , alignDown (mcrFallbackFinalizedThrough merged) interval
+    )
 
 resumeRanges
   :: Connection
   -> AdminRuntime
   -> RollupKind
   -> SourceBounds
-  -> IO [SourceBounds]
+  -> IO [BackfillRange]
 resumeRanges conn runtime kind bounds@SourceBounds {sbFrom, sbTo} = do
   coverage <- getCoverage conn runtime kind 60
   pure $ case trustedCoverageRange coverage of
     Just (coveredFrom, coveredTo)
       | coveredFrom <= sbTo && coveredTo >= sbFrom ->
-            [ bounds {sbFrom = max sbFrom coveredTo}
+            [ BackfillRange
+                (bounds {sbFrom = max sbFrom coveredTo})
+                OldestFirst
             | coveredTo < sbTo
             ]
-              <> [ bounds {sbTo = min sbTo coveredFrom}
+              <> [ BackfillRange
+                    (bounds {sbTo = min sbTo coveredFrom})
+                    NewestFirst
                  | sbFrom < coveredFrom
                  ]
-    _ -> [bounds]
+    _ -> [BackfillRange bounds NewestFirst]
 
 trustedCoverageRange :: Maybe RollupCoverage -> Maybe (Integer, Integer)
 trustedCoverageRange coverage =
@@ -1450,6 +1523,12 @@ newestFirstChunks chunkSeconds SourceBounds {sbFrom, sbTo} = go sbTo
     | otherwise =
         let chunkFrom = max sbFrom $ cursor - chunkSeconds
          in (chunkFrom, cursor) : go chunkFrom
+
+orderedChunks :: Integer -> BackfillRange -> [(Integer, Integer)]
+orderedChunks chunkSeconds BackfillRange {brBounds, brOrder} =
+  case brOrder of
+    OldestFirst -> reverse $ newestFirstChunks chunkSeconds brBounds
+    NewestFirst -> newestFirstChunks chunkSeconds brBounds
 
 alignDown :: Integer -> Integer -> Integer
 alignDown timestamp interval = timestamp - timestamp `mod` interval
