@@ -647,7 +647,9 @@ Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
 Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
 
 Candle intervals are restricted to `60`, `180`, `300`, `900`, `1800`, `3600`,
-and `86400` seconds. Historical candle cursors are positive Unix timestamps
+and `86400` seconds. Intervals and historical candle cursors use their unique
+positive decimal representation: signs, whitespace, and leading zeroes are
+rejected. Historical candle cursors are positive Unix timestamps
 aligned to `interval * 500`; responses are ascending and expose
 `previousCursor`, coverage/finalization watermarks, and `datasetGeneration`.
 Historical pages contain finalized rows only. `volumeUsdc` and `tradeCount` are
@@ -662,9 +664,10 @@ snapshot/volume scan. Oversized requests snap upward to the smallest canonical
 resolution that keeps the response bounded (for example, 30-day minute requests
 use five-minute rollups and one-year minute requests use hourly rollups).
 The route accepts canonical `range` values (`24h`, `7d`, `30d`, or `1y`) and a
-positive decimal `interval`, each exactly once. `includeComponents` may appear
-at most once and must be exactly `true` or `false`; missing, duplicate, unknown,
-or malformed query parameters return `400` before database access.
+canonical positive decimal `interval`, each exactly once. `includeComponents`
+may appear at most once and must be exactly `true` or `false`; missing,
+duplicate, unknown, or malformed query parameters return `400` before database
+access.
 Component-bearing history remains on the legacy source because candle rollups
 do not store per-component point metadata, and is therefore accepted only for
 the UI's bounded `range=24h`, `interval=3600`,
