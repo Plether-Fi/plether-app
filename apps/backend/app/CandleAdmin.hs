@@ -719,6 +719,16 @@ verifyKind conn runtime options kind = do
         "No canonical source range is available for candle verification"
         [field "kind" $ rollupKindName kind]
       pure False
+    Just SourceBounds {sbFrom, sbTo}
+      | not $ hasFullCanonicalRange sbFrom sbTo -> do
+          logError
+            "perps_candle_verification_failed"
+            "Requested range does not contain a full aligned bucket for every canonical interval"
+            [ field "kind" $ rollupKindName kind
+            , field "from_timestamp" sbFrom
+            , field "to_timestamp" sbTo
+            ]
+          pure False
     Just SourceBounds {sbFrom, sbTo} -> do
       coverages <- mapM (getCoverage conn runtime kind) canonicalCandleIntervals
       let relevantGenerations =
@@ -804,6 +814,12 @@ verifyKindValues conn runtime options kind = do
           ]
         pure matches
       pure $ and results
+
+hasFullCanonicalRange :: Integer -> Integer -> Bool
+hasFullCanonicalRange fromTimestamp toTimestamp =
+  all
+    (\interval -> alignUp fromTimestamp interval < alignDown toTimestamp interval)
+    canonicalCandleIntervals
 
 coversRange :: Maybe RollupCoverage -> Integer -> Integer -> Bool
 coversRange _ fromTimestamp toTimestamp | fromTimestamp >= toTimestamp = True

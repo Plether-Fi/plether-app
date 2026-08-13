@@ -400,7 +400,11 @@ Pass criteria:
 
 Start with a bounded recent window so the first useful chart ranges become
 available quickly. Unix timestamps are inclusive at `from_timestamp` and
-exclusive at `to_timestamp`, and must align to whole minutes.
+exclusive at `to_timestamp`, and must align to whole minutes. The first tranche
+must contain at least one fully aligned bucket for every canonical interval.
+Because `86400` is canonical and aligns to UTC midnight, use a range that spans
+at least one complete UTC day; an arbitrary trailing 24-hour window is not
+sufficient.
 
 ```bash
 run_candle_admin sepolia backfill all \
@@ -411,6 +415,17 @@ run_candle_admin sepolia backfill all \
 Extend toward inception in repeated runs. Coverage must only be published for
 contiguous completed chunks. A failed or cancelled task can be rerun with the
 same inputs; range replacement and recomputation are idempotent.
+
+Immediately before dispatch, derive the price upper bound from the latest
+successful `basket_price_watermark_advanced.checked_through` heartbeat and the
+volume upper bound from a certified
+`perps_indexer_progress.indexed_through_timestamp`. The price tranche must
+finish close enough to the live writer watermark that the first post-backfill
+poll remains within `max(300, 2 * PERPS_CANDLE_LATENESS_SECONDS)`; otherwise the
+writer correctly invalidates the newly published coverage with
+`price_watermark_gap`. Use separate price and volume runs when their safe upper
+bounds differ. Re-read both bounds after the run and treat the first live
+heartbeat as part of publication success, not as optional soak evidence.
 
 After each tranche:
 
@@ -423,6 +438,8 @@ run_candle_admin sepolia verify none \
 
 Pass criteria for every canonical interval:
 
+- the interval has a non-empty aligned verification range and an explicit
+  complete coverage row; an empty aligned range is not a successful check;
 - expected and actual non-empty bucket counts match;
 - open, high, low, close, sample count, exact volume numerator, trade count,
   and source-block bounds reconcile with canonical source rows;
@@ -436,6 +453,8 @@ Pass criteria for every canonical interval:
   independent operational checks against worker/indexer logs and RPC/DB
   cursor evidence; `candle-admin verify` reconciles source rows but cannot
   prove those external progress bounds by itself;
+- the first live price heartbeat after publication still reports
+  `coverage_state=complete`, an empty `coverage_error`, and an acceptable lag;
 - no partial tranche is exposed as complete coverage.
 
 ## Gate 5: deterministic reconciliation and soak

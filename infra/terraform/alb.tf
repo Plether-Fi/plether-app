@@ -2,6 +2,7 @@ resource "aws_lb" "api" {
   name               = "plether-${var.environment}"
   internal           = false
   load_balancer_type = "application"
+  idle_timeout       = 75
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
 }

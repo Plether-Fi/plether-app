@@ -177,25 +177,43 @@ resource "aws_cloudwatch_metric_alarm" "rds_io_latency_high" {
   }
 }
 
+resource "aws_cloudwatch_log_metric_filter" "api_foreground_request_duration" {
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  name           = "plether-${var.environment}-api-foreground-request-duration"
+  pattern        = "{ $.event = \"api_foreground_request_completed\" && $.request_class = \"foreground\" && $.duration_ms >= 0 }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  # Deliberately omit route, method, and status dimensions. The rollout gate
+  # needs one environment-wide foreground latency series with bounded cost and
+  # cardinality; normalized route/status remain available in the source logs.
+  metric_transformation {
+    name      = "ApiForegroundRequestDurationMilliseconds-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "$.duration_ms"
+    unit      = "Milliseconds"
+  }
+}
+
+# The Terraform resource address is retained for state continuity even though
+# the alarm now gates only structured foreground completion events. Raw
+# TargetResponseTime remains queryable in AWS/ApplicationELB for diagnosis, but
+# is intentionally not alarmed because it includes expected order long-polls.
 resource "aws_cloudwatch_metric_alarm" "alb_target_latency_high" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
   alarm_name          = "plether-${var.environment}-api-p95-latency-high"
-  alarm_description   = "API target p95 latency is above the candle rollout SLO."
+  alarm_description   = "Foreground API request p95 completion latency is above the 750ms candle rollout SLO. Expected long polls and health checks are excluded."
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
-  metric_name         = "TargetResponseTime"
-  namespace           = "AWS/ApplicationELB"
+  metric_name         = aws_cloudwatch_log_metric_filter.api_foreground_request_duration.metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.api_foreground_request_duration.metric_transformation[0].namespace
   period              = 300
   extended_statistic  = "p95"
-  threshold           = 0.75
+  threshold           = 750
+  unit                = "Milliseconds"
   treat_missing_data  = "notBreaching"
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
-
-  dimensions = {
-    LoadBalancer = aws_lb.api.arn_suffix
-    TargetGroup  = aws_lb_target_group.api.arn_suffix
-  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
@@ -216,6 +234,26 @@ resource "aws_cloudwatch_metric_alarm" "alb_target_5xx" {
   dimensions = {
     LoadBalancer = aws_lb.api.arn_suffix
     TargetGroup  = aws_lb_target_group.api.arn_suffix
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  alarm_name          = "plether-${var.environment}-api-alb-5xx"
+  alarm_description   = "The API load balancer generated a 5xx response before the target could respond successfully."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = "HTTPCode_ELB_5XX_Count"
+  namespace           = "AWS/ApplicationELB"
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+
+  dimensions = {
+    LoadBalancer = aws_lb.api.arn_suffix
   }
 }
 
