@@ -92,6 +92,7 @@ import Plether.Types.Perps
   , hasExactBasketCandleQueryKeys
   , isBasketCandleCursorWithinFutureBound
   , isCanonicalBasketCandleInterval
+  , parseCanonicalPositiveInteger
   , parseBasketHistoryQueryParams
   )
 import Plether.Types (ApiError)
@@ -414,7 +415,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
         now <- floor <$> liftIO getPOSIXTime
         mInterval <- queryParamMaybe "interval"
         mCursor <- queryParamMaybe "cursor"
-        case (mInterval >>= parsePositiveInteger, mCursor >>= parsePositiveInteger, mPool) of
+        case (mInterval >>= parseCanonicalPositiveInteger, mCursor >>= parseCanonicalPositiveInteger, mPool) of
           (Just interval, Just cursor, Just pool)
             | not (isCanonicalBasketCandleInterval interval) ->
                 handleError $
@@ -442,9 +443,9 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
                   Right fetch ->
                     handleBasketCandleResult handlerStartedAt "historical" interval fetch
           (Nothing, _, _) ->
-            handleError $ E.invalidAmount "interval must be a positive integer"
+            handleError $ E.invalidAmount "interval must be a canonical positive integer"
           (_, Nothing, _) ->
-            handleError $ E.invalidAmount "cursor must be a positive integer"
+            handleError $ E.invalidAmount "cursor must be a canonical positive integer"
           (_, _, Nothing) ->
             handleServiceUnavailable $
               E.internalError "DATABASE_URL is not configured; perps basket candles are unavailable"
@@ -458,7 +459,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
           E.invalidAmount "exactly one interval query parameter is required"
       else do
         mInterval <- queryParamMaybe "interval"
-        case (mInterval >>= parsePositiveInteger, mPool) of
+        case (mInterval >>= parseCanonicalPositiveInteger, mPool) of
           (Just interval, Just pool)
             | not (isCanonicalBasketCandleInterval interval) ->
                 handleError $
@@ -479,7 +480,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
                   Right fetch ->
                     handleBasketCandleResult handlerStartedAt "current" interval fetch
           (Nothing, _) ->
-            handleError $ E.invalidAmount "interval must be a positive integer"
+            handleError $ E.invalidAmount "interval must be a canonical positive integer"
           (_, Nothing) ->
             handleServiceUnavailable $
               E.internalError "DATABASE_URL is not configured; current perps basket candle is unavailable"

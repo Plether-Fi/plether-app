@@ -12,6 +12,7 @@ module Plether.Types.Perps
   , isAlignedBasketCandleCursor
   , isBasketCandleCursorWithinFutureBound
   , hasExactBasketCandleQueryKeys
+  , parseCanonicalPositiveInteger
   , parseBasketHistoryQueryParams
   , BasketLatest (..)
   , PythUpdateResponse (..)
@@ -68,6 +69,21 @@ hasExactBasketCandleQueryKeys required actual =
     && all (`elem` required) actual
   where
     count key = length . filter (== key)
+
+-- | Parse the unique decimal representation of a positive integer. Public
+-- candle URLs use the raw query text in cache keys, so accepting whitespace,
+-- signs, or leading zeroes would let multiple spellings reach the same DB
+-- query while bypassing the canonical request contract.
+parseCanonicalPositiveInteger :: Text -> Maybe Integer
+parseCanonicalPositiveInteger value =
+  case T.uncons value of
+    Just (first, rest)
+      | first >= '1'
+      , first <= '9'
+      , T.compareLength value 20 /= GT
+      , T.all (\c -> c >= '0' && c <= '9') rest ->
+          Just $ read $ T.unpack value
+    _ -> Nothing
 
 -- | Public candle fields intentionally remain in the canonical/raw oracle
 -- domain. Consumers applying a decreasing display transform must swap high
@@ -206,25 +222,15 @@ parseBasketHistoryQueryParams queryKeys mRange mInterval mIncludeComponents = do
       Just value | value `elem` ["24h", "7d", "30d", "1y"] -> Right value
       _ -> Left "range must be one of 24h, 7d, 30d, or 1y"
   interval <-
-    case mInterval >>= readPositiveInteger of
+    case mInterval >>= parseCanonicalPositiveInteger of
       Just value -> Right value
-      Nothing -> Left "interval must be a positive integer"
+      Nothing -> Left "interval must be a canonical positive integer"
   Right
     BasketHistoryParams
       { bhpRange = range
       , bhpIntervalSeconds = interval
       , bhpIncludeComponents = includeComponents
       }
- where
-  readPositiveInteger value =
-    let stripped = T.strip value
-     in if stripped == value
-          && not (T.null value)
-          && T.all (\c -> c >= '0' && c <= '9') value
-          then
-            let parsed = read $ T.unpack value
-             in if parsed > 0 then Just parsed else Nothing
-          else Nothing
 
 defaultBasketHistoryParams :: BasketHistoryParams
 defaultBasketHistoryParams =

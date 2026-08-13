@@ -13,6 +13,7 @@ import Plether.Types.Perps
   , hasExactBasketCandleQueryKeys
   , isAlignedBasketCandleCursor
   , isBasketCandleCursorWithinFutureBound
+  , parseCanonicalPositiveInteger
   , parseBasketHistoryQueryParams
   )
 import Test.Hspec
@@ -81,11 +82,11 @@ spec = do
               `shouldSatisfy` isLeft
       mapM_ rejects [Nothing, Just "", Just "week", Just "30D", Just " 30d"]
 
-    it "rejects missing, zero, signed, fractional, padded, and nonnumeric intervals" $ do
+    it "rejects missing, zero, leading-zero, signed, fractional, padded, and nonnumeric intervals" $ do
       let rejects interval =
             parseBasketHistoryQueryParams ["range", "interval"] (Just "30d") interval Nothing
               `shouldSatisfy` isLeft
-      mapM_ rejects [Nothing, Just "", Just "0", Just "-1", Just "+60", Just "60.0", Just " 60", Just "60 ", Just "abc"]
+      mapM_ rejects [Nothing, Just "", Just "0", Just "00", Just "03600", Just "-1", Just "+60", Just "60.0", Just " 60", Just "60 ", Just "abc"]
 
     it "rejects missing or noncanonical component booleans" $ do
       let rejects value =
@@ -113,6 +114,32 @@ spec = do
           ]
 
   describe "basket candle pagination" $ do
+    it "accepts only canonical positive decimal query values" $ do
+      parseCanonicalPositiveInteger "3600" `shouldBe` Just 3600
+      parseCanonicalPositiveInteger "1787400000" `shouldBe` Just 1_787_400_000
+      parseCanonicalPositiveInteger "12345678901234567890"
+        `shouldBe` Just 12_345_678_901_234_567_890
+      mapM_
+        (\value -> parseCanonicalPositiveInteger value `shouldBe` Nothing)
+        [ ""
+        , "0"
+        , "00"
+        , "03600"
+        , "+3600"
+        , "-3600"
+        , "3600.0"
+        , "36e2"
+        , "3_600"
+        , "3,600"
+        , " 3600"
+        , "3600 "
+        , "\t3600"
+        , "3600\t"
+        , "３６００"
+        , "seconds"
+        , "123456789012345678901"
+        ]
+
     it "supports only the seven canonical resolutions" $ do
       canonicalBasketCandleIntervals
         `shouldBe` [60, 180, 300, 900, 1800, 3600, 86_400]
