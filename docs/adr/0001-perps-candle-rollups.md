@@ -270,8 +270,11 @@ workflow and backend deployment share environment-specific mutation
 concurrency; the workflow also uses protected GitHub environments. Inputs are
 strictly allowlisted, logged without credentials, and require an explicit
 environment confirmation phrase. Both `candle-admin-sepolia` and
-`candle-admin-mainnet` must require an independent reviewer, prevent
-self-review, disable administrator bypass, and permit only `master`.
+`candle-admin-mainnet` must have at least one required reviewer, require an
+explicit approval, disable administrator bypass, and permit only `master`. The
+supervised Sepolia rollout may use its sole administrator's self-approval while
+no independent reviewer is available, so `prevent_self_review` is false there;
+mainnet still requires an independent reviewer and sets it to true.
 The first rollout follows the repository's existing environment-scoped AWS
 credential convention with a commit-pinned credential action. Migrating this
 privileged workflow to a narrowly scoped GitHub OIDC role is a follow-up once

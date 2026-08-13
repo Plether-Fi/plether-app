@@ -80,8 +80,9 @@ jobs:
     name: Run ${{ inputs.action }} on ${{ inputs.environment }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
-    # Configure required reviewers, prevent self-review, and disable
-    # administrator bypass for both candle-admin environments.
+    # Both environments require an explicit approval and disable administrator
+    # bypass. Sepolia may be self-approved during the supervised rollout;
+    # mainnet still requires an independent reviewer and prevents self-review.
     environment: candle-admin-${{ inputs.environment }}
     permissions:
       actions: read
@@ -114,23 +115,23 @@ jobs:
             exit 1
           fi
 
-          reviewer_count=$(jq \
-            '[.protection_rules[]?
-              | select(.type == "required_reviewers")
-              | .reviewers[]?] | length' \
-            "$environment_file")
-          if [ "$reviewer_count" -lt 1 ]; then
-            echo "::error title=Unprotected admin environment::$ADMIN_ENVIRONMENT must require at least one reviewer before this workflow may mutate the database."
-            exit 1
-          fi
+          case "$TARGET_ENV" in
+            sepolia) expected_prevent_self_review=false ;;
+            mainnet) expected_prevent_self_review=true ;;
+            *)
+              echo "::error title=Unsupported admin environment::The target environment is not allowlisted."
+              exit 1
+              ;;
+          esac
 
           if ! jq --exit-status \
-            'any(.protection_rules[]?;
-              .type == "required_reviewers"
-              and .prevent_self_review == true
-              and (.reviewers | length) > 0)' \
+            --argjson expected "$expected_prevent_self_review" \
+            '[.protection_rules[]? | select(.type == "required_reviewers")]
+             | length == 1
+               and .[0].prevent_self_review == $expected
+               and (.[0].reviewers | length) > 0' \
             "$environment_file" >/dev/null; then
-            echo "::error title=Self-review is allowed::$ADMIN_ENVIRONMENT must enable prevent_self_review on its required-reviewer rule."
+            echo "::error title=Unsafe reviewer policy::$ADMIN_ENVIRONMENT must have one required-reviewer rule with prevent_self_review=$expected_prevent_self_review and at least one reviewer."
             exit 1
           fi
 
@@ -162,7 +163,11 @@ jobs:
             exit 1
           fi
 
-          echo "$ADMIN_ENVIRONMENT requires an independent reviewer, disabled administrator bypass, and master-only deployment."
+          if [ "$TARGET_ENV" = "mainnet" ]; then
+            echo "$ADMIN_ENVIRONMENT requires an independent reviewer, disabled administrator bypass, and master-only deployment."
+          else
+            echo "$ADMIN_ENVIRONMENT requires an explicit approval, disabled administrator bypass, and master-only deployment; supervised Sepolia self-approval is allowed."
+          fi
 
       - name: Validate operation
         env:
