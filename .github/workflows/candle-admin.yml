@@ -21,6 +21,7 @@ on:
           - status
           - verify
           - repair
+          - replay
       scope:
         description: Required for backfill/repair; use none for other actions
         required: true
@@ -39,6 +40,14 @@ on:
         description: Optional exclusive Unix timestamp; required for repair
         required: false
         type: string
+      from_block:
+        description: Inclusive block number; required only for Sepolia replay
+        required: false
+        type: string
+      to_block:
+        description: Inclusive block number; required only for Sepolia replay (at most 5000 blocks)
+        required: false
+        type: string
       chunk_seconds:
         description: Backfill/repair transaction chunk size (3600-604800)
         required: true
@@ -50,9 +59,8 @@ on:
         default: '1800000'
         type: string
       lock_timeout_ms:
-        description: PostgreSQL lock timeout (100-60000)
-        required: true
-        default: '5000'
+        description: Optional PostgreSQL lock timeout override (100-60000; defaults to 60000 for migrate and 5000 otherwise)
+        required: false
         type: string
       throttle_ms:
         description: Delay between committed chunks (0-60000)
@@ -66,20 +74,20 @@ on:
 
 concurrency:
   # Shared with deploy-backend.yml so a task-definition rollout cannot change
-  # write mode while a backfill or repair is reconciling canonical sources.
+  # write mode while backfill, repair, or replay is reconciling canonical sources.
   group: plether-backend-mutation-${{ inputs.environment }}
   cancel-in-progress: false
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
   TARGET_ENV: ${{ inputs.environment }}
-  ECS_CONTAINER: plether-api
+  ECS_CONTAINER: ${{ inputs.action == 'replay' && 'plether-perps-indexer' || 'plether-api' }}
 
 jobs:
   run:
     name: Run ${{ inputs.action }} on ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: ${{ inputs.action == 'replay' && 90 || 360 }}
     # Both environments require an explicit approval and disable administrator
     # bypass. Sepolia may be self-approved during the supervised rollout;
     # mainnet still requires an independent reviewer and prevents self-review.
@@ -175,6 +183,8 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          FROM_BLOCK: ${{ inputs.from_block }}
+          TO_BLOCK: ${{ inputs.to_block }}
           CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
           STATEMENT_TIMEOUT_MS: ${{ inputs.statement_timeout_ms }}
           LOCK_TIMEOUT_MS: ${{ inputs.lock_timeout_ms }}
@@ -204,7 +214,7 @@ jobs:
                 exit 1
               fi
               ;;
-            estimate|migrate|status|verify)
+            estimate|migrate|status|verify|replay)
               if [ "$SCOPE" != "none" ]; then
                 echo "::error title=Unexpected scope::Use none for $ACTION."
                 exit 1
@@ -244,7 +254,9 @@ jobs:
           validate_optional_timestamp to_timestamp "$TO_TIMESTAMP"
           validate_integer chunk_seconds "$CHUNK_SECONDS" 3600 604800
           validate_integer statement_timeout_ms "$STATEMENT_TIMEOUT_MS" 1000 1800000
-          validate_integer lock_timeout_ms "$LOCK_TIMEOUT_MS" 100 60000
+          if [ -n "$LOCK_TIMEOUT_MS" ]; then
+            validate_integer lock_timeout_ms "$LOCK_TIMEOUT_MS" 100 60000
+          fi
           validate_integer throttle_ms "$THROTTLE_MS" 0 60000
 
           if (( 10#$CHUNK_SECONDS % 60 != 0 )); then
@@ -270,6 +282,31 @@ jobs:
             exit 1
           fi
 
+          if [ "$ACTION" = "replay" ]; then
+            if [ "$TARGET_ENV" != "sepolia" ] || \
+               [ "$CONFIRMATION" != "RUN REPLAY ON SEPOLIA" ]; then
+              echo "::error title=Replay is Sepolia-only::Replay requires the exact confirmation phrase RUN REPLAY ON SEPOLIA."
+              exit 1
+            fi
+            if [ -n "$FROM_TIMESTAMP" ] || [ -n "$TO_TIMESTAMP" ]; then
+              echo "::error title=Unexpected timestamp range::Replay accepts block bounds only; leave both timestamp inputs blank."
+              exit 1
+            fi
+            validate_integer from_block "$FROM_BLOCK" 0 4294967295
+            validate_integer to_block "$TO_BLOCK" 0 4294967295
+            if (( 10#$FROM_BLOCK > 10#$TO_BLOCK )); then
+              echo "::error title=Invalid replay range::from_block must be less than or equal to to_block."
+              exit 1
+            fi
+            if (( 10#$TO_BLOCK - 10#$FROM_BLOCK + 1 > 5000 )); then
+              echo "::error title=Replay range too large::The inclusive replay range may contain at most 5000 blocks."
+              exit 1
+            fi
+          elif [ -n "$FROM_BLOCK" ] || [ -n "$TO_BLOCK" ]; then
+            echo "::error title=Unexpected block range::from_block and to_block are accepted only for replay."
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
@@ -278,8 +315,10 @@ jobs:
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Require stable dual-write workers
-        if: inputs.action == 'backfill' || inputs.action == 'repair'
+        id: writers
+        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'replay'
         env:
+          ACTION: ${{ inputs.action }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
@@ -339,7 +378,7 @@ jobs:
                   | .value]]
                | length == 1 and .[0] == ["dual"]' \
               "$task_definition_file" >/dev/null; then
-              echo "::error title=Dual writes required::$label must have exactly PERPS_CANDLE_WRITE_MODE=dual before backfill or repair."
+              echo "::error title=Dual writes required::$label must have exactly PERPS_CANDLE_WRITE_MODE=dual before $ACTION."
               exit 1
             fi
 
@@ -386,36 +425,75 @@ jobs:
           indexer_desired=$(jq -r \
             '[.services[]? | select(.serviceName == "plether-perps-indexer") | .desiredCount][0] // 0' \
             "$services_file")
+          consolidated_running=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-workers") | .runningCount][0] // 0' \
+            "$services_file")
+          consolidated_pending=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-workers") | .pendingCount][0] // 0' \
+            "$services_file")
+          indexer_running=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-perps-indexer") | .runningCount][0] // 0' \
+            "$services_file")
+          indexer_pending=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-perps-indexer") | .pendingCount][0] // 0' \
+            "$services_file")
           if [[ ! "$consolidated_desired" =~ ^[0-9]+$ \
              || ! "$basket_desired" =~ ^[0-9]+$ \
-             || ! "$indexer_desired" =~ ^[0-9]+$ ]]; then
+             || ! "$indexer_desired" =~ ^[0-9]+$ \
+             || ! "$consolidated_running" =~ ^[0-9]+$ \
+             || ! "$consolidated_pending" =~ ^[0-9]+$ \
+             || ! "$indexer_running" =~ ^[0-9]+$ \
+             || ! "$indexer_pending" =~ ^[0-9]+$ ]]; then
             echo "::error title=Invalid worker topology::Could not determine the candle-writer service layout."
             exit 1
           fi
 
-          if (( consolidated_desired > 0 )); then
-            validate_service_container plether-workers plether-basket-worker "Consolidated basket writer"
-            validate_service_container plether-workers plether-perps-indexer "Consolidated volume writer"
+          if [ "$ACTION" = "replay" ]; then
+            if (( (consolidated_desired > 0) == (indexer_desired > 0) )); then
+              echo "::error title=Ambiguous replay topology::Replay requires exactly one desired Perps indexer topology: consolidated XOR standalone."
+              exit 1
+            fi
+            if (( consolidated_desired > 0 )); then
+              if (( indexer_desired != 0 || indexer_running != 0 || indexer_pending != 0 )); then
+                echo "::error title=Overlapping replay topology::The inactive standalone indexer must have zero desired, running, and pending tasks."
+                exit 1
+              fi
+              validate_service_container plether-workers plether-perps-indexer "Consolidated volume writer"
+              echo "replay_service=plether-workers" >> "$GITHUB_OUTPUT"
+            else
+              if (( consolidated_desired != 0 || consolidated_running != 0 || consolidated_pending != 0 )); then
+                echo "::error title=Overlapping replay topology::The inactive consolidated workers service must have zero desired, running, and pending tasks."
+                exit 1
+              fi
+              validate_service_container plether-perps-indexer plether-perps-indexer "Standalone volume writer"
+              echo "replay_service=plether-perps-indexer" >> "$GITHUB_OUTPUT"
+            fi
+            echo "Validated exactly one stable dual-write Perps indexer topology for replay."
+          else
+            if (( consolidated_desired > 0 )); then
+              validate_service_container plether-workers plether-basket-worker "Consolidated basket writer"
+              validate_service_container plether-workers plether-perps-indexer "Consolidated volume writer"
+            fi
+            if (( basket_desired > 0 )); then
+              validate_service_container plether-basket-worker plether-basket-worker "Basket writer"
+            fi
+            if (( indexer_desired > 0 )); then
+              validate_service_container plether-perps-indexer plether-perps-indexer "Volume writer"
+            fi
+            if (( consolidated_desired == 0 && basket_desired == 0 )); then
+              echo "::error title=Missing basket writer::At least one consolidated or standalone basket writer must be desired."
+              exit 1
+            fi
+            if (( consolidated_desired == 0 && indexer_desired == 0 )); then
+              echo "::error title=Missing volume writer::At least one consolidated or standalone Perps indexer must be desired."
+              exit 1
+            fi
+            echo "Validated every desired basket and volume writer with one stable dual-write deployment."
           fi
-          if (( basket_desired > 0 )); then
-            validate_service_container plether-basket-worker plether-basket-worker "Basket writer"
-          fi
-          if (( indexer_desired > 0 )); then
-            validate_service_container plether-perps-indexer plether-perps-indexer "Volume writer"
-          fi
-          if (( consolidated_desired == 0 && basket_desired == 0 )); then
-            echo "::error title=Missing basket writer::At least one consolidated or standalone basket writer must be desired."
-            exit 1
-          fi
-          if (( consolidated_desired == 0 && indexer_desired == 0 )); then
-            echo "::error title=Missing volume writer::At least one consolidated or standalone Perps indexer must be desired."
-            exit 1
-          fi
-
-          echo "Validated every desired basket and volume writer with one stable dual-write deployment."
 
       - name: Resolve deployed task and network
         id: target
+        if: inputs.action != 'replay'
         env:
           AWS_PAGER: ''
         run: |
@@ -484,12 +562,18 @@ jobs:
             > "$task_definition_file"
           if ! jq --exit-status \
             --arg container "$ECS_CONTAINER" \
-            '.containerDefinitions
-             | [.[] | select(.name == $container) | .image]
-             | length == 1
-               and (.[0] | type == "string")
-               and (.[0] | test(":(latest|master)$") | not)
-               and (.[0] | test("(:[0-9a-f]{40}|@sha256:[0-9a-f]{64})$"))' \
+            --arg environment "$TARGET_ENV" \
+            '([.containerDefinitions[]
+               | select(.name == $container)
+               | .image]
+              | length == 1
+                and (.[0] | type == "string")
+                and (.[0] | test(":(latest|master)$") | not)
+                and (.[0] | test("(:[0-9a-f]{40}|@sha256:[0-9a-f]{64})$")))
+             and (.taskRoleArn
+                  | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-task$"))
+             and (.executionRoleArn
+                  | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-execution$"))' \
             "$task_definition_file" >/dev/null; then
             echo "::error title=Immutable backend image required::The stable task definition must contain one $ECS_CONTAINER image pinned by commit SHA or digest."
             exit 1
@@ -664,6 +748,456 @@ jobs:
           echo "network_file=$network_file" >> "$GITHUB_OUTPUT"
           echo "Registered a temporary task definition pinned to the stable $TARGET_ENV API image digest."
 
+      - name: Resolve deployed indexer replay task and network
+        id: replay_target
+        if: inputs.action == 'replay'
+        env:
+          REPLAY_SERVICE: ${{ steps.writers.outputs.replay_service }}
+          AWS_PAGER: ''
+        run: |
+          set -euo pipefail
+          umask 077
+
+          cluster="plether-$TARGET_ENV"
+          service="$REPLAY_SERVICE"
+          service_file="$RUNNER_TEMP/candle-admin-service.json"
+          network_file="$RUNNER_TEMP/candle-admin-network.json"
+          task_definition_file="$RUNNER_TEMP/candle-admin-task-definition.json"
+          running_tasks_file="$RUNNER_TEMP/candle-admin-running-tasks.json"
+          registration_file="$RUNNER_TEMP/candle-admin-task-definition-registration.json"
+          registered_task_definition_file="$RUNNER_TEMP/candle-admin-registered-task-definition.json"
+          registered_task_definition_arn_file="$RUNNER_TEMP/candle-admin-registered-task-definition-arn"
+          topology_file="$RUNNER_TEMP/candle-admin-replay-topology.json"
+          firelens_container="otel-log-router"
+
+          case "$service" in
+            plether-workers|plether-perps-indexer) ;;
+            *)
+              echo "::error title=Unsafe replay service::The validated Perps indexer topology did not resolve to an allowlisted service."
+              exit 1
+              ;;
+          esac
+
+          # Terraform does not participate in the workflow concurrency group.
+          # Re-read both possible indexer services immediately before deriving
+          # the task and require the inactive topology to be fully drained.
+          aws ecs describe-services \
+            --cluster "$cluster" \
+            --services plether-workers plether-perps-indexer \
+            > "$topology_file"
+          if ! jq --exit-status \
+            --arg selected "$service" \
+            '([.failures[]?
+               | select((.arn | endswith("/" + $selected))
+                        or (.reason != "MISSING"))]
+              | length == 0)
+             and ([.services[] | select(.serviceName == $selected)]
+                  | length == 1)
+             and ([.services[] | select(.serviceName == $selected)]
+                  | length == 1 and .[0].desiredCount > 0)
+             and ([.services[]
+                   | select((.serviceName == "plether-workers"
+                             or .serviceName == "plether-perps-indexer")
+                            and .serviceName != $selected)]
+                  | length <= 1
+                    and all(.desiredCount == 0
+                            and .runningCount == 0
+                            and .pendingCount == 0))' \
+            "$topology_file" >/dev/null; then
+            echo "::error title=Overlapping replay topology::Replay requires one desired indexer topology and a fully drained inactive topology immediately before task derivation."
+            exit 1
+          fi
+
+          # Revalidate the selected writer after the dual-write preflight. The
+          # shared mutation concurrency prevents a backend deployment from
+          # changing this topology after the workflow starts.
+          if ! aws ecs wait services-stable \
+            --cluster "$cluster" \
+            --services "$service"; then
+            echo "::error title=Indexer rollout is not stable::Wait for the $TARGET_ENV Perps indexer deployment to finish before replay."
+            exit 1
+          fi
+
+          aws ecs describe-services \
+            --cluster "$cluster" \
+            --services "$service" \
+            > "$service_file"
+          if ! jq --exit-status \
+            '(.failures | length) == 0
+             and (.services | length) == 1
+             and .services[0].status == "ACTIVE"
+             and .services[0].desiredCount > 0
+             and .services[0].runningCount == .services[0].desiredCount
+             and .services[0].pendingCount == 0
+             and (.services[0].deployments | length) == 1
+             and .services[0].deployments[0].status == "PRIMARY"
+             and (.services[0].deployments[0].rolloutState // "COMPLETED") == "COMPLETED"
+             and (.services[0].taskDefinition | type == "string")
+             and (.services[0].taskDefinition | length) > 0' \
+            "$service_file" >/dev/null; then
+            echo "::error title=Indexer service unavailable::The selected Perps indexer service is not one stable deployment."
+            exit 1
+          fi
+
+          task_definition=$(jq -r '.services[0].taskDefinition' "$service_file")
+          jq --exit-status \
+            '.services[0].networkConfiguration.awsvpcConfiguration
+             | {awsvpcConfiguration: {
+                 subnets: .subnets,
+                 securityGroups: .securityGroups,
+                 assignPublicIp: (.assignPublicIp // "DISABLED")
+               }}
+             | select((.awsvpcConfiguration.subnets | length) > 0)
+             | select((.awsvpcConfiguration.securityGroups | length) > 0)' \
+            "$service_file" \
+            > "$network_file"
+
+          aws ecs describe-task-definition \
+            --task-definition "$task_definition" \
+            --query taskDefinition \
+            > "$task_definition_file"
+
+          if ! jq --exit-status \
+            --arg container "$ECS_CONTAINER" \
+            --arg firelens "$firelens_container" \
+            --arg environment "$TARGET_ENV" \
+            '
+              def selected($name): $name == $container or $name == $firelens;
+              def dependency_names:
+                [(.dependsOn // [])[]?.containerName]
+                + [(.volumesFrom // [])[]?.sourceContainer]
+                + [(.links // [])[]? | split(":")[0]];
+              (.containerDefinitions | [.[] | select(.name == $container)] | length == 1)
+              and (.containerDefinitions | [.[] | select(.name == $firelens)] | length == 1)
+              and ([.containerDefinitions[]
+                    | select(.firelensConfiguration != null)
+                    | .name] == [$firelens])
+              and ([.containerDefinitions[]
+                    | select(.name == $container)
+                    | .essential] == [true])
+              and ([.containerDefinitions[]
+                    | select(.name == $container)
+                    | .logConfiguration.logDriver] == ["awsfirelens"])
+              and ([.containerDefinitions[]
+                    | select(.name == $firelens)
+                    | .essential] == [true])
+              and ([.containerDefinitions[]
+                    | select(.name == $firelens)
+                    | .firelensConfiguration.type] == ["fluentbit"])
+              and ([.containerDefinitions[]
+                    | select(.name == $container)
+                    | [(.environment // [])[]?
+                       | select(.name == "PERPS_CANDLE_WRITE_MODE")
+                       | .value]] == [["dual"]])
+              and ([.containerDefinitions[]
+                    | select(.name == $container)
+                    | [(.environment // [])[]?
+                       | select(.name == "DEPLOYMENT_ENVIRONMENT")
+                       | .value]] == [[$environment]])
+              and ([.containerDefinitions[]
+                    | select(selected(.name))
+                    | dependency_names[]]
+                   | all(selected(.)))
+              and ((.proxyConfiguration // null) as $proxy
+                   | $proxy == null
+                     or ($proxy.containerName | selected(.)))
+              and ([.containerDefinitions[]
+                    | select(.name == $container)
+                    | .image]
+                   | length == 1
+                     and (.[0] | type == "string")
+                     and (.[0] | test(":(latest|master)$") | not)
+                     and (.[0] | test("(:[0-9a-f]{40}|@sha256:[0-9a-f]{64})$")))
+              and (.taskRoleArn
+                   | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-task$"))
+              and (.executionRoleArn
+                   | test("^arn:(aws|aws-us-gov|aws-cn):iam::[0-9]{12}:role/plether-" + $environment + "-ecs-execution$"))
+            ' \
+            "$task_definition_file" >/dev/null; then
+            echo "::error title=Unsafe replay task definition::Replay requires one dual-write Perps indexer, its exact FireLens sidecar, the target environment marker, an immutable application image, and no dependency on excluded containers."
+            exit 1
+          fi
+
+          mapfile -t running_task_arns < <(aws ecs list-tasks \
+            --cluster "$cluster" \
+            --service-name "$service" \
+            --desired-status RUNNING \
+            --query taskArns \
+            --output text | tr '\t' '\n' | sed '/^$/d')
+          if [ "${#running_task_arns[@]}" -eq 0 ]; then
+            echo "::error title=Running indexer task unavailable::Cannot pin replay to the deployed Perps indexer image digest."
+            exit 1
+          fi
+
+          aws ecs describe-tasks \
+            --cluster "$cluster" \
+            --tasks "${running_task_arns[@]}" \
+            > "$running_tasks_file"
+          if ! jq --exit-status \
+            --arg task_definition "$task_definition" \
+            --arg container "$ECS_CONTAINER" \
+            --arg firelens "$firelens_container" \
+            '(.failures | length) == 0
+             and (.tasks | length) > 0
+             and ([.tasks[] | .taskDefinitionArn == $task_definition] | all)
+             and ([.tasks[]
+                   | [.containers[] | select(.name == $container)]
+                   | length == 1] | all)
+             and ([.tasks[]
+                   | [.containers[] | select(.name == $firelens)]
+                   | length == 1] | all)
+             and ([.tasks[]
+                   | [.containers[] | select(.name == $container) | .imageDigest]
+                   | (length == 1
+                      and (.[0] | type == "string"
+                                   and test("^sha256:[0-9a-f]{64}$")))] | all)
+             and ([.tasks[]
+                   | [.containers[]
+                      | select(.name == $container)
+                      | .imageDigest][0]]
+                  | unique | length == 1)
+             and ([.tasks[]
+                   | [.containers[] | select(.name == $firelens) | .imageDigest]
+                   | (length == 1
+                      and (.[0] | type == "string"
+                                   and test("^sha256:[0-9a-f]{64}$")))] | all)
+             and ([.tasks[]
+                   | [.containers[]
+                      | select(.name == $firelens)
+                      | .imageDigest][0]]
+                  | unique | length == 1)' \
+            "$running_tasks_file" >/dev/null; then
+            echo "::error title=Indexer image digest unavailable::Stable writer tasks did not agree on one deployed Perps indexer image digest."
+            exit 1
+          fi
+
+          source_image=$(jq -r \
+            --arg container "$ECS_CONTAINER" \
+            '[.containerDefinitions[] | select(.name == $container) | .image][0]' \
+            "$task_definition_file")
+          image_repository=$(jq -nr \
+            --arg image "$source_image" \
+            '$image
+             | sub("@sha256:[0-9a-f]{64}$"; "")
+             | sub(":[^/:]+$"; "")')
+          image_digest=$(jq -r \
+            --arg container "$ECS_CONTAINER" \
+            '[.tasks[]
+              | [.containers[]
+                 | select(.name == $container)
+                 | .imageDigest][0]][0]' \
+            "$running_tasks_file")
+          source_firelens_image=$(jq -r \
+            --arg firelens "$firelens_container" \
+            '[.containerDefinitions[] | select(.name == $firelens) | .image][0]' \
+            "$task_definition_file")
+          firelens_image_repository=$(jq -nr \
+            --arg image "$source_firelens_image" \
+            '$image
+             | sub("@sha256:[0-9a-f]{64}$"; "")
+             | sub(":[^/:]+$"; "")')
+          firelens_image_digest=$(jq -r \
+            --arg firelens "$firelens_container" \
+            '[.tasks[]
+              | [.containers[]
+                 | select(.name == $firelens)
+                 | .imageDigest][0]][0]' \
+            "$running_tasks_file")
+          if [[ ! "$image_repository" =~ ^[^[:space:]]+/[^[:space:]@]+$ ]] || \
+             [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]] || \
+             [[ ! "$firelens_image_repository" =~ ^[^[:space:]]+/[^[:space:]@]+$ ]] || \
+             [[ ! "$firelens_image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error title=Invalid replay image identity::Could not derive repositories and unanimous digests for both the stable indexer and FireLens sidecar."
+            exit 1
+          fi
+
+          if ! jq --exit-status \
+            --arg container "$ECS_CONTAINER" \
+            --arg repository "$image_repository" \
+            '
+              def repository:
+                sub("@sha256:[0-9a-f]{64}$"; "")
+                | sub(":[^/:]+$"; "");
+              [.tasks[]
+                | [.containers[] | select(.name == $container) | .image][0]
+                | repository]
+              | length > 0 and all(. == $repository)
+            ' \
+            "$running_tasks_file" >/dev/null; then
+            echo "::error title=Indexer image repository mismatch::Stable writer tasks did not agree with the selected task definition's indexer repository."
+            exit 1
+          fi
+
+          if ! jq --exit-status \
+            --arg firelens "$firelens_container" \
+            --arg repository "$firelens_image_repository" \
+            '
+              def repository:
+                sub("@sha256:[0-9a-f]{64}$"; "")
+                | sub(":[^/:]+$"; "");
+              [.tasks[]
+                | [.containers[] | select(.name == $firelens) | .image][0]
+                | repository]
+              | length > 0 and all(. == $repository)
+            ' \
+            "$running_tasks_file" >/dev/null; then
+            echo "::error title=FireLens image repository mismatch::Stable writer tasks did not agree with the selected task definition's FireLens repository."
+            exit 1
+          fi
+
+          pinned_image="$image_repository@$image_digest"
+          pinned_firelens_image="$firelens_image_repository@$firelens_image_digest"
+          temporary_family="plether-$TARGET_ENV-candle-admin"
+          jq \
+            --arg family "$temporary_family" \
+            --arg container "$ECS_CONTAINER" \
+            --arg firelens "$firelens_container" \
+            --arg image "$pinned_image" \
+            --arg firelens_image "$pinned_firelens_image" \
+            '
+              ({
+                family: $family,
+                taskRoleArn,
+                executionRoleArn,
+                networkMode,
+                containerDefinitions: (
+                  .containerDefinitions
+                  | map(select(.name == $container or .name == $firelens))
+                  | map(
+                      if .name == $container then .image = $image
+                      elif .name == $firelens then .image = $firelens_image
+                      else .
+                      end
+                    )
+                ),
+                volumes,
+                placementConstraints,
+                requiresCompatibilities,
+                cpu,
+                memory,
+                pidMode,
+                ipcMode,
+                proxyConfiguration,
+                inferenceAccelerators,
+                ephemeralStorage,
+                runtimePlatform,
+                enableFaultInjection
+              } | with_entries(select(.value != null)))
+            ' \
+            "$task_definition_file" \
+            > "$registration_file"
+
+          if ! jq --exit-status --slurp \
+            --arg family "$temporary_family" \
+            --arg container "$ECS_CONTAINER" \
+            --arg firelens "$firelens_container" \
+            --arg image "$pinned_image" \
+            --arg firelens_image "$pinned_firelens_image" \
+            '
+              .[0] as $source
+              | .[1] as $derived
+              | $derived.family == $family
+                and ($derived.containerDefinitions | map(.name) | sort)
+                  == ([$container, $firelens] | sort)
+                and ([ $derived.containerDefinitions[]
+                       | select(.name == $container)
+                       | .image ] == [$image])
+                and ([ $derived.containerDefinitions[]
+                       | select(.name == $container)
+                       | del(.image) ]
+                  == [ $source.containerDefinitions[]
+                       | select(.name == $container)
+                       | del(.image) ])
+                and ([ $derived.containerDefinitions[]
+                       | select(.name == $firelens) ]
+                  == [ $source.containerDefinitions[]
+                       | select(.name == $firelens)
+                       | .image = $firelens_image ])
+            ' \
+            "$task_definition_file" \
+            "$registration_file" >/dev/null; then
+            echo "::error title=Unsafe replay task derivation::The temporary definition must contain only the unchanged FireLens sidecar and the unchanged indexer pinned to its deployed digest."
+            exit 1
+          fi
+
+          aws ecs register-task-definition \
+            --cli-input-json "file://$registration_file" \
+            > "$registered_task_definition_file"
+          registered_task_definition_arn=$(jq -r \
+            '.taskDefinition.taskDefinitionArn // empty' \
+            "$registered_task_definition_file")
+          if [ -z "$registered_task_definition_arn" ]; then
+            echo "::error title=Temporary replay task registration failed::ECS did not return a task definition ARN."
+            exit 1
+          fi
+          printf '%s\n' "$registered_task_definition_arn" \
+            > "$registered_task_definition_arn_file"
+
+          if ! jq --exit-status \
+            --arg arn "$registered_task_definition_arn" \
+            --arg family "$temporary_family" \
+            --arg container "$ECS_CONTAINER" \
+            --arg firelens "$firelens_container" \
+            --arg image "$pinned_image" \
+            --arg firelens_image "$pinned_firelens_image" \
+            '.taskDefinition.taskDefinitionArn == $arn
+             and .taskDefinition.family == $family
+             and (.taskDefinition.containerDefinitions | map(.name) | sort)
+               == ([$container, $firelens] | sort)
+             and ([.taskDefinition.containerDefinitions[]
+                   | select(.name == $container)
+                   | .image] == [$image])
+             and ([.taskDefinition.containerDefinitions[]
+                   | select(.name == $firelens)
+                   | .image] == [$firelens_image])' \
+            "$registered_task_definition_file" >/dev/null; then
+            echo "::error title=Temporary replay image pin rejected::The registered definition did not retain the exact deployed indexer digest and FireLens sidecar."
+            exit 1
+          fi
+
+          echo "cluster=$cluster" >> "$GITHUB_OUTPUT"
+          echo "task_definition=$registered_task_definition_arn" >> "$GITHUB_OUTPUT"
+          echo "expected_image=$pinned_image" >> "$GITHUB_OUTPUT"
+          echo "expected_image_digest=$image_digest" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image=$pinned_firelens_image" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image_digest=$firelens_image_digest" >> "$GITHUB_OUTPUT"
+          echo "replay_service=$service" >> "$GITHUB_OUTPUT"
+          echo "source_task_definition=$task_definition" >> "$GITHUB_OUTPUT"
+          echo "network_file=$network_file" >> "$GITHUB_OUTPUT"
+          echo "Registered a replay task containing only the stable indexer digest and its exact FireLens sidecar."
+
+      - name: Select validated execution target
+        id: resolved
+        env:
+          CLUSTER: ${{ steps.target.outputs.cluster || steps.replay_target.outputs.cluster }}
+          TASK_DEFINITION: ${{ steps.target.outputs.task_definition || steps.replay_target.outputs.task_definition }}
+          EXPECTED_IMAGE: ${{ steps.target.outputs.expected_image || steps.replay_target.outputs.expected_image }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.target.outputs.expected_image_digest || steps.replay_target.outputs.expected_image_digest }}
+          EXPECTED_FIRELENS_IMAGE: ${{ steps.replay_target.outputs.expected_firelens_image }}
+          EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.replay_target.outputs.expected_firelens_image_digest }}
+          REPLAY_SERVICE: ${{ steps.replay_target.outputs.replay_service }}
+          SOURCE_TASK_DEFINITION: ${{ steps.replay_target.outputs.source_task_definition }}
+          NETWORK_FILE: ${{ steps.target.outputs.network_file || steps.replay_target.outputs.network_file }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$CLUSTER" ] || [ -z "$TASK_DEFINITION" ] || \
+             [ -z "$EXPECTED_IMAGE" ] || [ -z "$EXPECTED_IMAGE_DIGEST" ] || \
+             [ -z "$NETWORK_FILE" ]; then
+            echo "::error title=Execution target unavailable::The allowlisted operation did not resolve one complete ECS target."
+            exit 1
+          fi
+
+          echo "cluster=$CLUSTER" >> "$GITHUB_OUTPUT"
+          echo "task_definition=$TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          echo "expected_image=$EXPECTED_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "expected_image_digest=$EXPECTED_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image=$EXPECTED_FIRELENS_IMAGE" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image_digest=$EXPECTED_FIRELENS_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "replay_service=$REPLAY_SERVICE" >> "$GITHUB_OUTPUT"
+          echo "source_task_definition=$SOURCE_TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          echo "network_file=$NETWORK_FILE" >> "$GITHUB_OUTPUT"
+
       - name: Build allowlisted command override
         id: command
         env:
@@ -671,6 +1205,8 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          FROM_BLOCK: ${{ inputs.from_block }}
+          TO_BLOCK: ${{ inputs.to_block }}
           CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
           STATEMENT_TIMEOUT_MS: ${{ inputs.statement_timeout_ms }}
           LOCK_TIMEOUT_MS: ${{ inputs.lock_timeout_ms }}
@@ -680,15 +1216,25 @@ jobs:
           umask 077
 
           overrides_file="$RUNNER_TEMP/candle-admin-overrides.json"
+          effective_lock_timeout="$LOCK_TIMEOUT_MS"
+          if [ -z "$effective_lock_timeout" ]; then
+            if [ "$ACTION" = "migrate" ]; then
+              effective_lock_timeout=60000
+            else
+              effective_lock_timeout=5000
+            fi
+          fi
           jq -n \
             --arg container "$ECS_CONTAINER" \
             --arg action "$ACTION" \
             --arg scope "$SCOPE" \
             --arg from "$FROM_TIMESTAMP" \
             --arg to "$TO_TIMESTAMP" \
+            --arg from_block "$FROM_BLOCK" \
+            --arg to_block "$TO_BLOCK" \
             --arg chunk "$CHUNK_SECONDS" \
             --arg statement_timeout "$STATEMENT_TIMEOUT_MS" \
-            --arg lock_timeout "$LOCK_TIMEOUT_MS" \
+            --arg lock_timeout "$effective_lock_timeout" \
             --arg throttle "$THROTTLE_MS" \
             '
               def optional($flag; $value):
@@ -703,17 +1249,29 @@ jobs:
                 then ["--chunk-seconds", $chunk, "--throttle-ms", $throttle]
                 else []
                 end;
-              {containerOverrides: [{
-                name: $container,
-                command: (["plether-candle-admin", $action]
-                  + scoped
-                  + optional("--from"; $from)
-                  + optional("--to"; $to)
-                  + chunked
-                  + ["--statement-timeout-ms", $statement_timeout,
-                     "--lock-timeout-ms", $lock_timeout,
-                     "--max-runtime-seconds", "19800"])
-              }]}
+              if $action == "replay" then
+                {containerOverrides: [{
+                  name: $container,
+                  command: ["plether-perps-indexer", "--replay",
+                            "--from-block", $from_block,
+                            "--to-block", $to_block,
+                            "--statement-timeout-ms", $statement_timeout,
+                            "--lock-timeout-ms", $lock_timeout,
+                            "--max-runtime-seconds", "1800"]
+                }]}
+              else
+                {containerOverrides: [{
+                  name: $container,
+                  command: (["plether-candle-admin", $action]
+                    + scoped
+                    + optional("--from"; $from)
+                    + optional("--to"; $to)
+                    + chunked
+                    + ["--statement-timeout-ms", $statement_timeout,
+                       "--lock-timeout-ms", $lock_timeout,
+                       "--max-runtime-seconds", "19800"])
+                }]}
+              end
             ' > "$overrides_file"
 
           echo "overrides_file=$overrides_file" >> "$GITHUB_OUTPUT"
@@ -722,10 +1280,15 @@ jobs:
       - name: Start one-off candle admin task
         id: task
         env:
-          CLUSTER: ${{ steps.target.outputs.cluster }}
-          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
-          NETWORK_FILE: ${{ steps.target.outputs.network_file }}
+          CLUSTER: ${{ steps.resolved.outputs.cluster }}
+          TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
+          NETWORK_FILE: ${{ steps.resolved.outputs.network_file }}
           OVERRIDES_FILE: ${{ steps.command.outputs.overrides_file }}
+          ACTION: ${{ inputs.action }}
+          REPLAY_SERVICE: ${{ steps.resolved.outputs.replay_service }}
+          SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_image_digest }}
+          EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_firelens_image_digest }}
           STARTED_BY: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
@@ -740,6 +1303,89 @@ jobs:
             exit 1
           fi
           printf '%s\n' "$STARTED_BY" > "$started_by_file"
+
+          if [ "$ACTION" = "replay" ]; then
+            topology_file="$RUNNER_TEMP/candle-admin-replay-topology-before-run.json"
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services plether-workers plether-perps-indexer \
+              > "$topology_file"
+            if ! jq --exit-status \
+              --arg selected "$REPLAY_SERVICE" \
+              --arg source_task_definition "$SOURCE_TASK_DEFINITION" \
+              '([.failures[]?
+                 | select((.arn | endswith("/" + $selected))
+                          or (.reason != "MISSING"))]
+                | length == 0)
+               and ([.services[] | select(.serviceName == $selected)]
+                    | length == 1)
+               and ([.services[] | select(.serviceName == $selected)]
+                    | length == 1
+                      and .[0].desiredCount > 0
+                      and .[0].runningCount == .[0].desiredCount
+                      and .[0].pendingCount == 0
+                      and .[0].taskDefinition == $source_task_definition
+                      and (.[0].deployments | length) == 1
+                      and .[0].deployments[0].status == "PRIMARY"
+                      and (.[0].deployments[0].rolloutState // "COMPLETED") == "COMPLETED")
+               and ([.services[]
+                     | select((.serviceName == "plether-workers"
+                               or .serviceName == "plether-perps-indexer")
+                              and .serviceName != $selected)]
+                    | length <= 1
+                      and all(.desiredCount == 0
+                              and .runningCount == 0
+                              and .pendingCount == 0))' \
+              "$topology_file" >/dev/null; then
+              echo "::error title=Replay topology changed::Refusing to start because the selected topology is no longer stable or the inactive topology is no longer fully drained."
+              exit 1
+            fi
+
+            mapfile -t final_running_task_arns < <(aws ecs list-tasks \
+              --cluster "$CLUSTER" \
+              --service-name "$REPLAY_SERVICE" \
+              --desired-status RUNNING \
+              --query taskArns \
+              --output text | tr '\t' '\n' | sed '/^$/d')
+            if [ "${#final_running_task_arns[@]}" -eq 0 ]; then
+              echo "::error title=Replay writer tasks changed::The selected writer no longer has running tasks immediately before replay."
+              exit 1
+            fi
+            final_tasks_file="$RUNNER_TEMP/candle-admin-replay-tasks-before-run.json"
+            aws ecs describe-tasks \
+              --cluster "$CLUSTER" \
+              --tasks "${final_running_task_arns[@]}" \
+              > "$final_tasks_file"
+            if ! jq --exit-status \
+              --arg source_task_definition "$SOURCE_TASK_DEFINITION" \
+              --arg container "$ECS_CONTAINER" \
+              --arg expected_image_digest "$EXPECTED_IMAGE_DIGEST" \
+              --arg expected_firelens_digest "$EXPECTED_FIRELENS_IMAGE_DIGEST" \
+              '(.failures | length) == 0
+               and (.tasks | length) > 0
+               and ([.tasks[]
+                     | .taskDefinitionArn == $source_task_definition]
+                    | all)
+               and ([.tasks[]
+                     | [.containers[]
+                        | select(.name == $container)
+                        | .imageDigest]
+                     | length == 1
+                       and .[0] == $expected_image_digest]
+                    | all)
+               and ([.tasks[]
+                     | [.containers[]
+                        | select(.name == "otel-log-router")
+                        | .imageDigest]
+                     | length == 1
+                       and .[0] == $expected_firelens_digest]
+                    | all)' \
+              "$final_tasks_file" >/dev/null; then
+              echo "::error title=Replay writer definition changed::Running writer tasks are no longer unanimous on the definition used to derive replay."
+              exit 1
+            fi
+          fi
+
           aws ecs run-task \
             --cluster "$CLUSTER" \
             --launch-type FARGATE \
@@ -773,11 +1419,14 @@ jobs:
 
       - name: Verify started task image digest
         env:
-          CLUSTER: ${{ steps.target.outputs.cluster }}
+          CLUSTER: ${{ steps.resolved.outputs.cluster }}
           TASK_ARN: ${{ steps.task.outputs.task_arn }}
-          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
-          EXPECTED_IMAGE: ${{ steps.target.outputs.expected_image }}
-          EXPECTED_IMAGE_DIGEST: ${{ steps.target.outputs.expected_image_digest }}
+          TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
+          EXPECTED_IMAGE: ${{ steps.resolved.outputs.expected_image }}
+          EXPECTED_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_image_digest }}
+          EXPECTED_FIRELENS_IMAGE: ${{ steps.resolved.outputs.expected_firelens_image }}
+          EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_firelens_image_digest }}
+          ACTION: ${{ inputs.action }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
@@ -796,13 +1445,18 @@ jobs:
             if ! jq --exit-status \
               --arg task_definition "$TASK_DEFINITION" \
               --arg container "$ECS_CONTAINER" \
+              --arg action "$ACTION" \
               '(.failures | length) == 0
                and (.tasks | length) == 1
                and .tasks[0].taskDefinitionArn == $task_definition
                and ([.tasks[0].containers[] | select(.name == $container)]
-                    | length == 1)' \
+                    | length == 1)
+               and ($action != "replay"
+                    or ([.tasks[0].containers[]
+                         | select(.name == "otel-log-router")]
+                        | length == 1))' \
               "$task_file" >/dev/null; then
-              echo "::error title=Started task identity mismatch::ECS did not return the exact temporary task definition and API container."
+              echo "::error title=Started task identity mismatch::ECS did not return the exact temporary task definition and target container."
               exit 1
             fi
 
@@ -816,11 +1470,34 @@ jobs:
               "$task_file")
             last_status=$(jq -r '.tasks[0].lastStatus // empty' "$task_file")
 
-            if [ -n "$actual_digest" ]; then
+            actual_firelens_image=""
+            actual_firelens_digest=""
+            if [ "$ACTION" = "replay" ]; then
+              actual_firelens_image=$(jq -r \
+                '[.tasks[0].containers[]
+                  | select(.name == "otel-log-router")
+                  | .image][0] // empty' \
+                "$task_file")
+              actual_firelens_digest=$(jq -r \
+                '[.tasks[0].containers[]
+                  | select(.name == "otel-log-router")
+                  | .imageDigest][0] // empty' \
+                "$task_file")
+            fi
+
+            if [ -n "$actual_digest" ] && \
+               { [ "$ACTION" != "replay" ] || [ -n "$actual_firelens_digest" ]; }; then
               if [ "$actual_image" != "$EXPECTED_IMAGE" ] || \
                  [ "$actual_digest" != "$EXPECTED_IMAGE_DIGEST" ]; then
-                echo "::error title=Started task image mismatch::The candle admin task did not start with the deployed API image digest."
+                echo "::error title=Started task image mismatch::The one-off task did not start with the selected service's deployed image digest."
                 exit 1
+              fi
+              if [ "$ACTION" = "replay" ]; then
+                if [ "$actual_firelens_image" != "$EXPECTED_FIRELENS_IMAGE" ] || \
+                   [ "$actual_firelens_digest" != "$EXPECTED_FIRELENS_IMAGE_DIGEST" ]; then
+                  echo "::error title=Started FireLens image mismatch::The replay task did not start with the stable writer's exact deployed FireLens image digest."
+                  exit 1
+                fi
               fi
               verified=true
               break
@@ -834,16 +1511,17 @@ jobs:
           done
 
           if [ "$verified" != "true" ]; then
-            echo "::error title=Started task digest timed out::ECS did not expose the API image digest within ten minutes."
+            echo "::error title=Started task digest timed out::ECS did not expose the target image digest within ten minutes."
             exit 1
           fi
 
-          echo "Verified that the candle admin task is running the exact deployed API image digest."
+          echo "Verified that the one-off task is running the exact deployed target image digest."
 
       - name: Wait for terminal status
         id: wait
         env:
-          CLUSTER: ${{ steps.target.outputs.cluster }}
+          ACTION: ${{ inputs.action }}
+          CLUSTER: ${{ steps.resolved.outputs.cluster }}
           TASK_ARN: ${{ steps.task.outputs.task_arn }}
           TASK_STARTED_AT: ${{ steps.task.outputs.task_started_at }}
           AWS_PAGER: ''
@@ -867,9 +1545,14 @@ jobs:
           }
           trap stop_unfinished_task EXIT INT TERM
 
-          # Reserve thirty minutes of the six-hour job budget for service
-          # resolution, digest verification, task shutdown, and deregistration.
-          deadline=$((10#$TASK_STARTED_AT + 19800))
+          # Replay has a 30-minute application deadline and a 45-minute
+          # workflow deadline. Other admin operations retain their existing
+          # five-and-a-half-hour application/workflow deadline.
+          if [ "$ACTION" = "replay" ]; then
+            deadline=$((10#$TASK_STARTED_AT + 2700))
+          else
+            deadline=$((10#$TASK_STARTED_AT + 19800))
+          fi
           while (( $(date +%s) < deadline )); do
             last_status=$(aws ecs describe-tasks \
               --cluster "$CLUSTER" \
@@ -896,14 +1579,22 @@ jobs:
             --tasks "$TASK_ARN" \
             --query "tasks[0].containers[?name=='$ECS_CONTAINER'].exitCode | [0]" \
             --output text)
-          if [ "$exit_code" != "0" ]; then
+          firelens_exit_code=0
+          if [ "$ACTION" = "replay" ]; then
+            firelens_exit_code=$(aws ecs describe-tasks \
+              --cluster "$CLUSTER" \
+              --tasks "$TASK_ARN" \
+              --query "tasks[0].containers[?name=='otel-log-router'].exitCode | [0]" \
+              --output text)
+          fi
+          if [ "$exit_code" != "0" ] || [ "$firelens_exit_code" != "0" ]; then
             stopped_reason=$(aws ecs describe-tasks \
               --cluster "$CLUSTER" \
               --tasks "$TASK_ARN" \
               --query 'tasks[0].stopCode' \
               --output text)
             echo "::error title=Candle admin operation failed::The ECS task exited unsuccessfully. Inspect its restricted CloudWatch logs."
-            echo "ECS stop code: ${stopped_reason:-unknown}; container exit code: ${exit_code:-unknown}."
+            echo "ECS stop code: ${stopped_reason:-unknown}; target exit code: ${exit_code:-unknown}; FireLens exit code: ${firelens_exit_code:-not-applicable}."
             exit 1
           fi
 
@@ -912,10 +1603,10 @@ jobs:
           echo "The ${{ inputs.action }} operation completed successfully on $TARGET_ENV."
 
       - name: Stop unfinished task after workflow failure or cancellation
-        if: always() && steps.target.outputs.cluster != '' && steps.wait.outcome != 'success'
+        if: always() && steps.resolved.outputs.cluster != '' && steps.wait.outcome != 'success'
         env:
-          CLUSTER: ${{ steps.target.outputs.cluster }}
-          TASK_DEFINITION: ${{ steps.target.outputs.task_definition }}
+          CLUSTER: ${{ steps.resolved.outputs.cluster }}
+          TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
           STARTED_BY: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
@@ -1039,6 +1730,9 @@ jobs:
             "$RUNNER_TEMP/candle-admin-network.json" \
             "$RUNNER_TEMP/candle-admin-task-definition.json" \
             "$RUNNER_TEMP/candle-admin-running-tasks.json" \
+            "$RUNNER_TEMP/candle-admin-replay-topology.json" \
+            "$RUNNER_TEMP/candle-admin-replay-topology-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-replay-tasks-before-run.json" \
             "$RUNNER_TEMP/candle-admin-task-definition-registration.json" \
             "$RUNNER_TEMP/candle-admin-registered-task-definition.json" \
             "$RUNNER_TEMP/candle-admin-registered-task-definition-arn" \

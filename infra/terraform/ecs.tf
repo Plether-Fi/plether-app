@@ -559,6 +559,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     ]
 
     environment = concat([
+      { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
       { name = "CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -823,6 +824,7 @@ resource "aws_ecs_task_definition" "workers" {
       ]
 
       environment = concat([
+        { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
         { name = "CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },

@@ -221,6 +221,7 @@ testIndexerConfig chain =
     , picMode = PerpsIndexerOnce
     , picCandleWriteMode = PerpsCandleWritesOff
     , picCandleLatenessSeconds = 120
+    , picDeploymentEnvironment = Nothing
     }
 
 fixtureApplication

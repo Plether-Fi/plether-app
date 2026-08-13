@@ -2,7 +2,7 @@ module Plether.Perps.CandleRollupSpec
   ( candleRollupSpec
   ) where
 
-import Control.Exception (bracket, finally, try)
+import Control.Exception (IOException, bracket, displayException, finally, try)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value, object, (.=))
 import Data.Pool (destroyAllResources)
@@ -49,11 +49,13 @@ import Plether.Database.Candles
   , upsertRollupCoverage
   )
 import Plether.Database.Schema
-  ( deletePerpsHistoryFromBlock
+  ( assertPerpsReplayEventExact
+  , deletePerpsHistoryFromBlock
   , ensureBasketSnapshotSchema
   , ensurePerpsHistorySchema
   , insertBasketSnapshotWithSource
   , insertPerpsActivity
+  , insertPerpsEvent
   )
 import Test.Hspec
   ( Spec
@@ -85,6 +87,107 @@ candleRollupSpec databaseUrl =
           candleEventReorgIndexValidity connection `shouldReturn` [Only True]
           canonicalCandleIntervals
             `shouldBe` [60, 180, 300, 900, 1800, 3600, 86_400]
+
+    it "rejects a conflicting replay event identity and rolls back its transaction" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          let blockNumber = 70
+              timestamp = baseTime + 70
+              txHash = "candle-rollup-event-tx:replay-conflict"
+              blockHash = "candle-rollup-event-block:70"
+              contractAddress = "canonical-replay-engine"
+              eventName = "PositionClosed"
+              account = Just "canonical-replay-account"
+              side = Just 1
+              storedPayload = object ["canonicalReplay" .= False]
+              replayPayload = object ["canonicalReplay" .= True]
+              markerKey :: Text
+              markerKey = "candle-rollup-integration:replay-rollback-marker"
+          insertPerpsEvent
+            connection
+            testChainId
+            testRouter
+            contractAddress
+            eventName
+            txHash
+            blockNumber
+            blockHash
+            0
+            blockNumber
+            timestamp
+            account
+            Nothing
+            side
+            storedPayload
+          replayResult <-
+            try
+              ( withTransaction connection $ do
+                  -- Every canonical field except payload matches the stored
+                  -- row. The production conflict handler suppresses this
+                  -- insert, reproducing the stale-row failure mode precisely.
+                  insertPerpsEvent
+                    connection
+                    testChainId
+                    testRouter
+                    contractAddress
+                    eventName
+                    txHash
+                    blockNumber
+                    blockHash
+                    0
+                    blockNumber
+                    timestamp
+                    account
+                    Nothing
+                    side
+                    replayPayload
+                  insertActivity
+                    connection
+                    "replay-rollback-marker"
+                    timestamp
+                    (blockNumber + 1)
+                    1
+                    1
+                    "Open"
+                  markerCountInside <-
+                    query
+                      connection
+                      "SELECT COUNT(*) FROM perps_account_activity WHERE event_key = ?"
+                      (Only markerKey) :: IO [Only Integer]
+                  markerCountInside `shouldBe` [Only 1]
+                  assertPerpsReplayEventExact
+                    connection
+                    testChainId
+                    testRouter
+                    contractAddress
+                    eventName
+                    txHash
+                    blockNumber
+                    blockHash
+                    0
+                    blockNumber
+                    timestamp
+                    account
+                    Nothing
+                    side
+                    replayPayload
+              ) :: IO (Either IOException ())
+          replayResult `shouldSatisfy` either (const True) (const False)
+          either displayException (const "") replayResult
+            `shouldBe` "user error (Bounded replay semantic assertion failed for event)"
+          storedEventPayload <-
+            query
+              connection
+              "SELECT data FROM perps_events \
+              \WHERE chain_id = ? AND tx_hash = ? AND log_index = ?"
+              (testChainId, txHash, blockNumber) :: IO [Only Value]
+          storedEventPayload `shouldBe` [Only storedPayload]
+          markerCount <-
+            query
+              connection
+              "SELECT COUNT(*) FROM perps_account_activity WHERE event_key = ?"
+              (Only markerKey) :: IO [Only Integer]
+          markerCount `shouldBe` [Only 0]
 
     it "repairs the exact invalid index left by a failed concurrent build" $
       withCandleDatabase databaseUrl $ \pool ->

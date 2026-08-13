@@ -68,6 +68,7 @@ library
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.HistoryIndexer
+        Plether.Perps.IndexerOptions
         Plether.Types.History
         Plether.Indexer
         Plether.Indexer.Contracts
@@ -267,6 +268,7 @@ test-suite plether-api-test
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
         Plether.Perps.HistoryIndexerSpec
+        Plether.Perps.IndexerOptionsSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
         Plether.Insights.SnapshotWorkerSpec

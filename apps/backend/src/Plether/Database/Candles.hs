@@ -8,6 +8,7 @@ module Plether.Database.Candles
   , CandleQuality (..)
   , RollupCoverage (..)
   , RollupKind (..)
+  , MarketVolumeRollupSnapshot (..)
   , canonicalCandleIntervals
   , defaultBasketSeriesId
   , ensureCandleSchema
@@ -16,6 +17,7 @@ module Plether.Database.Candles
   , recomputeBasketCandleHierarchy
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
+  , lockMarketVolumeDataset
   , advanceBasketPriceCoverage
   , advanceMarketVolumeCoverage
   , invalidateMarketVolumeFromBlock
@@ -29,6 +31,8 @@ module Plether.Database.Candles
   , countBasketCandles
   , countMarketVolumeRollups
   , getRollupCoverage
+  , getMarketVolumeCoverageSnapshot
+  , getMarketVolumeRollupSnapshot
   , upsertRollupCoverage
   , beginRollupMaintenance
   , bumpRollupDatasetGeneration
@@ -45,6 +49,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
   ( Connection
+  , In (..)
   , Only (..)
   , Query
   , execute
@@ -150,6 +155,33 @@ data RollupCoverage = RollupCoverage
   , rcMaintenanceTo :: Maybe Integer
   }
   deriving stock (Eq, Show)
+
+-- Semantic snapshot used by the bounded duplicate-ingestion gate. Timestamps
+-- are intentionally absent; values, source bounds, revision, and finalized
+-- state are all part of the identity that replay is forbidden to change.
+data MarketVolumeRollupSnapshot = MarketVolumeRollupSnapshot
+  { mvrsIntervalSeconds :: Integer
+  , mvrsBucketStart :: Integer
+  , mvrsVolumeNumerator :: Scientific
+  , mvrsTradeCount :: Integer
+  , mvrsFirstSourceBlock :: Integer
+  , mvrsLastSourceBlock :: Integer
+  , mvrsRevision :: Integer
+  , mvrsFinalized :: Bool
+  }
+  deriving stock (Eq, Show)
+
+instance FromRow MarketVolumeRollupSnapshot where
+  fromRow =
+    MarketVolumeRollupSnapshot
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
 
 canonicalCandleIntervals :: [Integer]
 canonicalCandleIntervals = [60, 180, 300, 900, 1800, 3600, 86_400]
@@ -843,6 +875,13 @@ recomputeMarketVolumeHierarchyBatch conn chainId releaseRouter timestamps latene
     bumpCorrectionGenerationForTimestamps
       conn VolumeRollup Nothing (Just chainId) (Just router) changedMinutes
 
+-- Bounded replay takes the indexer lock before this dataset lock. Exporting
+-- only the exact volume-dataset lock keeps the operational lock order explicit
+-- without exposing the generic advisory-lock namespace to callers.
+lockMarketVolumeDataset :: Connection -> Integer -> Text -> IO ()
+lockMarketVolumeDataset conn chainId releaseRouter =
+  lockDataset conn "volume" (normalizeRouter releaseRouter) chainId
+
 -- Call once after every successfully committed canonical indexer batch, even
 -- when the batch contained no trades. This proves zero-volume ranges complete
 -- without manufacturing rollup rows (reads represent them as zero).
@@ -1126,6 +1165,45 @@ getRollupCoverage conn kind seriesId chainId releaseRouter interval = do
     , interval
     ) :: IO [CoverageDbRow]
   pure $ coverageFromDb kind seriesId chainId (normalizeRouter <$> releaseRouter) interval <$> listToMaybe rows
+
+-- Preserve seven ordered slots, including absence. Early rollout legitimately
+-- has no published coverage rows; replay must prove it did not create or
+-- mutate any of them.
+getMarketVolumeCoverageSnapshot :: Connection -> Integer -> Text -> IO [Maybe RollupCoverage]
+getMarketVolumeCoverageSnapshot conn chainId releaseRouter = do
+  forM canonicalCandleIntervals $ \interval ->
+    getRollupCoverage
+      conn
+      VolumeRollup
+      Nothing
+      (Just chainId)
+      (Just releaseRouter)
+      interval
+
+-- Snapshot exactly the minute buckets touched by parsed volume activity and
+-- every overlapping canonical parent. An absent bucket is represented by its
+-- absence from this sorted list, so insertion/deletion is detected as well as
+-- semantic row changes.
+getMarketVolumeRollupSnapshot
+  :: Connection -> Integer -> Text -> [Integer] -> IO [MarketVolumeRollupSnapshot]
+getMarketVolumeRollupSnapshot conn chainId releaseRouter timestamps =
+  fmap concat $
+    forM canonicalCandleIntervals $ \interval -> do
+      let buckets =
+            Set.toAscList $
+              Set.fromList $
+                map (`alignDown` interval) timestamps
+      if null buckets
+        then pure []
+        else
+          query
+            conn
+            "SELECT interval_seconds, bucket_start, volume_numerator, trade_count, \
+            \ first_source_block, last_source_block, revision, finalized \
+            \FROM perps_market_volume_rollups \
+            \WHERE chain_id = ? AND release_router = ? AND interval_seconds = ? \
+            \AND bucket_start IN ? ORDER BY bucket_start"
+            (chainId, normalizeRouter releaseRouter, interval, In buckets)
 
 upsertRollupCoverage :: Connection -> RollupCoverage -> IO ()
 upsertRollupCoverage conn RollupCoverage {..} = do
