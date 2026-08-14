@@ -74,8 +74,11 @@ module Plether.Database.Schema
   , markTestnetFaucetClaimSubmitted
   , markTestnetFaucetClaimSubmittedSql
   , markTestnetFaucetClaimSuccess
+  , markTestnetFaucetClaimSuccessSql
   , markTestnetFaucetClaimReconciled
   , markTestnetFaucetClaimFailed
+  , markTestnetFaucetClaimReverted
+  , markTestnetFaucetClaimRevertedSql
   , PerpsOrderRow (..)
   , PerpsExecutionEvidenceRow (..)
   , PerpsActivityRow (..)
@@ -256,14 +259,18 @@ markTestnetFaucetClaimSubmittedSql =
   \tx_hash = ?, raw_tx = ?, status = 'submitted', error = NULL, updated_at = NOW() \
   \WHERE address = ? AND token_address = ? AND status = 'preparing'"
 
-markTestnetFaucetClaimSuccess :: Connection -> Text -> Text -> Text -> IO ()
+markTestnetFaucetClaimSuccess :: Connection -> Text -> Text -> Text -> IO Bool
 markTestnetFaucetClaimSuccess conn address tokenAddress txHash = do
-  _ <- execute conn
-    "UPDATE testnet_faucet_claims SET \
-    \tx_hash = ?, raw_tx = NULL, status = 'success', error = NULL, updated_at = NOW() \
-    \WHERE address = ? AND token_address = ?"
-    (txHash, T.toLower address, T.toLower tokenAddress)
-  pure ()
+  affected <- execute conn markTestnetFaucetClaimSuccessSql
+    (T.toLower txHash, T.toLower address, T.toLower tokenAddress, T.toLower txHash)
+  pure $ affected > (0 :: Int64)
+
+markTestnetFaucetClaimSuccessSql :: Query
+markTestnetFaucetClaimSuccessSql =
+  "UPDATE testnet_faucet_claims SET \
+  \tx_hash = ?, raw_tx = NULL, status = 'success', error = NULL, updated_at = NOW() \
+  \WHERE address = ? AND token_address = ? AND tx_hash = ? \
+  \AND status IN ('submitted', 'success')"
 
 markTestnetFaucetClaimReconciled :: Connection -> Text -> Text -> IO ()
 markTestnetFaucetClaimReconciled conn address tokenAddress = do
@@ -279,9 +286,21 @@ markTestnetFaucetClaimFailed conn address tokenAddress err = do
   _ <- execute conn
     "UPDATE testnet_faucet_claims SET \
     \status = 'failed', error = ?, updated_at = NOW() \
-    \WHERE address = ? AND token_address = ?"
+    \WHERE address = ? AND token_address = ? AND status = 'preparing'"
     (err, T.toLower address, T.toLower tokenAddress)
   pure ()
+
+markTestnetFaucetClaimReverted :: Connection -> Text -> Text -> Text -> Text -> IO Bool
+markTestnetFaucetClaimReverted conn address tokenAddress txHash err = do
+  affected <- execute conn markTestnetFaucetClaimRevertedSql
+    (err, T.toLower address, T.toLower tokenAddress, T.toLower txHash)
+  pure $ affected > (0 :: Int64)
+
+markTestnetFaucetClaimRevertedSql :: Query
+markTestnetFaucetClaimRevertedSql =
+  "UPDATE testnet_faucet_claims SET \
+  \raw_tx = NULL, status = 'failed', error = ?, updated_at = NOW() \
+  \WHERE address = ? AND token_address = ? AND tx_hash = ? AND status = 'submitted'"
 
 data InsertRow = InsertRow
   { irTxHash :: Text

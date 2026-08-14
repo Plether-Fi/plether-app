@@ -157,9 +157,11 @@ const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
   timeout: 30000,
 };
 
-// The backend can spend up to 165 seconds across its bounded database,
-// transaction-preparation, receipt-polling, and final-persistence stages.
-export const TESTNET_FAUCET_TIMEOUT_MS = 180_000;
+// The backend returns a durable submitted state instead of holding the request
+// open while Arbitrum confirms it. Sixty seconds covers the bounded database
+// and signer-lock stages. The backend stops at 60 seconds; five seconds of
+// transport margin still keeps the browser below the ALB's 75-second timeout.
+export const TESTNET_FAUCET_TIMEOUT_MS = 65_000;
 export const TESTNET_FAUCET_TIMEOUT_MESSAGE =
   'The faucet is taking longer than expected. Your request may still complete. Wait a moment, then try again—retrying is safe.';
 const NETWORK_ERROR_MESSAGE =
@@ -430,7 +432,7 @@ export class PlethApiClient {
   ): Promise<Result<ApiResponse<TestnetFaucetClaim>, PlethApiError>> {
     return fetchApi<TestnetFaucetClaim>(this.config, '/testnet/faucet', {
       method: 'POST',
-      body: JSON.stringify({ address }),
+      body: JSON.stringify({ address, confirmationMode: 'async' }),
     }, {
       operation: 'claim_testnet_faucet',
       timeoutMs: TESTNET_FAUCET_TIMEOUT_MS,

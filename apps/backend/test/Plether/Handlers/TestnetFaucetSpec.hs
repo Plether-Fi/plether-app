@@ -1,6 +1,7 @@
 module Plether.Handlers.TestnetFaucetSpec (spec) where
 
 import qualified Data.ByteString.Base16 as B16
+import Data.Aeson (Value (String), toJSON)
 import Data.List (isInfixOf)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -13,15 +14,26 @@ import Plether.Config
 import Plether.Database.Schema
   ( TestnetFaucetClaimRow (..)
   , beginTestnetFaucetClaimSql
+  , markTestnetFaucetClaimRevertedSql
   , markTestnetFaucetClaimSubmittedSql
+  , markTestnetFaucetClaimSuccessSql
   )
 import Plether.Handlers.TestnetFaucet
-  ( FaucetClaimDisposition (..)
+  ( FaucetBroadcastErrorDisposition (..)
+  , FaucetClaimDisposition (..)
+  , FaucetResponseStatus (..)
+  , TestnetFaucetResponse (..)
+  , classifyFaucetBroadcastErrorText
   , classifyTestnetFaucetClaim
   , faucetMintCall
+  , faucetRouteTimeoutMicros
+  , gateSubmittedFaucetResponse
+  , receiptMatchesPersistedTransaction
   , testnetFaucetAmount
   , testnetFaucetEnabled
   )
+import Plether.Ethereum.Rpc (TxReceipt (..))
+import Plether.Types (ApiError (..), ApiErrorCode (..), ApiResponse (..), mkResponse)
 import Test.Hspec
 
 spec :: Spec
@@ -35,6 +47,52 @@ spec = do
   describe "testnetFaucetAmount" $
     it "is 100,000 USDC with 6 decimals" $
       testnetFaucetAmount `shouldBe` 100_000_000_000
+
+  describe "faucet response status JSON" $
+    it "distinguishes pending confirmation from terminal funding states" $
+      map
+        toJSON
+        [ FaucetResponseSubmitted
+        , FaucetResponseMinted
+        , FaucetResponseAlreadyClaimed
+        , FaucetResponseAlreadyFunded
+        ]
+        `shouldBe` map String ["submitted", "minted", "already_claimed", "already_funded"]
+
+  describe "faucet route deadline" $
+    it "returns before the load balancer's 75-second idle timeout" $ do
+      faucetRouteTimeoutMicros `shouldBe` 60_000_000
+      faucetRouteTimeoutMicros `shouldSatisfy` (< 75_000_000)
+
+  describe "faucet submitted-response compatibility" $ do
+    let response status =
+          Right $
+            mkResponse
+              0
+              421614
+              TestnetFaucetResponse
+                { tfrAddress = "0x1111111111111111111111111111111111111111"
+                , tfrAmount = testnetFaucetAmount
+                , tfrToken = "0x2222222222222222222222222222222222222222"
+                , tfrTxHash = Just txHash
+                , tfrStatus = status
+                }
+
+    it "returns submitted only to clients that opt into the pending state" $ do
+      case gateSubmittedFaucetResponse True $ response FaucetResponseSubmitted of
+        Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus}} ->
+          tfrStatus `shouldBe` FaucetResponseSubmitted
+        _ -> expectationFailure "async client did not receive the durable submitted state"
+
+      case gateSubmittedFaucetResponse False $ response FaucetResponseSubmitted of
+        Left ApiError {errCode} -> errCode `shouldBe` RateLimited
+        _ -> expectationFailure "legacy client could mistake a submitted transaction for minted funds"
+
+    it "leaves terminal responses unchanged for every client" $
+      case gateSubmittedFaucetResponse False $ response FaucetResponseMinted of
+        Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus}} ->
+          tfrStatus `shouldBe` FaucetResponseMinted
+        _ -> expectationFailure "terminal faucet response was not preserved"
 
   describe "faucetMintCall" $
     it "encodes mint(address,uint256) for the faucet amount" $ do
@@ -70,6 +128,43 @@ spec = do
       classifyTestnetFaucetClaim (Just $ claimRow "success" (Just txHash) Nothing)
         `shouldBe` FaucetAlreadyClaimed
 
+  describe "faucet broadcast recovery" $ do
+    it "keeps known persisted transactions pending for an exact receipt" $ do
+      classifyFaucetBroadcastErrorText "already known"
+        `shouldBe` FaucetAlreadyKnown
+      classifyFaucetBroadcastErrorText "Known transaction"
+        `shouldBe` FaucetAlreadyKnown
+      classifyFaucetBroadcastErrorText "already imported"
+        `shouldBe` FaucetAlreadyKnown
+
+    it "does not treat a consumed nonce as proof that the exact mint succeeded" $
+      classifyFaucetBroadcastErrorText "replacement transaction underpriced: nonce too low"
+        `shouldBe` FaucetNonceAlreadyConsumed
+
+    it "keeps unrelated broadcast failures as real RPC errors" $
+      classifyFaucetBroadcastErrorText "insufficient funds for gas"
+        `shouldBe` FaucetBroadcastRejected
+
+    it "does not mistake unknown transactions for known transactions" $ do
+      classifyFaucetBroadcastErrorText "unknown transaction"
+        `shouldBe` FaucetBroadcastRejected
+      classifyFaucetBroadcastErrorText "transaction not known"
+        `shouldBe` FaucetBroadcastRejected
+
+    it "accepts only the exact persisted transaction receipt" $ do
+      let matchingReceipt =
+            TxReceipt
+              { receiptTxHash = T.toUpper txHash
+              , receiptBlockNumber = 123
+              , receiptSucceeded = True
+              , receiptLogs = []
+              }
+          mismatchedReceipt = matchingReceipt {receiptTxHash = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+      receiptMatchesPersistedTransaction txHash matchingReceipt `shouldBe` True
+      receiptMatchesPersistedTransaction txHash mismatchedReceipt `shouldBe` False
+      receiptMatchesPersistedTransaction txHash (matchingReceipt {receiptTxHash = ""})
+        `shouldBe` False
+
   describe "faucet claim persistence SQL" $ do
     it "uses a recoverable preparing lease before any transaction can be broadcast" $ do
       queryContains beginTestnetFaucetClaimSql "'preparing'"
@@ -82,6 +177,12 @@ spec = do
       queryContains markTestnetFaucetClaimSubmittedSql "raw_tx = ?"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'submitted'"
       queryContains markTestnetFaucetClaimSubmittedSql "status = 'preparing'"
+
+    it "finalizes only the exact durable submitted transaction" $ do
+      queryContains markTestnetFaucetClaimSuccessSql "tx_hash = ?"
+      queryContains markTestnetFaucetClaimSuccessSql "status IN ('submitted', 'success')"
+      queryContains markTestnetFaucetClaimRevertedSql "tx_hash = ?"
+      queryContains markTestnetFaucetClaimRevertedSql "status = 'submitted'"
 
     it "keeps the static schema aligned with durable transaction recovery" $ do
       schema <- readFile "schema.sql"
