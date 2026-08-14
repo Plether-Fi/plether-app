@@ -137,6 +137,43 @@ describe('TestnetWelcomeModalView wallet connection states', () => {
     expect(screen.getByRole('button', { name: 'Deposit' })).toBeInTheDocument()
   })
 
+  it('keeps a submitted faucet transaction pending and rechecks it idempotently', () => {
+    const onRequestFunds = vi.fn()
+    const pendingTxHash = `0x${'a'.repeat(64)}`
+
+    render(
+      <TestnetWelcomeModalView
+        isOpen
+        isWalletConnected
+        isTradingAccountRecipient
+        walletAddress={walletAddress}
+        claim={{
+          address: walletAddress,
+          amount: '100000000000',
+          token: '0xb15503d70b0eaa644dc6650d2a248762f7c5bce3',
+          txHash: pendingTxHash,
+          status: 'submitted',
+        }}
+        onClose={vi.fn()}
+        onWalletAddressChange={vi.fn()}
+        onConnectWallet={vi.fn()}
+        onRequestFunds={onRequestFunds}
+      />
+    )
+
+    expect(
+      screen.getByText('Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.')
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Deposit' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: pendingTxHash })).toBeInTheDocument()
+
+    const checkButton = screen.getByRole('button', { name: 'Check confirmation' })
+    expect(checkButton).toBeEnabled()
+    fireEvent.click(checkButton)
+    expect(onRequestFunds).toHaveBeenCalledOnce()
+  })
+
   it('shows an actionable faucet timeout and leaves retry available', () => {
     render(
       <TestnetWelcomeModalView

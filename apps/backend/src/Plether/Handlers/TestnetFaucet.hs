@@ -1,15 +1,27 @@
 module Plether.Handlers.TestnetFaucet
   ( TestnetFaucetResponse (..)
+  , FaucetResponseStatus (..)
   , FaucetClaimDisposition (..)
+  , FaucetBroadcastErrorDisposition (..)
   , claimTestnetFaucet
   , classifyTestnetFaucetClaim
+  , classifyFaucetBroadcastErrorText
+  , receiptMatchesPersistedTransaction
+  , faucetRouteTimeoutMicros
+  , gateSubmittedFaucetResponse
   , testnetFaucetAmount
   , testnetFaucetEnabled
   , faucetMintCall
   ) where
 
-import Control.Concurrent (threadDelay)
-import Control.Exception (AsyncException, SomeException, fromException, onException, throwIO, try)
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , fromException
+  , onException
+  , throwIO
+  , try
+  )
 import Data.Aeson (ToJSON (..), object, (.=))
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
@@ -29,6 +41,7 @@ import Plether.Database.Schema
   , getTestnetFaucetClaim
   , markTestnetFaucetClaimFailed
   , markTestnetFaucetClaimReconciled
+  , markTestnetFaucetClaimReverted
   , markTestnetFaucetClaimSubmitted
   , markTestnetFaucetClaimSuccess
   )
@@ -51,24 +64,38 @@ import Plether.Ethereum.Transaction
   , signTransaction
   )
 import Plether.Logging (field, logInfo)
-import Plether.Types (ApiError, ApiResponse, mkResponse)
+import Plether.Types (ApiError, ApiResponse (..), mkResponse)
 import qualified Plether.Types.Error as E
 import System.Timeout (timeout)
 
 testnetFaucetAmount :: Integer
 testnetFaucetAmount = 100_000 * 1_000_000
 
--- Keep receipt polling bounded so the frontend's faucet-specific timeout can
--- cover this stage plus the handler's bounded database and signer-lock stages.
-faucetReceiptTimeoutMicros :: Int
-faucetReceiptTimeoutMicros = 120_000_000
+-- The ALB closes idle target connections after 75 seconds. Keep the entire
+-- route below that boundary even when an RPC or database operation stalls.
+faucetRouteTimeoutMicros :: Int
+faucetRouteTimeoutMicros = 60_000_000
+
+data FaucetResponseStatus
+  = FaucetResponseSubmitted
+  | FaucetResponseMinted
+  | FaucetResponseAlreadyClaimed
+  | FaucetResponseAlreadyFunded
+  deriving stock (Show, Eq, Generic)
+
+instance ToJSON FaucetResponseStatus where
+  toJSON = \case
+    FaucetResponseSubmitted -> "submitted"
+    FaucetResponseMinted -> "minted"
+    FaucetResponseAlreadyClaimed -> "already_claimed"
+    FaucetResponseAlreadyFunded -> "already_funded"
 
 data TestnetFaucetResponse = TestnetFaucetResponse
   { tfrAddress :: Text
   , tfrAmount :: Integer
   , tfrToken :: Text
   , tfrTxHash :: Maybe Text
-  , tfrStatus :: Text
+  , tfrStatus :: FaucetResponseStatus
   }
   deriving stock (Show, Eq, Generic)
 
@@ -81,6 +108,24 @@ instance ToJSON TestnetFaucetResponse where
       , "txHash" .= tfrTxHash
       , "status" .= tfrStatus
       ]
+
+-- Older cached frontend bundles treat every unfamiliar success status as
+-- minted. They receive a retryable 429 until an exact receipt is available;
+-- only clients that advertise async confirmation receive `submitted`.
+gateSubmittedFaucetResponse
+  :: Bool
+  -> Either ApiError (ApiResponse TestnetFaucetResponse)
+  -> Either ApiError (ApiResponse TestnetFaucetResponse)
+gateSubmittedFaucetResponse acceptsSubmitted response
+  | acceptsSubmitted = response
+gateSubmittedFaucetResponse
+  _
+  (Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus = FaucetResponseSubmitted}}) =
+  Left $
+    E.mkError
+      E.RateLimited
+      "Faucet transaction submitted and awaiting confirmation. Wait a moment, then retrying is safe."
+gateSubmittedFaucetResponse _ response = response
 
 data FaucetClaimDisposition
   = FaucetAlreadyClaimed
@@ -100,6 +145,12 @@ data FaucetChainProgress
   | FaucetBroadcastFinished (Either RpcError Text)
   | FaucetReceiptLookupFailed RpcError
   | FaucetRawTransactionInvalid Text
+
+data FaucetBroadcastErrorDisposition
+  = FaucetAlreadyKnown
+  | FaucetNonceAlreadyConsumed
+  | FaucetBroadcastRejected
+  deriving stock (Show, Eq)
 
 classifyTestnetFaucetClaim :: Maybe TestnetFaucetClaimRow -> FaucetClaimDisposition
 classifyTestnetFaucetClaim = \case
@@ -136,22 +187,43 @@ claimTestnetFaucet
 claimTestnetFaucet pool client cfg rawAddress
   | not (testnetFaucetEnabled cfg) =
       pure $ Left $ E.internalError "Testnet faucet is only available for Arbitrum Sepolia perps"
-  | otherwise =
-      case cfgFaucetPrivateKey cfg of
-        Nothing ->
-          pure $ Left $ E.internalError "FAUCET_PRIVATE_KEY is not configured"
-        Just privateKey -> do
-          let address = T.toLower rawAddress
-              token = T.toLower $ cfgPerpsUsdc cfg
-          existingResult <-
-            runFaucetStage "claim_lookup" eitherOutcome $
-              withFaucetDb pool $ \conn -> getTestnetFaucetClaim conn address token
-          case existingResult of
-            Left err -> pure $ Left err
-            Right Nothing ->
-              beginOrObserveClaim pool client cfg privateKey address token
-            Right (Just claim) ->
-              handlePersistedClaim pool client cfg privateKey address token claim
+  | otherwise = do
+      result <- timeout faucetRouteTimeoutMicros $ claimTestnetFaucetWithin pool client cfg rawAddress
+      case result of
+        Just response -> pure response
+        Nothing -> do
+          logInfo
+            "testnet_faucet_route_timed_out"
+            "Testnet faucet route reached its safe response deadline"
+            []
+          pure $
+            Left $
+              E.mkError
+                E.RateLimited
+                "Faucet processing reached its safe deadline. Any submitted transaction remains recoverable; retrying is safe."
+
+claimTestnetFaucetWithin
+  :: DbPool
+  -> EthClient
+  -> Config
+  -> Text
+  -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
+claimTestnetFaucetWithin pool client cfg rawAddress =
+  case cfgFaucetPrivateKey cfg of
+    Nothing ->
+      pure $ Left $ E.internalError "FAUCET_PRIVATE_KEY is not configured"
+    Just privateKey -> do
+      let address = T.toLower rawAddress
+          token = T.toLower $ cfgPerpsUsdc cfg
+      existingResult <-
+        runFaucetStage "claim_lookup" eitherOutcome $
+          withFaucetDb pool $ \conn -> getTestnetFaucetClaim conn address token
+      case existingResult of
+        Left err -> pure $ Left err
+        Right Nothing ->
+          beginOrObserveClaim pool client cfg privateKey address token
+        Right (Just claim) ->
+          handlePersistedClaim pool client cfg privateKey address token claim
 
 handlePersistedClaim
   :: DbPool
@@ -251,7 +323,7 @@ prepareAndSubmitClaim pool client cfg privateKey address token = do
     Right FaucetSubmissionStateChanged ->
       pure $ Left $ E.internalError "Faucet claim changed state before its transaction could be persisted"
     Right (FaucetTransactionSubmitted txHash progress) ->
-      handleChainProgress pool client cfg address token txHash progress
+      handleChainProgress pool cfg address token txHash progress
 
 resumeSubmittedClaim
   :: DbPool
@@ -285,7 +357,7 @@ resumeSubmittedTransaction pool client cfg address token txHash rawTx = do
   case progressResult of
     Left err -> pure $ Left err
     Right progress ->
-      handleChainProgress pool client cfg address token txHash progress
+      handleChainProgress pool cfg address token txHash progress
 
 advanceSubmittedTransaction :: EthClient -> Text -> Text -> IO FaucetChainProgress
 advanceSubmittedTransaction client txHash rawTx = do
@@ -305,14 +377,13 @@ advanceSubmittedTransaction client txHash rawTx = do
 
 handleChainProgress
   :: DbPool
-  -> EthClient
   -> Config
   -> Text
   -> Text
   -> Text
   -> FaucetChainProgress
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
-handleChainProgress pool client cfg address token txHash = \case
+handleChainProgress pool cfg address token txHash = \case
   FaucetReceiptFound receipt ->
     finalizeSubmittedClaim pool cfg address token txHash receipt
   FaucetReceiptLookupFailed err ->
@@ -328,33 +399,41 @@ handleChainProgress pool client cfg address token txHash = \case
                 E.internalError
                   "Faucet RPC returned a transaction hash that did not match the persisted signed transaction"
         | otherwise ->
-            waitAndFinalizeClaim pool client cfg address token txHash
-      Left err
-        | isKnownTransactionError err ->
-            waitAndFinalizeClaim pool client cfg address token txHash
-        | otherwise ->
+            submittedClaimResponse cfg address token txHash "broadcast_accepted"
+      Left err ->
+        case classifyFaucetBroadcastErrorText $ rpcErrorText err of
+          FaucetAlreadyKnown ->
+            submittedClaimResponse cfg address token txHash "already_known"
+          FaucetNonceAlreadyConsumed ->
+            -- A low nonce does not prove that this exact mint was confirmed.
+            -- Keep the durable transaction pending until its exact receipt is
+            -- observable; signing a fresh transaction here could double mint.
+            submittedClaimResponse cfg address token txHash "nonce_already_consumed"
+          FaucetBroadcastRejected ->
             pure $
               Left $
                 E.rpcError $
                   "faucet transaction remains safely submitted for reconciliation: "
                     <> rpcErrorText err
 
-waitAndFinalizeClaim
-  :: DbPool
-  -> EthClient
-  -> Config
+submittedClaimResponse
+  :: Config
+  -> Text
   -> Text
   -> Text
   -> Text
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
-waitAndFinalizeClaim pool client cfg address token txHash = do
-  receiptResult <-
-    runFaucetStage "receipt_poll" eitherOutcome $
-      waitForReceipt client txHash 60
-  case receiptResult of
-    Left err -> pure $ Left $ E.rpcError err
-    Right receipt ->
-      finalizeSubmittedClaim pool cfg address token txHash receipt
+submittedClaimResponse cfg address token txHash reason = do
+  logInfo
+    "testnet_faucet_confirmation_pending"
+    "Testnet faucet transaction is durably submitted and awaiting its exact receipt"
+    [field "reason" reason]
+  pure $
+    Right $
+      mkResponse
+        0
+        (cfgPerpsChainId cfg)
+        (faucetResponse address token (Just txHash) FaucetResponseSubmitted)
 
 finalizeSubmittedClaim
   :: DbPool
@@ -365,28 +444,42 @@ finalizeSubmittedClaim
   -> TxReceipt
   -> IO (Either ApiError (ApiResponse TestnetFaucetResponse))
 finalizeSubmittedClaim pool cfg address token txHash receipt
+  | not $ receiptMatchesPersistedTransaction txHash receipt =
+      pure $
+        Left $
+          E.internalError
+            "Faucet receipt transaction hash did not match the persisted submitted transaction"
   | receiptSucceeded receipt = do
       successResult <-
-        runFaucetStage "persist_success" eitherOutcome $
+        runFaucetStage "persist_success" eitherBooleanOutcome $
           withFaucetDb pool $ \conn ->
             markTestnetFaucetClaimSuccess conn address token txHash
       pure $ case successResult of
         Left err -> Left err
-        Right _ ->
+        Right False ->
+          Left $ E.internalError "Faucet claim changed state before its exact receipt could be persisted"
+        Right True ->
           Right $
             mkResponse
               (receiptBlockNumber receipt)
               (cfgPerpsChainId cfg)
-              (faucetResponse address token (Just txHash) "minted")
+              (faucetResponse address token (Just txHash) FaucetResponseMinted)
   | otherwise = do
       let err = "faucet mint transaction reverted: " <> txHash
       failedResult <-
-        runFaucetStage "persist_revert" eitherOutcome $
+        runFaucetStage "persist_revert" eitherBooleanOutcome $
           withFaucetDb pool $ \conn ->
-            markTestnetFaucetClaimFailed conn address token err
+            markTestnetFaucetClaimReverted conn address token txHash err
       pure $ case failedResult of
         Left dbErr -> Left dbErr
-        Right _ -> Left $ E.rpcError err
+        Right False ->
+          Left $ E.internalError "Faucet claim changed state before its exact revert could be persisted"
+        Right True -> Left $ E.rpcError err
+
+receiptMatchesPersistedTransaction :: Text -> TxReceipt -> Bool
+receiptMatchesPersistedTransaction txHash receipt =
+  not (T.null $ receiptTxHash receipt)
+    && T.toLower (receiptTxHash receipt) == T.toLower txHash
 
 reconcileLegacyPending
   :: DbPool
@@ -431,7 +524,7 @@ alreadyClaimedResponse client chainId address token claim =
       let blockNum = either (const 0) id blockResult
       pure $
         Right $
-          mkResponse blockNum chainId (faucetResponse address token (Just txHash) "already_claimed")
+          mkResponse blockNum chainId (faucetResponse address token (Just txHash) FaucetResponseAlreadyClaimed)
     Nothing -> alreadyFundedResponse client chainId address token
 
 alreadyFundedResponse
@@ -445,9 +538,9 @@ alreadyFundedResponse client chainId address token = do
   let blockNum = either (const 0) id blockResult
   pure $
     Right $
-      mkResponse blockNum chainId (faucetResponse address token Nothing "already_funded")
+      mkResponse blockNum chainId (faucetResponse address token Nothing FaucetResponseAlreadyFunded)
 
-faucetResponse :: Text -> Text -> Maybe Text -> Text -> TestnetFaucetResponse
+faucetResponse :: Text -> Text -> Maybe Text -> FaucetResponseStatus -> TestnetFaucetResponse
 faucetResponse address token txHash status =
   TestnetFaucetResponse
     { tfrAddress = address
@@ -503,22 +596,6 @@ prepareFaucetMint cfg client privateKey token recipient =
                   , either ((: []) . rpcErrorText) (const []) gasPriceResult
                   ]
 
-waitForReceipt :: EthClient -> Text -> Int -> IO (Either Text TxReceipt)
-waitForReceipt client txHash attempts = do
-  result <- timeout faucetReceiptTimeoutMicros $ pollForReceipt client txHash attempts
-  pure $ maybe (Left $ "timed out waiting for receipt " <> txHash) id result
-
-pollForReceipt :: EthClient -> Text -> Int -> IO (Either Text TxReceipt)
-pollForReceipt _ txHash 0 = pure $ Left $ "timed out waiting for receipt " <> txHash
-pollForReceipt client txHash attempts = do
-  receiptResult <- ethGetTransactionReceipt client txHash
-  case receiptResult of
-    Left err -> pure $ Left $ rpcErrorText err
-    Right (Just receipt) -> pure $ Right receipt
-    Right Nothing -> do
-      threadDelay 2_000_000
-      pollForReceipt client txHash (attempts - 1)
-
 runFaucetStage :: Text -> (result -> Text) -> IO result -> IO result
 runFaucetStage stage outcomeFor action = do
   startedAt <- getMonotonicTimeNSec
@@ -550,6 +627,9 @@ booleanOutcome :: Bool -> Text
 booleanOutcome True = "success"
 booleanOutcome False = "state_changed"
 
+eitherBooleanOutcome :: Either left Bool -> Text
+eitherBooleanOutcome = either (const "failure") booleanOutcome
+
 receiptLookupOutcome :: Either RpcError (Maybe TxReceipt) -> Text
 receiptLookupOutcome = \case
   Left _ -> "failure"
@@ -578,7 +658,7 @@ withFaucetDbWithin timeoutMicros pool action = do
   result <- try @SomeException $ timeout timeoutMicros $ withDb pool action
   case result of
     Left err ->
-      case fromException err :: Maybe AsyncException of
+      case fromException err :: Maybe SomeAsyncException of
         Just _ -> throwIO err
         Nothing -> pure $ Left $ E.networkError "Faucet claim database operation failed"
     Right Nothing -> pure $ Left $ E.networkError "Faucet claim database operation timed out"
@@ -598,16 +678,24 @@ decodeRawTransaction value =
       | BS.null bytes -> Left "Persisted faucet transaction is empty"
       | otherwise -> Right bytes
 
-isKnownTransactionError :: RpcError -> Bool
-isKnownTransactionError err =
-  let message = T.toLower $ rpcErrorText err
-   in any
-        (`T.isInfixOf` message)
-        [ "already known"
-        , "known transaction"
-        , "already imported"
-        , "nonce too low"
-        ]
+classifyFaucetBroadcastErrorText :: Text -> FaucetBroadcastErrorDisposition
+classifyFaucetBroadcastErrorText rawMessage
+  | "nonce too low" `T.isInfixOf` message = FaucetNonceAlreadyConsumed
+  | any
+      (`T.isInfixOf` message)
+      [ "unknown transaction"
+      , "not known transaction"
+      , "transaction not known"
+      ] = FaucetBroadcastRejected
+  | any
+      (`T.isInfixOf` message)
+      [ "already known"
+      , "known transaction"
+      , "already imported"
+      ] = FaucetAlreadyKnown
+  | otherwise = FaucetBroadcastRejected
+  where
+    message = T.toLower rawMessage
 
 strip0x :: Text -> Text
 strip0x value =

@@ -73,6 +73,11 @@ describe('isUpstreamApiError', () => {
 });
 
 describe('API request timeouts', () => {
+  it('keeps the faucet client deadline below the ALB idle timeout', () => {
+    expect(TESTNET_FAUCET_TIMEOUT_MS).toBe(65_000);
+    expect(TESTNET_FAUCET_TIMEOUT_MS).toBeLessThan(75_000);
+  });
+
   it('allows a faucet claim to finish after the default 30-second API timeout', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn(() =>
@@ -105,6 +110,15 @@ describe('API request timeouts', () => {
 
     const pendingClaim = client.claimTestnetFaucet(
       '0x1111111111111111111111111111111111111111'
+    );
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/testnet/faucet',
+      expect.objectContaining({
+        body: JSON.stringify({
+          address: '0x1111111111111111111111111111111111111111',
+          confirmationMode: 'async',
+        }),
+      })
     );
     await vi.advanceTimersByTimeAsync(31_000);
     const result = await pendingClaim;

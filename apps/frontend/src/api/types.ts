@@ -252,7 +252,7 @@ export interface TestnetFaucetClaim {
   amount: string;
   token: string;
   txHash: string | null;
-  status: 'minted' | 'already_claimed' | 'already_funded';
+  status: 'submitted' | 'minted' | 'already_claimed' | 'already_funded';
 }
 
 // =============================================================================

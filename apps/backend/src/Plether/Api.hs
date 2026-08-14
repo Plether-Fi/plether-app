@@ -4,7 +4,7 @@ module Plether.Api
 
 import Control.Exception (evaluate)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:))
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
@@ -84,7 +84,10 @@ import Plether.Handlers.Insights
   , getInsightsDataStatusResponse
   )
 import Plether.Database (DbPool)
-import Plether.Handlers.TestnetFaucet (claimTestnetFaucet)
+import Plether.Handlers.TestnetFaucet
+  ( claimTestnetFaucet
+  , gateSubmittedFaucetResponse
+  )
 import Plether.Types.History (HistoryParams (..))
 import Plether.Types.Perps
   ( BasketHistoryParams (..)
@@ -114,11 +117,13 @@ import Web.Scotty
   , status
   )
 
-newtype TestnetFaucetRequest = TestnetFaucetRequest Text
+data TestnetFaucetRequest = TestnetFaucetRequest Text Bool
 
 instance FromJSON TestnetFaucetRequest where
-  parseJSON = withObject "TestnetFaucetRequest" $ \v ->
-    TestnetFaucetRequest <$> v .: "address"
+  parseJSON = withObject "TestnetFaucetRequest" $ \v -> do
+    address <- v .: "address"
+    confirmationMode <- v .:? "confirmationMode"
+    pure $ TestnetFaucetRequest address (confirmationMode == Just ("async" :: Text))
 
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
 app cache client perpsClient cfg mPool manager pimlicoProxyState = do
@@ -129,12 +134,12 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
     json ("{\"status\":\"ok\"}" :: Text)
 
   post "/api/testnet/faucet" $ do
-    TestnetFaucetRequest addr <- jsonData
+    TestnetFaucetRequest addr acceptsSubmitted <- jsonData
     if isValidAddress addr
       then case mPool of
         Just pool -> do
           result <- liftIO $ claimTestnetFaucet pool perpsClient cfg addr
-          handleResult result
+          handleResult $ gateSubmittedFaucetResponse acceptsSubmitted result
         Nothing ->
           handleServiceUnavailable $
             E.internalError "DATABASE_URL is not configured; testnet faucet is unavailable"

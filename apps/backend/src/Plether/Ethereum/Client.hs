@@ -13,7 +13,13 @@ module Plether.Ethereum.Client
   , renderBlockTag
   ) where
 
-import Control.Exception (SomeException, try)
+import Control.Exception
+  ( SomeAsyncException
+  , SomeException
+  , fromException
+  , throwIO
+  , try
+  )
 import Data.Aeson (FromJSON (..), ToJSON (..), Value (..), object, withObject, (.:), (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
@@ -132,7 +138,10 @@ rpcCall client method params = do
     pure $ responseBody response
 
   case eResult of
-    Left err -> pure $ Left $ RpcHttpError $ T.pack $ show err
+    Left err ->
+      case fromException err :: Maybe SomeAsyncException of
+        Just _ -> throwIO err
+        Nothing -> pure $ Left $ RpcHttpError $ T.pack $ show err
     Right body ->
       case Aeson.eitherDecode body of
         Left err -> pure $ Left $ RpcJsonError $ T.pack err
