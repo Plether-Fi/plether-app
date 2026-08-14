@@ -5,6 +5,8 @@ resource "terraform_data" "perps_candle_rollout_guard" {
     read_mode                      = var.perps_candle_read_mode
     read_intervals                 = var.perps_candle_read_intervals
     strict_coverage                = var.perps_candle_strict_coverage
+    finalization_grace_seconds     = var.perps_candle_finalization_grace_seconds
+    basket_worker_poll_seconds     = var.basket_worker_poll_seconds
     consolidate_workers            = var.consolidate_workers
     workers_desired_count          = var.workers_desired_count
     operations_alarm_sns_topic_arn = var.operations_alarm_sns_topic_arn
@@ -31,6 +33,15 @@ resource "terraform_data" "perps_candle_rollout_guard" {
         || (var.perps_candle_write_mode == "dual" && var.perps_candle_strict_coverage)
       )
       error_message = "Rollup read mode requires dual writes and strict coverage so public reads fail closed."
+    }
+
+    precondition {
+      condition = var.perps_candle_read_mode != "rollup" || try(
+        can(regex("^[1-9][0-9]*$", var.basket_worker_poll_seconds))
+        && var.perps_candle_finalization_grace_seconds >= tonumber(var.basket_worker_poll_seconds) + 5,
+        false
+      )
+      error_message = "Rollup read mode requires a positive whole-number basket_worker_poll_seconds value and finalization grace at least five seconds longer than that poll cadence."
     }
 
     precondition {

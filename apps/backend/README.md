@@ -554,6 +554,7 @@ Local URLs:
 | `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | `0` | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
 | `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`, and every response is still validated against combined coverage metadata. |
 | `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
+| `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
 
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set

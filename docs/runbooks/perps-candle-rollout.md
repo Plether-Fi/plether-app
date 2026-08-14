@@ -250,6 +250,7 @@ PERPS_CANDLE_READ_INTERVALS=
 PERPS_CANDLE_SHADOW_SAMPLE_BPS=0
 PERPS_CANDLE_STRICT_COVERAGE=true
 PERPS_CANDLE_LATENESS_SECONDS=120
+PERPS_CANDLE_FINALIZATION_GRACE_SECONDS=15
 ```
 
 Pass criteria:
@@ -518,6 +519,13 @@ For each interval, test an inception-clipped page, a fully closed page, the
 active page, current candle, a weekend gap, and pagination across at least two
 pages. Requests with duplicate, missing, unknown, unaligned, noncanonical, or
 far-future query parameters must fail closed and must not be shared-cached.
+Run the active-page, current-candle, and non-component rollup-backed
+compatibility-history probes across a real
+`bucket end + PERPS_CANDLE_LATENESS_SECONDS` boundary. The previous stored
+watermark may remain readable only during
+`PERPS_CANDLE_FINALIZATION_GRACE_SECONDS`; require zero 5xx responses while the
+writer publishes, and verify that a deliberately frozen finalizer fails closed
+when the grace expires.
 The server may accept only the immediately adjacent future page to tolerate a
 browser/backend clock difference at a page boundary. Component-bearing legacy
 history is intentionally restricted to the supported `24h`/`3600` shape;
@@ -525,7 +533,9 @@ other component requests must fail with `400` instead of scanning raw history.
 The allowed component request must not scan account activity: verify its
 per-point `volumeUsdc` is the deliberate non-authoritative zero, its
 `plether_db_volume` timing and volume-row count are zero, and market stats remain
-the authoritative rolling 24-hour volume source.
+the authoritative rolling 24-hour volume source. Keep this component-bearing
+request in the canary as a labeled legacy/raw control; it is not subject to the
+rollup watermark or publication grace.
 
 Collect latency samples using the ADR 0001 protocol. Every interval and each
 successful response shape listed above, including the permitted compatibility
@@ -537,6 +547,8 @@ Pass criteria:
 - rollup SQL p95/p99 is at most 50/100 ms;
 - backend p95/p99 is at most 150/300 ms;
 - direct origin p95/p99 is at most 750 ms/1 s;
+- no rollover-boundary request fails while a healthy writer publishes within
+  the configured finalization grace;
 - history pages contain no more than 500 strictly ascending finalized candles;
 - clients count actual candles across sparse weekend gaps;
 - one browser history traversal stops after at most 24 fixed pages even if a

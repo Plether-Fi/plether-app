@@ -46,6 +46,7 @@ locals {
     { name = "PERPS_CANDLE_SHADOW_SAMPLE_BPS", value = tostring(var.perps_candle_shadow_sample_bps) },
     { name = "PERPS_CANDLE_STRICT_COVERAGE", value = tostring(var.perps_candle_strict_coverage) },
     { name = "PERPS_CANDLE_LATENESS_SECONDS", value = tostring(var.perps_candle_lateness_seconds) },
+    { name = "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS", value = tostring(var.perps_candle_finalization_grace_seconds) },
   ]
 
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [

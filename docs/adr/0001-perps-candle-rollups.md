@@ -137,6 +137,18 @@ Price and volume have separate completeness watermarks:
 - volume completeness follows the canonical indexer's confirmed block/hash
   watermark.
 
+The price writer becomes eligible to finalize a bucket only after the source
+lateness window. Because durable publication runs on an asynchronous polling
+loop, strict readers apply a separate bounded finalization-publication grace
+(15 seconds by default) before requiring the newly eligible aligned watermark.
+During that grace they still clip every response to the previously stored
+`finalized_through`; no unfinalized row becomes visible. Coverage freshness
+does not receive this grace, and a frozen finalizer still fails closed when the
+bounded window expires. The 60-second configuration cap ensures the grace can
+never relax freshness by more than one canonical candle bucket. Terraform
+refuses rollup reads unless the grace is at least five seconds longer than the
+configured basket-writer poll cadence.
+
 A historical page is eligible for rollup reads only when the complete requested
 range is covered for both required sources and the active derivation version.
 The presence of one row is not proof of coverage. Partial backfills must never
@@ -303,6 +315,7 @@ PERPS_CANDLE_READ_MODE=legacy|shadow|rollup
 PERPS_CANDLE_READ_INTERVALS=<comma-separated seconds>
 PERPS_CANDLE_SHADOW_SAMPLE_BPS=<0..10000>
 PERPS_CANDLE_LATENESS_SECONDS=<seconds>
+PERPS_CANDLE_FINALIZATION_GRACE_SECONDS=<0..60>
 ```
 
 Safe defaults are writes off and legacy reads. The rollout order is:
@@ -357,7 +370,8 @@ With production-like data and at least twice observed peak traffic:
 | Edge hit p95 | <= 150 ms |
 | Initial chart history p95 | <= 1 s |
 | Current-candle lag while live | <= 10 s |
-| Coverage/finalization lag | <= 2 min |
+| Source lateness | 2 min |
+| Finalization publication after eligibility | <= 15 s |
 
 Apply the first three latency targets independently to every canonical interval
 and successful canonical request shape. Do not pool endpoints, intervals,

@@ -51,9 +51,10 @@ db_final_snapshot_identifier = "plether-sepolia-final-20260812-a"
 
 # Keep these safe during the additive schema deployment. Enable dual writes and
 # rollup reads only after the environment's migration and coverage checks pass.
-perps_candle_write_mode        = "off"
-perps_candle_read_mode         = "legacy"
-perps_candle_read_intervals    = ""
-perps_candle_shadow_sample_bps = 0
-perps_candle_strict_coverage   = true
-perps_candle_lateness_seconds  = 120
+perps_candle_write_mode                 = "off"
+perps_candle_read_mode                  = "legacy"
+perps_candle_read_intervals             = ""
+perps_candle_shadow_sample_bps          = 0
+perps_candle_strict_coverage            = true
+perps_candle_lateness_seconds           = 120
+perps_candle_finalization_grace_seconds = 15
