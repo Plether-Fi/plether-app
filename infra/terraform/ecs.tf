@@ -150,7 +150,7 @@ resource "aws_ecs_task_definition" "api" {
   family                   = "plether-${var.environment}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = var.container_cpu
+  cpu                      = var.api_container_cpu
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
