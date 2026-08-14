@@ -90,7 +90,7 @@ import Plether.Database.Candles
   , CandleQuality (..)
   , defaultBasketSeriesId
   , getActiveBasketDefinitionIdentity
-  , getBasketCandlePage
+  , getBasketCandlePageSnapshot
   , getBasketCandleRange
   , getCurrentBasketCandle
   )
@@ -180,17 +180,16 @@ getBasketCandlePageTimed
 getBasketCandlePageTimed pool cfg interval cursor = do
   now <- floor <$> getPOSIXTime
   poolStartedAt <- getMonotonicTimeNSec
-  (mDefinition, page, poolWaitNs, queryNs) <- withDb pool $ \conn -> withCandleReadSnapshot conn $ do
+  (mDefinition, page, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
     connectionReadyAt <- getMonotonicTimeNSec
     let poolWaitNs = connectionReadyAt - poolStartedAt
     queryStartedAt <- getMonotonicTimeNSec
     -- A client may request the bounded page ahead of the wall clock. Never use
     -- that future timestamp to select a scheduled basket definition.
-    mDefinition <- getActiveBasketDefinitionIdentity conn (min (cursor - 1) now)
-    page <-
-      getBasketCandlePage
+    (mDefinition, page) <-
+      getBasketCandlePageSnapshot
         conn
-        (maybe defaultBasketSeriesId bdiSeriesId mDefinition)
+        (min (cursor - 1) now)
         (cfgPerpsChainId cfg)
         (cfgPerpsOrderRouter cfg)
         interval

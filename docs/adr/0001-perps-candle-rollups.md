@@ -359,6 +359,27 @@ With production-like data and at least twice observed peak traffic:
 | Current-candle lag while live | <= 10 s |
 | Coverage/finalization lag | <= 2 min |
 
+Apply the first three latency targets independently to every canonical interval
+and successful canonical request shape. Do not pool endpoints, intervals,
+current candles, active pages, closed or inception-clipped pages, or
+compatibility history. For
+native candle responses, read SQL and application durations from the
+route-specific `Server-Timing` metrics `plether_db_candles` and `plether_app`.
+For the permitted `24h`/`3600` compatibility request, use
+`plether_db_snapshots` and `plether_app`, while `plether_db_volume` must remain
+zero. `plether_app` already includes database time and must not be added to a
+database metric.
+
+Before recording each series, issue 10 fixed, unrecorded warm-up requests.
+Evaluate direct-origin HTTP using established persistent keep-alive connections,
+with HTTP/2 where negotiated, from a documented probe location while the load
+condition above is present. Measure fresh DNS/TCP/TLS connections separately,
+report their phase timings, and never mix cold-transport observations into the
+warm series. Calculate nearest-rank percentiles from at least 200 recorded
+observations for p95 and 1,000 for p99; a pass asserting both therefore requires
+at least 1,000 observations per request shape. Record failures separately and
+do not silently retry, discard, or replace them.
+
 In addition, a normal initial chart load should require no more than two
 history pages, each SQL page should inspect at most its bounded page size, and
 rollup mode must execute no raw snapshot or account-activity scans.

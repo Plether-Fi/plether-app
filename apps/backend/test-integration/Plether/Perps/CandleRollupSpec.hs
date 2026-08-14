@@ -36,7 +36,9 @@ import Plether.Database.Candles
   , defaultBasketSeriesId
   , ensureCandleSchema
   , ensureCurrentBasketDefinition
+  , getActiveBasketDefinitionIdentity
   , getBasketCandlePage
+  , getBasketCandlePageSnapshot
   , getBasketCandleRange
   , getCurrentBasketCandle
   , getRollupCoverage
@@ -608,15 +610,27 @@ candleRollupSpec databaseUrl =
     it "requires combined complete coverage and skips sparse pages correctly" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
+          let cursor = baseTime + pageSpan60
+              coverageStart = baseTime - pageSpan60
+              emptyPage = CandlePage [] Nothing False Nothing Nothing Nothing 0 False
           ensureCurrentBasketDefinition connection testSeries
+          expectedDefinition <-
+            getActiveBasketDefinitionIdentity connection (cursor - 1)
+          (definitionWithoutCoverage, pageWithoutCoverage) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 cursor
+          definitionWithoutCoverage `shouldBe` expectedDefinition
+          pageWithoutCoverage `shouldBe` emptyPage
+
           insertObservation connection "earlier" (baseTime - 55) 80 "signed_pyth" 100
           insertObservation connection "page-first" (baseTime + 5) 100 "signed_pyth" 100
           insertObservation connection "page-sparse" (baseTime + 905) 120 "signed_pyth" 100
+          insertActivity connection "page-volume" (baseTime + 5) 150 7 11 "Open"
           forM_ [baseTime - 55, baseTime + 5, baseTime + 905] $ \timestamp ->
             recomputeBasketCandleHierarchy connection testSeries timestamp 0
+          recomputeMarketVolumeHierarchy
+            connection testChainId testRouter (baseTime + 5) 0
 
-          let cursor = baseTime + pageSpan60
-              coverageStart = baseTime - pageSpan60
           putPriceCoverageVersion
             connection 60 coverageStart cursor cursor 1 True "v0"
           putVolumeCoverageVersion
@@ -624,6 +638,11 @@ candleRollupSpec databaseUrl =
           staleDerivation <-
             getBasketCandlePage
               connection testSeries testChainId testRouter 60 cursor
+          (staleDefinition, staleSnapshot) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 cursor
+          staleDefinition `shouldBe` expectedDefinition
+          staleSnapshot `shouldBe` staleDerivation
           cpCandles staleDerivation `shouldBe` []
           cpCoverageComplete staleDerivation `shouldBe` False
 
@@ -635,6 +654,10 @@ candleRollupSpec databaseUrl =
           withoutVolume <-
             getBasketCandlePage
               connection testSeries testChainId testRouter 60 cursor
+          (_, withoutVolumeSnapshot) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 cursor
+          withoutVolumeSnapshot `shouldBe` withoutVolume
           cpCandles withoutVolume `shouldBe` []
           cpCoverageComplete withoutVolume `shouldBe` False
 
@@ -642,10 +665,17 @@ candleRollupSpec databaseUrl =
           page <-
             getBasketCandlePage
               connection testSeries testChainId testRouter 60 cursor
+          (pageDefinition, snapshotPage) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 cursor
+          pageDefinition `shouldBe` expectedDefinition
+          snapshotPage `shouldBe` page
           map bcrBucketStart (cpCandles page)
             `shouldBe` [baseTime, baseTime + 900]
           map bcrVolumeNumerator (cpCandles page)
-            `shouldBe` [Just 0, Just 0]
+            `shouldBe` [Just 77, Just 0]
+          map bcrTradeCount (cpCandles page)
+            `shouldBe` [Just 1, Just 0]
           map bcrVolumeComplete (cpCandles page)
             `shouldBe` [True, True]
           cpPreviousCursor page `shouldBe` Just baseTime
@@ -665,7 +695,7 @@ candleRollupSpec databaseUrl =
           map bcrBucketStart (crCandles range)
             `shouldBe` [baseTime, baseTime + 900]
           map bcrVolumeNumerator (crCandles range)
-            `shouldBe` [Just 0, Just 0]
+            `shouldBe` [Just 77, Just 0]
           crCoverageStart range `shouldBe` Just coverageStart
           crCoverageEnd range `shouldBe` Just cursor
           crFinalizedThrough range `shouldBe` Just cursor
@@ -680,10 +710,30 @@ candleRollupSpec databaseUrl =
           ccDatasetGeneration current `shouldBe` cpDatasetGeneration page
           ccCoverageComplete current `shouldBe` True
 
+          -- A complete page immediately beyond coverage is empty but retains
+          -- metadata and points back to the newest page containing candles.
+          let nextCursor = cursor + pageSpan60
+          beyondCoverage <-
+            getBasketCandlePage
+              connection testSeries testChainId testRouter 60 nextCursor
+          (beyondDefinition, beyondSnapshot) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 nextCursor
+          beyondDefinition `shouldBe` expectedDefinition
+          beyondSnapshot `shouldBe` beyondCoverage
+          cpCandles beyondSnapshot `shouldBe` []
+          cpPreviousCursor beyondSnapshot `shouldBe` Just cursor
+          cpHasEarlier beyondSnapshot `shouldBe` True
+          cpCoverageComplete beyondSnapshot `shouldBe` True
+
           putVolumeCoverage connection 60 coverageStart cursor cursor 4 False
           incomplete <-
             getBasketCandlePage
               connection testSeries testChainId testRouter 60 cursor
+          (_, incompleteSnapshot) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) testChainId testRouter 60 cursor
+          incompleteSnapshot `shouldBe` incomplete
           cpCandles incomplete `shouldBe` []
           cpCoverageComplete incomplete `shouldBe` False
           incompleteRange <-

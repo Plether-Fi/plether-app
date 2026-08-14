@@ -527,6 +527,11 @@ per-point `volumeUsdc` is the deliberate non-authoritative zero, its
 `plether_db_volume` timing and volume-row count are zero, and market stats remain
 the authoritative rolling 24-hour volume source.
 
+Collect latency samples using the ADR 0001 protocol. Every interval and each
+successful response shape listed above, including the permitted compatibility
+history, must meet its applicable thresholds independently. Rejected-input
+cases remain correctness checks and are not pooled into latency series.
+
 Pass criteria:
 
 - rollup SQL p95/p99 is at most 50/100 ms;
