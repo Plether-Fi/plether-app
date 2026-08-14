@@ -67,6 +67,7 @@ library
         Plether.Pyth.RevealPayload
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
+        Plether.Perps.CandleFinalizerProbe
         Plether.Perps.HistoryIndexer
         Plether.Perps.IndexerOptions
         Plether.Types.History
@@ -268,6 +269,7 @@ test-suite plether-api-test
         Plether.Pyth.RevealPayloadSpec
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
+        Plether.Perps.CandleFinalizerProbeSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Database.InsightsSpec

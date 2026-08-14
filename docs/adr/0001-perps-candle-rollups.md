@@ -149,6 +149,20 @@ never relax freshness by more than one canonical candle bucket. Terraform
 refuses rollup reads unless the grace is at least five seconds longer than the
 configured basket-writer poll cadence.
 
+The supervised frozen-finalizer canary holds the exact price-dataset writer
+lock across one hourly eligibility boundary without changing coverage data.
+The supervising operator issues the three cache-bypassed current-candle
+requests; the canary executable only controls and observes database state. Its
+2,100-second application deadline, 2,400-second workflow task deadline,
+12-second idle-transaction fail-safe, and 90-minute job limit bound the fault
+while preserving post-deadline cleanup time.
+The supervised Gate control passes only after the operator proves the expected
+request fails closed, the lock is released on schedule, price advances from
+the previous hour to the boundary while volume remains healthy at or beyond the
+boundary, both generations remain unchanged, and the same request succeeds
+again. Workflow/task success alone proves only the database lock and recovery
+lifecycle; it does not prove that the three HTTP observations occurred.
+
 A historical page is eligible for rollup reads only when the complete requested
 range is covered for both required sources and the active derivation version.
 The presence of one row is not proof of coverage. Partial backfills must never
@@ -239,6 +253,7 @@ backfill price|volume|all
 status
 verify
 repair price|volume|all
+finalizer-probe --boundary <aligned-hour>
 ```
 
 Backfill and repair run on a single database connection under a PostgreSQL
@@ -251,6 +266,18 @@ complete coverage. Backfill runs newest-first so useful chart windows become
 available first. It reads only existing PostgreSQL history and never calls
 remote Pyth services. Coverage is extended only across adjacent completed
 chunks.
+
+`finalizer-probe` is a Sepolia-only, hourly canary for the strict read failure
+path. It accepts one aligned boundary and requires the exact active `3600`
+rollout configuration. After taking the global candle-admin lock, it acquires
+the same transaction-scoped price dataset advisory lock as the live writer in
+a read-committed, read-only transaction; this makes state committed by a writer
+that held the lock visible after acquisition. Recovery is sampled in a fresh
+repeatable-read, read-only snapshot. The probe performs no row mutation, its
+transaction lock releases automatically on commit, rollback, disconnect, or
+task termination, and it exits successfully only after price reaches the
+protected boundary, volume remains healthy at or beyond it, and neither
+dataset generation changes.
 
 A bounded repair first captures each selected dataset's complete per-interval
 coverage envelope and records a durable maintenance identity binding that
@@ -283,11 +310,17 @@ settings and all sidecars and changes only the API image to
 service, pins the unanimous running Perps indexer digest, rejects dependencies
 on excluded containers, and derives a task containing only the unchanged
 indexer definition and its exact FireLens sidecar. The workflow registers the
-derived revision in a dedicated admin family and launches that exact revision
-with a unique ECS `startedBy` identity. It persists and validates the task ARN
-before exposing outputs, verifies the selected container's digest, recovers and
-stops an unfinished task after failure or cancellation, and always deregisters
-the temporary revision.
+derived revision in a dedicated admin family, tags it with the workflow-run
+owner, and launches that exact revision with a unique ECS `startedBy` identity
+and idempotent client token. The finalizer probe also validates the exact
+merged/deployed SHA, Sepolia chain and database, one complete writer topology,
+writer/read modes, hourly allowlist, strictness, lateness, and grace before
+pinning both the API and FireLens digests. It persists and validates the task
+ARN before exposing outputs and verifies the selected container's digest.
+`always()` cleanup recovers the task and definition by their immutable
+identities, confirms the task is stopped, and confirms the owned revision is
+inactive. If a runner is lost before cleanup, the application deadline bounds
+the process and the next run rejects the stale family until it is reconciled.
 An application deadline remains effective even if the runner itself is lost.
 This prevents a mutable registry tag from changing what an approved
 administration run executes or leaving an unbounded mutator behind. The admin

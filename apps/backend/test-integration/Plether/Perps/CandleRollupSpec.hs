@@ -2,16 +2,26 @@ module Plether.Perps.CandleRollupSpec
   ( candleRollupSpec
   ) where
 
-import Control.Exception (IOException, bracket, displayException, finally, try)
+import Control.Concurrent
+  ( forkFinally
+  , forkIO
+  , newEmptyMVar
+  , putMVar
+  , takeMVar
+  , threadDelay
+  , tryPutMVar
+  )
+import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value, object, (.=))
+import Data.Either (isLeft, isRight)
 import Data.Pool (destroyAllResources)
 import Data.Text (Text)
 import qualified Data.Text as Text
 import Database.PostgreSQL.Simple
   ( Connection
   , Only (..)
-  , SqlError
+  , SqlError (..)
   , execute
   , execute_
   , query
@@ -43,6 +53,7 @@ import Plether.Database.Candles
   , getCurrentBasketCandle
   , getRollupCoverage
   , invalidateMarketVolumeFromBlock
+  , lockBasketPriceDataset
   , markRollupCoverageIncomplete
   , recomputeBasketCandleHierarchy
   , recomputeMarketVolumeHierarchy
@@ -63,10 +74,18 @@ import Plether.Database.Schema
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
+import System.Timeout (timeout)
+import Database.PostgreSQL.Simple.Transaction
+  ( IsolationLevel (ReadCommitted, RepeatableRead)
+  , ReadWriteMode (ReadOnly)
+  , TransactionMode (..)
+  , withTransactionMode
+  )
 import Test.Hspec
   ( Spec
   , anyException
   , describe
+  , expectationFailure
   , it
   , shouldBe
   , shouldContain
@@ -916,6 +935,161 @@ candleRollupSpec databaseUrl =
         exitCode `shouldSatisfy` (/= ExitSuccess)
         (stdout <> stderr)
           `shouldContain` "Requested range does not contain a full aligned bucket for every canonical interval"
+
+    it "uses the exact writer lock and releases it with a read-only transaction" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        holderReady <- newEmptyMVar
+        releaseHolder <- newEmptyMVar
+        holderDone <- newEmptyMVar
+        _ <-
+          forkFinally
+            ( withDb pool $ \holder ->
+                withTransactionMode
+                  ( TransactionMode
+                      { isolationLevel = RepeatableRead
+                      , readWriteMode = ReadOnly
+                      }
+                  )
+                  holder $ do
+                    lockBasketPriceDataset holder defaultBasketSeriesId
+                    readOnlyRows <-
+                      query holder "SELECT current_setting('transaction_read_only')" ()
+                        :: IO [Only Text]
+                    readOnlyRows `shouldBe` [Only "on"]
+                    putMVar holderReady $ Right ()
+                    takeMVar releaseHolder
+                    fail "intentional rollback after releasing the probe lock"
+            )
+            ( \result -> do
+                case result of
+                  Left err -> void $ tryPutMVar holderReady $ Left err
+                  Right () -> pure ()
+                putMVar holderDone result
+            )
+        readyResult <- timeout 5_000_000 $ takeMVar holderReady
+        case readyResult of
+          Nothing -> do
+            void $ tryPutMVar releaseHolder ()
+            expectationFailure "Timed out waiting for the price dataset lock holder"
+          Just result ->
+            (result :: Either SomeException ()) `shouldSatisfy` isRight
+        contended <-
+          ( try
+              ( withDb pool $ \contender ->
+                  withTransaction contender $ do
+                    void $ execute_ contender "SET LOCAL lock_timeout = '100ms'"
+                    advanceBasketPriceCoverage
+                      contender defaultBasketSeriesId baseTime 120
+              ) :: IO (Either SqlError ())
+          ) `finally` putMVar releaseHolder ()
+        case contended of
+          Left err -> sqlState err `shouldBe` "55P03"
+          Right () -> expectationFailure "The live writer unexpectedly acquired the held price dataset lock"
+        holderResult <- timeout 5_000_000 $ takeMVar holderDone
+        holderResult `shouldSatisfy` maybe False isLeft
+        reacquired <-
+          try
+            ( withDb pool $ \contender ->
+                withTransaction contender $ do
+                  void $ execute_ contender "SET LOCAL lock_timeout = '1s'"
+                  lockBasketPriceDataset contender defaultBasketSeriesId
+            ) :: IO (Either SomeException ())
+        reacquired `shouldSatisfy` isRight
+
+    it "observes a writer commit that completed while the probe waited for the lock" $
+      withCandleAdminDatabase databaseUrl $ \pool -> do
+        let initialGeneration = 31
+            committedGeneration = initialGeneration + 1
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection defaultBasketSeriesId
+          upsertRollupCoverage connection $
+            RollupCoverage
+              { rcKind = PriceRollup
+              , rcSeriesId = Just defaultBasketSeriesId
+              , rcChainId = Nothing
+              , rcReleaseRouter = Nothing
+              , rcIntervalSeconds = 3_600
+              , rcCoverageStart = Just baseTime
+              , rcCoverageEnd = Just $ baseTime + 7_200
+              , rcFinalizedThrough = Just $ baseTime + 3_600
+              , rcGeneration = initialGeneration
+              , rcComplete = True
+              , rcDerivationVersion = "v1"
+              , rcLastError = Nothing
+              , rcMaintenanceFrom = Nothing
+              , rcMaintenanceTo = Nothing
+              }
+
+        writerReady <- newEmptyMVar
+        releaseWriter <- newEmptyMVar
+        writerDone <- newEmptyMVar
+        _ <-
+          forkFinally
+            ( withDb pool $ \writer ->
+                withTransaction writer $ do
+                  lockBasketPriceDataset writer defaultBasketSeriesId
+                  void $
+                    execute writer
+                      "UPDATE perps_rollup_coverage SET generation = ? \
+                      \WHERE kind = 'price' AND series_id = ? \
+                      \AND chain_id = 0 AND release_router = '' AND interval_seconds = 3600"
+                      (committedGeneration, defaultBasketSeriesId)
+                  putMVar writerReady $ Right ()
+                  takeMVar releaseWriter
+            )
+            ( \result -> do
+                case result of
+                  Left err -> void $ tryPutMVar writerReady $ Left err
+                  Right () -> pure ()
+                putMVar writerDone result
+            )
+        readyResult <- timeout 5_000_000 $ takeMVar writerReady
+        case readyResult of
+          Nothing -> do
+            void $ tryPutMVar releaseWriter ()
+            expectationFailure "Timed out waiting for the simulated writer"
+          Just result ->
+            (result :: Either SomeException ()) `shouldSatisfy` isRight
+        _ <- forkIO $ threadDelay 200_000 >> putMVar releaseWriter ()
+
+        observedGeneration <-
+          withDb pool $ \probe ->
+            withTransactionMode
+              ( TransactionMode
+                  { isolationLevel = ReadCommitted
+                  , readWriteMode = ReadOnly
+                  }
+              )
+              probe $ do
+                lockBasketPriceDataset probe defaultBasketSeriesId
+                rows <-
+                  query probe
+                    "SELECT generation FROM perps_rollup_coverage \
+                    \WHERE kind = 'price' AND series_id = ? \
+                    \AND chain_id = 0 AND release_router = '' AND interval_seconds = 3600"
+                    (Only defaultBasketSeriesId) :: IO [Only Integer]
+                pure rows
+        observedGeneration `shouldBe` [Only committedGeneration]
+        writerResult <- timeout 5_000_000 $ takeMVar writerDone
+        writerResult `shouldSatisfy` maybe False isRight
+
+    it "rejects unsafe finalizer-probe CLI shapes before database access" $ do
+      (missingCode, missingOut, missingErr) <-
+        runCandleAdmin databaseUrl ["finalizer-probe"]
+      missingCode `shouldSatisfy` (/= ExitSuccess)
+      (missingOut <> missingErr) `shouldContain` "requires --boundary"
+
+      (unalignedCode, unalignedOut, unalignedErr) <-
+        runCandleAdmin databaseUrl ["finalizer-probe", "--boundary", "3601"]
+      unalignedCode `shouldSatisfy` (/= ExitSuccess)
+      (unalignedOut <> unalignedErr) `shouldContain` "aligned to a UTC hour"
+
+      (unknownCode, unknownOut, unknownErr) <-
+        runCandleAdmin
+          databaseUrl
+          ["finalizer-probe", "--boundary", "3600", "--from", "1"]
+      unknownCode `shouldSatisfy` (/= ExitSuccess)
+      (unknownOut <> unknownErr) `shouldContain` "Unknown finalizer-probe option"
 
     it "verifies a range containing one full UTC day" $
       withCandleAdminDatabase databaseUrl $ \pool -> do

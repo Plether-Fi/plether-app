@@ -15,7 +15,7 @@ import Database.PostgreSQL.Simple
   , withTransaction
   )
 import Database.PostgreSQL.Simple.Transaction
-  ( IsolationLevel (RepeatableRead)
+  ( IsolationLevel (ReadCommitted, RepeatableRead)
   , ReadWriteMode (ReadOnly, ReadWrite)
   , TransactionMode (..)
   , withTransactionMode
@@ -34,6 +34,8 @@ import Plether.Database.Candles
   , defaultBasketSeriesId
   , ensureCandleSchema
   , getRollupCoverage
+  , getActiveBasketSeriesId
+  , lockBasketPriceDataset
   , markRollupCoverageIncomplete
   , upsertRollupCoverage
   )
@@ -42,7 +44,17 @@ import Plether.Logging
   , logError
   , logInfo
   )
-import System.Environment (getArgs, lookupEnv)
+import Plether.Perps.CandleFinalizerProbe
+  ( FinalizerProbeEnvironment (..)
+  , FinalizerProbePlan (..)
+  , finalizerProbeRecovered
+  , planFinalizerProbe
+  , validateFinalizerDatabaseUrl
+  , validateFinalizerLibpqEnvironment
+  , validateFinalizerProbeEnvironment
+  , validateFinalizerProbePrestate
+  )
+import System.Environment (getArgs, getEnvironment, lookupEnv)
 import System.Exit (exitFailure)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
@@ -60,12 +72,14 @@ data AdminAction
   | Status
   | Verify
   | Repair RollupScope
+  | FinalizerProbe
   deriving (Eq, Show)
 
 data AdminOptions = AdminOptions
   { aoAction :: AdminAction
   , aoFrom :: Maybe Integer
   , aoTo :: Maybe Integer
+  , aoBoundary :: Maybe Integer
   , aoChunkSeconds :: Integer
   , aoStatementTimeoutMs :: Int
   , aoLockTimeoutMs :: Int
@@ -123,6 +137,7 @@ defaultOptions action =
     { aoAction = action
     , aoFrom = Nothing
     , aoTo = Nothing
+    , aoBoundary = Nothing
     , aoChunkSeconds = 86_400
     , aoStatementTimeoutMs = 1_800_000
     , aoLockTimeoutMs =
@@ -130,7 +145,10 @@ defaultOptions action =
           Migrate -> 60_000
           _ -> 5_000
     , aoThrottleMs = 250
-    , aoMaxRuntimeSeconds = 21_600
+    , aoMaxRuntimeSeconds =
+        case action of
+          FinalizerProbe -> 2_100
+          _ -> 21_600
     }
 
 main :: IO ()
@@ -142,14 +160,41 @@ main = do
       putStrLn usage
       unless (null err) exitFailure
     Right options -> do
-      when (requiresDualWriteMode $ aoAction options) $ do
-        writeMode <- T.toLower . T.strip . T.pack <$> requireEnv "PERPS_CANDLE_WRITE_MODE"
+      writeMode <-
+        if requiresDualWriteMode $ aoAction options
+          then T.toLower . T.strip . T.pack <$> requireEnv "PERPS_CANDLE_WRITE_MODE"
+          else pure ""
+      when (requiresDualWriteMode $ aoAction options) $
         unless (writeMode == "dual") $
-          failWith "backfill and repair require PERPS_CANDLE_WRITE_MODE=dual"
-      databaseUrl <- requireEnv "DATABASE_URL"
+          failWith "This candle administration action requires PERPS_CANDLE_WRITE_MODE=dual"
       chainId <- requireIntegerEnv "PERPS_CHAIN_ID"
-      releaseRouter <- T.toLower . T.strip . T.pack <$> requireEnv "PERPS_ORDER_ROUTER"
       latenessSeconds <- optionalIntegerEnv "PERPS_CANDLE_LATENESS_SECONDS" 120 0 86_400
+      databaseUrl <- requireEnv "DATABASE_URL"
+      when (aoAction options == FinalizerProbe) $ do
+        deploymentEnvironment <- T.pack <$> requireEnv "DEPLOYMENT_ENVIRONMENT"
+        expectedDatabaseHost <- T.pack <$> requireEnv "EXPECTED_DATABASE_HOST"
+        processEnvironment <- map (T.pack . fst) <$> getEnvironment
+        readMode <- T.pack <$> requireEnv "PERPS_CANDLE_READ_MODE"
+        readIntervals <- T.pack <$> requireEnv "PERPS_CANDLE_READ_INTERVALS"
+        strictCoverage <- T.pack <$> requireEnv "PERPS_CANDLE_STRICT_COVERAGE"
+        finalizationGraceSeconds <- requireIntegerEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
+        either (failWith . T.unpack) pure $
+          validateFinalizerProbeEnvironment
+            FinalizerProbeEnvironment
+              { fpeDeploymentEnvironment = deploymentEnvironment
+              , fpeChainId = chainId
+              , fpeWriteMode = writeMode
+              , fpeReadMode = readMode
+              , fpeReadIntervals = readIntervals
+              , fpeStrictCoverage = strictCoverage
+              , fpeLatenessSeconds = latenessSeconds
+              , fpeFinalizationGraceSeconds = finalizationGraceSeconds
+              }
+        either (failWith . T.unpack) pure $
+          validateFinalizerDatabaseUrl expectedDatabaseHost $ T.pack databaseUrl
+        either (failWith . T.unpack) pure $
+          validateFinalizerLibpqEnvironment processEnvironment
+      releaseRouter <- T.toLower . T.strip . T.pack <$> requireEnv "PERPS_ORDER_ROUTER"
       let runtime = AdminRuntime chainId releaseRouter latenessSeconds
       pool <- newDbPool $ T.pack databaseUrl
       result <- try @SomeException $ do
@@ -176,6 +221,15 @@ main = do
             logError
               "perps_candle_backfill_failed"
               "Perps candle administration failed"
+              [ field "action" $ actionName $ aoAction options
+              , field "scope" $ scopeNameForAction $ aoAction options
+              , field "failure" ("operation_exception" :: T.Text)
+              , field "error" $ sanitizeException databaseUrl err
+              ]
+          when (aoAction options == FinalizerProbe) $
+            logError
+              "perps_candle_finalizer_probe_failed"
+              "Sepolia candle finalizer probe failed"
               [ field "action" $ actionName $ aoAction options
               , field "scope" $ scopeNameForAction $ aoAction options
               , field "failure" ("operation_exception" :: T.Text)
@@ -242,6 +296,7 @@ runAdmin conn runtime options@AdminOptions {aoAction} =
           , field "from_timestamp" $ aoFrom options
           , field "to_timestamp" $ aoTo options
           ]
+    FinalizerProbe -> runFinalizerProbe conn runtime options
 
 candleDerivationVersion :: T.Text
 candleDerivationVersion = "v1"
@@ -957,6 +1012,207 @@ bumpDatasetGeneration conn runtime = \case
       (Just $ arChainId runtime)
       (Just $ arReleaseRouter runtime)
 
+runFinalizerProbe :: Connection -> AdminRuntime -> AdminOptions -> IO ()
+runFinalizerProbe conn runtime AdminOptions {aoBoundary = Just boundary, aoMaxRuntimeSeconds} = do
+  databaseTimestamp <- databaseClockNow conn
+  plan <-
+    either (failWith . T.unpack) pure $
+      planFinalizerProbe databaseTimestamp boundary aoMaxRuntimeSeconds
+  logInfo
+    "perps_candle_finalizer_probe_scheduled"
+    "Scheduled the bounded Sepolia hourly finalizer probe"
+    [ field "boundary" $ fppBoundary plan
+    , field "acquire_at" $ fppAcquireAt plan
+    , field "grace_expires_at" $ fppGraceExpiresAt plan
+    , field "release_at" $ fppReleaseAt plan
+    , field "recovery_deadline" $ fppRecoveryDeadline plan
+    , field "interval_seconds" (3_600 :: Integer)
+    ]
+  _ <- waitForDatabaseTime conn $ fppAcquireAt plan
+  (priceGeneration, volumeGeneration) <-
+    withTransactionMode
+      ( TransactionMode
+          { isolationLevel = ReadCommitted
+          , readWriteMode = ReadOnly
+          }
+      )
+      conn $ do
+        lockBasketPriceDataset conn defaultBasketSeriesId
+        acquiredAt <- databaseClockNow conn
+        when (acquiredAt > fppAcquireAt plan + 5) $
+          failWith "Finalizer probe did not acquire the price writer lock by boundary + 110 seconds"
+        readOnlyRows <-
+          query conn "SELECT current_setting('transaction_read_only')" () :: IO [Only T.Text]
+        unless (readOnlyRows == [Only "on"]) $
+          failWith "Finalizer probe transaction is not read only"
+        requireFinalizerProbeSeriesWindow conn plan
+        (priceCoverage, volumeCoverage) <- readFinalizerProbeCoverage conn runtime
+        either (failWith . T.unpack) pure $
+          validateFinalizerProbePrestate
+            (fppBoundary plan)
+            (arChainId runtime)
+            (arReleaseRouter runtime)
+            priceCoverage
+            volumeCoverage
+        logInfo
+          "perps_candle_finalizer_probe_lock_acquired"
+          "Acquired the read-only Sepolia price finalizer probe lock"
+          [ field "boundary" $ fppBoundary plan
+          , field "acquired_at" acquiredAt
+          , field "release_at" $ fppReleaseAt plan
+          , field "price_generation" $ rcGeneration priceCoverage
+          , field "volume_generation" $ rcGeneration volumeCoverage
+          , field "price_coverage_end" $ rcCoverageEnd priceCoverage
+          , field "volume_coverage_end" $ rcCoverageEnd volumeCoverage
+          , field "price_finalized_through" $ rcFinalizedThrough priceCoverage
+          , field "volume_finalized_through" $ rcFinalizedThrough volumeCoverage
+          , field "transaction_read_only" True
+          ]
+        graceObservedAt <- waitForDatabaseTime conn $ fppGraceExpiresAt plan
+        logInfo
+          "perps_candle_finalizer_probe_grace_expired"
+          "Held the price writer lock through the hourly publication grace"
+          [ field "boundary" $ fppBoundary plan
+          , field "observed_at" graceObservedAt
+          , field "release_at" $ fppReleaseAt plan
+          ]
+        _ <- waitForDatabaseTime conn $ fppReleaseAt plan
+        pure (rcGeneration priceCoverage, rcGeneration volumeCoverage)
+  releasedAt <- databaseClockNow conn
+  when (releasedAt < fppReleaseAt plan) $
+    failWith "Finalizer probe released the price writer lock before its bounded deadline"
+  when (releasedAt > fppReleaseAt plan + 5) $
+    failWith "Finalizer probe released the price writer lock after boundary + 155 seconds"
+  logInfo
+    "perps_candle_finalizer_probe_lock_released"
+    "Released the read-only Sepolia price finalizer probe lock"
+    [ field "boundary" $ fppBoundary plan
+    , field "released_at" releasedAt
+    , field "recovery_deadline" $ fppRecoveryDeadline plan
+    ]
+  waitForFinalizerProbeRecovery
+    conn
+    runtime
+    plan
+    priceGeneration
+    volumeGeneration
+runFinalizerProbe _ _ _ =
+  failWith "Finalizer probe requires one aligned --boundary"
+
+readFinalizerProbeCoverage
+  :: Connection -> AdminRuntime -> IO (RollupCoverage, RollupCoverage)
+readFinalizerProbeCoverage conn runtime = do
+  price <-
+    getRollupCoverage
+      conn PriceRollup (Just defaultBasketSeriesId) Nothing Nothing 3_600
+      >>= maybe (failWith "Finalizer probe price hourly coverage is unavailable") pure
+  volume <-
+    getRollupCoverage
+      conn
+      VolumeRollup
+      Nothing
+      (Just $ arChainId runtime)
+      (Just $ arReleaseRouter runtime)
+      3_600
+      >>= maybe (failWith "Finalizer probe volume hourly coverage is unavailable") pure
+  pure (price, volume)
+
+waitForFinalizerProbeRecovery
+  :: Connection
+  -> AdminRuntime
+  -> FinalizerProbePlan
+  -> Integer
+  -> Integer
+  -> IO ()
+waitForFinalizerProbeRecovery conn runtime plan priceGeneration volumeGeneration = go
+ where
+  go = do
+    (priceCoverage, volumeCoverage, activeSeries, observedAt) <-
+      withTransactionMode
+        ( TransactionMode
+            { isolationLevel = RepeatableRead
+            , readWriteMode = ReadOnly
+            }
+        )
+        conn $ do
+          (priceCoverage, volumeCoverage) <- readFinalizerProbeCoverage conn runtime
+          currentTimestamp <- databaseClockNow conn
+          activeSeries <- getActiveBasketSeriesId conn currentTimestamp
+          observedAt <- databaseClockNow conn
+          pure (priceCoverage, volumeCoverage, activeSeries, observedAt)
+    unless (activeSeries == Just defaultBasketSeriesId) $
+      failWith "Finalizer probe active basket series changed before endpoint recovery"
+    if observedAt > fppRecoveryDeadline plan
+      then failWith "Hourly finalization did not recover by boundary + 165 seconds"
+      else if finalizerProbeRecovered
+        (fppBoundary plan)
+        (arChainId runtime)
+        (arReleaseRouter runtime)
+        priceGeneration
+        volumeGeneration
+        priceCoverage
+        volumeCoverage
+      then
+        logInfo
+          "perps_candle_finalizer_probe_recovery_complete"
+          "Hourly price and volume finalization recovered after the bounded probe"
+          [ field "boundary" $ fppBoundary plan
+          , field "recovered_at" observedAt
+          , field "price_generation" $ rcGeneration priceCoverage
+          , field "volume_generation" $ rcGeneration volumeCoverage
+          , field "price_coverage_end" $ rcCoverageEnd priceCoverage
+          , field "volume_coverage_end" $ rcCoverageEnd volumeCoverage
+          , field "price_finalized_through" $ rcFinalizedThrough priceCoverage
+          , field "volume_finalized_through" $ rcFinalizedThrough volumeCoverage
+          ]
+      else if observedAt == fppRecoveryDeadline plan
+        then failWith "Hourly finalization did not recover by boundary + 165 seconds"
+        else threadDelay 1_000_000 >> go
+
+waitForDatabaseTime :: Connection -> Integer -> IO Integer
+waitForDatabaseTime conn targetTimestamp = do
+  currentTimestamp <- databaseClockNow conn
+  if currentTimestamp >= targetTimestamp
+    then pure currentTimestamp
+    else do
+      let remaining = targetTimestamp - currentTimestamp
+          delayMicros =
+            if remaining > 2
+              then fromIntegral (min 5 $ remaining - 1) * 1_000_000
+              else 100_000
+      threadDelay delayMicros
+      waitForDatabaseTime conn targetTimestamp
+
+requireFinalizerProbeSeriesWindow :: Connection -> FinalizerProbePlan -> IO ()
+requireFinalizerProbeSeriesWindow conn plan = do
+  rows <-
+    query conn
+      "SELECT series_id, effective_from, effective_to \
+      \FROM perps_basket_definitions \
+      \WHERE active AND effective_from <= ? \
+      \AND (effective_to IS NULL OR effective_to > ?) \
+      \ORDER BY effective_from, series_id"
+      (fppRecoveryDeadline plan, fppBoundary plan - 1)
+      :: IO [(T.Text, Integer, Maybe Integer)]
+  case rows of
+    [(seriesId, effectiveFrom, effectiveTo)]
+      | seriesId == defaultBasketSeriesId
+      , effectiveFrom <= fppBoundary plan - 1
+      , maybe True (> fppRecoveryDeadline plan) effectiveTo -> pure ()
+    _ ->
+      failWith
+        "Finalizer probe requires dxy-v1 to remain the sole active basket series throughout the control window"
+
+databaseClockNow :: Connection -> IO Integer
+databaseClockNow conn = do
+  rows <-
+    query conn
+      "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::BIGINT"
+      () :: IO [Only Integer]
+  case rows of
+    [Only timestamp] -> pure timestamp
+    _ -> failWith "Could not read the advancing database clock"
+
 withVerificationSnapshot :: Connection -> IO a -> IO a
 withVerificationSnapshot =
   withTransactionMode $
@@ -1549,12 +1805,18 @@ rollupKindName = \case
   VolumeRollup -> "volume"
 
 configureSession :: Connection -> AdminOptions -> IO ()
-configureSession conn AdminOptions {aoStatementTimeoutMs, aoLockTimeoutMs} = do
+configureSession conn AdminOptions {aoAction, aoStatementTimeoutMs, aoLockTimeoutMs} = do
   let statementTimeout = show aoStatementTimeoutMs <> "ms"
       lockTimeout = show aoLockTimeoutMs <> "ms"
   _ <- query conn "SELECT set_config('application_name', 'plether-candle-admin', false)" () :: IO [Only T.Text]
   _ <- query conn "SELECT set_config('statement_timeout', ?, false)" (Only statementTimeout) :: IO [Only T.Text]
   _ <- query conn "SELECT set_config('lock_timeout', ?, false)" (Only lockTimeout) :: IO [Only T.Text]
+  when (aoAction == FinalizerProbe) $ do
+    _ <-
+      query conn
+        "SELECT set_config('idle_in_transaction_session_timeout', '12000ms', false)"
+        () :: IO [Only T.Text]
+    pure ()
   pure ()
 
 withAdminLock :: Connection -> Int -> IO a -> IO a
@@ -1588,6 +1850,7 @@ requiresAdvisoryLock = \case
   Backfill _ -> True
   Repair _ -> True
   Verify -> True
+  FinalizerProbe -> True
   Estimate -> False
   Status -> False
 
@@ -1595,6 +1858,7 @@ requiresDualWriteMode :: AdminAction -> Bool
 requiresDualWriteMode = \case
   Backfill _ -> True
   Repair _ -> True
+  FinalizerProbe -> True
   _ -> False
 
 reportsBackfillFailure :: AdminAction -> Bool
@@ -1603,6 +1867,7 @@ reportsBackfillFailure = \case
   Backfill _ -> True
   Verify -> True
   Repair _ -> True
+  FinalizerProbe -> False
   Estimate -> False
   Status -> False
 
@@ -1615,6 +1880,8 @@ parseAdminOptions = \case
   "migrate" : rest -> parseFlags (defaultOptions Migrate) rest >>= validateOptions
   "status" : rest -> parseFlags (defaultOptions Status) rest >>= validateOptions
   "verify" : rest -> parseFlags (defaultOptions Verify) rest >>= validateOptions
+  "finalizer-probe" : rest ->
+    parseFinalizerProbeFlags (defaultOptions FinalizerProbe) rest >>= validateOptions
   "backfill" : rawScope : rest -> do
     scope <- parseScope rawScope
     parseFlags (defaultOptions $ Backfill scope) rest >>= validateOptions
@@ -1624,6 +1891,24 @@ parseAdminOptions = \case
   "backfill" : _ -> Left "backfill requires a scope: price, volume, or all"
   "repair" : _ -> Left "repair requires a scope: price, volume, or all"
   command : _ -> Left $ "Unknown command: " <> command
+
+parseFinalizerProbeFlags :: AdminOptions -> [String] -> Either String AdminOptions
+parseFinalizerProbeFlags options = \case
+  [] -> Right options
+  "--boundary" : raw : rest -> do
+    value <- parseBoundedInteger "--boundary" 3_600 4_102_444_800 raw
+    parseFinalizerProbeFlags options {aoBoundary = Just value} rest
+  "--statement-timeout-ms" : raw : rest -> do
+    value <- parseBoundedInt "--statement-timeout-ms" 1_000 10_000 raw
+    parseFinalizerProbeFlags options {aoStatementTimeoutMs = value} rest
+  "--lock-timeout-ms" : raw : rest -> do
+    value <- parseBoundedInt "--lock-timeout-ms" 100 5_000 raw
+    parseFinalizerProbeFlags options {aoLockTimeoutMs = value} rest
+  "--max-runtime-seconds" : raw : rest -> do
+    value <- parseBoundedInt "--max-runtime-seconds" 60 2_100 raw
+    parseFinalizerProbeFlags options {aoMaxRuntimeSeconds = value} rest
+  [flag] -> Left $ "Missing value for option: " <> flag
+  flag : _ -> Left $ "Unknown finalizer-probe option: " <> flag
 
 parseFlags :: AdminOptions -> [String] -> Either String AdminOptions
 parseFlags options = \case
@@ -1653,7 +1938,7 @@ parseFlags options = \case
   flag : _ -> Left $ "Unknown option: " <> flag
 
 validateOptions :: AdminOptions -> Either String AdminOptions
-validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoChunkSeconds} = do
+validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoBoundary, aoChunkSeconds} = do
   whenEither
     (aoChunkSeconds `mod` 60 /= 0)
     "--chunk-seconds must align to a whole minute"
@@ -1668,6 +1953,14 @@ validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoChunkSeconds} = 
           Left "repair requires both --from and --to"
       | any ((/= 0) . (`mod` maximum canonicalCandleIntervals)) [fromMaybe 1 aoFrom, fromMaybe 1 aoTo] ->
           Left "repair --from and --to must align to UTC day boundaries so every canonical parent interval is rebuilt"
+    FinalizerProbe
+      | maybe True ((/= 0) . (`mod` 3_600)) aoBoundary ->
+          Left "finalizer-probe requires --boundary aligned to a UTC hour"
+      | isJust aoFrom || isJust aoTo ->
+          Left "finalizer-probe does not accept --from or --to"
+      | otherwise -> Right ()
+    _
+      | isJust aoBoundary -> Left "--boundary is accepted only for finalizer-probe"
     _ -> Right ()
   pure options
 
@@ -1734,11 +2027,13 @@ actionName = \case
   Status -> "status"
   Verify -> "verify"
   Repair _ -> "repair"
+  FinalizerProbe -> "finalizer_probe"
 
 scopeNameForAction :: AdminAction -> T.Text
 scopeNameForAction = \case
   Backfill scope -> scopeName scope
   Repair scope -> scopeName scope
+  FinalizerProbe -> "price"
   _ -> "none"
 
 scopeName :: RollupScope -> T.Text
@@ -1768,16 +2063,19 @@ usage =
     , "  plether-candle-admin status [OPTIONS]"
     , "  plether-candle-admin verify [OPTIONS]"
     , "  plether-candle-admin repair price|volume|all --from UNIX --to UNIX [OPTIONS]"
+    , "  plether-candle-admin finalizer-probe --boundary UNIX [OPTIONS]"
     , ""
     , "Options:"
     , "  --from UNIX                  Inclusive source timestamp"
     , "  --to UNIX                    Exclusive source timestamp"
+    , "  --boundary UNIX              Aligned UTC hour for the Sepolia finalizer probe"
     , "  --chunk-seconds N            Transaction chunk size (default 86400)"
     , "  --statement-timeout-ms N     Per-statement timeout (default 1800000)"
     , "  --lock-timeout-ms N          Admin advisory-lock wait (default 5000)"
     , "  --throttle-ms N              Delay after committed chunks (default 250)"
-    , "  --max-runtime-seconds N      Absolute process deadline (default 21600)"
+    , "  --max-runtime-seconds N      Absolute process deadline (2100 for probe; otherwise 21600)"
     , ""
-    , "Backfill and repair require PERPS_CANDLE_WRITE_MODE=dual, read only existing"
-    , "PostgreSQL data, and never contact Pyth."
+    , "Backfill, repair, and finalizer-probe require PERPS_CANDLE_WRITE_MODE=dual."
+    , "Backfill and repair read only existing PostgreSQL data and never contact Pyth;"
+    , "the Sepolia-only finalizer probe performs SELECTs and takes one transaction lock."
     ]
