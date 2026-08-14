@@ -384,6 +384,7 @@ testConfig =
     , cfgPerpsCandleShadowSampleBps = 0
     , cfgPerpsCandleStrictCoverage = True
     , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = usdc

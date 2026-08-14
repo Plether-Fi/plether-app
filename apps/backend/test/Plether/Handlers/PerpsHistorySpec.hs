@@ -252,6 +252,7 @@ testConfig =
     , cfgPerpsCandleShadowSampleBps = 0
     , cfgPerpsCandleStrictCoverage = True
     , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"

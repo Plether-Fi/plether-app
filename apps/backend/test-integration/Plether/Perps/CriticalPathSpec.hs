@@ -549,6 +549,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsCandleShadowSampleBps = 0
     , cfgPerpsCandleStrictCoverage = True
     , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = rpcUrl
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = testClearinghouse

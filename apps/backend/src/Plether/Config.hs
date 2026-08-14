@@ -52,6 +52,7 @@ data Config = Config
   , cfgPerpsCandleShadowSampleBps :: Int
   , cfgPerpsCandleStrictCoverage :: Bool
   , cfgPerpsCandleLatenessSeconds :: Integer
+  , cfgPerpsCandleFinalizationGraceSeconds :: Integer
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
@@ -224,6 +225,8 @@ loadConfig = do
       candleShadowSampleBpsStr <- fromMaybe "0" <$> lookupEnv "PERPS_CANDLE_SHADOW_SAMPLE_BPS"
       candleStrictCoverageStr <- fromMaybe "true" <$> lookupEnv "PERPS_CANDLE_STRICT_COVERAGE"
       candleLatenessSecondsStr <- fromMaybe "120" <$> lookupEnv "PERPS_CANDLE_LATENESS_SECONDS"
+      candleFinalizationGraceSecondsStr <-
+        fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
       perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
@@ -337,6 +340,12 @@ loadConfig = do
                 0
                 86_400
                 candleLatenessSecondsStr
+            finalizationGraceSeconds <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
+                0
+                60
+                candleFinalizationGraceSecondsStr
             validatePerpsCandleModeCombination
               writeMode
               readMode
@@ -349,6 +358,7 @@ loadConfig = do
               , shadowSampleBps
               , strictCoverage
               , fromIntegral latenessSeconds
+              , fromIntegral finalizationGraceSeconds
               )
 
       case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig) of
@@ -364,6 +374,7 @@ loadConfig = do
                 , candleShadowSampleBps
                 , candleStrictCoverage
                 , candleLatenessSeconds
+                , candleFinalizationGraceSeconds
                 )
           ) -> do
           eDeployments <- loadDeployments addressFile
@@ -393,6 +404,7 @@ loadConfig = do
                 , cfgPerpsCandleShadowSampleBps = candleShadowSampleBps
                 , cfgPerpsCandleStrictCoverage = candleStrictCoverage
                 , cfgPerpsCandleLatenessSeconds = candleLatenessSeconds
+                , cfgPerpsCandleFinalizationGraceSeconds = candleFinalizationGraceSeconds
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc

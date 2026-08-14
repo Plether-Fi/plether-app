@@ -204,6 +204,7 @@ getBasketCandlePageTimed pool cfg interval cursor = do
           validateBasketCandlePageWithPolicy
             (bdiDisplayPriceCap definition)
             (cfgPerpsCandleLatenessSeconds cfg)
+            (cfgPerpsCandleFinalizationGraceSeconds cfg)
             now
             interval
             cursor
@@ -258,6 +259,7 @@ getBasketCurrentCandleTimed pool cfg interval = do
           validateBasketCurrentCandleWithPolicy
             (bdiDisplayPriceCap definition)
             (cfgPerpsCandleLatenessSeconds cfg)
+            (cfgPerpsCandleFinalizationGraceSeconds cfg)
             now
             interval
             current
@@ -447,17 +449,18 @@ validateBasketCandlePageWithCap displayPriceCap now interval cursor CandlePage {
 validateBasketCandlePageWithPolicy
   :: Integer -- immutable display-price cap
   -> Integer -- configured candle lateness tolerance
+  -> Integer -- bounded finalization-publication grace
   -> Integer -- backend clock
   -> Integer -- candle interval
   -> Integer -- fixed-page cursor
   -> CandlePage
   -> Either Text ()
-validateBasketCandlePageWithPolicy displayPriceCap latenessSeconds now interval cursor page = do
+validateBasketCandlePageWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval cursor page = do
   validateBasketCandlePageWithCap displayPriceCap now interval cursor page
   coverageEnd <- maybe (Left "coverage end is unavailable") Right $ cpCoverageEnd page
   finalizedThrough <- maybe (Left "finalized watermark is unavailable") Right $ cpFinalizedThrough page
   validateCoverageFreshness latenessSeconds now interval coverageEnd
-  validateFinalizationFreshness latenessSeconds now interval finalizedThrough
+  validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
 
 -- | The current response is allowed to contain incomplete/nullable OHLCV,
 -- but its metadata and row shape must still be coherent. Storage returns
@@ -469,25 +472,26 @@ validateBasketCurrentCandle = validateBasketCurrentCandleWithCap defaultBasketDi
 validateBasketCurrentCandleWithCap
   :: Integer -> Integer -> Integer -> CandleCurrent -> Either Text ()
 validateBasketCurrentCandleWithCap displayPriceCap =
-  validateBasketCurrentCandleWithPolicy displayPriceCap 0
+  validateBasketCurrentCandleWithPolicy displayPriceCap 0 0
 
 -- | Validate the mutable response against the source-watermark freshness
--- policy used by this deployment. Coverage timestamps are interval-aligned, so
--- the oldest acceptable watermark is the bucket containing @now - lateness@.
--- This gives every resolution the configured ingestion tolerance without a
--- resolution-independent magic age, while a stopped writer eventually makes
--- even an otherwise complete dataset fail closed.
+-- policy used by this deployment. Coverage timestamps are interval-aligned and
+-- remain subject to the source-lateness floor. Finalization additionally gets
+-- the bounded publication grace needed by the asynchronous writer loop, while
+-- a stopped writer still makes an otherwise complete dataset fail closed.
 validateBasketCurrentCandleWithPolicy
   :: Integer -- immutable display-price cap
   -> Integer -- configured candle lateness tolerance
+  -> Integer -- bounded finalization-publication grace
   -> Integer -- backend clock
   -> Integer -- candle interval
   -> CandleCurrent
   -> Either Text ()
-validateBasketCurrentCandleWithPolicy displayPriceCap latenessSeconds now interval CandleCurrent {..}
+validateBasketCurrentCandleWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval CandleCurrent {..}
   | displayPriceCap <= 0 = Left "basket display price cap is not positive"
   | interval <= 0 = Left "interval must be positive"
   | latenessSeconds < 0 = Left "candle lateness tolerance is negative"
+  | finalizationGraceSeconds < 0 = Left "candle finalization grace is negative"
   | now < 0 = Left "backend clock is before the Unix epoch"
   | not ccCoverageComplete = Left "combined price and volume coverage is incomplete"
   | ccDatasetGeneration <= 0 = Left "dataset generation is unavailable"
@@ -506,7 +510,7 @@ validateBasketCurrentCandleWithPolicy displayPriceCap latenessSeconds now interv
       if finalizedThrough < coverageStart || finalizedThrough > coverageEnd
         then Left "finalized watermark is outside the coverage window"
         else Right ()
-      validateFinalizationFreshness latenessSeconds now interval finalizedThrough
+      validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
       if finalizedThrough > currentBucketStart
         then Left "finalized watermark extends into the mutable bucket"
         else Right ()
@@ -852,6 +856,7 @@ getRollupBasketHistoryTimed pool cfg params = do
             validateRollupHistoryRangeWithPolicy
               (bdiDisplayPriceCap definition)
               (cfgPerpsCandleLatenessSeconds cfg)
+              (cfgPerpsCandleFinalizationGraceSeconds cfg)
               now
               interval
               fromTimestamp
@@ -937,10 +942,11 @@ validateRollupHistoryRangeWithPolicy
   -> Integer
   -> Integer
   -> Integer
+  -> Integer
   -> Int
   -> CandleRange
   -> Either ApiError [BasketCandleRow]
-validateRollupHistoryRangeWithPolicy displayPriceCap latenessSeconds now interval requestedStart requestedEnd maximumRows range = do
+validateRollupHistoryRangeWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval requestedStart requestedEnd maximumRows range = do
   rows <-
     validateRollupHistoryRange
       displayPriceCap
@@ -965,7 +971,7 @@ validateRollupHistoryRangeWithPolicy displayPriceCap latenessSeconds now interva
           (Left $ E.networkError "Candle rollup compatibility range failed strict validation: finalized watermark is unavailable")
           Right
           (crFinalizedThrough range)
-      case validateFinalizationFreshness latenessSeconds now interval finalizedThrough of
+      case validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough of
         Left reason ->
           Left $
             E.networkError $
@@ -984,20 +990,22 @@ validateCoverageFreshness latenessSeconds now interval coverageEnd
   freshnessFloor = ((max 0 (now - latenessSeconds)) `div` interval) * interval
 
 -- Coverage proves that both writers have checked in; finalization separately
--- proves that closed buckets are publishable. Requiring both watermarks to reach
--- the same interval-aligned floor prevents a live writer with frozen
--- finalization from serving a silently truncated history or healthy-looking
--- current response.
-validateFinalizationFreshness :: Integer -> Integer -> Integer -> Integer -> Either Text ()
-validateFinalizationFreshness latenessSeconds now interval finalizedThrough
+-- proves that closed buckets are publishable. The writer may only advance once
+-- source lateness has elapsed and publishes asynchronously, so readers allow a
+-- small, bounded publication grace before requiring the next aligned watermark.
+-- Rows remain clipped to the stored finalized watermark throughout the grace.
+validateFinalizationFreshness :: Integer -> Integer -> Integer -> Integer -> Integer -> Either Text ()
+validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
   | interval <= 0 = Left "interval must be positive"
   | latenessSeconds < 0 = Left "candle lateness tolerance is negative"
+  | finalizationGraceSeconds < 0 = Left "candle finalization grace is negative"
   | now < 0 = Left "backend clock is before the Unix epoch"
   | finalizedThrough < freshnessFloor =
-      Left "finalized watermark is stale for the configured lateness tolerance"
+      Left "finalized watermark is stale after the configured publication grace"
   | otherwise = Right ()
  where
-  freshnessFloor = ((max 0 (now - latenessSeconds)) `div` interval) * interval
+  freshnessFloor =
+    ((max 0 (now - latenessSeconds - finalizationGraceSeconds)) `div` interval) * interval
 
 basketHistoryFromCandleRows
   :: POSIXTime

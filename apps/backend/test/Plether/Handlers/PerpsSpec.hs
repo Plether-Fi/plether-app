@@ -1,8 +1,10 @@
 module Plether.Handlers.PerpsSpec (spec) where
 
+import Control.Monad (forM_)
 import Data.Aeson (encode, object, (.=))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
+import Data.Either (isRight)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -56,6 +58,7 @@ import Plether.Types
   , BasketHistoryPoint (..)
   , PythUpdateResponse (..)
   )
+import Plether.Types.Perps (canonicalBasketCandleIntervals)
 import Test.Hspec
 
 spec :: Spec
@@ -259,6 +262,7 @@ spec = do
       validateRollupHistoryRangeWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         0
@@ -276,6 +280,7 @@ spec = do
       validateRollupHistoryRangeWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         0
@@ -294,6 +299,7 @@ spec = do
         validateRollupHistoryRangeWithPolicy
           200_000_000
           120
+          0
           30_030
           60
           0
@@ -301,6 +307,27 @@ spec = do
           12_000
           boundary
       validated `shouldBe` crCandles boundary
+
+    it "allows compatibility history through publication grace and fails at expiry" $ do
+      let previousWatermark =
+            sampleCandleRange
+              { crCoverageEnd = Just 30_000
+              , crFinalizedThrough = Just 29_940
+              }
+          validateAt now =
+            validateRollupHistoryRangeWithPolicy
+              200_000_000
+              120
+              15
+              now
+              60
+              0
+              30_000
+              12_000
+              previousWatermark
+      validateAt 30_120 `shouldSatisfy` isRight
+      validateAt 30_134 `shouldSatisfy` isRight
+      validateAt 30_135 `shouldFailWith` "finalized watermark is stale"
 
   describe "basket candle request timings" $ do
     it "attributes fixed-page reads to the rollup query" $ do
@@ -336,6 +363,7 @@ spec = do
       validateBasketCandlePageWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         30_000
@@ -354,6 +382,7 @@ spec = do
       validateBasketCandlePageWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         60_000
@@ -369,11 +398,34 @@ spec = do
       validateBasketCandlePageWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         30_000
         boundary
         `shouldBe` Right ()
+
+    it "allows an active native page through publication grace and fails at expiry" $ do
+      let previousWatermark =
+            sampleCandlePage
+              { cpCandles = []
+              , cpPreviousCursor = Just 30_000
+              , cpHasEarlier = True
+              , cpCoverageEnd = Just 45_000
+              , cpFinalizedThrough = Just 44_940
+              }
+          validateAt now =
+            validateBasketCandlePageWithPolicy
+              200_000_000
+              120
+              15
+              now
+              60
+              60_000
+              previousWatermark
+      validateAt 45_120 `shouldBe` Right ()
+      validateAt 45_134 `shouldBe` Right ()
+      validateAt 45_135 `shouldFailTextWith` "finalized watermark is stale"
 
     it "rejects mutable rows from an active historical page" $ do
       let page =
@@ -536,6 +588,7 @@ spec = do
       validateBasketCurrentCandleWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         current
@@ -554,6 +607,7 @@ spec = do
       validateBasketCurrentCandleWithPolicy
         200_000_000
         120
+        0
         30_030
         60
         current
@@ -572,7 +626,79 @@ spec = do
       validateBasketCurrentCandleWithPolicy
         200_000_000
         120
+        0
         30_030
+        60
+        current
+        `shouldBe` Right ()
+
+    it "applies publication grace at every canonical interval boundary" $ do
+      forM_ canonicalBasketCandleIntervals $ \interval -> do
+        let boundary = interval * 1_000
+            previousWatermark =
+              CandleCurrent
+                { ccCandle = Nothing
+                , ccCoverageStart = Just 0
+                , ccCoverageEnd = Just boundary
+                , ccFinalizedThrough = Just $ boundary - interval
+                , ccDatasetGeneration = 3
+                , ccCoverageComplete = True
+                }
+            validateAt now =
+              validateBasketCurrentCandleWithPolicy
+                200_000_000
+                120
+                15
+                now
+                interval
+                previousWatermark
+        validateAt (boundary + 120) `shouldBe` Right ()
+        validateAt (boundary + 134) `shouldBe` Right ()
+        validateAt (boundary + 135)
+          `shouldFailTextWith` "finalized watermark is stale"
+
+    it "does not let publication grace hide stale coverage or older finalization" $ do
+      let boundary = 30_000
+          staleCoverage =
+            CandleCurrent
+              { ccCandle = Nothing
+              , ccCoverageStart = Just 0
+              , ccCoverageEnd = Just $ boundary - 60
+              , ccFinalizedThrough = Just $ boundary - 60
+              , ccDatasetGeneration = 3
+              , ccCoverageComplete = True
+              }
+          staleFinalization =
+            staleCoverage
+              { ccCoverageEnd = Just boundary
+              , ccFinalizedThrough = Just $ boundary - 120
+              }
+          validate =
+            validateBasketCurrentCandleWithPolicy
+              200_000_000
+              120
+              15
+              (boundary + 120)
+              60
+      validate staleCoverage `shouldFailTextWith` "coverage watermark is stale"
+      validate staleFinalization `shouldFailTextWith` "finalized watermark is stale"
+
+    it "accepts the newly published watermark when grace expires" $ do
+      let boundary = 30_000
+          current =
+            CandleCurrent
+              { ccCandle = Nothing
+              , ccCoverageStart = Just 0
+              , ccCoverageEnd = Just boundary
+              , ccFinalizedThrough = Just boundary
+              , ccDatasetGeneration = 3
+              , ccCoverageComplete = True
+              }
+      validateBasketCurrentCandleWithPolicy
+        200_000_000
+        120
+        15
+        (boundary + 135)
         60
         current
         `shouldBe` Right ()
@@ -808,6 +934,7 @@ rollupConfig =
     , cfgPerpsCandleShadowSampleBps = 0
     , cfgPerpsCandleStrictCoverage = True
     , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = ""

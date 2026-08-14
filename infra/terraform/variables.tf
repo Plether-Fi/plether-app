@@ -291,6 +291,21 @@ variable "perps_candle_lateness_seconds" {
   }
 }
 
+variable "perps_candle_finalization_grace_seconds" {
+  type        = number
+  default     = 15
+  description = "Bounded publication grace after candle source lateness elapses, from 0 to 60 seconds."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_finalization_grace_seconds) == var.perps_candle_finalization_grace_seconds
+      && var.perps_candle_finalization_grace_seconds >= 0
+      && var.perps_candle_finalization_grace_seconds <= 60
+    )
+    error_message = "perps_candle_finalization_grace_seconds must be a whole number between 0 and 60."
+  }
+}
+
 variable "db_password" {
   type      = string
   sensitive = true
