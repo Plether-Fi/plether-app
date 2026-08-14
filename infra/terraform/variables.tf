@@ -512,6 +512,12 @@ variable "workers_desired_count" {
   }
 }
 
+variable "api_container_cpu" {
+  type        = number
+  default     = 512
+  description = "CPU units reserved for the foreground API task independently of background services."
+}
+
 variable "container_cpu" {
   type    = number
   default = 256
