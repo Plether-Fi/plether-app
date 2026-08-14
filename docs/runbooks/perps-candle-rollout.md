@@ -39,10 +39,14 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   it must resolve the sole stable Perps indexer topology, pin the unanimous
   running indexer digest, and derive a task containing only that indexer and
   its exact FireLens sidecar; dependencies on excluded containers are rejected.
-  In both cases it verifies the started task reports the pinned digest and
-  deregisters the temporary revision in cleanup. A commit-tagged deployed
-  definition is not itself sufficient evidence that the one-off task pulled
-  the deployed image.
+  For the frozen-finalizer control, it must additionally require the workflow
+  SHA to be the exact deployed API/router version, one complete writer topology
+  with matching chain/database/candle configuration, and unanimous application
+  and FireLens digests before pinning both images. In every case it verifies
+  the started task reports the pinned digest and confirms cleanup of the
+  workflow-owned temporary revision. A commit-tagged deployed definition is
+  not itself sufficient evidence that the one-off task pulled the deployed
+  image.
 - Before migration or backfill, record the RDS storage type, provisioned IOPS
   and throughput, `BurstBalance`, pending modifications, backup retention,
   deletion protection, final-snapshot configuration, free storage, CPU
@@ -89,9 +93,13 @@ operation with `gh`; repository-wide GitHub CLI guidance is in
   safe to retry.
 - Each one-off task has an application-enforced absolute runtime and a shorter
   workflow deadline. The workflow assigns a unique ECS `startedBy` identity,
-  persists the task ARN immediately, recovers it by that identity if the
-  runner is cancelled, stops unfinished tasks, and deregisters the temporary
-  task-definition revision during cleanup.
+  idempotent client token, and tagged temporary revision; persists the task ARN
+  immediately; and uses `always()` cleanup to recover the exact owned task and
+  revision after a normal failure or cancellation. Cleanup must confirm the
+  task is `STOPPED` before confirming the revision is `INACTIVE`. A hard runner
+  loss can prevent cleanup, so the application deadline remains the final
+  bound and the next run must reject any nonterminal task or active temporary
+  revision until an operator reconciles it.
 - Do not drop legacy tables or raw observations during the rollback window.
 
 ## GitHub CLI setup
@@ -171,9 +179,23 @@ only for `candle-admin-sepolia`, whose policy deliberately sets
 
 The environment-scoped AWS identity used by this workflow must be able to
 describe the stable services and their tasks, register and deregister the
-dedicated `plether-<environment>-candle-admin` task-definition family, run and
-stop tasks, and pass the selected task and execution roles. The workflow
-itself validates that the copied role ARNs are exactly
+dedicated `plether-<environment>-candle-admin` task-definition family, tag and
+list tags for its temporary revisions, list that exact family and its tasks,
+run and stop tasks, and pass the selected task and execution roles. The
+required read/tag actions therefore include `ecs:DescribeServices`,
+`ecs:DescribeTasks`, `ecs:DescribeTaskDefinition`, `ecs:ListTasks`,
+`ecs:ListTaskDefinitions`, `ecs:ListTagsForResource`, and `ecs:TagResource` in
+addition to the scoped register/run/stop/deregister/pass-role permissions. The
+finalizer control additionally requires `rds:DescribeDBInstances`,
+`rds:DescribePendingMaintenanceActions`, `ec2:DescribeSubnets`,
+`ec2:DescribeSecurityGroups`, and `ssm:GetParameter`
+scoped to `/plether/sepolia/database-url` where IAM supports resource scoping.
+The workflow reads only that parameter's ARN/version/modification metadata and
+never emits its decrypted value; after ECS injects the value, the executable
+compares its canonical host and database to the validated RDS endpoint and
+rejects every ambient libpq `PG*` override before creating a connection or
+taking any database lock. The
+workflow itself validates that the copied role ARNs are exactly
 `plether-<environment>-ecs-task` and
 `plether-<environment>-ecs-execution`; this validation constrains the task it
 will launch, not the AWS identity's ambient IAM permissions. During the
@@ -183,17 +205,33 @@ that exception to mainnet: provision a narrowly scoped environment credential
 before mainnet candle administration, and migrate both environments to OIDC as
 the durable follow-up. Ordinary candle administration copies the API
 definition's execution fields and every container, changing only the
-`plether-api` image. Replay copies the selected writer definition's execution
-fields but retains only `plether-perps-indexer` and the exact
-`otel-log-router` FireLens sidecar, pinning both to their unanimous running
-digests. The workflow never prints environment variables, secret values, or
-generated definition JSON.
+`plether-api` image. The finalizer control also pins the API definition's exact
+`otel-log-router` FireLens image. Replay copies the selected writer definition's
+execution fields but retains only `plether-perps-indexer` and its exact
+FireLens sidecar, pinning both to their unanimous running digests. The workflow
+never prints environment variables, secret values, or generated definition
+JSON.
+
+Before fault injection, also preflight the operator evidence identity. It must
+be able to query the Sepolia log group (`logs:StartQuery`,
+`logs:GetQueryResults`, `logs:StopQuery`, and the required log-group/stream
+describe reads), call `cloudwatch:DescribeAlarms`,
+`cloudwatch:DescribeAlarmHistory`, `cloudwatch:GetMetricData`, and
+`cloudwatch:GetMetricStatistics`, read the relevant ECS/RDS/SSM metadata, and
+resolve the exact ALB dimensions with
+`elasticloadbalancing:DescribeLoadBalancers` and
+`elasticloadbalancing:DescribeTargetGroups`. Prove these reads succeed before
+choosing `B`; discovering missing evidence permissions after the fault fails
+the control.
 
 The workflow passes candle administration an application deadline of 19,800
 seconds. Replay has a stricter 1,800-second application deadline and a
 2,700-second task deadline, leaving fifteen minutes for a clean ECS stop and
-task-definition cleanup. The executables accept runtime options for local
-diagnosis, but production mutations and replay must continue to use the
+task-definition cleanup. The finalizer control has a 2,100-second application
+deadline, a 2,400-second task deadline, and a 90-minute job deadline that leaves
+bounded reconciliation time after the task deadline. The
+executables accept runtime options for local diagnosis, but production
+mutations, replay, and the frozen-finalizer control must continue to use the
 protected workflow.
 
 ## Gate 1: compatible deployment
@@ -526,6 +564,305 @@ watermark may remain readable only during
 `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS`; require zero 5xx responses while the
 writer publishes, and verify that a deliberately frozen finalizer fails closed
 when the grace expires.
+
+Run the frozen-finalizer control once, only for the Sepolia `3600` canary. Keep
+the frontend flag off and stop all native candle-page traffic and probes,
+including requests whose edge cache lookup performs an internal current-candle
+identity probe. Exactly the three operator requests below may reach the current
+endpoint during the bounded control window. Freeze Terraform, SSM rotations,
+manual ECS/service changes, and backend/frontend deployments from preflight
+until all post-control evidence and cleanup are complete. Require the merged
+`master` SHA to be the exact version already deployed to the stable API and
+writers, with identical pre/post source definitions and running task sets.
+
+Before choosing the boundary, require every Sepolia alarm `OK`, RDS `available`
+with no pending changes, and no preferred backup or maintenance window that
+overlaps the candidate `[B + 45, B + 300)` evidence interval. Require no
+pending RDS action whose `CurrentApplyDate`, `AutoAppliedAfterDate`, or
+`ForcedApplyDate` is at or before `B + 300`; preserve the initial and
+immediate-pre-`RunTask` workflow snapshots because the maintenance API is
+eventually consistent. Also require a current complete/error-free
+`basket_price_watermark_advanced` heartbeat, a current complete/error-free
+`perps_volume_writer_heartbeat` with acceptable normalized lag, at least three
+recent `perps_indexer_progress` records with
+`canonical_progress_certified=true`, and zero
+`basket_price_writer_heartbeat_failed`, `perps_volume_writer_heartbeat_failed`,
+or `perps_indexer_iteration_failed` events across that certifying window.
+Choose an aligned hour `B` so `B + 105` is between five and 30 minutes away.
+Establish an evidence window beginning no later than `B + 45`: require zero
+`perps_candle_coverage_unhealthy` events and zero unthrottled API 5xx responses
+on every route continuously through `B + 139`. Then dispatch only from merged
+`master`:
+
+```bash
+gh workflow run candle-admin.yml \
+  --repo Plether-Fi/plether-app \
+  --ref master \
+  -f environment=sepolia \
+  -f action=finalizer-probe \
+  -f scope=none \
+  -f boundary="$B" \
+  -f 'confirmation=RUN FINALIZER-PROBE ON SEPOLIA'
+```
+
+Immediately before dispatch, preserve the remote `master` SHA from
+`gh api repos/Plether-Fi/plether-app/commits/master --jq .sha`. Locate the one
+new workflow-dispatch run with `gh run list`, then preserve and inspect:
+
+```bash
+gh run view RUN_ID \
+  --repo Plether-Fi/plether-app \
+  --json event,headBranch,headSha,status,conclusion,url
+```
+
+Require `event=workflow_dispatch`, `headBranch=master`, and `headSha` equal to
+the pre-recorded remote SHA and the deployed API/router `SERVICE_VERSION`;
+otherwise cancel the control before the timed requests.
+
+The protected workflow rejects a nonempty temporary task family, validates one
+complete stable writer topology, matches the API and writers on the exact
+chain, router, SSM parameter ARN/version, RDS endpoint/resource/VPC,
+pending-maintenance horizon, candle configuration, application digest,
+FireLens digest, and deployed workflow SHA, and pins both task images. It
+proves every running API/writer task was created
+no earlier than the selected parameter modification and every one-off subnet and
+security group belongs to that RDS VPC. The executable validates the resolved
+`DATABASE_URL` host and database before creating a connection, takes the global
+candle-admin lock, then at `B + 105` takes the price dataset's
+transaction-scoped writer lock inside a read-committed, read-only transaction.
+It requires the price hourly watermark to be exactly `B - 3600`, the volume
+hourly watermark to have reached `B`, and `dxy-v1` to remain active throughout
+the control window. It performs no row mutation and never stops or scales an
+ECS service. Database-clock polling is at most five seconds apart and a
+12-second idle-transaction timeout independently releases a wedged connection.
+
+Before the timed sequence, measure operator-to-API `Date` offset,
+operator-to-database/log-clock offset, and request RTT. The worst absolute
+offset plus the worst measured RTT must be less than two seconds; abort if it
+does not fit strictly inside the five-second `B + 130` to `B + 135` margin.
+Require exactly one lifecycle scoped to the recorded task ARN/log stream and
+workflow run: `perps_candle_finalizer_probe_scheduled` ->
+`perps_candle_finalizer_probe_lock_acquired` (database field `acquired_at`
+between `B + 105` and `B + 110`) ->
+`perps_candle_finalizer_probe_grace_expired` (`observed_at >= B + 135`) ->
+`perps_candle_finalizer_probe_lock_released` (`released_at` between `B + 150`
+and `B + 155`) -> `perps_candle_finalizer_probe_recovery_complete`
+(`recovered_at <= B + 165`). Require no
+`perps_candle_finalizer_probe_failed` from that task; that failure event has no
+boundary field, so task/run scope is mandatory. Abort on a missing, duplicate,
+out-of-order, or wrong-boundary lifecycle event.
+
+Do not send the first request unless the exact acquired event is available by
+`B + 125`; if it is available, send once at `B + 130` and require `200`. CloudWatch/FireLens
+delivery has no five-second SLA, so do not delay the fault request waiting for
+the asynchronously delivered grace-expired log. Instead, schedule it from the
+verified clocks at `B + 140`, after confirming by `B + 138` that the exact ECS
+target container remains `RUNNING`, and require `503`; afterward, verify the
+grace-expired event's database timestamp and lifecycle order. Both requests use
+this exact URL:
+
+```text
+https://app.sepolia.plether.com/api/perps/v1/perps/basket/candles/current?interval=3600
+```
+
+For each of `before-grace`, `fault`, and `after-recovery`, set `ARTIFACT` to a
+different evidence-path prefix and run this literal no-retry request. Do not add
+a query parameter or change the URL:
+
+```bash
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "${ARTIFACT}.started-at"
+curl --disable --silent --show-error --retry 0 --max-time 2 \
+  --request GET \
+  --header 'Cache-Control: no-store' \
+  --header 'Pragma: no-cache' \
+  --header 'If-None-Match:' \
+  --header 'If-Modified-Since:' \
+  --dump-header "${ARTIFACT}.headers" \
+  --output "${ARTIFACT}.body" \
+  --write-out '%{http_code} %{time_starttransfer} %{time_total}\n' \
+  'https://app.sepolia.plether.com/api/perps/v1/perps/basket/candles/current?interval=3600' \
+  > "${ARTIFACT}.timing"
+date -u +%Y-%m-%dT%H:%M:%S.%NZ > "${ARTIFACT}.finished-at"
+```
+
+Preserve every response header, including `Date`, `Cache-Control`,
+`CF-Cache-Status`, `Server-Timing`, and any `X-Plether-Edge-Cache`. Require
+`X-Plether-Edge-Cache` to be absent, `Server-Timing` to contain
+`plether_edge_origin` and no edge-cache timing, and `CF-Cache-Status` to be
+absent, `DYNAMIC`, or `BYPASS`. Reject `HIT`, `STALE`, `REVALIDATED`, `UPDATING`,
+`MISS`, `EXPIRED`, validators, an unbounded request, or any retry because those
+do not prove a direct origin observation. The task releases at `B + 150` and
+fails if release is later than `B + 155`. It samples recovery in one fresh
+repeatable-read snapshot: price must advance from `B - 3600` to at least `B`,
+volume must remain healthy at or beyond `B`, and both generations must remain
+unchanged by `B + 165`. Do not issue the third request until the matching
+`recovery_complete` event exists; then issue it once with the same command and
+require `200`.
+
+Validate both `200` bodies directly; statuses and headers alone are
+insufficient. Set `BEFORE_GRACE_ARTIFACT` and `AFTER_RECOVERY_ARTIFACT` to the
+two saved prefixes. Set `PRICE_GENERATION` and `VOLUME_GENERATION` to the exact
+positive integers from the scoped lock-acquired event, first confirm the
+recovery-complete event contains the same pair, and run:
+
+```bash
+jq --exit-status --null-input \
+  --slurpfile before "${BEFORE_GRACE_ARTIFACT}.body" \
+  --slurpfile after "${AFTER_RECOVERY_ARTIFACT}.body" \
+  --argjson boundary "$B" \
+  --argjson price_generation "$PRICE_GENERATION" \
+  --argjson volume_generation "$VOLUME_GENERATION" '
+    def integer: type == "number" and floor == .;
+    def optional_nonnegative_integer:
+      . == null or (integer and . >= 0);
+    def candle_schema($expected_timestamp):
+      . == null or
+      (type == "object"
+       and keys == ["complete", "priceComplete", "quality", "rawClosePrice",
+                    "rawHighPrice", "rawLowPrice", "rawOpenPrice", "revision",
+                    "sampleCount", "timestamp", "tradeCount", "volumeComplete",
+                    "volumeUsdc"]
+       and (.timestamp | integer) and .timestamp == $expected_timestamp
+       and ([.rawOpenPrice, .rawHighPrice, .rawLowPrice, .rawClosePrice]
+            | all(type == "string" and test("^[1-9][0-9]*$")))
+       and (.volumeUsdc == null
+            or (.volumeUsdc
+                | type == "string" and test("^[0-9]+$")))
+       and (.tradeCount | optional_nonnegative_integer)
+       and (.sampleCount | integer) and .sampleCount >= 0
+       and (.revision | integer) and .revision >= 0
+       and (.quality == "observed"
+            or .quality == "legacy_sampled"
+            or .quality == "mixed")
+       and .priceComplete == false
+       and .volumeComplete == false
+       and .complete == false);
+    def current_schema($expected_timestamp):
+      type == "object"
+      and keys == ["candle", "configurationHash", "coverageComplete",
+                   "coverageEnd", "coverageStart", "datasetGeneration",
+                   "displayPriceCap", "finalizedThrough", "intervalSeconds",
+                   "seriesId"]
+      and .intervalSeconds == 3600
+      and .seriesId == "dxy-v1"
+      and (.configurationHash
+           | type == "string" and test("^sha256:[0-9a-f]{64}$"))
+      and (.displayPriceCap
+           | type == "string" and test("^[1-9][0-9]*$"))
+      and (.datasetGeneration | integer) and .datasetGeneration > 0
+      and .coverageComplete == true
+      and (.coverageStart | integer)
+      and (.coverageEnd | integer)
+      and .coverageStart < .coverageEnd
+      and (.finalizedThrough | integer)
+      and (.candle | candle_schema($expected_timestamp));
+    def envelope_schema($expected_timestamp):
+      type == "object"
+      and keys == ["data", "meta"]
+      and (.meta | type == "object")
+      and (.meta | keys == ["blockNumber", "cached", "chainId"])
+      and .meta.cached == false
+      and .meta.blockNumber == 0
+      and .meta.chainId == 421614
+      and (.data | current_schema($expected_timestamp));
+    def identity:
+      {seriesId, configurationHash, displayPriceCap, datasetGeneration};
+    ($price_generation | integer and . > 0 and . < 67108864)
+    and ($volume_generation | integer and . > 0 and . < 67108864)
+    and (($price_generation * 67108864 + $volume_generation) as $generation
+         | ($before | length) == 1
+           and ($after | length) == 1
+           and ($before[0] | envelope_schema($boundary))
+           and ($after[0] | envelope_schema($boundary))
+           and $before[0].data.finalizedThrough == ($boundary - 3600)
+           and $after[0].data.finalizedThrough >= $boundary
+           and ($before[0].data | identity) == ($after[0].data | identity)
+           and $before[0].data.datasetGeneration == $generation
+           and $after[0].data.datasetGeneration == $generation)
+  '
+```
+
+This parses both bodies, enforces the current-candle schema and hourly
+`dxy-v1` identity, and binds both successful observations to the probe's
+unchanged database generations. Preserve both JSON bodies as evidence.
+
+The intentional `503` must produce exactly one
+`perps_candle_coverage_unhealthy` event with `request_kind=current`,
+`interval_seconds=3600`, reason `finalized watermark is stale after the
+configured publication grace`, and `suppressed_count` absent or zero. Prove the
+same single failure independently with exactly one unthrottled
+`api_foreground_request_completed` event for
+`http_route=/api/perps/basket/candles/current` and `http_status_code=503`, and
+exactly three total unthrottled completion events for that route, correlated to
+the three request artifacts with ordered statuses `200`, `503`, `200`. Require
+no additional current-candle request event and no other unthrottled API 5xx in
+the control window. Require the `PerpsCandleCoverageUnhealthy-sepolia` metric's
+exact aligned `[B + 120, B + 180)` 60-second `Sum` to be one; in
+`[B + 180, B + 240)`, require no positive datapoint (the metric normally has no
+point because its log filter has no default value). Separately wait through
+`B + 300` plus CloudWatch ingestion, then require the Application ELB
+`HTTPCode_Target_5XX_Count` exact LoadBalancer/TargetGroup 300-second `Sum` for
+`[B, B + 300)` to be one and prove zero other target 5xx across that whole
+period. Only
+`plether-sepolia-candle-coverage-unhealthy` may transition from `OK` to `ALARM`;
+observing that transition is required evidence, not a waiver. Require that
+alarm to return to `OK` after a full clean aligned 60-second evaluation period
+and every other alarm to remain `OK`. Preserve `describe-alarm-history` for the
+named alarm and every other Sepolia alarm over the full evidence window;
+correlate the named transition to `[B + 120, B + 180)`, and use `GetMetricData`
+or `GetMetricStatistics` to preserve the exact unhealthy point, following
+no-positive-point period, and exact ALB 300-second point. Do not use `set-alarm-state`,
+change thresholds, disable actions, or clear metric data.
+
+Preserve one change record for the entire certifying window: `master`/head SHA,
+workflow run ID and URL, boundary, selected topology, source and temporary task
+definitions, task ARN, application and FireLens digests, scheduled/acquired/
+grace-expired/released/recovery log events and absence of a failure event,
+pre/post generations and watermarks, all three HTTP timestamp/header/status/
+body artifacts, exact foreground/unhealthy events and metric points, complete
+state history for every alarm, exact pre/post source definitions and task sets,
+RDS endpoint/resource/VPC and dual pending-maintenance snapshots, exact SSM
+parameter ARN/version evidence, the named current writer
+heartbeats, three certified indexer advances, zero named writer failures, and
+confirmed task `STOPPED` and temporary definition `INACTIVE` cleanup. Workflow
+and task success prove only the database lock/recovery lifecycle; Gate 6 passes
+only after the operator's HTTP, log, metric, alarm, health, and cleanup record
+is complete. Retrieve workflow evidence with the CLI, never the Actions web UI,
+and privately preserve the authoritative final ECS states:
+
+```bash
+AWS_REGION=us-east-1
+gh run view RUN_ID \
+  --repo Plether-Fi/plether-app \
+  --log > gate6-finalizer-workflow.log
+aws ecs describe-tasks \
+  --profile plether \
+  --region "$AWS_REGION" \
+  --cluster plether-sepolia \
+  --tasks "$TASK_ARN" > gate6-finalizer-task.json
+aws ecs describe-task-definition \
+  --profile plether \
+  --region "$AWS_REGION" \
+  --task-definition "$TEMPORARY_TASK_DEFINITION" \
+  > gate6-finalizer-task-definition.json
+jq --exit-status '.tasks | length == 1 and .tasks[0].lastStatus == "STOPPED"' \
+  gate6-finalizer-task.json
+jq --exit-status '.taskDefinition.status == "INACTIVE"' \
+  gate6-finalizer-task-definition.json
+```
+
+Any early or additional `503`,
+missing/extra event, metric mismatch, missing named-alarm transition, unrelated
+alarm transition, task or cleanup failure, generation change, failed
+watermark/endpoint recovery, or missing final `OK` fails Gate 6 and triggers
+the flag-based rollback. The normal mutation freeze ends only for controlled
+failure recovery: first preserve the immutable evidence, then stop/reconcile
+the exact workflow-owned task (or wait for its bounded application deadline),
+prove its database lock is released, and only then permit the minimum manual
+ECS reconciliation or flag/deployment rollback. Never leave a failed cleanup
+blocked behind the freeze, and never broaden that exception beyond recovery of
+this exact Sepolia control.
+
 The server may accept only the immediately adjacent future page to tolerate a
 browser/backend clock difference at a page boundary. Component-bearing legacy
 history is intentionally restricted to the supported `24h`/`3600` shape;
@@ -540,7 +877,9 @@ rollup watermark or publication grace.
 Collect latency samples using the ADR 0001 protocol. Every interval and each
 successful response shape listed above, including the permitted compatibility
 history, must meet its applicable thresholds independently. Rejected-input
-cases remain correctness checks and are not pooled into latency series.
+cases remain correctness checks and are not pooled into latency series. The
+single frozen-finalizer `503` is a correctness fault-injection observation: do
+not pool, discard, retry, or replace it in latency evidence.
 
 Pass criteria:
 
@@ -549,6 +888,11 @@ Pass criteria:
 - direct origin p95/p99 is at most 750 ms/1 s;
 - no rollover-boundary request fails while a healthy writer publishes within
   the configured finalization grace;
+- the supervised frozen-finalizer control produces exactly one expected `503`
+  and the matching unthrottled request event, unhealthy event, one-point alarm
+  metric, and exact `[B, B + 300)` ALB target-5xx sum; the named alarm alone transitions `OK` to
+  `ALARM` to `OK`; writer publication recovers without a generation change;
+  cleanup is confirmed; and all alarms are `OK` before further rollout work;
 - history pages contain no more than 500 strictly ascending finalized candles;
 - clients count actual candles across sparse weekend gaps;
 - one browser history traversal stops after at most 24 fixed pages even if a

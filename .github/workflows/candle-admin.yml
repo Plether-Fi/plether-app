@@ -22,6 +22,7 @@ on:
           - verify
           - repair
           - replay
+          - finalizer-probe
       scope:
         description: Required for backfill/repair; use none for other actions
         required: true
@@ -38,6 +39,10 @@ on:
         type: string
       to_timestamp:
         description: Optional exclusive Unix timestamp; required for repair
+        required: false
+        type: string
+      boundary:
+        description: Aligned UTC hour required only for the Sepolia finalizer probe
         required: false
         type: string
       from_block:
@@ -87,7 +92,7 @@ jobs:
   run:
     name: Run ${{ inputs.action }} on ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.action == 'replay' && 90 || 360 }}
+    timeout-minutes: ${{ inputs.action == 'finalizer-probe' && 90 || inputs.action == 'replay' && 90 || 360 }}
     # Both environments require an explicit approval and disable administrator
     # bypass. Sepolia may be self-approved during the supervised rollout;
     # mainnet still requires an independent reviewer and prevents self-review.
@@ -183,6 +188,7 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          BOUNDARY: ${{ inputs.boundary }}
           FROM_BLOCK: ${{ inputs.from_block }}
           TO_BLOCK: ${{ inputs.to_block }}
           CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
@@ -214,7 +220,7 @@ jobs:
                 exit 1
               fi
               ;;
-            estimate|migrate|status|verify|replay)
+            estimate|migrate|status|verify|replay|finalizer-probe)
               if [ "$SCOPE" != "none" ]; then
                 echo "::error title=Unexpected scope::Use none for $ACTION."
                 exit 1
@@ -307,6 +313,33 @@ jobs:
             exit 1
           fi
 
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            if [ "$TARGET_ENV" != "sepolia" ] || \
+               [ "$CONFIRMATION" != "RUN FINALIZER-PROBE ON SEPOLIA" ]; then
+              echo "::error title=Finalizer probe is Sepolia-only::The probe requires the exact confirmation phrase RUN FINALIZER-PROBE ON SEPOLIA."
+              exit 1
+            fi
+            if [ -n "$FROM_TIMESTAMP" ] || [ -n "$TO_TIMESTAMP" ] || \
+               [ -n "$FROM_BLOCK" ] || [ -n "$TO_BLOCK" ]; then
+              echo "::error title=Unexpected probe bounds::Finalizer probe accepts only the hourly boundary input."
+              exit 1
+            fi
+            validate_integer boundary "$BOUNDARY" 3600 4102444800
+            if (( 10#$BOUNDARY % 3600 != 0 )); then
+              echo "::error title=Misaligned finalizer boundary::The finalizer probe boundary must align to a UTC hour."
+              exit 1
+            fi
+            current_timestamp=$(date +%s)
+            acquisition_lead=$((10#$BOUNDARY + 105 - current_timestamp))
+            if (( acquisition_lead < 300 || acquisition_lead > 1800 )); then
+              echo "::error title=Unsafe finalizer schedule::Dispatch so lock acquisition is between 5 and 30 minutes away."
+              exit 1
+            fi
+          elif [ -n "$BOUNDARY" ]; then
+            echo "::error title=Unexpected finalizer boundary::boundary is accepted only for finalizer-probe."
+            exit 1
+          fi
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4
         with:
@@ -314,9 +347,83 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Require idle temporary task family
+        env:
+          REGISTRATION_OWNER: candle-${{ github.run_id }}-${{ github.run_attempt }}
+          AWS_PAGER: ''
+        run: |
+          set -euo pipefail
+          umask 077
+
+          cluster="plether-$TARGET_ENV"
+          family="plether-$TARGET_ENV-candle-admin"
+          owner_file="$RUNNER_TEMP/candle-admin-registration-owner"
+          tasks_file="$RUNNER_TEMP/candle-admin-family-tasks.json"
+          stopping_tasks_file="$RUNNER_TEMP/candle-admin-family-stopping-tasks.json"
+          stopping_describe_file="$RUNNER_TEMP/candle-admin-family-stopping-describe.json"
+          definitions_file="$RUNNER_TEMP/candle-admin-family-definitions.json"
+          if [[ ! "$REGISTRATION_OWNER" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+            echo "::error title=Unsafe registration owner::The temporary task-definition owner is invalid."
+            exit 1
+          fi
+          printf '%s\n' "$REGISTRATION_OWNER" > "$owner_file"
+
+          aws ecs list-tasks \
+            --cluster "$cluster" \
+            --family "$family" \
+            --desired-status RUNNING \
+            > "$tasks_file"
+          if ! jq --exit-status '(.taskArns // []) | length == 0' "$tasks_file" >/dev/null; then
+            echo "::error title=Temporary task family is busy::Reconcile the existing candle-admin task before starting another operation."
+            exit 1
+          fi
+
+          # StopTask changes desiredStatus before the task reaches terminal
+          # lastStatus. Include that transition state so a prior process cannot
+          # retain a database lock after disappearing from the RUNNING filter.
+          aws ecs list-tasks \
+            --cluster "$cluster" \
+            --family "$family" \
+            --desired-status STOPPED \
+            > "$stopping_tasks_file"
+          mapfile -t stopping_task_arns < <(
+            jq -r '.taskArns[]?' "$stopping_tasks_file"
+          )
+          for ((offset = 0; offset < ${#stopping_task_arns[@]}; offset += 100)); do
+            batch=("${stopping_task_arns[@]:offset:100}")
+            aws ecs describe-tasks \
+              --cluster "$cluster" \
+              --tasks "${batch[@]}" \
+              > "$stopping_describe_file"
+            if ! jq --exit-status \
+              '(.failures | length) == 0
+               and ([.tasks[] | .lastStatus == "STOPPED"] | all)' \
+              "$stopping_describe_file" >/dev/null; then
+              echo "::error title=Temporary task still stopping::Wait until every prior candle-admin task reaches terminal STOPPED state."
+              exit 1
+            fi
+          done
+
+          aws ecs list-task-definitions \
+            --family-prefix "$family" \
+            --status ACTIVE \
+            --sort DESC \
+            > "$definitions_file"
+          if ! jq --exit-status \
+            --arg family "$family" \
+            '[.taskDefinitionArns[]?
+              | select((split("/")[-1] | split(":")[0]) == $family)]
+             | length == 0' \
+            "$definitions_file" >/dev/null; then
+            echo "::error title=Stale temporary task definition::Reconcile the existing active candle-admin revision before this run."
+            exit 1
+          fi
+
+          echo "Confirmed that the environment-specific candle-admin family has no active task or task definition."
+
       - name: Require stable dual-write workers
         id: writers
-        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'replay'
+        if: inputs.action == 'backfill' || inputs.action == 'repair' || inputs.action == 'replay' || inputs.action == 'finalizer-probe'
         env:
           ACTION: ${{ inputs.action }}
           AWS_PAGER: ''
@@ -371,14 +478,46 @@ jobs:
               > "$task_definition_file"
             if ! jq --exit-status \
               --arg container "$container" \
-              '[.containerDefinitions[]
-                | select(.name == $container)
-                | [(.environment // [])[]?
-                  | select(.name == "PERPS_CANDLE_WRITE_MODE")
-                  | .value]]
-               | length == 1 and .[0] == ["dual"]' \
+              --arg action "$ACTION" \
+              '
+                def environment_value($name):
+                  [.containerDefinitions[]
+                   | select(.name == $container)
+                   | .environment[]?
+                   | select(.name == $name)
+                   | .value];
+                def secret_value($name):
+                  [.containerDefinitions[]
+                   | select(.name == $container)
+                   | .secrets[]?
+                   | select(.name == $name)
+                   | .valueFrom];
+                def has_no_libpq_overrides:
+                  [.containerDefinitions[]
+                   | select(.name == $container)
+                   | ((.environment[]?.name), (.secrets[]?.name))
+                   | select(startswith("PG"))]
+                  | length == 0;
+                environment_value("PERPS_CANDLE_WRITE_MODE") == ["dual"]
+                and ($action != "finalizer-probe"
+                     or (environment_value("PERPS_CHAIN_ID") == ["421614"]
+                         and ((environment_value("PERPS_ORDER_ROUTER") | length) == 1)
+                         and (environment_value("PERPS_ORDER_ROUTER")[0]
+                              | test("^0x[0-9A-Fa-f]{40}$"))
+                         and environment_value("PERPS_CANDLE_READ_MODE") == ["rollup"]
+                         and environment_value("PERPS_CANDLE_READ_INTERVALS") == ["3600"]
+                         and environment_value("PERPS_CANDLE_STRICT_COVERAGE") == ["true"]
+                         and environment_value("PERPS_CANDLE_LATENESS_SECONDS") == ["120"]
+                         and environment_value("PERPS_CANDLE_FINALIZATION_GRACE_SECONDS") == ["15"]
+                         and ((secret_value("DATABASE_URL") | length) == 1)
+                         and (secret_value("DATABASE_URL")[0]
+                              | test(":parameter/plether/sepolia/database-url$"))
+                         and has_no_libpq_overrides
+                         and ($container != "plether-perps-indexer"
+                              or environment_value("DEPLOYMENT_ENVIRONMENT") == ["sepolia"])))
+              ' \
               "$task_definition_file" >/dev/null; then
-              echo "::error title=Dual writes required::$label must have exactly PERPS_CANDLE_WRITE_MODE=dual before $ACTION."
+              echo "::error title=Unsafe candle writer configuration::$label does not match the required dual-write configuration for $ACTION."
               exit 1
             fi
 
@@ -416,6 +555,14 @@ jobs:
             --cluster "$cluster" \
             --services plether-workers plether-basket-worker plether-perps-indexer \
             > "$services_file"
+          if ! jq --exit-status \
+            '(.failures | length) == 0
+             and ([.services[].serviceName] | sort)
+               == (["plether-basket-worker", "plether-perps-indexer", "plether-workers"] | sort)' \
+            "$services_file" >/dev/null; then
+            echo "::error title=Incomplete worker topology::All consolidated and standalone candle-writer services must be visible before protected administration."
+            exit 1
+          fi
           consolidated_desired=$(jq -r \
             '[.services[]? | select(.serviceName == "plether-workers") | .desiredCount][0] // 0' \
             "$services_file")
@@ -431,6 +578,12 @@ jobs:
           consolidated_pending=$(jq -r \
             '[.services[]? | select(.serviceName == "plether-workers") | .pendingCount][0] // 0' \
             "$services_file")
+          basket_running=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-basket-worker") | .runningCount][0] // 0' \
+            "$services_file")
+          basket_pending=$(jq -r \
+            '[.services[]? | select(.serviceName == "plether-basket-worker") | .pendingCount][0] // 0' \
+            "$services_file")
           indexer_running=$(jq -r \
             '[.services[]? | select(.serviceName == "plether-perps-indexer") | .runningCount][0] // 0' \
             "$services_file")
@@ -442,13 +595,36 @@ jobs:
              || ! "$indexer_desired" =~ ^[0-9]+$ \
              || ! "$consolidated_running" =~ ^[0-9]+$ \
              || ! "$consolidated_pending" =~ ^[0-9]+$ \
+             || ! "$basket_running" =~ ^[0-9]+$ \
+             || ! "$basket_pending" =~ ^[0-9]+$ \
              || ! "$indexer_running" =~ ^[0-9]+$ \
              || ! "$indexer_pending" =~ ^[0-9]+$ ]]; then
             echo "::error title=Invalid worker topology::Could not determine the candle-writer service layout."
             exit 1
           fi
 
-          if [ "$ACTION" = "replay" ]; then
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            if (( consolidated_desired > 0 )); then
+              if (( basket_desired != 0 || basket_running != 0 || basket_pending != 0 \
+                 || indexer_desired != 0 || indexer_running != 0 || indexer_pending != 0 )); then
+                echo "::error title=Overlapping finalizer topology::Standalone basket and indexer services must be fully drained when consolidated workers are active."
+                exit 1
+              fi
+              validate_service_container plether-workers plether-basket-worker "Consolidated basket writer"
+              validate_service_container plether-workers plether-perps-indexer "Consolidated volume writer"
+              echo "finalizer_topology=consolidated" >> "$GITHUB_OUTPUT"
+            else
+              if (( consolidated_desired != 0 || consolidated_running != 0 || consolidated_pending != 0 \
+                 || basket_desired == 0 || indexer_desired == 0 )); then
+                echo "::error title=Incomplete finalizer topology::Finalizer control requires either consolidated workers alone or both standalone writers alone."
+                exit 1
+              fi
+              validate_service_container plether-basket-worker plether-basket-worker "Standalone basket writer"
+              validate_service_container plether-perps-indexer plether-perps-indexer "Standalone volume writer"
+              echo "finalizer_topology=standalone" >> "$GITHUB_OUTPUT"
+            fi
+            echo "Validated exactly one complete stable dual-write topology for the finalizer control."
+          elif [ "$ACTION" = "replay" ]; then
             if (( (consolidated_desired > 0) == (indexer_desired > 0) )); then
               echo "::error title=Ambiguous replay topology::Replay requires exactly one desired Perps indexer topology: consolidated XOR standalone."
               exit 1
@@ -495,6 +671,9 @@ jobs:
         id: target
         if: inputs.action != 'replay'
         env:
+          ACTION: ${{ inputs.action }}
+          BOUNDARY: ${{ inputs.boundary }}
+          REGISTRATION_OWNER: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
@@ -509,6 +688,92 @@ jobs:
           registration_file="$RUNNER_TEMP/candle-admin-task-definition-registration.json"
           registered_task_definition_file="$RUNNER_TEMP/candle-admin-registered-task-definition.json"
           registered_task_definition_arn_file="$RUNNER_TEMP/candle-admin-registered-task-definition-arn"
+          registered_task_definition_tags_file="$RUNNER_TEMP/candle-admin-registered-task-definition-tags.json"
+          registration_attempt_file="$RUNNER_TEMP/candle-admin-registration-attempted"
+          finalizer_database_file="$RUNNER_TEMP/candle-admin-finalizer-database.json"
+          finalizer_database_maintenance_file="$RUNNER_TEMP/candle-admin-finalizer-database-maintenance.json"
+          finalizer_database_parameter_file="$RUNNER_TEMP/candle-admin-finalizer-database-parameter.json"
+          finalizer_network_subnets_file="$RUNNER_TEMP/candle-admin-finalizer-network-subnets.json"
+          finalizer_network_security_groups_file="$RUNNER_TEMP/candle-admin-finalizer-network-security-groups.json"
+          finalizer_database_security_groups_file="$RUNNER_TEMP/candle-admin-finalizer-database-security-groups.json"
+          expected_database_host=""
+          expected_database_arn=""
+          expected_database_resource_id=""
+          expected_database_vpc_id=""
+          expected_database_parameter_arn=""
+          expected_database_parameter_version=""
+          expected_database_parameter_modified_at=""
+
+          validate_finalizer_maintenance() {
+            local snapshot_file=$1
+            local database_arn=$2
+            local boundary=$3
+            local snapshot_label=$4
+            if [[ ! "$boundary" =~ ^[0-9]+$ ]] || \
+               [ "${#boundary}" -gt 10 ]; then
+              echo "::error title=Invalid maintenance boundary::The finalizer maintenance horizon cannot be established safely."
+              exit 1
+            fi
+            local cutoff=$((10#$boundary + 300))
+            if ! jq --exit-status \
+              --arg database_arn "$database_arn" \
+              '(.PendingMaintenanceActions | type) == "array"
+               and ([.PendingMaintenanceActions[]
+                     | .ResourceIdentifier == $database_arn
+                       and (.PendingMaintenanceActionDetails | type) == "array"
+                       and (.PendingMaintenanceActionDetails | length) > 0
+                       and ([.PendingMaintenanceActionDetails[]
+                             | (.Action | type == "string" and length > 0)
+                               and ([.CurrentApplyDate,
+                                     .AutoAppliedAfterDate,
+                                     .ForcedApplyDate]
+                                    | all(. == null
+                                          or (type == "string"
+                                              and length > 0)))]
+                            | all)]
+                    | all)' \
+              "$snapshot_file" >/dev/null; then
+              echo "::error title=Invalid RDS maintenance snapshot::The protected Sepolia maintenance schedule is malformed or belongs to another database."
+              exit 1
+            fi
+
+            mapfile -t apply_dates < <(
+              jq -r \
+                '.PendingMaintenanceActions[]
+                 .PendingMaintenanceActionDetails[]
+                 | [.CurrentApplyDate,
+                    .AutoAppliedAfterDate,
+                    .ForcedApplyDate][]
+                 | select(. != null)' \
+                "$snapshot_file"
+            )
+            local apply_date
+            local apply_epoch
+            for apply_date in "${apply_dates[@]}"; do
+              if ! apply_epoch=$(date --date="$apply_date" +%s) || \
+                 [[ ! "$apply_epoch" =~ ^[0-9]{10}$ ]]; then
+                echo "::error title=Invalid RDS maintenance date::A pending maintenance application date cannot be compared safely."
+                exit 1
+              fi
+              if (( 10#$apply_epoch <= cutoff )); then
+                echo "::error title=RDS maintenance overlaps finalizer evidence::A pending RDS action may apply before boundary plus 300 seconds."
+                exit 1
+              fi
+            done
+
+            printf 'RDS pending-maintenance snapshot (%s): ' "$snapshot_label"
+            jq --compact-output \
+              '{PendingMaintenanceActions:
+                  [.PendingMaintenanceActions[]
+                   | {ResourceIdentifier,
+                      PendingMaintenanceActionDetails:
+                        [.PendingMaintenanceActionDetails[]
+                         | {Action,
+                            CurrentApplyDate,
+                            AutoAppliedAfterDate,
+                            ForcedApplyDate}]}]}' \
+              "$snapshot_file"
+          }
 
           # Do not inherit a task definition from an in-progress or failed
           # backend rollout. A deploy that starts after this point cannot
@@ -544,6 +809,84 @@ jobs:
 
           task_definition=$(jq -r '.services[0].taskDefinition' "$service_file")
 
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            aws rds describe-db-instances \
+              --db-instance-identifier plether-sepolia \
+              > "$finalizer_database_file"
+            if ! jq --exit-status \
+              --arg region "$AWS_REGION" \
+              '(.DBInstances | length) == 1
+               and .DBInstances[0].DBInstanceIdentifier == "plether-sepolia"
+               and .DBInstances[0].DBInstanceStatus == "available"
+               and .DBInstances[0].Engine == "postgres"
+               and .DBInstances[0].DBName == "plether"
+               and .DBInstances[0].PubliclyAccessible == false
+               and .DBInstances[0].DeletionProtection == true
+               and .DBInstances[0].Endpoint.Port == 5432
+               and (.DBInstances[0].Endpoint.Address
+                    | test("^plether-sepolia[.][a-z0-9-]+[.]" + $region + "[.]rds[.]amazonaws[.]com$"))
+               and (.DBInstances[0].DbiResourceId
+                    | test("^db-[A-Z0-9]+$"))
+               and (.DBInstances[0].DBInstanceArn
+                    | test("^arn:(aws|aws-us-gov|aws-cn):rds:" + $region + ":[0-9]{12}:db:plether-sepolia$"))
+               and (.DBInstances[0].DBSubnetGroup.VpcId | length) > 0
+               and ([.DBInstances[0].VpcSecurityGroups[]
+                     | .Status == "active"] | all)
+               and .DBInstances[0].PendingModifiedValues == {}' \
+              "$finalizer_database_file" >/dev/null; then
+              echo "::error title=Unsafe Sepolia database::The protected RDS instance is not available with its exact immutable Sepolia identity and no pending changes."
+              exit 1
+            fi
+            expected_database_host=$(jq -r \
+              '.DBInstances[0].Endpoint.Address' \
+              "$finalizer_database_file")
+            expected_database_arn=$(jq -r \
+              '.DBInstances[0].DBInstanceArn' \
+              "$finalizer_database_file")
+            expected_database_resource_id=$(jq -r \
+              '.DBInstances[0].DbiResourceId' \
+              "$finalizer_database_file")
+            expected_database_vpc_id=$(jq -r \
+              '.DBInstances[0].DBSubnetGroup.VpcId' \
+              "$finalizer_database_file")
+            aws rds describe-pending-maintenance-actions \
+              --resource-identifier "$expected_database_arn" \
+              > "$finalizer_database_maintenance_file"
+            validate_finalizer_maintenance \
+              "$finalizer_database_maintenance_file" \
+              "$expected_database_arn" \
+              "$BOUNDARY" \
+              "before registration"
+            printf 'RDS preferred windows (before registration): maintenance=%s backup=%s\n' \
+              "$(jq -r '.DBInstances[0].PreferredMaintenanceWindow' "$finalizer_database_file")" \
+              "$(jq -r '.DBInstances[0].PreferredBackupWindow' "$finalizer_database_file")"
+
+            # Record only parameter metadata, never its decrypted value. The
+            # executable separately validates the value's host before connect.
+            aws ssm get-parameter \
+              --name /plether/sepolia/database-url \
+              --query 'Parameter.{ARN:ARN,Name:Name,Type:Type,Version:Version,LastModifiedDate:LastModifiedDate}' \
+              > "$finalizer_database_parameter_file"
+            if ! jq --exit-status \
+              --arg region "$AWS_REGION" \
+              '.Name == "/plether/sepolia/database-url"
+               and .Type == "SecureString"
+               and (.ARN
+                    | test("^arn:(aws|aws-us-gov|aws-cn):ssm:" + $region + ":[0-9]{12}:parameter/plether/sepolia/database-url$"))
+               and (.Version | type == "number" and . > 0)
+               and (.LastModifiedDate | type == "string" and length > 0)' \
+              "$finalizer_database_parameter_file" >/dev/null; then
+              echo "::error title=Unsafe database parameter::The Sepolia database parameter metadata is incomplete or unexpected."
+              exit 1
+            fi
+            expected_database_parameter_version=$(jq -r \
+              '.Version' "$finalizer_database_parameter_file")
+            expected_database_parameter_arn=$(jq -r \
+              '.ARN' "$finalizer_database_parameter_file")
+            expected_database_parameter_modified_at=$(jq -r \
+              '.LastModifiedDate' "$finalizer_database_parameter_file")
+          fi
+
           jq --exit-status \
             '.services[0].networkConfiguration.awsvpcConfiguration
              | {awsvpcConfiguration: {
@@ -555,6 +898,76 @@ jobs:
              | select((.awsvpcConfiguration.securityGroups | length) > 0)' \
             "$service_file" \
             > "$network_file"
+
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            mapfile -t finalizer_subnet_ids < <(
+              jq -r '.awsvpcConfiguration.subnets[]' "$network_file"
+            )
+            mapfile -t finalizer_security_group_ids < <(
+              jq -r '.awsvpcConfiguration.securityGroups[]' "$network_file"
+            )
+            mapfile -t finalizer_database_security_group_ids < <(
+              jq -r '.DBInstances[0].VpcSecurityGroups[].VpcSecurityGroupId' \
+                "$finalizer_database_file"
+            )
+            if [ "${#finalizer_database_security_group_ids[@]}" -eq 0 ]; then
+              echo "::error title=Missing RDS security group::The protected Sepolia database has no VPC security group."
+              exit 1
+            fi
+            aws ec2 describe-subnets \
+              --subnet-ids "${finalizer_subnet_ids[@]}" \
+              > "$finalizer_network_subnets_file"
+            aws ec2 describe-security-groups \
+              --group-ids "${finalizer_security_group_ids[@]}" \
+              > "$finalizer_network_security_groups_file"
+            aws ec2 describe-security-groups \
+              --group-ids "${finalizer_database_security_group_ids[@]}" \
+              > "$finalizer_database_security_groups_file"
+            if ! jq --exit-status \
+              --arg vpc_id "$expected_database_vpc_id" \
+              --argjson expected_count "${#finalizer_subnet_ids[@]}" \
+              '(.Subnets | length) == $expected_count
+               and ([.Subnets[].SubnetId] | unique | length) == $expected_count
+               and ([.Subnets[]
+                     | .VpcId == $vpc_id and .State == "available"]
+                    | all)' \
+              "$finalizer_network_subnets_file" >/dev/null || \
+               ! jq --exit-status \
+              --arg vpc_id "$expected_database_vpc_id" \
+              --argjson expected_count "${#finalizer_security_group_ids[@]}" \
+              '(.SecurityGroups | length) == $expected_count
+               and ([.SecurityGroups[].GroupId] | unique | length) == $expected_count
+               and ([.SecurityGroups[] | .VpcId == $vpc_id] | all)' \
+              "$finalizer_network_security_groups_file" >/dev/null || \
+               ! jq --exit-status \
+              --arg vpc_id "$expected_database_vpc_id" \
+              --argjson expected_count "${#finalizer_database_security_group_ids[@]}" \
+              --argjson task_security_groups "$(jq -c '.awsvpcConfiguration.securityGroups' "$network_file")" \
+              '(.SecurityGroups | length) == $expected_count
+               and ([.SecurityGroups[].GroupId] | unique | length) == $expected_count
+               and ([.SecurityGroups[] | .VpcId == $vpc_id] | all)
+               and ([.SecurityGroups[].IpPermissions[]?] as $permissions
+                    | ($permissions | length) > 0
+                      and ([$permissions[]
+                            | .IpProtocol == "tcp"
+                              and .FromPort == 5432
+                              and .ToPort == 5432
+                              and (.IpRanges | length) == 0
+                              and (.Ipv6Ranges | length) == 0
+                              and (.PrefixListIds | length) == 0
+                              and (.UserIdGroupPairs | length) > 0]
+                           | all)
+                      and ([ $permissions[].UserIdGroupPairs[].GroupId ] as $sources
+                           | ($sources | length) > 0
+                             and all($sources[];
+                                     . as $source
+                                     | ($task_security_groups
+                                        | index($source)) != null)))' \
+              "$finalizer_database_security_groups_file" >/dev/null; then
+              echo "::error title=Unsafe finalizer network::Every task subnet and security group must belong to the exact private Sepolia RDS VPC."
+              exit 1
+            fi
+          fi
 
           aws ecs describe-task-definition \
             --task-definition "$task_definition" \
@@ -579,6 +992,65 @@ jobs:
             exit 1
           fi
 
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            if [ "$TARGET_ENV" != "sepolia" ] || \
+               ! jq --exit-status \
+                 --arg container "$ECS_CONTAINER" \
+                 --arg workflow_sha "$GITHUB_SHA" \
+                 --arg expected_database_parameter_arn "$expected_database_parameter_arn" \
+                 '
+                   def environment_value($name):
+                     [.containerDefinitions[]
+                      | select(.name == $container)
+                      | .environment[]?
+                      | select(.name == $name)
+                      | .value];
+                   def router_environment_value($name):
+                     [.containerDefinitions[]
+                      | select(.name == "otel-log-router")
+                      | .environment[]?
+                      | select(.name == $name)
+                      | .value];
+                   def has_no_libpq_overrides:
+                     [.containerDefinitions[]
+                      | select(.name == $container)
+                      | ((.environment[]?.name), (.secrets[]?.name))
+                      | select(startswith("PG"))]
+                     | length == 0;
+                   .family == "plether-sepolia"
+                   and ([.containerDefinitions[]
+                         | select(.name == $container)
+                         | .image]
+                        | length == 1
+                          and (.[0] | endswith(":" + $workflow_sha)))
+                   and (environment_value("PERPS_CHAIN_ID") == ["421614"])
+                   and ((environment_value("PERPS_ORDER_ROUTER") | length) == 1)
+                   and (environment_value("PERPS_ORDER_ROUTER")[0]
+                        | test("^0x[0-9A-Fa-f]{40}$"))
+                   and (environment_value("PERPS_CANDLE_WRITE_MODE") == ["dual"])
+                   and (environment_value("PERPS_CANDLE_READ_MODE") == ["rollup"])
+                   and (environment_value("PERPS_CANDLE_READ_INTERVALS") == ["3600"])
+                   and (environment_value("PERPS_CANDLE_STRICT_COVERAGE") == ["true"])
+                   and (environment_value("PERPS_CANDLE_LATENESS_SECONDS") == ["120"])
+                   and (environment_value("PERPS_CANDLE_FINALIZATION_GRACE_SECONDS") == ["15"])
+                   and has_no_libpq_overrides
+                   and (router_environment_value("DEPLOYMENT_ENVIRONMENT") == ["sepolia"])
+                   and (router_environment_value("CLOUDWATCH_LOG_GROUP") == ["/ecs/plether-sepolia"])
+                   and (router_environment_value("SERVICE_VERSION") == [$workflow_sha])
+                   and (([.containerDefinitions[]
+                          | select(.name == $container)
+                          | .secrets[]?
+                          | select(.name == "DATABASE_URL")
+                          | .valueFrom]) as $database_secrets
+                        | ($database_secrets | length) == 1
+                          and $database_secrets[0] == $expected_database_parameter_arn)
+                 ' \
+                 "$task_definition_file" >/dev/null; then
+              echo "::error title=Unsafe finalizer source::The probe requires the stable Sepolia API definition with exact hourly rollout configuration and database identity."
+              exit 1
+            fi
+          fi
+
           mapfile -t running_task_arns < <(aws ecs list-tasks \
             --cluster "$cluster" \
             --service-name "$service" \
@@ -597,12 +1069,27 @@ jobs:
           if ! jq --exit-status \
             --arg task_definition "$task_definition" \
             --arg container "$ECS_CONTAINER" \
+            --arg action "$ACTION" \
             '(.failures | length) == 0
              and (.tasks | length) > 0
              and ([.tasks[] | .taskDefinitionArn == $task_definition] | all)
              and ([.tasks[] | [.containers[] | select(.name == $container) | .imageDigest]
                | (length == 1 and (.[0] | type == "string" and test("^sha256:[0-9a-f]{64}$")))] | all)
-             and ([.tasks[] | [.containers[] | select(.name == $container) | .imageDigest][0]] | unique | length == 1)' \
+             and ([.tasks[] | [.containers[] | select(.name == $container) | .imageDigest][0]] | unique | length == 1)
+             and ($action != "finalizer-probe"
+                  or (([.tasks[]
+                        | [.containers[]
+                           | select(.name == "otel-log-router")
+                           | .imageDigest]
+                        | length == 1
+                          and (.[0] | type == "string"
+                               and test("^sha256:[0-9a-f]{64}$"))]
+                       | all)
+                      and ([.tasks[]
+                            | [.containers[]
+                               | select(.name == "otel-log-router")
+                               | .imageDigest][0]]
+                           | unique | length == 1)))' \
             "$running_tasks_file" >/dev/null; then
             echo "::error title=Backend image digest unavailable::Stable service tasks did not agree on one deployed API image digest."
             exit 1
@@ -621,6 +1108,50 @@ jobs:
             --arg container "$ECS_CONTAINER" \
             '[.tasks[] | [.containers[] | select(.name == $container) | .imageDigest][0]][0]' \
             "$running_tasks_file")
+
+          pinned_firelens_image=""
+          firelens_image_digest=""
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            firelens_source_image=$(jq -r \
+              '[.containerDefinitions[]
+                | select(.name == "otel-log-router")
+                | .image][0] // empty' \
+              "$task_definition_file")
+            firelens_repository=$(jq -nr \
+              --arg image "$firelens_source_image" \
+              '$image
+               | sub("@sha256:[0-9a-f]{64}$"; "")
+               | sub(":[^/:]+$"; "")')
+            firelens_image_digest=$(jq -r \
+              '[.tasks[]
+                | [.containers[]
+                   | select(.name == "otel-log-router")
+                   | .imageDigest][0]][0]' \
+              "$running_tasks_file")
+            if [[ ! "$firelens_repository" =~ ^[^[:space:]]+/[^[:space:]@]+$ ]] || \
+               [[ ! "$firelens_image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error title=Invalid FireLens identity::Could not derive the exact deployed log-router repository and digest for finalizer evidence."
+              exit 1
+            fi
+            if ! jq --exit-status \
+              --arg repository "$firelens_repository" \
+              '
+                def repository:
+                  sub("@sha256:[0-9a-f]{64}$"; "")
+                  | sub(":[^/:]+$"; "");
+                [.tasks[]
+                  | [.containers[]
+                     | select(.name == "otel-log-router")
+                     | .image][0]
+                  | repository]
+                | length > 0 and all(. == $repository)
+              ' \
+              "$running_tasks_file" >/dev/null; then
+              echo "::error title=FireLens repository mismatch::Stable API tasks did not agree on the deployed log-router repository."
+              exit 1
+            fi
+            pinned_firelens_image="$firelens_repository@$firelens_image_digest"
+          fi
 
           if [[ ! "$image_repository" =~ ^[^[:space:]]+/[^[:space:]@]+$ ]] || \
              [[ ! "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
@@ -653,6 +1184,8 @@ jobs:
             --arg family "$temporary_family" \
             --arg container "$ECS_CONTAINER" \
             --arg image "$pinned_image" \
+            --arg action "$ACTION" \
+            --arg firelens_image "$pinned_firelens_image" \
             '
               ({
                 family: $family,
@@ -661,7 +1194,13 @@ jobs:
                 networkMode,
                 containerDefinitions: (
                   .containerDefinitions
-                  | map(if .name == $container then .image = $image else . end)
+                  | map(
+                      if .name == $container then .image = $image
+                      elif $action == "finalizer-probe" and .name == "otel-log-router"
+                        then .image = $firelens_image
+                      else .
+                      end
+                    )
                 ),
                 volumes,
                 placementConstraints,
@@ -684,6 +1223,8 @@ jobs:
             --arg family "$temporary_family" \
             --arg container "$ECS_CONTAINER" \
             --arg image "$pinned_image" \
+            --arg action "$ACTION" \
+            --arg firelens_image "$pinned_firelens_image" \
             '
               .[0] as $source
               | .[1] as $derived
@@ -702,19 +1243,34 @@ jobs:
                        | select(.name == $container)
                        | del(.image) ])
                 and ([ $derived.containerDefinitions[]
-                       | select(.name != $container) ]
+                       | select(.name != $container
+                                and ($action != "finalizer-probe"
+                                     or .name != "otel-log-router")) ]
                   == [ $source.containerDefinitions[]
-                       | select(.name != $container) ])
+                       | select(.name != $container
+                                and ($action != "finalizer-probe"
+                                     or .name != "otel-log-router")) ])
+                and ($action != "finalizer-probe"
+                     or ([ $derived.containerDefinitions[]
+                           | select(.name == "otel-log-router") ]
+                         == [ $source.containerDefinitions[]
+                              | select(.name == "otel-log-router")
+                              | .image = $firelens_image ]))
             ' \
             "$task_definition_file" \
             "$registration_file" >/dev/null; then
-            echo "::error title=Unsafe derived task definition::The temporary definition must change only the API image and preserve every sidecar."
+            echo "::error title=Unsafe derived task definition::The temporary definition must preserve every container and pin only the deployed API and required FireLens images."
             exit 1
           fi
 
-          aws ecs register-task-definition \
+          printf '%s\n' "$REGISTRATION_OWNER" > "$registration_attempt_file"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs register-task-definition \
             --cli-input-json "file://$registration_file" \
-            > "$registered_task_definition_file"
+            --tags "key=PletherCandleAdminRun,value=$REGISTRATION_OWNER" \
+            > "$registered_task_definition_file"; then
+            echo "::error title=Ambiguous task-definition registration::Cleanup will recover only an exact family revision carrying this workflow's owner tag."
+            exit 1
+          fi
 
           registered_task_definition_arn=$(jq -r \
             '.taskDefinition.taskDefinitionArn // empty' \
@@ -726,16 +1282,34 @@ jobs:
           printf '%s\n' "$registered_task_definition_arn" \
             > "$registered_task_definition_arn_file"
 
+          aws ecs list-tags-for-resource \
+            --resource-arn "$registered_task_definition_arn" \
+            > "$registered_task_definition_tags_file"
+          if ! jq --exit-status \
+            --arg owner "$REGISTRATION_OWNER" \
+            '[.tags[]? | select(.key == "PletherCandleAdminRun") | .value]
+             == [$owner]' \
+            "$registered_task_definition_tags_file" >/dev/null; then
+            echo "::error title=Temporary task ownership unavailable::The registered definition is not bound to this workflow run."
+            exit 1
+          fi
+
           if ! jq --exit-status \
             --arg arn "$registered_task_definition_arn" \
             --arg family "$temporary_family" \
             --arg container "$ECS_CONTAINER" \
             --arg image "$pinned_image" \
+            --arg action "$ACTION" \
+            --arg firelens_image "$pinned_firelens_image" \
             '.taskDefinition.taskDefinitionArn == $arn
              and .taskDefinition.family == $family
              and ([.taskDefinition.containerDefinitions[]
                    | select(.name == $container)
-                   | .image] == [$image])' \
+                   | .image] == [$image])
+             and ($action != "finalizer-probe"
+                  or ([.taskDefinition.containerDefinitions[]
+                       | select(.name == "otel-log-router")
+                       | .image] == [$firelens_image]))' \
             "$registered_task_definition_file" >/dev/null; then
             echo "::error title=Temporary image pin rejected::The registered definition did not retain the exact deployed API digest."
             exit 1
@@ -745,14 +1319,148 @@ jobs:
           echo "task_definition=$registered_task_definition_arn" >> "$GITHUB_OUTPUT"
           echo "expected_image=$pinned_image" >> "$GITHUB_OUTPUT"
           echo "expected_image_digest=$image_digest" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image=$pinned_firelens_image" >> "$GITHUB_OUTPUT"
+          echo "expected_firelens_image_digest=$firelens_image_digest" >> "$GITHUB_OUTPUT"
           echo "network_file=$network_file" >> "$GITHUB_OUTPUT"
+          echo "source_task_definition=$task_definition" >> "$GITHUB_OUTPUT"
+          echo "expected_database_host=$expected_database_host" >> "$GITHUB_OUTPUT"
+          echo "expected_database_arn=$expected_database_arn" >> "$GITHUB_OUTPUT"
+          echo "expected_database_resource_id=$expected_database_resource_id" >> "$GITHUB_OUTPUT"
+          echo "expected_database_vpc_id=$expected_database_vpc_id" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_arn=$expected_database_parameter_arn" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_version=$expected_database_parameter_version" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_modified_at=$expected_database_parameter_modified_at" >> "$GITHUB_OUTPUT"
           echo "Registered a temporary task definition pinned to the stable $TARGET_ENV API image digest."
+
+      - name: Match finalizer writers to the API source
+        if: inputs.action == 'finalizer-probe'
+        env:
+          FINALIZER_TOPOLOGY: ${{ steps.writers.outputs.finalizer_topology }}
+        run: |
+          set -euo pipefail
+
+          validation_dir="$RUNNER_TEMP/candle-admin-dual-writers"
+          api_definition="$RUNNER_TEMP/candle-admin-task-definition.json"
+          api_tasks="$RUNNER_TEMP/candle-admin-running-tasks.json"
+
+          validate_writer_identity() {
+            local writer_definition=$1
+            local writer_tasks=$2
+            local writer_container=$3
+            local label=$4
+            if ! jq -n --exit-status \
+              --slurpfile api "$api_definition" \
+              --slurpfile writer "$writer_definition" \
+              --slurpfile api_tasks "$api_tasks" \
+              --slurpfile writer_tasks "$writer_tasks" \
+              --arg api_container "plether-api" \
+              --arg writer_container "$writer_container" \
+              '
+                def environment_value($definition; $container; $name):
+                  [$definition.containerDefinitions[]
+                   | select(.name == $container)
+                   | .environment[]?
+                   | select(.name == $name)
+                   | .value];
+                def secret_value($definition; $container; $name):
+                  [$definition.containerDefinitions[]
+                   | select(.name == $container)
+                   | .secrets[]?
+                   | select(.name == $name)
+                   | .valueFrom];
+                def image($definition; $container):
+                  [$definition.containerDefinitions[]
+                   | select(.name == $container)
+                   | .image];
+                def digests($tasks; $container):
+                  [$tasks.tasks[]
+                   | .containers[]
+                   | select(.name == $container)
+                   | .imageDigest]
+                  | unique;
+                def has_no_libpq_overrides($definition; $container):
+                  [$definition.containerDefinitions[]
+                   | select(.name == $container)
+                   | ((.environment[]?.name), (.secrets[]?.name))
+                   | select(startswith("PG"))]
+                  | length == 0;
+                ($api[0]) as $api_definition
+                | ($writer[0]) as $writer_definition
+                | ($api_tasks[0]) as $api_task_set
+                | ($writer_tasks[0]) as $writer_task_set
+                | ["PERPS_CHAIN_ID", "PERPS_ORDER_ROUTER",
+                   "PERPS_CANDLE_WRITE_MODE", "PERPS_CANDLE_READ_MODE",
+                   "PERPS_CANDLE_READ_INTERVALS", "PERPS_CANDLE_STRICT_COVERAGE",
+                   "PERPS_CANDLE_LATENESS_SECONDS",
+                   "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"] as $names
+                | ([$names[] as $name
+                    | environment_value($api_definition; $api_container; $name)]
+                   == [$names[] as $name
+                       | environment_value($writer_definition; $writer_container; $name)])
+                  and (secret_value($api_definition; $api_container; "DATABASE_URL")
+                       == secret_value($writer_definition; $writer_container; "DATABASE_URL"))
+                  and ((secret_value($api_definition; $api_container; "DATABASE_URL") | length) == 1)
+                  and has_no_libpq_overrides($api_definition; $api_container)
+                  and has_no_libpq_overrides($writer_definition; $writer_container)
+                  and (image($api_definition; $api_container)
+                       == image($writer_definition; $writer_container))
+                  and (image($api_definition; "otel-log-router")
+                       == image($writer_definition; "otel-log-router"))
+                  and ([ ["DEPLOYMENT_ENVIRONMENT", "CLOUDWATCH_LOG_GROUP", "SERVICE_VERSION"][] as $name
+                         | environment_value($api_definition; "otel-log-router"; $name)
+                           == environment_value($writer_definition; "otel-log-router"; $name) ]
+                       | all)
+                  and ((digests($api_task_set; $api_container) | length) == 1)
+                  and (digests($api_task_set; $api_container)
+                       == digests($writer_task_set; $writer_container))
+                  and ((digests($api_task_set; "otel-log-router") | length) == 1)
+                  and (digests($api_task_set; "otel-log-router")
+                       == digests($writer_task_set; "otel-log-router"))
+              ' >/dev/null; then
+              echo "::error title=Finalizer writer identity mismatch::$label does not match the stable API configuration, database, application image, or FireLens digest."
+              exit 1
+            fi
+          }
+
+          case "$FINALIZER_TOPOLOGY" in
+            consolidated)
+              validate_writer_identity \
+                "$validation_dir/plether-workers-task-definition.json" \
+                "$validation_dir/plether-workers-tasks.json" \
+                plether-basket-worker \
+                "Consolidated basket writer"
+              validate_writer_identity \
+                "$validation_dir/plether-workers-task-definition.json" \
+                "$validation_dir/plether-workers-tasks.json" \
+                plether-perps-indexer \
+                "Consolidated volume writer"
+              ;;
+            standalone)
+              validate_writer_identity \
+                "$validation_dir/plether-basket-worker-task-definition.json" \
+                "$validation_dir/plether-basket-worker-tasks.json" \
+                plether-basket-worker \
+                "Standalone basket writer"
+              validate_writer_identity \
+                "$validation_dir/plether-perps-indexer-task-definition.json" \
+                "$validation_dir/plether-perps-indexer-tasks.json" \
+                plether-perps-indexer \
+                "Standalone volume writer"
+              ;;
+            *)
+              echo "::error title=Finalizer topology unavailable::The protected writer check did not resolve one exact topology."
+              exit 1
+              ;;
+          esac
+
+          echo "Matched the exact writer topology to the deployed API configuration and immutable digests."
 
       - name: Resolve deployed indexer replay task and network
         id: replay_target
         if: inputs.action == 'replay'
         env:
           REPLAY_SERVICE: ${{ steps.writers.outputs.replay_service }}
+          REGISTRATION_OWNER: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
@@ -767,6 +1475,8 @@ jobs:
           registration_file="$RUNNER_TEMP/candle-admin-task-definition-registration.json"
           registered_task_definition_file="$RUNNER_TEMP/candle-admin-registered-task-definition.json"
           registered_task_definition_arn_file="$RUNNER_TEMP/candle-admin-registered-task-definition-arn"
+          registered_task_definition_tags_file="$RUNNER_TEMP/candle-admin-registered-task-definition-tags.json"
+          registration_attempt_file="$RUNNER_TEMP/candle-admin-registration-attempted"
           topology_file="$RUNNER_TEMP/candle-admin-replay-topology.json"
           firelens_container="otel-log-router"
 
@@ -1120,9 +1830,14 @@ jobs:
             exit 1
           fi
 
-          aws ecs register-task-definition \
+          printf '%s\n' "$REGISTRATION_OWNER" > "$registration_attempt_file"
+          if ! AWS_MAX_ATTEMPTS=1 aws ecs register-task-definition \
             --cli-input-json "file://$registration_file" \
-            > "$registered_task_definition_file"
+            --tags "key=PletherCandleAdminRun,value=$REGISTRATION_OWNER" \
+            > "$registered_task_definition_file"; then
+            echo "::error title=Ambiguous replay task registration::Cleanup will recover only an exact family revision carrying this workflow's owner tag."
+            exit 1
+          fi
           registered_task_definition_arn=$(jq -r \
             '.taskDefinition.taskDefinitionArn // empty' \
             "$registered_task_definition_file")
@@ -1132,6 +1847,18 @@ jobs:
           fi
           printf '%s\n' "$registered_task_definition_arn" \
             > "$registered_task_definition_arn_file"
+
+          aws ecs list-tags-for-resource \
+            --resource-arn "$registered_task_definition_arn" \
+            > "$registered_task_definition_tags_file"
+          if ! jq --exit-status \
+            --arg owner "$REGISTRATION_OWNER" \
+            '[.tags[]? | select(.key == "PletherCandleAdminRun") | .value]
+             == [$owner]' \
+            "$registered_task_definition_tags_file" >/dev/null; then
+            echo "::error title=Temporary replay ownership unavailable::The registered replay definition is not bound to this workflow run."
+            exit 1
+          fi
 
           if ! jq --exit-status \
             --arg arn "$registered_task_definition_arn" \
@@ -1169,22 +1896,53 @@ jobs:
       - name: Select validated execution target
         id: resolved
         env:
+          ACTION: ${{ inputs.action }}
           CLUSTER: ${{ steps.target.outputs.cluster || steps.replay_target.outputs.cluster }}
           TASK_DEFINITION: ${{ steps.target.outputs.task_definition || steps.replay_target.outputs.task_definition }}
           EXPECTED_IMAGE: ${{ steps.target.outputs.expected_image || steps.replay_target.outputs.expected_image }}
           EXPECTED_IMAGE_DIGEST: ${{ steps.target.outputs.expected_image_digest || steps.replay_target.outputs.expected_image_digest }}
-          EXPECTED_FIRELENS_IMAGE: ${{ steps.replay_target.outputs.expected_firelens_image }}
-          EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.replay_target.outputs.expected_firelens_image_digest }}
+          EXPECTED_FIRELENS_IMAGE: ${{ steps.target.outputs.expected_firelens_image || steps.replay_target.outputs.expected_firelens_image }}
+          EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.target.outputs.expected_firelens_image_digest || steps.replay_target.outputs.expected_firelens_image_digest }}
           REPLAY_SERVICE: ${{ steps.replay_target.outputs.replay_service }}
-          SOURCE_TASK_DEFINITION: ${{ steps.replay_target.outputs.source_task_definition }}
+          SOURCE_TASK_DEFINITION: ${{ steps.target.outputs.source_task_definition || steps.replay_target.outputs.source_task_definition }}
+          FINALIZER_TOPOLOGY: ${{ steps.writers.outputs.finalizer_topology }}
+          EXPECTED_DATABASE_HOST: ${{ steps.target.outputs.expected_database_host }}
+          EXPECTED_DATABASE_ARN: ${{ steps.target.outputs.expected_database_arn }}
+          EXPECTED_DATABASE_RESOURCE_ID: ${{ steps.target.outputs.expected_database_resource_id }}
+          EXPECTED_DATABASE_VPC_ID: ${{ steps.target.outputs.expected_database_vpc_id }}
+          EXPECTED_DATABASE_PARAMETER_ARN: ${{ steps.target.outputs.expected_database_parameter_arn }}
+          EXPECTED_DATABASE_PARAMETER_VERSION: ${{ steps.target.outputs.expected_database_parameter_version }}
+          EXPECTED_DATABASE_PARAMETER_MODIFIED_AT: ${{ steps.target.outputs.expected_database_parameter_modified_at }}
           NETWORK_FILE: ${{ steps.target.outputs.network_file || steps.replay_target.outputs.network_file }}
         run: |
           set -euo pipefail
 
           if [ -z "$CLUSTER" ] || [ -z "$TASK_DEFINITION" ] || \
              [ -z "$EXPECTED_IMAGE" ] || [ -z "$EXPECTED_IMAGE_DIGEST" ] || \
-             [ -z "$NETWORK_FILE" ]; then
+             [ -z "$SOURCE_TASK_DEFINITION" ] || [ -z "$NETWORK_FILE" ]; then
             echo "::error title=Execution target unavailable::The allowlisted operation did not resolve one complete ECS target."
+            exit 1
+          fi
+          if { [ "$ACTION" = "replay" ] || [ "$ACTION" = "finalizer-probe" ]; } && \
+             { [ -z "$EXPECTED_FIRELENS_IMAGE" ] || [ -z "$EXPECTED_FIRELENS_IMAGE_DIGEST" ]; }; then
+            echo "::error title=FireLens execution target unavailable::The protected task did not resolve one exact deployed log-router image."
+            exit 1
+          fi
+          if [ "$ACTION" = "finalizer-probe" ] && \
+             [ "$FINALIZER_TOPOLOGY" != "consolidated" ] && \
+             [ "$FINALIZER_TOPOLOGY" != "standalone" ]; then
+            echo "::error title=Finalizer topology unavailable::The protected task did not retain its exact validated writer topology."
+            exit 1
+          fi
+          if [ "$ACTION" = "finalizer-probe" ] && \
+             { [ -z "$EXPECTED_DATABASE_HOST" ] || \
+               [ -z "$EXPECTED_DATABASE_ARN" ] || \
+               [ -z "$EXPECTED_DATABASE_RESOURCE_ID" ] || \
+               [ -z "$EXPECTED_DATABASE_VPC_ID" ] || \
+               [ -z "$EXPECTED_DATABASE_PARAMETER_ARN" ] || \
+               [ -z "$EXPECTED_DATABASE_PARAMETER_VERSION" ] || \
+               [ -z "$EXPECTED_DATABASE_PARAMETER_MODIFIED_AT" ]; }; then
+            echo "::error title=Finalizer database identity unavailable::The protected task did not retain the validated Sepolia RDS and parameter metadata."
             exit 1
           fi
 
@@ -1196,6 +1954,14 @@ jobs:
           echo "expected_firelens_image_digest=$EXPECTED_FIRELENS_IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
           echo "replay_service=$REPLAY_SERVICE" >> "$GITHUB_OUTPUT"
           echo "source_task_definition=$SOURCE_TASK_DEFINITION" >> "$GITHUB_OUTPUT"
+          echo "finalizer_topology=$FINALIZER_TOPOLOGY" >> "$GITHUB_OUTPUT"
+          echo "expected_database_host=$EXPECTED_DATABASE_HOST" >> "$GITHUB_OUTPUT"
+          echo "expected_database_arn=$EXPECTED_DATABASE_ARN" >> "$GITHUB_OUTPUT"
+          echo "expected_database_resource_id=$EXPECTED_DATABASE_RESOURCE_ID" >> "$GITHUB_OUTPUT"
+          echo "expected_database_vpc_id=$EXPECTED_DATABASE_VPC_ID" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_arn=$EXPECTED_DATABASE_PARAMETER_ARN" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_version=$EXPECTED_DATABASE_PARAMETER_VERSION" >> "$GITHUB_OUTPUT"
+          echo "expected_database_parameter_modified_at=$EXPECTED_DATABASE_PARAMETER_MODIFIED_AT" >> "$GITHUB_OUTPUT"
           echo "network_file=$NETWORK_FILE" >> "$GITHUB_OUTPUT"
 
       - name: Build allowlisted command override
@@ -1205,12 +1971,14 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          BOUNDARY: ${{ inputs.boundary }}
           FROM_BLOCK: ${{ inputs.from_block }}
           TO_BLOCK: ${{ inputs.to_block }}
           CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
           STATEMENT_TIMEOUT_MS: ${{ inputs.statement_timeout_ms }}
           LOCK_TIMEOUT_MS: ${{ inputs.lock_timeout_ms }}
           THROTTLE_MS: ${{ inputs.throttle_ms }}
+          EXPECTED_DATABASE_HOST: ${{ steps.resolved.outputs.expected_database_host }}
         run: |
           set -euo pipefail
           umask 077
@@ -1230,12 +1998,14 @@ jobs:
             --arg scope "$SCOPE" \
             --arg from "$FROM_TIMESTAMP" \
             --arg to "$TO_TIMESTAMP" \
+            --arg boundary "$BOUNDARY" \
             --arg from_block "$FROM_BLOCK" \
             --arg to_block "$TO_BLOCK" \
             --arg chunk "$CHUNK_SECONDS" \
             --arg statement_timeout "$STATEMENT_TIMEOUT_MS" \
             --arg lock_timeout "$effective_lock_timeout" \
             --arg throttle "$THROTTLE_MS" \
+            --arg expected_database_host "$EXPECTED_DATABASE_HOST" \
             '
               def optional($flag; $value):
                 if $value == "" then [] else [$flag, $value] end;
@@ -1258,6 +2028,19 @@ jobs:
                             "--statement-timeout-ms", $statement_timeout,
                             "--lock-timeout-ms", $lock_timeout,
                             "--max-runtime-seconds", "1800"]
+                }]}
+              elif $action == "finalizer-probe" then
+                {containerOverrides: [{
+                  name: $container,
+                  command: ["plether-candle-admin", "finalizer-probe",
+                            "--boundary", $boundary,
+                            "--statement-timeout-ms", "5000",
+                            "--lock-timeout-ms", "5000",
+                            "--max-runtime-seconds", "2100"],
+                  environment: [
+                    {name: "DEPLOYMENT_ENVIRONMENT", value: "sepolia"},
+                    {name: "EXPECTED_DATABASE_HOST", value: $expected_database_host}
+                  ]
                 }]}
               else
                 {containerOverrides: [{
@@ -1285,21 +2068,109 @@ jobs:
           NETWORK_FILE: ${{ steps.resolved.outputs.network_file }}
           OVERRIDES_FILE: ${{ steps.command.outputs.overrides_file }}
           ACTION: ${{ inputs.action }}
+          BOUNDARY: ${{ inputs.boundary }}
           REPLAY_SERVICE: ${{ steps.resolved.outputs.replay_service }}
           SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
+          FINALIZER_TOPOLOGY: ${{ steps.resolved.outputs.finalizer_topology }}
           EXPECTED_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_image_digest }}
           EXPECTED_FIRELENS_IMAGE_DIGEST: ${{ steps.resolved.outputs.expected_firelens_image_digest }}
+          EXPECTED_DATABASE_HOST: ${{ steps.resolved.outputs.expected_database_host }}
+          EXPECTED_DATABASE_ARN: ${{ steps.resolved.outputs.expected_database_arn }}
+          EXPECTED_DATABASE_RESOURCE_ID: ${{ steps.resolved.outputs.expected_database_resource_id }}
+          EXPECTED_DATABASE_VPC_ID: ${{ steps.resolved.outputs.expected_database_vpc_id }}
+          EXPECTED_DATABASE_PARAMETER_ARN: ${{ steps.resolved.outputs.expected_database_parameter_arn }}
+          EXPECTED_DATABASE_PARAMETER_VERSION: ${{ steps.resolved.outputs.expected_database_parameter_version }}
+          EXPECTED_DATABASE_PARAMETER_MODIFIED_AT: ${{ steps.resolved.outputs.expected_database_parameter_modified_at }}
           STARTED_BY: candle-${{ github.run_id }}-${{ github.run_attempt }}
+          CLIENT_TOKEN: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
           umask 077
 
           result_file="$RUNNER_TEMP/candle-admin-run-task.json"
+          ambiguous_start_file="$RUNNER_TEMP/candle-admin-run-task-ambiguous"
+          rejected_start_file="$RUNNER_TEMP/candle-admin-run-task-rejected"
           started_by_file="$RUNNER_TEMP/candle-admin-started-by"
           task_arn_file="$RUNNER_TEMP/candle-admin-task-arn"
+
+          validate_finalizer_maintenance() {
+            local snapshot_file=$1
+            local database_arn=$2
+            local boundary=$3
+            local snapshot_label=$4
+            if [[ ! "$boundary" =~ ^[0-9]+$ ]] || \
+               [ "${#boundary}" -gt 10 ]; then
+              echo "::error title=Invalid maintenance boundary::The finalizer maintenance horizon cannot be established safely."
+              exit 1
+            fi
+            local cutoff=$((10#$boundary + 300))
+            if ! jq --exit-status \
+              --arg database_arn "$database_arn" \
+              '(.PendingMaintenanceActions | type) == "array"
+               and ([.PendingMaintenanceActions[]
+                     | .ResourceIdentifier == $database_arn
+                       and (.PendingMaintenanceActionDetails | type) == "array"
+                       and (.PendingMaintenanceActionDetails | length) > 0
+                       and ([.PendingMaintenanceActionDetails[]
+                             | (.Action | type == "string" and length > 0)
+                               and ([.CurrentApplyDate,
+                                     .AutoAppliedAfterDate,
+                                     .ForcedApplyDate]
+                                    | all(. == null
+                                          or (type == "string"
+                                              and length > 0)))]
+                            | all)]
+                    | all)' \
+              "$snapshot_file" >/dev/null; then
+              echo "::error title=Invalid RDS maintenance snapshot::The protected Sepolia maintenance schedule is malformed or belongs to another database."
+              exit 1
+            fi
+
+            mapfile -t apply_dates < <(
+              jq -r \
+                '.PendingMaintenanceActions[]
+                 .PendingMaintenanceActionDetails[]
+                 | [.CurrentApplyDate,
+                    .AutoAppliedAfterDate,
+                    .ForcedApplyDate][]
+                 | select(. != null)' \
+                "$snapshot_file"
+            )
+            local apply_date
+            local apply_epoch
+            for apply_date in "${apply_dates[@]}"; do
+              if ! apply_epoch=$(date --date="$apply_date" +%s) || \
+                 [[ ! "$apply_epoch" =~ ^[0-9]{10}$ ]]; then
+                echo "::error title=Invalid RDS maintenance date::A pending maintenance application date cannot be compared safely."
+                exit 1
+              fi
+              if (( 10#$apply_epoch <= cutoff )); then
+                echo "::error title=RDS maintenance overlaps finalizer evidence::A pending RDS action may apply before boundary plus 300 seconds."
+                exit 1
+              fi
+            done
+
+            printf 'RDS pending-maintenance snapshot (%s): ' "$snapshot_label"
+            jq --compact-output \
+              '{PendingMaintenanceActions:
+                  [.PendingMaintenanceActions[]
+                   | {ResourceIdentifier,
+                      PendingMaintenanceActionDetails:
+                        [.PendingMaintenanceActionDetails[]
+                         | {Action,
+                            CurrentApplyDate,
+                            AutoAppliedAfterDate,
+                            ForcedApplyDate}]}]}' \
+              "$snapshot_file"
+          }
+
           if [[ ! "$STARTED_BY" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
             echo "::error title=Unsafe ECS started-by value::The workflow task identity is invalid."
+            exit 1
+          fi
+          if [[ ! "$CLIENT_TOKEN" =~ ^[A-Za-z0-9_-]{1,64}$ ]]; then
+            echo "::error title=Unsafe ECS client token::The idempotent workflow task token is invalid."
             exit 1
           fi
           printf '%s\n' "$STARTED_BY" > "$started_by_file"
@@ -1386,20 +2257,348 @@ jobs:
             fi
           fi
 
-          aws ecs run-task \
-            --cluster "$CLUSTER" \
-            --launch-type FARGATE \
-            --task-definition "$TASK_DEFINITION" \
-            --network-configuration "file://$NETWORK_FILE" \
-            --overrides "file://$OVERRIDES_FILE" \
-            --started-by "$STARTED_BY" \
-            > "$result_file"
+          if [ "$ACTION" = "finalizer-probe" ]; then
+            validation_dir="$RUNNER_TEMP/candle-admin-dual-writers"
+            finalizer_services_file="$RUNNER_TEMP/candle-admin-finalizer-topology-before-run.json"
+            finalizer_tasks_file="$RUNNER_TEMP/candle-admin-finalizer-tasks-before-run.json"
+            finalizer_database_file="$RUNNER_TEMP/candle-admin-finalizer-database-before-run.json"
+            finalizer_database_maintenance_file="$RUNNER_TEMP/candle-admin-finalizer-database-maintenance-before-run.json"
+            finalizer_database_parameter_file="$RUNNER_TEMP/candle-admin-finalizer-database-parameter-before-run.json"
+            finalizer_network_file="$RUNNER_TEMP/candle-admin-finalizer-network-before-run.json"
+            finalizer_network_subnets_file="$RUNNER_TEMP/candle-admin-finalizer-network-subnets-before-run.json"
+            finalizer_network_security_groups_file="$RUNNER_TEMP/candle-admin-finalizer-network-security-groups-before-run.json"
+            finalizer_database_security_groups_file="$RUNNER_TEMP/candle-admin-finalizer-database-security-groups-before-run.json"
+            if [[ ! "$EXPECTED_DATABASE_PARAMETER_VERSION" =~ ^[1-9][0-9]*$ ]]; then
+              echo "::error title=Invalid database parameter version::The protected Sepolia parameter version is not a positive integer."
+              exit 1
+            fi
+            if ! parameter_modified_ns=$(date \
+              --date="$EXPECTED_DATABASE_PARAMETER_MODIFIED_AT" +%s%N) || \
+               [[ ! "$parameter_modified_ns" =~ ^[0-9]{19}$ ]]; then
+              echo "::error title=Invalid database parameter timestamp::The protected Sepolia parameter modification time cannot be compared safely."
+              exit 1
+            fi
+            aws rds describe-db-instances \
+              --db-instance-identifier plether-sepolia \
+              > "$finalizer_database_file"
+            if ! jq --exit-status \
+              --arg expected_host "$EXPECTED_DATABASE_HOST" \
+              --arg expected_arn "$EXPECTED_DATABASE_ARN" \
+              --arg expected_resource_id "$EXPECTED_DATABASE_RESOURCE_ID" \
+              --arg expected_vpc_id "$EXPECTED_DATABASE_VPC_ID" \
+              '(.DBInstances | length) == 1
+               and .DBInstances[0].DBInstanceIdentifier == "plether-sepolia"
+               and .DBInstances[0].DBInstanceStatus == "available"
+               and .DBInstances[0].Engine == "postgres"
+               and .DBInstances[0].DBName == "plether"
+               and .DBInstances[0].PubliclyAccessible == false
+               and .DBInstances[0].DeletionProtection == true
+               and .DBInstances[0].DBInstanceArn == $expected_arn
+               and .DBInstances[0].DbiResourceId == $expected_resource_id
+               and .DBInstances[0].DBSubnetGroup.VpcId == $expected_vpc_id
+               and .DBInstances[0].Endpoint.Address == $expected_host
+               and .DBInstances[0].Endpoint.Port == 5432
+               and ([.DBInstances[0].VpcSecurityGroups[]
+                     | .Status == "active"] | all)
+               and .DBInstances[0].PendingModifiedValues == {}' \
+              "$finalizer_database_file" >/dev/null; then
+              echo "::error title=Finalizer database changed::The exact available Sepolia RDS endpoint changed after protected validation."
+              exit 1
+            fi
+            aws rds describe-pending-maintenance-actions \
+              --resource-identifier "$EXPECTED_DATABASE_ARN" \
+              > "$finalizer_database_maintenance_file"
+            validate_finalizer_maintenance \
+              "$finalizer_database_maintenance_file" \
+              "$EXPECTED_DATABASE_ARN" \
+              "$BOUNDARY" \
+              "immediately before RunTask"
+            printf 'RDS preferred windows (immediately before RunTask): maintenance=%s backup=%s\n' \
+              "$(jq -r '.DBInstances[0].PreferredMaintenanceWindow' "$finalizer_database_file")" \
+              "$(jq -r '.DBInstances[0].PreferredBackupWindow' "$finalizer_database_file")"
+            aws ssm get-parameter \
+              --name /plether/sepolia/database-url \
+              --query 'Parameter.{ARN:ARN,Name:Name,Type:Type,Version:Version,LastModifiedDate:LastModifiedDate}' \
+              > "$finalizer_database_parameter_file"
+            if ! jq --exit-status \
+              --arg expected_arn "$EXPECTED_DATABASE_PARAMETER_ARN" \
+              --argjson expected_version "$EXPECTED_DATABASE_PARAMETER_VERSION" \
+              --arg expected_modified_at "$EXPECTED_DATABASE_PARAMETER_MODIFIED_AT" \
+              '.Name == "/plether/sepolia/database-url"
+               and .Type == "SecureString"
+               and .ARN == $expected_arn
+               and .Version == $expected_version
+               and .LastModifiedDate == $expected_modified_at' \
+              "$finalizer_database_parameter_file" >/dev/null; then
+              echo "::error title=Finalizer database parameter changed::The Sepolia DATABASE_URL parameter rotated after protected validation."
+              exit 1
+            fi
+            consolidated_definition=$(jq -r \
+              '.taskDefinitionArn // empty' \
+              "$validation_dir/plether-workers-task-definition.json" 2>/dev/null || true)
+            basket_definition=$(jq -r \
+              '.taskDefinitionArn // empty' \
+              "$validation_dir/plether-basket-worker-task-definition.json" 2>/dev/null || true)
+            indexer_definition=$(jq -r \
+              '.taskDefinitionArn // empty' \
+              "$validation_dir/plether-perps-indexer-task-definition.json" 2>/dev/null || true)
+
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services plether-api plether-workers plether-basket-worker plether-perps-indexer \
+              > "$finalizer_services_file"
+            if ! jq --exit-status \
+              --arg topology "$FINALIZER_TOPOLOGY" \
+              --arg api_definition "$SOURCE_TASK_DEFINITION" \
+              --arg consolidated_definition "$consolidated_definition" \
+              --arg basket_definition "$basket_definition" \
+              --arg indexer_definition "$indexer_definition" \
+              '
+                def stable($name; $definition):
+                  [.services[] | select(.serviceName == $name)]
+                  | length == 1
+                    and .[0].status == "ACTIVE"
+                    and .[0].desiredCount > 0
+                    and .[0].runningCount == .[0].desiredCount
+                    and .[0].pendingCount == 0
+                    and .[0].taskDefinition == $definition
+                    and (.[0].deployments | length) == 1
+                    and .[0].deployments[0].status == "PRIMARY"
+                    and (.[0].deployments[0].rolloutState // "COMPLETED") == "COMPLETED";
+                def drained($name):
+                  [.services[] | select(.serviceName == $name)]
+                  | length == 1
+                    and .[0].desiredCount == 0
+                    and .[0].runningCount == 0
+                    and .[0].pendingCount == 0;
+                (.failures | length) == 0
+                and ([.services[].serviceName] | sort)
+                  == (["plether-api", "plether-basket-worker",
+                       "plether-perps-indexer", "plether-workers"] | sort)
+                and stable("plether-api"; $api_definition)
+                and (($topology == "consolidated"
+                      and ($consolidated_definition | length) > 0
+                      and stable("plether-workers"; $consolidated_definition)
+                      and drained("plether-basket-worker")
+                      and drained("plether-perps-indexer"))
+                     or ($topology == "standalone"
+                         and ($basket_definition | length) > 0
+                         and ($indexer_definition | length) > 0
+                         and drained("plether-workers")
+                         and stable("plether-basket-worker"; $basket_definition)
+                         and stable("plether-perps-indexer"; $indexer_definition)))
+              ' \
+              "$finalizer_services_file" >/dev/null; then
+              echo "::error title=Finalizer topology changed::The exact API or writer topology changed after protected validation."
+              exit 1
+            fi
+
+            jq --exit-status \
+              '[.services[] | select(.serviceName == "plether-api")][0]
+               | .networkConfiguration.awsvpcConfiguration
+               | {awsvpcConfiguration: {
+                   subnets: .subnets,
+                   securityGroups: .securityGroups,
+                   assignPublicIp: (.assignPublicIp // "DISABLED")
+                 }}' \
+              "$finalizer_services_file" > "$finalizer_network_file"
+            if ! jq --exit-status \
+              --slurpfile expected "$NETWORK_FILE" \
+              '($expected | length) == 1 and . == $expected[0]' \
+              "$finalizer_network_file" >/dev/null; then
+              echo "::error title=Finalizer network changed::The API service network no longer matches the exact network selected for RunTask."
+              exit 1
+            fi
+
+            mapfile -t finalizer_subnet_ids < <(
+              jq -r '.awsvpcConfiguration.subnets[]' "$finalizer_network_file"
+            )
+            mapfile -t finalizer_security_group_ids < <(
+              jq -r '.awsvpcConfiguration.securityGroups[]' "$finalizer_network_file"
+            )
+            mapfile -t finalizer_database_security_group_ids < <(
+              jq -r '.DBInstances[0].VpcSecurityGroups[].VpcSecurityGroupId' \
+                "$finalizer_database_file"
+            )
+            if [ "${#finalizer_subnet_ids[@]}" -eq 0 ] || \
+               [ "${#finalizer_security_group_ids[@]}" -eq 0 ] || \
+               [ "${#finalizer_database_security_group_ids[@]}" -eq 0 ]; then
+              echo "::error title=Finalizer network identity incomplete::The protected task and RDS security-group identities must be nonempty."
+              exit 1
+            fi
+            aws ec2 describe-subnets \
+              --subnet-ids "${finalizer_subnet_ids[@]}" \
+              > "$finalizer_network_subnets_file"
+            aws ec2 describe-security-groups \
+              --group-ids "${finalizer_security_group_ids[@]}" \
+              > "$finalizer_network_security_groups_file"
+            aws ec2 describe-security-groups \
+              --group-ids "${finalizer_database_security_group_ids[@]}" \
+              > "$finalizer_database_security_groups_file"
+            if ! jq --exit-status \
+              --arg vpc_id "$EXPECTED_DATABASE_VPC_ID" \
+              --argjson expected_count "${#finalizer_subnet_ids[@]}" \
+              '(.Subnets | length) == $expected_count
+               and ([.Subnets[].SubnetId] | unique | length) == $expected_count
+               and ([.Subnets[]
+                     | .VpcId == $vpc_id and .State == "available"]
+                    | all)' \
+              "$finalizer_network_subnets_file" >/dev/null || \
+               ! jq --exit-status \
+              --arg vpc_id "$EXPECTED_DATABASE_VPC_ID" \
+              --argjson expected_count "${#finalizer_security_group_ids[@]}" \
+              '(.SecurityGroups | length) == $expected_count
+               and ([.SecurityGroups[].GroupId] | unique | length) == $expected_count
+               and ([.SecurityGroups[] | .VpcId == $vpc_id] | all)' \
+              "$finalizer_network_security_groups_file" >/dev/null || \
+               ! jq --exit-status \
+              --arg vpc_id "$EXPECTED_DATABASE_VPC_ID" \
+              --argjson expected_count "${#finalizer_database_security_group_ids[@]}" \
+              --argjson task_security_groups "$(jq -c '.awsvpcConfiguration.securityGroups' "$finalizer_network_file")" \
+              '(.SecurityGroups | length) == $expected_count
+               and ([.SecurityGroups[].GroupId] | unique | length) == $expected_count
+               and ([.SecurityGroups[] | .VpcId == $vpc_id] | all)
+               and ([.SecurityGroups[].IpPermissions[]?] as $permissions
+                    | ($permissions | length) > 0
+                      and ([$permissions[]
+                            | .IpProtocol == "tcp"
+                              and .FromPort == 5432
+                              and .ToPort == 5432
+                              and (.IpRanges | length) == 0
+                              and (.Ipv6Ranges | length) == 0
+                              and (.PrefixListIds | length) == 0
+                              and (.UserIdGroupPairs | length) > 0]
+                           | all)
+                      and ([ $permissions[].UserIdGroupPairs[].GroupId ] as $sources
+                           | ($sources | length) > 0
+                             and all($sources[];
+                                     . as $source
+                                     | ($task_security_groups
+                                        | index($source)) != null)))' \
+              "$finalizer_database_security_groups_file" >/dev/null; then
+              echo "::error title=Finalizer database path changed::The exact task-to-RDS VPC and security-group path changed immediately before RunTask."
+              exit 1
+            fi
+
+            validate_finalizer_running_identity() {
+              local service=$1
+              local task_definition=$2
+              local container=$3
+              local label=$4
+              mapfile -t running_arns < <(aws ecs list-tasks \
+                --cluster "$CLUSTER" \
+                --service-name "$service" \
+                --desired-status RUNNING \
+                --query taskArns \
+                --output text | tr '\t' '\n' | sed '/^$/d')
+              if [ "${#running_arns[@]}" -eq 0 ]; then
+                echo "::error title=Finalizer task identity unavailable::$label has no running task."
+                exit 1
+              fi
+              aws ecs describe-tasks \
+                --cluster "$CLUSTER" \
+                --tasks "${running_arns[@]}" \
+                > "$finalizer_tasks_file"
+              if ! jq --exit-status \
+                --arg task_definition "$task_definition" \
+                --arg container "$container" \
+                --arg app_digest "$EXPECTED_IMAGE_DIGEST" \
+                --arg firelens_digest "$EXPECTED_FIRELENS_IMAGE_DIGEST" \
+                '(.failures | length) == 0
+                 and (.tasks | length) > 0
+                 and ([.tasks[]
+                       | .lastStatus == "RUNNING"
+                         and .taskDefinitionArn == $task_definition
+                         and ([.containers[]
+                               | select(.name == $container)
+                               | .imageDigest] == [$app_digest])
+                         and ([.containers[]
+                               | select(.name == "otel-log-router")
+                               | .imageDigest] == [$firelens_digest])]
+                      | all)' \
+                "$finalizer_tasks_file" >/dev/null; then
+                echo "::error title=Finalizer runtime identity changed::$label no longer runs the validated application and FireLens digests."
+                exit 1
+              fi
+              mapfile -t running_created_at < <(
+                jq -r '.tasks[].createdAt // empty' "$finalizer_tasks_file"
+              )
+              described_task_count=$(jq -r '.tasks | length' "$finalizer_tasks_file")
+              if [[ ! "$described_task_count" =~ ^[1-9][0-9]*$ ]] || \
+                 [ "${#running_created_at[@]}" -ne "$described_task_count" ]; then
+                echo "::error title=Finalizer task launch identity unavailable::$label does not have one authoritative creation time per running task."
+                exit 1
+              fi
+              for created_at in "${running_created_at[@]}"; do
+                if ! created_ns=$(date --date="$created_at" +%s%N) || \
+                   [[ ! "$created_ns" =~ ^[0-9]{19}$ ]] || \
+                   (( created_ns < parameter_modified_ns )); then
+                  echo "::error title=Stale database secret injection::$label provisioning began before the current Sepolia DATABASE_URL parameter version."
+                  exit 1
+                fi
+              done
+            }
+
+            validate_finalizer_running_identity \
+              plether-api "$SOURCE_TASK_DEFINITION" plether-api "Stable API"
+            if [ "$FINALIZER_TOPOLOGY" = "consolidated" ]; then
+              validate_finalizer_running_identity \
+                plether-workers "$consolidated_definition" plether-basket-worker \
+                "Consolidated basket writer"
+              validate_finalizer_running_identity \
+                plether-workers "$consolidated_definition" plether-perps-indexer \
+                "Consolidated volume writer"
+            else
+              validate_finalizer_running_identity \
+                plether-basket-worker "$basket_definition" plether-basket-worker \
+                "Standalone basket writer"
+              validate_finalizer_running_identity \
+                plether-perps-indexer "$indexer_definition" plether-perps-indexer \
+                "Standalone volume writer"
+            fi
+            echo "Revalidated the exact finalizer API, topology, and immutable digests immediately before RunTask."
+          fi
+
+          run_task_request() {
+            aws ecs run-task \
+              --cluster "$CLUSTER" \
+              --launch-type FARGATE \
+              --count 1 \
+              --client-token "$CLIENT_TOKEN" \
+              --task-definition "$TASK_DEFINITION" \
+              --network-configuration "file://$NETWORK_FILE" \
+              --overrides "file://$OVERRIDES_FILE" \
+              --started-by "$STARTED_BY"
+          }
+
+          # From this point until an exact response is validated and persisted,
+          # RunTask may have been accepted even if the runner loses its response.
+          printf '%s\n' "$STARTED_BY" > "$ambiguous_start_file"
+          if ! run_task_request > "$result_file"; then
+            echo "::warning title=Ambiguous ECS task start::Retrying the exact request once with the same idempotency token."
+            : > "$result_file"
+            if ! run_task_request > "$result_file"; then
+              echo "::error title=ECS task start unavailable::Both identical idempotent RunTask attempts failed; cleanup will recover by the immutable started-by identity."
+              exit 1
+            fi
+          fi
 
           failure_count=$(jq -r '.failures | length' "$result_file")
           task_arn=$(jq -r '.tasks[0].taskArn // empty' "$result_file")
           started_task_definition=$(jq -r \
             '.tasks[0].taskDefinitionArn // empty' \
             "$result_file")
+          if jq --exit-status \
+            '(.failures | type) == "array"
+             and (.failures | length) > 0
+             and (.tasks | type) == "array"
+             and (.tasks | length) == 0' \
+            "$result_file" >/dev/null; then
+            printf '%s\n' "$STARTED_BY" > "$rejected_start_file"
+            rm -f "$ambiguous_start_file"
+            echo "::error title=ECS rejected candle admin task::ECS authoritatively returned failures and no task for the count-one request."
+            exit 1
+          fi
           task_arn_pattern='^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task/.+$'
           if [ -n "$task_arn" ] && [[ "$task_arn" =~ $task_arn_pattern ]]; then
             # Persist the recovery handle before validation or step outputs so
@@ -1412,6 +2611,8 @@ jobs:
             echo "::error title=ECS rejected candle admin task::Inspect the ECS service privately for the failure reason."
             exit 1
           fi
+
+          rm -f "$ambiguous_start_file"
 
           echo "task_arn=$task_arn" >> "$GITHUB_OUTPUT"
           echo "task_started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
@@ -1442,6 +2643,14 @@ jobs:
               --tasks "$TASK_ARN" \
               > "$task_file"
 
+            if jq --exit-status \
+              '(.tasks | length) == 0
+               and ([.failures[]? | .reason == "MISSING"] | all)' \
+              "$task_file" >/dev/null; then
+              sleep 5
+              continue
+            fi
+
             if ! jq --exit-status \
               --arg task_definition "$TASK_DEFINITION" \
               --arg container "$ECS_CONTAINER" \
@@ -1451,7 +2660,7 @@ jobs:
                and .tasks[0].taskDefinitionArn == $task_definition
                and ([.tasks[0].containers[] | select(.name == $container)]
                     | length == 1)
-               and ($action != "replay"
+               and (($action != "replay" and $action != "finalizer-probe")
                     or ([.tasks[0].containers[]
                          | select(.name == "otel-log-router")]
                         | length == 1))' \
@@ -1472,7 +2681,7 @@ jobs:
 
             actual_firelens_image=""
             actual_firelens_digest=""
-            if [ "$ACTION" = "replay" ]; then
+            if [ "$ACTION" = "replay" ] || [ "$ACTION" = "finalizer-probe" ]; then
               actual_firelens_image=$(jq -r \
                 '[.tasks[0].containers[]
                   | select(.name == "otel-log-router")
@@ -1486,16 +2695,17 @@ jobs:
             fi
 
             if [ -n "$actual_digest" ] && \
-               { [ "$ACTION" != "replay" ] || [ -n "$actual_firelens_digest" ]; }; then
+               { { [ "$ACTION" != "replay" ] && [ "$ACTION" != "finalizer-probe" ]; } || \
+                 [ -n "$actual_firelens_digest" ]; }; then
               if [ "$actual_image" != "$EXPECTED_IMAGE" ] || \
                  [ "$actual_digest" != "$EXPECTED_IMAGE_DIGEST" ]; then
                 echo "::error title=Started task image mismatch::The one-off task did not start with the selected service's deployed image digest."
                 exit 1
               fi
-              if [ "$ACTION" = "replay" ]; then
+              if [ "$ACTION" = "replay" ] || [ "$ACTION" = "finalizer-probe" ]; then
                 if [ "$actual_firelens_image" != "$EXPECTED_FIRELENS_IMAGE" ] || \
                    [ "$actual_firelens_digest" != "$EXPECTED_FIRELENS_IMAGE_DIGEST" ]; then
-                  echo "::error title=Started FireLens image mismatch::The replay task did not start with the stable writer's exact deployed FireLens image digest."
+                  echo "::error title=Started FireLens image mismatch::The protected task did not start with the stable service's exact deployed FireLens image digest."
                   exit 1
                 fi
               fi
@@ -1516,6 +2726,59 @@ jobs:
           fi
 
           echo "Verified that the one-off task is running the exact deployed target image digest."
+
+      - name: Record immutable execution evidence
+        env:
+          ACTION: ${{ inputs.action }}
+          BOUNDARY: ${{ inputs.boundary }}
+          SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
+          TEMPORARY_TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
+          TASK_ARN: ${{ steps.task.outputs.task_arn }}
+          APP_DIGEST: ${{ steps.resolved.outputs.expected_image_digest }}
+          FIRELENS_DIGEST: ${{ steps.resolved.outputs.expected_firelens_image_digest }}
+          FINALIZER_TOPOLOGY: ${{ steps.resolved.outputs.finalizer_topology }}
+          EXPECTED_DATABASE_HOST: ${{ steps.resolved.outputs.expected_database_host }}
+          EXPECTED_DATABASE_ARN: ${{ steps.resolved.outputs.expected_database_arn }}
+          EXPECTED_DATABASE_RESOURCE_ID: ${{ steps.resolved.outputs.expected_database_resource_id }}
+          EXPECTED_DATABASE_VPC_ID: ${{ steps.resolved.outputs.expected_database_vpc_id }}
+          EXPECTED_DATABASE_PARAMETER_ARN: ${{ steps.resolved.outputs.expected_database_parameter_arn }}
+          EXPECTED_DATABASE_PARAMETER_VERSION: ${{ steps.resolved.outputs.expected_database_parameter_version }}
+          EXPECTED_DATABASE_PARAMETER_MODIFIED_AT: ${{ steps.resolved.outputs.expected_database_parameter_modified_at }}
+        run: |
+          set -euo pipefail
+
+          {
+            printf '## Perps candle admin execution\n\n'
+            printf -- '- Action: `%s`\n' "$ACTION"
+            printf -- '- Environment: `%s`\n' "$TARGET_ENV"
+            printf -- '- Workflow SHA: `%s`\n' "$GITHUB_SHA"
+            printf -- '- Workflow run: `%s/actions/runs/%s`\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            printf -- '- Boundary: `%s`\n' "${BOUNDARY:-not-applicable}"
+            printf -- '- Finalizer topology: `%s`\n' "${FINALIZER_TOPOLOGY:-not-applicable}"
+            printf -- '- Source task definition: `%s`\n' "$SOURCE_TASK_DEFINITION"
+            printf -- '- Temporary task definition: `%s`\n' "$TEMPORARY_TASK_DEFINITION"
+            printf -- '- Task ARN: `%s`\n' "$TASK_ARN"
+            printf -- '- Application digest: `%s`\n' "$APP_DIGEST"
+            printf -- '- FireLens digest: `%s`\n' "${FIRELENS_DIGEST:-not-applicable}"
+            printf -- '- Expected database host: `%s`\n' "${EXPECTED_DATABASE_HOST:-not-applicable}"
+            printf -- '- Database ARN: `%s`\n' "${EXPECTED_DATABASE_ARN:-not-applicable}"
+            printf -- '- Database resource ID: `%s`\n' "${EXPECTED_DATABASE_RESOURCE_ID:-not-applicable}"
+            printf -- '- Database VPC: `%s`\n' "${EXPECTED_DATABASE_VPC_ID:-not-applicable}"
+            printf -- '- Database parameter ARN: `%s`\n' "${EXPECTED_DATABASE_PARAMETER_ARN:-not-applicable}"
+            printf -- '- Database parameter version: `%s`\n' "${EXPECTED_DATABASE_PARAMETER_VERSION:-not-applicable}"
+            printf -- '- Database parameter modified at: `%s`\n' "${EXPECTED_DATABASE_PARAMETER_MODIFIED_AT:-not-applicable}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          printf 'Execution evidence: source=%s temporary=%s task=%s app=%s firelens=%s database_host=%s database_arn=%s database_resource=%s database_vpc=%s parameter_arn=%s parameter_version=%s parameter_modified=%s\n' \
+            "$SOURCE_TASK_DEFINITION" "$TEMPORARY_TASK_DEFINITION" "$TASK_ARN" \
+            "$APP_DIGEST" "${FIRELENS_DIGEST:-not-applicable}" \
+            "${EXPECTED_DATABASE_HOST:-not-applicable}" \
+            "${EXPECTED_DATABASE_ARN:-not-applicable}" \
+            "${EXPECTED_DATABASE_RESOURCE_ID:-not-applicable}" \
+            "${EXPECTED_DATABASE_VPC_ID:-not-applicable}" \
+            "${EXPECTED_DATABASE_PARAMETER_ARN:-not-applicable}" \
+            "${EXPECTED_DATABASE_PARAMETER_VERSION:-not-applicable}" \
+            "${EXPECTED_DATABASE_PARAMETER_MODIFIED_AT:-not-applicable}"
 
       - name: Wait for terminal status
         id: wait
@@ -1545,11 +2808,12 @@ jobs:
           }
           trap stop_unfinished_task EXIT INT TERM
 
-          # Replay has a 30-minute application deadline and a 45-minute
-          # workflow deadline. Other admin operations retain their existing
-          # five-and-a-half-hour application/workflow deadline.
+          # Replay and the finalizer probe have short application deadlines;
+          # other admin operations retain their five-and-a-half-hour deadline.
           if [ "$ACTION" = "replay" ]; then
             deadline=$((10#$TASK_STARTED_AT + 2700))
+          elif [ "$ACTION" = "finalizer-probe" ]; then
+            deadline=$((10#$TASK_STARTED_AT + 2400))
           else
             deadline=$((10#$TASK_STARTED_AT + 19800))
           fi
@@ -1580,7 +2844,7 @@ jobs:
             --query "tasks[0].containers[?name=='$ECS_CONTAINER'].exitCode | [0]" \
             --output text)
           firelens_exit_code=0
-          if [ "$ACTION" = "replay" ]; then
+          if [ "$ACTION" = "replay" ] || [ "$ACTION" = "finalizer-probe" ]; then
             firelens_exit_code=$(aws ecs describe-tasks \
               --cluster "$CLUSTER" \
               --tasks "$TASK_ARN" \
@@ -1603,6 +2867,7 @@ jobs:
           echo "The ${{ inputs.action }} operation completed successfully on $TARGET_ENV."
 
       - name: Stop unfinished task after workflow failure or cancellation
+        id: cleanup_task
         if: always() && steps.resolved.outputs.cluster != '' && steps.wait.outcome != 'success'
         env:
           CLUSTER: ${{ steps.resolved.outputs.cluster }}
@@ -1616,25 +2881,54 @@ jobs:
           result_file="$RUNNER_TEMP/candle-admin-run-task.json"
           task_arn_file="$RUNNER_TEMP/candle-admin-task-arn"
           started_by_file="$RUNNER_TEMP/candle-admin-started-by"
+          ambiguous_start_file="$RUNNER_TEMP/candle-admin-run-task-ambiguous"
+          rejected_start_file="$RUNNER_TEMP/candle-admin-run-task-rejected"
           task_arn_pattern='^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task/.+$'
           candidates_file="$RUNNER_TEMP/candle-admin-cleanup-candidates.txt"
+          family="plether-$TARGET_ENV-candle-admin"
           : > "$candidates_file"
 
           if [ -s "$started_by_file" ] && [ "$(<"$started_by_file")" != "$STARTED_BY" ]; then
             echo "::error title=Unsafe ECS cleanup identity::The persisted started-by value changed."
             exit 1
           fi
+          if [ -s "$ambiguous_start_file" ] && \
+             [ "$(<"$ambiguous_start_file")" != "$STARTED_BY" ]; then
+            echo "::error title=Unsafe ambiguous-start identity::The persisted RunTask recovery identity changed."
+            exit 1
+          fi
+          if [ -s "$rejected_start_file" ] && \
+             [ "$(<"$rejected_start_file")" != "$STARTED_BY" ]; then
+            echo "::error title=Unsafe rejected-start identity::The persisted RunTask rejection identity changed."
+            exit 1
+          fi
           if [ -s "$task_arn_file" ]; then
-            printf '%s\n' "$(<"$task_arn_file")" >> "$candidates_file"
+            persisted_task_arn=$(<"$task_arn_file")
+            if [[ "$persisted_task_arn" =~ $task_arn_pattern ]]; then
+              printf '%s\n' "$persisted_task_arn" >> "$candidates_file"
+            else
+              echo "::warning title=Malformed persisted task ARN::Recovering the task by its immutable started-by identity."
+            fi
           elif [ -s "$result_file" ]; then
-            jq -r '.tasks[0].taskArn // empty' "$result_file" >> "$candidates_file"
+            response_task_arn=$(jq -r \
+              '.tasks[0].taskArn // empty' \
+              "$result_file" 2>/dev/null || true)
+            if [[ "$response_task_arn" =~ $task_arn_pattern ]]; then
+              printf '%s\n' "$response_task_arn" >> "$candidates_file"
+            elif [ -n "$response_task_arn" ]; then
+              echo "::warning title=Malformed RunTask response::Recovering the task by its immutable started-by identity."
+            fi
           fi
 
           # Covers cancellation or response loss after ECS accepted run-task
           # but before the ARN was persisted or exposed as a step output.
           list_file="$RUNNER_TEMP/candle-admin-cleanup-list.json"
-          if [ ! -s "$candidates_file" ]; then
-            for attempt in $(seq 1 12); do
+          stopped_list_file="$RUNNER_TEMP/candle-admin-cleanup-stopped-list.json"
+          stopped_describe_file="$RUNNER_TEMP/candle-admin-cleanup-stopped-describe.json"
+          if [ ! -s "$candidates_file" ] && [ ! -s "$rejected_start_file" ]; then
+            for attempt in $(seq 1 24); do
+              # ECS requires startedBy to be the only ListTasks filter. Its
+              # default RUNNING view covers live tasks for this workflow.
               aws ecs list-tasks \
                 --cluster "$CLUSTER" \
                 --started-by "$STARTED_BY" \
@@ -1643,13 +2937,53 @@ jobs:
               if [ -s "$candidates_file" ]; then
                 break
               fi
+
+              # Find already-terminal response-loss tasks from the exact
+              # temporary family, then filter immutable ownership locally.
+              aws ecs list-tasks \
+                --cluster "$CLUSTER" \
+                --family "$family" \
+                --desired-status STOPPED \
+                > "$stopped_list_file"
+              mapfile -t stopped_task_arns < <(
+                jq -r '.taskArns[]?' "$stopped_list_file"
+              )
+              for ((offset = 0; offset < ${#stopped_task_arns[@]}; offset += 100)); do
+                batch=("${stopped_task_arns[@]:offset:100}")
+                aws ecs describe-tasks \
+                  --cluster "$CLUSTER" \
+                  --tasks "${batch[@]}" \
+                  > "$stopped_describe_file"
+                if ! jq --exit-status \
+                  '(.failures | length) == 0' \
+                  "$stopped_describe_file" >/dev/null; then
+                  echo "::error title=Terminal task discovery failed::ECS could not authoritatively describe the temporary family."
+                  exit 1
+                fi
+                jq -r \
+                  --arg started_by "$STARTED_BY" \
+                  --arg task_definition "$TASK_DEFINITION" \
+                  '.tasks[]
+                   | select(.startedBy == $started_by
+                            and .taskDefinitionArn == $task_definition)
+                   | .taskArn' \
+                  "$stopped_describe_file" >> "$candidates_file"
+              done
+              if [ -s "$candidates_file" ]; then
+                break
+              fi
               # ECS task-list visibility is eventually consistent immediately
               # after run-task. Retry only the response-loss path; a persisted
               # ARN above already gives cleanup an authoritative handle.
-              if [ "$attempt" -lt 12 ]; then
+              if [ "$attempt" -lt 24 ]; then
                 sleep 5
               fi
             done
+          fi
+
+          if [ ! -s "$candidates_file" ] && [ -s "$ambiguous_start_file" ]; then
+            echo "::error title=Ambiguous task requires reconciliation::ECS did not expose a task ARN after both idempotent start attempts; retaining the temporary revision until an operator proves no task can surface."
+            exit 1
           fi
 
           sort -u "$candidates_file" | sed '/^$/d' > "${candidates_file}.unique"
@@ -1659,6 +2993,56 @@ jobs:
               exit 1
             fi
             task_file="$RUNNER_TEMP/candle-admin-cleanup-task.json"
+            candidate_visible=false
+            for attempt in $(seq 1 24); do
+              aws ecs describe-tasks \
+                --cluster "$CLUSTER" \
+                --tasks "$candidate" \
+                > "$task_file"
+              if jq --exit-status \
+                --arg arn "$candidate" \
+                --arg task_definition "$TASK_DEFINITION" \
+                --arg started_by "$STARTED_BY" \
+                '(.failures | length) == 0
+                 and (.tasks | length) == 1
+                 and .tasks[0].taskArn == $arn
+                 and .tasks[0].taskDefinitionArn == $task_definition
+                 and .tasks[0].startedBy == $started_by' \
+                "$task_file" >/dev/null; then
+                candidate_visible=true
+                break
+              fi
+              if ! jq --exit-status \
+                '(.tasks | length) == 0
+                 and ([.failures[]? | .reason == "MISSING"] | all)' \
+                "$task_file" >/dev/null; then
+                echo "::error title=Unsafe ECS cleanup target::Refusing to stop a task whose nonempty immutable identity does not match this workflow run."
+                exit 1
+              fi
+              if [ "$attempt" -lt 24 ]; then
+                sleep 5
+              fi
+            done
+            if [ "$candidate_visible" != "true" ]; then
+              echo "::error title=Temporary task visibility timed out::Retaining the task definition until the exact workflow-owned task can be reconciled."
+              exit 1
+            fi
+            last_status=$(jq -r '.tasks[0].lastStatus // empty' "$task_file")
+            if [ "$last_status" != "STOPPED" ]; then
+              if ! aws ecs stop-task \
+                --cluster "$CLUSTER" \
+                --task "$candidate" \
+                --reason "GitHub candle admin workflow failed or was cancelled" \
+                >/dev/null; then
+                echo "::warning title=Ambiguous temporary task stop::Confirming the authoritative task state after a nonzero StopTask response."
+              fi
+            fi
+            if ! aws ecs wait tasks-stopped \
+              --cluster "$CLUSTER" \
+              --tasks "$candidate"; then
+              echo "::error title=Temporary task did not stop::The candle-admin task still requires operator reconciliation."
+              exit 1
+            fi
             aws ecs describe-tasks \
               --cluster "$CLUSTER" \
               --tasks "$candidate" \
@@ -1671,54 +3055,204 @@ jobs:
                and (.tasks | length) == 1
                and .tasks[0].taskArn == $arn
                and .tasks[0].taskDefinitionArn == $task_definition
-               and .tasks[0].startedBy == $started_by' \
+               and .tasks[0].startedBy == $started_by
+               and .tasks[0].lastStatus == "STOPPED"' \
               "$task_file" >/dev/null; then
-              echo "::error title=Unsafe ECS cleanup target::Refusing to stop a task whose immutable identity does not match this workflow run."
+              echo "::error title=Temporary task stop unconfirmed::ECS did not confirm the exact workflow-owned task as STOPPED."
               exit 1
-            fi
-            last_status=$(jq -r '.tasks[0].lastStatus // empty' "$task_file")
-            if [ "$last_status" != "STOPPED" ]; then
-              aws ecs stop-task \
-                --cluster "$CLUSTER" \
-                --task "$candidate" \
-                --reason "GitHub candle admin workflow failed or was cancelled" \
-                >/dev/null
             fi
           done < "${candidates_file}.unique"
 
       - name: Deregister temporary task definition
-        if: always()
+        if: >-
+          always() &&
+          (steps.wait.outcome == 'success' ||
+           steps.cleanup_task.outcome == 'success' ||
+           steps.task.outcome == 'skipped')
         env:
+          REGISTRATION_OWNER: candle-${{ github.run_id }}-${{ github.run_attempt }}
           AWS_PAGER: ''
         run: |
           set -euo pipefail
+          umask 077
 
           arn_file="$RUNNER_TEMP/candle-admin-registered-task-definition-arn"
           registration_result_file="$RUNNER_TEMP/candle-admin-registered-task-definition.json"
-          if [ -s "$arn_file" ]; then
-            registered_arn=$(<"$arn_file")
-          elif [ -s "$registration_result_file" ]; then
-            registered_arn=$(jq -r \
-              '.taskDefinition.taskDefinitionArn // empty' \
-              "$registration_result_file" 2>/dev/null || true)
-            if [ -z "$registered_arn" ]; then
-              echo "::error title=Temporary task cleanup identity unavailable::The registration response exists but does not contain a valid task definition ARN."
-              exit 1
+          registration_attempt_file="$RUNNER_TEMP/candle-admin-registration-attempted"
+          owner_file="$RUNNER_TEMP/candle-admin-registration-owner"
+          definitions_file="$RUNNER_TEMP/candle-admin-cleanup-definitions.json"
+          tags_file="$RUNNER_TEMP/candle-admin-cleanup-definition-tags.json"
+          active_exact_file="$RUNNER_TEMP/candle-admin-cleanup-active-definitions.txt"
+          unowned_active_file="$RUNNER_TEMP/candle-admin-cleanup-unowned-definitions.txt"
+          deregistration_file="$RUNNER_TEMP/candle-admin-deregistered-task-definition.json"
+          deregistration_state_file="$RUNNER_TEMP/candle-admin-deregistered-task-definition-state.json"
+          candidates_file="$RUNNER_TEMP/candle-admin-definition-cleanup-candidates.txt"
+          family="plether-$TARGET_ENV-candle-admin"
+          expected_arn_pattern="^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-${TARGET_ENV}-candle-admin:[1-9][0-9]*$"
+          : > "$candidates_file"
+
+          if [ ! -s "$owner_file" ]; then
+            if [ ! -s "$arn_file" ] && [ ! -s "$registration_result_file" ] && \
+               [ ! -s "$registration_attempt_file" ]; then
+              exit 0
             fi
-          else
-            exit 0
+            echo "::error title=Temporary task owner unavailable::Refusing task-definition cleanup without the persisted workflow owner."
+            exit 1
+          fi
+          persisted_owner=$(<"$owner_file")
+          if [ "$persisted_owner" != "$REGISTRATION_OWNER" ] || \
+             [[ ! "$persisted_owner" =~ ^[A-Za-z0-9_-]{1,36}$ ]]; then
+            echo "::error title=Unsafe task-definition owner::The persisted registration owner does not match this workflow run."
+            exit 1
+          fi
+          if [ -s "$registration_attempt_file" ] && \
+             [ "$(<"$registration_attempt_file")" != "$persisted_owner" ]; then
+            echo "::error title=Unsafe registration attempt owner::The registration attempt is not owned by this workflow run."
+            exit 1
           fi
 
-          expected_arn_pattern="^arn:(aws|aws-us-gov|aws-cn):ecs:[a-z0-9-]+:[0-9]{12}:task-definition/plether-${TARGET_ENV}-candle-admin:[1-9][0-9]*$"
+          if [ -s "$arn_file" ]; then
+            persisted_arn=$(<"$arn_file")
+            if [[ "$persisted_arn" =~ $expected_arn_pattern ]]; then
+              printf '%s\n' "$persisted_arn" >> "$candidates_file"
+            else
+              echo "::warning title=Malformed persisted task ARN::Recovering the temporary revision by its exact family and workflow tag."
+            fi
+          elif [ -s "$registration_result_file" ]; then
+            response_arn=$(jq -r \
+              '.taskDefinition.taskDefinitionArn // empty' \
+              "$registration_result_file" 2>/dev/null || true)
+            if [[ "$response_arn" =~ $expected_arn_pattern ]]; then
+              printf '%s\n' "$response_arn" >> "$candidates_file"
+            elif [ -n "$response_arn" ]; then
+              echo "::warning title=Malformed registration response::Recovering the temporary revision by its exact family and workflow tag."
+            fi
+          fi
+
+          # A successful registration can outlive a lost CLI response. Always
+          # enumerate the exact active family so a second same-owner revision
+          # cannot be hidden by one returned ARN.
+          maximum_discovery_attempts=1
+          if [ -s "$registration_attempt_file" ]; then
+            maximum_discovery_attempts=24
+          fi
+          for attempt in $(seq 1 "$maximum_discovery_attempts"); do
+              : > "$active_exact_file"
+              : > "$unowned_active_file"
+              aws ecs list-task-definitions \
+                --family-prefix "$family" \
+                --status ACTIVE \
+                --sort DESC \
+                > "$definitions_file"
+              mapfile -t active_arns < <(
+                jq -r \
+                  --arg family "$family" \
+                  '.taskDefinitionArns[]?
+                   | select((split("/")[-1] | split(":")[0]) == $family)' \
+                  "$definitions_file"
+              )
+              printf '%s\n' "${active_arns[@]}" | sed '/^$/d' > "$active_exact_file"
+              for active_arn in "${active_arns[@]}"; do
+                if [[ ! "$active_arn" =~ $expected_arn_pattern ]]; then
+                  echo "::error title=Unsafe discovered task definition::The temporary family returned an unexpected ARN."
+                  exit 1
+                fi
+                aws ecs list-tags-for-resource \
+                  --resource-arn "$active_arn" \
+                  > "$tags_file"
+                if jq --exit-status \
+                  --arg owner "$persisted_owner" \
+                  '[.tags[]? | select(.key == "PletherCandleAdminRun") | .value]
+                   == [$owner]' \
+                  "$tags_file" >/dev/null; then
+                  printf '%s\n' "$active_arn" >> "$candidates_file"
+                else
+                  printf '%s\n' "$active_arn" >> "$unowned_active_file"
+                fi
+              done
+              if [ ! -s "$unowned_active_file" ] && \
+                 { [ -s "$active_exact_file" ] || [ -s "$candidates_file" ]; }; then
+                break
+              fi
+              if [ "$attempt" -lt "$maximum_discovery_attempts" ]; then
+                sleep 5
+              fi
+          done
+
+          if [ -s "$unowned_active_file" ]; then
+            echo "::error title=Unowned temporary task definition::Every active exact-family revision must carry this workflow's immutable owner tag."
+            exit 1
+          fi
+
+          sort -u "$candidates_file" | sed '/^$/d' > "${candidates_file}.unique"
+          candidate_count=$(wc -l < "${candidates_file}.unique" | tr -d ' ')
+          if [ "$candidate_count" = "0" ]; then
+            if [ -s "$registration_attempt_file" ]; then
+              echo "::error title=Ambiguous registration requires reconciliation::No owned revision became visible after a registration attempt; retaining the family until an operator proves no revision can surface."
+              exit 1
+            fi
+            # No registration was attempted. Any unowned active exact-family
+            # revision is still an explicit blocker.
+            if [ -s "$definitions_file" ] && ! jq --exit-status \
+              --arg family "$family" \
+              '[.taskDefinitionArns[]?
+                | select((split("/")[-1] | split(":")[0]) == $family)]
+               | length == 0' \
+              "$definitions_file" >/dev/null; then
+              echo "::error title=Unowned temporary task definition::An active exact-family revision requires operator reconciliation."
+              exit 1
+            fi
+            exit 0
+          fi
+          if [ "$candidate_count" != "1" ]; then
+            echo "::error title=Ambiguous temporary task definitions::Expected at most one workflow-owned active revision."
+            exit 1
+          fi
+
+          registered_arn=$(<"${candidates_file}.unique")
           if [[ ! "$registered_arn" =~ $expected_arn_pattern ]]; then
             echo "::error title=Unsafe temporary task ARN::Refusing to deregister an unexpected task definition ARN."
             exit 1
           fi
+          aws ecs list-tags-for-resource \
+            --resource-arn "$registered_arn" \
+            > "$tags_file"
+          if ! jq --exit-status \
+            --arg owner "$persisted_owner" \
+            '[.tags[]? | select(.key == "PletherCandleAdminRun") | .value]
+             == [$owner]' \
+            "$tags_file" >/dev/null; then
+            echo "::error title=Unsafe temporary task ownership::Refusing to deregister a revision not owned by this workflow run."
+            exit 1
+          fi
 
-          aws ecs deregister-task-definition \
+          if ! aws ecs deregister-task-definition \
             --task-definition "$registered_arn" \
-            >/dev/null
-          echo "Deregistered the temporary candle admin task definition."
+            > "$deregistration_file"; then
+            echo "::warning title=Ambiguous task-definition deregistration::Confirming the authoritative task-definition state after a nonzero response."
+          fi
+          definition_inactive=false
+          for attempt in $(seq 1 12); do
+            aws ecs describe-task-definition \
+              --task-definition "$registered_arn" \
+              > "$deregistration_state_file"
+            if jq --exit-status \
+              --arg arn "$registered_arn" \
+              '.taskDefinition.taskDefinitionArn == $arn
+               and .taskDefinition.status == "INACTIVE"' \
+              "$deregistration_state_file" >/dev/null; then
+              definition_inactive=true
+              break
+            fi
+            if [ "$attempt" -lt 12 ]; then
+              sleep 5
+            fi
+          done
+          if [ "$definition_inactive" != "true" ]; then
+            echo "::error title=Temporary task deregistration unconfirmed::ECS did not confirm the exact revision as INACTIVE."
+            exit 1
+          fi
+          echo "Deregistered and confirmed the workflow-owned temporary candle admin task definition."
 
       - name: Remove temporary files
         if: always()
@@ -1726,6 +3260,11 @@ jobs:
           rm -f \
             "$RUNNER_TEMP/candle-admin-environment.json" \
             "$RUNNER_TEMP/candle-admin-branch-policies.json" \
+            "$RUNNER_TEMP/candle-admin-registration-owner" \
+            "$RUNNER_TEMP/candle-admin-family-tasks.json" \
+            "$RUNNER_TEMP/candle-admin-family-stopping-tasks.json" \
+            "$RUNNER_TEMP/candle-admin-family-stopping-describe.json" \
+            "$RUNNER_TEMP/candle-admin-family-definitions.json" \
             "$RUNNER_TEMP/candle-admin-service.json" \
             "$RUNNER_TEMP/candle-admin-network.json" \
             "$RUNNER_TEMP/candle-admin-task-definition.json" \
@@ -1733,18 +3272,47 @@ jobs:
             "$RUNNER_TEMP/candle-admin-replay-topology.json" \
             "$RUNNER_TEMP/candle-admin-replay-topology-before-run.json" \
             "$RUNNER_TEMP/candle-admin-replay-tasks-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-topology-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-tasks-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-maintenance.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-maintenance-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-parameter.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-parameter-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-network-subnets.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-network-security-groups.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-security-groups.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-network-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-network-subnets-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-network-security-groups-before-run.json" \
+            "$RUNNER_TEMP/candle-admin-finalizer-database-security-groups-before-run.json" \
             "$RUNNER_TEMP/candle-admin-task-definition-registration.json" \
             "$RUNNER_TEMP/candle-admin-registered-task-definition.json" \
             "$RUNNER_TEMP/candle-admin-registered-task-definition-arn" \
+            "$RUNNER_TEMP/candle-admin-registered-task-definition-tags.json" \
+            "$RUNNER_TEMP/candle-admin-registration-attempted" \
             "$RUNNER_TEMP/candle-admin-overrides.json" \
             "$RUNNER_TEMP/candle-admin-run-task.json" \
+            "$RUNNER_TEMP/candle-admin-run-task-ambiguous" \
+            "$RUNNER_TEMP/candle-admin-run-task-rejected" \
             "$RUNNER_TEMP/candle-admin-started-task.json" \
             "$RUNNER_TEMP/candle-admin-started-by" \
             "$RUNNER_TEMP/candle-admin-task-arn" \
             "$RUNNER_TEMP/candle-admin-cleanup-list.json" \
+            "$RUNNER_TEMP/candle-admin-cleanup-stopped-list.json" \
+            "$RUNNER_TEMP/candle-admin-cleanup-stopped-describe.json" \
             "$RUNNER_TEMP/candle-admin-cleanup-candidates.txt" \
             "$RUNNER_TEMP/candle-admin-cleanup-candidates.txt.unique" \
             "$RUNNER_TEMP/candle-admin-cleanup-task.json" \
+            "$RUNNER_TEMP/candle-admin-cleanup-definitions.json" \
+            "$RUNNER_TEMP/candle-admin-cleanup-definition-tags.json" \
+            "$RUNNER_TEMP/candle-admin-cleanup-active-definitions.txt" \
+            "$RUNNER_TEMP/candle-admin-cleanup-unowned-definitions.txt" \
+            "$RUNNER_TEMP/candle-admin-deregistered-task-definition.json" \
+            "$RUNNER_TEMP/candle-admin-deregistered-task-definition-state.json" \
+            "$RUNNER_TEMP/candle-admin-definition-cleanup-candidates.txt" \
+            "$RUNNER_TEMP/candle-admin-definition-cleanup-candidates.txt.unique" \
             "$RUNNER_TEMP/candle-admin-dual-writers/services.json" \
             "$RUNNER_TEMP/candle-admin-dual-writers/plether-workers-service.json" \
             "$RUNNER_TEMP/candle-admin-dual-writers/plether-workers-task-definition.json" \

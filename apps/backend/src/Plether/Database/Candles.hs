@@ -17,6 +17,7 @@ module Plether.Database.Candles
   , recomputeBasketCandleHierarchy
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
+  , lockBasketPriceDataset
   , lockMarketVolumeDataset
   , advanceBasketPriceCoverage
   , advanceMarketVolumeCoverage
@@ -826,7 +827,7 @@ assertObservationPublishTime conn seriesId observationId publishTime = do
 
 recomputeBasketCandleHierarchy :: Connection -> Text -> Integer -> Integer -> IO ()
 recomputeBasketCandleHierarchy conn seriesId publishTime latenessSeconds = do
-  lockDataset conn "price" seriesId 0
+  lockBasketPriceDataset conn seriesId
   lockBucket conn "price" seriesId 60 $ alignDown publishTime 60
   minuteChanged <- replacePriceMinute conn seriesId (alignDown publishTime 60) latenessSeconds
   forM_ (drop 1 canonicalCandleIntervals) $ \interval -> do
@@ -848,7 +849,7 @@ advanceBasketPriceCoverage conn seriesId checkedThrough latenessSeconds = do
   -- Validate the compiled definition here so stale/no-update polls cannot
   -- bypass the configuration-hash fail-closed check in the observation path.
   ensureCurrentBasketDefinition conn seriesId
-  lockDataset conn "price" seriesId 0
+  lockBasketPriceDataset conn seriesId
   let maximumPollGap = max 300 (max 0 latenessSeconds * 2)
   coverageRows <- query conn
     "SELECT interval_seconds, coverage_end, complete \
@@ -916,6 +917,10 @@ recomputeMarketVolumeHierarchyBatch conn chainId releaseRouter timestamps latene
 -- Bounded replay takes the indexer lock before this dataset lock. Exporting
 -- only the exact volume-dataset lock keeps the operational lock order explicit
 -- without exposing the generic advisory-lock namespace to callers.
+lockBasketPriceDataset :: Connection -> Text -> IO ()
+lockBasketPriceDataset conn seriesId =
+  lockDataset conn "price" seriesId 0
+
 lockMarketVolumeDataset :: Connection -> Integer -> Text -> IO ()
 lockMarketVolumeDataset conn chainId releaseRouter =
   lockDataset conn "volume" (normalizeRouter releaseRouter) chainId
@@ -1332,7 +1337,7 @@ backfillLegacyBasketSnapshots :: Connection -> Text -> Integer -> Integer -> IO 
 backfillLegacyBasketSnapshots conn seriesId fromTimestamp toTimestamp = do
   validateBackfillRange fromTimestamp toTimestamp
   ensureCurrentBasketDefinition conn seriesId
-  lockDataset conn "price" seriesId 0
+  lockBasketPriceDataset conn seriesId
   lockRange conn "price-backfill" seriesId fromTimestamp toTimestamp
   invalidSources <- query conn
     "SELECT COUNT(*)::BIGINT FROM (\
