@@ -408,14 +408,14 @@ With production-like data and at least twice observed peak traffic:
 
 Apply the first three latency targets independently to every canonical interval
 and successful canonical request shape. Do not pool endpoints, intervals,
-current candles, active pages, closed or inception-clipped pages, or
-compatibility history. For
-native candle responses, read SQL and application durations from the
+current candles, active pages, or closed or inception-clipped pages. For native
+candle responses, read SQL and application durations from the
 route-specific `Server-Timing` metrics `plether_db_candles` and `plether_app`.
-For the permitted `24h`/`3600` compatibility request, use
-`plether_db_snapshots` and `plether_app`, while `plether_db_volume` must remain
-zero. `plether_app` already includes database time and must not be added to a
-database metric.
+The transitional compatibility-history route is excluded from rollup latency
+acceptance because its remaining consumers are migrated separately before the
+route is removed. Its bounded-shape and zero account-activity-scan invariants
+remain correctness checks until that removal. `plether_app` already includes
+database time and must not be added to a database metric.
 
 Before recording each series, issue 10 fixed, unrecorded warm-up requests.
 Evaluate direct-origin HTTP using established persistent keep-alive connections,

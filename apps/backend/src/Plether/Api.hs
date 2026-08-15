@@ -1,5 +1,6 @@
 module Plether.Api
   ( app
+  , handleBasketCurrentCandleAt
   ) where
 
 import Control.Exception (evaluate)
@@ -44,7 +45,7 @@ import Plether.Handlers.Perps
   , durationMilliseconds
   , getBasketHistoryTimed
   , getBasketCandlePageTimed
-  , getBasketCurrentCandleTimed
+  , getBasketCurrentCandleTimedAt
   , isBoundedComponentHistoryRequest
   , getBasketLatest
   , getCachedLatestPythUpdate
@@ -456,39 +457,8 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
               E.internalError "DATABASE_URL is not configured; perps basket candles are unavailable"
 
   get "/api/perps/basket/candles/current" $ do
-    handlerStartedAt <- liftIO getMonotonicTimeNSec
-    queryKeys <- currentQueryKeys
-    if not $ hasExactBasketCandleQueryKeys ["interval"] queryKeys
-      then
-        handleError $
-          E.invalidAmount "exactly one interval query parameter is required"
-      else do
-        mInterval <- queryParamMaybe "interval"
-        case (mInterval >>= parseCanonicalPositiveInteger, mPool) of
-          (Just interval, Just pool)
-            | not (isCanonicalBasketCandleInterval interval) ->
-                handleError $
-                  E.invalidAmount
-                    "interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400"
-            | not $
-                perpsCandleRollupReadEnabled
-                  (cfgPerpsCandleReadMode cfg)
-                  (cfgPerpsCandleStrictCoverage cfg)
-                  (cfgPerpsCandleReadIntervals cfg)
-                  interval ->
-                handleError $
-                  E.notFound "Strict candle rollup reads are not enabled for this interval"
-            | otherwise -> do
-                result <- liftIO $ getBasketCurrentCandleTimed pool cfg interval
-                case result of
-                  Left err -> handleError err
-                  Right fetch ->
-                    handleBasketCandleResult handlerStartedAt "current" interval fetch
-          (Nothing, _) ->
-            handleError $ E.invalidAmount "interval must be a canonical positive integer"
-          (_, Nothing) ->
-            handleServiceUnavailable $
-              E.internalError "DATABASE_URL is not configured; current perps basket candle is unavailable"
+    validatedAt <- floor <$> liftIO getPOSIXTime
+    handleBasketCurrentCandleAt cfg mPool validatedAt
 
   get "/api/perps/basket/latest" $ do
     case mPool of
@@ -621,6 +591,52 @@ handleBasketHistoryResult handlerStartedAt params fetch = do
   setHeader "Server-Timing" $ LT.fromStrict $ basketHistoryServerTiming timings
   status status200
   raw body
+
+-- | Serve the strict current-candle route with a caller-supplied backend clock
+-- second. Production samples it once at route entry; the integration suite
+-- fixes it at the publication-grace boundary so the response header and
+-- validation outcome remain one testable invariant.
+handleBasketCurrentCandleAt :: Config -> Maybe DbPool -> Integer -> ActionM ()
+handleBasketCurrentCandleAt cfg mPool validatedAt = do
+  handlerStartedAt <- liftIO getMonotonicTimeNSec
+  queryKeys <- currentQueryKeys
+  if not $ hasExactBasketCandleQueryKeys ["interval"] queryKeys
+    then
+      handleError $
+        E.invalidAmount "exactly one interval query parameter is required"
+    else do
+      mInterval <- queryParamMaybe "interval"
+      case (mInterval >>= parseCanonicalPositiveInteger, mPool) of
+        (Just interval, Just pool)
+          | not (isCanonicalBasketCandleInterval interval) ->
+              handleError $
+                E.invalidAmount
+                  "interval must be one of 60, 180, 300, 900, 1800, 3600, or 86400"
+          | not $
+              perpsCandleRollupReadEnabled
+                (cfgPerpsCandleReadMode cfg)
+                (cfgPerpsCandleStrictCoverage cfg)
+                (cfgPerpsCandleReadIntervals cfg)
+                interval ->
+              handleError $
+                E.notFound "Strict candle rollup reads are not enabled for this interval"
+          | otherwise -> do
+              -- This is the exact integer wall-clock sample used by strict
+              -- current-candle freshness validation. Set it before running
+              -- the handler so both its 200 and 503 paths retain the same
+              -- deterministic origin-clock evidence. The public Date header
+              -- may be generated or replaced by an intermediary.
+              setHeader "X-Plether-Candle-Validated-At" $ LT.pack $ show validatedAt
+              result <- liftIO $ getBasketCurrentCandleTimedAt pool cfg validatedAt interval
+              case result of
+                Left err -> handleError err
+                Right fetch ->
+                  handleBasketCandleResult handlerStartedAt "current" interval fetch
+        (Nothing, _) ->
+          handleError $ E.invalidAmount "interval must be a canonical positive integer"
+        (_, Nothing) ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; current perps basket candle is unavailable"
 
 handleBasketCandleResult
   :: (ToJSON a)

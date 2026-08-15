@@ -557,13 +557,17 @@ For each interval, test an inception-clipped page, a fully closed page, the
 active page, current candle, a weekend gap, and pagination across at least two
 pages. Requests with duplicate, missing, unknown, unaligned, noncanonical, or
 far-future query parameters must fail closed and must not be shared-cached.
-Run the active-page, current-candle, and non-component rollup-backed
-compatibility-history probes across a real
+Run the active-page and current-candle probes across a real
 `bucket end + PERPS_CANDLE_LATENESS_SECONDS` boundary. The previous stored
 watermark may remain readable only during
 `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS`; require zero 5xx responses while the
 writer publishes, and verify that a deliberately frozen finalizer fails closed
 when the grace expires.
+
+The legacy basket-history route remains an availability/rollback smoke only
+until its component/headline consumers migrate and a separate follow-up
+removes it. Do not include it in Gate 6 rollover, latency, or performance
+acceptance evidence, and do not optimize it as part of this rollout.
 
 Run the frozen-finalizer control once, only for the Sepolia `3600` canary. Keep
 the frontend flag off and stop all native candle-page traffic and probes,
@@ -636,10 +640,17 @@ the control window. It performs no row mutation and never stops or scales an
 ECS service. Database-clock polling is at most five seconds apart and a
 12-second idle-transaction timeout independently releases a wedged connection.
 
-Before the timed sequence, measure operator-to-API `Date` offset,
-operator-to-database/log-clock offset, and request RTT. The worst absolute
-offset plus the worst measured RTT must be less than two seconds; abort if it
-does not fit strictly inside the five-second `B + 130` to `B + 135` margin.
+The current route samples its backend wall clock once and uses that exact
+integer Unix second for database selection and strict freshness validation. It
+must return the same value in exactly one
+`X-Plether-Candle-Validated-At` response header on both success and error
+paths. Use that origin-specific header as the API-clock evidence; do not infer
+the backend clock from the standard `Date` header, which is whole-second,
+generated at an unspecified response stage, and may be replaced by an edge
+intermediary. Keep database lifecycle timestamps as separate evidence for the
+probe's lock, grace, release, and recovery schedule; do not combine them with
+an edge clock into a synthetic offset bound. The literal no-retry request and
+two-second timeout remain mandatory.
 Require exactly one lifecycle scoped to the recorded task ARN/log stream and
 workflow run: `perps_candle_finalizer_probe_scheduled` ->
 `perps_candle_finalizer_probe_lock_acquired` (database field `acquired_at`
@@ -685,8 +696,15 @@ curl --disable --silent --show-error --retry 0 --max-time 2 \
 date -u +%Y-%m-%dT%H:%M:%S.%NZ > "${ARTIFACT}.finished-at"
 ```
 
-Preserve every response header, including `Date`, `Cache-Control`,
-`CF-Cache-Status`, `Server-Timing`, and any `X-Plether-Edge-Cache`. Require
+Preserve every response header, including `Date`,
+`X-Plether-Candle-Validated-At`, `Cache-Control`, `CF-Cache-Status`,
+`Server-Timing`, and any `X-Plether-Edge-Cache`. Require exactly one canonical
+integer candle-validation header on each response. The `before-grace` value
+must be less than `B + 135`; the intentional `fault` value must be at least
+`B + 135` and less than `B + 150`; and the `after-recovery` value must not be
+less than the fault value. These are the exact clock values used to produce
+the three outcomes, so do not replace them with a midpoint estimate from
+`Date`. Also require
 `X-Plether-Edge-Cache` to be absent, `Server-Timing` to contain
 `plether_edge_origin` and no edge-cache timing, and `CF-Cache-Status` to be
 absent, `DYNAMIC`, or `BYPASS`. Reject `HIT`, `STALE`, `REVALIDATED`, `UPDATING`,
@@ -864,20 +882,19 @@ blocked behind the freeze, and never broaden that exception beyond recovery of
 this exact Sepolia control.
 
 The server may accept only the immediately adjacent future page to tolerate a
-browser/backend clock difference at a page boundary. Component-bearing legacy
-history is intentionally restricted to the supported `24h`/`3600` shape;
-other component requests must fail with `400` instead of scanning raw history.
-The allowed component request must not scan account activity: verify its
-per-point `volumeUsdc` is the deliberate non-authoritative zero, its
-`plether_db_volume` timing and volume-row count are zero, and market stats remain
-the authoritative rolling 24-hour volume source. Keep this component-bearing
-request in the canary as a labeled legacy/raw control; it is not subject to the
-rollup watermark or publication grace.
+browser/backend clock difference at a page boundary. While the frontend still
+uses component-bearing legacy history before cutover, keep it restricted to
+the supported `24h`/`3600` shape; other component requests must fail with `400`
+instead of scanning raw history. The allowed request must not scan account
+activity: its per-point `volumeUsdc` is the deliberate non-authoritative zero,
+its `plether_db_volume` timing and volume-row count are zero, and market stats
+remain the authoritative rolling 24-hour volume source. This is transitional
+availability/correctness evidence only, not Gate 6 latency evidence.
 
-Collect latency samples using the ADR 0001 protocol. Every interval and each
-successful response shape listed above, including the permitted compatibility
-history, must meet its applicable thresholds independently. Rejected-input
-cases remain correctness checks and are not pooled into latency series. The
+Collect native candle latency samples using the ADR 0001 protocol. Every
+interval and each successful native candle response shape listed above must
+meet its applicable thresholds independently. Rejected-input cases remain
+correctness checks and are not pooled into latency series. The
 single frozen-finalizer `503` is a correctness fault-injection observation: do
 not pool, discard, retry, or replace it in latency evidence.
 
