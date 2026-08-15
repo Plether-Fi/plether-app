@@ -121,13 +121,114 @@ candleRollupSpec databaseUrl =
           ensureCandleSchema connection
           after <- candleRelationOids connection
           after `shouldBe` before
-          length after `shouldBe` 5
+          length after `shouldBe` 8
           candleActivityIndexValidity connection `shouldReturn` [Only True]
           candleEventIndexValidity connection `shouldReturn` [Only True]
           candleActivityReorgIndexValidity connection `shouldReturn` [Only True]
           candleEventReorgIndexValidity connection `shouldReturn` [Only True]
           canonicalCandleIntervals
             `shouldBe` [60, 180, 300, 900, 1800, 3600, 86_400]
+
+    it "retains arbitrary earlier and later history targets as immutable revisions" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection ->
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryTarget connection 1 1_700_000_001 "history-target-1"
+            insertHistoryTarget connection 2 946_684_801 "history-target-2"
+            insertHistoryTarget connection 3 1_800_000_001 "history-target-3"
+            targets <-
+              query_
+                connection
+                "SELECT revision, requested_start_timestamp \
+                \FROM perps_candle_history_targets \
+                \WHERE market_id = 'dxy-history-integration' ORDER BY revision"
+                :: IO [(Integer, Integer)]
+            targets
+              `shouldBe`
+                [ (1, 1_700_000_001)
+                , (2, 946_684_801)
+                , (3, 1_800_000_001)
+                ]
+
+    it "rejects history target mutation and revision gaps" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryTarget connection 1 1_700_000_001 "history-target-1"
+            execute_
+              connection
+              "UPDATE perps_candle_history_targets \
+              \SET requested_start_timestamp = 946684801 \
+              \WHERE market_id = 'dxy-history-integration' AND revision = 1"
+              `shouldThrow` sqlErrorContaining "candle history targets are immutable"
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryTarget connection 2 946_684_801 "history-target-gap"
+              `shouldThrow` sqlErrorContaining "must append the next revision"
+
+    it "keeps logical markets and release evidence immutable and ordered" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            execute_
+              connection
+              "UPDATE perps_candle_markets SET chain_id = 1 \
+              \WHERE market_id = 'dxy-history-integration'"
+              `shouldThrow` sqlErrorContaining "candle market identity is immutable"
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryGenesis connection
+            insertHistorySuccessor connection
+            releases <-
+              query_
+                connection
+                "SELECT release_revision, activation_block, activation_timestamp \
+                \FROM perps_market_release_epochs \
+                \WHERE market_id = 'dxy-history-integration' \
+                \ORDER BY release_revision"
+                :: IO [(Integer, Integer, Integer)]
+            releases `shouldBe` [(1, 100, 1_000), (2, 200, 2_000)]
+            execute_
+              connection
+              "UPDATE perps_market_release_epochs SET activation_block = 201 \
+              \WHERE market_id = 'dxy-history-integration' AND release_revision = 2"
+              `shouldThrow` sqlErrorContaining "market release epochs are immutable"
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistorySuccessor connection
+              `shouldThrow` sqlErrorContaining "must append the next revision"
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryGenesis connection
+            insertHistoryRelease
+              connection
+              2
+              "0x5555555555555555555555555555555555555555"
+              90
+              99
+              2_000
+              False
+              "integration-out-of-order"
+              `shouldThrow` sqlErrorContaining "must append in activation order"
+
+    it "rejects whitespace-only target and release audit evidence" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            execute_
+              connection
+              "INSERT INTO perps_candle_history_targets (\
+              \market_id, revision, requested_start_timestamp, requested_by, request_reference) \
+              \VALUES ('dxy-history-integration', 1, 1700000001, E'\\t\\n', 'audit-target')"
+              `shouldThrow` sqlErrorState "23514"
+          withRollback connection $ do
+            seedCandleHistoryMarket connection
+            insertHistoryGenesisWithApproval connection "\t\n"
+              `shouldThrow` sqlErrorState "23514"
 
     it "binds the exact current-candle validation clock to both grace-side responses" $
       withCandleDatabase databaseUrl $ \pool -> do
@@ -1822,6 +1923,103 @@ withCandleDatabase databaseUrl action =
     cleanupCandleRows pool
     action pool `finally` cleanupCandleRows pool
 
+withRollback :: Connection -> IO a -> IO a
+withRollback connection action = do
+  void $ execute_ connection "BEGIN"
+  action `finally` void (execute_ connection "ROLLBACK")
+
+sqlErrorContaining :: BS8.ByteString -> SqlError -> Bool
+sqlErrorContaining fragment sqlError =
+  fragment `BS8.isInfixOf` sqlErrorMsg sqlError
+
+sqlErrorState :: BS8.ByteString -> SqlError -> Bool
+sqlErrorState expected sqlError = sqlState sqlError == expected
+
+seedCandleHistoryMarket :: Connection -> IO ()
+seedCandleHistoryMarket connection = do
+  ensureCurrentBasketDefinition connection testSeries
+  void $
+    execute
+      connection
+      "INSERT INTO perps_candle_markets (market_id, chain_id, price_series_id) \
+      \VALUES (?, ?, ?)"
+      ("dxy-history-integration" :: Text, testChainId, testSeries)
+
+insertHistoryTarget :: Connection -> Integer -> Integer -> Text -> IO ()
+insertHistoryTarget connection revision requestedStart requestReference =
+  void $
+    execute
+      connection
+      "INSERT INTO perps_candle_history_targets \
+      \(market_id, revision, requested_start_timestamp, requested_by, request_reference) \
+      \VALUES ('dxy-history-integration', ?, ?, 'integration-test', ?)"
+      (revision, requestedStart, requestReference)
+
+insertHistoryGenesis :: Connection -> IO ()
+insertHistoryGenesis connection =
+  insertHistoryGenesisWithApproval connection "integration-genesis"
+
+insertHistoryGenesisWithApproval :: Connection -> Text -> IO ()
+insertHistoryGenesisWithApproval connection approvalReference =
+  insertHistoryRelease
+    connection
+    1
+    "0x1111111111111111111111111111111111111111"
+    90
+    100
+    1_000
+    True
+    approvalReference
+
+insertHistorySuccessor :: Connection -> IO ()
+insertHistorySuccessor connection =
+  insertHistoryRelease
+    connection
+    2
+    "0x2222222222222222222222222222222222222222"
+    190
+    200
+    2_000
+    False
+    "integration-successor"
+
+insertHistoryRelease
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Bool
+  -> Text
+  -> IO ()
+insertHistoryRelease
+  connection revision router deploymentBlock activationBlock activationTimestamp isGenesis approvalReference =
+    void $
+      execute
+        connection
+        "INSERT INTO perps_market_release_epochs (\
+        \market_id, release_revision, chain_id, release_router, cfd_engine, \
+        \margin_clearinghouse, deployment_block, deployment_block_hash, \
+        \deployment_tx_hash, activation_block, activation_timestamp, \
+        \activation_block_hash, approval_reference, is_market_genesis) VALUES (\
+        \'dxy-history-integration', ?, 9999421614, ?, \
+        \'0x3333333333333333333333333333333333333333', \
+        \'0x4444444444444444444444444444444444444444', ?, \
+        \'0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', \
+        \'0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', \
+        \?, ?, \
+        \'0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', \
+        \?, ?)"
+        ( revision
+        , router
+        , deploymentBlock
+        , activationBlock
+        , activationTimestamp
+        , approvalReference
+        , isGenesis
+        )
+
 currentCandleResponse :: DbPool -> Config -> Integer -> IO SResponse
 currentCandleResponse pool config validatedAt = do
   application <-
@@ -2041,6 +2239,11 @@ cleanupCandleRows pool =
   withDb pool $ \connection ->
     withTransaction connection $ do
       void $
+        execute_
+          connection
+          "TRUNCATE TABLE perps_candle_history_targets, perps_market_release_epochs, \
+          \perps_candle_markets"
+      void $
         execute
           connection
           "DELETE FROM perps_rollup_coverage \
@@ -2122,6 +2325,9 @@ candleRelationOids connection = do
       \('perps_basket_definitions'::regclass), \
       \('perps_basket_observations'::regclass), \
       \('perps_basket_candles'::regclass), \
+      \('perps_candle_markets'::regclass), \
+      \('perps_candle_history_targets'::regclass), \
+      \('perps_market_release_epochs'::regclass), \
       \('perps_market_volume_rollups'::regclass), \
       \('perps_rollup_coverage'::regclass)) AS expected(relation) \
       \ORDER BY relation::regclass::text"

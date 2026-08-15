@@ -116,6 +116,13 @@ identity includes chain, release router, resolution, and bucket start. A
 multi-market router must add an explicit market identifier in a new derivation
 version before it can share this read model.
 
+An additive metadata foundation records the stable logical market separately
+from its contract releases. Each release has an immutable sequential revision,
+contract addresses, and canonical deployment and activation evidence. Its
+exclusive block end is derived from the next release activation; it is not
+stored as mutable state. This foundation does not yet change the v1 writer or
+read identity.
+
 The stored value is the exact numerator of the existing contract-notional
 definition, based on `ABS(size_delta) * execution_price`. Division and flooring
 occur only at the API boundary. Parent buckets sum exact one-minute numerators,
@@ -228,6 +235,19 @@ The read model consists of:
 - `perps_basket_candles`;
 - `perps_market_volume_rollups`;
 - `perps_rollup_coverage`.
+
+Three inert metadata tables prepare arbitrary operator-selected history without
+claiming that history is already available:
+
+- `perps_candle_markets` binds a logical market to its chain and price series;
+- `perps_candle_history_targets` stores immutable target revisions containing
+  the exact non-negative Unix second selected by the operator;
+- `perps_market_release_epochs` stores immutable, ordered contract-release
+  evidence for later cross-release volume ingestion.
+
+For each candle interval, a selected timestamp aligns up to the first complete
+Unix-aligned bucket. The metadata tables contain no ingestion progress,
+publication state, rollups, or read-path switch.
 
 Price identity is `(series_id, interval_seconds, bucket_start)`.
 Volume identity in the single-market v1 deployment is `(chain_id,
