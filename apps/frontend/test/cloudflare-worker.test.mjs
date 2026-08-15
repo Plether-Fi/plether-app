@@ -177,6 +177,70 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
 });
 
 describe('Cloudflare API proxy candle caching', () => {
+  for (const status of [200, 503]) {
+    it(`preserves exact origin candle-clock evidence on a no-store ${status} current response`, async () => {
+      mock.method(Date, 'now', () => 1_800_000_100_000);
+      const cacheMatch = mock.fn(async () => new Response('{"cached":true}', {
+        status: 200,
+        headers: {
+          'X-Plether-Candle-Validated-At': '1799999999',
+        },
+      }));
+      const cachePut = mock.fn(async () => undefined);
+      const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+      Object.defineProperty(globalThis, 'caches', {
+        configurable: true,
+        value: {
+          default: {
+            match: cacheMatch,
+            put: cachePut,
+          },
+        },
+      });
+      const originResponse = new Response('{"data":{"coverageComplete":true}}', {
+        status,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Plether-Candle-Validated-At': '1800000100',
+        },
+      });
+      const fetchMock = mockOriginFetch(originResponse, 17.25);
+
+      let response;
+      try {
+        response = await worker.fetch(
+          new Request(CURRENT_CANDLE_URL, {
+            headers: {
+              'Cache-Control': 'no-store',
+              Pragma: 'no-cache',
+            },
+          }),
+          workerEnv(),
+        );
+      } finally {
+        if (originalCaches === undefined) delete globalThis.caches;
+        else Object.defineProperty(globalThis, 'caches', originalCaches);
+      }
+
+      assert.equal(fetchMock.mock.callCount(), 1);
+      assert.equal(cacheMatch.mock.callCount(), 0);
+      assert.equal(cachePut.mock.callCount(), 0);
+      assert.equal(
+        fetchMock.mock.calls[0].arguments[1].headers.get('Cache-Control'),
+        'no-store',
+      );
+      assert.equal(response.status, status);
+      assert.equal(
+        response.headers.get('X-Plether-Candle-Validated-At'),
+        '1800000100',
+      );
+      assert.equal(
+        response.headers.get('Server-Timing'),
+        'plether_edge_origin;dur=17.250',
+      );
+    });
+  }
+
   for (const [kind, requestUrl] of [
     ['page', ACTIVE_CANDLE_URL],
     ['current', CURRENT_CANDLE_URL],

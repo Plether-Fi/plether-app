@@ -4,7 +4,7 @@ module Plether.Handlers.Perps
   , getBasketHistoryWithSourcesTimed
   , getLegacyBasketHistoryVolumeRowsTimed
   , getBasketCandlePageTimed
-  , getBasketCurrentCandleTimed
+  , getBasketCurrentCandleTimedAt
   , BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
   , BasketCandleFetch (..)
@@ -229,13 +229,17 @@ getBasketCandlePageTimed pool cfg interval cursor = do
                 , bcfDatasetGeneration = cpDatasetGeneration page
                 }
 
-getBasketCurrentCandleTimed
+-- | Fetch and validate the mutable candle using the exact wall-clock second
+-- supplied by the HTTP route. Keeping the clock sample outside this function
+-- lets the route expose that same value as response evidence on both success
+-- and strict-coverage failure paths.
+getBasketCurrentCandleTimedAt
   :: DbPool
   -> Config
   -> Integer
+  -> Integer
   -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
-getBasketCurrentCandleTimed pool cfg interval = do
-  now <- floor <$> getPOSIXTime
+getBasketCurrentCandleTimedAt pool cfg now interval = do
   poolStartedAt <- getMonotonicTimeNSec
   (mDefinition, current, poolWaitNs, queryNs) <- withDb pool $ \conn -> withCandleReadSnapshot conn $ do
     connectionReadyAt <- getMonotonicTimeNSec

@@ -14,6 +14,7 @@ import Control.Concurrent
 import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
 import Control.Monad (forM_, void)
 import Data.Aeson (Value, object, (.=))
+import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isLeft, isRight)
 import Data.Pool (destroyAllResources)
 import Data.Text (Text)
@@ -29,6 +30,20 @@ import Database.PostgreSQL.Simple
   , withTransaction
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Network.HTTP.Types.Status (status200, status503)
+import Network.Wai.Test
+  ( SResponse (..)
+  , defaultRequest
+  , request
+  , runSession
+  , setPath
+  )
+import Plether.Api (handleBasketCurrentCandleAt)
+import Plether.Config
+  ( Config (..)
+  , PerpsCandleReadMode (PerpsCandleReadsRollup)
+  , PerpsCandleWriteMode (PerpsCandleWritesDual)
+  )
 import Plether.Database (DbPool, newDbPool, withDb)
 import Plether.Database.Candles
   ( BasketCandleRow (..)
@@ -93,6 +108,7 @@ import Test.Hspec
   , shouldSatisfy
   , shouldThrow
   )
+import Web.Scotty (get, scottyApp)
 
 candleRollupSpec :: Text -> Spec
 candleRollupSpec databaseUrl =
@@ -112,6 +128,37 @@ candleRollupSpec databaseUrl =
           candleEventReorgIndexValidity connection `shouldReturn` [Only True]
           canonicalCandleIntervals
             `shouldBe` [60, 180, 300, 900, 1800, 3600, 86_400]
+
+    it "binds the exact current-candle validation clock to both grace-side responses" $
+      withCandleDatabase databaseUrl $ \pool -> do
+        let interval = 3_600
+            boundary = baseTime + interval
+            beforeGrace = boundary + 134
+            atGraceExpiry = boundary + 135
+            coverageStart = boundary - 2 * interval
+            coverageEnd = boundary + interval
+            finalizedThrough = boundary - interval
+            config = candleApiConfig databaseUrl
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          putPriceCoverage
+            connection interval coverageStart coverageEnd finalizedThrough 7 True
+          putVolumeCoverage
+            connection interval coverageStart coverageEnd finalizedThrough 11 True
+
+        beforeResponse <- currentCandleResponse pool config beforeGrace
+        simpleStatus beforeResponse `shouldBe` status200
+        filter
+          ((== "X-Plether-Candle-Validated-At") . fst)
+          (simpleHeaders beforeResponse)
+          `shouldBe` [("X-Plether-Candle-Validated-At", BS8.pack $ show beforeGrace)]
+
+        faultResponse <- currentCandleResponse pool config atGraceExpiry
+        simpleStatus faultResponse `shouldBe` status503
+        filter
+          ((== "X-Plether-Candle-Validated-At") . fst)
+          (simpleHeaders faultResponse)
+          `shouldBe` [("X-Plether-Candle-Validated-At", BS8.pack $ show atGraceExpiry)]
 
     it "rejects a conflicting replay event identity and rolls back its transaction" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -1774,6 +1821,59 @@ withCandleDatabase databaseUrl action =
     prepareCandleDatabase pool
     cleanupCandleRows pool
     action pool `finally` cleanupCandleRows pool
+
+currentCandleResponse :: DbPool -> Config -> Integer -> IO SResponse
+currentCandleResponse pool config validatedAt = do
+  application <-
+    scottyApp $
+      get "/api/perps/basket/candles/current" $
+        handleBasketCurrentCandleAt config (Just pool) validatedAt
+  runSession
+    (request $ setPath defaultRequest "/api/perps/basket/candles/current?interval=3600")
+    application
+
+candleApiConfig :: Text -> Config
+candleApiConfig databaseUrl =
+  Config
+    { cfgRpcUrl = ""
+    , cfgChainId = 11_155_111
+    , cfgPort = 3001
+    , cfgCorsOrigins = []
+    , cfgDeployments = []
+    , cfgDatabaseUrl = Just databaseUrl
+    , cfgIndexerStartBlock = 0
+    , cfgPythBenchmarksUrl = ""
+    , cfgPythHermesUrl = ""
+    , cfgPythApiKey = Nothing
+    , cfgPythBackfillDays = 1
+    , cfgPythSampleIntervalSeconds = 60
+    , cfgPythLatestMaxAgeSeconds = 10
+    , cfgPythIngestionEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesDual
+    , cfgPerpsCandleReadMode = PerpsCandleReadsRollup
+    , cfgPerpsCandleReadIntervals = [3_600]
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
+    , cfgPerpsRpcUrl = ""
+    , cfgPerpsChainId = testChainId
+    , cfgPerpsUsdc = ""
+    , cfgPerpsOrderRouter = testRouter
+    , cfgPerpsCfdEngine = ""
+    , cfgPerpsMarginClearinghouse = ""
+    , cfgPerpsPletherOracle = ""
+    , cfgPerpsAccountLens = ""
+    , cfgPerpsIndexerStartBlock = 0
+    , cfgAaConfig = Nothing
+    , cfgFaucetPrivateKey = Nothing
+    , cfgKeeperPrivateKey = Nothing
+    , cfgKeeperPollSeconds = 1
+    , cfgKeeperMaxBatchSize = 20
+    , cfgKeeperConfirmations = 0
+    , cfgKeeperGasBufferBps = 2_000
+    , cfgKeeperFeeBufferBps = 2_500
+    }
 
 withCandleAdminDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCandleAdminDatabase databaseUrl action =
