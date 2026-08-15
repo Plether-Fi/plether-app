@@ -59,6 +59,7 @@ import Database.PostgreSQL.Simple
   , query
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Plether.Database.CandleHistory (ensureCandleHistorySchema)
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents, basketDisplayPriceCap)
 
 data BasketObservationInput = BasketObservationInput
@@ -233,6 +234,7 @@ ensureCandleSchema conn = do
   forM_ candleTableSchemaStatements $ \statement -> do
     _ <- execute_ conn statement
     pure ()
+  ensureCandleHistorySchema conn
   ensureCandleActivityIndexPrerequisites conn
   ensureCandleEventIndexPrerequisites conn
   ensureCandleActivityIndex conn
