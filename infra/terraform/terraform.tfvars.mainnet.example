@@ -26,6 +26,7 @@ consolidate_workers = true
 workers_desired_count = 1
 liquidation_worker_desired_count = 0
 api_container_cpu   = 512
+api_container_memory = 1024
 container_cpu       = 256
 container_memory    = 1024
 workers_container_memory = 1024

@@ -533,6 +533,12 @@ variable "api_container_cpu" {
   description = "CPU units reserved for the foreground API task independently of background services."
 }
 
+variable "api_container_memory" {
+  type        = number
+  default     = 1024
+  description = "Memory in MiB reserved for the foreground API task independently of background services."
+}
+
 variable "container_cpu" {
   type    = number
   default = 256

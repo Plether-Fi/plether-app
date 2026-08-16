@@ -152,7 +152,7 @@ resource "aws_ecs_task_definition" "api" {
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.api_container_cpu
-  memory                   = var.container_memory
+  memory                   = var.api_container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
   enable_fault_injection   = false
