@@ -33,6 +33,7 @@ liquidation_worker_reorg_overlap_blocks = "12"
 liquidation_worker_pending_replacement_seconds = "120"
 liquidation_worker_desired_count     = 1
 api_container_cpu   = 1024
+api_container_memory = 2048
 container_cpu       = 256
 container_memory    = 1024
 db_instance_class   = "db.t4g.medium"
