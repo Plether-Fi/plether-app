@@ -160,6 +160,23 @@ spec = do
       schema `shouldContain` "protect_perps_rollup_generation_monotonic"
       schema `shouldContain` "perps rollup usability regression requires a new generation"
 
+    it "bootstraps covering indexes for native candle pages" $ do
+      schema <- readFile "schema.sql"
+      schema `shouldContain` "idx_perps_basket_candles_page_cover"
+      schema
+        `shouldContain` "INCLUDE (raw_open_price, raw_high_price, raw_low_price, raw_close_price,"
+      schema `shouldContain` "idx_perps_market_volume_rollups_page_cover"
+      schema `shouldContain` "INCLUDE (volume_numerator, trade_count, finalized)"
+
+    it "builds native page covering indexes concurrently at runtime" $ do
+      migration <- readFile "src/Plether/Database/Candles.hs"
+      migration `shouldContain` "CREATE INDEX CONCURRENTLY idx_perps_basket_candles_page_cover"
+      migration
+        `shouldContain` "CREATE INDEX CONCURRENTLY idx_perps_market_volume_rollups_page_cover"
+      migration `shouldContain` "DROP INDEX CONCURRENTLY idx_perps_basket_candles_page_cover"
+      migration
+        `shouldContain` "DROP INDEX CONCURRENTLY idx_perps_market_volume_rollups_page_cover"
+
 selection :: CandleHistorySelection
 selection =
   CandleHistorySelection
