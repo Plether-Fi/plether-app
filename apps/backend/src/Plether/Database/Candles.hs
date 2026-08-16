@@ -59,7 +59,10 @@ import Database.PostgreSQL.Simple
   , query
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
-import Plether.Database.CandleHistory (ensureCandleHistorySchema)
+import Plether.Database.CandleHistory
+  ( defaultCandleMarketId
+  , ensureCandleHistorySchema
+  )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents, basketDisplayPriceCap)
 
 data BasketObservationInput = BasketObservationInput
@@ -109,6 +112,10 @@ data CandleCurrent = CandleCurrent
   , ccFinalizedThrough :: Maybe Integer
   , ccDatasetGeneration :: Integer
   , ccCoverageComplete :: Bool
+  , ccVolumeCoverageStart :: Maybe Integer
+  , ccVolumeCoverageEnd :: Maybe Integer
+  , ccVolumeFinalizedThrough :: Maybe Integer
+  , ccVolumeCoverageComplete :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -121,6 +128,10 @@ data CandlePage = CandlePage
   , cpFinalizedThrough :: Maybe Integer
   , cpDatasetGeneration :: Integer
   , cpCoverageComplete :: Bool
+  , cpVolumeCoverageStart :: Maybe Integer
+  , cpVolumeCoverageEnd :: Maybe Integer
+  , cpVolumeFinalizedThrough :: Maybe Integer
+  , cpVolumeCoverageComplete :: Bool
   }
   deriving stock (Eq, Show)
 
@@ -142,6 +153,10 @@ data BasketCandlePageSnapshotRow = BasketCandlePageSnapshotRow
   , bcpsrFinalizedThrough :: Maybe Integer
   , bcpsrDatasetGeneration :: Maybe Integer
   , bcpsrCoverageComplete :: Maybe Bool
+  , bcpsrVolumeCoverageStart :: Maybe Integer
+  , bcpsrVolumeCoverageEnd :: Maybe Integer
+  , bcpsrVolumeFinalizedThrough :: Maybe Integer
+  , bcpsrVolumeCoverageComplete :: Maybe Bool
   , bcpsrEarlierBucket :: Maybe Integer
   , bcpsrCandlePresent :: Bool
   , bcpsrBucketStart :: Maybe Integer
@@ -159,8 +174,8 @@ data BasketCandlePageSnapshotRow = BasketCandlePageSnapshotRow
   }
   deriving stock (Eq, Show)
 
--- A bounded compatibility read shares the same combined price/volume metadata
--- as native pages, but returns one caller-supplied time range in one SQL query.
+-- A bounded compatibility read retains the legacy combined price/volume
+-- metadata contract, and returns one caller-supplied time range in one SQL query.
 -- The handler validates every row and the maximum result count before exposing
 -- this read through the legacy response shape.
 data CandleRange = CandleRange
@@ -882,11 +897,16 @@ advanceBasketPriceCoverage conn seriesId checkedThrough latenessSeconds = do
     else unless alreadyIncomplete $ do
       assertGenerationCapacity conn PriceRollup (Just seriesId) Nothing Nothing
       _ <- execute conn
-        "UPDATE perps_rollup_coverage SET complete = FALSE, \
-        \ generation = generation + 1, last_error = 'price_watermark_gap', \
+        "WITH next_generation AS (SELECT COALESCE(MAX(generation), 0) + 1 AS generation \
+        \ FROM perps_rollup_coverage WHERE kind = 'price' AND series_id = ? \
+        \ AND chain_id = 0 AND release_router = '') \
+        \UPDATE perps_rollup_coverage coverage SET complete = FALSE, \
+        \ generation = next_generation.generation, last_error = 'price_watermark_gap', \
         \ maintenance_from = NULL, maintenance_to = NULL, updated_at = NOW() \
-        \WHERE kind = 'price' AND series_id = ? AND chain_id = 0 AND release_router = ''"
-        (Only seriesId)
+        \FROM next_generation WHERE coverage.kind = 'price' \
+        \AND coverage.series_id = ? AND coverage.chain_id = 0 \
+        \AND coverage.release_router = ''"
+        (seriesId, seriesId)
       pure ()
 
 recomputeMarketVolumeHierarchy :: Connection -> Integer -> Text -> Integer -> Integer -> IO ()
@@ -1029,23 +1049,33 @@ getBasketCandlePage conn seriesId chainId releaseRouter interval cursor = do
   let pageSpan = interval * 500
       pageStart = cursor - pageSpan
       router = normalizeRouter releaseRouter
-  metadata <- getCombinedMetadata conn seriesId chainId router interval
+  metadata <- getNativeMetadata conn True seriesId chainId router interval
   case metadata of
     Nothing -> pure emptyPage
-    Just CombinedMetadata {..} -> do
-      let effectiveStart = max pageStart cmCoverageStart
-          effectiveEnd = min cursor $ min cmCoverageEnd cmFinalizedThrough
+    Just NativeMetadata {..} -> do
+      let effectiveStart = max pageStart nmCoverageStart
+          effectiveEnd = min cursor $ min nmCoverageEnd nmFinalizedThrough
       candles <-
-        if not cmComplete || effectiveStart >= effectiveEnd
+        if not nmComplete || effectiveStart >= effectiveEnd
           then pure []
-          else query conn candleRowsSql
-            (chainId, router, seriesId, interval, effectiveStart, effectiveEnd)
+          else query conn nativeCandleRowsSql
+            ( nmVolumeUsable
+            , nmVolumeCoverageStart
+            , nmVolumeCoverageEnd
+            , nmVolumeFinalizedThrough
+            , chainId
+            , router
+            , seriesId
+            , interval
+            , effectiveStart
+            , effectiveEnd
+            )
       earlierRows <- query conn
         "SELECT bucket_start FROM perps_basket_candles \
         \WHERE series_id = ? AND interval_seconds = ? \
         \AND bucket_start >= ? AND bucket_start < ? \
         \ORDER BY bucket_start DESC LIMIT 1"
-        (seriesId, interval, cmCoverageStart, effectiveStart) :: IO [Only Integer]
+        (seriesId, interval, nmCoverageStart, effectiveStart) :: IO [Only Integer]
       let mEarlierBucket = fromOnly <$> listToMaybe earlierRows
           previousCursor =
             (\bucket -> (bucket `div` pageSpan + 1) * pageSpan) <$> mEarlierBucket
@@ -1054,17 +1084,22 @@ getBasketCandlePage conn seriesId chainId releaseRouter interval cursor = do
           { cpCandles = candles
           , cpPreviousCursor = previousCursor
           , cpHasEarlier = maybe False (const True) mEarlierBucket
-          , cpCoverageStart = Just cmCoverageStart
-          , cpCoverageEnd = Just cmCoverageEnd
-          , cpFinalizedThrough = Just cmFinalizedThrough
-          , cpDatasetGeneration = cmGeneration
-          , cpCoverageComplete = cmComplete
+          , cpCoverageStart = Just nmCoverageStart
+          , cpCoverageEnd = Just nmCoverageEnd
+          , cpFinalizedThrough = Just nmFinalizedThrough
+          , cpDatasetGeneration = nmGeneration
+          , cpCoverageComplete = nmComplete
+          , cpVolumeCoverageStart = trustedVolumeMetadata nmVolumeUsable nmVolumeCoverageStart
+          , cpVolumeCoverageEnd = trustedVolumeMetadata nmVolumeUsable nmVolumeCoverageEnd
+          , cpVolumeFinalizedThrough = trustedVolumeMetadata nmVolumeUsable nmVolumeFinalizedThrough
+          , cpVolumeCoverageComplete = nmVolumeUsable
           }
  where
   emptyPage =
-    CandlePage [] Nothing False Nothing Nothing Nothing 0 False
+    CandlePage [] Nothing False Nothing Nothing Nothing 0 False Nothing Nothing Nothing False
 
--- Read the active definition, combined coverage, page rows, and earlier-page
+-- Read the active definition, price coverage, optional current-router volume,
+-- page rows, and earlier-page
 -- sentinel in one PostgreSQL statement. A statement has one MVCC snapshot, so
 -- this is coherent without the repeatable-read transaction required by the
 -- older multi-query composition above.
@@ -1085,6 +1120,7 @@ getBasketCandlePageSnapshot
       , interval
       , cursor
       , currentDerivationVersion
+      , defaultCandleMarketId
       )
     either (fail . ("Invalid native candle page snapshot: " <>)) pure $
       decodeBasketCandlePageSnapshot interval rows
@@ -1149,6 +1185,10 @@ decodeSnapshotPage interval firstRow rows
           , (() <$ bcpsrFinalizedThrough firstRow)
           , (() <$ bcpsrDatasetGeneration firstRow)
           , (() <$ bcpsrCoverageComplete firstRow)
+          , (() <$ bcpsrVolumeCoverageStart firstRow)
+          , (() <$ bcpsrVolumeCoverageEnd firstRow)
+          , (() <$ bcpsrVolumeFinalizedThrough firstRow)
+          , (() <$ bcpsrVolumeCoverageComplete firstRow)
           , (() <$ bcpsrEarlierBucket firstRow)
           ]
           && allNothing candles
@@ -1161,6 +1201,7 @@ decodeSnapshotPage interval firstRow rows
           , bcpsrFinalizedThrough firstRow
           , bcpsrDatasetGeneration firstRow
           , bcpsrCoverageComplete firstRow
+          , bcpsrVolumeCoverageComplete firstRow
           )
         of
         ( Just coverageStart
@@ -1168,8 +1209,15 @@ decodeSnapshotPage interval firstRow rows
           , Just finalizedThrough
           , Just datasetGeneration
           , Just coverageComplete
+          , Just volumeCoverageComplete
           ) -> do
             candles <- catMaybes <$> traverse decodeSnapshotCandle rows
+            (volumeCoverageStart, volumeCoverageEnd, volumeFinalizedThrough) <-
+              decodeTrustedVolumeCoverage
+                volumeCoverageComplete
+                (bcpsrVolumeCoverageStart firstRow)
+                (bcpsrVolumeCoverageEnd firstRow)
+                (bcpsrVolumeFinalizedThrough firstRow)
             let pageSpan = interval * 500
                 previousCursor =
                   (\bucket -> (bucket `div` pageSpan + 1) * pageSpan)
@@ -1183,10 +1231,33 @@ decodeSnapshotPage interval firstRow rows
               , cpFinalizedThrough = Just finalizedThrough
               , cpDatasetGeneration = datasetGeneration
               , cpCoverageComplete = coverageComplete
+              , cpVolumeCoverageStart = volumeCoverageStart
+              , cpVolumeCoverageEnd = volumeCoverageEnd
+              , cpVolumeFinalizedThrough = volumeFinalizedThrough
+              , cpVolumeCoverageComplete = volumeCoverageComplete
               }
         _ -> Left "metadata presence flag has missing required fields"
  where
-  emptyPage = CandlePage [] Nothing False Nothing Nothing Nothing 0 False
+  emptyPage =
+    CandlePage [] Nothing False Nothing Nothing Nothing 0 False Nothing Nothing Nothing False
+
+decodeTrustedVolumeCoverage
+  :: Bool
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Maybe Integer
+  -> Either String (Maybe Integer, Maybe Integer, Maybe Integer)
+decodeTrustedVolumeCoverage complete coverageStart coverageEnd finalizedThrough
+  | complete =
+      case (coverageStart, coverageEnd, finalizedThrough) of
+        (Just start, Just end, Just finalized) -> Right (Just start, Just end, Just finalized)
+        _ -> Left "usable volume coverage has missing bounds"
+  | allNothing [coverageStart, coverageEnd, finalizedThrough] =
+      Right (Nothing, Nothing, Nothing)
+  | otherwise = Left "unusable volume coverage has populated bounds"
+
+trustedVolumeMetadata :: Bool -> Maybe value -> Maybe value
+trustedVolumeMetadata usable = if usable then id else const Nothing
 
 decodeSnapshotCandle
   :: BasketCandlePageSnapshotRow
@@ -1207,8 +1278,6 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
           , bcpsrQuality
           , bcpsrRevision
           , bcpsrPriceComplete
-          , bcpsrVolumeNumerator
-          , bcpsrTradeCount
           , bcpsrVolumeComplete
           )
         of
@@ -1221,10 +1290,14 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
           , Just quality
           , Just revision
           , Just priceComplete
-          , Just volumeNumerator
-          , Just tradeCount
           , Just volumeComplete
-          ) ->
+          ) -> do
+            (volumeNumerator, tradeCount) <-
+              case (bcpsrVolumeNumerator, bcpsrTradeCount, volumeComplete) of
+                (Nothing, Nothing, False) -> Right (Nothing, Nothing)
+                (Just volume, Just trades, True) ->
+                  Right (Just $ scientificToInteger volume, Just trades)
+                _ -> Left "candle volume fields are inconsistent"
             Right $ Just BasketCandleRow
               { bcrBucketStart = bucketStart
               , bcrRawOpenPrice = rawOpenPrice
@@ -1235,8 +1308,8 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
               , bcrQuality = parseCandleQuality quality
               , bcrRevision = revision
               , bcrPriceComplete = priceComplete
-              , bcrVolumeNumerator = Just $ scientificToInteger volumeNumerator
-              , bcrTradeCount = Just tradeCount
+              , bcrVolumeNumerator = volumeNumerator
+              , bcrTradeCount = tradeCount
               , bcrVolumeComplete = volumeComplete
               }
         _ -> Left "candle presence flag has missing required fields"
@@ -1273,6 +1346,10 @@ sameBasketCandlePageSnapshotHeader left right =
     && bcpsrFinalizedThrough left == bcpsrFinalizedThrough right
     && bcpsrDatasetGeneration left == bcpsrDatasetGeneration right
     && bcpsrCoverageComplete left == bcpsrCoverageComplete right
+    && bcpsrVolumeCoverageStart left == bcpsrVolumeCoverageStart right
+    && bcpsrVolumeCoverageEnd left == bcpsrVolumeCoverageEnd right
+    && bcpsrVolumeFinalizedThrough left == bcpsrVolumeFinalizedThrough right
+    && bcpsrVolumeCoverageComplete left == bcpsrVolumeCoverageComplete right
     && bcpsrEarlierBucket left == bcpsrEarlierBucket right
 
 allNothing :: [Maybe value] -> Bool
@@ -1320,17 +1397,37 @@ getCurrentBasketCandle
 getCurrentBasketCandle conn seriesId chainId releaseRouter interval now = do
   let bucketStart = alignDown now interval
       router = normalizeRouter releaseRouter
-  metadata <- getCombinedMetadata conn seriesId chainId router interval
+  -- Current and paged reads share the same latest published history target so
+  -- their cache identity cannot disagree about the public coverage start.
+  -- Desired targets remain private while they ingest because history_target
+  -- selects only an immutable published generation.
+  metadata <- getNativeMetadata conn True seriesId chainId router interval
   rows <- query conn currentCandleRowSql
-    (chainId, router, seriesId, interval, bucketStart) :: IO [BasketCandleRow]
+    ( maybe False nmVolumeUsable metadata
+    , metadata >>= nmVolumeCoverageStart
+    , metadata >>= nmVolumeCoverageEnd
+    , metadata >>= nmVolumeFinalizedThrough
+    , chainId
+    , router
+    , seriesId
+    , interval
+    , bucketStart
+    ) :: IO [BasketCandleRow]
   pure
     CandleCurrent
       { ccCandle = listToMaybe rows
-      , ccCoverageStart = cmCoverageStart <$> metadata
-      , ccCoverageEnd = cmCoverageEnd <$> metadata
-      , ccFinalizedThrough = cmFinalizedThrough <$> metadata
-      , ccDatasetGeneration = maybe 0 cmGeneration metadata
-      , ccCoverageComplete = maybe False cmComplete metadata
+      , ccCoverageStart = nmCoverageStart <$> metadata
+      , ccCoverageEnd = nmCoverageEnd <$> metadata
+      , ccFinalizedThrough = nmFinalizedThrough <$> metadata
+      , ccDatasetGeneration = maybe 0 nmGeneration metadata
+      , ccCoverageComplete = maybe False nmComplete metadata
+      , ccVolumeCoverageStart = metadata >>= \row ->
+          trustedVolumeMetadata (nmVolumeUsable row) (nmVolumeCoverageStart row)
+      , ccVolumeCoverageEnd = metadata >>= \row ->
+          trustedVolumeMetadata (nmVolumeUsable row) (nmVolumeCoverageEnd row)
+      , ccVolumeFinalizedThrough = metadata >>= \row ->
+          trustedVolumeMetadata (nmVolumeUsable row) (nmVolumeFinalizedThrough row)
+      , ccVolumeCoverageComplete = maybe False nmVolumeUsable metadata
       }
 
 -- Range replacement is intentional: a repair must remove stale buckets whose
@@ -1670,6 +1767,48 @@ instance FromRow CoverageDbRow where
     CoverageDbRow <$> field <*> field <*> field <*> field <*> field <*> field <*> field
       <*> field <*> field
 
+-- Native reads are price-led. The current router's volume coverage is
+-- optional metadata used only to decide whether a historical bucket has
+-- proven volume (including a proven zero). It never clips price availability.
+data NativeMetadata = NativeMetadata
+  { nmCoverageStart :: Integer
+  , nmCoverageEnd :: Integer
+  , nmFinalizedThrough :: Integer
+  , nmGeneration :: Integer
+  , nmComplete :: Bool
+  , nmVolumeCoverageStart :: Maybe Integer
+  , nmVolumeCoverageEnd :: Maybe Integer
+  , nmVolumeFinalizedThrough :: Maybe Integer
+  , nmVolumeUsable :: Bool
+  }
+
+getNativeMetadata
+  :: Connection -> Bool -> Text -> Integer -> Text -> Integer -> IO (Maybe NativeMetadata)
+getNativeMetadata conn respectHistoryTarget seriesId chainId releaseRouter interval = do
+  rows <- query conn nativeMetadataSql
+    ( respectHistoryTarget
+    , currentDerivationVersion
+    , chainId
+    , normalizeRouter releaseRouter
+    , interval
+    , defaultCandleMarketId
+    , seriesId
+    )
+  pure $ listToMaybe rows
+
+instance FromRow NativeMetadata where
+  fromRow =
+    NativeMetadata
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
 data CombinedMetadata = CombinedMetadata
   { cmCoverageStart :: Integer
   , cmCoverageEnd :: Integer
@@ -1730,6 +1869,10 @@ instance FromRow BasketCandlePageSnapshotRow where
   fromRow =
     BasketCandlePageSnapshotRow
       <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
       <*> field
       <*> field
       <*> field
@@ -2077,7 +2220,7 @@ basketCandlePageSnapshotSql =
   "WITH input AS MATERIALIZED (\
   \ SELECT ?::bigint AS definition_at, ?::bigint AS chain_id, \
   \ ?::text AS release_router, ?::bigint AS interval_seconds, \
-  \ ?::bigint AS cursor, ?::text AS derivation_version\
+  \ ?::bigint AS cursor, ?::text AS derivation_version, ?::text AS market_id\
   \), definition AS MATERIALIZED (\
   \ SELECT d.series_id, d.configuration_hash, \
   \  (d.configuration ->> 'priceCap')::bigint AS display_price_cap, \
@@ -2086,41 +2229,102 @@ basketCandlePageSnapshotSql =
   \ WHERE d.active AND d.effective_from <= i.definition_at \
   \ AND (d.effective_to IS NULL OR d.effective_to > i.definition_at) \
   \ ORDER BY d.effective_from DESC, d.series_id ASC LIMIT 1\
-  \), combined AS MATERIALIZED (\
-  \ SELECT GREATEST(price.coverage_start, volume.coverage_start) AS coverage_start, \
-  \  LEAST(price.coverage_end, volume.coverage_end) AS coverage_end, \
-  \  LEAST(price.finalized_through, volume.finalized_through) AS finalized_through, \
-  \  price.generation * 67108864 + volume.generation AS dataset_generation, \
-  \  price.complete AND volume.complete \
-  \   AND price.generation > 0 AND price.generation < 67108864 \
+  \), canonical_market AS MATERIALIZED (\
+  \ SELECT market.market_id, market.chain_id, market.price_series_id \
+  \ FROM input i JOIN perps_candle_markets market \
+  \  ON market.market_id = i.market_id\
+  \), history_target AS MATERIALIZED (\
+  \ SELECT ((target.requested_start_timestamp + i.interval_seconds - 1) \
+  \   / i.interval_seconds) * i.interval_seconds AS selected_start, \
+  \  COALESCE(progress.complete \
+  \   AND progress.sample_interval_seconds = 60 \
+  \   AND progress.start_timestamp = ((target.requested_start_timestamp + 59) / 60) * 60 \
+  \   AND progress.next_timestamp = progress.end_timestamp_exclusive \
+  \   AND progress.last_error IS NULL \
+  \   AND progress.published_generation IS NOT NULL, FALSE) AS ingestion_complete \
+  \ FROM input i JOIN definition d ON TRUE \
+  \ JOIN canonical_market market \
+  \  ON market.chain_id = i.chain_id AND market.price_series_id = d.series_id \
+  \ JOIN LATERAL (\
+  \  SELECT target.revision, target.requested_start_timestamp \
+  \  FROM perps_candle_history_targets target \
+  \  JOIN perps_candle_history_ingestions published \
+  \   ON published.market_id = target.market_id \
+  \   AND published.target_revision = target.revision \
+  \   AND published.published_generation IS NOT NULL \
+  \  WHERE target.market_id = market.market_id \
+  \  ORDER BY target.revision DESC LIMIT 1\
+  \ ) target ON TRUE \
+  \ LEFT JOIN perps_candle_history_ingestions progress \
+  \  ON progress.market_id = market.market_id \
+  \  AND progress.target_revision = target.revision\
+  \), volume_state AS MATERIALIZED (\
+  \ SELECT volume.coverage_start, volume.coverage_end, volume.finalized_through, \
+  \  volume.generation, volume.complete \
   \   AND volume.generation > 0 AND volume.generation < 67108864 \
-  \   AND price.derivation_version = volume.derivation_version \
-  \   AND price.derivation_version = i.derivation_version AS coverage_complete \
+  \   AND volume.derivation_version = i.derivation_version \
+  \   AND volume.coverage_start IS NOT NULL AND volume.coverage_end IS NOT NULL \
+  \   AND volume.finalized_through IS NOT NULL \
+  \   AND volume.coverage_start < volume.coverage_end \
+  \   AND volume.finalized_through >= volume.coverage_start \
+  \   AND volume.finalized_through <= volume.coverage_end \
+  \   AND MOD(volume.coverage_start, i.interval_seconds) = 0 \
+  \   AND MOD(volume.coverage_end, i.interval_seconds) = 0 \
+  \   AND MOD(volume.finalized_through, i.interval_seconds) = 0 AS usable \
+  \ FROM input i LEFT JOIN perps_rollup_coverage volume \
+  \  ON volume.kind = 'volume' AND volume.series_id = '' \
+  \  AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
+  \  AND volume.interval_seconds = i.interval_seconds\
+  \), metadata AS MATERIALIZED (\
+  \ SELECT COALESCE(history_target.selected_start, price.coverage_start) AS coverage_start, \
+  \  price.coverage_end, price.finalized_through, \
+  \  price.generation * 134217728 \
+  \   + CASE WHEN volume.generation > 0 AND volume.generation < 67108864 \
+  \          THEN volume.generation * 2 ELSE 0 END \
+  \   + CASE WHEN COALESCE(volume.usable, FALSE) THEN 1 ELSE 0 END \
+  \     AS dataset_generation, \
+  \  price.complete AND price.generation > 0 AND price.generation < 67108864 \
+  \   AND price.derivation_version = i.derivation_version \
+  \   AND (NOT EXISTS (SELECT 1 FROM canonical_market) \
+  \     OR EXISTS (SELECT 1 FROM canonical_market market \
+  \       WHERE market.chain_id = i.chain_id \
+  \       AND market.price_series_id = d.series_id)) \
+  \   AND (history_target.selected_start IS NULL \
+  \     OR (history_target.ingestion_complete \
+  \       AND price.coverage_start <= history_target.selected_start \
+  \       AND history_target.selected_start < price.coverage_end \
+  \       AND history_target.selected_start <= price.finalized_through)) \
+  \     AS coverage_complete, \
+  \  volume.coverage_start AS volume_coverage_start, \
+  \  volume.coverage_end AS volume_coverage_end, \
+  \  volume.finalized_through AS volume_finalized_through, \
+  \  COALESCE(volume.usable, FALSE) AS volume_usable \
   \ FROM definition d CROSS JOIN input i \
   \ JOIN perps_rollup_coverage price \
   \  ON price.kind = 'price' AND price.series_id = d.series_id \
   \  AND price.chain_id = 0 AND price.release_router = '' \
   \  AND price.interval_seconds = i.interval_seconds \
-  \ JOIN perps_rollup_coverage volume \
-  \  ON volume.kind = 'volume' AND volume.series_id = '' \
-  \  AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
-  \  AND volume.interval_seconds = price.interval_seconds \
-  \ WHERE price.coverage_start IS NOT NULL AND volume.coverage_start IS NOT NULL \
-  \ AND price.coverage_end IS NOT NULL AND volume.coverage_end IS NOT NULL \
-  \ AND price.finalized_through IS NOT NULL AND volume.finalized_through IS NOT NULL\
+  \ LEFT JOIN volume_state volume ON TRUE \
+  \ LEFT JOIN history_target ON TRUE \
+  \ WHERE price.coverage_start IS NOT NULL AND price.coverage_end IS NOT NULL \
+  \ AND price.finalized_through IS NOT NULL\
   \), bounds AS MATERIALIZED (\
   \ SELECT metadata.*, \
   \  GREATEST(i.cursor - i.interval_seconds * 500, metadata.coverage_start) \
   \   AS effective_start, \
   \  LEAST(i.cursor, metadata.coverage_end, metadata.finalized_through) \
   \   AS effective_end \
-  \ FROM combined metadata CROSS JOIN input i\
+  \ FROM metadata CROSS JOIN input i\
   \) SELECT \
   \ (definition.series_id IS NOT NULL), definition.series_id, \
   \ definition.configuration_hash, definition.display_price_cap, \
   \ definition.effective_from, definition.effective_to, \
   \ (bounds.coverage_start IS NOT NULL), bounds.coverage_start, bounds.coverage_end, \
   \ bounds.finalized_through, bounds.dataset_generation, bounds.coverage_complete, \
+  \ CASE WHEN bounds.volume_usable THEN bounds.volume_coverage_start END, \
+  \ CASE WHEN bounds.volume_usable THEN bounds.volume_coverage_end END, \
+  \ CASE WHEN bounds.volume_usable THEN bounds.volume_finalized_through END, \
+  \ bounds.volume_usable, \
   \ earlier.bucket_start, (candle.bucket_start IS NOT NULL), \
   \ candle.bucket_start, candle.raw_open_price, candle.raw_high_price, \
   \ candle.raw_low_price, candle.raw_close_price, candle.sample_count, \
@@ -2141,12 +2345,30 @@ basketCandlePageSnapshotSql =
   \ SELECT price.bucket_start, price.raw_open_price, price.raw_high_price, \
   \  price.raw_low_price, price.raw_close_price, price.sample_count, price.quality, \
   \  price.revision, price.finalized AS price_complete, \
-  \  COALESCE(volume.volume_numerator, 0::numeric) AS volume_numerator, \
-  \  COALESCE(volume.trade_count, 0) AS trade_count, \
-  \  COALESCE(volume.finalized, TRUE) AS volume_complete \
+  \  CASE WHEN bounds.volume_usable \
+  \    AND price.bucket_start >= bounds.volume_coverage_start \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \    AND COALESCE(volume.finalized, TRUE) \
+  \   THEN COALESCE(volume.volume_numerator, 0::numeric) END AS volume_numerator, \
+  \  CASE WHEN bounds.volume_usable \
+  \    AND price.bucket_start >= bounds.volume_coverage_start \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \    AND COALESCE(volume.finalized, TRUE) \
+  \   THEN COALESCE(volume.trade_count, 0) END AS trade_count, \
+  \  bounds.volume_usable \
+  \    AND price.bucket_start >= bounds.volume_coverage_start \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \    AND COALESCE(volume.finalized, TRUE) AS volume_complete \
   \ FROM perps_basket_candles price CROSS JOIN input i \
   \ LEFT JOIN perps_market_volume_rollups volume \
-  \  ON volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
+  \  ON bounds.volume_usable \
+  \  AND price.bucket_start >= bounds.volume_coverage_start \
+  \  AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
+  \  AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
+  \  AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
   \  AND volume.interval_seconds = price.interval_seconds \
   \  AND volume.bucket_start = price.bucket_start \
   \ WHERE bounds.coverage_complete AND bounds.effective_start < bounds.effective_end \
@@ -2158,15 +2380,32 @@ basketCandlePageSnapshotSql =
   \) candle ON TRUE \
   \ORDER BY candle.bucket_start ASC NULLS LAST"
 
-candleRowsSql :: Query
-candleRowsSql =
-  "SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
+nativeCandleRowsSql :: Query
+nativeCandleRowsSql =
+  "WITH volume_metadata AS (SELECT ?::boolean AS usable, \
+  \ ?::bigint AS coverage_start, ?::bigint AS coverage_end, \
+  \ ?::bigint AS finalized_through) \
+  \SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
   \c.raw_close_price, c.sample_count, c.quality, c.revision, c.finalized, \
-  \COALESCE(v.volume_numerator, 0::numeric), COALESCE(v.trade_count, 0), \
-  \COALESCE(v.finalized, TRUE) \
-  \FROM perps_basket_candles c \
+  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= m.coverage_end \
+  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \ AND COALESCE(v.finalized, TRUE) \
+  \ THEN COALESCE(v.volume_numerator, 0::numeric) END, \
+  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= m.coverage_end \
+  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \ AND COALESCE(v.finalized, TRUE) THEN COALESCE(v.trade_count, 0) END, \
+  \m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= m.coverage_end \
+  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \ AND COALESCE(v.finalized, TRUE) \
+  \FROM perps_basket_candles c CROSS JOIN volume_metadata m \
   \LEFT JOIN perps_market_volume_rollups v \
-  \ ON v.chain_id = ? AND v.release_router = ? \
+  \ ON m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= m.coverage_end \
+  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \ AND v.chain_id = ? AND v.release_router = ? \
   \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
   \WHERE c.series_id = ? AND c.interval_seconds = ? \
   \AND c.bucket_start >= ? AND c.bucket_start < ? \
@@ -2185,6 +2424,92 @@ candleRangeRowsSql =
   \WHERE c.series_id = ? AND c.interval_seconds = ? \
   \AND c.bucket_start >= ? AND c.bucket_start < ? \
   \ORDER BY c.bucket_start ASC LIMIT ?"
+
+nativeMetadataSql :: Query
+nativeMetadataSql =
+  "WITH input AS MATERIALIZED (\
+  \ SELECT ?::boolean AS respect_history_target, ?::text AS derivation_version, \
+  \ ?::bigint AS chain_id, ?::text AS release_router, \
+  \ ?::bigint AS interval_seconds, ?::text AS market_id, ?::text AS series_id\
+  \), volume AS MATERIALIZED (\
+  \ SELECT coverage.coverage_start, coverage.coverage_end, \
+  \  coverage.finalized_through, coverage.generation, \
+  \  coverage.complete AND coverage.generation > 0 \
+  \   AND coverage.generation < 67108864 \
+  \   AND coverage.derivation_version = i.derivation_version \
+  \   AND coverage.coverage_start IS NOT NULL \
+  \   AND coverage.coverage_end IS NOT NULL \
+  \   AND coverage.finalized_through IS NOT NULL \
+  \   AND coverage.coverage_start < coverage.coverage_end \
+  \   AND coverage.finalized_through >= coverage.coverage_start \
+  \   AND coverage.finalized_through <= coverage.coverage_end \
+  \   AND MOD(coverage.coverage_start, i.interval_seconds) = 0 \
+  \   AND MOD(coverage.coverage_end, i.interval_seconds) = 0 \
+  \   AND MOD(coverage.finalized_through, i.interval_seconds) = 0 AS usable \
+  \ FROM input i LEFT JOIN perps_rollup_coverage coverage \
+  \  ON coverage.kind = 'volume' AND coverage.series_id = '' \
+  \  AND coverage.chain_id = i.chain_id \
+  \  AND coverage.release_router = i.release_router \
+  \  AND coverage.interval_seconds = i.interval_seconds\
+  \), canonical_market AS MATERIALIZED (\
+  \ SELECT market.market_id, market.chain_id, market.price_series_id \
+  \ FROM input i JOIN perps_candle_markets market \
+  \  ON market.market_id = i.market_id\
+  \), history_target AS MATERIALIZED (\
+  \ SELECT ((target.requested_start_timestamp + i.interval_seconds - 1) \
+  \   / i.interval_seconds) * i.interval_seconds AS selected_start, \
+  \  COALESCE(progress.complete \
+  \   AND progress.sample_interval_seconds = 60 \
+  \   AND progress.start_timestamp = ((target.requested_start_timestamp + 59) / 60) * 60 \
+  \   AND progress.next_timestamp = progress.end_timestamp_exclusive \
+  \   AND progress.last_error IS NULL \
+  \   AND progress.published_generation IS NOT NULL, FALSE) AS ingestion_complete \
+  \ FROM input i JOIN canonical_market market \
+  \  ON market.chain_id = i.chain_id AND market.price_series_id = i.series_id \
+  \ JOIN LATERAL (\
+  \  SELECT target.revision, target.requested_start_timestamp \
+  \  FROM perps_candle_history_targets target \
+  \  JOIN perps_candle_history_ingestions published \
+  \   ON published.market_id = target.market_id \
+  \   AND published.target_revision = target.revision \
+  \   AND published.published_generation IS NOT NULL \
+  \  WHERE target.market_id = market.market_id \
+  \  ORDER BY target.revision DESC LIMIT 1\
+  \ ) target ON TRUE \
+  \ LEFT JOIN perps_candle_history_ingestions progress \
+  \  ON progress.market_id = market.market_id \
+  \  AND progress.target_revision = target.revision \
+  \ WHERE i.respect_history_target\
+  \) SELECT CASE WHEN i.respect_history_target \
+  \ THEN COALESCE(history_target.selected_start, price.coverage_start) \
+  \ ELSE price.coverage_start END, \
+  \ price.coverage_end, price.finalized_through, \
+  \ price.generation * 134217728 \
+  \  + CASE WHEN volume.generation > 0 AND volume.generation < 67108864 \
+  \         THEN volume.generation * 2 ELSE 0 END \
+  \  + CASE WHEN COALESCE(volume.usable, FALSE) THEN 1 ELSE 0 END, \
+  \ price.complete AND price.generation > 0 AND price.generation < 67108864 \
+  \  AND price.derivation_version = i.derivation_version \
+  \  AND (NOT EXISTS (SELECT 1 FROM canonical_market) \
+  \    OR EXISTS (SELECT 1 FROM canonical_market market \
+  \      WHERE market.chain_id = i.chain_id \
+  \      AND market.price_series_id = i.series_id)) \
+  \  AND (NOT i.respect_history_target \
+  \    OR history_target.selected_start IS NULL \
+  \      OR (history_target.ingestion_complete \
+  \        AND price.coverage_start <= history_target.selected_start \
+  \        AND history_target.selected_start < price.coverage_end \
+  \        AND history_target.selected_start <= price.finalized_through)), \
+  \ volume.coverage_start, volume.coverage_end, volume.finalized_through, \
+  \ COALESCE(volume.usable, FALSE) \
+  \FROM input i JOIN perps_rollup_coverage price \
+  \ ON price.kind = 'price' AND price.series_id = i.series_id \
+  \ AND price.chain_id = 0 AND price.release_router = '' \
+  \ AND price.interval_seconds = i.interval_seconds \
+  \LEFT JOIN volume ON TRUE \
+  \LEFT JOIN history_target ON TRUE \
+  \WHERE price.coverage_start IS NOT NULL AND price.coverage_end IS NOT NULL \
+  \AND price.finalized_through IS NOT NULL"
 
 combinedMetadataSql :: Query
 combinedMetadataSql =
@@ -2211,12 +2536,23 @@ combinedMetadataSql =
 
 currentCandleRowSql :: Query
 currentCandleRowSql =
-  "SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
+  "WITH volume_metadata AS (SELECT ?::boolean AS usable, \
+  \ ?::bigint AS coverage_start, ?::bigint AS coverage_end, \
+  \ ?::bigint AS finalized_through) \
+  \SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, c.raw_low_price, \
   \c.raw_close_price, c.sample_count, c.quality, c.revision, c.finalized, \
-  \v.volume_numerator, v.trade_count, (v.bucket_start IS NOT NULL AND v.finalized) \
-  \FROM perps_basket_candles c \
+  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start <= m.coverage_end THEN v.volume_numerator END, \
+  \CASE WHEN m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start <= m.coverage_end THEN v.trade_count END, \
+  \m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start + c.interval_seconds <= m.finalized_through \
+  \ AND v.bucket_start IS NOT NULL AND v.finalized \
+  \FROM perps_basket_candles c CROSS JOIN volume_metadata m \
   \LEFT JOIN perps_market_volume_rollups v \
-  \ ON v.chain_id = ? AND v.release_router = ? \
+  \ ON m.usable AND c.bucket_start >= m.coverage_start \
+  \ AND c.bucket_start <= m.coverage_end \
+  \ AND v.chain_id = ? AND v.release_router = ? \
   \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
   \WHERE c.series_id = ? AND c.interval_seconds = ? AND c.bucket_start = ? LIMIT 1"
 
@@ -2568,4 +2904,28 @@ candleTableSchemaStatements =
     \ (last_error IS DISTINCT FROM 'bounded_admin_repair' \
     \ AND maintenance_from IS NULL AND maintenance_to IS NULL)); \
     \ END IF; END $maintenance_constraint$"
+  , "CREATE OR REPLACE FUNCTION protect_perps_rollup_generation_monotonic() \
+    \RETURNS TRIGGER LANGUAGE plpgsql AS $rollup_generation$ BEGIN \
+    \IF NEW.generation < OLD.generation THEN \
+    \ RAISE EXCEPTION 'perps rollup generation cannot decrease' USING ERRCODE = '23514'; \
+    \END IF; \
+    \IF NEW.generation = OLD.generation AND (\
+    \ OLD.derivation_version IS DISTINCT FROM NEW.derivation_version OR (\
+    \  OLD.complete AND OLD.coverage_start IS NOT NULL AND OLD.coverage_end IS NOT NULL \
+    \  AND OLD.finalized_through IS NOT NULL AND (NOT NEW.complete \
+    \   OR NEW.coverage_start IS NULL OR NEW.coverage_end IS NULL \
+    \   OR NEW.finalized_through IS NULL \
+    \   OR NEW.coverage_start > OLD.coverage_start \
+    \   OR NEW.coverage_end < OLD.coverage_end \
+    \   OR NEW.finalized_through < OLD.finalized_through))) THEN \
+    \ RAISE EXCEPTION 'perps rollup usability regression requires a new generation' \
+    \ USING ERRCODE = '23514'; \
+    \END IF; RETURN NEW; END $rollup_generation$"
+  , "DO $rollup_generation_trigger$ BEGIN IF NOT EXISTS (\
+    \ SELECT 1 FROM pg_trigger WHERE tgname = 'perps_rollup_generation_monotonic' \
+    \ AND tgrelid = 'perps_rollup_coverage'::regclass) THEN \
+    \ CREATE TRIGGER perps_rollup_generation_monotonic BEFORE UPDATE \
+    \ ON perps_rollup_coverage FOR EACH ROW \
+    \ EXECUTE FUNCTION protect_perps_rollup_generation_monotonic(); \
+    \ END IF; END $rollup_generation_trigger$"
   ]

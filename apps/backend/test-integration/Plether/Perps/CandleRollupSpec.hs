@@ -12,7 +12,7 @@ import Control.Concurrent
   , tryPutMVar
   )
 import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
-import Control.Monad (forM_, void)
+import Control.Monad (forM_, void, when)
 import Data.Aeson (Value, object, (.=))
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isLeft, isRight)
@@ -45,6 +45,24 @@ import Plether.Config
   , PerpsCandleWriteMode (PerpsCandleWritesDual)
   )
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database.CandleHistory
+  ( CandleHistoryIngestionProgress (..)
+  , CandleHistorySelection (..)
+  , appendCandleHistorySelection
+  , candleHistorySelectionIsAbsent
+  , candleHistorySelectionIsLatest
+  , completeCandleHistoryIngestionWindow
+  , defaultCandleMarketId
+  , ensureCandleMarketIdentity
+  , getCandleHistoryIngestionProgress
+  , getLatestCandleHistoryIngestionProgress
+  , getLatestPublishedCandleHistoryIngestion
+  , getLatestCandleHistorySelection
+  , initializeCandleHistoryIngestionProgress
+  , publishCandleHistoryIngestion
+  , recordCandleHistoryIngestionError
+  , validateCandleHistoryIngestionCompletion
+  )
 import Plether.Database.Candles
   ( BasketCandleRow (..)
   , BasketObservationInput (..)
@@ -57,6 +75,7 @@ import Plether.Database.Candles
   , advanceMarketVolumeCoverage
   , backfillLegacyBasketSnapshots
   , backfillMarketVolume
+  , bumpRollupDatasetGeneration
   , canonicalCandleIntervals
   , defaultBasketSeriesId
   , ensureCandleSchema
@@ -83,9 +102,11 @@ import Plether.Database.Schema
   , ensureBasketSnapshotSchema
   , ensurePerpsHistorySchema
   , insertBasketSnapshotWithSource
+  , insertBasketSnapshotsWithSource
   , insertPerpsActivity
   , insertPerpsEvent
   )
+import Plether.Pyth.History (filterTradingViewHistorySamplesForPersistence)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
 import System.Process (CreateProcess (..), proc, readCreateProcessWithExitCode)
@@ -121,7 +142,7 @@ candleRollupSpec databaseUrl =
           ensureCandleSchema connection
           after <- candleRelationOids connection
           after `shouldBe` before
-          length after `shouldBe` 8
+          length after `shouldBe` 10
           candleActivityIndexValidity connection `shouldReturn` [Only True]
           candleEventIndexValidity connection `shouldReturn` [Only True]
           candleActivityReorgIndexValidity connection `shouldReturn` [Only True]
@@ -167,6 +188,317 @@ candleRollupSpec databaseUrl =
             seedCandleHistoryMarket connection
             insertHistoryTarget connection 2 946_684_801 "history-target-gap"
               `shouldThrow` sqlErrorContaining "must append the next revision"
+
+    it "appends auditable history targets idempotently without requiring release rows" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          ensureCandleMarketIdentity
+            connection defaultCandleMarketId testChainId testSeries
+          -- Repeating the exact identity is safe, while a conflicting runtime
+          -- binding fails instead of silently selecting another market.
+          ensureCandleMarketIdentity
+            connection defaultCandleMarketId testChainId testSeries
+          ensureCandleMarketIdentity
+            connection defaultCandleMarketId (testChainId + 1) testSeries
+            `shouldThrow` anyException
+          let appendTarget requestedStart requestReference =
+                appendCandleHistorySelection
+                  connection defaultCandleMarketId testChainId testSeries
+                  requestedStart "integration-test" requestReference
+              readLatest =
+                getLatestCandleHistorySelection
+                  connection defaultCandleMarketId testChainId testSeries
+
+          readLatest `shouldReturn` Nothing
+          ( withTransaction connection $
+              candleHistorySelectionIsAbsent
+                connection defaultCandleMarketId testChainId testSeries
+            )
+            `shouldReturn` True
+
+          (firstSelection, firstInserted) <-
+            appendTarget 946_684_801 "history-append-1"
+          firstInserted `shouldBe` True
+          chsRevision firstSelection `shouldBe` 1
+          ( withTransaction connection $
+              candleHistorySelectionIsAbsent
+                connection defaultCandleMarketId testChainId testSeries
+            )
+            `shouldReturn` False
+
+          (retriedSelection, retryInserted) <-
+            appendTarget 946_684_801 "history-append-1"
+          retriedSelection `shouldBe` firstSelection
+          retryInserted `shouldBe` False
+
+          appendTarget 946_684_802 "history-append-1"
+            `shouldThrow` anyException
+
+          (latestSelection, latestInserted) <-
+            appendTarget 1_700_000_001 "history-append-2"
+          latestInserted `shouldBe` True
+          chsRevision latestSelection `shouldBe` 2
+          readLatest `shouldReturn` Just latestSelection
+
+          marketRows <-
+            query
+              connection
+              "SELECT chain_id, price_series_id FROM perps_candle_markets \
+              \WHERE market_id = ?"
+              (Only defaultCandleMarketId) :: IO [(Integer, Text)]
+          marketRows `shouldBe` [(testChainId, testSeries)]
+          releaseRows <-
+            query
+              connection
+              "SELECT COUNT(*)::BIGINT FROM perps_market_release_epochs \
+              \WHERE market_id = ?"
+              (Only defaultCandleMarketId) :: IO [Only Integer]
+          releaseRows `shouldBe` [Only 0]
+
+    it "advances only contiguous proved ingestion windows and exposes the exact latest revision" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          ensureCandleMarketIdentity
+            connection defaultCandleMarketId testChainId testSeries
+          (firstSelection, _) <-
+            withTransaction connection $
+              appendCandleHistorySelection
+                connection defaultCandleMarketId testChainId testSeries
+                1_700_000_001 "integration-test" "history-progress-1"
+          let startTimestamp = 1_700_000_040
+              middleTimestamp = startTimestamp + 120
+              endTimestampExclusive = startTimestamp + 180
+          initial <-
+            withTransaction connection $ do
+              isLatest <-
+                candleHistorySelectionIsLatest
+                  connection testChainId testSeries firstSelection
+              isLatest `shouldBe` True
+              initializeCandleHistoryIngestionProgress
+                connection firstSelection startTimestamp endTimestampExclusive 60
+          chipNextTimestamp initial `shouldBe` startTimestamp
+          chipComplete initial `shouldBe` False
+
+          withTransaction connection $
+            recordCandleHistoryIngestionError
+              connection firstSelection startTimestamp "partial component timestamp set"
+          errored <-
+            getCandleHistoryIngestionProgress
+              connection defaultCandleMarketId (chsRevision firstSelection)
+          chipLastError <$> errored
+            `shouldBe` Just (Just "partial component timestamp set")
+
+          firstWindow <-
+            withTransaction connection $
+              completeCandleHistoryIngestionWindow
+                connection firstSelection startTimestamp middleTimestamp 0
+          chipNextTimestamp firstWindow `shouldBe` middleTimestamp
+          chipComplete firstWindow `shouldBe` False
+          chipLastError firstWindow `shouldBe` Nothing
+
+          completed <-
+            withTransaction connection $
+              completeCandleHistoryIngestionWindow
+                connection firstSelection middleTimestamp endTimestampExclusive 1
+          validateCandleHistoryIngestionCompletion firstSelection completed
+            `shouldBe` Right ()
+          completedWindows <-
+            query
+              connection
+              "SELECT window_start, window_end_exclusive, sample_count \
+              \FROM perps_candle_history_ingestion_windows \
+              \WHERE market_id = ? AND target_revision = ? ORDER BY window_start"
+              (defaultCandleMarketId, chsRevision firstSelection)
+              :: IO [(Integer, Integer, Integer)]
+          completedWindows
+            `shouldBe`
+              [ (startTimestamp, middleTimestamp, 0)
+              , (middleTimestamp, endTimestampExclusive, 1)
+              ]
+          getLatestCandleHistoryIngestionProgress
+            connection defaultCandleMarketId testChainId testSeries
+            `shouldReturn` Just (firstSelection, Just completed)
+          getLatestPublishedCandleHistoryIngestion
+            connection defaultCandleMarketId testChainId testSeries
+            `shouldReturn` Nothing
+          published <-
+            withTransaction connection $
+              publishCandleHistoryIngestion connection firstSelection 7
+          chipPublishedGeneration published `shouldBe` Just 7
+          getLatestPublishedCandleHistoryIngestion
+            connection defaultCandleMarketId testChainId testSeries
+            `shouldReturn` Just (firstSelection, published)
+          execute
+            connection
+            "UPDATE perps_candle_history_ingestions SET published_generation = 8 \
+            \WHERE market_id = ? AND target_revision = ?"
+            (defaultCandleMarketId, chsRevision firstSelection)
+            `shouldThrow` sqlErrorContaining "candle history publication is immutable"
+
+          (replacement, _) <-
+            withTransaction connection $
+              appendCandleHistorySelection
+                connection defaultCandleMarketId testChainId testSeries
+                946_684_801 "integration-test" "history-progress-2"
+          ( withTransaction connection $
+              candleHistorySelectionIsLatest
+                connection testChainId testSeries firstSelection
+            )
+            `shouldReturn` False
+          getLatestCandleHistoryIngestionProgress
+            connection defaultCandleMarketId testChainId testSeries
+            `shouldReturn` Just (replacement, Nothing)
+          getLatestPublishedCandleHistoryIngestion
+            connection defaultCandleMarketId testChainId testSeries
+            `shouldReturn` Just (firstSelection, published)
+
+    it "serializes a fetched legacy write with history-target selection" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \legacyConnection -> do
+          ensureCurrentBasketDefinition legacyConnection testSeries
+          ensureCandleMarketIdentity
+            legacyConnection defaultCandleMarketId testChainId testSeries
+          targetStarted <- newEmptyMVar
+          targetDone <- newEmptyMVar
+          let legacyTimestamp = baseTime
+              legacyPrice = 99_000_000
+          withTransaction legacyConnection $ do
+            allowed <-
+              candleHistorySelectionIsAbsent
+                legacyConnection defaultCandleMarketId testChainId testSeries
+            allowed `shouldBe` True
+            _ <- forkIO $ do
+              putMVar targetStarted ()
+              result <- try @SomeException $
+                withDb pool $ \targetConnection -> withTransaction targetConnection $
+                  appendCandleHistorySelection
+                    targetConnection defaultCandleMarketId testChainId testSeries
+                    (legacyTimestamp - 86_400) "integration-test" "legacy-race-target"
+              putMVar targetDone result
+            takeMVar targetStarted
+            -- Target selection takes the same market-row lock and therefore
+            -- cannot commit until this already-authorized legacy write does.
+            threadDelay 100_000
+            blockedTargetResult <- timeout 100_000 (takeMVar targetDone)
+            case blockedTargetResult of
+              Nothing -> pure ()
+              Just _ -> expectationFailure "History-target selection did not wait for the legacy write"
+            insertBasketSnapshotWithSource
+              legacyConnection legacyTimestamp 60 legacyPrice componentPayload legacySnapshotSource
+
+          targetResult <- timeout 5_000_000 $ takeMVar targetDone
+          case targetResult of
+            Just (Right (_, True)) -> pure ()
+            Just (Right _) -> expectationFailure "History-target race insert was not new"
+            Just (Left err) -> expectationFailure $ "History-target race failed: " <> displayException err
+            Nothing -> expectationFailure "History-target race remained blocked after legacy commit"
+
+          persistedAfterSelection <- withTransaction legacyConnection $ do
+            allowed <-
+              candleHistorySelectionIsAbsent
+                legacyConnection defaultCandleMarketId testChainId testSeries
+            when allowed $
+              insertBasketSnapshotWithSource
+                legacyConnection legacyTimestamp 60 (legacyPrice + 1) componentPayload targetHistorySnapshotSource
+            pure allowed
+          persistedAfterSelection `shouldBe` False
+          query
+            legacyConnection
+            "SELECT basket_price, source FROM perps_basket_snapshots \
+            \WHERE timestamp = ? AND interval_seconds = 60"
+            (Only legacyTimestamp)
+            `shouldReturn` [(legacyPrice, legacySnapshotSource)]
+
+    it "does not change published raw inputs while bounded repair disables coverage" $
+      withCandleAdminDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          let coverageStart = baseTime
+              coverageEnd = baseTime + 86_400
+              prefixTimestamp = coverageStart - 60
+              publishedPrice = 100_000_000
+              targetPrice = 101_000_000
+          insertBasketSnapshotWithSource
+            connection coverageStart 60 publishedPrice componentPayload legacySnapshotSource
+          _ <-
+            backfillLegacyBasketSnapshots
+              connection defaultBasketSeriesId coverageStart coverageEnd
+          forM_ canonicalCandleIntervals $ \interval ->
+            upsertRollupCoverage connection $
+              RollupCoverage
+                { rcKind = PriceRollup
+                , rcSeriesId = Just defaultBasketSeriesId
+                , rcChainId = Nothing
+                , rcReleaseRouter = Nothing
+                , rcIntervalSeconds = interval
+                , rcCoverageStart = Just coverageStart
+                , rcCoverageEnd = Just coverageEnd
+                , rcFinalizedThrough = Just coverageEnd
+                , rcGeneration = 3
+                , rcComplete = True
+                , rcDerivationVersion = "v1"
+                , rcLastError = Nothing
+                , rcMaintenanceFrom = Nothing
+                , rcMaintenanceTo = Nothing
+                }
+          _ <-
+            beginRollupMaintenance
+              connection
+              PriceRollup
+              (Just defaultBasketSeriesId)
+              Nothing
+              Nothing
+              coverageStart
+              coverageEnd
+          coverage <-
+            getRollupCoverage
+              connection PriceRollup (Just defaultBasketSeriesId) Nothing Nothing 60
+          fmap rcComplete coverage `shouldBe` Just False
+          fmap rcLastError coverage `shouldBe` Just (Just "bounded_admin_repair")
+          let fetchedTargetSamples =
+                [ (prefixTimestamp, targetPrice, componentPayload)
+                , (coverageStart, targetPrice, componentPayload)
+                , (coverageEnd, targetPrice, componentPayload)
+                ]
+          safeTargetSamples <-
+            either (fail . Text.unpack) pure $
+              filterTradingViewHistorySamplesForPersistence
+                coverage
+                fetchedTargetSamples
+          insertBasketSnapshotsWithSource
+            connection
+            [ (timestamp, 60, price, components)
+            | (timestamp, price, components) <- safeTargetSamples
+            ]
+            targetHistorySnapshotSource
+
+          storedSnapshots <-
+            query
+              connection
+              "SELECT timestamp, basket_price, source FROM perps_basket_snapshots \
+              \WHERE timestamp IN (?, ?, ?) ORDER BY timestamp"
+              (prefixTimestamp, coverageStart, coverageEnd)
+              :: IO [(Integer, Integer, Text)]
+          storedSnapshots
+            `shouldBe`
+              [ (prefixTimestamp, targetPrice, targetHistorySnapshotSource)
+              , (coverageStart, publishedPrice, legacySnapshotSource)
+              ]
+
+          -- The same source reconstruction CandleAdmin verifies remains
+          -- unchanged because target inputs never enter the protected overlap.
+          _ <-
+            backfillLegacyBasketSnapshots
+              connection defaultBasketSeriesId coverageStart coverageEnd
+          reconstructed <-
+            query
+              connection
+              "SELECT raw_close_price, sample_count FROM perps_basket_candles \
+              \WHERE series_id = ? AND interval_seconds = 60 AND bucket_start = ?"
+              (defaultBasketSeriesId, coverageStart) :: IO [(Integer, Int)]
+          reconstructed `shouldBe` [(publishedPrice, 1)]
 
     it "keeps logical markets and release evidence immutable and ordered" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -774,141 +1106,375 @@ candleRollupSpec databaseUrl =
             coverage <- requireVolumeCoverage connection interval
             rcGeneration coverage `shouldBe` 8
 
-    it "requires combined complete coverage and skips sparse pages correctly" $
+    it "serves price-led native pages while legacy compatibility remains volume-bounded" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           let cursor = baseTime + pageSpan60
-              coverageStart = baseTime - pageSpan60
-              emptyPage = CandlePage [] Nothing False Nothing Nothing Nothing 0 False
+              priceCoverageStart = baseTime - pageSpan60
+              volumeCoverageStart = baseTime + 900
+              expectedBuckets = [baseTime, baseTime + 900, baseTime + 1800]
+              emptyPage =
+                CandlePage [] Nothing False Nothing Nothing Nothing 0 False
+                  Nothing Nothing Nothing False
           ensureCurrentBasketDefinition connection testSeries
+          (initialHistorySelection, _) <-
+            appendCandleHistorySelection
+              connection
+              defaultCandleMarketId
+              testChainId
+              testSeries
+              priceCoverageStart
+              "integration-test"
+              "native-price-led-history"
+          _ <-
+            initializeCandleHistoryIngestionProgress
+              connection initialHistorySelection priceCoverageStart cursor 60
+          _ <-
+            completeCandleHistoryIngestionWindow
+              connection initialHistorySelection priceCoverageStart cursor 0
           expectedDefinition <-
             getActiveBasketDefinitionIdentity connection (cursor - 1)
-          (definitionWithoutCoverage, pageWithoutCoverage) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 cursor
-          definitionWithoutCoverage `shouldBe` expectedDefinition
+          let readNativePage pageCursor = do
+                plainPage <-
+                  getBasketCandlePage
+                    connection testSeries testChainId testRouter 60 pageCursor
+                (definition, snapshotPage) <-
+                  getBasketCandlePageSnapshot
+                    connection (cursor - 1) testChainId testRouter 60 pageCursor
+                definition `shouldBe` expectedDefinition
+                snapshotPage `shouldBe` plainPage
+                pure snapshotPage
+              assertPriceRows page =
+                map bcrBucketStart (cpCandles page) `shouldBe` expectedBuckets
+              assertUnknownVolume page = do
+                map bcrVolumeNumerator (cpCandles page)
+                  `shouldBe` replicate 3 Nothing
+                map bcrTradeCount (cpCandles page)
+                  `shouldBe` replicate 3 Nothing
+                map bcrVolumeComplete (cpCandles page)
+                  `shouldBe` replicate 3 False
+
+          pageWithoutCoverage <- readNativePage cursor
           pageWithoutCoverage `shouldBe` emptyPage
 
           insertObservation connection "earlier" (baseTime - 55) 80 "signed_pyth" 100
-          insertObservation connection "page-first" (baseTime + 5) 100 "signed_pyth" 100
-          insertObservation connection "page-sparse" (baseTime + 905) 120 "signed_pyth" 100
-          insertActivity connection "page-volume" (baseTime + 5) 150 7 11 "Open"
-          forM_ [baseTime - 55, baseTime + 5, baseTime + 905] $ \timestamp ->
+          insertObservation connection "pre-volume-price" (baseTime + 5) 100 "signed_pyth" 100
+          insertObservation connection "covered-volume-price" (baseTime + 905) 120 "signed_pyth" 100
+          insertObservation connection "covered-zero-price" (baseTime + 1805) 140 "signed_pyth" 100
+          insertActivity connection "covered-page-volume" (baseTime + 905) 150 7 11 "Open"
+          forM_ [baseTime - 55, baseTime + 5, baseTime + 905, baseTime + 1805] $ \timestamp ->
             recomputeBasketCandleHierarchy connection testSeries timestamp 0
           recomputeMarketVolumeHierarchy
-            connection testChainId testRouter (baseTime + 5) 0
+            connection testChainId testRouter (baseTime + 905) 0
+          putPriceCoverage
+            connection 60 priceCoverageStart cursor cursor 2 True
+          _ <-
+            publishCandleHistoryIngestion
+              connection initialHistorySelection 2
 
-          putPriceCoverageVersion
-            connection 60 coverageStart cursor cursor 1 True "v0"
+          -- Price coverage alone is sufficient for native history. Absence of
+          -- current-router volume metadata is represented as unknown, not as a
+          -- fabricated zero and not as a failed price page.
+          noVolume <- readNativePage cursor
+          assertPriceRows noVolume
+          assertUnknownVolume noVolume
+          cpCoverageStart noVolume `shouldBe` Just priceCoverageStart
+          cpCoverageEnd noVolume `shouldBe` Just cursor
+          cpFinalizedThrough noVolume `shouldBe` Just cursor
+          cpCoverageComplete noVolume `shouldBe` True
+          cpDatasetGeneration noVolume `shouldSatisfy` (> 0)
+          cpVolumeCoverageStart noVolume `shouldBe` Nothing
+          cpVolumeCoverageEnd noVolume `shouldBe` Nothing
+          cpVolumeFinalizedThrough noVolume `shouldBe` Nothing
+          cpVolumeCoverageComplete noVolume `shouldBe` False
+
+          currentPriceOnly <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          case ccCandle currentPriceOnly of
+            Just row -> do
+              bcrVolumeNumerator row `shouldBe` Nothing
+              bcrTradeCount row `shouldBe` Nothing
+              bcrVolumeComplete row `shouldBe` False
+            Nothing -> fail "Expected the current price row without volume coverage"
+
+          currentWithoutVolume <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 1200)
+          ccCandle currentWithoutVolume `shouldBe` Nothing
+          ccCoverageStart currentWithoutVolume `shouldBe` Just priceCoverageStart
+          ccCoverageEnd currentWithoutVolume `shouldBe` Just cursor
+          ccFinalizedThrough currentWithoutVolume `shouldBe` Just cursor
+          ccCoverageComplete currentWithoutVolume `shouldBe` True
+          ccVolumeCoverageStart currentWithoutVolume `shouldBe` Nothing
+          ccVolumeCoverageEnd currentWithoutVolume `shouldBe` Nothing
+          ccVolumeFinalizedThrough currentWithoutVolume `shouldBe` Nothing
+          ccVolumeCoverageComplete currentWithoutVolume `shouldBe` False
+          ccDatasetGeneration currentWithoutVolume
+            `shouldBe` cpDatasetGeneration noVolume
+
+          -- A complete row written by an obsolete derivation cannot prove
+          -- volume. Native price rows remain available and explicitly null.
           putVolumeCoverageVersion
-            connection 60 coverageStart cursor cursor 1 True "v0"
-          staleDerivation <-
-            getBasketCandlePage
-              connection testSeries testChainId testRouter 60 cursor
-          (staleDefinition, staleSnapshot) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 cursor
-          staleDefinition `shouldBe` expectedDefinition
-          staleSnapshot `shouldBe` staleDerivation
-          cpCandles staleDerivation `shouldBe` []
-          cpCoverageComplete staleDerivation `shouldBe` False
+            connection 60 volumeCoverageStart cursor cursor 1 True "v0"
+          staleVolume <- readNativePage cursor
+          assertPriceRows staleVolume
+          assertUnknownVolume staleVolume
+          cpCoverageComplete staleVolume `shouldBe` True
+          cpDatasetGeneration staleVolume
+            `shouldSatisfy` (/= cpDatasetGeneration noVolume)
+          staleCurrentVolume <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          case ccCandle staleCurrentVolume of
+            Just row -> do
+              bcrVolumeNumerator row `shouldBe` Nothing
+              bcrTradeCount row `shouldBe` Nothing
+              bcrVolumeComplete row `shouldBe` False
+            Nothing -> fail "Expected the current price row with stale volume coverage"
 
-          putPriceCoverage connection 60 coverageStart cursor cursor 2 True
+          -- An incomplete current-derivation volume publication likewise does
+          -- not suppress price or claim that any bucket has known volume.
+          putVolumeCoverage
+            connection 60 volumeCoverageStart cursor cursor 2 False
+          incompleteVolume <- readNativePage cursor
+          assertPriceRows incompleteVolume
+          assertUnknownVolume incompleteVolume
+          cpCoverageComplete incompleteVolume `shouldBe` True
+          cpDatasetGeneration incompleteVolume
+            `shouldSatisfy` (/= cpDatasetGeneration staleVolume)
+          incompleteCurrentVolume <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          case ccCandle incompleteCurrentVolume of
+            Just row -> do
+              bcrVolumeNumerator row `shouldBe` Nothing
+              bcrTradeCount row `shouldBe` Nothing
+              bcrVolumeComplete row `shouldBe` False
+            Nothing -> fail "Expected the current price row with incomplete volume coverage"
 
-          -- Current price coverage paired with stale volume coverage is still
-          -- insufficient: zero volume is proven only by current-derivation
-          -- volume coverage.
-          withoutVolume <-
-            getBasketCandlePage
-              connection testSeries testChainId testRouter 60 cursor
-          (_, withoutVolumeSnapshot) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 cursor
-          withoutVolumeSnapshot `shouldBe` withoutVolume
-          cpCandles withoutVolume `shouldBe` []
-          cpCoverageComplete withoutVolume `shouldBe` False
+          -- The live coverage terminal is aligned down to the active bucket.
+          -- Equality deliberately exposes its provisional volume, while the
+          -- finalized watermark keeps that mutable value incomplete.
+          putVolumeCoverage
+            connection 60 baseTime volumeCoverageStart volumeCoverageStart 3 True
+          exactBoundaryCurrentVolume <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          case ccCandle exactBoundaryCurrentVolume of
+            Just row -> do
+              bcrVolumeNumerator row `shouldBe` Just 77
+              bcrTradeCount row `shouldBe` Just 1
+              bcrVolumeComplete row `shouldBe` False
+            Nothing -> fail "Expected provisional volume at the live coverage terminal"
 
-          putVolumeCoverage connection 60 coverageStart cursor cursor 3 True
-          page <-
-            getBasketCandlePage
-              connection testSeries testChainId testRouter 60 cursor
-          (pageDefinition, snapshotPage) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 cursor
-          pageDefinition `shouldBe` expectedDefinition
-          snapshotPage `shouldBe` page
-          map bcrBucketStart (cpCandles page)
-            `shouldBe` [baseTime, baseTime + 900]
+          -- Once current-router coverage is usable, the pre-coverage candle
+          -- remains unknown, the real trade remains exact, and absence of a
+          -- rollup row inside proven coverage is a known zero.
+          putVolumeCoverage
+            connection 60 volumeCoverageStart cursor (baseTime + 1800) 4 True
+          partialVolume <- readNativePage cursor
+          map bcrVolumeNumerator (cpCandles partialVolume)
+            `shouldBe` [Nothing, Just 77, Nothing]
+          map bcrVolumeComplete (cpCandles partialVolume)
+            `shouldBe` [False, True, False]
+          cpVolumeCoverageStart partialVolume `shouldBe` Just volumeCoverageStart
+          cpVolumeCoverageEnd partialVolume `shouldBe` Just cursor
+          cpVolumeFinalizedThrough partialVolume `shouldBe` Just (baseTime + 1800)
+          cpVolumeCoverageComplete partialVolume `shouldBe` True
+          coveredCurrentVolume <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          case ccCandle coveredCurrentVolume of
+            Just row -> do
+              bcrVolumeNumerator row `shouldBe` Just 77
+              bcrTradeCount row `shouldBe` Just 1
+              bcrVolumeComplete row `shouldBe` True
+            Nothing -> fail "Expected the current price row inside usable volume coverage"
+
+          -- The live finalizer advances this watermark without changing the
+          -- dataset generation. The response metadata must still expose the
+          -- transition so edge caches cannot retain nullable volume.
+          putVolumeCoverage
+            connection 60 volumeCoverageStart cursor cursor 4 True
+          page <- readNativePage cursor
+          assertPriceRows page
           map bcrVolumeNumerator (cpCandles page)
-            `shouldBe` [Just 77, Just 0]
+            `shouldBe` [Nothing, Just 77, Just 0]
           map bcrTradeCount (cpCandles page)
-            `shouldBe` [Just 1, Just 0]
+            `shouldBe` [Nothing, Just 1, Just 0]
           map bcrVolumeComplete (cpCandles page)
-            `shouldBe` [True, True]
+            `shouldBe` [False, True, True]
           cpPreviousCursor page `shouldBe` Just baseTime
           cpHasEarlier page `shouldBe` True
-          cpCoverageStart page `shouldBe` Just coverageStart
+          cpCoverageStart page `shouldBe` Just priceCoverageStart
           cpCoverageEnd page `shouldBe` Just cursor
           cpFinalizedThrough page `shouldBe` Just cursor
-          cpDatasetGeneration page `shouldBe` 134_217_731
           cpCoverageComplete page `shouldBe` True
+          cpVolumeCoverageStart page `shouldBe` Just volumeCoverageStart
+          cpVolumeCoverageEnd page `shouldBe` Just cursor
+          cpVolumeFinalizedThrough page `shouldBe` Just cursor
+          cpVolumeCoverageComplete page `shouldBe` True
+          cpDatasetGeneration page `shouldBe` cpDatasetGeneration partialVolume
 
-          -- The compatibility endpoint reads its complete bounded time window
-          -- with the same coherent metadata and one sparse range query.
-          range <-
-            getBasketCandleRange
-              connection testSeries testChainId testRouter 60
-              baseTime (baseTime + 1200) 12_001
-          map bcrBucketStart (crCandles range)
-            `shouldBe` [baseTime, baseTime + 900]
-          map bcrVolumeNumerator (crCandles range)
-            `shouldBe` [Just 77, Just 0]
-          crCoverageStart range `shouldBe` Just coverageStart
-          crCoverageEnd range `shouldBe` Just cursor
-          crFinalizedThrough range `shouldBe` Just cursor
-          crDatasetGeneration range `shouldBe` cpDatasetGeneration page
-          crCoverageComplete range `shouldBe` True
-
-          -- Current metadata must survive a market-closed/empty bucket.
           current <-
             getCurrentBasketCandle
               connection testSeries testChainId testRouter 60 (baseTime + 1200)
           ccCandle current `shouldBe` Nothing
+          ccCoverageStart current `shouldBe` cpCoverageStart page
+          ccCoverageEnd current `shouldBe` cpCoverageEnd page
+          ccFinalizedThrough current `shouldBe` cpFinalizedThrough page
           ccDatasetGeneration current `shouldBe` cpDatasetGeneration page
           ccCoverageComplete current `shouldBe` True
+          ccVolumeCoverageStart current `shouldBe` Just volumeCoverageStart
+          ccVolumeCoverageEnd current `shouldBe` Just cursor
+          ccVolumeFinalizedThrough current `shouldBe` Just cursor
+          ccVolumeCoverageComplete current `shouldBe` True
 
-          -- A complete page immediately beyond coverage is empty but retains
-          -- metadata and points back to the newest page containing candles.
+          -- The legacy response cannot express unknown volume. Its range stays
+          -- on the combined price/volume intersection and omits the earlier
+          -- price-only candle instead of turning it into zero volume.
+          range <-
+            getBasketCandleRange
+              connection testSeries testChainId testRouter 60
+              baseTime (baseTime + 2400) 12_001
+          map bcrBucketStart (crCandles range)
+            `shouldBe` [baseTime + 900, baseTime + 1800]
+          map bcrVolumeNumerator (crCandles range)
+            `shouldBe` [Just 77, Just 0]
+          map bcrTradeCount (crCandles range)
+            `shouldBe` [Just 1, Just 0]
+          map bcrVolumeComplete (crCandles range)
+            `shouldBe` [True, True]
+          crCoverageStart range `shouldBe` Just volumeCoverageStart
+          crCoverageEnd range `shouldBe` Just cursor
+          crFinalizedThrough range `shouldBe` Just cursor
+          crDatasetGeneration range `shouldSatisfy` (> 0)
+          crCoverageComplete range `shouldBe` True
+
+          -- A complete page immediately beyond price coverage is empty but
+          -- retains price metadata and points to the newest price page.
           let nextCursor = cursor + pageSpan60
-          beyondCoverage <-
-            getBasketCandlePage
-              connection testSeries testChainId testRouter 60 nextCursor
-          (beyondDefinition, beyondSnapshot) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 nextCursor
-          beyondDefinition `shouldBe` expectedDefinition
-          beyondSnapshot `shouldBe` beyondCoverage
-          cpCandles beyondSnapshot `shouldBe` []
-          cpPreviousCursor beyondSnapshot `shouldBe` Just cursor
-          cpHasEarlier beyondSnapshot `shouldBe` True
-          cpCoverageComplete beyondSnapshot `shouldBe` True
+          beyondCoverage <- readNativePage nextCursor
+          cpCandles beyondCoverage `shouldBe` []
+          cpPreviousCursor beyondCoverage `shouldBe` Just cursor
+          cpHasEarlier beyondCoverage `shouldBe` True
+          cpCoverageStart beyondCoverage `shouldBe` Just priceCoverageStart
+          cpCoverageComplete beyondCoverage `shouldBe` True
 
-          putVolumeCoverage connection 60 coverageStart cursor cursor 4 False
-          incomplete <-
-            getBasketCandlePage
-              connection testSeries testChainId testRouter 60 cursor
-          (_, incompleteSnapshot) <-
-            getBasketCandlePageSnapshot
-              connection (cursor - 1) testChainId testRouter 60 cursor
-          incompleteSnapshot `shouldBe` incomplete
-          cpCandles incomplete `shouldBe` []
-          cpCoverageComplete incomplete `shouldBe` False
+          -- With volume made incomplete again, native price remains available
+          -- as nullable volume while legacy compatibility fails closed.
+          putVolumeCoverage
+            connection 60 volumeCoverageStart cursor cursor 5 False
+          nativeAfterVolumeFailure <- readNativePage cursor
+          assertPriceRows nativeAfterVolumeFailure
+          assertUnknownVolume nativeAfterVolumeFailure
+          cpCoverageComplete nativeAfterVolumeFailure `shouldBe` True
+          cpVolumeCoverageStart nativeAfterVolumeFailure `shouldBe` Nothing
+          cpVolumeCoverageEnd nativeAfterVolumeFailure `shouldBe` Nothing
+          cpVolumeFinalizedThrough nativeAfterVolumeFailure `shouldBe` Nothing
+          cpVolumeCoverageComplete nativeAfterVolumeFailure `shouldBe` False
           incompleteRange <-
             getBasketCandleRange
               connection testSeries testChainId testRouter 60
-              baseTime (baseTime + 1200) 12_001
+              baseTime (baseTime + 2400) 12_001
           crCandles incompleteRange `shouldBe` []
           crCoverageComplete incompleteRange `shouldBe` False
+
+          -- The latest published logical-market selection is the public price
+          -- boundary. Merely selecting a replacement remains private.
+          (laterHistorySelection, _) <-
+            appendCandleHistorySelection
+              connection
+              defaultCandleMarketId
+              testChainId
+              testSeries
+              volumeCoverageStart
+              "integration-test"
+              "native-price-led-history-later"
+          _ <-
+            initializeCandleHistoryIngestionProgress
+              connection laterHistorySelection volumeCoverageStart cursor 60
+          _ <-
+            completeCandleHistoryIngestionWindow
+              connection laterHistorySelection volumeCoverageStart cursor 0
+          laterGeneration <-
+            bumpRollupDatasetGeneration
+              connection PriceRollup (Just testSeries) Nothing Nothing
+          _ <-
+            publishCandleHistoryIngestion
+              connection laterHistorySelection laterGeneration
+          laterTarget <- readNativePage cursor
+          map bcrBucketStart (cpCandles laterTarget)
+            `shouldBe` [baseTime + 900, baseTime + 1800]
+          cpCoverageStart laterTarget `shouldBe` Just volumeCoverageStart
+          cpCoverageComplete laterTarget `shouldBe` True
+          cpDatasetGeneration laterTarget
+            `shouldSatisfy` (> cpDatasetGeneration nativeAfterVolumeFailure)
+
+          let unfilledEarlierTarget = priceCoverageStart - 60
+          _ <-
+            appendCandleHistorySelection
+              connection
+              defaultCandleMarketId
+              testChainId
+              testSeries
+              unfilledEarlierTarget
+              "integration-test"
+              "native-price-led-history-earlier"
+          earlierTarget <- readNativePage cursor
+          map bcrBucketStart (cpCandles earlierTarget)
+            `shouldBe` [baseTime + 900, baseTime + 1800]
+          cpCoverageStart earlierTarget `shouldBe` Just volumeCoverageStart
+          cpCoverageComplete earlierTarget `shouldBe` True
+          cpDatasetGeneration earlierTarget
+            `shouldBe` cpDatasetGeneration laterTarget
+          currentDuringEarlierBackfill <-
+            getCurrentBasketCandle
+              connection testSeries testChainId testRouter 60 (baseTime + 1200)
+          ccCoverageStart currentDuringEarlierBackfill `shouldBe` Just volumeCoverageStart
+          ccCoverageComplete currentDuringEarlierBackfill `shouldBe` True
+          ccDatasetGeneration currentDuringEarlierBackfill
+            `shouldBe` cpDatasetGeneration laterTarget
+
+          -- Once the canonical logical market exists, a runtime chain/series
+          -- mismatch is an invariant failure, not permission to ignore the
+          -- published boundary and expose the full physical price table.
+          let mismatchedChainId = testChainId + 1
+          mismatchedPlain <-
+            getBasketCandlePage
+              connection testSeries mismatchedChainId testRouter 60 cursor
+          (mismatchedDefinition, mismatchedSnapshot) <-
+            getBasketCandlePageSnapshot
+              connection (cursor - 1) mismatchedChainId testRouter 60 cursor
+          mismatchedDefinition `shouldBe` expectedDefinition
+          mismatchedSnapshot `shouldBe` mismatchedPlain
+          cpCandles mismatchedPlain `shouldBe` []
+          cpCoverageComplete mismatchedPlain `shouldBe` False
+          mismatchedCurrent <-
+            getCurrentBasketCandle
+              connection testSeries mismatchedChainId testRouter 60 (baseTime + 1200)
+          ccCoverageComplete mismatchedCurrent `shouldBe` False
+
+    it "requires a new generation before usable rollup coverage can regress" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          putVolumeCoverage
+            connection 60 baseTime (baseTime + 3600) (baseTime + 3600) 3 True
+          putVolumeCoverage
+            connection 60 baseTime (baseTime + 3600) (baseTime + 3600) 3 False
+            `shouldThrow` sqlErrorContaining "usability regression requires a new generation"
+          putVolumeCoverage
+            connection 60 (baseTime + 60) (baseTime + 3600) (baseTime + 3600) 3 True
+            `shouldThrow` sqlErrorContaining "usability regression requires a new generation"
+          putVolumeCoverage
+            connection 60 baseTime (baseTime + 3600) (baseTime + 3540) 3 True
+            `shouldThrow` sqlErrorContaining "usability regression requires a new generation"
+          putVolumeCoverage
+            connection 60 baseTime (baseTime + 3600) (baseTime + 3600) 4 False
+          coverage <- requireVolumeCoverage connection 60
+          rcGeneration coverage `shouldBe` 4
+          rcComplete coverage `shouldBe` False
 
     it "finalizes unchanged price and volume rows solely through watermarks" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -962,6 +1528,8 @@ candleRollupSpec databaseUrl =
           case ccCandle before of
             Just row -> do
               bcrPriceComplete row `shouldBe` False
+              bcrVolumeNumerator row `shouldBe` Just 60
+              bcrTradeCount row `shouldBe` Just 1
               bcrVolumeComplete row `shouldBe` False
             Nothing -> fail "Expected the mutable candle before watermark advance"
 
@@ -1052,7 +1620,7 @@ candleRollupSpec databaseUrl =
           void $
             execute
               connection
-              "UPDATE perps_rollup_coverage SET complete = FALSE, \
+              "UPDATE perps_rollup_coverage SET generation = generation + 1, complete = FALSE, \
               \last_error = 'bounded_admin_repair', maintenance_from = ?, maintenance_to = ? \
               \WHERE kind = 'price' AND series_id = ? AND interval_seconds = 60"
               (coverageStart, coverageEnd, testSeries)
@@ -1064,7 +1632,7 @@ candleRollupSpec databaseUrl =
             mapM (requirePriceCoverage connection) canonicalCandleIntervals
           forM_ invalidated $ \coverage -> do
             rcComplete coverage `shouldBe` False
-            rcGeneration coverage `shouldBe` initialGeneration + 1
+            rcGeneration coverage `shouldBe` initialGeneration + 2
             rcLastError coverage `shouldBe` Just "price_watermark_gap"
 
     it "rejects a trailing 24-hour verification range without a full UTC day" $
@@ -1076,6 +1644,7 @@ candleRollupSpec databaseUrl =
         (exitCode, stdout, stderr) <-
           runCandleAdmin databaseUrl
             [ "verify"
+            , "all"
             , "--from", show verificationFrom
             , "--to", show verificationTo
             ]
@@ -1248,6 +1817,7 @@ candleRollupSpec databaseUrl =
         (exitCode, _, _) <-
           runCandleAdmin databaseUrl
             [ "verify"
+            , "all"
             , "--from", show verificationFrom
             , "--to", show verificationTo
             ]
@@ -2241,8 +2811,9 @@ cleanupCandleRows pool =
       void $
         execute_
           connection
-          "TRUNCATE TABLE perps_candle_history_targets, perps_market_release_epochs, \
-          \perps_candle_markets"
+          "TRUNCATE TABLE perps_candle_history_ingestion_windows, \
+          \perps_candle_history_ingestions, perps_candle_history_targets, \
+          \perps_market_release_epochs, perps_candle_markets"
       void $
         execute
           connection
@@ -2285,11 +2856,12 @@ cleanupCandleRows pool =
       void $
         execute
           connection
-          "DELETE FROM perps_basket_snapshots WHERE source IN (?, ?, ?, ?)"
+          "DELETE FROM perps_basket_snapshots WHERE source IN (?, ?, ?, ?, ?)"
           ( legacySnapshotSource
           , latestSnapshotSource
           , previousLatestSnapshotSource
           , historicalSnapshotSource
+          , targetHistorySnapshotSource
           )
 
 cleanupCandleAdminRows :: DbPool -> IO ()
@@ -2327,6 +2899,8 @@ candleRelationOids connection = do
       \('perps_basket_candles'::regclass), \
       \('perps_candle_markets'::regclass), \
       \('perps_candle_history_targets'::regclass), \
+      \('perps_candle_history_ingestions'::regclass), \
+      \('perps_candle_history_ingestion_windows'::regclass), \
       \('perps_market_release_epochs'::regclass), \
       \('perps_market_volume_rollups'::regclass), \
       \('perps_rollup_coverage'::regclass)) AS expected(relation) \
@@ -2626,6 +3200,9 @@ normalizedTestRouter = Text.toLower testRouter
 
 legacySnapshotSource :: Text
 legacySnapshotSource = "candle_rollup_integration_test"
+
+targetHistorySnapshotSource :: Text
+targetHistorySnapshotSource = "pyth_tradingview_history_v1"
 
 latestSnapshotSource :: Text
 latestSnapshotSource = "backend_hermes_latest_v2"

@@ -236,8 +236,43 @@ function parseCandleDatasetIdentity(payload, expectedInterval) {
     seriesId,
     configurationHash,
     displayPriceCap,
+    volumeChainId,
+    volumeRouter,
+    volumeCoverageStart,
+    volumeCoverageEnd,
+    volumeFinalizedThrough,
+    volumeCoverageComplete,
     datasetGeneration,
+    coverageStart,
+    coverageEnd,
+    finalizedThrough,
   } = data;
+  const validPriceCoverage =
+    Number.isSafeInteger(coverageStart) &&
+    Number.isSafeInteger(coverageEnd) &&
+    Number.isSafeInteger(finalizedThrough) &&
+    coverageStart >= 0 &&
+    coverageStart < coverageEnd &&
+    finalizedThrough >= coverageStart &&
+    finalizedThrough <= coverageEnd &&
+    coverageStart % expectedInterval === 0 &&
+    coverageEnd % expectedInterval === 0 &&
+    finalizedThrough % expectedInterval === 0;
+  const validVolumeCoverage = volumeCoverageComplete === true
+    ? Number.isSafeInteger(volumeCoverageStart) &&
+      Number.isSafeInteger(volumeCoverageEnd) &&
+      Number.isSafeInteger(volumeFinalizedThrough) &&
+      volumeCoverageStart >= 0 &&
+      volumeCoverageStart < volumeCoverageEnd &&
+      volumeFinalizedThrough >= volumeCoverageStart &&
+      volumeFinalizedThrough <= volumeCoverageEnd &&
+      volumeCoverageStart % expectedInterval === 0 &&
+      volumeCoverageEnd % expectedInterval === 0 &&
+      volumeFinalizedThrough % expectedInterval === 0
+    : volumeCoverageComplete === false &&
+      volumeCoverageStart === null &&
+      volumeCoverageEnd === null &&
+      volumeFinalizedThrough === null;
   if (
     intervalSeconds !== expectedInterval ||
     typeof seriesId !== 'string' ||
@@ -247,8 +282,14 @@ function parseCandleDatasetIdentity(payload, expectedInterval) {
     !/^sha256:[0-9a-f]{64}$/.test(configurationHash) ||
     typeof displayPriceCap !== 'string' ||
     !/^[1-9]\d*$/.test(displayPriceCap) ||
+    !Number.isSafeInteger(volumeChainId) ||
+    volumeChainId <= 0 ||
+    typeof volumeRouter !== 'string' ||
+    !/^0x[0-9a-fA-F]{40}$/.test(volumeRouter) ||
     !Number.isSafeInteger(datasetGeneration) ||
-    datasetGeneration <= 0
+    datasetGeneration <= 0 ||
+    !validPriceCoverage ||
+    !validVolumeCoverage
   ) {
     return undefined;
   }
@@ -258,8 +299,51 @@ function parseCandleDatasetIdentity(payload, expectedInterval) {
     seriesId,
     configurationHash,
     displayPriceCap,
+    volumeChainId,
+    volumeRouter: volumeRouter.toLowerCase(),
+    volumeCoverageStart,
+    volumeCoverageEnd,
+    volumeFinalizedThrough,
+    volumeCoverageComplete,
     datasetGeneration,
+    coverageStart,
+    coverageEnd,
+    finalizedThrough,
   };
+}
+
+function getCandlePageState(identity, cursor, pricePageState) {
+  if (pricePageState === 'active') return 'active';
+
+  // A page wholly before the published price boundary stays empty under this
+  // boundary. Include it in the key so an earlier extension cannot reuse it.
+  if (cursor <= identity.coverageStart) {
+    return `closed-before-price-${identity.coverageStart}`;
+  }
+  // A terminal or only-partly-finalized price page can gain ordinary live rows
+  // without a generation bump (for example after a weekend). It must retain
+  // the live TTL until price is finalized through the full page.
+  if (
+    cursor > identity.coverageEnd ||
+    cursor > identity.finalizedThrough
+  ) return 'active';
+
+  if (!identity.volumeCoverageComplete) return 'active';
+
+  if (cursor <= identity.volumeCoverageStart) {
+    // Include the boundary so a future backwards extension cannot reuse the
+    // formerly-null page under the same internal key.
+    return `closed-before-volume-${identity.coverageStart}-${identity.volumeCoverageStart}`;
+  }
+  if (
+    cursor <= identity.volumeCoverageEnd &&
+    cursor <= identity.volumeFinalizedThrough
+  ) {
+    // Rows before the current-router boundary are permanently nullable under
+    // this key; every row at/after it is now volume-finalized.
+    return `closed-volume-finalized-${identity.coverageStart}-${identity.volumeCoverageStart}`;
+  }
+  return 'active';
 }
 
 function candleDatasetIdentitiesEqual(left, right) {
@@ -268,6 +352,8 @@ function candleDatasetIdentitiesEqual(left, right) {
     left.seriesId === right.seriesId &&
     left.configurationHash === right.configurationHash &&
     left.displayPriceCap === right.displayPriceCap &&
+    left.volumeChainId === right.volumeChainId &&
+    left.volumeRouter === right.volumeRouter &&
     left.datasetGeneration === right.datasetGeneration
   );
 }
@@ -280,6 +366,8 @@ function getCandleVariantCacheKey(url, identity, pageState) {
   cacheUrl.searchParams.set('__plether_series', identity.seriesId);
   cacheUrl.searchParams.set('__plether_configuration', identity.configurationHash);
   cacheUrl.searchParams.set('__plether_display_cap', identity.displayPriceCap);
+  cacheUrl.searchParams.set('__plether_volume_chain', String(identity.volumeChainId));
+  cacheUrl.searchParams.set('__plether_volume_router', identity.volumeRouter);
   cacheUrl.searchParams.set('__plether_generation', String(identity.datasetGeneration));
   return cacheUrl.toString();
 }
@@ -304,7 +392,13 @@ async function probeCandleDatasetIdentity(variant) {
   }
 }
 
-async function responseMatchesCandleDatasetIdentity(response, identity) {
+async function responseMatchesCandleDatasetIdentity(
+  response,
+  identity,
+  expectedPageState,
+  cursor,
+  pricePageState,
+) {
   try {
     const payload = await response.clone().json();
     const responseIdentity = parseCandleDatasetIdentity(
@@ -312,7 +406,8 @@ async function responseMatchesCandleDatasetIdentity(response, identity) {
       identity.intervalSeconds,
     );
     return responseIdentity !== undefined &&
-      candleDatasetIdentitiesEqual(responseIdentity, identity);
+      candleDatasetIdentitiesEqual(responseIdentity, identity) &&
+      getCandlePageState(responseIdentity, cursor, pricePageState) === expectedPageState;
   } catch {
     return false;
   }
@@ -463,6 +558,7 @@ async function fetchPublicResponse(
   candleVariant,
 ) {
   const cache = globalThis.caches?.default;
+  let effectivePolicy = policy;
   const fetchUncachedCandlePage = async () => noStoreResponse(
     await (candleVariant?.fetchUncachedPage ?? fetchBackend)(),
   );
@@ -474,19 +570,33 @@ async function fetchPublicResponse(
   if (candleVariant !== undefined) {
     // Never consult a historical-page cache entry until the origin has supplied
     // the authoritative identity for this exact interval. A failed or malformed
-    // probe deliberately degrades to an uncached origin page. Candle rewrites
-    // and their generation bump commit atomically at the origin, so this probe
-    // is the request's identity linearization point; a later commit belongs to
-    // the next request.
+    // probe deliberately degrades to an uncached origin page. Candle rewrites,
+    // generation changes, and coverage-watermark publications commit
+    // atomically at the origin, so this probe is the request's state
+    // linearization point; a later commit belongs to the next request.
     const identity = await probeCandleDatasetIdentity(candleVariant);
     if (identity === undefined) return fetchUncachedCandlePage();
+    const pageState = getCandlePageState(
+      identity,
+      candleVariant.cursor,
+      candleVariant.pricePageState,
+    );
+    effectivePolicy = pageState === 'active'
+      ? CANDLE_ACTIVE_PAGE_CACHE_POLICY
+      : CANDLE_CLOSED_PAGE_CACHE_POLICY;
     cacheKeyUrl = getCandleVariantCacheKey(
       url,
       identity,
-      candleVariant.pageState,
+      pageState,
     );
     responseMatchesVariant = (response) =>
-      responseMatchesCandleDatasetIdentity(response, identity);
+      responseMatchesCandleDatasetIdentity(
+        response,
+        identity,
+        pageState,
+        candleVariant.cursor,
+        candleVariant.pricePageState,
+      );
   }
   if (/\bno-store\b/i.test(requestCacheControl)) {
     return candleVariant === undefined
@@ -503,12 +613,12 @@ async function fetchPublicResponse(
     const storedAt = Number(cached.headers.get(EDGE_CACHE_STORED_AT_HEADER));
     if (Number.isFinite(storedAt) && storedAt > 0) {
       const ageSeconds = Math.max(0, Date.now() - storedAt) / 1000;
-      if (ageSeconds <= policy.freshSeconds) {
-        return clientCacheResponse(cached, policy, 'HIT');
+      if (ageSeconds <= effectivePolicy.freshSeconds) {
+        return clientCacheResponse(cached, effectivePolicy, 'HIT');
       }
 
       const maximumReusableAgeSeconds =
-        policy.freshSeconds + policy.staleWhileRevalidateSeconds;
+        effectivePolicy.freshSeconds + effectivePolicy.staleWhileRevalidateSeconds;
       if (ageSeconds <= maximumReusableAgeSeconds) {
         runInBackground(
           context,
@@ -516,11 +626,11 @@ async function fetchPublicResponse(
             fetchBackend,
             cache,
             cacheKey,
-            policy,
+            effectivePolicy,
             responseMatchesVariant,
           )
         );
-        return clientCacheResponse(cached, policy, 'STALE');
+        return clientCacheResponse(cached, effectivePolicy, 'STALE');
       }
     }
   }
@@ -532,7 +642,7 @@ async function fetchPublicResponse(
     const cacheable = responseCanBePubliclyCached(response) && matchesVariant;
     const cacheWrite = cacheable
       ? cache
-          .put(cacheKey, storedCacheResponse(response.clone(), policy))
+          .put(cacheKey, storedCacheResponse(response.clone(), effectivePolicy))
           .catch(() => undefined)
       : Promise.resolve();
     if (cacheable) runInBackground(context, cacheWrite);
@@ -546,7 +656,7 @@ async function fetchPublicResponse(
     };
   });
   const response = result.response.clone();
-  if (result.cacheable) return clientCacheResponse(response, policy, 'MISS');
+  if (result.cacheable) return clientCacheResponse(response, effectivePolicy, 'MISS');
   return result.variantMismatch ? noStoreResponse(response) : response;
 }
 
@@ -607,7 +717,8 @@ export default {
           identityHeaders.delete('If-None-Match');
           candleVariant = {
             intervalSeconds: Number(intervalText),
-            pageState: cachePolicy === CANDLE_CLOSED_PAGE_CACHE_POLICY
+            cursor: Number(url.searchParams.get('cursor')),
+            pricePageState: cachePolicy === CANDLE_CLOSED_PAGE_CACHE_POLICY
               ? 'closed'
               : 'active',
             flightKey: `candle-identity:${identityUrl.toString()}`,

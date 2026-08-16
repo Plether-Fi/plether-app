@@ -253,6 +253,22 @@ spec = do
         sampleCandleRange {crCoverageComplete = False}
         `shouldFailWith` "coverage is incomplete"
 
+    it "keeps nullable volume out of the legacy compatibility shape" $ do
+      let priceOnlyRow =
+            sampleCandleRow
+              { bcrVolumeNumerator = Nothing
+              , bcrTradeCount = Nothing
+              , bcrVolumeComplete = False
+              }
+      validateRollupHistoryRange
+        200_000_000
+        60
+        0
+        30_000
+        12_000
+        sampleCandleRange {crCandles = [priceOnlyRow]}
+        `shouldFailWith` "compatibility candle has unknown volume"
+
     it "rejects a complete compatibility range with a stale source watermark" $ do
       let stale =
             sampleCandleRange
@@ -500,19 +516,40 @@ spec = do
       validateBasketCandlePage 30_060 60 30_000 page
         `shouldFailTextWith` "inception-clipped page"
 
-    it "rejects duplicate or unordered rows and incomplete historical volume" $ do
+    it "rejects duplicate or unordered rows" $ do
       let duplicateRows =
             sampleCandlePage
               { cpCandles = [sampleCandleRow, sampleCandleRow]
               }
-          unknownVolume =
-            sampleCandlePage
-              { cpCandles = [sampleCandleRow {bcrVolumeNumerator = Nothing}]
-              }
       validateBasketCandlePage 30_060 60 30_000 duplicateRows
         `shouldFailTextWith` "not strictly ascending"
-      validateBasketCandlePage 30_060 60 30_000 unknownVolume
-        `shouldFailTextWith` "unknown volume"
+
+    it "accepts finalized price history before current-router volume coverage" $ do
+      let priceOnly =
+            sampleCandlePage
+              { cpCandles =
+                  [ sampleCandleRow
+                      { bcrVolumeNumerator = Nothing
+                      , bcrTradeCount = Nothing
+                      , bcrVolumeComplete = False
+                      }
+                  ]
+              }
+      validateBasketCandlePage 30_060 60 30_000 priceOnly `shouldBe` Right ()
+
+    it "rejects contradictory historical volume fields and incomplete prices" $ do
+      let validate row =
+            validateBasketCandlePage
+              30_060
+              60
+              30_000
+              sampleCandlePage {cpCandles = [row]}
+      validate sampleCandleRow {bcrVolumeNumerator = Nothing}
+        `shouldFailTextWith` "volume fields are inconsistent"
+      validate sampleCandleRow {bcrVolumeComplete = False}
+        `shouldFailTextWith` "volume fields are inconsistent"
+      validate sampleCandleRow {bcrPriceComplete = False}
+        `shouldFailTextWith` "price is incomplete"
 
     it "rejects historical prices at or above the immutable display cap" $ do
       let cap = 200_000_000
@@ -560,8 +597,70 @@ spec = do
               , ccFinalizedThrough = Just 30_000
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandle 30_030 60 current `shouldBe` Right ()
+
+    it "allows provisional current volume only with usable covering metadata" $ do
+      let current =
+            CandleCurrent
+              { ccCandle =
+                  Just $
+                    sampleCandleRow
+                      { bcrBucketStart = 30_000
+                      , bcrPriceComplete = False
+                      , bcrVolumeComplete = False
+                      }
+              , ccCoverageStart = Just 0
+              , ccCoverageEnd = Just 30_000
+              , ccFinalizedThrough = Just 30_000
+              , ccDatasetGeneration = 3
+              , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Just 0
+              , ccVolumeCoverageEnd = Just 30_000
+              , ccVolumeFinalizedThrough = Just 29_940
+              , ccVolumeCoverageComplete = True
+              }
+      validateBasketCurrentCandle 30_030 60 current `shouldBe` Right ()
+
+    it "rejects provisional current volume when coverage is unusable or has not reached the bucket" $ do
+      let covered =
+            CandleCurrent
+              { ccCandle =
+                  Just $
+                    sampleCandleRow
+                      { bcrBucketStart = 30_000
+                      , bcrPriceComplete = False
+                      , bcrVolumeComplete = False
+                      }
+              , ccCoverageStart = Just 0
+              , ccCoverageEnd = Just 30_000
+              , ccFinalizedThrough = Just 30_000
+              , ccDatasetGeneration = 3
+              , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Just 0
+              , ccVolumeCoverageEnd = Just 30_000
+              , ccVolumeFinalizedThrough = Just 29_940
+              , ccVolumeCoverageComplete = True
+              }
+          unusable =
+            covered
+              { ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
+              }
+          notReached =
+            covered
+              { ccVolumeCoverageEnd = Just 29_940
+              }
+      validateBasketCurrentCandle 30_030 60 unusable
+        `shouldFailTextWith` "without usable coverage"
+      validateBasketCurrentCandle 30_030 60 notReached
+        `shouldFailTextWith` "outside the checked coverage envelope"
 
     it "keeps current metadata valid when the active bucket has no row" $ do
       let current =
@@ -572,6 +671,10 @@ spec = do
               , ccFinalizedThrough = Just 30_000
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandle 30_030 60 current `shouldBe` Right ()
 
@@ -584,6 +687,10 @@ spec = do
               , ccFinalizedThrough = Just 29_820
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandleWithPolicy
         200_000_000
@@ -603,6 +710,10 @@ spec = do
               , ccFinalizedThrough = Just 60
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandleWithPolicy
         200_000_000
@@ -622,6 +733,10 @@ spec = do
               , ccFinalizedThrough = Just 29_880
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandleWithPolicy
         200_000_000
@@ -643,6 +758,10 @@ spec = do
                 , ccFinalizedThrough = Just $ boundary - interval
                 , ccDatasetGeneration = 3
                 , ccCoverageComplete = True
+                , ccVolumeCoverageStart = Nothing
+                , ccVolumeCoverageEnd = Nothing
+                , ccVolumeFinalizedThrough = Nothing
+                , ccVolumeCoverageComplete = False
                 }
             validateAt now =
               validateBasketCurrentCandleWithPolicy
@@ -667,6 +786,10 @@ spec = do
               , ccFinalizedThrough = Just $ boundary - 60
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
           staleFinalization =
             staleCoverage
@@ -693,6 +816,10 @@ spec = do
               , ccFinalizedThrough = Just boundary
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandleWithPolicy
         200_000_000
@@ -706,12 +833,23 @@ spec = do
     it "rejects a current-bucket row marked finalized" $ do
       let current =
             CandleCurrent
-              { ccCandle = Just sampleCandleRow {bcrBucketStart = 30_000}
+              { ccCandle =
+                  Just $
+                    sampleCandleRow
+                      { bcrBucketStart = 30_000
+                      , bcrVolumeNumerator = Nothing
+                      , bcrTradeCount = Nothing
+                      , bcrVolumeComplete = False
+                      }
               , ccCoverageStart = Just 0
               , ccCoverageEnd = Just 30_000
               , ccFinalizedThrough = Just 30_000
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandle 30_030 60 current
         `shouldFailTextWith` "incorrectly marked finalized"
@@ -729,6 +867,8 @@ spec = do
                       , bcrRawLowPrice = cap
                       , bcrRawClosePrice = cap
                       , bcrPriceComplete = False
+                      , bcrVolumeNumerator = Nothing
+                      , bcrTradeCount = Nothing
                       , bcrVolumeComplete = False
                       }
               , ccCoverageStart = Just 0
@@ -736,17 +876,21 @@ spec = do
               , ccFinalizedThrough = Just 30_000
               , ccDatasetGeneration = 3
               , ccCoverageComplete = True
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandleWithCap cap 30_030 60 current
         `shouldFailTextWith` "outside the display domain"
 
-    it "fails closed when combined coverage is marked incomplete" $ do
+    it "fails closed when price coverage is marked incomplete" $ do
       validateBasketCandlePage
         30_060
         60
         30_000
         sampleCandlePage {cpCoverageComplete = False}
-        `shouldFailTextWith` "combined price and volume coverage is incomplete"
+        `shouldFailTextWith` "price coverage is incomplete"
 
       let current =
             CandleCurrent
@@ -756,9 +900,13 @@ spec = do
               , ccFinalizedThrough = Just 30_000
               , ccDatasetGeneration = 3
               , ccCoverageComplete = False
+              , ccVolumeCoverageStart = Nothing
+              , ccVolumeCoverageEnd = Nothing
+              , ccVolumeFinalizedThrough = Nothing
+              , ccVolumeCoverageComplete = False
               }
       validateBasketCurrentCandle 30_030 60 current
-        `shouldFailTextWith` "combined price and volume coverage is incomplete"
+        `shouldFailTextWith` "price coverage is incomplete"
 
     it "treats missing finalization metadata as maximally unhealthy lag" $ do
       coverageLagSeconds 1_900_000_000 Nothing `shouldBe` 1_900_000_000
@@ -873,6 +1021,10 @@ sampleCandlePage =
     , cpFinalizedThrough = Just 30_000
     , cpDatasetGeneration = 1
     , cpCoverageComplete = True
+    , cpVolumeCoverageStart = Just 0
+    , cpVolumeCoverageEnd = Just 30_000
+    , cpVolumeFinalizedThrough = Just 30_000
+    , cpVolumeCoverageComplete = True
     }
 
 sampleCandleRange :: CandleRange

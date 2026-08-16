@@ -539,9 +539,56 @@ BEGIN
 END
 $maintenance_constraint$;
 
--- Operator-selected candle history and logical Perps market identity. These
--- tables are deliberately inert: no public read or writer uses them until a
--- separately gated logical-market rollout is implemented.
+CREATE OR REPLACE FUNCTION protect_perps_rollup_generation_monotonic()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $rollup_generation$
+BEGIN
+    IF NEW.generation < OLD.generation THEN
+        RAISE EXCEPTION 'perps rollup generation cannot decrease'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NEW.generation = OLD.generation AND (
+        OLD.derivation_version IS DISTINCT FROM NEW.derivation_version OR (
+            OLD.complete AND
+            OLD.coverage_start IS NOT NULL AND
+            OLD.coverage_end IS NOT NULL AND
+            OLD.finalized_through IS NOT NULL AND (
+                NOT NEW.complete OR
+                NEW.coverage_start IS NULL OR
+                NEW.coverage_end IS NULL OR
+                NEW.finalized_through IS NULL OR
+                NEW.coverage_start > OLD.coverage_start OR
+                NEW.coverage_end < OLD.coverage_end OR
+                NEW.finalized_through < OLD.finalized_through
+            )
+        )
+    ) THEN
+        RAISE EXCEPTION 'perps rollup usability regression requires a new generation'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$rollup_generation$;
+
+DO $rollup_generation_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'perps_rollup_generation_monotonic'
+          AND tgrelid = 'perps_rollup_coverage'::regclass
+    ) THEN
+        CREATE TRIGGER perps_rollup_generation_monotonic
+            BEFORE UPDATE ON perps_rollup_coverage
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_rollup_generation_monotonic();
+    END IF;
+END
+$rollup_generation_trigger$;
+
+-- Operator-selected candle history, durable source proof, and independently
+-- published logical-market price boundaries.
 -- BEGIN PERPS CANDLE HISTORY FOUNDATION
 CREATE TABLE IF NOT EXISTS perps_candle_markets (
     market_id TEXT PRIMARY KEY,
@@ -648,6 +695,100 @@ BEGIN
     END IF;
 END
 $candle_history_target_triggers$;
+
+CREATE TABLE IF NOT EXISTS perps_candle_history_ingestions (
+    market_id TEXT NOT NULL,
+    target_revision BIGINT NOT NULL,
+    start_timestamp BIGINT NOT NULL,
+    end_timestamp_exclusive BIGINT NOT NULL,
+    next_timestamp BIGINT NOT NULL,
+    sample_interval_seconds BIGINT NOT NULL,
+    complete BOOLEAN NOT NULL DEFAULT FALSE,
+    last_error TEXT,
+    published_generation BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, target_revision),
+    FOREIGN KEY (market_id, target_revision)
+        REFERENCES perps_candle_history_targets(market_id, revision),
+    CHECK (sample_interval_seconds > 0),
+    CHECK (start_timestamp >= 0 AND end_timestamp_exclusive >= start_timestamp),
+    CHECK (MOD(start_timestamp, sample_interval_seconds) = 0),
+    CHECK (MOD(end_timestamp_exclusive, sample_interval_seconds) = 0),
+    CHECK (next_timestamp >= start_timestamp AND next_timestamp <= end_timestamp_exclusive),
+    CHECK (MOD(next_timestamp, sample_interval_seconds) = 0),
+    CHECK (complete = (next_timestamp = end_timestamp_exclusive)),
+    CHECK (last_error IS NULL OR (NOT complete AND last_error ~ '[^[:space:]]')),
+    CONSTRAINT perps_candle_history_ingestions_publication_valid CHECK (
+        published_generation IS NULL OR
+        (published_generation > 0 AND complete AND last_error IS NULL)
+    )
+);
+
+ALTER TABLE perps_candle_history_ingestions
+    ADD COLUMN IF NOT EXISTS published_generation BIGINT;
+
+DO $candle_history_publication_constraint$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'perps_candle_history_ingestions_publication_valid'
+          AND conrelid = 'perps_candle_history_ingestions'::regclass
+    ) THEN
+        ALTER TABLE perps_candle_history_ingestions
+            ADD CONSTRAINT perps_candle_history_ingestions_publication_valid
+            CHECK (
+                published_generation IS NULL OR
+                (published_generation > 0 AND complete AND last_error IS NULL)
+            );
+    END IF;
+END
+$candle_history_publication_constraint$;
+
+CREATE OR REPLACE FUNCTION protect_perps_candle_history_publication()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $candle_history_publication$
+BEGIN
+    IF OLD.published_generation IS NOT NULL
+       AND NEW.published_generation IS DISTINCT FROM OLD.published_generation THEN
+        RAISE EXCEPTION 'candle history publication is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$candle_history_publication$;
+
+DO $candle_history_publication_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'perps_candle_history_publication_immutable'
+          AND tgrelid = 'perps_candle_history_ingestions'::regclass
+    ) THEN
+        CREATE TRIGGER perps_candle_history_publication_immutable
+            BEFORE UPDATE ON perps_candle_history_ingestions
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_candle_history_publication();
+    END IF;
+END
+$candle_history_publication_trigger$;
+
+CREATE TABLE IF NOT EXISTS perps_candle_history_ingestion_windows (
+    market_id TEXT NOT NULL,
+    target_revision BIGINT NOT NULL,
+    window_start BIGINT NOT NULL,
+    window_end_exclusive BIGINT NOT NULL,
+    sample_count BIGINT NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, target_revision, window_start),
+    FOREIGN KEY (market_id, target_revision)
+        REFERENCES perps_candle_history_ingestions(market_id, target_revision),
+    CHECK (window_start >= 0 AND window_end_exclusive > window_start),
+    CHECK (sample_count >= 0)
+);
 
 CREATE TABLE IF NOT EXISTS perps_market_release_epochs (
     market_id TEXT NOT NULL,

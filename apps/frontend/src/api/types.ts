@@ -192,8 +192,11 @@ export interface PerpsBasketCandle {
   sampleCount: number;
   quality: PerpsBasketCandleQuality;
   revision: number;
+  /** Whether the price source proved this bucket. Native chart availability is price-led. */
   priceComplete: boolean;
+  /** Whether the current chain/router volume source proved this bucket. */
   volumeComplete: boolean;
+  /** Legacy combined completeness: priceComplete && volumeComplete. */
   complete: boolean;
 }
 
@@ -207,6 +210,18 @@ export interface PerpsBasketCandlePage {
   configurationHash: string;
   /** Raw oracle-domain value representing a displayed price of zero. */
   displayPriceCap: string;
+  /** Chain half of the canonical current-router volume scope. */
+  volumeChainId: number;
+  /** Canonical current-router scope used for nullable candle volume. */
+  volumeRouter: string;
+  /** Inclusive start of trusted coverage for the current chain/router, if published. */
+  volumeCoverageStart: number | null;
+  /** Exclusive end of trusted coverage for the current chain/router, if published. */
+  volumeCoverageEnd: number | null;
+  /** Exclusive end through which current-router volume is finalized. */
+  volumeFinalizedThrough: number | null;
+  /** Whether the current-router volume coverage bounds are safe to use. */
+  volumeCoverageComplete: boolean;
   /** Exclusive end cursor for the next older page, or null at coverage start. */
   previousCursor: number | null;
   hasEarlier: boolean;
@@ -223,6 +238,12 @@ export interface PerpsBasketCurrentCandle {
   seriesId: string;
   configurationHash: string;
   displayPriceCap: string;
+  volumeChainId: number;
+  volumeRouter: string;
+  volumeCoverageStart: number | null;
+  volumeCoverageEnd: number | null;
+  volumeFinalizedThrough: number | null;
+  volumeCoverageComplete: boolean;
   datasetGeneration: number;
   coverageStart: number | null;
   coverageEnd: number | null;

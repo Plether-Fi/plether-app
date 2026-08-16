@@ -64,7 +64,16 @@ type CandleIdentity = {
   seriesId: string
   configurationHash: string
   displayPriceCap: string
+  volumeChainId: number
+  volumeRouter: string
+  volumeCoverageStart: number | null
+  volumeCoverageEnd: number | null
+  volumeFinalizedThrough: number | null
+  volumeCoverageComplete: boolean
   datasetGeneration: number
+  coverageStart: number
+  coverageEnd: number
+  finalizedThrough: number
 }
 
 function candleIdentity(
@@ -76,7 +85,16 @@ function candleIdentity(
     seriesId: 'dxy-v1',
     configurationHash: CANDLE_CONFIGURATION_HASH,
     displayPriceCap: '200000000',
+    volumeChainId: 421_614,
+    volumeRouter: '0x1111111111111111111111111111111111111111',
+    volumeCoverageStart: 1_799_700_000,
+    volumeCoverageEnd: 1_800_000_000,
+    volumeFinalizedThrough: 1_800_000_000,
+    volumeCoverageComplete: true,
     datasetGeneration,
+    coverageStart: 1_799_700_000,
+    coverageEnd: 1_800_000_000,
+    finalizedThrough: 1_800_000_000,
     ...overrides,
   }
 }
@@ -640,17 +658,213 @@ describe('Perps public edge caching', () => {
     expect(probeHeaders.get('Cache-Control')).toBe('no-store')
   })
 
+  it('makes old-chain volume cache entries unreachable with the same router address', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    let volumeChainId = 421_614
+    const identity = () => candleIdentity(7, { volumeChainId })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(identity())
+      : candlePageResponse(identity()))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000'
+
+    const first = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    volumeChainId = 1
+    const replaced = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    const subsequent = await worker.fetch(new Request(url), workerEnv(), executionContext())
+
+    expect(first.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
+    expect(replaced.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
+    expect(subsequent.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    await expect(replaced.json()).resolves.toMatchObject({
+      data: { datasetGeneration: 7, volumeChainId },
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+  })
+
+  it('keeps a closed page on the active TTL until current-router volume finalizes it', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    let volumeFinalizedThrough = 1_799_970_000
+    const identity = () => candleIdentity(7, { volumeFinalizedThrough })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(identity())
+      : candleResponse(identity(), {
+          cursor: 1_800_000_000,
+          candles: [{
+            timestamp: 1_799_999_700,
+            volumeComplete: volumeFinalizedThrough >= 1_800_000_000,
+          }],
+        }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000'
+
+    const unfinished = await worker.fetch(
+      new Request(url),
+      workerEnv(),
+      executionContext(),
+    )
+    volumeFinalizedThrough = 1_800_000_000
+    const finalized = await worker.fetch(
+      new Request(url),
+      workerEnv(),
+      executionContext(),
+    )
+    const finalizedHit = await worker.fetch(
+      new Request(url),
+      workerEnv(),
+      executionContext(),
+    )
+
+    expect(unfinished.headers.get('Cache-Control')).toContain('s-maxage=2')
+    expect(finalized.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
+    expect(finalized.headers.get('Cache-Control')).toContain('s-maxage=300')
+    expect(finalizedHit.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    await expect(finalized.json()).resolves.toMatchObject({
+      data: { candles: [{ volumeComplete: true }] },
+    })
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input)))
+      .toHaveLength(2)
+  })
+
+  it('retains an immutable pre-volume page while the current-router watermark advances', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    let volumeCoverageEnd = 1_800_300_000
+    let volumeFinalizedThrough = 1_800_000_000
+    const identity = () => candleIdentity(7, {
+      coverageStart: 1_799_400_000,
+      volumeCoverageStart: 1_800_000_000,
+      volumeCoverageEnd,
+      volumeFinalizedThrough,
+    })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(identity())
+      : candleResponse(identity(), {
+          cursor: 1_799_850_000,
+          candles: [{ timestamp: 1_799_849_700, volumeComplete: false }],
+        }))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1799850000'
+
+    const seeded = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    volumeCoverageEnd = 1_800_600_000
+    volumeFinalizedThrough = 1_800_300_000
+    const hit = await worker.fetch(new Request(url), workerEnv(), executionContext())
+
+    expect(seeded.headers.get('Cache-Control')).toContain('s-maxage=300')
+    expect(hit.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input)))
+      .toHaveLength(1)
+  })
+
+  it('long-caches a finalized page that straddles the current-router coverage start', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    const identity = candleIdentity(7, {
+      volumeCoverageStart: 1_799_900_100,
+      volumeCoverageEnd: 1_800_000_000,
+      volumeFinalizedThrough: 1_800_000_000,
+    })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(identity)
+      : candlePageResponse(identity))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000'
+
+    const seeded = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    const hit = await worker.fetch(new Request(url), workerEnv(), executionContext())
+
+    expect(seeded.headers.get('Cache-Control')).toContain('s-maxage=300')
+    expect(hit.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input)))
+      .toHaveLength(1)
+  })
+
+  it('caches against the shared later published price target boundary', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    // Physical storage may begin earlier; both public endpoints intentionally
+    // expose this latest published boundary so their page-state proofs agree.
+    const publishedIdentity = candleIdentity(7, {
+      coverageStart: 1_799_900_100,
+    })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(publishedIdentity)
+      : candlePageResponse(publishedIdentity))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000'
+
+    const seeded = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    const hit = await worker.fetch(new Request(url), workerEnv(), executionContext())
+
+    expect(seeded.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
+    expect(hit.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input)))
+      .toHaveLength(1)
+  })
+
+  it('keeps a wall-clock-closed terminal price page active until price catches up', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
+    let coverageEnd = 1_799_970_000
+    let finalizedThrough = 1_799_970_000
+    let volumeCoverageEnd = 1_799_970_000
+    let volumeFinalizedThrough = 1_799_970_000
+    const identity = () => candleIdentity(7, {
+      coverageEnd,
+      finalizedThrough,
+      volumeCoverageEnd,
+      volumeFinalizedThrough,
+    })
+    const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
+      ? currentCandleResponse(identity())
+      : candlePageResponse(identity()))
+    vi.stubGlobal('fetch', fetchMock)
+    const url =
+      'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800000000'
+
+    const terminal = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    coverageEnd = 1_800_000_000
+    finalizedThrough = 1_800_000_000
+    volumeCoverageEnd = 1_800_000_000
+    volumeFinalizedThrough = 1_800_000_000
+    const completed = await worker.fetch(new Request(url), workerEnv(), executionContext())
+    const hit = await worker.fetch(new Request(url), workerEnv(), executionContext())
+
+    expect(terminal.headers.get('Cache-Control')).toContain('s-maxage=2')
+    expect(completed.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
+    expect(completed.headers.get('Cache-Control')).toContain('s-maxage=300')
+    expect(hit.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input)))
+      .toHaveLength(2)
+  })
+
   it('makes an active-page cache entry unreachable when the page becomes closed', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_100_000)
+    let coverageEnd = 1_800_000_000
+    let finalizedThrough = 1_800_000_000
+    let volumeCoverageEnd = 1_800_000_000
+    let volumeFinalizedThrough = 1_800_000_000
+    const identity = () => candleIdentity(7, {
+      coverageEnd,
+      finalizedThrough,
+      volumeCoverageEnd,
+      volumeFinalizedThrough,
+    })
     const fetchMock = vi.fn(async (input: unknown) => isCurrentCandleFetch(input)
-      ? currentCandleResponse(candleIdentity(7))
-      : candlePageResponse(candleIdentity(7)))
+      ? currentCandleResponse(identity())
+      : candlePageResponse(identity()))
     vi.stubGlobal('fetch', fetchMock)
     const url =
       'https://app.example/api/perps/v1/perps/basket/candles?interval=300&cursor=1800150000'
 
     const active = await worker.fetch(new Request(url), workerEnv(), executionContext())
     now.mockReturnValue(1_800_150_000_000)
+    coverageEnd = 1_800_150_000
+    finalizedThrough = 1_800_150_000
+    volumeCoverageEnd = 1_800_150_000
+    volumeFinalizedThrough = 1_800_150_000
     const newlyClosed = await worker.fetch(new Request(url), workerEnv(), executionContext())
     const closedHit = await worker.fetch(new Request(url), workerEnv(), executionContext())
 

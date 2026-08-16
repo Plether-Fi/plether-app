@@ -60,6 +60,8 @@ const CANDLE_IDENTITY = {
   seriesId: 'dxy-v1',
   configurationHash: 'sha256:test-configuration',
   displayPriceCap: '200000000',
+  volumeChainId: 421_614,
+  volumeRouter: '0x1111111111111111111111111111111111111111',
 } as const
 
 function rawCandle(
@@ -99,6 +101,10 @@ function candlePage(
     coverageEnd: 64_800,
     coverageComplete: true,
     finalizedThrough: 64_800,
+    volumeCoverageStart: 0,
+    volumeCoverageEnd: 64_800,
+    volumeFinalizedThrough: 64_800,
+    volumeCoverageComplete: true,
     datasetGeneration: 7,
     candles,
     ...overrides,
@@ -116,6 +122,10 @@ function currentCandle(
     coverageEnd: 64_800,
     coverageComplete: true,
     finalizedThrough: 64_800,
+    volumeCoverageStart: 0,
+    volumeCoverageEnd: 64_800,
+    volumeFinalizedThrough: 64_800,
+    volumeCoverageComplete: true,
     datasetGeneration: 7,
     candle: null,
     ...overrides,
@@ -446,6 +456,7 @@ describe('Plether TradingView datafeed', () => {
       seriesId: 'dxy-v2',
       configurationHash: 'sha256:next-configuration',
       displayPriceCap: '250000000',
+      volumeRouter: CANDLE_IDENTITY.volumeRouter,
     } as const
     let activeIdentity: typeof CANDLE_IDENTITY | typeof nextIdentity = CANDLE_IDENTITY
     let activeGeneration = 7
@@ -509,6 +520,7 @@ describe('Plether TradingView datafeed', () => {
       seriesId: 'dxy-v2',
       configurationHash: 'sha256:next-configuration',
       displayPriceCap: '250000000',
+      volumeRouter: CANDLE_IDENTITY.volumeRouter,
     } as const
     let pageGeneration = 1
     let pageIdentity: typeof CANDLE_IDENTITY | typeof nextIdentity = nextIdentity
@@ -714,14 +726,13 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
-  it('resets one interval when current data transitions to a new basket identity', async () => {
+  it('resets one interval when current data transitions to a new volume router', async () => {
     const onResetCacheNeeded = vi.fn()
     const onHistoryGap = vi.fn()
     const clearCandlePageCache = vi.fn()
     const nextIdentity = {
-      seriesId: 'dxy-v2',
-      configurationHash: 'sha256:next-configuration',
-      displayPriceCap: '250000000',
+      ...CANDLE_IDENTITY,
+      volumeRouter: '0x2222222222222222222222222222222222222222',
     } as const
     let currentIdentity: typeof CANDLE_IDENTITY | typeof nextIdentity = CANDLE_IDENTITY
     const feed = new PletherDxyDatafeed({
@@ -778,10 +789,10 @@ describe('Plether TradingView datafeed', () => {
 
       expect(liveBar).toMatchObject({
         time: 64_920_000,
-        open: 1.52,
-        high: 1.53,
-        low: 1.49,
-        close: 1.51,
+        open: 1.02,
+        high: 1.03,
+        low: 0.99,
+        close: 1.01,
       })
       expect(clearCandlePageCache).toHaveBeenCalledWith(60)
     } finally {

@@ -12,6 +12,7 @@ module Plether.Database.Schema
   , ensureBasketSnapshotSchema
   , insertBasketSnapshot
   , insertBasketSnapshotWithSource
+  , insertBasketSnapshotsWithSource
   , getBasketSnapshots
   , getBasketSnapshotTimes
   , getLatestBasketSnapshot
@@ -132,6 +133,7 @@ import Database.PostgreSQL.Simple
   , Only (..)
   , Query
   , execute
+  , executeMany
   , execute_
   , query
   , query_
@@ -605,7 +607,23 @@ insertBasketSnapshotWithSource
   -> Text    -- source
   -> IO ()
 insertBasketSnapshotWithSource conn timestamp intervalSeconds basketPrice components source = do
-  _ <- execute conn
+  insertBasketSnapshotsWithSource
+    conn
+    [(timestamp, intervalSeconds, basketPrice, components)]
+    source
+
+-- | Persist a bounded endpoint response with one prepared batch operation.
+-- The upsert policy is identical to the single-row writer, including source
+-- priority, so historical bulk ingestion cannot overwrite a stronger live
+-- observation for the same minute.
+insertBasketSnapshotsWithSource
+  :: Connection
+  -> [(Integer, Integer, Integer, Value)]
+  -> Text
+  -> IO ()
+insertBasketSnapshotsWithSource _ [] _ = pure ()
+insertBasketSnapshotsWithSource conn snapshots source = do
+  _ <- executeMany conn
     "INSERT INTO perps_basket_snapshots \
     \(timestamp, interval_seconds, basket_price, component_prices, source) \
     \VALUES (?, ?, ?, ?, ?) \
@@ -625,7 +643,9 @@ insertBasketSnapshotWithSource conn timestamp intervalSeconds basketPrice compon
     \  WHEN 'backend_hermes_historical_v2' THEN 20 \
     \  WHEN 'backend_hermes_reveal_v2' THEN 20 \
     \  ELSE 10 END)"
-    (timestamp, intervalSeconds, basketPrice, encode components, source)
+    [ (timestamp, intervalSeconds, basketPrice, encode components, source)
+    | (timestamp, intervalSeconds, basketPrice, components) <- snapshots
+    ]
   pure ()
 
 getBasketSnapshots

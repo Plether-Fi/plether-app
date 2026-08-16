@@ -8,11 +8,14 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple.Types (Query (..))
 import Plether.Database.CandleHistory
-  ( CandleHistorySelection (..)
+  ( CandleHistoryIngestionProgress (..)
+  , CandleHistorySelection (..)
   , MarketReleaseEpoch (..)
   , candleHistorySchemaStatements
+  , defaultCandleMarketId
   , effectiveHistoryStart
   , releaseEpochAtBlock
+  , validateCandleHistoryIngestionCompletion
   , validateCandleHistorySelection
   , validateMarketReleaseEpoch
   , validateMarketReleaseEpochSequence
@@ -22,6 +25,9 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "operator-selected candle history" $ do
+    it "uses one explicit logical-market identity independent of releases" $
+      defaultCandleMarketId `shouldBe` "dxy-perps-v1"
+
     it "accepts an arbitrary second and aligns each interval independently" $ do
       validateCandleHistorySelection selection `shouldBe` Right ()
       effectiveHistoryStart 60 120 `shouldBe` Right 120
@@ -38,6 +44,26 @@ spec = do
       validateCandleHistorySelection selection {chsRequestedBy = "  "}
         `shouldSatisfy` isLeft
       validateCandleHistorySelection selection {chsRequestReference = ""}
+        `shouldSatisfy` isLeft
+
+    it "requires exact canonical minute-grid progress before publication" $ do
+      validateCandleHistoryIngestionCompletion selection completedProgress
+        `shouldBe` Right ()
+      validateCandleHistoryIngestionCompletion
+        selection
+        completedProgress {chipTargetRevision = 2}
+        `shouldSatisfy` isLeft
+      validateCandleHistoryIngestionCompletion
+        selection
+        completedProgress {chipSampleIntervalSeconds = 180}
+        `shouldSatisfy` isLeft
+      validateCandleHistoryIngestionCompletion
+        selection
+        completedProgress {chipComplete = False, chipNextTimestamp = 1_700_000_060}
+        `shouldSatisfy` isLeft
+      validateCandleHistoryIngestionCompletion
+        selection
+        completedProgress {chipLastError = Just "partial component window"}
         `shouldSatisfy` isLeft
 
   describe "immutable logical-market releases" $ do
@@ -93,14 +119,18 @@ spec = do
       validateMarketReleaseEpoch firstRelease {mreApprovalReference = " "}
         `shouldSatisfy` isLeft
 
-  describe "minimal history schema" $ do
-    it "contains only market, target, and release metadata" $ do
+  describe "history schema" $ do
+    it "contains immutable targets, resumable ingestion proof, and release metadata" $ do
       schemaContains "CREATE TABLE IF NOT EXISTS perps_candle_markets"
       schemaContains "CREATE TABLE IF NOT EXISTS perps_candle_history_targets"
+      schemaContains "CREATE TABLE IF NOT EXISTS perps_candle_history_ingestions"
+      schemaContains "CREATE TABLE IF NOT EXISTS perps_candle_history_ingestion_windows"
       schemaContains "CREATE TABLE IF NOT EXISTS perps_market_release_epochs"
       schemaContains "candle market identity is immutable"
       schemaContains "candle history targets are immutable; append a revision"
       schemaContains "candle history target must append the next revision"
+      schemaContains "candle history publication is immutable"
+      schemaContains "published_generation"
       schemaContains "market release epochs are immutable; append a successor epoch"
       schemaContains "market release must append the next revision"
       schemaContains "UNIQUE (market_id, activation_block)"
@@ -125,6 +155,11 @@ spec = do
         Nothing -> pure ()
         Just mismatch -> expectationFailure mismatch
 
+    it "installs the generation monotonicity guard in the static bootstrap" $ do
+      schema <- readFile "schema.sql"
+      schema `shouldContain` "protect_perps_rollup_generation_monotonic"
+      schema `shouldContain` "perps rollup usability regression requires a new generation"
+
 selection :: CandleHistorySelection
 selection =
   CandleHistorySelection
@@ -133,6 +168,20 @@ selection =
     , chsRequestedStartTimestamp = 1_700_000_001
     , chsRequestedBy = "operator@example.com"
     , chsRequestReference = "change-42"
+    }
+
+completedProgress :: CandleHistoryIngestionProgress
+completedProgress =
+  CandleHistoryIngestionProgress
+    { chipMarketId = marketId
+    , chipTargetRevision = 1
+    , chipStartTimestamp = 1_700_000_040
+    , chipEndTimestampExclusive = 1_700_086_440
+    , chipNextTimestamp = 1_700_086_440
+    , chipSampleIntervalSeconds = 60
+    , chipComplete = True
+    , chipLastError = Nothing
+    , chipPublishedGeneration = Nothing
     }
 
 releases :: [MarketReleaseEpoch]
@@ -171,7 +220,7 @@ release revision router deploymentBlock activationBlock activationTimestamp isGe
     }
 
 marketId :: Text
-marketId = "dxy-perps-v1"
+marketId = defaultCandleMarketId
 
 firstRouter :: Text
 firstRouter = "0x" <> T.replicate 40 "1"
