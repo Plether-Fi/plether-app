@@ -2368,7 +2368,7 @@ candleRollupSpec databaseUrl =
           rcComplete unchanged `shouldBe` True
           rcGeneration unchanged `shouldBe` 67_108_863
 
-    it "uses both rollup primary keys for bounded compatibility range reads" $
+    it "uses both rollup covering indexes for bounded compatibility range reads" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
@@ -2400,9 +2400,10 @@ candleRollupSpec databaseUrl =
               )
               :: IO [Only Text]
           let renderedPlan = Text.unpack $ Text.unlines [line | Only line <- plan]
-          renderedPlan `shouldContain` "Index"
-          renderedPlan `shouldContain` "perps_basket_candles_pkey"
-          renderedPlan `shouldContain` "perps_market_volume_rollups_pkey"
+          renderedPlan
+            `shouldContain` "Index Only Scan using idx_perps_basket_candles_page_cover"
+          renderedPlan
+            `shouldContain` "Index Only Scan using idx_perps_market_volume_rollups_page_cover"
 
     it "uses block-number indexes for reorg discovery and history deletion" $
       withCandleDatabase databaseUrl $ \pool ->
