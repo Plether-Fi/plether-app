@@ -4,6 +4,7 @@ import Data.Aeson (object, toJSON, (.=))
 import Data.Either (isLeft)
 import Plether.Types.Perps
   ( BasketCandle (..)
+  , BasketCandlePage (..)
   , BasketCurrentCandle (..)
   , BasketHistoryParams (..)
   , BasketHistoryPoint (..)
@@ -200,7 +201,7 @@ spec = do
           , "complete" .= False
           ]
 
-    it "preserves unknown current-candle volume as null" $ do
+    it "preserves price-only candle volume as null" $ do
       let candle =
             BasketCandle
               { bcTimestamp = 3600
@@ -213,7 +214,7 @@ spec = do
               , bcSampleCount = 1
               , bcQuality = "observed"
               , bcRevision = 1
-              , bcPriceComplete = False
+              , bcPriceComplete = True
               , bcVolumeComplete = False
               }
       toJSON candle `shouldSatisfy` (== object
@@ -227,7 +228,7 @@ spec = do
         , "sampleCount" .= (1 :: Integer)
         , "quality" .= ("observed" :: String)
         , "revision" .= (1 :: Integer)
-        , "priceComplete" .= False
+        , "priceComplete" .= True
         , "volumeComplete" .= False
         , "complete" .= False
         ])
@@ -239,6 +240,12 @@ spec = do
           , bccSeriesId = "dxy-v1"
           , bccConfigurationHash = "sha256:test"
           , bccDisplayPriceCap = 200_000_000
+          , bccVolumeChainId = 421_614
+          , bccVolumeRouter = "0x1111111111111111111111111111111111111111"
+          , bccVolumeCoverageStart = Just 1_200
+          , bccVolumeCoverageEnd = Just 1_800
+          , bccVolumeFinalizedThrough = Just 1_800
+          , bccVolumeCoverageComplete = True
           , bccDatasetGeneration = 67_108_865
           , bccCoverageStart = Just 1_000
           , bccCoverageEnd = Just 2_000
@@ -251,10 +258,61 @@ spec = do
           , "seriesId" .= ("dxy-v1" :: String)
           , "configurationHash" .= ("sha256:test" :: String)
           , "displayPriceCap" .= ("200000000" :: String)
+          , "volumeChainId" .= (421_614 :: Integer)
+          , "volumeRouter" .= ("0x1111111111111111111111111111111111111111" :: String)
+          , "volumeCoverageStart" .= (Just 1_200 :: Maybe Integer)
+          , "volumeCoverageEnd" .= (Just 1_800 :: Maybe Integer)
+          , "volumeFinalizedThrough" .= (Just 1_800 :: Maybe Integer)
+          , "volumeCoverageComplete" .= True
           , "datasetGeneration" .= (67_108_865 :: Integer)
           , "coverageStart" .= (Just 1_000 :: Maybe Integer)
           , "coverageEnd" .= (Just 2_000 :: Maybe Integer)
           , "finalizedThrough" .= (Just 1_900 :: Maybe Integer)
           , "coverageComplete" .= True
           , "candle" .= (Nothing :: Maybe BasketCandle)
+          ]
+
+    it "binds historical volume coverage to the exact chain and router" $ do
+      toJSON
+        BasketCandlePage
+          { bcpIntervalSeconds = 60
+          , bcpCursor = 30_000
+          , bcpSeriesId = "dxy-v1"
+          , bcpConfigurationHash = "sha256:test"
+          , bcpDisplayPriceCap = 200_000_000
+          , bcpVolumeChainId = 421_614
+          , bcpVolumeRouter = "0x1111111111111111111111111111111111111111"
+          , bcpVolumeCoverageStart = Nothing
+          , bcpVolumeCoverageEnd = Nothing
+          , bcpVolumeFinalizedThrough = Nothing
+          , bcpVolumeCoverageComplete = False
+          , bcpPreviousCursor = Nothing
+          , bcpHasEarlier = False
+          , bcpCoverageStart = Just 0
+          , bcpCoverageEnd = Just 30_000
+          , bcpFinalizedThrough = Just 30_000
+          , bcpDatasetGeneration = 134_217_728
+          , bcpCoverageComplete = True
+          , bcpCandles = []
+          }
+        `shouldBe` object
+          [ "intervalSeconds" .= (60 :: Integer)
+          , "cursor" .= (30_000 :: Integer)
+          , "seriesId" .= ("dxy-v1" :: String)
+          , "configurationHash" .= ("sha256:test" :: String)
+          , "displayPriceCap" .= ("200000000" :: String)
+          , "volumeChainId" .= (421_614 :: Integer)
+          , "volumeRouter" .= ("0x1111111111111111111111111111111111111111" :: String)
+          , "volumeCoverageStart" .= (Nothing :: Maybe Integer)
+          , "volumeCoverageEnd" .= (Nothing :: Maybe Integer)
+          , "volumeFinalizedThrough" .= (Nothing :: Maybe Integer)
+          , "volumeCoverageComplete" .= False
+          , "previousCursor" .= (Nothing :: Maybe Integer)
+          , "hasEarlier" .= False
+          , "coverageStart" .= (Just 0 :: Maybe Integer)
+          , "coverageEnd" .= (Just 30_000 :: Maybe Integer)
+          , "finalizedThrough" .= (Just 30_000 :: Maybe Integer)
+          , "datasetGeneration" .= (134_217_728 :: Integer)
+          , "coverageComplete" .= True
+          , "candles" .= ([] :: [BasketCandle])
           ]

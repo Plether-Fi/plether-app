@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Control.Concurrent (threadDelay)
+import Control.Concurrent (forkIO, threadDelay)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (forM_, when)
 import Data.Aeson (toJSON)
@@ -56,7 +56,12 @@ import Plether.Pyth.Hermes
   , isPermanentHermesConfigurationError
   , resolveHermesApiKey
   )
-import Plether.Pyth.History (BasketIngestorConfig (..), basketObservationId, runBasketBackfill)
+import Plether.Pyth.History
+  ( BasketIngestorConfig (..)
+  , basketObservationId
+  , runBasketBackfill
+  , startBasketHistoryIngestor
+  )
 import Plether.Pyth.RevealPayload
   ( PythPayloadAdmission (..)
   , classifyPythPayloadAdmission
@@ -135,14 +140,34 @@ main = do
                       [field "error" err]
                     exitFailure
                   Right () -> pure ()
-              LatestLoop ->
+              LatestLoop -> do
+                when (candleWritesEnabled cfg) $ do
+                  _ <-
+                    forkIO $
+                      startBasketHistoryIngestor
+                        manager
+                        pool
+                        BasketIngestorConfig
+                          { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                          , bicApiKey = cfgPythApiKey cfg
+                          , bicChainId = cfgPerpsChainId cfg
+                          , bicBackfillDays = cfgPythBackfillDays cfg
+                          , bicOwnHistoryTargets = True
+                          , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
+                          , bicPollSeconds = 15 * 60
+                          , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                          , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
+                          }
+                  pure ()
                 latestLoop manager ethClient pool cfg (waPollSeconds args)
               BackfillOnce -> do
                 let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
                 runBasketBackfill manager pool BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
                   , bicApiKey = cfgPythApiKey cfg
+                  , bicChainId = cfgPerpsChainId cfg
                   , bicBackfillDays = backfillDays
+                  , bicOwnHistoryTargets = False
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 0
                   , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg

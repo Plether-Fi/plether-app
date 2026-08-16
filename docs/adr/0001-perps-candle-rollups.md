@@ -120,8 +120,8 @@ An additive metadata foundation records the stable logical market separately
 from its contract releases. Each release has an immutable sequential revision,
 contract addresses, and canonical deployment and activation evidence. Its
 exclusive block end is derived from the next release activation; it is not
-stored as mutable state. This foundation does not yet change the v1 writer or
-read identity.
+stored as mutable state. This metadata does not participate in v1 candle
+ingestion or reads; cross-release volume is outside this migration.
 
 The stored value is the exact numerator of the existing contract-notional
 definition, based on `ABS(size_delta) * execution_price`. Division and flooring
@@ -170,10 +170,14 @@ boundary, both generations remain unchanged, and the same request succeeds
 again. Workflow/task success alone proves only the database lock and recovery
 lifecycle; it does not prove that the three HTTP observations occurred.
 
-A historical page is eligible for rollup reads only when the complete requested
-range is covered for both required sources and the active derivation version.
-The presence of one row is not proof of coverage. Partial backfills must never
-produce sparse production pages.
+A native historical page is eligible for rollup reads only when its complete
+requested range has price coverage for the active derivation version. Volume
+from the currently configured `(chain_id, router)` scope is attached
+independently where that scope has proven coverage; earlier volume remains
+unknown rather than clipping price history. Legacy compatibility reads retain
+their combined price-and-volume coverage requirement. The presence of one row
+is not proof of coverage. Partial backfills must never produce sparse
+production pages.
 
 Corrections to finalized data increment the relevant row revision and dataset
 generation. Current candles are mutable replacements; finalized history pages
@@ -207,6 +211,15 @@ The current-candle endpoint returns a full OHLCV replacement with revision and
 source completeness. It does not participate in immutable historical
 pagination.
 
+Both native responses bind nullable volume to `volumeChainId` and
+`volumeRouter` and expose that scope's trusted `volumeCoverageStart`,
+`volumeCoverageEnd`, `volumeFinalizedThrough`, and
+`volumeCoverageComplete`. Edge caches use those bounds in addition to the
+dataset generation: a wall-clock-closed page remains on the active TTL until
+price is finalized through the page and its current-router volume semantics
+can no longer change. Pages entirely before scoped volume coverage and pages
+whose in-scope volume is fully finalized may use the long TTL.
+
 The legacy `/basket/history` endpoint remains available during rollout and is
 served by one bounded rollup range read once complete coverage exists. Direct
 raw-table fallback remains bounded and is removed after the compatibility
@@ -219,8 +232,9 @@ endpoint remains authoritative for rolling 24-hour volume. The browser reuses
 the component response on a five-minute refresh cadence.
 
 Closed edge-cache entries are keyed internally by the authoritative current
-dataset identity: series, configuration hash, display-price cap, and positive
-dataset generation. The worker checks that identity directly at origin before
+dataset identity: series, configuration hash, display-price cap, normalized
+current volume chain/router scope, and positive dataset generation. The worker
+checks that identity directly at origin before
 serving a historical cache entry and caches a newly fetched page only when its
 identity matches the probe. A failed or incomplete probe bypasses the shared
 page cache. Thus a correction or reorg makes an old generation unreachable
@@ -236,18 +250,54 @@ The read model consists of:
 - `perps_market_volume_rollups`;
 - `perps_rollup_coverage`.
 
-Three inert metadata tables prepare arbitrary operator-selected history without
-claiming that history is already available:
+Logical-market metadata and ingestion evidence support arbitrary
+operator-selected price history without claiming that unfinished history is
+already available:
 
 - `perps_candle_markets` binds a logical market to its chain and price series;
 - `perps_candle_history_targets` stores immutable target revisions containing
   the exact non-negative Unix second selected by the operator;
-- `perps_market_release_epochs` stores immutable, ordered contract-release
-  evidence for later cross-release volume ingestion.
+- `perps_candle_history_ingestions` freezes one half-open source range and a
+  contiguous checked cursor for each target revision, and records which
+  completed revision has been atomically published;
+- `perps_candle_history_ingestion_windows` records every successfully checked
+  six-component Pyth history window, including valid sparse/no-update windows.
+
+Separately, `perps_market_release_epochs` stores immutable, ordered
+contract-release evidence. The v1 candle API does not require or consume it.
 
 For each candle interval, a selected timestamp aligns up to the first complete
-Unix-aligned bucket. The metadata tables contain no ingestion progress,
-publication state, rollups, or read-path switch.
+Unix-aligned bucket. The target worker reads all six Pyth component histories
+in bounded two-day bulk windows. Component update grids need not be identical:
+the worker derives the canonical minute grid from per-feed as-of closes with a
+strict five-minute freshness bound and a matching request lookback. It rejects
+failed or malformed component responses, commits source rows and one
+contiguous progress advance atomically, and stops an old revision before its
+next batch when a replacement target appears. Empty windows are valid proof;
+the worker does not infer or skip an unqueried historical range merely because
+nearby windows had no data. When trusted price coverage already exists, the
+worker persists only samples before that coverage start while still proving the
+whole frozen range; this prevents remote overlap from changing public canonical
+rows before generation-switched publication. Work therefore scales with the
+selected range.
+
+Native candle availability is price-led. The latest selected target is desired
+state only; a previously published target remains readable while an older or
+later selected range is fetched and built. A separate protected operation
+validates the exact latest target's complete, error-free ingestion evidence,
+publishes price coverage, advances the price generation, and activates that
+target in one transaction. Native historical pages use only the latest
+published target as their lower bound. Current metadata exposes that same
+published lower bound so page-cache identity remains coherent, while the
+mutable candle itself stays live and ignores unpublished desired revisions.
+Current-router volume is attached only for buckets inside complete, finalized
+volume coverage. Earlier price
+candles remain valid and expose
+`volumeUsdc: null`, `tradeCount: null`, and `volumeComplete: false`; the reader
+does not query or aggregate older contract releases. The existing candle-level
+`complete` field remains the legacy conjunction
+`priceComplete && volumeComplete`; native availability is determined from
+page-level price coverage and `priceComplete`, not that combined field.
 
 Price identity is `(series_id, interval_seconds, bucket_start)`.
 Volume identity in the single-market v1 deployment is `(chain_id,
@@ -269,9 +319,10 @@ The `plether-candle-admin` executable provides:
 ```text
 estimate
 migrate
+set-history-target --start-timestamp <unix> --requested-by <identity> --request-reference <reference>
 backfill price|volume|all
 status
-verify
+verify price|volume|all
 repair price|volume|all
 finalizer-probe --boundary <aligned-hour>
 ```
@@ -282,10 +333,14 @@ lock and statement timeouts, optional throttling, an absolute application
 runtime, and durable coverage state. Both operations require dual-write mode;
 the final repair reconciliation and publication use a repeatable-read canonical
 source snapshot, and an empty canonical source domain cannot be published as
-complete coverage. Backfill runs newest-first so useful chart windows become
-available first. It reads only existing PostgreSQL history and never calls
-remote Pyth services. Coverage is extended only across adjacent completed
-chunks.
+complete coverage. Ordinary backfill runs newest-first so useful chart windows
+become available first. It reads only existing PostgreSQL history and never
+calls remote Pyth services. Coverage is extended only across adjacent completed
+chunks. For a selected history target, source ingestion remains the worker's
+responsibility; protected price backfill accepts only the target's exact frozen
+range, builds unpublished chunks, then publishes coverage and activates the
+target once in a final transaction. A partial or replaced target cannot become
+public.
 
 `finalizer-probe` is a Sepolia-only, hourly canary for the strict read failure
 path. It accepts one aligned boundary and requires the exact active `3600`

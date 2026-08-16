@@ -17,6 +17,7 @@ on:
         options:
           - estimate
           - migrate
+          - set-history-target
           - backfill
           - status
           - verify
@@ -24,7 +25,7 @@ on:
           - replay
           - finalizer-probe
       scope:
-        description: Required for backfill/repair; use none for other actions
+        description: Required for backfill/verify/repair; use none for other actions
         required: true
         default: none
         type: choice
@@ -39,6 +40,10 @@ on:
         type: string
       to_timestamp:
         description: Optional exclusive Unix timestamp; required for repair
+        required: false
+        type: string
+      history_start_timestamp:
+        description: Desired Unix timestamp required only for set-history-target
         required: false
         type: string
       boundary:
@@ -188,6 +193,7 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          HISTORY_START_TIMESTAMP: ${{ inputs.history_start_timestamp }}
           BOUNDARY: ${{ inputs.boundary }}
           FROM_BLOCK: ${{ inputs.from_block }}
           TO_BLOCK: ${{ inputs.to_block }}
@@ -214,13 +220,13 @@ jobs:
           fi
 
           case "$ACTION" in
-            backfill|repair)
+            backfill|verify|repair)
               if [ "$SCOPE" = "none" ]; then
-                echo "::error title=Missing scope::backfill and repair require price, volume, or all."
+                echo "::error title=Missing scope::backfill, verify, and repair require price, volume, or all."
                 exit 1
               fi
               ;;
-            estimate|migrate|status|verify|replay|finalizer-probe)
+            estimate|migrate|set-history-target|status|replay|finalizer-probe)
               if [ "$SCOPE" != "none" ]; then
                 echo "::error title=Unexpected scope::Use none for $ACTION."
                 exit 1
@@ -248,16 +254,27 @@ jobs:
             fi
           }
 
-          validate_optional_timestamp() {
-            local name=$1
-            local value=$2
-            if [ -n "$value" ]; then
-              validate_integer "$name" "$value" 1 4102444800
+          if [ -n "$FROM_TIMESTAMP" ]; then
+            validate_integer from_timestamp "$FROM_TIMESTAMP" 0 4102444800
+          fi
+          if [ -n "$TO_TIMESTAMP" ]; then
+            validate_integer to_timestamp "$TO_TIMESTAMP" 1 4102444800
+          fi
+          if [ "$ACTION" = "set-history-target" ]; then
+            if [ -z "$HISTORY_START_TIMESTAMP" ]; then
+              echo "::error title=Missing history target::set-history-target requires history_start_timestamp."
+              exit 1
             fi
-          }
-
-          validate_optional_timestamp from_timestamp "$FROM_TIMESTAMP"
-          validate_optional_timestamp to_timestamp "$TO_TIMESTAMP"
+            validate_integer history_start_timestamp "$HISTORY_START_TIMESTAMP" 0 4102444800
+            if [ -n "$FROM_TIMESTAMP" ] || [ -n "$TO_TIMESTAMP" ] || \
+               [ -n "$BOUNDARY" ] || [ -n "$FROM_BLOCK" ] || [ -n "$TO_BLOCK" ]; then
+              echo "::error title=Unexpected history-target bounds::set-history-target accepts only history_start_timestamp."
+              exit 1
+            fi
+          elif [ -n "$HISTORY_START_TIMESTAMP" ]; then
+            echo "::error title=Unexpected history target::history_start_timestamp is accepted only for set-history-target."
+            exit 1
+          fi
           validate_integer chunk_seconds "$CHUNK_SECONDS" 3600 604800
           validate_integer statement_timeout_ms "$STATEMENT_TIMEOUT_MS" 1000 1800000
           if [ -n "$LOCK_TIMEOUT_MS" ]; then
@@ -1971,6 +1988,9 @@ jobs:
           SCOPE: ${{ inputs.scope }}
           FROM_TIMESTAMP: ${{ inputs.from_timestamp }}
           TO_TIMESTAMP: ${{ inputs.to_timestamp }}
+          HISTORY_START_TIMESTAMP: ${{ inputs.history_start_timestamp }}
+          HISTORY_REQUESTED_BY: ${{ github.actor }}
+          HISTORY_REQUEST_REFERENCE: github:${{ github.repository }}:run:${{ github.run_id }}
           BOUNDARY: ${{ inputs.boundary }}
           FROM_BLOCK: ${{ inputs.from_block }}
           TO_BLOCK: ${{ inputs.to_block }}
@@ -1998,6 +2018,9 @@ jobs:
             --arg scope "$SCOPE" \
             --arg from "$FROM_TIMESTAMP" \
             --arg to "$TO_TIMESTAMP" \
+            --arg history_start "$HISTORY_START_TIMESTAMP" \
+            --arg history_requested_by "$HISTORY_REQUESTED_BY" \
+            --arg history_request_reference "$HISTORY_REQUEST_REFERENCE" \
             --arg boundary "$BOUNDARY" \
             --arg from_block "$FROM_BLOCK" \
             --arg to_block "$TO_BLOCK" \
@@ -2010,7 +2033,7 @@ jobs:
               def optional($flag; $value):
                 if $value == "" then [] else [$flag, $value] end;
               def scoped:
-                if $action == "backfill" or $action == "repair"
+                if $action == "backfill" or $action == "verify" or $action == "repair"
                 then [$scope]
                 else []
                 end;
@@ -2025,6 +2048,17 @@ jobs:
                   command: ["plether-perps-indexer", "--replay",
                             "--from-block", $from_block,
                             "--to-block", $to_block,
+                            "--statement-timeout-ms", $statement_timeout,
+                            "--lock-timeout-ms", $lock_timeout,
+                            "--max-runtime-seconds", "1800"]
+                }]}
+              elif $action == "set-history-target" then
+                {containerOverrides: [{
+                  name: $container,
+                  command: ["plether-candle-admin", "set-history-target",
+                            "--start-timestamp", $history_start,
+                            "--requested-by", $history_requested_by,
+                            "--request-reference", $history_request_reference,
                             "--statement-timeout-ms", $statement_timeout,
                             "--lock-timeout-ms", $lock_timeout,
                             "--max-runtime-seconds", "1800"]
@@ -2731,6 +2765,9 @@ jobs:
         env:
           ACTION: ${{ inputs.action }}
           BOUNDARY: ${{ inputs.boundary }}
+          HISTORY_START_TIMESTAMP: ${{ inputs.history_start_timestamp }}
+          HISTORY_REQUESTED_BY: ${{ inputs.action == 'set-history-target' && github.actor || '' }}
+          HISTORY_REQUEST_REFERENCE: ${{ inputs.action == 'set-history-target' && format('github:{0}:run:{1}', github.repository, github.run_id) || '' }}
           SOURCE_TASK_DEFINITION: ${{ steps.resolved.outputs.source_task_definition }}
           TEMPORARY_TASK_DEFINITION: ${{ steps.resolved.outputs.task_definition }}
           TASK_ARN: ${{ steps.task.outputs.task_arn }}
@@ -2754,6 +2791,9 @@ jobs:
             printf -- '- Workflow SHA: `%s`\n' "$GITHUB_SHA"
             printf -- '- Workflow run: `%s/actions/runs/%s`\n' "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
             printf -- '- Boundary: `%s`\n' "${BOUNDARY:-not-applicable}"
+            printf -- '- History start timestamp: `%s`\n' "${HISTORY_START_TIMESTAMP:-not-applicable}"
+            printf -- '- History target requested by: `%s`\n' "${HISTORY_REQUESTED_BY:-not-applicable}"
+            printf -- '- History target request reference: `%s`\n' "${HISTORY_REQUEST_REFERENCE:-not-applicable}"
             printf -- '- Finalizer topology: `%s`\n' "${FINALIZER_TOPOLOGY:-not-applicable}"
             printf -- '- Source task definition: `%s`\n' "$SOURCE_TASK_DEFINITION"
             printf -- '- Temporary task definition: `%s`\n' "$TEMPORARY_TASK_DEFINITION"

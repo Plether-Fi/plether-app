@@ -135,7 +135,8 @@ echo 'DATABASE_URL=postgresql://localhost/plether' >> .env
 
 The indexer runs automatically on startup and polls for new blocks every 12 seconds.
 
-The static bootstrap creates the five additive candle read-model tables, but
+The static bootstrap creates the additive candle read-model and history-target
+tables, but
 intentionally does not build the Perps event/activity history indexes because a
 fresh database does not have their source tables yet. After the API or Perps
 indexer has initialized its history schema, run `plether-candle-admin migrate`;
@@ -154,6 +155,17 @@ concurrency group so a deployment cannot change write mode during a mutation.
 Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
 runs from a stable deployed indexer digest without moving its canonical cursor
 or coverage certification.
+
+An arbitrary price-history start is selected with the protected
+`set-history-target` action. Selection is desired state only: the basket worker
+bulk-fetches and proves the exact frozen range while the previous published
+target remains live. After `status` reports `publication_ready=true`, run a
+price-only backfill with no narrowed bounds; CandleAdmin builds any missing
+rollups and atomically publishes coverage, generation, and the new active
+target. Selecting an earlier start adds a history prefix, while selecting a
+later start moves the public lower bound without deleting physical history.
+This does not ingest old contract releases. Candles before the current router's
+proven volume coverage expose unknown volume rather than zero.
 
 ## Local Perps Stack
 
@@ -552,7 +564,7 @@ Local URLs:
 | `PERPS_CANDLE_READ_MODE` | No | `legacy` | Candle API read mode: `legacy` keeps rollup routes closed; `rollup` enables allowlisted intervals only with strict coverage. `shadow` is reserved and currently performs no comparison or traffic switch. |
 | `PERPS_CANDLE_READ_INTERVALS` | No | empty | Comma/space-separated canonical intervals eligible for strict rollup reads; empty exposes no rollup interval |
 | `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | `0` | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
-| `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`, and every response is still validated against combined coverage metadata. |
+| `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
 | `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
 | `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
 
@@ -653,11 +665,22 @@ positive decimal representation: signs, whitespace, and leading zeroes are
 rejected. Historical candle cursors are positive Unix timestamps
 aligned to `interval * 500`; responses are ascending and expose
 `previousCursor`, coverage/finalization watermarks, and `datasetGeneration`.
-Historical pages contain finalized rows only. `volumeUsdc` and `tradeCount` are
-nullable on the mutable current candle so missing data is never reported as
-zero. Native candle responses identify the immutable basket definition with
-`seriesId`, `configurationHash`, and the lossless `displayPriceCap`. OHLC fields
-use explicit `raw*Price` names and lossless decimal strings.
+Historical pages contain finalized price rows only. `volumeUsdc` and
+`tradeCount` are nullable on both native historical and mutable current candles:
+before current-router volume coverage, null means unknown; inside complete
+coverage, zero means the indexer proved no trades in that bucket. Per-candle
+`complete` remains the legacy combined value `priceComplete && volumeComplete`;
+therefore a valid pre-router price candle intentionally has `complete: false`.
+Native chart consumers use page-level price coverage and `priceComplete`, with
+`volumeComplete` interpreted independently. Native candle responses identify
+the immutable basket definition with
+`seriesId`, `configurationHash`, and the lossless `displayPriceCap`, plus the
+current volume scope in `volumeChainId` and normalized `volumeRouter`. The
+same response exposes trusted `volumeCoverageStart`, `volumeCoverageEnd`,
+`volumeFinalizedThrough`, and `volumeCoverageComplete` for that exact scope;
+unusable or absent volume coverage is represented by three null bounds and
+`volumeCoverageComplete: false`. OHLC
+fields use explicit `raw*Price` names and lossless decimal strings.
 
 When strict rollup reads are enabled for an effective interval, the legacy
 `/basket/history` route is served from bounded candle pages and performs no raw

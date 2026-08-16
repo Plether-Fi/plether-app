@@ -470,7 +470,7 @@ After each tranche:
 
 ```bash
 run_candle_admin sepolia status none
-run_candle_admin sepolia verify none \
+run_candle_admin sepolia verify all \
   -f from_timestamp=FROM_UNIX \
   -f to_timestamp=TO_UNIX
 ```
@@ -496,6 +496,68 @@ Pass criteria for every canonical interval:
   `coverage_state=complete`, an empty `coverage_error`, and an acceptable lag;
 - no partial tranche is exposed as complete coverage.
 
+### Operator-selected price-history target
+
+After the target/progress migration and target-capable basket worker are
+deployed, select any non-negative Unix timestamp as the public price-history
+start through the protected admin workflow:
+
+```bash
+run_candle_admin sepolia set-history-target none \
+  -f history_start_timestamp=PRICE_TARGET_FROM_UNIX
+```
+
+Selection records desired state only. It must not change the currently
+published target, public coverage, or dataset generation. The deployed basket
+worker freezes a source-safe exclusive end and checks all six Pyth component
+histories in bounded two-day windows. A recent or future target intentionally
+remains uninitialized until that end contains one full aligned UTC day and at
+least one canonical database price source; this prevents an immutable target
+from completing in a range that cannot be published after a weekend or market
+closure. `status` reports both the desired and
+active published revisions, the active generation, frozen bounds, durable next
+timestamp, last source error, and whether the exact desired revision is ready
+for publication:
+
+```bash
+run_candle_admin sepolia status none
+```
+
+Do not infer a large empty interval from a nearby no-data response. The
+resolution-one Pyth endpoint limits the requested range before checking whether
+it contains data, so progress through very old empty history is intentionally
+proportional to the selected range. Unequal component update timestamps are
+normal; the worker uses per-feed as-of closes only within a five-minute
+freshness bound and records an empty proved window when no complete fresh
+basket exists. If trusted price coverage already exists, overlap is proved but
+not rewritten; only samples before its published start are persisted for the
+later protected publication and rebuild.
+
+When `publication_ready=true`, publish price only. Omit bounds so CandleAdmin
+uses the exact frozen ingestion proof (supplying `--from` or `--to` is accepted
+only when both match it exactly):
+
+```bash
+run_candle_admin sepolia backfill price
+run_candle_admin sepolia status none
+run_candle_admin sepolia verify price \
+  -f from_timestamp=PRICE_TARGET_FROM_UNIX \
+  -f to_timestamp=FROZEN_PRICE_END_UNIX
+```
+
+The protected backfill builds unpublished price chunks, then rechecks that the
+target is still latest and its proof is complete before publishing coverage,
+advancing the price generation, and activating the target in one transaction.
+A cancellation, source error, or replacement target leaves the prior published
+history readable. Require at least one canonical price sample and one full
+aligned bucket for every canonical interval before publication.
+
+This operation does not backfill volume from old contracts. Native candles
+before the currently configured router's proven volume coverage must contain
+`volumeUsdc: null`, `tradeCount: null`, and `volumeComplete: false`. Within
+that current-router coverage, a missing volume row is a proven zero. Never run
+cross-release ingestion or substitute zero for unknown pre-router volume.
+
 ## Gate 5: deterministic reconciliation and soak
 
 Keep `perps_candle_read_mode = "legacy"`, the public interval allowlist empty,
@@ -504,10 +566,15 @@ correctness gate is the deterministic `plether-candle-admin verify`
 reconciliation against canonical PostgreSQL source rows; it does not depend on
 sampled request traffic.
 
-Run verification over the intended canary range at the start of the soak:
+Run verification over the intended canary range at the start of the soak. For
+`verify all`, `FROM_UNIX..TO_UNIX` must be inside the common overlap of price
+coverage and the currently configured `(chain_id, router)` volume coverage.
+It is deliberately independent of `PRICE_TARGET_FROM_UNIX`: any earlier price
+prefix is certified by the `verify price` command above and does not require
+old-router volume.
 
 ```bash
-run_candle_admin sepolia verify none \
+run_candle_admin sepolia verify all \
   -f from_timestamp=FROM_UNIX \
   -f to_timestamp=TO_UNIX
 ```
@@ -720,8 +787,10 @@ require `200`.
 Validate both `200` bodies directly; statuses and headers alone are
 insufficient. Set `BEFORE_GRACE_ARTIFACT` and `AFTER_RECOVERY_ARTIFACT` to the
 two saved prefixes. Set `PRICE_GENERATION` and `VOLUME_GENERATION` to the exact
-positive integers from the scoped lock-acquired event, first confirm the
-recovery-complete event contains the same pair, and run:
+positive integers from the scoped lock-acquired event. Set `VOLUME_ROUTER` to
+the exact lower-case `PERPS_ORDER_ROUTER` value from the pinned task
+definition, first confirm the recovery-complete event contains the same
+generation pair, and run:
 
 ```bash
 jq --exit-status --null-input \
@@ -729,7 +798,8 @@ jq --exit-status --null-input \
   --slurpfile after "${AFTER_RECOVERY_ARTIFACT}.body" \
   --argjson boundary "$B" \
   --argjson price_generation "$PRICE_GENERATION" \
-  --argjson volume_generation "$VOLUME_GENERATION" '
+  --argjson volume_generation "$VOLUME_GENERATION" \
+  --arg volume_router "$VOLUME_ROUTER" '
     def integer: type == "number" and floor == .;
     def optional_nonnegative_integer:
       . == null or (integer and . >= 0);
@@ -760,13 +830,24 @@ jq --exit-status --null-input \
       and keys == ["candle", "configurationHash", "coverageComplete",
                    "coverageEnd", "coverageStart", "datasetGeneration",
                    "displayPriceCap", "finalizedThrough", "intervalSeconds",
-                   "seriesId"]
+                   "seriesId", "volumeChainId", "volumeCoverageComplete",
+                   "volumeCoverageEnd", "volumeCoverageStart",
+                   "volumeFinalizedThrough", "volumeRouter"]
       and .intervalSeconds == 3600
       and .seriesId == "dxy-v1"
       and (.configurationHash
            | type == "string" and test("^sha256:[0-9a-f]{64}$"))
       and (.displayPriceCap
            | type == "string" and test("^[1-9][0-9]*$"))
+      and .volumeChainId == 421614
+      and .volumeRouter == $volume_router
+      and .volumeCoverageComplete == true
+      and (.volumeCoverageStart | integer)
+      and (.volumeCoverageEnd | integer)
+      and .volumeCoverageStart < .volumeCoverageEnd
+      and (.volumeFinalizedThrough | integer)
+      and .volumeFinalizedThrough >= .volumeCoverageStart
+      and .volumeFinalizedThrough <= .volumeCoverageEnd
       and (.datasetGeneration | integer) and .datasetGeneration > 0
       and .coverageComplete == true
       and (.coverageStart | integer)
@@ -784,10 +865,11 @@ jq --exit-status --null-input \
       and .meta.chainId == 421614
       and (.data | current_schema($expected_timestamp));
     def identity:
-      {seriesId, configurationHash, displayPriceCap, datasetGeneration};
+      {seriesId, configurationHash, displayPriceCap, volumeChainId,
+       volumeRouter, datasetGeneration};
     ($price_generation | integer and . > 0 and . < 67108864)
     and ($volume_generation | integer and . > 0 and . < 67108864)
-    and (($price_generation * 67108864 + $volume_generation) as $generation
+    and (($price_generation * 134217728 + $volume_generation * 2 + 1) as $generation
          | ($before | length) == 1
            and ($after | length) == 1
            and ($before[0] | envelope_schema($boundary))
@@ -802,7 +884,9 @@ jq --exit-status --null-input \
 
 This parses both bodies, enforces the current-candle schema and hourly
 `dxy-v1` identity, and binds both successful observations to the probe's
-unchanged database generations. Preserve both JSON bodies as evidence.
+unchanged database generations. The public generation reserves the low bit
+for usable volume; this healthy-volume probe therefore requires that bit to be
+set. Preserve both JSON bodies as evidence.
 
 The intentional `503` must produce exactly one
 `perps_candle_coverage_unhealthy` event with `request_kind=current`,
@@ -926,7 +1010,14 @@ candle query shapes, uses single-flight origin refreshes, short TTLs for the
 active/current candle, and long stale-while-revalidate for closed pages. Before
 serving a closed-page cache entry, the worker obtains the authoritative current
 series identity from origin and includes `seriesId`, `configurationHash`,
-`displayPriceCap`, and `datasetGeneration` in its internal Cache API key. If
+`displayPriceCap`, `volumeChainId`, `volumeRouter`, and `datasetGeneration` in
+its internal Cache API key. The probe also supplies price and scoped-volume
+coverage bounds. A page receives the long TTL only when price is finalized
+through its full boundary and its volume is either wholly before the scoped
+coverage start or finalized through that boundary; terminal and partially
+covered pages retain the active TTL. Coverage boundaries are part of the
+internal page-state key, so normal watermark advances do not churn immutable
+pages while a backwards coverage extension cannot reuse stale null volume. If
 that probe is unavailable or incomplete, it bypasses the shared page cache;
 if a fetched page does not match the probed identity, it is not cached.
 

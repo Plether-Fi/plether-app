@@ -88,7 +88,9 @@ parseCanonicalPositiveInteger value =
 -- | Public candle fields intentionally remain in the canonical/raw oracle
 -- domain. Consumers applying a decreasing display transform must swap high
 -- and low. Integer values are encoded as decimal strings to remain lossless in
--- JavaScript.
+-- JavaScript. Volume is nullable because price history may predate the current
+-- router; null means unavailable, while zero means complete coverage proved no
+-- activity in that bucket.
 data BasketCandle = BasketCandle
   { bcTimestamp :: Integer
   , bcRawOpenPrice :: Integer
@@ -123,12 +125,20 @@ instance ToJSON BasketCandle where
       , "complete" .= (bcPriceComplete && bcVolumeComplete)
       ]
 
+-- Page-level coverage describes the price dataset. Volume completeness is
+-- reported independently on every candle.
 data BasketCandlePage = BasketCandlePage
   { bcpIntervalSeconds :: Integer
   , bcpCursor :: Integer
   , bcpSeriesId :: Text
   , bcpConfigurationHash :: Text
   , bcpDisplayPriceCap :: Integer
+  , bcpVolumeChainId :: Integer
+  , bcpVolumeRouter :: Text
+  , bcpVolumeCoverageStart :: Maybe Integer
+  , bcpVolumeCoverageEnd :: Maybe Integer
+  , bcpVolumeFinalizedThrough :: Maybe Integer
+  , bcpVolumeCoverageComplete :: Bool
   , bcpPreviousCursor :: Maybe Integer
   , bcpHasEarlier :: Bool
   , bcpCoverageStart :: Maybe Integer
@@ -148,6 +158,12 @@ instance ToJSON BasketCandlePage where
       , "seriesId" .= bcpSeriesId
       , "configurationHash" .= bcpConfigurationHash
       , "displayPriceCap" .= show bcpDisplayPriceCap
+      , "volumeChainId" .= bcpVolumeChainId
+      , "volumeRouter" .= bcpVolumeRouter
+      , "volumeCoverageStart" .= bcpVolumeCoverageStart
+      , "volumeCoverageEnd" .= bcpVolumeCoverageEnd
+      , "volumeFinalizedThrough" .= bcpVolumeFinalizedThrough
+      , "volumeCoverageComplete" .= bcpVolumeCoverageComplete
       , "previousCursor" .= bcpPreviousCursor
       , "hasEarlier" .= bcpHasEarlier
       , "coverageStart" .= bcpCoverageStart
@@ -163,6 +179,12 @@ data BasketCurrentCandle = BasketCurrentCandle
   , bccSeriesId :: Text
   , bccConfigurationHash :: Text
   , bccDisplayPriceCap :: Integer
+  , bccVolumeChainId :: Integer
+  , bccVolumeRouter :: Text
+  , bccVolumeCoverageStart :: Maybe Integer
+  , bccVolumeCoverageEnd :: Maybe Integer
+  , bccVolumeFinalizedThrough :: Maybe Integer
+  , bccVolumeCoverageComplete :: Bool
   , bccDatasetGeneration :: Integer
   , bccCoverageStart :: Maybe Integer
   , bccCoverageEnd :: Maybe Integer
@@ -179,6 +201,12 @@ instance ToJSON BasketCurrentCandle where
       , "seriesId" .= bccSeriesId
       , "configurationHash" .= bccConfigurationHash
       , "displayPriceCap" .= show bccDisplayPriceCap
+      , "volumeChainId" .= bccVolumeChainId
+      , "volumeRouter" .= bccVolumeRouter
+      , "volumeCoverageStart" .= bccVolumeCoverageStart
+      , "volumeCoverageEnd" .= bccVolumeCoverageEnd
+      , "volumeFinalizedThrough" .= bccVolumeFinalizedThrough
+      , "volumeCoverageComplete" .= bccVolumeCoverageComplete
       , "datasetGeneration" .= bccDatasetGeneration
       , "coverageStart" .= bccCoverageStart
       , "coverageEnd" .= bccCoverageEnd

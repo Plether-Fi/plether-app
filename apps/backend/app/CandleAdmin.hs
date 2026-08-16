@@ -21,6 +21,17 @@ import Database.PostgreSQL.Simple.Transaction
   , withTransactionMode
   )
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.CandleHistory
+  ( CandleHistoryIngestionProgress (..)
+  , CandleHistorySelection (..)
+  , appendCandleHistorySelection
+  , candleHistorySelectionIsLatest
+  , defaultCandleMarketId
+  , getLatestCandleHistoryIngestionProgress
+  , getLatestPublishedCandleHistoryIngestion
+  , publishCandleHistoryIngestion
+  , validateCandleHistoryIngestionCompletion
+  )
 import Plether.Database.Candles
   ( RollupCoverage (..)
   , RollupKind (..)
@@ -33,6 +44,7 @@ import Plether.Database.Candles
   , countMarketVolumeRollups
   , defaultBasketSeriesId
   , ensureCandleSchema
+  , ensureCurrentBasketDefinition
   , getRollupCoverage
   , getActiveBasketSeriesId
   , lockBasketPriceDataset
@@ -68,9 +80,10 @@ data RollupScope
 data AdminAction
   = Estimate
   | Migrate
+  | SetHistoryTarget
   | Backfill RollupScope
   | Status
-  | Verify
+  | Verify RollupScope
   | Repair RollupScope
   | FinalizerProbe
   deriving (Eq, Show)
@@ -80,6 +93,9 @@ data AdminOptions = AdminOptions
   , aoFrom :: Maybe Integer
   , aoTo :: Maybe Integer
   , aoBoundary :: Maybe Integer
+  , aoHistoryStartTimestamp :: Maybe Integer
+  , aoRequestedBy :: Maybe T.Text
+  , aoRequestReference :: Maybe T.Text
   , aoChunkSeconds :: Integer
   , aoStatementTimeoutMs :: Int
   , aoLockTimeoutMs :: Int
@@ -99,6 +115,12 @@ data SourceBounds = SourceBounds
   { sbFrom :: Integer
   , sbTo :: Integer
   , sbRows :: Integer
+  }
+  deriving (Eq, Show)
+
+data CompletedHistoryTarget = CompletedHistoryTarget
+  { chtSelection :: CandleHistorySelection
+  , chtProgress :: CandleHistoryIngestionProgress
   }
   deriving (Eq, Show)
 
@@ -138,6 +160,9 @@ defaultOptions action =
     , aoFrom = Nothing
     , aoTo = Nothing
     , aoBoundary = Nothing
+    , aoHistoryStartTimestamp = Nothing
+    , aoRequestedBy = Nothing
+    , aoRequestReference = Nothing
     , aoChunkSeconds = 86_400
     , aoStatementTimeoutMs = 1_800_000
     , aoLockTimeoutMs =
@@ -194,7 +219,10 @@ main = do
           validateFinalizerDatabaseUrl expectedDatabaseHost $ T.pack databaseUrl
         either (failWith . T.unpack) pure $
           validateFinalizerLibpqEnvironment processEnvironment
-      releaseRouter <- T.toLower . T.strip . T.pack <$> requireEnv "PERPS_ORDER_ROUTER"
+      releaseRouter <-
+        if aoAction options == SetHistoryTarget
+          then pure ""
+          else T.toLower . T.strip . T.pack <$> requireEnv "PERPS_ORDER_ROUTER"
       let runtime = AdminRuntime chainId releaseRouter latenessSeconds
       pool <- newDbPool $ T.pack databaseUrl
       result <- try @SomeException $ do
@@ -247,12 +275,13 @@ runAdmin conn runtime options@AdminOptions {aoAction} =
         "perps_candle_migration_complete"
         "Perps candle schema migration completed"
         [field "derivation_version" candleDerivationVersion]
+    SetHistoryTarget -> runSetHistoryTarget conn runtime options
     Backfill scope ->
       forM_ (rollupKinds scope) $ \kind ->
         runBackfill conn runtime options kind False
-    Status -> runStatus conn runtime
-    Verify -> withVerificationSnapshot conn $ do
-      verified <- and <$> mapM (verifyKind conn runtime options) [PriceRollup, VolumeRollup]
+    Status -> withVerificationSnapshot conn $ runStatus conn runtime
+    Verify scope -> withVerificationSnapshot conn $ do
+      verified <- and <$> mapM (verifyKind conn runtime options) (rollupKinds scope)
       unless verified $ failWith "Candle rollup verification found mismatches"
     Repair scope -> do
       let selectedKinds = rollupKinds scope
@@ -298,6 +327,301 @@ runAdmin conn runtime options@AdminOptions {aoAction} =
           ]
     FinalizerProbe -> runFinalizerProbe conn runtime options
 
+runSetHistoryTarget :: Connection -> AdminRuntime -> AdminOptions -> IO ()
+runSetHistoryTarget
+  conn
+  AdminRuntime {arChainId}
+  AdminOptions
+    { aoHistoryStartTimestamp = Just requestedStartTimestamp
+    , aoRequestedBy = Just requestedBy
+    , aoRequestReference = Just requestReference
+    } = do
+    (selection, inserted) <-
+      withTransaction conn $ do
+        -- The logical-market row references the immutable price definition;
+        -- seed/assert it here so this command also works on a freshly migrated
+        -- database before any writer has started.
+        ensureCurrentBasketDefinition conn defaultBasketSeriesId
+        result <-
+          appendCandleHistorySelection
+            conn
+            defaultCandleMarketId
+            arChainId
+            defaultBasketSeriesId
+            requestedStartTimestamp
+            requestedBy
+            requestReference
+        pure result
+    logInfo
+      "perps_candle_history_target_selected"
+      "Perps candle history target selected"
+      [ field "market_id" $ chsMarketId selection
+      , field "revision" $ chsRevision selection
+      , field "requested_start_timestamp" $ chsRequestedStartTimestamp selection
+      , field "requested_by" $ chsRequestedBy selection
+      , field "request_reference" $ chsRequestReference selection
+      , field "inserted" inserted
+      ]
+runSetHistoryTarget _ _ _ =
+  failWith "set-history-target requires --start-timestamp, --requested-by, and --request-reference"
+
+-- A selected target is desired state only. Until its exact ingestion proof is
+-- complete and CandleAdmin publishes it, native readers continue serving the
+-- previously published target (or their existing physical coverage).
+loadLatestHistoryTarget
+  :: Connection
+  -> AdminRuntime
+  -> IO (Maybe (CandleHistorySelection, Maybe CandleHistoryIngestionProgress))
+loadLatestHistoryTarget conn AdminRuntime {arChainId} = do
+  marketRows <-
+    query
+      conn
+      "SELECT chain_id, price_series_id FROM perps_candle_markets WHERE market_id = ?"
+      (Only defaultCandleMarketId) :: IO [(Integer, T.Text)]
+  case marketRows of
+    [] -> pure Nothing
+    [(storedChainId, storedSeriesId)]
+      | storedChainId == arChainId && storedSeriesId == defaultBasketSeriesId ->
+          getLatestCandleHistoryIngestionProgress
+            conn
+            defaultCandleMarketId
+            arChainId
+            defaultBasketSeriesId
+      | otherwise ->
+          failWith "Configured candle logical-market identity does not match this environment"
+    _ -> failWith "Configured candle logical-market identity is not unique"
+
+requireCompletedHistoryTarget
+  :: Connection
+  -> AdminRuntime
+  -> IO (Maybe CompletedHistoryTarget)
+requireCompletedHistoryTarget conn runtime = do
+  latest <- loadLatestHistoryTarget conn runtime
+  case latest of
+    Nothing -> pure Nothing
+    Just (_, Nothing) ->
+      failWith "The latest candle history target has not initialized source ingestion"
+    Just (selection, Just progress) -> do
+      either (failWith . T.unpack) pure $
+        validateCandleHistoryIngestionCompletion selection progress
+      pure $ Just $ CompletedHistoryTarget selection progress
+
+emitHistoryTargetStatus
+  :: Maybe (CandleHistorySelection, Maybe CandleHistoryIngestionProgress)
+  -> Maybe (CandleHistorySelection, CandleHistoryIngestionProgress)
+  -> Bool
+  -> IO ()
+emitHistoryTargetStatus latest active publicationReady =
+  case latest of
+    Nothing ->
+      logInfo
+        "perps_candle_history_target_status"
+        "No Perps candle history target is selected"
+        [ field "market_id" defaultCandleMarketId
+        , field "selected" False
+        , field "active_published_target" False
+        , field "publication_ready" False
+        ]
+    Just (selection, progress) -> do
+      let publishedGeneration = progress >>= chipPublishedGeneration
+          activeSelection = fst <$> active
+          activeProgress = snd <$> active
+      logInfo
+        "perps_candle_history_target_status"
+        "Reported desired Perps candle history target and ingestion proof"
+        [ field "market_id" $ chsMarketId selection
+        , field "selected" True
+        , field "target_revision" $ chsRevision selection
+        , field "requested_start_timestamp" $ chsRequestedStartTimestamp selection
+        , field "requested_by" $ chsRequestedBy selection
+        , field "request_reference" $ chsRequestReference selection
+        , field "ingestion_start_timestamp" $ chipStartTimestamp <$> progress
+        , field "ingestion_end_timestamp_exclusive" $ chipEndTimestampExclusive <$> progress
+        , field "ingestion_next_timestamp" $ chipNextTimestamp <$> progress
+        , field "sample_interval_seconds" $ chipSampleIntervalSeconds <$> progress
+        , field "ingestion_complete" $ maybe False chipComplete progress
+        , field "ingestion_last_error" $ progress >>= chipLastError
+        , field "published" $ isJust publishedGeneration
+        , field "published_generation" publishedGeneration
+        , field "active_published_target" $ isJust active
+        , field "active_target_revision" $ chsRevision <$> activeSelection
+        , field "active_requested_start_timestamp" $
+            chsRequestedStartTimestamp <$> activeSelection
+        , field "active_published_generation" $
+            activeProgress >>= chipPublishedGeneration
+        , field "publication_ready" publicationReady
+        ]
+
+resolveCompletedHistoryTargetBounds
+  :: Connection
+  -> AdminOptions
+  -> CompletedHistoryTarget
+  -> IO SourceBounds
+resolveCompletedHistoryTargetBounds
+  conn
+  AdminOptions {aoFrom, aoTo}
+  CompletedHistoryTarget {chtProgress} = do
+    let targetFrom = chipStartTimestamp chtProgress
+        targetTo = chipEndTimestampExclusive chtProgress
+    unless (maybe True (== targetFrom) aoFrom && maybe True (== targetTo) aoTo) $
+      failWith
+        "Target price backfill must use its complete frozen ingestion range; omit --from/--to or pass the exact bounds"
+    unless (hasFullCanonicalRange targetFrom targetTo) $
+      failWith
+        "The completed history target does not contain a full aligned bucket for every canonical interval"
+    sourceRows <- countPriceSourceRowsWithin conn targetFrom targetTo
+    when (sourceRows <= 0) $
+      failWith "The completed history target contains no canonical price observations"
+    pure $ SourceBounds targetFrom targetTo sourceRows
+
+countPriceSourceRowsWithin :: Connection -> Integer -> Integer -> IO Integer
+countPriceSourceRowsWithin conn fromTimestamp toTimestamp = do
+  observationTableRows <-
+    query
+      conn
+      "SELECT to_regclass('perps_basket_observations') IS NOT NULL"
+      () :: IO [Only Bool]
+  rows <- case observationTableRows of
+    [Only True] ->
+      query
+        conn
+        "WITH observed_prioritized AS ( \
+        \ SELECT publish_time, source_priority, \
+        \   MAX(source_priority) OVER (PARTITION BY publish_time) AS max_source_priority \
+        \ FROM perps_basket_observations WHERE series_id = ? \
+        \   AND publish_time >= ? AND publish_time < ?), \
+        \source_times AS ( \
+        \ SELECT publish_time AS timestamp FROM observed_prioritized \
+        \ WHERE source_priority = max_source_priority \
+        \ UNION \
+        \ SELECT timestamp FROM perps_basket_snapshots \
+        \ WHERE timestamp >= ? AND timestamp < ?) \
+        \SELECT COUNT(*)::BIGINT FROM source_times"
+        ( defaultBasketSeriesId
+        , fromTimestamp
+        , toTimestamp
+        , fromTimestamp
+        , toTimestamp
+        )
+    [Only False] ->
+      query
+        conn
+        "SELECT COUNT(DISTINCT timestamp)::BIGINT FROM perps_basket_snapshots \
+        \WHERE timestamp >= ? AND timestamp < ?"
+        (fromTimestamp, toTimestamp)
+    _ -> failWith "Could not determine whether the basket observation ledger exists"
+  case rows of
+    [Only count] -> pure count
+    _ -> failWith "Could not count canonical price observations in the history target"
+
+priceSourceRowsExistWithin :: Connection -> Integer -> Integer -> IO Bool
+priceSourceRowsExistWithin conn fromTimestamp toTimestamp = do
+  observationTableRows <-
+    query
+      conn
+      "SELECT to_regclass('perps_basket_observations') IS NOT NULL"
+      () :: IO [Only Bool]
+  rows <- case observationTableRows of
+    [Only True] ->
+      query
+        conn
+        "SELECT EXISTS (SELECT 1 FROM perps_basket_observations \
+        \ WHERE series_id = ? AND publish_time >= ? AND publish_time < ?) \
+        \OR EXISTS (SELECT 1 FROM perps_basket_snapshots \
+        \ WHERE timestamp >= ? AND timestamp < ?)"
+        ( defaultBasketSeriesId
+        , fromTimestamp
+        , toTimestamp
+        , fromTimestamp
+        , toTimestamp
+        )
+    [Only False] ->
+      query
+        conn
+        "SELECT EXISTS (SELECT 1 FROM perps_basket_snapshots \
+        \ WHERE timestamp >= ? AND timestamp < ?)"
+        (fromTimestamp, toTimestamp)
+    _ -> failWith "Could not determine whether the basket observation ledger exists"
+  case rows of
+    [Only available] -> pure available
+    _ -> failWith "Could not determine canonical price source availability"
+
+historyTargetPublicationReady
+  :: Connection
+  -> Maybe (CandleHistorySelection, Maybe CandleHistoryIngestionProgress)
+  -> IO Bool
+historyTargetPublicationReady conn = \case
+  Just (selection, Just progress)
+    | isNothing (chipPublishedGeneration progress)
+    , Right () <- validateCandleHistoryIngestionCompletion selection progress
+    , let fromTimestamp = chipStartTimestamp progress
+    , let toTimestamp = chipEndTimestampExclusive progress
+    , hasFullCanonicalRange fromTimestamp toTimestamp ->
+        priceSourceRowsExistWithin conn fromTimestamp toTimestamp
+  _ -> pure False
+
+publishCompletedHistoryTarget
+  :: Connection
+  -> AdminRuntime
+  -> CompletedHistoryTarget
+  -> SourceBounds
+  -> IO ()
+publishCompletedHistoryTarget
+  conn
+  runtime
+  CompletedHistoryTarget {chtSelection, chtProgress}
+  SourceBounds {sbFrom, sbTo} =
+    case chipPublishedGeneration chtProgress of
+      Just generation ->
+        logInfo
+          "perps_candle_history_target_already_published"
+          "The selected Perps candle history target is already published"
+          [ field "market_id" $ chsMarketId chtSelection
+          , field "target_revision" $ chsRevision chtSelection
+          , field "price_generation" generation
+          ]
+      Nothing ->
+        do
+          generation <- withTransaction conn $ do
+            isLatest <-
+              candleHistorySelectionIsLatest
+                conn
+                (arChainId runtime)
+                defaultBasketSeriesId
+                chtSelection
+            unless isLatest $
+              failWith "Candle history target was replaced before publication"
+            refreshed <-
+              getLatestCandleHistoryIngestionProgress
+                conn
+                defaultCandleMarketId
+                (arChainId runtime)
+                defaultBasketSeriesId
+            storedProgress <- case refreshed of
+              Just (storedSelection, Just progress)
+                | storedSelection == chtSelection && progress == chtProgress -> pure progress
+              _ -> failWith "Candle history ingestion proof changed before publication"
+            either (failWith . T.unpack) pure $
+              validateCandleHistoryIngestionCompletion chtSelection storedProgress
+            unless
+              ( sbFrom == chipStartTimestamp storedProgress
+                  && sbTo == chipEndTimestampExclusive storedProgress
+              ) $
+              failWith "Candle history publication bounds do not match its frozen ingestion proof"
+            nextGeneration <- bumpDatasetGeneration conn runtime PriceRollup
+            publishCoverage conn runtime PriceRollup sbFrom sbTo $ Just nextGeneration
+            _ <- publishCandleHistoryIngestion conn chtSelection nextGeneration
+            pure nextGeneration
+          logInfo
+            "perps_candle_history_target_published"
+            "Published a completely ingested Perps candle history target"
+            [ field "market_id" $ chsMarketId chtSelection
+            , field "target_revision" $ chsRevision chtSelection
+            , field "from_timestamp" sbFrom
+            , field "to_timestamp" sbTo
+            , field "price_generation" generation
+            ]
+
 candleDerivationVersion :: T.Text
 candleDerivationVersion = "v1"
 
@@ -340,7 +664,19 @@ runEstimate conn runtime options =
           ]
 
 runStatus :: Connection -> AdminRuntime -> IO ()
-runStatus conn runtime =
+runStatus conn runtime = do
+  historyTarget <- loadLatestHistoryTarget conn runtime
+  activeTarget <-
+    case historyTarget of
+      Nothing -> pure Nothing
+      Just _ ->
+        getLatestPublishedCandleHistoryIngestion
+          conn
+          defaultCandleMarketId
+          (arChainId runtime)
+          defaultBasketSeriesId
+  publicationReady <- historyTargetPublicationReady conn historyTarget
+  emitHistoryTargetStatus historyTarget activeTarget publicationReady
   forM_ [PriceRollup, VolumeRollup] $ \kind ->
     forM_ canonicalCandleIntervals $ \interval -> do
       coverage <- getCoverage conn runtime kind interval
@@ -354,7 +690,14 @@ runBackfill
   -> Bool
   -> IO ()
 runBackfill conn runtime options kind isRepair = do
-  bounds <- resolveBounds conn runtime options kind
+  historyTarget <-
+    if kind == PriceRollup && not isRepair
+      then requireCompletedHistoryTarget conn runtime
+      else pure Nothing
+  bounds <-
+    case historyTarget of
+      Just target -> Just <$> resolveCompletedHistoryTargetBounds conn options target
+      Nothing -> resolveBounds conn runtime options kind
   case bounds of
     Nothing ->
       logInfo
@@ -362,13 +705,23 @@ runBackfill conn runtime options kind isRepair = do
         "No source rows matched the requested candle backfill"
         [field "kind" $ rollupKindName kind, field "affected_base_buckets" (0 :: Integer)]
     Just availableBounds -> do
-      unless isRepair $ prepareBackfillCoverage conn runtime kind availableBounds
+      forM_ historyTarget $ \CompletedHistoryTarget {chtProgress} ->
+        unless
+          ( sbFrom availableBounds == chipStartTimestamp chtProgress
+              && sbTo availableBounds == chipEndTimestampExclusive chtProgress
+          ) $
+          failWith
+            "Target price backfill must cover the complete frozen ingestion range; omit --from/--to or pass its exact bounds"
+      unless (isRepair || isJust historyTarget) $
+        prepareBackfillCoverage conn runtime kind availableBounds
       ranges <-
         if isRepair
           then pure [BackfillRange availableBounds NewestFirst]
           else resumeRanges conn runtime kind availableBounds
       case ranges of
         [] -> do
+          forM_ historyTarget $ \target ->
+            publishCompletedHistoryTarget conn runtime target availableBounds
           coverage <- getCoverage conn runtime kind 60
           emitCoverage conn kind 60 coverage $ Just (0 :: Integer)
           logInfo
@@ -381,12 +734,21 @@ runBackfill conn runtime options kind isRepair = do
             affected <-
               if isRepair
                 then backfillChunk conn runtime kind chunkFrom chunkTo False
-                else backfillChunk conn runtime kind chunkFrom chunkTo True
+                else
+                  backfillChunk
+                    conn
+                    runtime
+                    kind
+                    chunkFrom
+                    chunkTo
+                    (isNothing historyTarget)
             coverage <- getCoverage conn runtime kind 60
             emitCoverage conn kind 60 coverage $ Just affected
             when (aoThrottleMs options > 0) $
               threadDelay $ aoThrottleMs options * 1_000
             pure affected
+          forM_ historyTarget $ \target ->
+            publishCompletedHistoryTarget conn runtime target availableBounds
           let processedFrom = minimum $ map (sbFrom . brBounds) ranges
               processedTo = maximum $ map (sbTo . brBounds) ranges
           finalCoverage <- getCoverage conn runtime kind 60
@@ -1628,23 +1990,32 @@ resolveBounds
   -> AdminOptions
   -> RollupKind
   -> IO (Maybe SourceBounds)
-resolveBounds conn runtime AdminOptions {aoAction, aoFrom, aoTo} kind = do
-  source <- sourceBounds conn runtime kind
-  currentTimestamp <- databaseNow conn
-  let finalizedCutoff = alignDown (currentTimestamp - arLatenessSeconds runtime) 60
-  pure $ case (aoAction, source, aoFrom, aoTo) of
-    (Repair _, Just _, Just requestedFrom, Just requestedTo) ->
-      Just $ SourceBounds (alignDown requestedFrom 60) (alignUp requestedTo 60) 0
-    (Repair _, Nothing, _, _) -> Nothing
-    (_, Nothing, Nothing, Nothing) -> Nothing
-    (_, Nothing, _, _) -> Nothing
-    (_, Just bounds, requestedFrom, requestedTo) ->
-      let fromTimestamp = alignDown (max (sbFrom bounds) $ fromMaybe (sbFrom bounds) requestedFrom) 60
-          requestedEnd = min (sbTo bounds) $ fromMaybe (sbTo bounds) requestedTo
-          toTimestamp = alignDown (min finalizedCutoff requestedEnd) 60
-       in if fromTimestamp < toTimestamp
-            then Just bounds {sbFrom = fromTimestamp, sbTo = toTimestamp}
-            else Nothing
+resolveBounds conn runtime AdminOptions {aoAction, aoFrom, aoTo} kind =
+  case (aoAction, aoFrom, aoTo) of
+    (Repair _, Just requestedFrom, Just requestedTo) ->
+      pure $
+        Just $
+          SourceBounds
+            (alignDown requestedFrom 60)
+            (alignUp requestedTo 60)
+            0
+    (Repair _, _, _) -> pure Nothing
+    _ -> do
+      source <- sourceBounds conn runtime kind
+      currentTimestamp <- databaseNow conn
+      let finalizedCutoff = alignDown (currentTimestamp - arLatenessSeconds runtime) 60
+      pure $ case source of
+        Nothing -> Nothing
+        Just bounds ->
+          let fromTimestamp =
+                alignDown
+                  (max (sbFrom bounds) $ fromMaybe (sbFrom bounds) aoFrom)
+                  60
+              requestedEnd = min (sbTo bounds) $ fromMaybe (sbTo bounds) aoTo
+              toTimestamp = alignDown (min finalizedCutoff requestedEnd) 60
+           in if fromTimestamp < toTimestamp
+                then Just bounds {sbFrom = fromTimestamp, sbTo = toTimestamp}
+                else Nothing
 
 sourceBounds :: Connection -> AdminRuntime -> RollupKind -> IO (Maybe SourceBounds)
 sourceBounds conn runtime kind = do
@@ -1847,9 +2218,10 @@ candleAdminLockId = 4_278_619_031
 requiresAdvisoryLock :: AdminAction -> Bool
 requiresAdvisoryLock = \case
   Migrate -> True
+  SetHistoryTarget -> True
   Backfill _ -> True
   Repair _ -> True
-  Verify -> True
+  Verify _ -> True
   FinalizerProbe -> True
   Estimate -> False
   Status -> False
@@ -1864,8 +2236,9 @@ requiresDualWriteMode = \case
 reportsBackfillFailure :: AdminAction -> Bool
 reportsBackfillFailure = \case
   Migrate -> False
+  SetHistoryTarget -> False
   Backfill _ -> True
-  Verify -> True
+  Verify _ -> True
   Repair _ -> True
   FinalizerProbe -> False
   Estimate -> False
@@ -1878,8 +2251,12 @@ parseAdminOptions = \case
   ["help"] -> Left ""
   "estimate" : rest -> parseFlags (defaultOptions Estimate) rest >>= validateOptions
   "migrate" : rest -> parseFlags (defaultOptions Migrate) rest >>= validateOptions
+  "set-history-target" : rest ->
+    parseSetHistoryTargetFlags (defaultOptions SetHistoryTarget) rest >>= validateOptions
   "status" : rest -> parseFlags (defaultOptions Status) rest >>= validateOptions
-  "verify" : rest -> parseFlags (defaultOptions Verify) rest >>= validateOptions
+  "verify" : rawScope : rest -> do
+    scope <- parseScope rawScope
+    parseFlags (defaultOptions $ Verify scope) rest >>= validateOptions
   "finalizer-probe" : rest ->
     parseFinalizerProbeFlags (defaultOptions FinalizerProbe) rest >>= validateOptions
   "backfill" : rawScope : rest -> do
@@ -1889,8 +2266,31 @@ parseAdminOptions = \case
     scope <- parseScope rawScope
     parseFlags (defaultOptions $ Repair scope) rest >>= validateOptions
   "backfill" : _ -> Left "backfill requires a scope: price, volume, or all"
+  "verify" : _ -> Left "verify requires a scope: price, volume, or all"
   "repair" : _ -> Left "repair requires a scope: price, volume, or all"
   command : _ -> Left $ "Unknown command: " <> command
+
+parseSetHistoryTargetFlags :: AdminOptions -> [String] -> Either String AdminOptions
+parseSetHistoryTargetFlags options = \case
+  [] -> Right options
+  "--start-timestamp" : raw : rest -> do
+    value <- parseBoundedInteger "--start-timestamp" 0 4_102_444_800 raw
+    parseSetHistoryTargetFlags options {aoHistoryStartTimestamp = Just value} rest
+  "--requested-by" : raw : rest ->
+    parseSetHistoryTargetFlags options {aoRequestedBy = Just $ T.pack raw} rest
+  "--request-reference" : raw : rest ->
+    parseSetHistoryTargetFlags options {aoRequestReference = Just $ T.pack raw} rest
+  "--statement-timeout-ms" : raw : rest -> do
+    value <- parseBoundedInt "--statement-timeout-ms" 1_000 1_800_000 raw
+    parseSetHistoryTargetFlags options {aoStatementTimeoutMs = value} rest
+  "--lock-timeout-ms" : raw : rest -> do
+    value <- parseBoundedInt "--lock-timeout-ms" 100 60_000 raw
+    parseSetHistoryTargetFlags options {aoLockTimeoutMs = value} rest
+  "--max-runtime-seconds" : raw : rest -> do
+    value <- parseBoundedInt "--max-runtime-seconds" 60 21_600 raw
+    parseSetHistoryTargetFlags options {aoMaxRuntimeSeconds = value} rest
+  [flag] -> Left $ "Missing value for option: " <> flag
+  flag : _ -> Left $ "Unknown set-history-target option: " <> flag
 
 parseFinalizerProbeFlags :: AdminOptions -> [String] -> Either String AdminOptions
 parseFinalizerProbeFlags options = \case
@@ -1914,7 +2314,7 @@ parseFlags :: AdminOptions -> [String] -> Either String AdminOptions
 parseFlags options = \case
   [] -> Right options
   "--from" : raw : rest -> do
-    value <- parseBoundedInteger "--from" 1 4_102_444_800 raw
+    value <- parseBoundedInteger "--from" 0 4_102_444_800 raw
     parseFlags options {aoFrom = Just value} rest
   "--to" : raw : rest -> do
     value <- parseBoundedInteger "--to" 1 4_102_444_800 raw
@@ -1938,7 +2338,17 @@ parseFlags options = \case
   flag : _ -> Left $ "Unknown option: " <> flag
 
 validateOptions :: AdminOptions -> Either String AdminOptions
-validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoBoundary, aoChunkSeconds} = do
+validateOptions
+  options@AdminOptions
+    { aoAction
+    , aoFrom
+    , aoTo
+    , aoBoundary
+    , aoHistoryStartTimestamp
+    , aoRequestedBy
+    , aoRequestReference
+    , aoChunkSeconds
+    } = do
   whenEither
     (aoChunkSeconds `mod` 60 /= 0)
     "--chunk-seconds must align to a whole minute"
@@ -1948,6 +2358,16 @@ validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoBoundary, aoChun
           Left "--from must be earlier than --to"
     _ -> Right ()
   case aoAction of
+    SetHistoryTarget
+      | isNothing aoHistoryStartTimestamp ->
+          Left "set-history-target requires --start-timestamp"
+      | maybe True (T.null . T.strip) aoRequestedBy ->
+          Left "set-history-target requires a non-blank --requested-by"
+      | maybe True (T.null . T.strip) aoRequestReference ->
+          Left "set-history-target requires a non-blank --request-reference"
+      | isJust aoFrom || isJust aoTo || isJust aoBoundary ->
+          Left "set-history-target does not accept --from, --to, or --boundary"
+      | otherwise -> Right ()
     Repair _
       | isNothing aoFrom || isNothing aoTo ->
           Left "repair requires both --from and --to"
@@ -1961,6 +2381,8 @@ validateOptions options@AdminOptions {aoAction, aoFrom, aoTo, aoBoundary, aoChun
       | otherwise -> Right ()
     _
       | isJust aoBoundary -> Left "--boundary is accepted only for finalizer-probe"
+      | isJust aoHistoryStartTimestamp || isJust aoRequestedBy || isJust aoRequestReference ->
+          Left "History-target options are accepted only for set-history-target"
     _ -> Right ()
   pure options
 
@@ -2023,15 +2445,17 @@ actionName :: AdminAction -> T.Text
 actionName = \case
   Estimate -> "estimate"
   Migrate -> "migrate"
+  SetHistoryTarget -> "set_history_target"
   Backfill _ -> "backfill"
   Status -> "status"
-  Verify -> "verify"
+  Verify _ -> "verify"
   Repair _ -> "repair"
   FinalizerProbe -> "finalizer_probe"
 
 scopeNameForAction :: AdminAction -> T.Text
 scopeNameForAction = \case
   Backfill scope -> scopeName scope
+  Verify scope -> scopeName scope
   Repair scope -> scopeName scope
   FinalizerProbe -> "price"
   _ -> "none"
@@ -2059,9 +2483,10 @@ usage =
     [ "Usage:"
     , "  plether-candle-admin estimate [OPTIONS]"
     , "  plether-candle-admin migrate [OPTIONS]"
+    , "  plether-candle-admin set-history-target --start-timestamp UNIX --requested-by TEXT --request-reference TEXT [OPTIONS]"
     , "  plether-candle-admin backfill price|volume|all [OPTIONS]"
     , "  plether-candle-admin status [OPTIONS]"
-    , "  plether-candle-admin verify [OPTIONS]"
+    , "  plether-candle-admin verify price|volume|all [OPTIONS]"
     , "  plether-candle-admin repair price|volume|all --from UNIX --to UNIX [OPTIONS]"
     , "  plether-candle-admin finalizer-probe --boundary UNIX [OPTIONS]"
     , ""
@@ -2069,6 +2494,9 @@ usage =
     , "  --from UNIX                  Inclusive source timestamp"
     , "  --to UNIX                    Exclusive source timestamp"
     , "  --boundary UNIX              Aligned UTC hour for the Sepolia finalizer probe"
+    , "  --start-timestamp UNIX       Desired logical-market price-history start"
+    , "  --requested-by TEXT          Identity recording the protected request"
+    , "  --request-reference TEXT     Retry-stable protected workflow reference"
     , "  --chunk-seconds N            Transaction chunk size (default 86400)"
     , "  --statement-timeout-ms N     Per-statement timeout (default 1800000)"
     , "  --lock-timeout-ms N          Admin advisory-lock wait (default 5000)"
@@ -2076,6 +2504,7 @@ usage =
     , "  --max-runtime-seconds N      Absolute process deadline (2100 for probe; otherwise 21600)"
     , ""
     , "Backfill, repair, and finalizer-probe require PERPS_CANDLE_WRITE_MODE=dual."
+    , "set-history-target appends metadata only and does not publish candle coverage."
     , "Backfill and repair read only existing PostgreSQL data and never contact Pyth;"
     , "the Sepolia-only finalizer probe performs SELECTs and takes one transaction lock."
     ]

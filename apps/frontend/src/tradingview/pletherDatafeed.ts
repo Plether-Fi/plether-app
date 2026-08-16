@@ -135,6 +135,8 @@ interface CandleDatasetIdentity {
   seriesId: string
   configurationHash: string
   displayPriceCap: string
+  volumeChainId: number
+  volumeRouter: string
 }
 
 export interface PletherDxyDatafeedOptions {
@@ -1163,18 +1165,34 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   private candleIdentity(
     response: Pick<
       PerpsBasketCandlePage | PerpsBasketCurrentCandle,
-      'seriesId' | 'configurationHash' | 'displayPriceCap'
+      'seriesId' | 'configurationHash' | 'displayPriceCap' |
+      'volumeChainId' | 'volumeRouter'
     >
   ): CandleDatasetIdentity {
     const seriesId = response.seriesId.trim()
     const configurationHash = response.configurationHash.trim()
-    if (!seriesId || !configurationHash) {
+    const volumeRouter = typeof response.volumeRouter === 'string'
+      ? response.volumeRouter.trim().toLowerCase()
+      : ''
+    if (
+      !seriesId ||
+      !configurationHash ||
+      !Number.isSafeInteger(response.volumeChainId) ||
+      response.volumeChainId <= 0 ||
+      !/^0x[0-9a-f]{40}$/.test(volumeRouter)
+    ) {
       throw new Error('The Perps candle API returned an invalid dataset identity')
     }
     if (parsePerpsDisplayPriceCap(response.displayPriceCap) === undefined) {
       throw new Error('The Perps candle API returned an invalid display-price cap')
     }
-    return { seriesId, configurationHash, displayPriceCap: response.displayPriceCap }
+    return {
+      seriesId,
+      configurationHash,
+      displayPriceCap: response.displayPriceCap,
+      volumeChainId: response.volumeChainId,
+      volumeRouter,
+    }
   }
 
   private candleIdentitiesEqual(
@@ -1183,7 +1201,9 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   ): boolean {
     return left.seriesId === right.seriesId &&
       left.configurationHash === right.configurationHash &&
-      left.displayPriceCap === right.displayPriceCap
+      left.displayPriceCap === right.displayPriceCap &&
+      left.volumeChainId === right.volumeChainId &&
+      left.volumeRouter === right.volumeRouter
   }
 
   private observeCandleIdentity(
