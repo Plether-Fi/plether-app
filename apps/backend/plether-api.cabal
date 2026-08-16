@@ -248,6 +248,7 @@ test-suite plether-api-test
     main-is:          Spec.hs
     other-modules:
         Plether.AA.PimlicoSpec
+        Plether.CacheSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec

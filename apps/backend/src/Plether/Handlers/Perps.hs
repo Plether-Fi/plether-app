@@ -68,7 +68,12 @@ import Network.HTTP.Client
   , setQueryString
   )
 import Network.HTTP.Types.Status (statusCode)
-import Plether.Cache (AppCache (..))
+import Plether.Cache
+  ( AppCache (..)
+  , CandlePageCacheValue (..)
+  , SingleFlightSource (..)
+  , runSingleFlightCache
+  )
 import Plether.Config
   ( Config (..)
   , perpsCandleRollupReadEnabled
@@ -172,12 +177,36 @@ unattributedCandleDuration BasketCandleTimings {..} =
       (bctDbPoolWaitNs + bctQueryNs + bctResponseEncodeNs)
 
 getBasketCandlePageTimed
-  :: DbPool
+  :: AppCache
+  -> DbPool
   -> Config
   -> Integer
   -> Integer
   -> IO (Either ApiError (BasketCandleFetch BasketCandlePage))
-getBasketCandlePageTimed pool cfg interval cursor = do
+getBasketCandlePageTimed cache pool cfg interval cursor = do
+  (cacheSource, result) <-
+    runSingleFlightCache
+      (cacheBasketCandlePages cache)
+      (interval, cursor)
+      (either (const False) (const True))
+      loadPage
+  pure $ fmap (candlePageFetch cacheSource) result
+  where
+    loadPage = do
+      result <- loadBasketCandlePage pool cfg interval cursor
+      case result of
+        Left err -> pure $ Left err
+        Right value -> do
+          cachedAt <- getPOSIXTime
+          pure $ Right value {cpcvCachedAt = cachedAt}
+
+loadBasketCandlePage
+  :: DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> IO (Either ApiError CandlePageCacheValue)
+loadBasketCandlePage pool cfg interval cursor = do
   now <- floor <$> getPOSIXTime
   poolStartedAt <- getMonotonicTimeNSec
   (mDefinition, page, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
@@ -219,8 +248,8 @@ getBasketCandlePageTimed pool cfg interval cursor = do
         Right () ->
           pure $
             Right
-              BasketCandleFetch
-                { bcfResponse =
+              CandlePageCacheValue
+                { cpcvResponse =
                     mkResponse 0 (cfgPerpsChainId cfg) $
                       candlePageToResponse
                         definition
@@ -229,13 +258,46 @@ getBasketCandlePageTimed pool cfg interval cursor = do
                         interval
                         cursor
                         page
-                , bcfReadSource = "rollup"
-                , bcfPoolWaitNs = poolWaitNs
-                , bcfQueryNs = queryNs
-                , bcfRowCount = length $ cpCandles page
-                , bcfFinalizedThrough = cpFinalizedThrough page
-                , bcfDatasetGeneration = cpDatasetGeneration page
+                , cpcvPoolWaitNs = poolWaitNs
+                , cpcvQueryNs = queryNs
+                , cpcvRowCount = length $ cpCandles page
+                , cpcvFinalizedThrough = cpFinalizedThrough page
+                , cpcvDatasetGeneration = cpDatasetGeneration page
+                , cpcvCachedAt = 0
                 }
+
+candlePageFetch
+  :: SingleFlightSource
+  -> CandlePageCacheValue
+  -> BasketCandleFetch BasketCandlePage
+candlePageFetch source CandlePageCacheValue {..} =
+  BasketCandleFetch
+    { bcfResponse =
+        case source of
+          SingleFlightLoaded -> cpcvResponse
+          _ -> markCandlePageResponseCached cpcvCachedAt cpcvResponse
+    , bcfReadSource =
+        case source of
+          SingleFlightLoaded -> "rollup"
+          SingleFlightMemory -> "rollup_memory_cache"
+          SingleFlightCoalesced -> "rollup_coalesced"
+    , bcfPoolWaitNs = if source == SingleFlightLoaded then cpcvPoolWaitNs else 0
+    , bcfQueryNs = if source == SingleFlightLoaded then cpcvQueryNs else 0
+    , bcfRowCount = cpcvRowCount
+    , bcfFinalizedThrough = cpcvFinalizedThrough
+    , bcfDatasetGeneration = cpcvDatasetGeneration
+    }
+
+markCandlePageResponseCached :: POSIXTime -> ApiResponse a -> ApiResponse a
+markCandlePageResponseCached cachedAt response =
+  response
+    { respMeta =
+        (respMeta response)
+          { metaCached = True
+          , metaCachedAt = Just cachedAt
+          , metaStale = Just False
+          }
+    }
 
 -- | Fetch and validate the mutable candle using the exact wall-clock second
 -- supplied by the HTTP route. Keeping the clock sample outside this function
