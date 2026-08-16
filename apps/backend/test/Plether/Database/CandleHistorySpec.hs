@@ -177,6 +177,17 @@ spec = do
       migration
         `shouldContain` "DROP INDEX CONCURRENTLY idx_perps_market_volume_rollups_page_cover"
 
+    it "bounds native page volume reads and refreshes index visibility after migration" $ do
+      migration <- readFile "src/Plether/Database/Candles.hs"
+      admin <- readFile "app/CandleAdmin.hs"
+      migration
+        `shouldContain` "volume.bucket_start >= GREATEST(bounds.effective_start, bounds.volume_coverage_start)"
+      migration
+        `shouldContain` "volume.bucket_start < LEAST(bounds.effective_end, bounds.volume_coverage_end,"
+      migration `shouldContain` "VACUUM (ANALYZE) perps_basket_candles"
+      migration `shouldContain` "VACUUM (ANALYZE) perps_market_volume_rollups"
+      admin `shouldContain` "vacuumCandlePageTables conn"
+
 selection :: CandleHistorySelection
 selection =
   CandleHistorySelection

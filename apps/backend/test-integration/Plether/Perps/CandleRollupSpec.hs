@@ -95,6 +95,7 @@ import Plether.Database.Candles
   , beginRollupMaintenance
   , upsertBasketObservation
   , upsertRollupCoverage
+  , vacuumCandlePageTables
   )
 import Plether.Database.Schema
   ( assertPerpsReplayEventExact
@@ -2404,6 +2405,27 @@ candleRollupSpec databaseUrl =
             `shouldContain` "Index Only Scan using idx_perps_basket_candles_page_cover"
           renderedPlan
             `shouldContain` "Index Only Scan using idx_perps_market_volume_rollups_page_cover"
+
+    it "refreshes the visibility map used by candle page covering indexes" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          insertObservation connection "visibility-price" (baseTime + 5) 100 "signed_pyth" 100
+          recomputeBasketCandleHierarchy connection testSeries (baseTime + 5) 0
+          insertActivity connection "visibility-volume" (baseTime + 5) 701 2 10 "Open"
+          _ <- backfillMarketVolume connection testChainId testRouter baseTime (baseTime + 60)
+          vacuumCandlePageTables connection
+          visibility <-
+            query_
+              connection
+              "SELECT relname, relallvisible > 0 FROM pg_class \
+              \WHERE relname IN ('perps_basket_candles','perps_market_volume_rollups') \
+              \ORDER BY relname" :: IO [(Text, Bool)]
+          visibility
+            `shouldBe`
+              [ ("perps_basket_candles", True)
+              , ("perps_market_volume_rollups", True)
+              ]
 
     it "uses block-number indexes for reorg discovery and history deletion" $
       withCandleDatabase databaseUrl $ \pool ->
