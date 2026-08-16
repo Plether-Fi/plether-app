@@ -135,13 +135,13 @@ data CandlePage = CandlePage
   }
   deriving stock (Eq, Show)
 
--- One row from the native page snapshot query. Definition and coverage fields
--- repeat for each candle so the public read can be served by one PostgreSQL
--- statement (and therefore one MVCC snapshot) without a surrounding
--- multi-statement transaction. Candle columns are nullable only because an
--- empty page is represented by the LEFT JOIN's single metadata row.
+-- One row from the native page snapshot query. The first row carries the
+-- definition and coverage header; subsequent candle rows leave those fields
+-- empty. This keeps the read in one PostgreSQL statement (and therefore one
+-- MVCC snapshot) without decoding the same metadata up to 500 times.
 data BasketCandlePageSnapshotRow = BasketCandlePageSnapshotRow
-  { bcpsrDefinitionPresent :: Bool
+  { bcpsrHeaderPresent :: Bool
+  , bcpsrDefinitionPresent :: Bool
   , bcpsrSeriesId :: Maybe Text
   , bcpsrConfigurationHash :: Maybe Text
   , bcpsrDisplayPriceCap :: Maybe Integer
@@ -1130,10 +1130,12 @@ decodeBasketCandlePageSnapshot
   -> [BasketCandlePageSnapshotRow]
   -> Either String (Maybe BasketDefinitionIdentity, CandlePage)
 decodeBasketCandlePageSnapshot _ [] =
-  Left "query returned no singleton row"
-decodeBasketCandlePageSnapshot interval rows@(firstRow : _)
-  | not $ all (sameBasketCandlePageSnapshotHeader firstRow) rows =
-      Left "query returned inconsistent repeated metadata"
+  Left "query returned no header row"
+decodeBasketCandlePageSnapshot interval rows@(firstRow : remainingRows)
+  | not $ bcpsrHeaderPresent firstRow =
+      Left "query first row omitted the page header"
+  | not $ all snapshotHeaderAbsent remainingRows =
+      Left "query repeated or partially populated the page header"
   | otherwise = do
       definition <- decodeSnapshotDefinition firstRow
       page <- decodeSnapshotPage interval firstRow rows
@@ -1329,28 +1331,28 @@ decodeSnapshotCandle BasketCandlePageSnapshotRow {..}
     , (() <$ bcpsrVolumeComplete)
     ]
 
-sameBasketCandlePageSnapshotHeader
-  :: BasketCandlePageSnapshotRow
-  -> BasketCandlePageSnapshotRow
-  -> Bool
-sameBasketCandlePageSnapshotHeader left right =
-  bcpsrDefinitionPresent left == bcpsrDefinitionPresent right
-    && bcpsrSeriesId left == bcpsrSeriesId right
-    && bcpsrConfigurationHash left == bcpsrConfigurationHash right
-    && bcpsrDisplayPriceCap left == bcpsrDisplayPriceCap right
-    && bcpsrEffectiveFrom left == bcpsrEffectiveFrom right
-    && bcpsrEffectiveTo left == bcpsrEffectiveTo right
-    && bcpsrMetadataPresent left == bcpsrMetadataPresent right
-    && bcpsrCoverageStart left == bcpsrCoverageStart right
-    && bcpsrCoverageEnd left == bcpsrCoverageEnd right
-    && bcpsrFinalizedThrough left == bcpsrFinalizedThrough right
-    && bcpsrDatasetGeneration left == bcpsrDatasetGeneration right
-    && bcpsrCoverageComplete left == bcpsrCoverageComplete right
-    && bcpsrVolumeCoverageStart left == bcpsrVolumeCoverageStart right
-    && bcpsrVolumeCoverageEnd left == bcpsrVolumeCoverageEnd right
-    && bcpsrVolumeFinalizedThrough left == bcpsrVolumeFinalizedThrough right
-    && bcpsrVolumeCoverageComplete left == bcpsrVolumeCoverageComplete right
-    && bcpsrEarlierBucket left == bcpsrEarlierBucket right
+snapshotHeaderAbsent :: BasketCandlePageSnapshotRow -> Bool
+snapshotHeaderAbsent BasketCandlePageSnapshotRow {..} =
+  not bcpsrHeaderPresent
+    && not bcpsrDefinitionPresent
+    && not bcpsrMetadataPresent
+    && allNothing
+      [ (() <$ bcpsrSeriesId)
+      , (() <$ bcpsrConfigurationHash)
+      , (() <$ bcpsrDisplayPriceCap)
+      , (() <$ bcpsrEffectiveFrom)
+      , (() <$ bcpsrEffectiveTo)
+      , (() <$ bcpsrCoverageStart)
+      , (() <$ bcpsrCoverageEnd)
+      , (() <$ bcpsrFinalizedThrough)
+      , (() <$ bcpsrDatasetGeneration)
+      , (() <$ bcpsrCoverageComplete)
+      , (() <$ bcpsrVolumeCoverageStart)
+      , (() <$ bcpsrVolumeCoverageEnd)
+      , (() <$ bcpsrVolumeFinalizedThrough)
+      , (() <$ bcpsrVolumeCoverageComplete)
+      , (() <$ bcpsrEarlierBucket)
+      ]
 
 allNothing :: [Maybe value] -> Bool
 allNothing = all $ maybe True (const False)
@@ -1898,6 +1900,7 @@ instance FromRow BasketCandlePageSnapshotRow where
       <*> field
       <*> field
       <*> field
+      <*> field
 
 parseCandleQuality :: Text -> CandleQuality
 parseCandleQuality = \case
@@ -2316,25 +2319,38 @@ basketCandlePageSnapshotSql =
   \   AS effective_end \
   \ FROM metadata CROSS JOIN input i\
   \) SELECT \
-  \ (definition.series_id IS NOT NULL), definition.series_id, \
-  \ definition.configuration_hash, definition.display_price_cap, \
-  \ definition.effective_from, definition.effective_to, \
-  \ (bounds.coverage_start IS NOT NULL), bounds.coverage_start, bounds.coverage_end, \
-  \ bounds.finalized_through, bounds.dataset_generation, bounds.coverage_complete, \
-  \ CASE WHEN bounds.volume_usable THEN bounds.volume_coverage_start END, \
-  \ CASE WHEN bounds.volume_usable THEN bounds.volume_coverage_end END, \
-  \ CASE WHEN bounds.volume_usable THEN bounds.volume_finalized_through END, \
-  \ bounds.volume_usable, \
-  \ earlier.bucket_start, (candle.bucket_start IS NOT NULL), \
+  \ header.present, \
+  \ header.present AND definition.series_id IS NOT NULL, \
+  \ CASE WHEN header.present THEN definition.series_id END, \
+  \ CASE WHEN header.present THEN definition.configuration_hash END, \
+  \ CASE WHEN header.present THEN definition.display_price_cap END, \
+  \ CASE WHEN header.present THEN definition.effective_from END, \
+  \ CASE WHEN header.present THEN definition.effective_to END, \
+  \ header.present AND bounds.coverage_start IS NOT NULL, \
+  \ CASE WHEN header.present THEN bounds.coverage_start END, \
+  \ CASE WHEN header.present THEN bounds.coverage_end END, \
+  \ CASE WHEN header.present THEN bounds.finalized_through END, \
+  \ CASE WHEN header.present THEN bounds.dataset_generation END, \
+  \ CASE WHEN header.present THEN bounds.coverage_complete END, \
+  \ CASE WHEN header.present AND bounds.volume_usable \
+  \  THEN bounds.volume_coverage_start END, \
+  \ CASE WHEN header.present AND bounds.volume_usable \
+  \  THEN bounds.volume_coverage_end END, \
+  \ CASE WHEN header.present AND bounds.volume_usable \
+  \  THEN bounds.volume_finalized_through END, \
+  \ CASE WHEN header.present THEN bounds.volume_usable END, \
+  \ CASE WHEN header.present THEN earlier.bucket_start END, \
+  \ (candle.bucket_start IS NOT NULL), \
   \ candle.bucket_start, candle.raw_open_price, candle.raw_high_price, \
   \ candle.raw_low_price, candle.raw_close_price, candle.sample_count, \
   \ candle.quality, candle.revision, candle.price_complete, \
   \ candle.volume_numerator, candle.trade_count, candle.volume_complete \
   \FROM (SELECT 1) singleton \
+  \CROSS JOIN input i \
   \LEFT JOIN definition ON TRUE \
   \LEFT JOIN bounds ON TRUE \
   \LEFT JOIN LATERAL (\
-  \ SELECT prior.bucket_start FROM perps_basket_candles prior CROSS JOIN input i \
+  \ SELECT prior.bucket_start FROM perps_basket_candles prior \
   \ WHERE prior.series_id = definition.series_id \
   \ AND prior.interval_seconds = i.interval_seconds \
   \ AND prior.bucket_start >= bounds.coverage_start \
@@ -2345,6 +2361,7 @@ basketCandlePageSnapshotSql =
   \ SELECT price.bucket_start, price.raw_open_price, price.raw_high_price, \
   \  price.raw_low_price, price.raw_close_price, price.sample_count, price.quality, \
   \  price.revision, price.finalized AS price_complete, \
+  \  ROW_NUMBER() OVER (ORDER BY price.bucket_start ASC) AS page_row_number, \
   \  CASE WHEN bounds.volume_usable \
   \    AND price.bucket_start >= bounds.volume_coverage_start \
   \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
@@ -2362,7 +2379,7 @@ basketCandlePageSnapshotSql =
   \    AND price.bucket_start + price.interval_seconds <= bounds.volume_coverage_end \
   \    AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
   \    AND COALESCE(volume.finalized, TRUE) AS volume_complete \
-  \ FROM perps_basket_candles price CROSS JOIN input i \
+  \ FROM perps_basket_candles price \
   \ LEFT JOIN perps_market_volume_rollups volume \
   \  ON bounds.volume_usable \
   \  AND price.bucket_start >= bounds.volume_coverage_start \
@@ -2378,6 +2395,9 @@ basketCandlePageSnapshotSql =
   \ AND price.bucket_start < bounds.effective_end \
   \ ORDER BY price.bucket_start ASC LIMIT 500\
   \) candle ON TRUE \
+  \LEFT JOIN LATERAL (\
+  \ SELECT COALESCE(candle.page_row_number, 1) = 1 AS present\
+  \) header ON TRUE \
   \ORDER BY candle.bucket_start ASC NULLS LAST"
 
 nativeCandleRowsSql :: Query
