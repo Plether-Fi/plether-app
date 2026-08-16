@@ -12,6 +12,7 @@ module Plether.Database.Candles
   , canonicalCandleIntervals
   , defaultBasketSeriesId
   , ensureCandleSchema
+  , vacuumCandlePageTables
   , ensureCurrentBasketDefinition
   , upsertBasketObservation
   , recomputeBasketCandleHierarchy
@@ -258,6 +259,23 @@ ensureCandleSchema conn = do
   ensureCandleEventIndex conn
   ensureCandleActivityReorgIndex conn
   ensureCandleEventReorgIndex conn
+
+-- CREATE INDEX CONCURRENTLY does not mark heap pages all-visible. Refresh the
+-- visibility map and planner statistics after migration so the page covering
+-- indexes can remain index-only instead of fetching every selected heap row.
+-- VACUUM cannot run inside a transaction; CandleAdmin migrate is deliberately
+-- session-scoped for the concurrent index builders above.
+vacuumCandlePageTables :: Connection -> IO ()
+vacuumCandlePageTables conn =
+  forM_ candlePageVacuumStatements $ \statement -> do
+    _ <- execute_ conn statement
+    pure ()
+
+candlePageVacuumStatements :: [Query]
+candlePageVacuumStatements =
+  [ "VACUUM (ANALYZE) perps_basket_candles"
+  , "VACUUM (ANALYZE) perps_market_volume_rollups"
+  ]
 
 ensureCandleActivityIndex :: Connection -> IO ()
 ensureCandleActivityIndex conn = do
@@ -2522,6 +2540,9 @@ basketCandlePageSnapshotSql =
   \  AND price.bucket_start + price.interval_seconds <= bounds.volume_finalized_through \
   \  AND volume.chain_id = i.chain_id AND volume.release_router = i.release_router \
   \  AND volume.interval_seconds = price.interval_seconds \
+  \  AND volume.bucket_start >= GREATEST(bounds.effective_start, bounds.volume_coverage_start) \
+  \  AND volume.bucket_start < LEAST(bounds.effective_end, bounds.volume_coverage_end, \
+  \   bounds.volume_finalized_through) \
   \  AND volume.bucket_start = price.bucket_start \
   \ WHERE bounds.coverage_complete AND bounds.effective_start < bounds.effective_end \
   \ AND price.series_id = definition.series_id \

@@ -50,6 +50,7 @@ import Plether.Database.Candles
   , lockBasketPriceDataset
   , markRollupCoverageIncomplete
   , upsertRollupCoverage
+  , vacuumCandlePageTables
   )
 import Plether.Logging
   ( field
@@ -271,6 +272,7 @@ runAdmin conn runtime options@AdminOptions {aoAction} =
     Estimate -> runEstimate conn runtime options
     Migrate -> do
       ensureCandleSchema conn
+      vacuumCandlePageTables conn
       logInfo
         "perps_candle_migration_complete"
         "Perps candle schema migration completed"
