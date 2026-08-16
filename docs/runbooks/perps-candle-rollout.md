@@ -236,12 +236,13 @@ protected workflow.
 
 ## Gate 1: compatible deployment
 
-Merging compatible code to `master` may trigger the repository's existing
-automatic mainnet backend/frontend deployments before Sepolia. This exception
-is safe only while the candle behavior remains inert: writes off, legacy reads,
-an empty interval allowlist, and the frontend candle flag false. Treat that
-automatic image deployment as code compatibility only; it does not authorize
-migration, dual writes, backfill, rollup reads, or frontend feature activation.
+Merging compatible code to `master` may trigger the repository's automatic
+mainnet frontend deployment before Sepolia. Backend deployment is manual for
+both environments. This exception is safe only while the candle behavior
+remains inert: writes off, legacy reads, an empty interval allowlist, and the
+frontend candle flag false. Treat any automatic frontend deployment as code
+compatibility only; it does not authorize migration, dual writes, backfill,
+rollup reads, or frontend feature activation.
 
 Before activating any candle behavior in either environment, set that target's
 Terraform candle variables to the safe explicit values below, review the

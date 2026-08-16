@@ -51,7 +51,9 @@ Do not blindly run `aws login --profile plether`. This repository's pinned Terra
 
 ### Sepolia
 
-A push to `master` targets mainnet in the deployment workflows. Sepolia therefore requires explicit manual workflow dispatches from `master`.
+Backend deployments are manual for both Sepolia and mainnet. The frontend
+workflow still targets mainnet on a push to `master`; Sepolia frontend
+deployments require an explicit manual dispatch from `master`.
 
 Deploy the backend with:
 
