@@ -426,6 +426,10 @@ CREATE TABLE IF NOT EXISTS perps_basket_candles (
     CHECK (raw_low_price <= LEAST(raw_open_price, raw_close_price)),
     CHECK (last_observation_time >= first_observation_time)
 );
+CREATE INDEX IF NOT EXISTS idx_perps_basket_candles_page_cover
+    ON perps_basket_candles(series_id, interval_seconds, bucket_start)
+    INCLUDE (raw_open_price, raw_high_price, raw_low_price, raw_close_price,
+             sample_count, quality, revision, finalized);
 
 CREATE TABLE IF NOT EXISTS perps_market_volume_rollups (
     chain_id BIGINT NOT NULL,
@@ -449,6 +453,9 @@ CREATE TABLE IF NOT EXISTS perps_market_volume_rollups (
     CHECK (revision > 0),
     CHECK (last_source_block >= first_source_block)
 );
+CREATE INDEX IF NOT EXISTS idx_perps_market_volume_rollups_page_cover
+    ON perps_market_volume_rollups(chain_id, release_router, interval_seconds, bucket_start)
+    INCLUDE (volume_numerator, trade_count, finalized);
 
 CREATE TABLE IF NOT EXISTS perps_rollup_coverage (
     kind TEXT NOT NULL,

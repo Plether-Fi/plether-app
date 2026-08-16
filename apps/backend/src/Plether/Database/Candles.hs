@@ -249,6 +249,8 @@ ensureCandleSchema conn = do
   forM_ candleTableSchemaStatements $ \statement -> do
     _ <- execute_ conn statement
     pure ()
+  ensureCandlePageIndex conn candlePricePageIndexSpec
+  ensureCandlePageIndex conn candleVolumePageIndexSpec
   ensureCandleHistorySchema conn
   ensureCandleActivityIndexPrerequisites conn
   ensureCandleEventIndexPrerequisites conn
@@ -330,6 +332,139 @@ ensureCandleEventReorgIndex conn = do
           buildCandleEventReorgIndex conn
       | otherwise ->
           fail $ candleEventReorgIndexConflictMessage state
+
+data CandlePageIndexSpec = CandlePageIndexSpec
+  { cpisName :: Text
+  , cpisLabel :: String
+  , cpisTableName :: Text
+  , cpisKeyAttributeCount :: Int
+  , cpisAttributes :: [Text]
+  , cpisCreateStatement :: Query
+  , cpisDropStatement :: Query
+  }
+
+data CandlePageIndexState = CandlePageIndexState
+  { cpisValid :: Bool
+  , cpisReady :: Bool
+  , cpisLive :: Bool
+  , cpisTargetTableName :: Text
+  , cpisActualKeyAttributeCount :: Int
+  , cpisActualAttributeCount :: Int
+  , cpisSerializedAttributes :: Text
+  , cpisPredicate :: Maybe Text
+  }
+  deriving stock (Show)
+
+instance FromRow CandlePageIndexState where
+  fromRow =
+    CandlePageIndexState
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+ensureCandlePageIndex :: Connection -> CandlePageIndexSpec -> IO ()
+ensureCandlePageIndex conn spec = do
+  indexState <- getCandlePageIndexState conn spec
+  case indexState of
+    Nothing -> do
+      assertCandleNamedIndexNameAvailable conn (cpisName spec) (cpisLabel spec)
+      buildCandlePageIndex conn spec
+    Just state
+      | candlePageIndexUsable spec state -> pure ()
+      | candlePageIndexCatalogValid state ->
+          fail $ candlePageIndexShapeConflictMessage spec state
+      | candlePageIndexTargetsExpectedTable spec state -> do
+          -- CREATE INDEX CONCURRENTLY can leave an invalid catalog entry after
+          -- interruption. Retry only that exact index on the expected table.
+          _ <- execute_ conn $ cpisDropStatement spec
+          buildCandlePageIndex conn spec
+      | otherwise ->
+          fail $ candlePageIndexConflictMessage spec state
+
+getCandlePageIndexState
+  :: Connection -> CandlePageIndexSpec -> IO (Maybe CandlePageIndexState)
+getCandlePageIndexState conn spec = do
+  rows <-
+    query conn
+      "SELECT index_state.indisvalid, index_state.indisready, index_state.indislive, \
+      \ target_relation.relname, index_state.indnkeyatts::integer, \
+      \ index_state.indnatts::integer, \
+      \ COALESCE((SELECT string_agg(\
+      \   COALESCE(pg_get_indexdef(index_relation.oid, attribute_number, TRUE), ''), \
+      \   CHR(31) ORDER BY attribute_number) \
+      \  FROM generate_series(1, index_state.indnatts) AS attributes(attribute_number)), ''), \
+      \ pg_get_expr(index_state.indpred, index_state.indrelid, TRUE) \
+      \FROM pg_class index_relation \
+      \JOIN pg_namespace index_namespace ON index_namespace.oid = index_relation.relnamespace \
+      \JOIN pg_index index_state ON index_state.indexrelid = index_relation.oid \
+      \JOIN pg_class target_relation ON target_relation.oid = index_state.indrelid \
+      \WHERE index_namespace.nspname = current_schema() \
+      \AND index_relation.relname = ?"
+      (Only $ cpisName spec)
+  case rows of
+    [] -> pure Nothing
+    [state] -> pure $ Just state
+    _ -> fail $ cpisLabel spec <> " lookup returned more than one relation"
+
+candlePageIndexCatalogValid :: CandlePageIndexState -> Bool
+candlePageIndexCatalogValid state =
+  cpisValid state && cpisReady state && cpisLive state
+
+candlePageIndexTargetsExpectedTable
+  :: CandlePageIndexSpec -> CandlePageIndexState -> Bool
+candlePageIndexTargetsExpectedTable spec state =
+  cpisTargetTableName state == cpisTableName spec
+
+candlePageIndexUsable :: CandlePageIndexSpec -> CandlePageIndexState -> Bool
+candlePageIndexUsable spec state =
+  candlePageIndexTargetsExpectedTable spec state
+    && candlePageIndexCatalogValid state
+    && cpisActualKeyAttributeCount state == cpisKeyAttributeCount spec
+    && cpisActualAttributeCount state == length (cpisAttributes spec)
+    && map normalizeIndexAttribute
+      (T.splitOn (T.singleton '\x1f') $ cpisSerializedAttributes state)
+      == cpisAttributes spec
+    && cpisPredicate state == Nothing
+
+candlePageIndexConflictMessage
+  :: CandlePageIndexSpec -> CandlePageIndexState -> String
+candlePageIndexConflictMessage spec state =
+  "Relation "
+    <> T.unpack (cpisName spec)
+    <> " already exists in the current schema but does not target "
+    <> T.unpack (cpisTableName spec)
+    <> ". Refusing to drop an unrelated relation: "
+    <> show state
+
+candlePageIndexShapeConflictMessage
+  :: CandlePageIndexSpec -> CandlePageIndexState -> String
+candlePageIndexShapeConflictMessage spec state =
+  "A valid relation named "
+    <> T.unpack (cpisName spec)
+    <> " exists, but it does not match the required candle page covering index. "
+    <> "Refusing to replace a valid index automatically: "
+    <> show state
+
+buildCandlePageIndex :: Connection -> CandlePageIndexSpec -> IO ()
+buildCandlePageIndex conn spec = do
+  -- PostgreSQL forbids CONCURRENTLY inside a transaction. Callers receive its
+  -- explicit error if they wrap the migration in one.
+  _ <- execute_ conn $ cpisCreateStatement spec
+  verified <- getCandlePageIndexState conn spec
+  case verified of
+    Just state
+      | candlePageIndexUsable spec state -> pure ()
+      | otherwise ->
+          fail $
+            cpisLabel spec
+              <> " build completed without a valid expected index: "
+              <> show state
+    Nothing -> fail $ cpisLabel spec <> " build completed but the index is absent"
 
 ensureCandleActivityIndexPrerequisites :: Connection -> IO ()
 ensureCandleActivityIndexPrerequisites conn = do
@@ -2834,6 +2969,59 @@ candleEventReorgIndexStatement =
 candleEventReorgIndexDropStatement :: Query
 candleEventReorgIndexDropStatement =
   "DROP INDEX CONCURRENTLY idx_perps_events_reorg_blocks"
+
+candlePricePageIndexSpec :: CandlePageIndexSpec
+candlePricePageIndexSpec =
+  CandlePageIndexSpec
+    { cpisName = "idx_perps_basket_candles_page_cover"
+    , cpisLabel = "Candle price page covering index"
+    , cpisTableName = "perps_basket_candles"
+    , cpisKeyAttributeCount = 3
+    , cpisAttributes =
+        [ "series_id"
+        , "interval_seconds"
+        , "bucket_start"
+        , "raw_open_price"
+        , "raw_high_price"
+        , "raw_low_price"
+        , "raw_close_price"
+        , "sample_count"
+        , "quality"
+        , "revision"
+        , "finalized"
+        ]
+    , cpisCreateStatement =
+        "CREATE INDEX CONCURRENTLY idx_perps_basket_candles_page_cover \
+        \ON perps_basket_candles(series_id, interval_seconds, bucket_start) \
+        \INCLUDE (raw_open_price, raw_high_price, raw_low_price, raw_close_price, \
+        \sample_count, quality, revision, finalized)"
+    , cpisDropStatement =
+        "DROP INDEX CONCURRENTLY idx_perps_basket_candles_page_cover"
+    }
+
+candleVolumePageIndexSpec :: CandlePageIndexSpec
+candleVolumePageIndexSpec =
+  CandlePageIndexSpec
+    { cpisName = "idx_perps_market_volume_rollups_page_cover"
+    , cpisLabel = "Candle volume page covering index"
+    , cpisTableName = "perps_market_volume_rollups"
+    , cpisKeyAttributeCount = 4
+    , cpisAttributes =
+        [ "chain_id"
+        , "release_router"
+        , "interval_seconds"
+        , "bucket_start"
+        , "volume_numerator"
+        , "trade_count"
+        , "finalized"
+        ]
+    , cpisCreateStatement =
+        "CREATE INDEX CONCURRENTLY idx_perps_market_volume_rollups_page_cover \
+        \ON perps_market_volume_rollups(chain_id, release_router, interval_seconds, bucket_start) \
+        \INCLUDE (volume_numerator, trade_count, finalized)"
+    , cpisDropStatement =
+        "DROP INDEX CONCURRENTLY idx_perps_market_volume_rollups_page_cover"
+    }
 
 candleTableSchemaStatements :: [Query]
 candleTableSchemaStatements =
