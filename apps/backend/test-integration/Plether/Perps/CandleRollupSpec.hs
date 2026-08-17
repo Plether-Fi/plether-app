@@ -83,6 +83,7 @@ import Plether.Database.Candles
   , getActiveBasketDefinitionIdentity
   , getBasketCandlePage
   , getBasketCandlePageSnapshot
+  , getBasketCurrentCandleSnapshot
   , getBasketCandleRange
   , getCurrentBasketCandle
   , getRollupCoverage
@@ -1145,6 +1146,16 @@ candleRollupSpec databaseUrl =
                 definition `shouldBe` expectedDefinition
                 snapshotPage `shouldBe` plainPage
                 pure snapshotPage
+              readCurrent timestamp = do
+                plainCurrent <-
+                  getCurrentBasketCandle
+                    connection testSeries testChainId testRouter 60 timestamp
+                (definition, snapshotCurrent) <-
+                  getBasketCurrentCandleSnapshot
+                    connection timestamp testChainId testRouter 60
+                definition `shouldBe` expectedDefinition
+                snapshotCurrent `shouldBe` plainCurrent
+                pure snapshotCurrent
               assertPriceRows page =
                 map bcrBucketStart (cpCandles page) `shouldBe` expectedBuckets
               assertUnknownVolume page = do
@@ -1189,9 +1200,7 @@ candleRollupSpec databaseUrl =
           cpVolumeFinalizedThrough noVolume `shouldBe` Nothing
           cpVolumeCoverageComplete noVolume `shouldBe` False
 
-          currentPriceOnly <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          currentPriceOnly <- readCurrent (baseTime + 920)
           case ccCandle currentPriceOnly of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Nothing
@@ -1199,9 +1208,7 @@ candleRollupSpec databaseUrl =
               bcrVolumeComplete row `shouldBe` False
             Nothing -> fail "Expected the current price row without volume coverage"
 
-          currentWithoutVolume <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 1200)
+          currentWithoutVolume <- readCurrent (baseTime + 1200)
           ccCandle currentWithoutVolume `shouldBe` Nothing
           ccCoverageStart currentWithoutVolume `shouldBe` Just priceCoverageStart
           ccCoverageEnd currentWithoutVolume `shouldBe` Just cursor
@@ -1224,9 +1231,7 @@ candleRollupSpec databaseUrl =
           cpCoverageComplete staleVolume `shouldBe` True
           cpDatasetGeneration staleVolume
             `shouldSatisfy` (/= cpDatasetGeneration noVolume)
-          staleCurrentVolume <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          staleCurrentVolume <- readCurrent (baseTime + 920)
           case ccCandle staleCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Nothing
@@ -1244,9 +1249,7 @@ candleRollupSpec databaseUrl =
           cpCoverageComplete incompleteVolume `shouldBe` True
           cpDatasetGeneration incompleteVolume
             `shouldSatisfy` (/= cpDatasetGeneration staleVolume)
-          incompleteCurrentVolume <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          incompleteCurrentVolume <- readCurrent (baseTime + 920)
           case ccCandle incompleteCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Nothing
@@ -1259,9 +1262,7 @@ candleRollupSpec databaseUrl =
           -- finalized watermark keeps that mutable value incomplete.
           putVolumeCoverage
             connection 60 baseTime volumeCoverageStart volumeCoverageStart 3 True
-          exactBoundaryCurrentVolume <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          exactBoundaryCurrentVolume <- readCurrent (baseTime + 920)
           case ccCandle exactBoundaryCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Just 77
@@ -1283,9 +1284,7 @@ candleRollupSpec databaseUrl =
           cpVolumeCoverageEnd partialVolume `shouldBe` Just cursor
           cpVolumeFinalizedThrough partialVolume `shouldBe` Just (baseTime + 1800)
           cpVolumeCoverageComplete partialVolume `shouldBe` True
-          coveredCurrentVolume <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 920)
+          coveredCurrentVolume <- readCurrent (baseTime + 920)
           case ccCandle coveredCurrentVolume of
             Just row -> do
               bcrVolumeNumerator row `shouldBe` Just 77
@@ -1318,9 +1317,7 @@ candleRollupSpec databaseUrl =
           cpVolumeCoverageComplete page `shouldBe` True
           cpDatasetGeneration page `shouldBe` cpDatasetGeneration partialVolume
 
-          current <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 1200)
+          current <- readCurrent (baseTime + 1200)
           ccCandle current `shouldBe` Nothing
           ccCoverageStart current `shouldBe` cpCoverageStart page
           ccCoverageEnd current `shouldBe` cpCoverageEnd page
@@ -1430,9 +1427,7 @@ candleRollupSpec databaseUrl =
           cpCoverageComplete earlierTarget `shouldBe` True
           cpDatasetGeneration earlierTarget
             `shouldBe` cpDatasetGeneration laterTarget
-          currentDuringEarlierBackfill <-
-            getCurrentBasketCandle
-              connection testSeries testChainId testRouter 60 (baseTime + 1200)
+          currentDuringEarlierBackfill <- readCurrent (baseTime + 1200)
           ccCoverageStart currentDuringEarlierBackfill `shouldBe` Just volumeCoverageStart
           ccCoverageComplete currentDuringEarlierBackfill `shouldBe` True
           ccDatasetGeneration currentDuringEarlierBackfill
@@ -1455,6 +1450,11 @@ candleRollupSpec databaseUrl =
           mismatchedCurrent <-
             getCurrentBasketCandle
               connection testSeries mismatchedChainId testRouter 60 (baseTime + 1200)
+          (mismatchedCurrentDefinition, mismatchedCurrentSnapshot) <-
+            getBasketCurrentCandleSnapshot
+              connection (baseTime + 1200) mismatchedChainId testRouter 60
+          mismatchedCurrentDefinition `shouldBe` expectedDefinition
+          mismatchedCurrentSnapshot `shouldBe` mismatchedCurrent
           ccCoverageComplete mismatchedCurrent `shouldBe` False
 
     it "requires a new generation before usable rollup coverage can regress" $

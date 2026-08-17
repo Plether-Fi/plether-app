@@ -94,11 +94,10 @@ import Plether.Database.Candles
   , CandlePage (..)
   , CandleRange (..)
   , CandleQuality (..)
-  , defaultBasketSeriesId
   , getActiveBasketDefinitionIdentity
   , getBasketCandlePageSnapshot
+  , getBasketCurrentCandleSnapshot
   , getBasketCandleRange
-  , getCurrentBasketCandle
   )
 import Plether.Database.Schema
   ( BasketHistorySnapshotRow (..)
@@ -318,19 +317,17 @@ getBasketCurrentCandleTimedAt
   -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
 getBasketCurrentCandleTimedAt pool cfg now interval = do
   poolStartedAt <- getMonotonicTimeNSec
-  (mDefinition, current, poolWaitNs, queryNs) <- withDb pool $ \conn -> withCandleReadSnapshot conn $ do
+  (mDefinition, current, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
     connectionReadyAt <- getMonotonicTimeNSec
     let poolWaitNs = connectionReadyAt - poolStartedAt
     queryStartedAt <- getMonotonicTimeNSec
-    mDefinition <- getActiveBasketDefinitionIdentity conn now
-    current <-
-      getCurrentBasketCandle
+    (mDefinition, current) <-
+      getBasketCurrentCandleSnapshot
         conn
-        (maybe defaultBasketSeriesId bdiSeriesId mDefinition)
+        now
         (cfgPerpsChainId cfg)
         (cfgPerpsOrderRouter cfg)
         interval
-        now
     queryFinishedAt <- getMonotonicTimeNSec
     pure (mDefinition, current, poolWaitNs, queryFinishedAt - queryStartedAt)
   case mDefinition of
