@@ -227,6 +227,147 @@ describe('Plether TradingView datafeed', () => {
     }
   })
 
+  it('returns no data without requesting a daily page before known coverage', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_786_986_000_000)
+    const intervalSeconds = 86_400 as const
+    const currentCursor = 1_814_400_000
+    const inceptionCursor = 1_771_200_000
+    const coverageStart = 1_767_225_600
+    const coverageEnd = 1_786_924_800
+    const getCandlePage = vi.fn(async (interval: number, cursor: number) => {
+      expect(interval).toBe(intervalSeconds)
+      if (cursor === currentCursor) {
+        return candlePage(cursor, [rawCandle(1_786_838_400)], {
+          intervalSeconds,
+          coverageStart,
+          coverageEnd,
+          finalizedThrough: coverageEnd,
+          previousCursor: inceptionCursor,
+          hasEarlier: true,
+        })
+      }
+      if (cursor === inceptionCursor) {
+        return candlePage(cursor, [rawCandle(coverageStart)], {
+          intervalSeconds,
+          coverageStart,
+          coverageEnd,
+          finalizedThrough: coverageEnd,
+          previousCursor: null,
+          hasEarlier: false,
+        })
+      }
+      throw new Error(`Unexpected pre-coverage cursor ${cursor.toString()}`)
+    })
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage }),
+      useCandleApi: true,
+    })
+    const requestBars = (to: number) => new Promise<{
+      bars: TradingViewBar[]
+      metadata: { noData: boolean }
+    }>((resolve, reject) => {
+      feed.getBars(
+        {} as TradingViewSymbolInfo,
+        '1D',
+        { from: 0, to, countBack: 300, firstDataRequest: true },
+        (bars, metadata) => resolve({ bars, metadata }),
+        reject
+      )
+    })
+
+    try {
+      const available = await requestBars(1_786_986_000)
+      expect(available.bars.map((bar) => bar.time)).toEqual([
+        coverageStart * 1_000,
+        1_786_838_400_000,
+      ])
+
+      await expect(requestBars(coverageStart)).resolves.toEqual({
+        bars: [],
+        metadata: { noData: true },
+      })
+      expect(getCandlePage.mock.calls.map(([, cursor]) => cursor)).toEqual([
+        currentCursor,
+        inceptionCursor,
+      ])
+    } finally {
+      feed.destroy()
+      now.mockRestore()
+    }
+  })
+
+  it('refreshes the known coverage boundary when the dataset generation advances', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_786_986_000_000)
+    const intervalSeconds = 86_400 as const
+    const currentCursor = 1_814_400_000
+    const inceptionCursor = 1_771_200_000
+    const originalCoverageStart = 1_767_225_600
+    const expandedCoverageStart = originalCoverageStart - intervalSeconds
+    const coverageEnd = 1_786_924_800
+    let datasetGeneration = 7
+    let coverageStart = originalCoverageStart
+    const getCandlePage = vi.fn(async (interval: number, cursor: number) => {
+      expect(interval).toBe(intervalSeconds)
+      if (cursor === currentCursor) {
+        return candlePage(cursor, [rawCandle(1_786_838_400)], {
+          intervalSeconds,
+          datasetGeneration,
+          coverageStart,
+          coverageEnd,
+          finalizedThrough: coverageEnd,
+          previousCursor: inceptionCursor,
+          hasEarlier: true,
+        })
+      }
+      if (cursor === inceptionCursor) {
+        return candlePage(cursor, [rawCandle(coverageStart)], {
+          intervalSeconds,
+          datasetGeneration,
+          coverageStart,
+          coverageEnd,
+          finalizedThrough: coverageEnd,
+          previousCursor: null,
+          hasEarlier: false,
+        })
+      }
+      throw new Error(`Unexpected cursor ${cursor.toString()}`)
+    })
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage }),
+      useCandleApi: true,
+    })
+    const requestBars = (to: number, countBack: number) => new Promise<TradingViewBar[]>(
+      (resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1D',
+          { from: 0, to, countBack, firstDataRequest: true },
+          resolve,
+          reject
+        )
+      }
+    )
+
+    try {
+      await expect(requestBars(1_786_986_000, 300)).resolves.toHaveLength(2)
+      await expect(requestBars(originalCoverageStart, 300)).resolves.toEqual([])
+      expect(getCandlePage).toHaveBeenCalledTimes(2)
+
+      datasetGeneration = 8
+      coverageStart = expandedCoverageStart
+      await expect(requestBars(1_786_986_000, 1)).resolves.toHaveLength(1)
+      await expect(requestBars(originalCoverageStart, 1)).resolves.toEqual([
+        expect.objectContaining({ time: expandedCoverageStart * 1_000 }),
+      ])
+
+      expect(getCandlePage).toHaveBeenCalledTimes(4)
+      expect(getCandlePage.mock.calls.at(-1)?.[1]).toBe(inceptionCursor)
+    } finally {
+      feed.destroy()
+      now.mockRestore()
+    }
+  })
+
   it('does not reuse an interval/cursor React Query entry across Worker probes', async () => {
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     const cursor = 90_000

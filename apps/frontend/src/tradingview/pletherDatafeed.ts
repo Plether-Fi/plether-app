@@ -139,6 +139,11 @@ interface CandleDatasetIdentity {
   volumeRouter: string
 }
 
+interface CandleCoverageBoundary {
+  coverageStart: number
+  datasetGeneration: number
+}
+
 export interface PletherDxyDatafeedOptions {
   dataSource?: PletherChartDataSource
   queryClient?: QueryClient
@@ -599,6 +604,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     PerpsCandleIntervalSeconds,
     CandleDatasetIdentity
   >()
+  private readonly candleCoverageBoundaries = new Map<
+    PerpsCandleIntervalSeconds,
+    CandleCoverageBoundary
+  >()
   private readonly candleIntervalsNeedingRevalidation = new Set<PerpsCandleIntervalSeconds>()
   private readonly pendingCandleHistoryResets = new Set<PerpsCandleIntervalSeconds>()
   private destroyed = false
@@ -808,6 +817,19 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
 
     const intervalSeconds = candleIntervalForTradingViewResolution(resolution)
+    const knownCoverageBoundary = this.candleCoverageBoundaries.get(intervalSeconds)
+    if (
+      knownCoverageBoundary &&
+      knownCoverageBoundary.datasetGeneration === this.datasetGenerations.get(intervalSeconds) &&
+      Number.isFinite(periodParams.to) &&
+      periodParams.to <= knownCoverageBoundary.coverageStart
+    ) {
+      // TradingView asks again when the first response contains fewer bars than
+      // countBack. Once the API has proved the series inception, an older
+      // follow-up is a normal end-of-history condition rather than an API
+      // error. Avoid requesting a fixed page that cannot intersect coverage.
+      return []
+    }
     const targetCount = Math.max(1, periodParams.countBack)
     const requestedToMs = periodParams.to * 1000
     const barsByTime = new Map<number, TradingViewBar>()
@@ -818,6 +840,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     let pageRequestCount = 0
     let requestGeneration: number | undefined
     let requestIdentity: CandleDatasetIdentity | undefined
+    let requestCoverageStart: number | undefined
     let forceRevalidate = this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
 
     while (
@@ -895,6 +918,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
         }
       }
 
+      requestCoverageStart ??= this.candleCoverageStart(page)
       if (requestGeneration === undefined) {
         requestGeneration = page.datasetGeneration
       } else if (requestGeneration !== page.datasetGeneration) {
@@ -930,6 +954,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     if (requestGeneration !== undefined && requestIdentity !== undefined) {
       this.observeCandleIdentity(intervalSeconds, requestIdentity)
       this.observeDatasetGeneration(intervalSeconds, requestGeneration)
+      if (requestCoverageStart !== undefined) {
+        this.candleCoverageBoundaries.set(intervalSeconds, {
+          coverageStart: requestCoverageStart,
+          datasetGeneration: requestGeneration,
+        })
+      }
       // Every page used by this response was checked against one generation.
       // A future older-page request still detects and repairs an old edge entry.
       this.candleIntervalsNeedingRevalidation.delete(intervalSeconds)
@@ -1100,6 +1130,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     if (!page.coverageComplete) {
       throw new Error('The Perps candle API returned incomplete page coverage')
     }
+    this.candleCoverageStart(page)
 
     const pageSpan = intervalSeconds * PERPS_CANDLE_PAGE_BUCKETS
     const previousCursor = page.previousCursor
@@ -1195,6 +1226,20 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
   }
 
+  private candleCoverageStart(
+    response: Pick<PerpsBasketCandlePage, 'coverageStart'>
+  ): number {
+    const coverageStart = response.coverageStart
+    if (
+      typeof coverageStart !== 'number' ||
+      !Number.isSafeInteger(coverageStart) ||
+      coverageStart < 0
+    ) {
+      throw new Error('The Perps candle API returned an invalid coverage start')
+    }
+    return coverageStart
+  }
+
   private candleIdentitiesEqual(
     left: CandleDatasetIdentity,
     right: CandleDatasetIdentity
@@ -1224,6 +1269,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   }
 
   private requestCandleHistoryReset(intervalSeconds: PerpsCandleIntervalSeconds): void {
+    this.candleCoverageBoundaries.delete(intervalSeconds)
     if (this.pendingCandleHistoryResets.has(intervalSeconds)) return
     this.pendingCandleHistoryResets.add(intervalSeconds)
     this.prepareCandleRevalidation(intervalSeconds)
@@ -1247,6 +1293,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   }
 
   private prepareCandleRevalidation(intervalSeconds: PerpsCandleIntervalSeconds): void {
+    this.candleCoverageBoundaries.delete(intervalSeconds)
     this.candleIntervalsNeedingRevalidation.add(intervalSeconds)
     this.dataSource.clearCandlePageCache?.(intervalSeconds)
   }
