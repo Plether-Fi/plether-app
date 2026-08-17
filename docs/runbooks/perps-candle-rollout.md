@@ -615,11 +615,31 @@ Pass criteria:
 
 ## Gate 6: backend interval canary
 
-Set `perps_candle_read_mode = "rollup"` and add intervals one at a time to
-`perps_candle_read_intervals`. A conservative order is `3600`, `86400`, `900`,
-`300`, `1800`, `180`, then `60`. Apply the Terraform change before dispatching
-the image-only backend deployment; that workflow deliberately preserves the
-environment from the currently registered task definitions.
+Set `perps_candle_read_mode = "rollup"` and, by default, add intervals one at a
+time to `perps_candle_read_intervals`. A conservative order is `3600`, `86400`,
+`900`, `300`, `1800`, `180`, then `60`. Apply the Terraform change before
+dispatching the image-only backend deployment; that workflow deliberately
+preserves the environment from the currently registered task definitions.
+
+After the Sepolia `3600` canary completes its frozen-finalizer control, the
+supervised rollout may batch-enable the remaining canonical intervals in one
+change only when all of the following are recorded explicitly:
+
+- deterministic price and volume verification already passed for all seven
+  intervals;
+- the hourly load run had zero request failures and passed the public HTTP
+  latency targets; and
+- the operator explicitly accepts any missed internal application or database
+  sub-budget as a follow-up rather than representing the unchanged gate as a
+  full pass.
+
+Use `infra/terraform/sepolia-candle-rollout.tfvars` for that final Sepolia
+expansion. A batch does not waive interval correctness: after the resulting
+task replacement, collect a fresh three-period health window and run the full
+current, active, closed, inception, weekend-gap, pagination, invalid-request,
+cache, and latency matrix for every enabled interval. Keep the frontend flag
+off until the entire matrix passes. On any failure, restore the last accepted
+allowlist. This batching exception does not apply to mainnet.
 
 For each interval, test an inception-clipped page, a fully closed page, the
 active page, current candle, a weekend gap, and pagination across at least two
