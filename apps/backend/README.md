@@ -738,11 +738,14 @@ All responses follow this structure:
 
 ## Caching
 
-Responses are cached in-memory using STM. Cache invalidates when block number advances:
+Responses are cached in-memory using STM:
 
-- `/protocol/status` - Global cache
-- `/user/:address/dashboard` - Per-address cache
-- `/user/:address/allowances` - Per-address cache
+- `/protocol/status` - Global cache invalidated when the block advances
+- `/user/:address/dashboard` - Per-address cache invalidated when the block advances
+- `/user/:address/allowances` - Per-address cache invalidated when the block advances
+- `/api/perps/basket/candles` - Successful finalized pages only, for five seconds
+  with a 64-page process-local bound; concurrent requests for the same page
+  share one database load. `/api/perps/basket/candles/current` remains uncached.
 
 Cached responses include `meta.cached: true` and `meta.cachedAt` timestamp.
 

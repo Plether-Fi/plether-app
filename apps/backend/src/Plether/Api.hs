@@ -443,7 +443,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
                 handleError $
                   E.invalidAmount "cursor is too far ahead of the backend clock"
             | otherwise -> do
-                result <- liftIO $ getBasketCandlePageTimed pool cfg interval cursor
+                result <- liftIO $ getBasketCandlePageTimed cache pool cfg interval cursor
                 case result of
                   Left err -> handleError err
                   Right fetch ->
