@@ -4,11 +4,13 @@ module Plether.Api
   ) where
 
 import Control.Exception (evaluate)
+import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:), (.:?))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
 import Data.Text (Text)
@@ -19,9 +21,10 @@ import qualified Data.Text.Lazy as LT
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import Network.HTTP.Types.Header (hCacheControl, hPragma)
 import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware, queryString)
+import Network.Wai (Middleware, queryString, requestHeaders)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -443,7 +446,10 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
                 handleError $
                   E.invalidAmount "cursor is too far ahead of the backend clock"
             | otherwise -> do
-                result <- liftIO $ getBasketCandlePageTimed cache pool cfg interval cursor
+                requireFresh <- requestForcesCandleRefresh
+                result <-
+                  liftIO $
+                    getBasketCandlePageTimed cache pool cfg interval cursor requireFresh
                 case result of
                   Left err -> handleError err
                   Right fetch ->
@@ -658,6 +664,10 @@ handleBasketCandleResult handlerStartedAt requestKind interval fetch = do
           , bctResponseEncodeNs = encodeFinishedAt - encodeStartedAt
           }
   liftIO $ logBasketCandleTimings requestKind interval fetch bodyBytes timings
+  -- A bounded stale backend value is useful to the current caller, but must
+  -- not be promoted into a fresh shared edge-cache entry.
+  when (bcfReadSource fetch == "rollup_stale_memory_cache") $
+    setHeader "Cache-Control" "no-store"
   setHeader "Content-Type" "application/json"
   setHeader "Server-Timing" $ LT.fromStrict $ basketCandleServerTiming timings
   status status200
@@ -755,6 +765,24 @@ currentQueryKeys = do
     map
       (Data.Text.Encoding.decodeUtf8With lenientDecode . fst)
       (queryString req)
+
+requestForcesCandleRefresh :: ActionM Bool
+requestForcesCandleRefresh = do
+  req <- request
+  let headers = requestHeaders req
+      contains directive name =
+        maybe False
+          (BS8.isInfixOf directive . BS8.map toLowerAscii)
+          (lookup name headers)
+  pure $
+    contains "no-cache" hCacheControl
+      || contains "no-store" hCacheControl
+      || contains "max-age=0" hCacheControl
+      || contains "no-cache" hPragma
+  where
+    toLowerAscii byte
+      | byte >= 'A' && byte <= 'Z' = toEnum $ fromEnum byte + 32
+      | otherwise = byte
 
 parseAmount :: Text -> Maybe Integer
 parseAmount txt =

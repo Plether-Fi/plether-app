@@ -6,7 +6,9 @@ module Plether.Cache
   , AppCache (..)
   , newAppCache
   , newSingleFlightCache
+  , newRefreshingSingleFlightCache
   , runSingleFlightCache
+  , runSingleFlightCacheFresh
   , isValid
   , getCached
   , setCached
@@ -15,7 +17,7 @@ module Plether.Cache
   , evictStale
   ) where
 
-import Control.Exception (SomeException, mask, throwIO, try)
+import Control.Concurrent (MVar, forkIO, newMVar, withMVar)
 import Control.Concurrent.STM
   ( STM
   , TMVar
@@ -29,6 +31,8 @@ import Control.Concurrent.STM
   , readTVar
   , writeTVar
   )
+import Control.Exception (SomeException, mask, throwIO, try)
+import Control.Monad (void)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -62,26 +66,32 @@ data CandlePageCacheValue = CandlePageCacheValue
 
 data SingleFlightEntry value = SingleFlightEntry
   { sfeValue :: !value
-  , sfeExpiresAtNs :: !Word64
+  , sfeFreshUntilNs :: !Word64
+  , sfeStaleUntilNs :: !Word64
   }
 
 data SingleFlightCache key value = SingleFlightCache
   { sfcEntries :: !(TVar (Map key (SingleFlightEntry value)))
   , sfcInFlight :: !(TVar (Map key (TMVar (Either SomeException value))))
+  , sfcLoadLock :: !(MVar ())
   , sfcMaxEntries :: !Int
-  , sfcTtlNs :: !Word64
+  , sfcFreshTtlNs :: !Word64
+  , sfcStaleTtlNs :: !Word64
   }
 
 data SingleFlightSource
   = SingleFlightLoaded
   | SingleFlightMemory
   | SingleFlightCoalesced
+  | SingleFlightStale
   deriving stock (Eq, Show)
 
 data SingleFlightDecision value
   = UseMemory !value
+  | UseStale !value
   | WaitForLoad !(TMVar (Either SomeException value))
   | StartLoad !(TMVar (Either SomeException value))
+  | StartRefresh !value !(TMVar (Either SomeException value))
 
 data AppCache = AppCache
   { cacheProtocolStatus :: !(TVar (Maybe (CacheEntry ProtocolStatus)))
@@ -96,12 +106,19 @@ data AppCache = AppCache
 candlePageCacheMaxEntries :: Int
 candlePageCacheMaxEntries = 64
 
-candlePageCacheTtlNs :: Word64
-candlePageCacheTtlNs = 5_000_000_000
+candlePageCacheFreshTtlNs :: Word64
+candlePageCacheFreshTtlNs = 20_000_000_000
+
+candlePageCacheStaleTtlNs :: Word64
+candlePageCacheStaleTtlNs = 60_000_000_000
 
 newAppCache :: IO AppCache
 newAppCache = do
-  candlePages <- newSingleFlightCache candlePageCacheMaxEntries candlePageCacheTtlNs
+  candlePages <-
+    newRefreshingSingleFlightCache
+      candlePageCacheMaxEntries
+      candlePageCacheFreshTtlNs
+      candlePageCacheStaleTtlNs
   AppCache
     <$> newTVarIO Nothing
     <*> newTVarIO Map.empty
@@ -112,16 +129,27 @@ newAppCache = do
 
 newSingleFlightCache :: Int -> Word64 -> IO (SingleFlightCache key value)
 newSingleFlightCache maxEntries ttlNs =
+  newRefreshingSingleFlightCache maxEntries ttlNs ttlNs
+
+newRefreshingSingleFlightCache
+  :: Int
+  -> Word64
+  -> Word64
+  -> IO (SingleFlightCache key value)
+newRefreshingSingleFlightCache maxEntries freshTtlNs staleTtlNs =
   SingleFlightCache
     <$> newTVarIO Map.empty
     <*> newTVarIO Map.empty
+    <*> newMVar ()
     <*> pure (max 0 maxEntries)
-    <*> pure ttlNs
+    <*> pure freshTtlNs
+    <*> pure (max freshTtlNs staleTtlNs)
 
--- Run at most one loader for a key. Waiting callers share its result, and only
--- values accepted by shouldCache survive as short-lived memory hits. Exceptions
--- are published to waiters before being rethrown so a cancelled loader cannot
--- strand an in-flight key forever.
+-- Run at most one loader for a key. Waiting cold callers share its result;
+-- callers with a bounded stale value return it immediately while one serialized
+-- background refresh runs. Only values accepted by shouldCache survive in
+-- memory. Exceptions are published to cold waiters before being rethrown, while
+-- a failed refresh leaves the previous value available until its hard expiry.
 runSingleFlightCache
   :: Ord key
   => SingleFlightCache key value
@@ -130,41 +158,88 @@ runSingleFlightCache
   -> IO value
   -> IO (SingleFlightSource, value)
 runSingleFlightCache cache key shouldCache load = mask $ \restore -> do
+  runSingleFlightCacheWithPolicy False cache key shouldCache load restore
+
+-- Ignore a cached value and wait for the authoritative loader result. This is
+-- used for explicit HTTP revalidation so a stale-while-revalidate response
+-- cannot hide a newly published dataset generation from the client.
+runSingleFlightCacheFresh
+  :: Ord key
+  => SingleFlightCache key value
+  -> key
+  -> (value -> Bool)
+  -> IO value
+  -> IO (SingleFlightSource, value)
+runSingleFlightCacheFresh cache key shouldCache load = mask $ \restore -> do
+  runSingleFlightCacheWithPolicy True cache key shouldCache load restore
+
+runSingleFlightCacheWithPolicy
+  :: Ord key
+  => Bool
+  -> SingleFlightCache key value
+  -> key
+  -> (value -> Bool)
+  -> IO value
+  -> (forall result. IO result -> IO result)
+  -> IO (SingleFlightSource, value)
+runSingleFlightCacheWithPolicy requireFresh cache key shouldCache load restore = do
   nowNs <- getMonotonicTimeNSec
-  decision <- atomically $ claimSingleFlight cache key nowNs
+  decision <- atomically $ claimSingleFlight requireFresh cache key nowNs
   case decision of
     UseMemory value -> pure (SingleFlightMemory, value)
+    UseStale value -> pure (SingleFlightStale, value)
     WaitForLoad gate -> do
       outcome <- restore $ atomically $ readTMVar gate
       value <- either throwIO pure outcome
       pure (SingleFlightCoalesced, value)
     StartLoad gate -> do
-      outcome <- try $ restore load
+      outcome <- try $ restore $ withMVar (sfcLoadLock cache) $ const load
       completedAtNs <- getMonotonicTimeNSec
       atomically $ completeSingleFlight cache key gate completedAtNs shouldCache outcome
       value <- either throwIO pure outcome
       pure (SingleFlightLoaded, value)
+    StartRefresh staleValue gate -> do
+      void $ forkIO $ do
+        outcome <- try $ restore $ withMVar (sfcLoadLock cache) $ const load
+        completedAtNs <- getMonotonicTimeNSec
+        atomically $ completeSingleFlight cache key gate completedAtNs shouldCache outcome
+      pure (SingleFlightStale, staleValue)
 
 claimSingleFlight
   :: Ord key
-  => SingleFlightCache key value
+  => Bool
+  -> SingleFlightCache key value
   -> key
   -> Word64
   -> STM (SingleFlightDecision value)
-claimSingleFlight SingleFlightCache {..} key nowNs = do
+claimSingleFlight requireFresh SingleFlightCache {..} key nowNs = do
   entries <- readTVar sfcEntries
-  let fresh = Map.filter ((> nowNs) . sfeExpiresAtNs) entries
-  writeTVar sfcEntries fresh
-  case Map.lookup key fresh of
-    Just entry -> pure $ UseMemory $ sfeValue entry
-    Nothing -> do
-      inFlight <- readTVar sfcInFlight
-      case Map.lookup key inFlight of
-        Just gate -> pure $ WaitForLoad gate
-        Nothing -> do
-          gate <- newEmptyTMVar
-          writeTVar sfcInFlight $ Map.insert key gate inFlight
-          pure $ StartLoad gate
+  let retained = Map.filter ((> nowNs) . sfeStaleUntilNs) entries
+  writeTVar sfcEntries retained
+  inFlight <- readTVar sfcInFlight
+  case (requireFresh, Map.lookup key inFlight) of
+    (True, Just gate) -> pure $ WaitForLoad gate
+    (True, Nothing) -> do
+      gate <- newEmptyTMVar
+      writeTVar sfcInFlight $ Map.insert key gate inFlight
+      pure $ StartLoad gate
+    _ -> case Map.lookup key retained of
+      Just entry
+        | sfeFreshUntilNs entry > nowNs -> pure $ UseMemory $ sfeValue entry
+        | otherwise ->
+            case Map.lookup key inFlight of
+              Just _ -> pure $ UseStale $ sfeValue entry
+              Nothing -> do
+                gate <- newEmptyTMVar
+                writeTVar sfcInFlight $ Map.insert key gate inFlight
+                pure $ StartRefresh (sfeValue entry) gate
+      Nothing -> do
+        case Map.lookup key inFlight of
+          Just gate -> pure $ WaitForLoad gate
+          Nothing -> do
+            gate <- newEmptyTMVar
+            writeTVar sfcInFlight $ Map.insert key gate inFlight
+            pure $ StartLoad gate
 
 completeSingleFlight
   :: Ord key
@@ -185,7 +260,8 @@ completeSingleFlight SingleFlightCache {..} key gate completedAtNs shouldCache o
             key
             SingleFlightEntry
               { sfeValue = value
-              , sfeExpiresAtNs = completedAtNs + sfcTtlNs
+              , sfeFreshUntilNs = completedAtNs + sfcFreshTtlNs
+              , sfeStaleUntilNs = completedAtNs + sfcStaleTtlNs
               }
     _ -> pure ()
   putTMVar gate outcome
@@ -205,9 +281,9 @@ trimSingleFlightEntries maxEntries entries
 oldestSingleFlightKey :: Map key (SingleFlightEntry value) -> Maybe key
 oldestSingleFlightKey = fmap fst . Map.foldlWithKey' choose Nothing
   where
-    choose Nothing key entry = Just (key, sfeExpiresAtNs entry)
+    choose Nothing key entry = Just (key, sfeStaleUntilNs entry)
     choose current@(Just (_, oldestExpiry)) key entry
-      | sfeExpiresAtNs entry < oldestExpiry = Just (key, sfeExpiresAtNs entry)
+      | sfeStaleUntilNs entry < oldestExpiry = Just (key, sfeStaleUntilNs entry)
       | otherwise = current
 
 isValid :: Integer -> CacheEntry a -> Bool

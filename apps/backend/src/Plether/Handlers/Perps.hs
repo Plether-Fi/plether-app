@@ -73,6 +73,7 @@ import Plether.Cache
   , CandlePageCacheValue (..)
   , SingleFlightSource (..)
   , runSingleFlightCache
+  , runSingleFlightCacheFresh
   )
 import Plether.Config
   ( Config (..)
@@ -182,10 +183,11 @@ getBasketCandlePageTimed
   -> Config
   -> Integer
   -> Integer
+  -> Bool
   -> IO (Either ApiError (BasketCandleFetch BasketCandlePage))
-getBasketCandlePageTimed cache pool cfg interval cursor = do
+getBasketCandlePageTimed cache pool cfg interval cursor requireFresh = do
   (cacheSource, result) <-
-    runSingleFlightCache
+    (if requireFresh then runSingleFlightCacheFresh else runSingleFlightCache)
       (cacheBasketCandlePages cache)
       (interval, cursor)
       (either (const False) (const True))
@@ -275,12 +277,17 @@ candlePageFetch source CandlePageCacheValue {..} =
     { bcfResponse =
         case source of
           SingleFlightLoaded -> cpcvResponse
-          _ -> markCandlePageResponseCached cpcvCachedAt cpcvResponse
+          _ ->
+            markCandlePageResponseCached
+              (source == SingleFlightStale)
+              cpcvCachedAt
+              cpcvResponse
     , bcfReadSource =
         case source of
           SingleFlightLoaded -> "rollup"
           SingleFlightMemory -> "rollup_memory_cache"
           SingleFlightCoalesced -> "rollup_coalesced"
+          SingleFlightStale -> "rollup_stale_memory_cache"
     , bcfPoolWaitNs = if source == SingleFlightLoaded then cpcvPoolWaitNs else 0
     , bcfQueryNs = if source == SingleFlightLoaded then cpcvQueryNs else 0
     , bcfRowCount = cpcvRowCount
@@ -288,14 +295,14 @@ candlePageFetch source CandlePageCacheValue {..} =
     , bcfDatasetGeneration = cpcvDatasetGeneration
     }
 
-markCandlePageResponseCached :: POSIXTime -> ApiResponse a -> ApiResponse a
-markCandlePageResponseCached cachedAt response =
+markCandlePageResponseCached :: Bool -> POSIXTime -> ApiResponse a -> ApiResponse a
+markCandlePageResponseCached stale cachedAt response =
   response
     { respMeta =
         (respMeta response)
           { metaCached = True
           , metaCachedAt = Just cachedAt
-          , metaStale = Just False
+          , metaStale = Just stale
           }
     }
 
