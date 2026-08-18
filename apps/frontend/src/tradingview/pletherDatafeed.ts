@@ -50,6 +50,7 @@ export const PERPS_CANDLE_MAX_HISTORY_PAGES = 24
 
 const MICRO_USDC_PER_USDC = 1_000_000n
 const LIVE_VOLUME_REFRESH_MS = 60_000
+const INITIAL_CURRENT_CANDLE_WAIT_MS = 250
 
 export function isPerpsCandleApiEnabled(
   value = import.meta.env.VITE_PERPS_CANDLE_API_ENABLED as string | undefined
@@ -142,6 +143,11 @@ interface CandleDatasetIdentity {
 interface CandleCoverageBoundary {
   coverageStart: number
   datasetGeneration: number
+}
+
+interface PrimedCurrentCandle {
+  bar: TradingViewBar
+  primedAt: number
 }
 
 export interface PletherDxyDatafeedOptions {
@@ -308,6 +314,20 @@ function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined)
         reject(error instanceof Error ? error : new Error('Chart data request failed'))
       }
     )
+  })
+}
+
+function settleWithin<T>(promise: Promise<T | undefined>, waitMs: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: T | undefined) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => finish(undefined), waitMs)
+    void promise.then(finish, () => finish(undefined))
   })
 }
 
@@ -608,6 +628,8 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     PerpsCandleIntervalSeconds,
     CandleCoverageBoundary
   >()
+  private readonly initializedCandleIntervals = new Set<PerpsCandleIntervalSeconds>()
+  private readonly primedCurrentCandles = new Map<TradingViewResolution, PrimedCurrentCandle>()
   private readonly candleIntervalsNeedingRevalidation = new Set<PerpsCandleIntervalSeconds>()
   private readonly pendingCandleHistoryResets = new Set<PerpsCandleIntervalSeconds>()
   private destroyed = false
@@ -694,6 +716,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   ): void {
     this.unsubscribeBars(listenerGuid)
 
+    const primedCurrent = this.useCandleApi
+      ? this.consumePrimedCurrentCandle(resolution)
+      : undefined
+
     const subscription: Subscription = {
       listenerGuid,
       resolution,
@@ -703,12 +729,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       failureCount: 0,
       nextPollAt: 0,
       requestControllers: new Set(),
-      currentBar: this.lastBars.get(resolution),
+      currentBar: primedCurrent?.bar ?? this.lastBars.get(resolution),
     }
     this.subscriptions.set(listenerGuid, subscription)
     if (this.isDocumentVisible()) {
       this.startSubscriptionTimer(listenerGuid, subscription)
-      void this.pollSubscription(listenerGuid)
+      if (!primedCurrent) void this.pollSubscription(listenerGuid)
     }
   }
 
@@ -763,7 +789,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
   private async loadBars(
     resolution: TradingViewResolution,
-    periodParams: { from: number; to: number; countBack: number },
+    periodParams: {
+      from: number
+      to: number
+      countBack: number
+      firstDataRequest: boolean
+    },
     signal?: AbortSignal
   ): Promise<TradingViewBar[]> {
     if (this.useCandleApi) {
@@ -808,7 +839,12 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
   private async loadCandleBars(
     resolution: TradingViewResolution,
-    periodParams: { from: number; to: number; countBack: number },
+    periodParams: {
+      from: number
+      to: number
+      countBack: number
+      firstDataRequest: boolean
+    },
     signal?: AbortSignal
   ): Promise<TradingViewBar[]> {
     const getCandlePage = this.dataSource.getCandlePage
@@ -832,6 +868,16 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
     const targetCount = Math.max(1, periodParams.countBack)
     const requestedToMs = periodParams.to * 1000
+    const shouldPrimeCurrent = periodParams.firstDataRequest &&
+      !this.initializedCandleIntervals.has(intervalSeconds) &&
+      this.dataSource.getCurrentCandle !== undefined
+    const currentCandleRequest = shouldPrimeCurrent
+      ? this.dataSource.getCurrentCandle?.(
+          intervalSeconds,
+          signal,
+          this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
+        ).catch(() => undefined)
+      : undefined
     const barsByTime = new Map<number, TradingViewBar>()
     const visitedCursors = new Set<number>()
     const requestedCursor = candlePageCursorForRequest(periodParams.to, intervalSeconds)
@@ -964,6 +1010,41 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       // A future older-page request still detects and repairs an old edge entry.
       this.candleIntervalsNeedingRevalidation.delete(intervalSeconds)
     }
+    let primedCurrentBar: TradingViewBar | undefined
+    if (currentCandleRequest) {
+      const currentResponse = await settleWithin(
+        currentCandleRequest,
+        INITIAL_CURRENT_CANDLE_WAIT_MS
+      )
+      if (currentResponse && requestGeneration !== undefined && requestIdentity !== undefined) {
+        try {
+          this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+          const currentIdentity = this.candleIdentity(currentResponse)
+          if (
+            currentResponse.datasetGeneration === requestGeneration &&
+            this.candleIdentitiesEqual(currentIdentity, requestIdentity)
+          ) {
+            const currentBar = currentResponse.candle
+              ? perpsBasketCandlesToTradingViewBars(
+                  [currentResponse.candle],
+                  intervalSeconds,
+                  currentResponse.displayPriceCap
+                ).at(0)
+              : undefined
+            if (currentBar && currentBar.time < requestedToMs) {
+              barsByTime.set(currentBar.time, currentBar)
+              primedCurrentBar = currentBar
+            }
+          }
+        } catch {
+          // Finalized history remains usable when the optional live snapshot is
+          // malformed or changes generation while the first page is loading.
+          // The normal subscription poll will revalidate and recover it.
+        }
+      }
+    }
+    this.initializedCandleIntervals.add(intervalSeconds)
+
     const bars = [...barsByTime.values()]
       .sort((left, right) => left.time - right.time)
       .slice(-targetCount)
@@ -972,7 +1053,22 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     if (lastBar && (!previousLastBar || lastBar.time >= previousLastBar.time)) {
       this.lastBars.set(resolution, { ...lastBar })
     }
+    if (primedCurrentBar && bars.some((bar) => bar.time === primedCurrentBar.time)) {
+      this.primedCurrentCandles.set(resolution, {
+        bar: { ...primedCurrentBar },
+        primedAt: Date.now(),
+      })
+    }
     return bars
+  }
+
+  private consumePrimedCurrentCandle(
+    resolution: TradingViewResolution
+  ): PrimedCurrentCandle | undefined {
+    const primed = this.primedCurrentCandles.get(resolution)
+    this.primedCurrentCandles.delete(resolution)
+    if (!primed || Date.now() - primed.primedAt > this.pollIntervalMs) return undefined
+    return primed
   }
 
   private async pollSubscription(listenerGuid: string): Promise<void> {
@@ -1270,6 +1366,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
   private requestCandleHistoryReset(intervalSeconds: PerpsCandleIntervalSeconds): void {
     this.candleCoverageBoundaries.delete(intervalSeconds)
+    this.initializedCandleIntervals.delete(intervalSeconds)
     if (this.pendingCandleHistoryResets.has(intervalSeconds)) return
     this.pendingCandleHistoryResets.add(intervalSeconds)
     this.prepareCandleRevalidation(intervalSeconds)
@@ -1277,6 +1374,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     for (const resolution of TRADINGVIEW_RESOLUTIONS) {
       if (secondsForTradingViewResolution(resolution) !== intervalSeconds) continue
       this.lastBars.delete(resolution)
+      this.primedCurrentCandles.delete(resolution)
       this.volumeSnapshots.delete(resolution)
       this.liveVolumeRefreshedAt.delete(resolution)
     }

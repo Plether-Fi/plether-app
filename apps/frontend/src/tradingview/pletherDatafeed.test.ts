@@ -221,7 +221,91 @@ describe('Plether TradingView datafeed', () => {
       expect(getCandlePage.mock.calls.map(([, cursor]) => cursor)).toEqual([90_000, 60_000])
       expect(getHistory).not.toHaveBeenCalled()
       expect(getLatest).not.toHaveBeenCalled()
-      expect(getCurrentCandle).not.toHaveBeenCalled()
+      expect(getCurrentCandle).toHaveBeenCalledOnce()
+    } finally {
+      feed.destroy()
+    }
+  })
+
+  it('coalesces the first current candle into history before normal polling begins', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const getCandlePage = vi.fn(async (_interval: number, cursor: number) => candlePage(
+      cursor,
+      [rawCandle(64_920)],
+      { hasEarlier: false, previousCursor: null }
+    ))
+    const getCurrentCandle = vi.fn(async () => currentCandle(60, {
+      candle: rawCandle(64_980, { volumeUsdc: '10750000' }),
+    }))
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage, getCurrentCandle }),
+      useCandleApi: true,
+      pollIntervalMs: 60_000,
+    })
+
+    try {
+      const bars = await new Promise<TradingViewBar[]>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 65_000, countBack: 2, firstDataRequest: true },
+          resolve,
+          reject
+        )
+      })
+      expect(bars.map((bar) => bar.time)).toEqual([64_920_000, 64_980_000])
+      expect(bars.at(-1)?.volume).toBe(10.75)
+      expect(getCurrentCandle).toHaveBeenCalledOnce()
+
+      const onTick = vi.fn()
+      feed.subscribeBars(
+        {} as TradingViewSymbolInfo,
+        '1',
+        onTick,
+        'primed-current-listener',
+        () => undefined
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+
+      expect(getCurrentCandle).toHaveBeenCalledOnce()
+      expect(onTick).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(getCurrentCandle).toHaveBeenCalledTimes(2)
+    } finally {
+      feed.destroy()
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not delay first history when the optional current-candle request fails', async () => {
+    const getCandlePage = vi.fn(async (_interval: number, cursor: number) => candlePage(
+      cursor,
+      [rawCandle(64_920)],
+      { hasEarlier: false, previousCursor: null }
+    ))
+    const getCurrentCandle = vi.fn(async () => {
+      throw new Error('current endpoint unavailable')
+    })
+    const feed = new PletherDxyDatafeed({
+      dataSource: dataSource({ getCandlePage, getCurrentCandle }),
+      useCandleApi: true,
+    })
+
+    try {
+      const bars = await new Promise<TradingViewBar[]>((resolve, reject) => {
+        feed.getBars(
+          {} as TradingViewSymbolInfo,
+          '1',
+          { from: 0, to: 65_000, countBack: 2, firstDataRequest: true },
+          resolve,
+          reject
+        )
+      })
+
+      expect(bars.map((bar) => bar.time)).toEqual([64_920_000])
+      expect(getCandlePage).toHaveBeenCalledOnce()
+      expect(getCurrentCandle).toHaveBeenCalledOnce()
     } finally {
       feed.destroy()
     }
@@ -396,7 +480,7 @@ describe('Plether TradingView datafeed', () => {
       feed.getBars(
         {} as TradingViewSymbolInfo,
         '1',
-        { from: 0, to: 65_000, countBack: 1, firstDataRequest: true },
+        { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
         resolve,
         reject
       )
@@ -908,7 +992,7 @@ describe('Plether TradingView datafeed', () => {
         feed.getBars(
           {} as TradingViewSymbolInfo,
           '1',
-          { from: 0, to: 65_000, countBack: 1, firstDataRequest: true },
+          { from: 0, to: 65_000, countBack: 1, firstDataRequest: false },
           resolve,
           reject
         )
