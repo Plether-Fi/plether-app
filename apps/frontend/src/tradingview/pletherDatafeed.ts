@@ -64,10 +64,9 @@ const SYMBOL_INFO: TradingViewSymbolInfo = {
   ticker: PLDXY_TRADINGVIEW_SYMBOL,
   description: 'plDXY Perpetual',
   type: 'futures',
-  // UTC weekdays align TradingView's daily bars with the backend's epoch/UTC
-  // bucket boundaries. Weekend buckets remain absent rather than being
-  // synthesized as empty bars.
-  session: '0000-0000:23456',
+  // The FX basket can publish partial Sunday buckets after the weekly market
+  // opens. Saturday remains closed, and missing bars are never synthesized.
+  session: '0000-0000:123456',
   timezone: 'Etc/UTC',
   exchange: 'Plether',
   listed_exchange: 'Plether',
@@ -326,8 +325,12 @@ function settleWithin<T>(promise: Promise<T | undefined>, waitMs: number): Promi
       clearTimeout(timer)
       resolve(value)
     }
-    const timer = setTimeout(() => finish(undefined), waitMs)
-    void promise.then(finish, () => finish(undefined))
+    const timer = setTimeout(() => {
+      finish(undefined)
+    }, waitMs)
+    void promise.then(finish, () => {
+      finish(undefined)
+    })
   })
 }
 

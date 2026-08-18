@@ -1444,7 +1444,7 @@ describe('Plether TradingView datafeed', () => {
     expect(symbolInfo.supported_resolutions).toEqual(TRADINGVIEW_RESOLUTIONS)
     expect(symbolInfo.intraday_multipliers).toEqual(['1', '3', '5', '15', '30', '60'])
     expect(symbolInfo.daily_multipliers).toEqual(['1'])
-    expect(symbolInfo.session).toBe('0000-0000:23456')
+    expect(symbolInfo.session).toBe('0000-0000:123456')
     expect(symbolInfo.timezone).toBe('Etc/UTC')
     expect(symbolInfo.has_empty_bars).toBe(false)
   })
