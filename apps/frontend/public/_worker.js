@@ -66,7 +66,6 @@ const CANDLE_INTERVALS = new Set([
 ]);
 const CANDLES_PATH = '/api/perps/v1/perps/basket/candles';
 const CURRENT_CANDLE_PATH = '/api/perps/v1/perps/basket/candles/current';
-const publicResponseFlights = new Map();
 const PUBLIC_HISTORY_QUERY_KEYS = new Set(['range', 'interval', 'includeComponents']);
 const PUBLIC_HISTORY_VARIANTS = new Set([
   // Live-volume refreshes use a 24-hour window at the active resolution.
@@ -374,19 +373,17 @@ function getCandleVariantCacheKey(url, identity, pageState) {
 
 async function probeCandleDatasetIdentity(variant) {
   try {
-    return await runSingleFlight(variant.flightKey, async () => {
-      const response = await variant.fetchIdentity();
-      if (
-        response.status !== 200 ||
-        !response.headers.get('Content-Type')?.toLowerCase().includes('application/json')
-      ) {
-        await response.body?.cancel().catch(() => undefined);
-        return undefined;
-      }
+    const response = await variant.fetchIdentity();
+    if (
+      response.status !== 200 ||
+      !response.headers.get('Content-Type')?.toLowerCase().includes('application/json')
+    ) {
+      await response.body?.cancel().catch(() => undefined);
+      return undefined;
+    }
 
-      const payload = await response.json();
-      return parseCandleDatasetIdentity(payload, variant.intervalSeconds);
-    });
+    const payload = await response.json();
+    return parseCandleDatasetIdentity(payload, variant.intervalSeconds);
   } catch {
     return undefined;
   }
@@ -477,76 +474,24 @@ function runInBackground(context, promise) {
   }
 }
 
-function runSingleFlight(key, operation) {
-  const existingFlight = publicResponseFlights.get(key);
-  if (existingFlight) return existingFlight;
-
-  let flight;
-  flight = (async () => {
-    try {
-      return await operation();
-    } finally {
-      if (publicResponseFlights.get(key) === flight) {
-        publicResponseFlights.delete(key);
-      }
-    }
-  })();
-  publicResponseFlights.set(key, flight);
-  return flight;
-}
-
-// Resolve callers as soon as the origin response is ready, but retain the
-// single-flight entry until the accompanying background work (normally a Cache
-// API put) settles. This keeps cache storage off the response critical path
-// without reopening a stampede window between the origin response and cache
-// visibility.
-function runSingleFlightUntil(key, operation) {
-  const existingFlight = publicResponseFlights.get(key);
-  if (existingFlight) return existingFlight;
-
-  let flight;
-  flight = (async () => {
-    try {
-      const { value, keepAlive } = await operation();
-      void Promise.resolve(keepAlive)
-        .catch(() => undefined)
-        .finally(() => {
-          if (publicResponseFlights.get(key) === flight) {
-            publicResponseFlights.delete(key);
-          }
-        });
-      return value;
-    } catch (error) {
-      if (publicResponseFlights.get(key) === flight) {
-        publicResponseFlights.delete(key);
-      }
-      throw error;
-    }
-  })();
-  publicResponseFlights.set(key, flight);
-  return flight;
-}
-
-function refreshStoredPublicResponse(
+async function refreshStoredPublicResponse(
   fetchBackend,
   cache,
   cacheKey,
   policy,
   responseMatchesVariant,
 ) {
-  return runSingleFlight(`refresh:${cacheKey.url}`, async () => {
-    const response = await fetchBackend();
-    const matchesVariant = responseMatchesVariant === undefined ||
-      await responseMatchesVariant(response);
-    if (!responseCanBePubliclyCached(response) || !matchesVariant) {
-      await response.body?.cancel().catch(() => undefined);
-      return;
-    }
+  const response = await fetchBackend();
+  const matchesVariant = responseMatchesVariant === undefined ||
+    await responseMatchesVariant(response);
+  if (!responseCanBePubliclyCached(response) || !matchesVariant) {
+    await response.body?.cancel().catch(() => undefined);
+    return;
+  }
 
-    await cache
-      .put(cacheKey, storedCacheResponse(response, policy))
-      .catch(() => undefined);
-  });
+  await cache
+    .put(cacheKey, storedCacheResponse(response, policy))
+    .catch(() => undefined);
 }
 
 async function fetchPublicResponse(
@@ -635,32 +580,28 @@ async function fetchPublicResponse(
     }
   }
 
-  const result = await runSingleFlightUntil(`miss:${cacheKey.url}`, async () => {
-    const response = await fetchBackend();
-    const matchesVariant = responseMatchesVariant === undefined ||
-      await responseMatchesVariant(response);
-    const cacheable = responseCanBePubliclyCached(response) && matchesVariant;
-    const cacheWrite = cacheable
-      ? cache
-          .put(cacheKey, storedCacheResponse(response.clone(), effectivePolicy))
-          .catch(() => undefined)
-      : Promise.resolve();
-    if (cacheable) runInBackground(context, cacheWrite);
-    return {
-      value: {
-        response,
-        cacheable,
-        variantMismatch: responseMatchesVariant !== undefined && !matchesVariant,
-      },
-      keepAlive: cacheWrite,
-    };
-  });
-  const response = result.response.clone();
-  if (result.cacheable) return clientCacheResponse(response, effectivePolicy, 'MISS');
-  return result.variantMismatch ? noStoreResponse(response) : response;
+  // Keep every origin fetch and Response within the request that created it.
+  // Cloudflare Workers cannot share live I/O objects across request contexts;
+  // the Cache API is the safe cross-request reuse boundary.
+  const response = await fetchBackend();
+  const matchesVariant = responseMatchesVariant === undefined ||
+    await responseMatchesVariant(response);
+  const cacheable = responseCanBePubliclyCached(response) && matchesVariant;
+  if (cacheable) {
+    runInBackground(
+      context,
+      cache
+        .put(cacheKey, storedCacheResponse(response.clone(), effectivePolicy))
+        .catch(() => undefined),
+    );
+    return clientCacheResponse(response, effectivePolicy, 'MISS');
+  }
+  return responseMatchesVariant !== undefined && !matchesVariant
+    ? noStoreResponse(response)
+    : response;
 }
 
-export default {
+const requestHandler = {
   async fetch(request, env, context) {
     const url = new URL(request.url);
 
@@ -721,7 +662,6 @@ export default {
             pricePageState: cachePolicy === CANDLE_CLOSED_PAGE_CACHE_POLICY
               ? 'closed'
               : 'active',
-            flightKey: `candle-identity:${identityUrl.toString()}`,
             fetchIdentity: () => fetch(identityUrl, {
               method: 'GET',
               headers: identityHeaders,
@@ -761,5 +701,35 @@ export default {
       return env.ASSETS.fetch(new URL('/', request.url));
     }
     return response;
+  },
+};
+
+export default {
+  async fetch(request, env, context) {
+    try {
+      return await requestHandler.fetch(request, env, context);
+    } catch (error) {
+      console.error(JSON.stringify({
+        message: 'Cloudflare Worker request failed',
+        method: request.method,
+        path: new URL(request.url).pathname,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      }));
+      return Response.json(
+        {
+          error: {
+            code: 'EDGE_PROXY_UNAVAILABLE',
+            message: 'The edge proxy is temporarily unavailable.',
+          },
+        },
+        {
+          status: 503,
+          headers: {
+            'Cache-Control': 'no-store',
+            'Retry-After': '1',
+          },
+        },
+      );
+    }
   },
 };

@@ -337,7 +337,7 @@ describe('Perps public edge caching', () => {
     await expect(second.json()).resolves.toMatchObject({ data: { ok: true } })
   })
 
-  it('returns a miss before cache storage completes while retaining single-flight', async () => {
+  it('keeps concurrent misses request-scoped while cache storage completes', async () => {
     const cache = new DeferredPutCache()
     vi.stubGlobal('caches', { default: cache })
     const fetchMock = vi.fn(async () => jsonResponse())
@@ -353,13 +353,13 @@ describe('Perps public edge caching', () => {
 
     expect(first.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
     expect(second.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
 
     cache.releasePut()
     await Promise.all([...firstContext.promises, ...secondContext.promises])
     const third = await worker.fetch(request, workerEnv(), executionContext())
     expect(third.headers.get('X-Plether-Edge-Cache')).toBe('HIT')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('serves stale data when a background refresh fails', async () => {
@@ -417,13 +417,13 @@ describe('Perps public edge caching', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('coalesces concurrent candle cache misses per canonical key', async () => {
+  it('keeps concurrent candle cache misses and identity probes request-scoped', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
-    let resolvePage!: (response: Response) => void
+    const resolvePages: Array<(response: Response) => void> = []
     const fetchMock = vi.fn((input: unknown) => {
       if (isCurrentCandleFetch(input)) return Promise.resolve(currentCandleResponse())
       return new Promise<Response>((resolve) => {
-        resolvePage = resolve
+        resolvePages.push(resolve)
       })
     })
     vi.stubGlobal('fetch', fetchMock)
@@ -436,24 +436,25 @@ describe('Perps public edge caching', () => {
 
     const firstPromise = worker.fetch(firstRequest, workerEnv(), executionContext())
     const secondPromise = worker.fetch(secondRequest, workerEnv(), executionContext())
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    resolvePage(candlePageResponse())
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
+    for (const resolvePage of resolvePages) resolvePage(candlePageResponse())
     const [first, second] = await Promise.all([firstPromise, secondPromise])
 
     expect(first.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
     expect(second.headers.get('X-Plether-Edge-Cache')).toBe('MISS')
     await expect(first.json()).resolves.toMatchObject({ data: { datasetGeneration: 7 } })
     await expect(second.json()).resolves.toMatchObject({ data: { datasetGeneration: 7 } })
-    expect(fetchMock.mock.calls.filter(([input]) => isCurrentCandleFetch(input))).toHaveLength(1)
+    expect(fetchMock.mock.calls.filter(([input]) => isCurrentCandleFetch(input))).toHaveLength(2)
+    expect(fetchMock.mock.calls.filter(([input]) => !isCurrentCandleFetch(input))).toHaveLength(2)
   })
 
-  it('coalesces concurrent stale candle refreshes', async () => {
+  it('keeps concurrent stale candle refreshes request-scoped', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000)
-    let resolveRefresh!: (response: Response) => void
+    const resolveRefreshes: Array<(response: Response) => void> = []
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse())
       .mockImplementation(() => new Promise<Response>((resolve) => {
-        resolveRefresh = resolve
+        resolveRefreshes.push(resolve)
       }))
     vi.stubGlobal('fetch', fetchMock)
     const request = new Request(
@@ -471,10 +472,37 @@ describe('Perps public edge caching', () => {
 
     expect(first.headers.get('X-Plether-Edge-Cache')).toBe('STALE')
     expect(second.headers.get('X-Plether-Edge-Cache')).toBe('STALE')
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    resolveRefresh(jsonResponse())
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    for (const resolveRefresh of resolveRefreshes) resolveRefresh(jsonResponse())
     await Promise.all([...firstContext.promises, ...secondContext.promises])
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('returns a controlled 503 when the origin fetch throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const fetchMock = vi.fn().mockRejectedValue(new Error('origin unavailable'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const response = await worker.fetch(
+      new Request('https://app.example/api/perps/v1/perps/basket/latest?secret=hidden'),
+      workerEnv(),
+      executionContext()
+    )
+
+    expect(response.status).toBe(503)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+    expect(response.headers.get('Retry-After')).toBe('1')
+    await expect(response.json()).resolves.toEqual({
+      error: {
+        code: 'EDGE_PROXY_UNAVAILABLE',
+        message: 'The edge proxy is temporarily unavailable.',
+      },
+    })
+    expect(consoleError).toHaveBeenCalledOnce()
+    const logEntry = String(consoleError.mock.calls[0]?.[0])
+    expect(logEntry).toContain('origin unavailable')
+    expect(logEntry).toContain('/api/perps/v1/perps/basket/latest')
+    expect(logEntry).not.toContain('secret=hidden')
   })
 
   it('never serves current-candle cache entries beyond the freshness budget', async () => {
