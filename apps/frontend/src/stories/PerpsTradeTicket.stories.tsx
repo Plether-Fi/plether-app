@@ -103,6 +103,7 @@ const currentLongPosition = {
   displayDxyPrice: 101_700_000n,
   liquidationPrice: 112_000_000n,
   pendingCarryUsdc: 4_200_000n,
+  vpiAccrued: 60n * USDC,
 }
 
 function openPreviewFixture({
@@ -111,12 +112,14 @@ function openPreviewFixture({
   marginDeltaUsdc,
   postSize,
   postMarginUsdc,
+  postVpiAccrued = 1_400_000n,
 }: {
   size: bigint
   notionalUsdc: bigint
   marginDeltaUsdc: bigint
   postSize: bigint
   postMarginUsdc: bigint
+  postVpiAccrued?: bigint
 }): OpenPreviewFixture {
   return {
     valid: true,
@@ -136,7 +139,7 @@ function openPreviewFixture({
     postSize,
     postMarginUsdc,
     postEntryPrice: 98_280_000n,
-    postVpiAccrued: 1_400_000n,
+    postVpiAccrued,
     postUnrealizedPnlUsdc: 0n,
     postEquityUsdc: postMarginUsdc - 1_400_000n,
     postHealthBps: 9_400n,
@@ -150,10 +153,12 @@ function closePreviewFixture({
   sizeDelta,
   remainingSize,
   remainingMargin,
+  vpiDeltaUsdc = -2_750_000n,
 }: {
   sizeDelta: bigint
   remainingSize: bigint
   remainingMargin: bigint
+  vpiDeltaUsdc?: bigint
 }): ClosePreviewFixture {
   return {
     valid: true,
@@ -161,7 +166,7 @@ function closePreviewFixture({
     executionPrice: 98_320_000n,
     sizeDelta,
     realizedPnlUsdc: 32_500_000n,
-    vpiDeltaUsdc: -2_750_000n,
+    vpiDeltaUsdc,
     vpiUsdc: 0n,
     executionFeeUsdc: 1_966_400n,
     remainingSize,
@@ -295,12 +300,14 @@ export const IncreaseLongPreview: Story = {
       marginDeltaUsdc: 983n * USDC,
       postSize: 13_200n * 10n ** 18n,
       postMarginUsdc: 2_623n * USDC,
+      postVpiAccrued: 61_400_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
 }
 
 export const ReduceLongPreview: Story = {
+  name: 'Reduce Long · VPI Credit',
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
@@ -317,7 +324,27 @@ export const ReduceLongPreview: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+export const ReduceLongWithProvisionalVpiCredit: Story = {
+  name: 'Reduce Long · Existing Provisional VPI Credit',
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'preview',
+    initialReviewOpen: true,
+    initialDirection: 'short',
+    initialSize: '4 100',
+    currentPosition: { ...currentLongPosition, vpiAccrued: -40n * USDC },
+    closePreviewFixture: closePreviewFixture({
+      sizeDelta: 4_100n * 10n ** 18n,
+      remainingSize: 4_100n * 10n ** 18n,
+      remainingMargin: 820n * USDC,
+      vpiDeltaUsdc: 6n * USDC,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const CloseLongPreview: Story = {
+  name: 'Close Long · VPI Charge',
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
@@ -329,6 +356,7 @@ export const CloseLongPreview: Story = {
       sizeDelta: POSITION_SIZE,
       remainingSize: 0n,
       remainingMargin: 0n,
+      vpiDeltaUsdc: 4_250_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
