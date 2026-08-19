@@ -224,17 +224,49 @@ export interface TradingViewCreateShapeOptions {
   }
 }
 
+export interface TradingViewVisibleTimeRange {
+  from: number
+  to: number
+}
+
+export interface TradingViewTimeFrameValue {
+  type: 'period-back' | 'time-range'
+  value?: string
+  from?: number
+  to?: number
+}
+
+export interface TradingViewIntervalChangeParameters {
+  timeframe?: TradingViewTimeFrameValue
+}
+
+export type TradingViewIntervalChangedCallback = (
+  resolution: string,
+  parameters?: TradingViewIntervalChangeParameters
+) => void
+
+export type TradingViewVisibleRangeChangedCallback = (
+  range: TradingViewVisibleTimeRange
+) => void
+
 export interface TradingViewIntervalSubscription {
-  subscribe: (context: object | null, callback: (resolution: string) => void) => void
-  unsubscribe: (context: object | null, callback: (resolution: string) => void) => void
+  subscribe: (context: object | null, callback: TradingViewIntervalChangedCallback) => void
+  unsubscribe: (context: object | null, callback: TradingViewIntervalChangedCallback) => void
+}
+
+export interface TradingViewVisibleRangeSubscription {
+  subscribe: (context: object | null, callback: TradingViewVisibleRangeChangedCallback) => void
+  unsubscribe: (context: object | null, callback: TradingViewVisibleRangeChangedCallback) => void
 }
 
 export interface TradingViewChart {
   resetData: () => void
   resolution: () => string
   symbol: () => string
+  getVisibleRange: () => TradingViewVisibleTimeRange
   setResolution: (resolution: TradingViewResolution) => Promise<boolean>
   onIntervalChanged: () => TradingViewIntervalSubscription
+  onVisibleRangeChanged: () => TradingViewVisibleRangeSubscription
   createShape: (
     point: TradingViewShapePoint,
     options: TradingViewCreateShapeOptions

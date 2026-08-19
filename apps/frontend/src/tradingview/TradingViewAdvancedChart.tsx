@@ -19,6 +19,10 @@ import type {
   TradingViewCustomSymbolStatusAdapter,
   TradingViewChart,
   TradingViewEntityId,
+  TradingViewIntervalChangedCallback,
+  TradingViewVisibleRangeChangedCallback,
+  TradingViewVisibleRangeSubscription,
+  TradingViewVisibleTimeRange,
   TradingViewWidget,
 } from './types'
 import { PLETHER_TRADINGVIEW_CUSTOM_THEMES } from './pletherTheme'
@@ -303,7 +307,10 @@ export function TradingViewAdvancedChart({
 
     let cancelled = false
     let intervalSubscription: TradingViewIntervalSubscription | undefined
-    let handleIntervalChange: ((resolution: string) => void) | undefined
+    let handleIntervalChange: TradingViewIntervalChangedCallback | undefined
+    let visibleRangeSubscription: TradingViewVisibleRangeSubscription | undefined
+    let handleVisibleRangeChange: TradingViewVisibleRangeChangedCallback | undefined
+    let lastStableVisibleRange: TradingViewVisibleTimeRange | undefined
     const libraryPath = normalizeLibraryPath()
     const useCandleApi = isPerpsCandleApiEnabled()
     const datafeed = new PletherDxyDatafeed({
@@ -384,8 +391,37 @@ export function TradingViewAdvancedChart({
           .then(() => {
             if (cancelled) return
 
-            intervalSubscription = widget.activeChart().onIntervalChanged()
-            handleIntervalChange = (resolution) => {
+            const chart = widget.activeChart()
+            lastStableVisibleRange = chart.getVisibleRange()
+            visibleRangeSubscription = chart.onVisibleRangeChanged()
+            handleVisibleRangeChange = (range) => {
+              const visibleInterval = chartIntervalForTradingViewResolution(chart.resolution())
+              if (visibleInterval !== intervalRef.current) return
+              lastStableVisibleRange = { ...range }
+            }
+            visibleRangeSubscription.subscribe(null, handleVisibleRangeChange)
+
+            intervalSubscription = chart.onIntervalChanged()
+            handleIntervalChange = (resolution, parameters = {}) => {
+              if (parameters.timeframe === undefined) {
+                const visibleRange = lastStableVisibleRange ?? chart.getVisibleRange()
+                if (
+                  Number.isFinite(visibleRange.from) &&
+                  Number.isFinite(visibleRange.to) &&
+                  visibleRange.from >= 0 &&
+                  visibleRange.from < visibleRange.to
+                ) {
+                  // Resolution controls should change candle size, not the
+                  // complete visible time domain. This intentionally includes
+                  // any empty time to the right of the latest candle.
+                  parameters.timeframe = {
+                    type: 'time-range',
+                    from: visibleRange.from,
+                    to: visibleRange.to,
+                  }
+                }
+              }
+
               const nextInterval = chartIntervalForTradingViewResolution(resolution)
               if (!nextInterval || nextInterval === intervalRef.current) return
 
@@ -424,6 +460,9 @@ export function TradingViewAdvancedChart({
       liquidationLineRevisionRef.current += 1
       if (intervalSubscription && handleIntervalChange) {
         intervalSubscription.unsubscribe(null, handleIntervalChange)
+      }
+      if (visibleRangeSubscription && handleVisibleRangeChange) {
+        visibleRangeSubscription.unsubscribe(null, handleVisibleRangeChange)
       }
       marketStatusAdapterRef.current?.setVisible(false)
       marketStatusAdapterRef.current = null

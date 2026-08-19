@@ -6,9 +6,13 @@ import type {
   TradingViewChart,
   TradingViewCustomStatusDropDownContent,
   TradingViewCustomSymbolStatusAdapter,
+  TradingViewIntervalChangeParameters,
+  TradingViewIntervalChangedCallback,
   TradingViewIntervalSubscription,
   TradingViewNamespace,
   TradingViewResolution,
+  TradingViewVisibleRangeChangedCallback,
+  TradingViewVisibleRangeSubscription,
   TradingViewWidgetOptions,
 } from './types'
 
@@ -33,7 +37,9 @@ describe('TradingViewAdvancedChart', () => {
     const chartReady = deferred()
     const headerReady = deferred()
     const unsubscribe = vi.fn()
-    let intervalCallback: ((resolution: string) => void) | undefined
+    const unsubscribeVisibleRange = vi.fn()
+    let intervalCallback: TradingViewIntervalChangedCallback | undefined
+    let visibleRangeCallback: TradingViewVisibleRangeChangedCallback | undefined
     let currentResolution: string = '1'
     let widgetOptions: TradingViewWidgetOptions | undefined
     const setVisible = vi.fn()
@@ -71,16 +77,27 @@ describe('TradingViewAdvancedChart', () => {
       },
       unsubscribe,
     }
+    const visibleRangeSubscription: TradingViewVisibleRangeSubscription = {
+      subscribe: (_context, callback) => {
+        visibleRangeCallback = callback
+      },
+      unsubscribe: unsubscribeVisibleRange,
+    }
     const chart: TradingViewChart = {
       resetData: vi.fn(),
       resolution: () => currentResolution,
       symbol: () => 'PLETHER:PLDXY.P',
+      getVisibleRange: vi.fn(() => ({
+        from: 1_800_000_000,
+        to: 1_800_432_000,
+      })),
       setResolution: vi.fn(async (resolution: TradingViewResolution) => {
         currentResolution = resolution
-        intervalCallback?.(resolution)
+        intervalCallback?.(resolution, {})
         return true
       }),
       onIntervalChanged: () => subscription,
+      onVisibleRangeChanged: () => visibleRangeSubscription,
       createShape: vi.fn(async () => 'liquidation-line'),
       removeEntity: vi.fn(),
     }
@@ -289,18 +306,52 @@ describe('TradingViewAdvancedChart', () => {
     ])
 
     act(() => {
+      visibleRangeCallback?.({
+        from: 1_800_010_000,
+        to: 1_800_420_000,
+      })
+    })
+
+    // TradingView can begin recalculating the time scale before it emits the
+    // interval event. Ignore that intermediate range because it belongs to a
+    // resolution the parent has not accepted yet.
+    act(() => {
       currentResolution = '5'
-      intervalCallback?.('5')
+      visibleRangeCallback?.({
+        from: 1_799_000_000,
+        to: 1_801_000_000,
+      })
+    })
+
+    const resolutionOnlyChange: TradingViewIntervalChangeParameters = {}
+    act(() => {
+      intervalCallback?.('5', resolutionOnlyChange)
+    })
+    expect(resolutionOnlyChange.timeframe).toEqual({
+      type: 'time-range',
+      from: 1_800_010_000,
+      to: 1_800_420_000,
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
     expect(onIntervalChange).toHaveBeenCalledWith('5m')
+
+    const explicitRangeChange: TradingViewIntervalChangeParameters = {
+      timeframe: { type: 'period-back', value: '5D' },
+    }
+    act(() => {
+      intervalCallback?.('5', explicitRangeChange)
+    })
+    expect(explicitRangeChange.timeframe).toEqual({
+      type: 'period-back',
+      value: '5D',
+    })
 
     view.rerender(chartElement('5m'))
     expect(chart.setResolution).not.toHaveBeenCalled()
 
     act(() => {
       currentResolution = '15'
-      intervalCallback?.('15')
+      intervalCallback?.('15', {})
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
 
@@ -320,6 +371,7 @@ describe('TradingViewAdvancedChart', () => {
 
     view.unmount()
     expect(unsubscribe).toHaveBeenCalledWith(null, intervalCallback)
+    expect(unsubscribeVisibleRange).toHaveBeenCalledWith(null, visibleRangeCallback)
     expect(setVisible).toHaveBeenLastCalledWith(false)
     expect(remove).toHaveBeenCalledOnce()
     queryClient.clear()
