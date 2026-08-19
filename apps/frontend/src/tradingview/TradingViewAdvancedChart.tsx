@@ -360,6 +360,7 @@ export function TradingViewAdvancedChart({
             'volume_force_overlay',
           ],
           enabled_features: [
+            'determine_first_data_request_size_using_visible_range',
             'hide_left_toolbar_by_default',
             'iframe_loading_compatibility_mode',
             'move_logo_to_main_pane',

@@ -141,6 +141,7 @@ describe('TradingViewAdvancedChart', () => {
     expect(widgetOptions?.disabled_features).toContain('volume_force_overlay')
     expect(widgetOptions?.timeframe).toBe('5D')
     expect(widgetOptions?.enabled_features).toEqual(expect.arrayContaining([
+      'determine_first_data_request_size_using_visible_range',
       'hide_left_toolbar_by_default',
       'move_logo_to_main_pane',
       'remove_library_container_border',
