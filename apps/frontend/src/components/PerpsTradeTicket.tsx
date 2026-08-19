@@ -190,6 +190,12 @@ interface PerpsTradeTicketProps {
   initialFinalExecutionEconomicsVersion?: number
   /** Static exact VPI evidence for deterministic stories and tests. */
   initialFinalVpiUsdc?: bigint
+  /** Static committed VPI estimate for deterministic stories and tests. */
+  initialCommittedVpiUsdc?: bigint
+  /** Static committed position VPI balance for deterministic stories and tests. */
+  initialCommittedPositionVpiAccrued?: bigint
+  /** Static full-close intent for deterministic finalized stories and tests. */
+  initialCommittedIsFullClose?: boolean
   initialCommittedSizeDelta?: bigint
   initialFlowError?: string
   closePositionRequestId?: number
@@ -298,6 +304,8 @@ const CLOSE_VPI_TOOLTIP =
   'For a close or reduction, positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement after the lifetime VPI clamp. A credit is not sent directly to the owner wallet. The preview can change before execution.'
 const FINAL_CLOSE_VPI_TOOLTIP =
   'This is the VPI settled for the close or reduction. Paid VPI was charged to the Margin Account; credited VPI was added to the Margin Account settlement after the lifetime VPI clamp, not sent directly to the owner wallet.'
+const FINAL_POSITION_VPI_BALANCE_TOOLTIP =
+  'This is the signed aggregate VPI balance on the position immediately before this close or reduction. It is shown with the transaction VPI so you can compare the lifetime position balance with the amount settled by this transaction. A full close leaves no remaining position VPI balance.'
 const POSITION_VPI_BALANCE_TOOLTIP =
   'The position\'s signed net VPI over its lifecycle. Net paid VPI can support a future closing credit. A provisional credit has already been added to settlement, remains excluded from risk equity, and may be reconciled on close. Partial-reduction limits are applied automatically to the VPI estimate.'
 const ORACLE_CONFIDENCE_SPREAD_TOOLTIP =
@@ -1576,6 +1584,9 @@ export function PerpsTradeTicket({
   initialFinalFrozenCloseSpreadUsdc,
   initialFinalExecutionEconomicsVersion,
   initialFinalVpiUsdc,
+  initialCommittedVpiUsdc,
+  initialCommittedPositionVpiAccrued,
+  initialCommittedIsFullClose,
   initialCommittedSizeDelta,
   initialFlowError,
   closePositionRequestId,
@@ -1672,11 +1683,21 @@ export function PerpsTradeTicket({
   const [finalExecutionEconomicsVersion, setFinalExecutionEconomicsVersion] =
     useState<number | undefined>(initialFinalExecutionEconomicsVersion)
   const [finalVpiUsdc, setFinalVpiUsdc] = useState<bigint | undefined>(initialFinalVpiUsdc)
+  const [committedVpiUsdc, setCommittedVpiUsdc] = useState<bigint | undefined>(initialCommittedVpiUsdc)
+  const [committedPositionVpiAccrued, setCommittedPositionVpiAccrued] = useState<bigint | undefined>(
+    initialCommittedPositionVpiAccrued
+  )
+  const [committedShowsPositionVpiBalance, setCommittedShowsPositionVpiBalance] = useState(
+    initialCommittedPositionVpiAccrued !== undefined
+  )
   const [committedSizeDelta, setCommittedSizeDelta] = useState<bigint | undefined>(initialCommittedSizeDelta)
   const [committedSlippage, setCommittedSlippage] = useState<number | undefined>()
   const [committedTargetPrice, setCommittedTargetPrice] = useState<number | null | undefined>()
   const [committedIsClose, setCommittedIsClose] = useState<boolean | undefined>(
     initialReduceOnly ? true : undefined
+  )
+  const [committedIsFullClose, setCommittedIsFullClose] = useState<boolean | undefined>(
+    initialCommittedIsFullClose
   )
   const [flowError, setFlowError] = useState<string | undefined>(initialFlowError)
   const [marginAction, setMarginAction] = useState<MarginAction | null>(initialMarginAction ?? null)
@@ -2855,6 +2876,7 @@ export function PerpsTradeTicket({
   const finalIsClose = committedIsClose
     ?? historyOrderIsClose(executedOrderHistoryRow)
     ?? isReducingCurrentPosition
+  const finalIsFullClose = finalIsClose && committedIsFullClose === true
   const displayCommitTx = commitTxHash ?? executedOrderHistoryRow?.commitTxHash ?? (enableLiveTrading ? undefined : COMMIT_TX)
   const displayExecuteTx = executeTxHash ?? executedOrderHistoryRow?.revealTxHash ?? (enableLiveTrading ? undefined : EXECUTE_TX)
   const displayCommitTxValue = displayCommitTx ? <TxHashActions hash={displayCommitTx} /> : '--'
@@ -2909,6 +2931,24 @@ export function PerpsTradeTicket({
   const finalFrozenCloseSpreadValue = finalExecutionFrozenCloseSpreadUsdc === undefined
     ? PREVIEW_UNAVAILABLE_VALUE
     : formatUsdcRaw(finalExecutionFrozenCloseSpreadUsdc)
+  const committedVpiAction = formatTradeVpi(committedVpiUsdc, 'estimate')
+  const committedPositionVpiBalance = formatVpiBalance(committedPositionVpiAccrued)
+  const committedVpiRows: PreviewRow[] = [
+    ...(committedShowsPositionVpiBalance
+      ? [{
+          label: 'Position VPI balance',
+          ...committedPositionVpiBalance,
+          tooltip: POSITION_VPI_BALANCE_TOOLTIP,
+          tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+        }]
+      : []),
+    {
+      label: 'VPI',
+      ...committedVpiAction,
+      tooltip: committedIsClose ? CLOSE_VPI_TOOLTIP : VPI_PRICE_IMPACT_TOOLTIP,
+      tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+    },
+  ]
   const finalOracleConfidenceSpreadRaw =
     finalExecutionEconomicsComplete
       && finalExecutionOracleFrozen === false
@@ -2926,8 +2966,12 @@ export function PerpsTradeTicket({
       ? '--'
       : formatDisplayDxyPrice(99_110_000n)
   const executedTitle = finalPriceDisplay === '--'
-    ? 'Trade executed'
-    : `Trade executed at ${finalPriceDisplay} USDC`
+    ? finalIsFullClose ? 'Position closed' : finalIsClose ? 'Position reduced' : 'Trade executed'
+    : finalIsFullClose
+      ? `${directionLabel(oppositeDirection(direction))} position closed at ${finalPriceDisplay} USDC`
+      : finalIsClose
+        ? `${directionLabel(oppositeDirection(direction))} position reduced at ${finalPriceDisplay} USDC`
+        : `Trade executed at ${finalPriceDisplay} USDC`
   const isReviewingFullClose = isReducingCurrentPosition &&
     availableCloseDxyExposureRaw > 0n &&
     (isFullCloseIntent || availableCloseDxyExposureRaw <= effectiveDxyExposureUsdc + SUMMARY_CLOSE_DUST_USDC_RAW)
@@ -3156,6 +3200,10 @@ export function PerpsTradeTicket({
     setWalletRequestWarning(undefined)
     setCommitExecutionStatus(undefined)
     setCommittedIsClose(isReducingCurrentPosition)
+    setCommittedIsFullClose(isReviewingFullClose)
+    setCommittedVpiUsdc(previewVpiUsdc)
+    setCommittedPositionVpiAccrued(previewPositionVpiAccrued)
+    setCommittedShowsPositionVpiBalance(!isOpeningFromZero)
     debugPerpsCommit('ticket:confirm-click', {
       enableLiveTrading,
       isConnected,
@@ -3434,6 +3482,10 @@ export function PerpsTradeTicket({
     setCommittedSlippage(undefined)
     setCommittedTargetPrice(undefined)
     setCommittedIsClose(undefined)
+    setCommittedIsFullClose(undefined)
+    setCommittedVpiUsdc(undefined)
+    setCommittedPositionVpiAccrued(undefined)
+    setCommittedShowsPositionVpiBalance(false)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)
@@ -4025,6 +4077,7 @@ export function PerpsTradeTicket({
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
+                    ...committedVpiRows,
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                   ]}
                 />
@@ -4055,6 +4108,7 @@ export function PerpsTradeTicket({
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
+                    ...committedVpiRows,
                     { label: 'Estimated execution reward', value: formatUsdc(keeperBounty) },
                     ...(isSponsoredAccountConfigured
                       ? [{ label: 'UserOperation', value: displayUserOperationHashValue }]
@@ -4384,12 +4438,35 @@ export function PerpsTradeTicket({
                 <PreviewRows
                   rows={[
                     { label: 'Order ID', value: <CopyableValue ariaLabel="Copy order ID" value={displayOrderId} /> },
-                    { label: 'Direction', value: directionLabel(direction) },
+                    {
+                      label: finalIsClose ? 'Position side' : 'Direction',
+                      value: finalIsClose
+                        ? directionLabel(oppositeDirection(direction))
+                        : directionLabel(direction),
+                    },
                     { label: 'Final price', value: finalPriceDisplay },
-                    { label: 'Target plDXY Perp exposure', value: formatUsdc(dxyExposureNumber) },
-                    { label: 'Execution plDXY Perp exposure', value: finalExecutedDxyExposureUsdc === undefined ? formatUsdc(dxyExposureNumber) : formatUsdcRaw(finalExecutedDxyExposureUsdc) },
+                    {
+                      label: finalIsFullClose
+                        ? 'Requested close exposure'
+                        : finalIsClose
+                          ? 'Requested reduction exposure'
+                          : 'Target plDXY Perp exposure',
+                      value: formatUsdc(dxyExposureNumber),
+                    },
+                    {
+                      label: finalIsFullClose
+                        ? 'Executed close exposure'
+                        : finalIsClose
+                          ? 'Executed reduction exposure'
+                          : 'Execution plDXY Perp exposure',
+                      value: finalExecutedDxyExposureUsdc === undefined
+                        ? formatUsdc(dxyExposureNumber)
+                        : formatUsdcRaw(finalExecutedDxyExposureUsdc),
+                    },
                     { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
-                    { label: 'Margin posted', value: formatUsdc(marginNumber) },
+                    ...(!finalIsClose
+                      ? [{ label: 'Margin posted', value: formatUsdc(marginNumber) }]
+                      : []),
                     { label: 'Protocol execution fee', value: formatUsdcRaw(finalProtocolExecutionFee) },
                     finalUsesFrozenCloseSpread
                       ? {
@@ -4404,6 +4481,16 @@ export function PerpsTradeTicket({
                           tooltip: ORACLE_CONFIDENCE_SPREAD_TOOLTIP,
                           tooltipDocsLink: DOCS_LINKS.oracleConfidence,
                         },
+                    ...(finalIsClose && committedShowsPositionVpiBalance
+                      ? [{
+                          label: finalIsFullClose
+                            ? 'Position VPI before close'
+                            : 'Position VPI before reduction',
+                          ...committedPositionVpiBalance,
+                          tooltip: FINAL_POSITION_VPI_BALANCE_TOOLTIP,
+                          tooltipDocsLink: DOCS_LINKS.virtualPriceImpact,
+                        }]
+                      : []),
                     {
                       label: 'VPI',
                       value: finalVpiValue,
@@ -4419,7 +4506,11 @@ export function PerpsTradeTicket({
                   ]}
                 />
                 <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                  Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.
+                  {finalIsFullClose
+                    ? 'Requested close exposure is the position exposure submitted for closure. Executed close exposure is the committed size valued with the displayed plDXY Perp price at finalization.'
+                    : finalIsClose
+                      ? 'Requested reduction exposure is what you submitted. Executed reduction exposure is the committed size valued with the displayed plDXY Perp price at finalization.'
+                      : 'Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.'}
                 </p>
               </div>
               <Button

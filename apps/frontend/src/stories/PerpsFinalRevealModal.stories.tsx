@@ -427,10 +427,13 @@ export const NegativeVpiExactEvidence: Story = {
 }
 
 export const FrozenOracleClose: Story = {
-  name: '09d · Frozen Oracle Close',
+  name: '09d · Frozen Oracle Close, VPI Credited',
   render: renderModal({
     initialLifecycleState: 'executed',
     initialDirection: 'short',
+    initialReduceOnly: true,
+    initialCommittedIsFullClose: true,
+    initialCommittedPositionVpiAccrued: 60n * USDC,
     initialFinalExecutionOracleFrozen: true,
     initialFinalFrozenCloseSpreadUsdc: 3_750_000n,
     initialFinalVpiUsdc: -2_875_000n,
@@ -447,6 +450,34 @@ export const SelfExecutedSuccess: Story = {
     initialExecuteTxHash: SELF_REVEAL_TX,
     initialFinalVpiUsdc: 182_822_887n,
     currentPosition: executedPosition,
+  }),
+}
+
+export const AutomaticCloseVpiCredited: Story = {
+  name: '09f · Automatic Close, VPI Credited',
+  render: renderModal({
+    initialLifecycleState: 'executed',
+    initialDirection: 'short',
+    initialReduceOnly: true,
+    initialCommittedIsFullClose: true,
+    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialFinalVpiUsdc: -12_300_000n,
+    currentPosition: undefined,
+    currentPositionAmount: '0',
+  }),
+}
+
+export const AutomaticCloseVpiPaid: Story = {
+  name: '09g · Automatic Close, VPI Paid',
+  render: renderModal({
+    initialLifecycleState: 'executed',
+    initialDirection: 'short',
+    initialReduceOnly: true,
+    initialCommittedIsFullClose: true,
+    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialFinalVpiUsdc: 4_250_000n,
+    currentPosition: undefined,
+    currentPositionAmount: '0',
   }),
 }
 

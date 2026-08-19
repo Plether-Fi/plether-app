@@ -225,35 +225,54 @@ describe('Perps trade preview debounce', () => {
   })
 
   it('shows the resulting position VPI balance when increasing an existing position', () => {
-    wagmiMocks.useReadContracts.mockReturnValue({
-      data: [{
-        status: 'success',
-        result: {
-          ...openPreviewResult,
-          postSize: 1_100n * 10n ** 18n,
-          postMarginUsdc: 220_000_000n,
-          postVpiAccrued: 85_000_000n,
-        },
-      }],
-      isFetching: false,
-      isLoading: false,
-    })
+    const increasePreviewResult = {
+      ...openPreviewResult,
+      postSize: 1_100n * 10n ** 18n,
+      postMarginUsdc: 220_000_000n,
+      postVpiAccrued: 85_000_000n,
+    }
 
     render(
       <PerpsTradeTicket
-        enableLiveTrading
+        initialReviewOpen
         initialDirection="long"
         initialSize="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={1_000_000_000n}
         currentPosition={existingLongPosition}
+        openPreviewFixture={increasePreviewResult}
       />
     )
 
-    const previewPanel = screen.getByText('Preview').parentElement
-    expect(previewPanel).not.toBeNull()
-    expect(within(previewPanel!).getByLabelText('Net paid 85.0 USDC')).toBeInTheDocument()
-    expect(within(previewPanel!).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
+    expect(screen.getAllByLabelText('Net paid 85.0 USDC')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Pay 25.0 USDC')).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+
+    const confirmation = screen.getByRole('dialog')
+    expect(within(confirmation).getByLabelText('Net paid 85.0 USDC')).toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
+  })
+
+  it('keeps the reviewed VPI in a fresh opening confirmation without adding a balance row', () => {
+    render(
+      <PerpsTradeTicket
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="100"
+        currentPositionAmount="0"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={1_000_000_000n}
+        openPreviewFixture={openPreviewResult}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+
+    const confirmation = screen.getByRole('dialog')
+    expect(within(confirmation).queryByText('Position VPI balance')).not.toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
   })
 })

@@ -166,6 +166,7 @@ function closeTicket({
   finalVpiUsdc,
   positionVpiAccrued = 60_000_000n,
   showCurrentPosition = true,
+  size = '500',
 }: {
   enableLiveTrading?: boolean
   lifecycleState?: 'executed' | 'preview'
@@ -175,6 +176,7 @@ function closeTicket({
   finalVpiUsdc?: bigint
   positionVpiAccrued?: bigint
   showCurrentPosition?: boolean
+  size?: string
 }) {
   return (
     <PerpsTradeTicket
@@ -183,9 +185,13 @@ function closeTicket({
       initialLifecycleState={lifecycleState}
       initialDirection="short"
       initialReduceOnly
-      initialSize="500"
+      initialSize={size}
       initialOrderId={42n}
       initialCommittedSizeDelta={500n * 10n ** 18n}
+      initialCommittedIsFullClose={lifecycleState === 'executed'}
+      initialCommittedPositionVpiAccrued={
+        lifecycleState === 'executed' ? positionVpiAccrued : undefined
+      }
       initialFinalExecutionPrice={
         lifecycleState === 'executed' ? 100_000_000n : undefined
       }
@@ -332,6 +338,7 @@ describe('perps ticket oracle regime matrix', () => {
       enableLiveTrading: false,
       marketPhase: 'open' as const,
       oracleFrozen: false,
+      size: '1000',
     }
     const { rerender } = renderCloseTicket(input)
 
@@ -342,6 +349,13 @@ describe('perps ticket oracle regime matrix', () => {
 
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
+      .toHaveTextContent('Long plDXY Perp position closed')
+    expect(within(finalResult!).getByText('Requested close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
+    expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()
+    expect(within(finalResult!).getByLabelText('Net paid 60.0 USDC')).toBeInTheDocument()
     expect(within(finalResult!).getByText('VPI')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('VPI / Price impact')).not.toBeInTheDocument()
   })
@@ -528,6 +542,15 @@ describe('perps ticket oracle regime matrix', () => {
 
     const finalResult = screen.getByText('Final Result').parentElement
     expect(finalResult).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
+      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDC')
+    expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Requested close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
+    expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()
+    expect(within(finalResult!).getByLabelText('Net paid 60.0 USDC')).toBeInTheDocument()
     const vpiRow = within(finalResult!).getByText('VPI').closest('div')
     if (finalVpiUsdc === 0n) {
       expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
