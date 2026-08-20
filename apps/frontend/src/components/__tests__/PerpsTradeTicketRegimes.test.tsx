@@ -259,6 +259,10 @@ describe('perps ticket oracle regime matrix', () => {
     expect(preview.queryByText('Waived')).not.toBeInTheDocument()
     expect(preview.queryByText('Estimated frozen close spread')).not.toBeInTheDocument()
 
+    const oracleConfidenceLabel = preview.getByText('Adverse oracle confidence spread')
+    expect(oracleConfidenceLabel).toHaveClass('overflow-hidden', 'text-ellipsis', 'whitespace-nowrap')
+    expect(oracleConfidenceLabel).toHaveAttribute('title', 'Adverse oracle confidence spread')
+
     fireEvent.focus(preview.getByLabelText('Adverse oracle confidence spread info'))
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'It applies to opens and to close/reduce execution in live and FAD-only regimes.'
@@ -292,6 +296,13 @@ describe('perps ticket oracle regime matrix', () => {
     expect(preview.getByLabelText(positionBalance)).toBeInTheDocument()
     expect(preview.queryByText('VPI allocated to reduction')).not.toBeInTheDocument()
     expect(preview.queryByText('Maximum eligible VPI credit')).not.toBeInTheDocument()
+
+    const positionVpiLabel = preview.getByText('Position VPI balance')
+    const positionVpiRow = positionVpiLabel.closest('div')
+    expect(positionVpiRow).toHaveClass('flex-nowrap')
+    expect(positionVpiLabel).toHaveClass('overflow-hidden', 'text-ellipsis', 'whitespace-nowrap')
+    expect(positionVpiLabel).toHaveAttribute('title', 'Position VPI balance')
+    expect(positionVpiRow?.querySelector('dd')).toHaveClass('whitespace-nowrap')
 
     const positionVpiInfo = preview.getByLabelText('Position VPI balance info')
     fireEvent.focus(positionVpiInfo)
@@ -579,7 +590,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(dialog).getByText('Waiting for wallet confirmation')).toBeInTheDocument()
     expect(within(dialog).getByText('Exact')).toBeInTheDocument()
     const committedLimit = within(dialog).getByText('Execution limit')
-      .parentElement?.querySelector('dd')?.textContent
+      .closest('div')?.querySelector('dd')?.textContent
     expect(committedLimit).toBeTruthy()
 
     rerender(closeTicket({
@@ -593,7 +604,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(dialog).queryByText('0.1%')).not.toBeInTheDocument()
     expect(
       within(dialog).getByText('Execution limit')
-        .parentElement?.querySelector('dd')?.textContent
+        .closest('div')?.querySelector('dd')?.textContent
     ).toBe(committedLimit)
   })
 })

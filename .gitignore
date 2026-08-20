@@ -68,4 +68,5 @@ terraform.tfvars.*
 !terraform.tfvars.*.example
 *.tfstate
 *.tfstate.backup
+*.tfstate.*.backup
 .terraform/

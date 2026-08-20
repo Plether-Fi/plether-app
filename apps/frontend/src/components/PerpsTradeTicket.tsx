@@ -242,7 +242,7 @@ interface PerpsTradeTicketProps {
   executionFeeBps?: bigint
   marketPhase?: PerpsMarketPhase
   marketCurrentDuration?: string
-  onAccountRefresh?: () => void
+  onAccountRefresh?: () => Promise<unknown>
 }
 
 const MOCK_PREVIEW_PRICE = 0.9909
@@ -563,7 +563,7 @@ function formatTradeVpi(
     value: (
       <span
         aria-label={`${action} ${formattedAmount} USDC`}
-        className="inline-flex flex-wrap items-baseline justify-end gap-1.5"
+        className="inline-flex items-baseline justify-end gap-1.5 whitespace-nowrap"
       >
         <span>{action}</span>
         <TokenAmount amount={formattedAmount} />
@@ -584,15 +584,16 @@ function formatVpiBalance(
   const isProvisionalCredit = value < 0n
   const absolute = isProvisionalCredit ? -value : value
   const status = isProvisionalCredit ? 'Provisional credit' : 'Net paid'
+  const compactStatus = isProvisionalCredit ? 'Credit' : 'Paid'
   const formattedAmount = formatPreviewUsdcRaw(absolute)
 
   return {
     value: (
       <span
         aria-label={`${status} ${formattedAmount} USDC`}
-        className="inline-flex flex-wrap items-baseline justify-end gap-1.5"
+        className="inline-flex items-baseline justify-end gap-1.5 whitespace-nowrap"
       >
-        <span>{status}</span>
+        <span>{compactStatus}</span>
         <TokenAmount amount={formattedAmount} />
       </span>
     ),
@@ -1008,11 +1009,11 @@ function PreviewRows({
             <div key={row.label}>
               <button
                 type="button"
-                className="group flex min-h-6 w-full flex-wrap items-start justify-between gap-x-3 gap-y-1 text-left text-sm text-[#FFAB96] transition-colors hover:text-content-primary"
+                className="group flex min-h-6 w-full flex-nowrap items-start justify-between gap-x-3 text-left text-sm text-[#FFAB96] transition-colors hover:text-content-primary"
                 onClick={onSlippageClick}
               >
                 <span className="group-hover:underline group-focus-visible:underline">{row.label}</span>
-                <span className="ml-auto flex min-h-6 max-w-full flex-wrap items-center justify-end break-words text-right font-normal group-hover:underline group-focus-visible:underline">
+                <span className="ml-auto flex min-h-6 shrink-0 items-center justify-end whitespace-nowrap text-right font-normal group-hover:underline group-focus-visible:underline">
                   {row.value}
                 </span>
               </button>
@@ -1022,9 +1023,11 @@ function PreviewRows({
         }
 
         return (
-          <div key={row.label} className="flex min-h-6 min-w-0 flex-wrap items-start justify-between gap-x-3 gap-y-1 text-sm">
+          <div key={row.label} className="flex min-h-6 min-w-0 flex-nowrap items-start justify-between gap-x-3 text-sm">
             <dt className="inline-flex min-w-0 items-center gap-1.5 text-content-secondary">
-              {row.label}
+              <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap" title={row.label}>
+                {row.label}
+              </span>
               {row.tooltip ? (
                 <Tooltip
                   content={row.tooltip}
@@ -1042,7 +1045,7 @@ function PreviewRows({
                 </Tooltip>
               ) : null}
             </dt>
-            <dd className={`ml-auto flex min-h-6 max-w-full min-w-0 flex-wrap items-center justify-end break-words text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
+            <dd className={`ml-auto flex min-h-6 shrink-0 items-center justify-end whitespace-nowrap text-right font-normal ${previewToneClass(row.tone)}`}>{row.value}</dd>
           </div>
         )
       })}
@@ -1970,13 +1973,34 @@ export function PerpsTradeTicket({
 
     if (order.status === 'Executed') {
       setFlowError(undefined)
-      setLifecycleState('executed')
+      const refreshAccount = onAccountRefreshRef.current
+      if (refreshAccount === undefined) {
+        setLifecycleState('executed')
+      } else {
+        void (async () => {
+          try {
+            await refreshAccount()
+          } catch {
+            // The order is already terminal. Show its result even if the
+            // follow-up account read fails; the normal polling can retry it.
+          } finally {
+            const terminalIsStillCurrent =
+              handledTerminalOrderKeyRef.current === nextTerminalOrderKey &&
+              (
+                nextTerminalBlockHash === undefined ||
+                handledTerminalBlockHashRef.current === nextTerminalBlockHash
+              )
+            if (terminalIsStillCurrent) {
+              setLifecycleState('executed')
+            }
+          }
+        })()
+      }
     } else {
       setFlowError(terminalOrderFailureMessage(order))
       setLifecycleState('selfExecuteFailed')
+      void onAccountRefreshRef.current?.()
     }
-
-    onAccountRefreshRef.current?.()
     return true
   }, [])
 
@@ -2098,7 +2122,7 @@ export function PerpsTradeTicket({
       if (activeEvidencePoll.exhausted) return undefined
       if (Date.now() >= activeEvidencePoll.deadlineMs) {
         activeEvidencePoll.exhausted = true
-        onAccountRefreshRef.current?.()
+        void onAccountRefreshRef.current?.()
         return undefined
       }
     }
@@ -2121,7 +2145,7 @@ export function PerpsTradeTicket({
       if (pollState.exhausted) return true
       if (Date.now() < pollState.deadlineMs) return false
       pollState.exhausted = true
-      onAccountRefreshRef.current?.()
+      void onAccountRefreshRef.current?.()
       return true
     }
 
@@ -2140,7 +2164,7 @@ export function PerpsTradeTicket({
             if (hasCompleteExecutionEvidence(result.order)) return
             if (stopIfEvidencePollExpired()) return
           } else {
-            onAccountRefreshRef.current?.()
+            void onAccountRefreshRef.current?.()
           }
         } catch (error: unknown) {
           if (isCancelled() || (error instanceof DOMException && error.name === 'AbortError')) return
@@ -3152,7 +3176,7 @@ export function PerpsTradeTicket({
             ownerWallet: effectiveOwnerWalletBalance - ownerWalletTransferAmountRaw,
             tradingAccount: effectiveTradingAccountBalance + ownerWalletTransferAmountRaw,
           })
-          onAccountRefresh?.()
+          void onAccountRefresh?.()
         }
         setMarginActionStatus('depositing')
         const depositSource = isSponsoredAccountConfigured &&
@@ -3174,7 +3198,7 @@ export function PerpsTradeTicket({
       setMarginActionAmount('')
       setLocallyConfirmedFundingBalances(null)
       trackPerpsMarginLifecycle(`${marginAction}_succeeded`, commonAnalyticsProperties)
-      onAccountRefresh?.()
+      void onAccountRefresh?.()
     } catch (error) {
       setMarginActionStatus('failed')
       const errorMessage = error instanceof Error
@@ -3289,7 +3313,7 @@ export function PerpsTradeTicket({
             setKeeperRevealDeadlineMs(Date.now() + KEEPER_REVEAL_GRACE_MS)
             setKeeperRevealNowMs(Date.now())
             setLifecycleState('revealPending')
-            onAccountRefresh?.()
+            void onAccountRefresh?.()
           }
           return
         }
@@ -3305,7 +3329,7 @@ export function PerpsTradeTicket({
             : currentState
         ))
         trackPerpsOrderLifecycle('commit_succeeded', commonAnalyticsProperties)
-        onAccountRefresh?.()
+        void onAccountRefresh?.()
       }
       const result = await commitOrder({
         direction: effectiveOrderDirection,
@@ -3415,11 +3439,11 @@ export function PerpsTradeTicket({
       setCleanupStatus('pending')
       await cleanupExpiredOrder(firstPendingOrderId)
       setCleanupStatus('idle')
-      onAccountRefresh?.()
+      void onAccountRefresh?.()
     } catch (error) {
       setCleanupStatus('failed')
       setCleanupError(error instanceof Error ? error.message : 'Expired-order cleanup failed')
-      onAccountRefresh?.()
+      void onAccountRefresh?.()
     }
   }
 
@@ -3454,7 +3478,7 @@ export function PerpsTradeTicket({
         ...commonAnalyticsProperties,
         error_category: perpsErrorCategory(error),
       })
-      onAccountRefresh?.()
+      void onAccountRefresh?.()
     }
   }
 

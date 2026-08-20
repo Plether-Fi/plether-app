@@ -1567,6 +1567,83 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
   })
 
+  it('updates the account position before publishing the execution result', async () => {
+    mockIsConnected = true
+    let resolveAccountRefresh = () => {}
+    const accountRefreshGate = new Promise<void>((resolve) => {
+      resolveAccountRefresh = resolve
+    })
+    const onAccountRefresh = vi.fn(async () => {
+      await accountRefreshGate
+    })
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: {
+        orderId: 59n,
+        time: '22 Jun, 12:02',
+        market: 'plDXY Perp',
+        side: 'Long',
+        type: 'Open',
+        price: '0.9733',
+        size: '1 000',
+        status: 'Executed',
+        commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+        revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
+        executionPriceRaw: 97_330_315n,
+        executionOracleFrozen: false,
+        oracleDerivationVersion: 1,
+        executionEconomicsVersion: 1,
+      },
+    })
+
+    function PositionRefreshHarness() {
+      const [position, setPosition] = useState('No position')
+
+      return (
+        <>
+          <output aria-label="Current position">{position}</output>
+          <PerpsTradeTicket
+            enableLiveTrading
+            initialLifecycleState="revealPending"
+            initialReviewOpen
+            initialDirection="long"
+            initialSize="1 000"
+            initialOrderId={59n}
+            oraclePriceRaw={97_330_315n}
+            oraclePublishTime={Math.floor(Date.now() / 1000)}
+            availableToTradeRaw={2_000_000_000n}
+            walletUsdcRaw={2_000_000_000n}
+            portfolioValueRaw={2_000_000_000n}
+            withdrawableUsdcRaw={2_000_000_000n}
+            minOpenNotionalUsdc={100_000_000n}
+            minNewPositionNotionalUsdc={100_000_000n}
+            onAccountRefresh={async () => {
+              await onAccountRefresh()
+              setPosition('1 000 USDC')
+            }}
+          />
+        </>
+      )
+    }
+
+    render(<PositionRefreshHarness />)
+
+    await waitFor(() => {
+      expect(onAccountRefresh).toHaveBeenCalledOnce()
+    })
+    expect(screen.getByLabelText('Current position')).toHaveTextContent('No position')
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveAccountRefresh()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 USDC')
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+  })
+
   it('keeps settlement hashes compact and links both hashes to Blockscout', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
