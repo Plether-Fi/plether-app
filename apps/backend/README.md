@@ -745,7 +745,14 @@ Responses are cached in-memory using STM:
 - `/user/:address/allowances` - Per-address cache invalidated when the block advances
 - `/api/perps/basket/candles` - Successful finalized pages only, for five seconds
   with a 64-page process-local bound; concurrent requests for the same page
-  share one database load. `/api/perps/basket/candles/current` remains uncached.
+  share one database load.
+- `/api/perps/basket/candles/current` - Coherent raw snapshots only, for 850ms
+  from the start of their load and keyed by chain, router, interval, and mutable
+  bucket. Concurrent misses for the same bucket share one database load, while
+  every request still composes and strictly validates its response against its
+  own sampled clock. Explicit `no-cache`/`no-store` requests force a database
+  revalidation. Coalesced request time is exposed separately as
+  `plether_singleflight_wait` in `Server-Timing`.
 
 Cached responses include `meta.cached: true` and `meta.cachedAt` timestamp.
 

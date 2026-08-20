@@ -486,6 +486,11 @@ and successful canonical request shape. Do not pool endpoints, intervals,
 current candles, active pages, or closed or inception-clipped pages. For native
 candle responses, read SQL and application durations from the
 route-specific `Server-Timing` metrics `plether_db_candles` and `plether_app`.
+When same-key requests share one in-flight candle load, non-owning callers
+report their blocked time as `plether_singleflight_wait`; their
+`plether_db_candles` remains zero so one database query is not attributed to
+multiple requests. Include the single-flight metric when diagnosing application
+tail latency, but do not add it to the database percentile series.
 The transitional compatibility-history route is excluded from rollup latency
 acceptance because its remaining consumers are migrated separately before the
 route is removed. Its bounded-shape and zero account-activity-scan invariants
