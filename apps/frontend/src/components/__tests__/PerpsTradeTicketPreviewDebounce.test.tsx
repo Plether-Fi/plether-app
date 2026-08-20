@@ -88,7 +88,7 @@ const openPreviewResult = {
   sizeDelta: 100n * 10n ** 18n,
   notionalUsdc: 100_000_000n,
   marginDeltaUsdc: 20_000_000n,
-  vpiUsdc: 0n,
+  vpiUsdc: 25_000_000n,
   executionFeeUsdc: 40_000n,
   tradeCostUsdc: 40_000n,
   poolRebatePayoutUsdc: 0n,
@@ -98,13 +98,29 @@ const openPreviewResult = {
   postSize: 100n * 10n ** 18n,
   postMarginUsdc: 20_000_000n,
   postEntryPrice: 99_000_000n,
-  postVpiAccrued: 0n,
+  postVpiAccrued: 25_000_000n,
   postUnrealizedPnlUsdc: 0n,
   postEquityUsdc: 20_000_000n,
   postHealthBps: 4_000n,
   postLiquidatable: false,
   hasLiquidationPrice: true,
   liquidationPrice: 94_000_000n,
+}
+
+const existingLongPosition = {
+  exists: true,
+  side: 0,
+  direction: 'long' as const,
+  size: 1_000n * 10n ** 18n,
+  entryPrice: 100_000_000n,
+  marginUsdc: 200_000_000n,
+  unrealizedPnlUsdc: 0n,
+  maintenanceMarginUsdc: 10_000_000n,
+  liquidatable: false,
+  estimatedNotionalUsdc: 1_000_000_000n,
+  entryNotionalUsdc: 1_000_000_000n,
+  dxyExposureUsdc: 1_000_000_000n,
+  vpiAccrued: 60_000_000n,
 }
 
 function latestReadOptions(): ReadContractsOptions {
@@ -203,5 +219,60 @@ describe('Perps trade preview debounce', () => {
     expect(finalContract?.args?.[3]).not.toBe(initialContract?.args?.[3])
     expect((reviewButton as HTMLButtonElement).disabled).toBe(false)
     expect(within(previewPanel!).queryByText('Loading')).toBeNull()
+    expect(within(previewPanel!).queryByText('Position VPI balance')).not.toBeInTheDocument()
+    expect(within(previewPanel!).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
+    expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
+  })
+
+  it('shows the resulting position VPI balance when increasing an existing position', () => {
+    const increasePreviewResult = {
+      ...openPreviewResult,
+      postSize: 1_100n * 10n ** 18n,
+      postMarginUsdc: 220_000_000n,
+      postVpiAccrued: 85_000_000n,
+    }
+
+    render(
+      <PerpsTradeTicket
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={1_000_000_000n}
+        currentPosition={existingLongPosition}
+        openPreviewFixture={increasePreviewResult}
+      />
+    )
+
+    expect(screen.getAllByLabelText('Net paid 85.0 USDC')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Pay 25.0 USDC')).toHaveLength(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+
+    const confirmation = screen.getByRole('dialog')
+    expect(within(confirmation).getByLabelText('Net paid 85.0 USDC')).toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
+  })
+
+  it('keeps the reviewed VPI in a fresh opening confirmation without adding a balance row', () => {
+    render(
+      <PerpsTradeTicket
+        initialReviewOpen
+        initialDirection="long"
+        initialSize="100"
+        currentPositionAmount="0"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={1_000_000_000n}
+        openPreviewFixture={openPreviewResult}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+
+    const confirmation = screen.getByRole('dialog')
+    expect(within(confirmation).queryByText('Position VPI balance')).not.toBeInTheDocument()
+    expect(within(confirmation).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
   })
 })

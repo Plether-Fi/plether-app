@@ -52,6 +52,8 @@ export interface PerpsPosition {
   displayDxyPrice?: bigint
   liquidationPrice?: bigint
   pendingCarryUsdc?: bigint
+  /** Signed net VPI accumulated over the position lifecycle. Positive is net paid; negative is provisional credit. */
+  vpiAccrued?: bigint
 }
 
 function readResult(data: readonly ContractResult[] | undefined, index: number): unknown {
@@ -535,7 +537,7 @@ export function usePerpsAccount(markPrice?: bigint) {
       : undefined
     const positionWithLiquidationPrice = position === undefined
       ? undefined
-      : { ...position, liquidationPrice, pendingCarryUsdc }
+      : { ...position, liquidationPrice, pendingCarryUsdc, vpiAccrued }
     const pendingOrders = basicPendingOrders.map((order, index) => {
       const commitTime = parsePendingOrderCommitTime(readResult(pendingOrderViewsData, index))
       const expiryTime = commitTime !== undefined && maxOrderAge !== undefined

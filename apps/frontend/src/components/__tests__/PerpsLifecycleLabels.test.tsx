@@ -1693,7 +1693,7 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
-    expect(within(finalResult!).getByText('VPI / Price impact')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('VPI')).toBeInTheDocument()
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
     const oracleSpreadRow = within(finalResult!).getByText('Oracle confidence spread').closest('div')
     expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.1974%')
@@ -1867,12 +1867,12 @@ describe('perps lifecycle labels', () => {
     })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
-    const vpiRow = within(finalResult!).getByText('VPI / Price impact').closest('div')
+    const vpiRow = within(finalResult!).getByText('VPI').closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
-      expect(vpiRow?.querySelector('dd')).toHaveTextContent('182.8')
+      expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
       expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
     }, { timeout: 4_000 })
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)

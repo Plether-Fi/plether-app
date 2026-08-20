@@ -63,9 +63,11 @@ function primaryData({
     maintenanceMarginUsdc: 100_000_000n,
     liquidatable: false,
   }),
+  enginePositionResult = failure('engine position unavailable'),
 }: {
   hasOpenPosition?: boolean
   positionResult?: ContractResult
+  enginePositionResult?: ContractResult
 } = {}): ContractResult[] {
   return [
     success({
@@ -92,7 +94,7 @@ function primaryData({
     success(1_500_000_000n),
     failure('ledger snapshot unavailable'),
     success(false),
-    failure('engine position unavailable'),
+    enginePositionResult,
   ]
 }
 
@@ -239,6 +241,24 @@ describe('usePerpsAccount', () => {
       size: 2_000_000_000_000_000_000_000n,
       marginUsdc: 400_000_000n,
     }))
+  })
+
+  it('exposes the engine position signed VPI balance', () => {
+    mocks.primaryData = primaryData({
+      enginePositionResult: success({
+        size: 2_000_000_000_000_000_000_000n,
+        margin: 400_000_000n,
+        entryPrice: 97_500_000n,
+        maxProfitUsdc: 1_000_000_000n,
+        side: 0,
+        lastUpdateTime: 1_700_000_000n,
+        vpiAccrued: -40_000_000n,
+      }),
+    })
+
+    const { result } = renderHook(() => usePerpsAccount(98_000_000n))
+
+    expect(result.current.position?.vpiAccrued).toBe(-40_000_000n)
   })
 
   it('retains the last valid position across a transient getPosition subcall failure', () => {
