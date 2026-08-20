@@ -64,6 +64,13 @@ export function Perps() {
     setIsTransactionHistoryActive(activeTab === 'tradeHistory')
   }, [])
 
+  const handleAccountRefresh = useCallback(async () => {
+    const accountRefresh = perpsAccount.refetchDynamic()
+    void perpsMarket.refetchDynamic()
+    void perpsHistory.refetch()
+    await accountRefresh
+  }, [perpsAccount, perpsHistory, perpsMarket])
+
   useEffect(() => {
     if (trackedPageViewRef.current) return
     trackedPageViewRef.current = true
@@ -304,11 +311,7 @@ export function Perps() {
             executionFeeBps={perpsMarket.raw.executionFeeBps}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
-            onAccountRefresh={() => {
-              void perpsAccount.refetchDynamic()
-              void perpsMarket.refetchDynamic()
-              void perpsHistory.refetch()
-            }}
+            onAccountRefresh={handleAccountRefresh}
           />
         </div>
 
@@ -339,9 +342,7 @@ export function Perps() {
             tradeHistoryError={perpsHistory.tradeHistoryError}
             onActiveTabChange={handleAccountTabChange}
             onAccountRefresh={() => {
-              void perpsAccount.refetchDynamic()
-              void perpsMarket.refetchDynamic()
-              void perpsHistory.refetch()
+              void handleAccountRefresh()
             }}
             onClosePosition={() => {
               setClosePositionRequestId((requestId) => requestId + 1)
