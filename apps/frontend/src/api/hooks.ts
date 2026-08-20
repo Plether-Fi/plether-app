@@ -9,6 +9,7 @@ import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Result } from 'better-result';
 import { perpsApi, spotApi, PlethApiError } from './client';
+import { PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS } from './candlePolicy';
 import type {
   Side,
   ZapDirection,
@@ -19,6 +20,7 @@ import type {
   PricesMessage,
   WebSocketMessage,
   BasketHistoryRange,
+  PerpsCandleIntervalSeconds,
 } from './types';
 
 // =============================================================================
@@ -40,6 +42,11 @@ export const apiQueryKeys = {
     basketHistoryAll: () => [...apiQueryKeys.perps.all(), 'basketHistory'] as const,
     basketHistory: (range: BasketHistoryRange, intervalSeconds: number, includeComponents = false) =>
       [...apiQueryKeys.perps.basketHistoryAll(), range, intervalSeconds, includeComponents] as const,
+    basketCandlesAll: () => [...apiQueryKeys.perps.all(), 'basketCandles'] as const,
+    basketCandles: (intervalSeconds: PerpsCandleIntervalSeconds, cursor: number) =>
+      [...apiQueryKeys.perps.basketCandlesAll(), intervalSeconds, cursor] as const,
+    basketCurrentCandle: (intervalSeconds: PerpsCandleIntervalSeconds) =>
+      [...apiQueryKeys.perps.basketCandlesAll(), 'current', intervalSeconds] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
   },
   user: {
@@ -80,6 +87,12 @@ function unwrapResult<T>(result: Result<ApiResponse<T>, PlethApiError>): ApiResp
   return result.value;
 }
 
+function retryTransientFailureOnce(failureCount: number, error: unknown): boolean {
+  const status = (error as { status?: number }).status;
+  if (status !== undefined && status >= 400 && status < 500) return false;
+  return failureCount < 1;
+}
+
 // =============================================================================
 // Protocol Hooks
 // =============================================================================
@@ -102,35 +115,87 @@ export function useProtocolConfig() {
   });
 }
 
+const GENERIC_HISTORY_STALE_MS = 60 * 1000;
+const GENERIC_HISTORY_REFETCH_MS = 60 * 1000;
+const GENERIC_HISTORY_ERROR_REFETCH_MS = 2 * 60 * 1000;
+const COMPONENT_HISTORY_REFETCH_MS = 5 * 60 * 1000;
+
+export function perpsBasketHistoryQueryPolicy(
+  range: BasketHistoryRange,
+  intervalSeconds: number,
+  includeComponents: boolean
+) {
+  const isBoundedComponentHistory =
+    includeComponents && range === '24h' && intervalSeconds === 60 * 60;
+  return isBoundedComponentHistory
+    ? {
+        staleTimeMs: COMPONENT_HISTORY_REFETCH_MS,
+        refetchIntervalMs: COMPONENT_HISTORY_REFETCH_MS,
+        errorRefetchIntervalMs: COMPONENT_HISTORY_REFETCH_MS,
+        retryTransientFailure: false,
+      }
+    : {
+        staleTimeMs: GENERIC_HISTORY_STALE_MS,
+        refetchIntervalMs: GENERIC_HISTORY_REFETCH_MS,
+        errorRefetchIntervalMs: GENERIC_HISTORY_ERROR_REFETCH_MS,
+        retryTransientFailure: true,
+      };
+}
+
 export function usePerpsBasketHistory(
   range: BasketHistoryRange = '7d',
   intervalSeconds = 60 * 60,
   includeComponents = false
 ) {
+  const policy = perpsBasketHistoryQueryPolicy(range, intervalSeconds, includeComponents);
   return useQuery({
     queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds, includeComponents),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketHistory(range, intervalSeconds, includeComponents)),
-    staleTime: 60 * 1000,
-    refetchInterval: 60 * 1000,
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsBasketHistory(
+      range,
+      intervalSeconds,
+      includeComponents,
+      signal
+    )),
+    staleTime: policy.staleTimeMs,
+    refetchInterval: (query) => query.state.status === 'error'
+      ? policy.errorRefetchIntervalMs
+      : policy.refetchIntervalMs,
+    retry: policy.retryTransientFailure ? retryTransientFailureOnce : false,
   });
 }
 
 export function usePerpsBasketLatest() {
   return useQuery({
     queryKey: apiQueryKeys.perps.basketLatest(),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsBasketLatest()),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsBasketLatest(signal)),
     staleTime: 5 * 1000,
-    refetchInterval: 5 * 1000,
+    refetchInterval: (query) => query.state.status === 'error' ? 15 * 1000 : 5 * 1000,
+    retry: retryTransientFailureOnce,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
+  });
+}
+
+export function usePerpsBasketCurrentCandle(intervalSeconds: PerpsCandleIntervalSeconds) {
+  return useQuery({
+    queryKey: apiQueryKeys.perps.basketCurrentCandle(intervalSeconds),
+    queryFn: async ({ signal }) => unwrapResult(
+      await perpsApi.getPerpsBasketCurrentCandle(intervalSeconds, signal)
+    ),
+    staleTime: 0,
+    refetchInterval: (query) => query.state.status === 'error'
+      ? 15 * 1000
+      : PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS,
+    retry: retryTransientFailureOnce,
   });
 }
 
 export function usePerpsMarketStats() {
   return useQuery({
     queryKey: apiQueryKeys.perps.marketStats(),
-    queryFn: async () => unwrapResult(await perpsApi.getPerpsMarketStats()),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsMarketStats(signal)),
     staleTime: 30 * 1000,
-    refetchInterval: 30 * 1000,
+    refetchInterval: (query) => query.state.status === 'error' ? 60 * 1000 : 30 * 1000,
+    retry: retryTransientFailureOnce,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });
 }

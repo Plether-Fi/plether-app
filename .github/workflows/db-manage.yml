@@ -67,7 +67,7 @@ jobs:
               \"name\": \"psql\",
               \"image\": \"postgres:16-alpine\",
               \"essential\": true,
-              \"command\": [\"sh\", \"-c\", \"echo $SQL_B64 | base64 -d | psql \\\"$DATABASE_URL\\\"\"]
+              \"command\": [\"sh\", \"-c\", \"echo $SQL_B64 | base64 -d | psql --set=ON_ERROR_STOP=1 \\\"$DATABASE_URL\\\"\"]
             }]" \
             --query 'taskDefinition.taskDefinitionArn' --output text)
 

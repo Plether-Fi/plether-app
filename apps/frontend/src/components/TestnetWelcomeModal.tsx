@@ -46,7 +46,9 @@ export function TestnetWelcomeModalView({
   onDeposit,
 }: TestnetWelcomeModalViewProps) {
   const activeClaim = isWalletConnected ? claim : null
-  const handleSecondaryAction = activeClaim && onDeposit ? onDeposit : onClose
+  const isPendingClaim = activeClaim?.status === 'submitted'
+  const isCompletedClaim = !!activeClaim && !isPendingClaim
+  const handleSecondaryAction = isCompletedClaim && onDeposit ? onDeposit : onClose
   const isRecipientReady =
     isWalletConnected &&
     (!isTradingAccountRecipient || walletAddress.trim().length > 0) &&
@@ -118,24 +120,34 @@ export function TestnetWelcomeModalView({
         ) : null}
 
         {activeClaim ? (
-          <div className="space-y-2 border border-positive/40 bg-positive/10 px-4 py-3 text-sm text-content-primary">
+          <div
+            className={`space-y-2 border px-4 py-3 text-sm text-content-primary ${
+              isPendingClaim
+                ? 'border-brand-orange/40 bg-brand-orange/10'
+                : 'border-positive/40 bg-positive/10'
+            }`}
+          >
             <p className="font-medium">
-              {activeClaim.status === 'already_funded'
+              {isPendingClaim
+                ? 'Faucet transaction submitted. Waiting for Arbitrum Sepolia confirmation.'
+                : activeClaim.status === 'already_funded'
                 ? `Mock USDC is already available for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
                 : activeClaim.status === 'already_claimed'
                   ? `Mock USDC was already claimed for this ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`
                   : `Mock USDC minted to your ${isTradingAccountRecipient ? 'Trading Account' : 'wallet'}.`}
             </p>
             <p className="text-content-secondary">
-              {isTradingAccountRecipient
+              {isPendingClaim
+                ? 'Use “Check confirmation” below to refresh this transaction safely. Funds are not available until confirmation completes.'
+                : isTradingAccountRecipient
                 ? 'Next, use the sponsored deposit flow to move those funds into the Trading Account’s Margin Account before placing orders.'
                 : 'Next, deposit those funds into the exchange margin account before placing orders.'}
             </p>
-            {isTradingAccountRecipient ? (
+            {!isPendingClaim && isTradingAccountRecipient ? (
               <p className="text-content-secondary">
                 Plether sponsors eligible perps operations. A later owner-wallet transfer back to the Trading Account, such as after withdrawing MockUSDC, requires Arbitrum Sepolia ETH for gas.
               </p>
-            ) : (
+            ) : !isPendingClaim ? (
               <p className="text-content-secondary">
                 You also need some Arbitrum Sepolia ETH to pay transaction fees.{' '}
                 <a
@@ -147,13 +159,13 @@ export function TestnetWelcomeModalView({
                   Get Arbitrum Sepolia ETH from Alchemy.
                 </a>
               </p>
-            )}
+            ) : null}
             {activeClaim.txHash ? (
               <a
                 href={`https://sepolia.arbiscan.io/tx/${activeClaim.txHash}`}
                 target="_blank"
                 rel="noreferrer"
-                className="break-all text-positive hover:underline"
+                className={`break-all hover:underline ${isPendingClaim ? 'text-brand-orange' : 'text-positive'}`}
               >
                 {activeClaim.txHash}
               </a>
@@ -170,12 +182,12 @@ export function TestnetWelcomeModalView({
           isLoading={isRecipientReady ? isSubmitting : isPreparingRecipient}
           disabled={
             isWalletConnected &&
-            (!isRecipientReady || !!activeClaim)
+            (!isRecipientReady || (!!activeClaim && !isPendingClaim))
           }
           className="w-full"
         >
           {isRecipientReady ? (
-            'Get 100,000 mock USDC'
+            isPendingClaim ? 'Check confirmation' : 'Get 100,000 mock USDC'
           ) : isWalletConnected ? (
             recipientError ? 'Trading Account unavailable' : 'Preparing Trading Account'
           ) : (
@@ -193,7 +205,7 @@ export function TestnetWelcomeModalView({
           onClick={handleSecondaryAction}
           className="w-full"
         >
-          {activeClaim ? 'Deposit' : 'Maybe later'}
+          {isCompletedClaim ? 'Deposit' : activeClaim ? 'Close' : 'Maybe later'}
         </Button>
       </div>
     </Modal>

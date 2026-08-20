@@ -1,3 +1,5 @@
+\set ON_ERROR_STOP on
+
 -- Plether Transaction History Schema
 
 CREATE TABLE IF NOT EXISTS transactions (
@@ -358,3 +360,548 @@ CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_scan
 CREATE INDEX IF NOT EXISTS idx_perps_liquidation_candidates_pending
     ON perps_liquidation_candidates(chain_id, cfd_engine, pending_since ASC)
     WHERE pending_tx_hash IS NOT NULL;
+
+-- Incrementally maintained Perps basket OHLCV read model. These five tables are
+-- safe to bootstrap before the Perps history indexer schema exists. Historical
+-- population and the concurrent perps_events/perps_account_activity backfill
+-- and block-rewind indexes are installed by `plether-candle-admin migrate` after
+-- ensurePerpsHistorySchema has created the source tables. Keeping CREATE INDEX
+-- CONCURRENTLY out of this fresh bootstrap prevents references to source tables
+-- that do not exist yet.
+
+CREATE TABLE IF NOT EXISTS perps_basket_definitions (
+    series_id TEXT PRIMARY KEY,
+    definition_version TEXT NOT NULL,
+    configuration_hash TEXT NOT NULL,
+    configuration JSONB NOT NULL,
+    effective_from BIGINT NOT NULL,
+    effective_to BIGINT,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (configuration_hash ~ '^sha256:[0-9a-f]{64}$'),
+    CHECK (effective_from >= 0),
+    CHECK (effective_to IS NULL OR effective_to > effective_from)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_definitions_effective
+    ON perps_basket_definitions(active, effective_from DESC);
+
+CREATE TABLE IF NOT EXISTS perps_basket_observations (
+    series_id TEXT NOT NULL REFERENCES perps_basket_definitions(series_id),
+    observation_id TEXT NOT NULL,
+    publish_time BIGINT NOT NULL,
+    basket_price BIGINT NOT NULL,
+    component_prices JSONB NOT NULL,
+    source TEXT NOT NULL,
+    source_priority INTEGER NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (series_id, observation_id)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_observations_series_time
+    ON perps_basket_observations(series_id, publish_time, source_priority DESC, observation_id);
+
+CREATE TABLE IF NOT EXISTS perps_basket_candles (
+    series_id TEXT NOT NULL REFERENCES perps_basket_definitions(series_id),
+    interval_seconds BIGINT NOT NULL,
+    bucket_start BIGINT NOT NULL,
+    raw_open_price BIGINT NOT NULL,
+    raw_high_price BIGINT NOT NULL,
+    raw_low_price BIGINT NOT NULL,
+    raw_close_price BIGINT NOT NULL,
+    first_observation_time BIGINT NOT NULL,
+    last_observation_time BIGINT NOT NULL,
+    sample_count INTEGER NOT NULL,
+    quality TEXT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    finalized BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (series_id, interval_seconds, bucket_start),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    CHECK (bucket_start % interval_seconds = 0),
+    CHECK (sample_count > 0),
+    CHECK (revision > 0),
+    CHECK (quality IN ('observed', 'legacy_sampled', 'mixed')),
+    CHECK (raw_high_price >= GREATEST(raw_open_price, raw_close_price)),
+    CHECK (raw_low_price <= LEAST(raw_open_price, raw_close_price)),
+    CHECK (last_observation_time >= first_observation_time)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_basket_candles_page_cover
+    ON perps_basket_candles(series_id, interval_seconds, bucket_start)
+    INCLUDE (raw_open_price, raw_high_price, raw_low_price, raw_close_price,
+             sample_count, quality, revision, finalized);
+
+CREATE TABLE IF NOT EXISTS perps_market_volume_rollups (
+    chain_id BIGINT NOT NULL,
+    release_router TEXT NOT NULL,
+    interval_seconds BIGINT NOT NULL,
+    bucket_start BIGINT NOT NULL,
+    -- Exact ABS(size_delta) * price numerator; division happens only at API output.
+    volume_numerator NUMERIC(78,0) NOT NULL,
+    trade_count BIGINT NOT NULL,
+    first_source_block BIGINT NOT NULL,
+    last_source_block BIGINT NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 1,
+    finalized BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, release_router, interval_seconds, bucket_start),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    CHECK (bucket_start % interval_seconds = 0),
+    CHECK (volume_numerator >= 0),
+    CHECK (trade_count > 0),
+    CHECK (revision > 0),
+    CHECK (last_source_block >= first_source_block)
+);
+CREATE INDEX IF NOT EXISTS idx_perps_market_volume_rollups_page_cover
+    ON perps_market_volume_rollups(chain_id, release_router, interval_seconds, bucket_start)
+    INCLUDE (volume_numerator, trade_count, finalized);
+
+CREATE TABLE IF NOT EXISTS perps_rollup_coverage (
+    kind TEXT NOT NULL,
+    series_id TEXT NOT NULL DEFAULT '',
+    chain_id BIGINT NOT NULL DEFAULT 0,
+    release_router TEXT NOT NULL DEFAULT '',
+    interval_seconds BIGINT NOT NULL,
+    coverage_start BIGINT,
+    coverage_end BIGINT,
+    finalized_through BIGINT,
+    generation BIGINT NOT NULL DEFAULT 1,
+    complete BOOLEAN NOT NULL DEFAULT FALSE,
+    derivation_version TEXT NOT NULL,
+    last_error TEXT,
+    maintenance_from BIGINT,
+    maintenance_to BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (kind, series_id, chain_id, release_router, interval_seconds),
+    CHECK (kind IN ('price', 'volume')),
+    CHECK (interval_seconds IN (60, 180, 300, 900, 1800, 3600, 86400)),
+    -- Two 26-bit source generations are packed into one JS-safe API integer.
+    CHECK (generation > 0 AND generation < 67108864),
+    CHECK (
+        (kind = 'price' AND series_id <> '' AND chain_id = 0 AND release_router = '') OR
+        (kind = 'volume' AND series_id = '' AND chain_id > 0 AND release_router <> '')
+    ),
+    CHECK ((coverage_start IS NULL) = (coverage_end IS NULL)),
+    CHECK (coverage_start IS NULL OR coverage_start >= 0),
+    CHECK (coverage_end IS NULL OR coverage_end >= 0),
+    CHECK (finalized_through IS NULL OR finalized_through >= 0),
+    CHECK (coverage_start IS NULL OR coverage_start % interval_seconds = 0),
+    CHECK (coverage_end IS NULL OR coverage_end % interval_seconds = 0),
+    CHECK (finalized_through IS NULL OR finalized_through % interval_seconds = 0),
+    CHECK (coverage_start IS NULL OR coverage_end > coverage_start),
+    CHECK (finalized_through IS NULL OR coverage_start IS NULL OR finalized_through >= coverage_start),
+    CHECK (finalized_through IS NULL OR coverage_end IS NULL OR finalized_through <= coverage_end),
+    CONSTRAINT perps_rollup_coverage_maintenance_state_check CHECK (
+        (
+            last_error IS NOT DISTINCT FROM 'bounded_admin_repair' AND
+            NOT complete AND
+            maintenance_from IS NOT NULL AND
+            maintenance_to IS NOT NULL AND
+            maintenance_from >= 0 AND
+            maintenance_to > maintenance_from AND
+            maintenance_from % 60 = 0 AND
+            maintenance_to % 60 = 0
+        ) OR (
+            last_error IS DISTINCT FROM 'bounded_admin_repair' AND
+            maintenance_from IS NULL AND
+            maintenance_to IS NULL
+        )
+    )
+);
+
+-- Existing installations need the maintenance metadata added independently of
+-- CREATE TABLE IF NOT EXISTS. These statements are additive and idempotent.
+ALTER TABLE perps_rollup_coverage
+    ADD COLUMN IF NOT EXISTS maintenance_from BIGINT;
+ALTER TABLE perps_rollup_coverage
+    ADD COLUMN IF NOT EXISTS maintenance_to BIGINT;
+DO $maintenance_constraint$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'perps_rollup_coverage_maintenance_state_check'
+          AND conrelid = 'perps_rollup_coverage'::regclass
+    ) THEN
+        ALTER TABLE perps_rollup_coverage
+            ADD CONSTRAINT perps_rollup_coverage_maintenance_state_check CHECK (
+                (
+                    last_error IS NOT DISTINCT FROM 'bounded_admin_repair' AND
+                    NOT complete AND
+                    maintenance_from IS NOT NULL AND
+                    maintenance_to IS NOT NULL AND
+                    maintenance_from >= 0 AND
+                    maintenance_to > maintenance_from AND
+                    maintenance_from % 60 = 0 AND
+                    maintenance_to % 60 = 0
+                ) OR (
+                    last_error IS DISTINCT FROM 'bounded_admin_repair' AND
+                    maintenance_from IS NULL AND
+                    maintenance_to IS NULL
+                )
+            );
+    END IF;
+END
+$maintenance_constraint$;
+
+CREATE OR REPLACE FUNCTION protect_perps_rollup_generation_monotonic()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $rollup_generation$
+BEGIN
+    IF NEW.generation < OLD.generation THEN
+        RAISE EXCEPTION 'perps rollup generation cannot decrease'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NEW.generation = OLD.generation AND (
+        OLD.derivation_version IS DISTINCT FROM NEW.derivation_version OR (
+            OLD.complete AND
+            OLD.coverage_start IS NOT NULL AND
+            OLD.coverage_end IS NOT NULL AND
+            OLD.finalized_through IS NOT NULL AND (
+                NOT NEW.complete OR
+                NEW.coverage_start IS NULL OR
+                NEW.coverage_end IS NULL OR
+                NEW.finalized_through IS NULL OR
+                NEW.coverage_start > OLD.coverage_start OR
+                NEW.coverage_end < OLD.coverage_end OR
+                NEW.finalized_through < OLD.finalized_through
+            )
+        )
+    ) THEN
+        RAISE EXCEPTION 'perps rollup usability regression requires a new generation'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$rollup_generation$;
+
+DO $rollup_generation_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'perps_rollup_generation_monotonic'
+          AND tgrelid = 'perps_rollup_coverage'::regclass
+    ) THEN
+        CREATE TRIGGER perps_rollup_generation_monotonic
+            BEFORE UPDATE ON perps_rollup_coverage
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_rollup_generation_monotonic();
+    END IF;
+END
+$rollup_generation_trigger$;
+
+-- Operator-selected candle history, durable source proof, and independently
+-- published logical-market price boundaries.
+-- BEGIN PERPS CANDLE HISTORY FOUNDATION
+CREATE TABLE IF NOT EXISTS perps_candle_markets (
+    market_id TEXT PRIMARY KEY,
+    chain_id BIGINT NOT NULL,
+    price_series_id TEXT NOT NULL REFERENCES perps_basket_definitions(series_id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (market_id, chain_id),
+    CHECK (chain_id > 0),
+    CHECK (market_id ~ '^[a-z0-9][a-z0-9-]{0,62}$')
+);
+
+CREATE OR REPLACE FUNCTION protect_perps_candle_market_identity()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $candle_market_identity$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.created_at := NOW();
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'candle market identity is immutable'
+        USING ERRCODE = '55000';
+END
+$candle_market_identity$;
+
+DO $candle_market_triggers$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_trigger
+         WHERE tgname = 'perps_candle_market_immutable'
+           AND tgrelid = 'perps_candle_markets'::regclass
+    ) THEN
+        CREATE TRIGGER perps_candle_market_immutable
+            BEFORE INSERT OR UPDATE OR DELETE ON perps_candle_markets
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_candle_market_identity();
+    END IF;
+END
+$candle_market_triggers$;
+
+CREATE TABLE IF NOT EXISTS perps_candle_history_targets (
+    market_id TEXT NOT NULL REFERENCES perps_candle_markets(market_id),
+    revision BIGINT NOT NULL,
+    requested_start_timestamp BIGINT NOT NULL,
+    requested_by TEXT NOT NULL,
+    request_reference TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, revision),
+    UNIQUE (market_id, request_reference),
+    CHECK (revision > 0),
+    CHECK (requested_start_timestamp >= 0),
+    CHECK (requested_by ~ '[^[:space:]]'),
+    CHECK (request_reference ~ '[^[:space:]]')
+);
+
+CREATE OR REPLACE FUNCTION protect_perps_candle_history_target()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $candle_history_target$
+DECLARE
+    current_revision BIGINT;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'candle history targets are immutable; append a revision'
+            USING ERRCODE = '55000';
+    END IF;
+
+    PERFORM 1
+      FROM perps_candle_markets
+     WHERE market_id = NEW.market_id
+       FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'candle history target market does not exist'
+            USING ERRCODE = '23503';
+    END IF;
+
+    SELECT COALESCE(MAX(revision), 0)
+      INTO current_revision
+      FROM perps_candle_history_targets
+     WHERE market_id = NEW.market_id;
+    IF NEW.revision <> current_revision + 1 THEN
+        RAISE EXCEPTION 'candle history target must append the next revision'
+            USING ERRCODE = '23514';
+    END IF;
+
+    NEW.created_at := NOW();
+    RETURN NEW;
+END
+$candle_history_target$;
+
+DO $candle_history_target_triggers$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_trigger
+         WHERE tgname = 'perps_candle_history_target_identity'
+           AND tgrelid = 'perps_candle_history_targets'::regclass
+    ) THEN
+        CREATE TRIGGER perps_candle_history_target_identity
+            BEFORE INSERT OR UPDATE OR DELETE ON perps_candle_history_targets
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_candle_history_target();
+    END IF;
+END
+$candle_history_target_triggers$;
+
+CREATE TABLE IF NOT EXISTS perps_candle_history_ingestions (
+    market_id TEXT NOT NULL,
+    target_revision BIGINT NOT NULL,
+    start_timestamp BIGINT NOT NULL,
+    end_timestamp_exclusive BIGINT NOT NULL,
+    next_timestamp BIGINT NOT NULL,
+    sample_interval_seconds BIGINT NOT NULL,
+    complete BOOLEAN NOT NULL DEFAULT FALSE,
+    last_error TEXT,
+    published_generation BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, target_revision),
+    FOREIGN KEY (market_id, target_revision)
+        REFERENCES perps_candle_history_targets(market_id, revision),
+    CHECK (sample_interval_seconds > 0),
+    CHECK (start_timestamp >= 0 AND end_timestamp_exclusive >= start_timestamp),
+    CHECK (MOD(start_timestamp, sample_interval_seconds) = 0),
+    CHECK (MOD(end_timestamp_exclusive, sample_interval_seconds) = 0),
+    CHECK (next_timestamp >= start_timestamp AND next_timestamp <= end_timestamp_exclusive),
+    CHECK (MOD(next_timestamp, sample_interval_seconds) = 0),
+    CHECK (complete = (next_timestamp = end_timestamp_exclusive)),
+    CHECK (last_error IS NULL OR (NOT complete AND last_error ~ '[^[:space:]]')),
+    CONSTRAINT perps_candle_history_ingestions_publication_valid CHECK (
+        published_generation IS NULL OR
+        (published_generation > 0 AND complete AND last_error IS NULL)
+    )
+);
+
+ALTER TABLE perps_candle_history_ingestions
+    ADD COLUMN IF NOT EXISTS published_generation BIGINT;
+
+DO $candle_history_publication_constraint$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'perps_candle_history_ingestions_publication_valid'
+          AND conrelid = 'perps_candle_history_ingestions'::regclass
+    ) THEN
+        ALTER TABLE perps_candle_history_ingestions
+            ADD CONSTRAINT perps_candle_history_ingestions_publication_valid
+            CHECK (
+                published_generation IS NULL OR
+                (published_generation > 0 AND complete AND last_error IS NULL)
+            );
+    END IF;
+END
+$candle_history_publication_constraint$;
+
+CREATE OR REPLACE FUNCTION protect_perps_candle_history_publication()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $candle_history_publication$
+BEGIN
+    IF OLD.published_generation IS NOT NULL
+       AND NEW.published_generation IS DISTINCT FROM OLD.published_generation THEN
+        RAISE EXCEPTION 'candle history publication is immutable'
+            USING ERRCODE = '55000';
+    END IF;
+    RETURN NEW;
+END
+$candle_history_publication$;
+
+DO $candle_history_publication_trigger$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_trigger
+        WHERE tgname = 'perps_candle_history_publication_immutable'
+          AND tgrelid = 'perps_candle_history_ingestions'::regclass
+    ) THEN
+        CREATE TRIGGER perps_candle_history_publication_immutable
+            BEFORE UPDATE ON perps_candle_history_ingestions
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_candle_history_publication();
+    END IF;
+END
+$candle_history_publication_trigger$;
+
+CREATE TABLE IF NOT EXISTS perps_candle_history_ingestion_windows (
+    market_id TEXT NOT NULL,
+    target_revision BIGINT NOT NULL,
+    window_start BIGINT NOT NULL,
+    window_end_exclusive BIGINT NOT NULL,
+    sample_count BIGINT NOT NULL,
+    completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, target_revision, window_start),
+    FOREIGN KEY (market_id, target_revision)
+        REFERENCES perps_candle_history_ingestions(market_id, target_revision),
+    CHECK (window_start >= 0 AND window_end_exclusive > window_start),
+    CHECK (sample_count >= 0)
+);
+
+CREATE TABLE IF NOT EXISTS perps_market_release_epochs (
+    market_id TEXT NOT NULL,
+    release_revision BIGINT NOT NULL,
+    chain_id BIGINT NOT NULL,
+    release_router TEXT NOT NULL,
+    cfd_engine TEXT NOT NULL,
+    margin_clearinghouse TEXT NOT NULL,
+    deployment_block BIGINT NOT NULL,
+    deployment_block_hash TEXT NOT NULL,
+    deployment_tx_hash TEXT NOT NULL,
+    activation_block BIGINT NOT NULL,
+    activation_timestamp BIGINT NOT NULL,
+    activation_block_hash TEXT NOT NULL,
+    approval_reference TEXT NOT NULL,
+    is_market_genesis BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (market_id, release_revision),
+    UNIQUE (market_id, activation_block),
+    UNIQUE (chain_id, release_router),
+    FOREIGN KEY (market_id, chain_id)
+        REFERENCES perps_candle_markets(market_id, chain_id),
+    CHECK (release_router ~ '^0x[0-9a-f]{40}$'),
+    CHECK (cfd_engine ~ '^0x[0-9a-f]{40}$'),
+    CHECK (margin_clearinghouse ~ '^0x[0-9a-f]{40}$'),
+    CHECK (release_router <> '0x0000000000000000000000000000000000000000'),
+    CHECK (cfd_engine <> '0x0000000000000000000000000000000000000000'),
+    CHECK (margin_clearinghouse <> '0x0000000000000000000000000000000000000000'),
+    CHECK (release_revision > 0),
+    CHECK (is_market_genesis = (release_revision = 1)),
+    CHECK (deployment_block > 0),
+    CHECK (activation_block >= deployment_block),
+    CHECK (activation_timestamp >= 0),
+    CHECK (deployment_block_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (deployment_tx_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (activation_block_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (deployment_block_hash <> '0x0000000000000000000000000000000000000000000000000000000000000000'),
+    CHECK (deployment_tx_hash <> '0x0000000000000000000000000000000000000000000000000000000000000000'),
+    CHECK (activation_block_hash <> '0x0000000000000000000000000000000000000000000000000000000000000000'),
+    CHECK (approval_reference ~ '[^[:space:]]')
+);
+
+CREATE OR REPLACE FUNCTION protect_perps_market_release_identity()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $market_release_identity$
+DECLARE
+    market_chain_id BIGINT;
+    current_revision BIGINT;
+    latest_block BIGINT;
+    latest_timestamp BIGINT;
+BEGIN
+    IF TG_OP <> 'INSERT' THEN
+        RAISE EXCEPTION 'market release epochs are immutable; append a successor epoch'
+            USING ERRCODE = '55000';
+    END IF;
+
+    SELECT chain_id
+      INTO market_chain_id
+      FROM perps_candle_markets
+     WHERE market_id = NEW.market_id
+       FOR UPDATE;
+    IF NOT FOUND OR market_chain_id <> NEW.chain_id THEN
+        RAISE EXCEPTION 'market release does not match the logical market and chain'
+            USING ERRCODE = '23503';
+    END IF;
+
+    SELECT release_revision, activation_block, activation_timestamp
+      INTO current_revision, latest_block, latest_timestamp
+      FROM perps_market_release_epochs
+     WHERE market_id = NEW.market_id
+     ORDER BY release_revision DESC
+     LIMIT 1;
+    IF NOT FOUND THEN
+        current_revision := 0;
+    ELSE
+        IF NEW.activation_block <= latest_block
+           OR NEW.activation_timestamp < latest_timestamp THEN
+            RAISE EXCEPTION 'market release epochs must append in activation order'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
+
+    IF NEW.release_revision <> current_revision + 1 THEN
+        RAISE EXCEPTION 'market release must append the next revision'
+            USING ERRCODE = '23514';
+    END IF;
+
+    NEW.created_at := NOW();
+    RETURN NEW;
+END
+$market_release_identity$;
+
+DO $market_release_triggers$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_trigger
+         WHERE tgname = 'perps_market_release_immutable'
+           AND tgrelid = 'perps_market_release_epochs'::regclass
+    ) THEN
+        CREATE TRIGGER perps_market_release_immutable
+            BEFORE INSERT OR UPDATE OR DELETE ON perps_market_release_epochs
+            FOR EACH ROW
+            EXECUTE FUNCTION protect_perps_market_release_identity();
+    END IF;
+END
+$market_release_triggers$;
+-- END PERPS CANDLE HISTORY FOUNDATION

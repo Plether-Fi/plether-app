@@ -103,6 +103,7 @@ const currentLongPosition = {
   displayDxyPrice: 101_700_000n,
   liquidationPrice: 112_000_000n,
   pendingCarryUsdc: 4_200_000n,
+  vpiAccrued: 60n * USDC,
 }
 
 function openPreviewFixture({
@@ -111,12 +112,14 @@ function openPreviewFixture({
   marginDeltaUsdc,
   postSize,
   postMarginUsdc,
+  postVpiAccrued = 1_400_000n,
 }: {
   size: bigint
   notionalUsdc: bigint
   marginDeltaUsdc: bigint
   postSize: bigint
   postMarginUsdc: bigint
+  postVpiAccrued?: bigint
 }): OpenPreviewFixture {
   return {
     valid: true,
@@ -136,7 +139,7 @@ function openPreviewFixture({
     postSize,
     postMarginUsdc,
     postEntryPrice: 98_280_000n,
-    postVpiAccrued: 1_400_000n,
+    postVpiAccrued,
     postUnrealizedPnlUsdc: 0n,
     postEquityUsdc: postMarginUsdc - 1_400_000n,
     postHealthBps: 9_400n,
@@ -150,10 +153,12 @@ function closePreviewFixture({
   sizeDelta,
   remainingSize,
   remainingMargin,
+  vpiDeltaUsdc = -2_750_000n,
 }: {
   sizeDelta: bigint
   remainingSize: bigint
   remainingMargin: bigint
+  vpiDeltaUsdc?: bigint
 }): ClosePreviewFixture {
   return {
     valid: true,
@@ -161,7 +166,7 @@ function closePreviewFixture({
     executionPrice: 98_320_000n,
     sizeDelta,
     realizedPnlUsdc: 32_500_000n,
-    vpiDeltaUsdc: -2_750_000n,
+    vpiDeltaUsdc,
     vpiUsdc: 0n,
     executionFeeUsdc: 1_966_400n,
     remainingSize,
@@ -245,19 +250,87 @@ export const LongUnavailableDueToMarketSkew: Story = {
 }
 
 export const PreviewModal: Story = {
+  name: 'Open Long · Confirmation Modal',
   args: {
+    ...documentationMarketArgs,
     initialLifecycleState: 'preview',
     initialReviewOpen: true,
+    initialDirection: 'long',
+    initialSize: '2 000',
+    currentPositionAmount: '0',
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalUsdc: 1_966n * USDC,
+      marginDeltaUsdc: 393_200_000n,
+      postSize: 2_000n * 10n ** 18n,
+      postMarginUsdc: 393_200_000n,
+    }),
   },
   render: (args) => <TicketFrame {...args} />,
 }
 
 export const PreparingWalletRequest: Story = {
+  name: 'Open Long · Preparing Wallet Request',
   args: {
+    ...documentationMarketArgs,
     initialLifecycleState: 'commitPreparing',
     initialReviewOpen: true,
     initialDirection: 'long',
     initialSize: '2 000',
+    initialCommittedVpiUsdc: 1_400_000n,
+    currentPositionAmount: '0',
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalUsdc: 1_966n * USDC,
+      marginDeltaUsdc: 393_200_000n,
+      postSize: 2_000n * 10n ** 18n,
+      postMarginUsdc: 393_200_000n,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const IncreaseLongPreparingWalletRequest: Story = {
+  name: 'Increase Long · Preparing Wallet Request',
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'commitPreparing',
+    initialReviewOpen: true,
+    initialDirection: 'long',
+    initialSize: '5 000',
+    initialCommittedVpiUsdc: 1_400_000n,
+    initialCommittedPositionVpiAccrued: 61_400_000n,
+    currentPosition: currentLongPosition,
+    openPreviewFixture: openPreviewFixture({
+      size: 5_000n * 10n ** 18n,
+      notionalUsdc: 4_915n * USDC,
+      marginDeltaUsdc: 983n * USDC,
+      postSize: 13_200n * 10n ** 18n,
+      postMarginUsdc: 2_623n * USDC,
+      postVpiAccrued: 61_400_000n,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const CloseLongPreparingWalletRequest: Story = {
+  name: 'Close Long · Preparing VPI Credit',
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'commitPreparing',
+    initialReviewOpen: true,
+    initialDirection: 'short',
+    initialSize: '8 200',
+    initialReduceOnly: true,
+    initialCommittedVpiUsdc: -12_300_000n,
+    initialCommittedPositionVpiAccrued: 60n * USDC,
+    currentPosition: currentLongPosition,
+    closePreviewFixture: closePreviewFixture({
+      sizeDelta: POSITION_SIZE,
+      remainingSize: 0n,
+      remainingMargin: 0n,
+      vpiDeltaUsdc: -12_300_000n,
+    }),
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -295,12 +368,14 @@ export const IncreaseLongPreview: Story = {
       marginDeltaUsdc: 983n * USDC,
       postSize: 13_200n * 10n ** 18n,
       postMarginUsdc: 2_623n * USDC,
+      postVpiAccrued: 61_400_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
 }
 
 export const ReduceLongPreview: Story = {
+  name: 'Reduce Long · VPI Credit',
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
@@ -317,7 +392,27 @@ export const ReduceLongPreview: Story = {
   render: (args) => <TicketFrame {...args} />,
 }
 
+export const ReduceLongWithProvisionalVpiCredit: Story = {
+  name: 'Reduce Long · Existing Provisional VPI Credit',
+  args: {
+    ...documentationMarketArgs,
+    initialLifecycleState: 'preview',
+    initialReviewOpen: true,
+    initialDirection: 'short',
+    initialSize: '4 100',
+    currentPosition: { ...currentLongPosition, vpiAccrued: -40n * USDC },
+    closePreviewFixture: closePreviewFixture({
+      sizeDelta: 4_100n * 10n ** 18n,
+      remainingSize: 4_100n * 10n ** 18n,
+      remainingMargin: 820n * USDC,
+      vpiDeltaUsdc: 6n * USDC,
+    }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
 export const CloseLongPreview: Story = {
+  name: 'Close Long · VPI Charge',
   args: {
     ...documentationMarketArgs,
     initialLifecycleState: 'preview',
@@ -329,6 +424,7 @@ export const CloseLongPreview: Story = {
       sizeDelta: POSITION_SIZE,
       remainingSize: 0n,
       remainingMargin: 0n,
+      vpiDeltaUsdc: 4_250_000n,
     }),
   },
   render: (args) => <TicketFrame {...args} />,
@@ -373,8 +469,20 @@ export const ReduceOnlyPreventsFlipPreview: Story = {
 
 export const CommitPending: Story = {
   args: {
+    ...documentationMarketArgs,
     initialLifecycleState: 'commitPending',
     initialReviewOpen: true,
+    initialDirection: 'long',
+    initialSize: '2 000',
+    initialCommittedVpiUsdc: 1_400_000n,
+    currentPositionAmount: '0',
+    openPreviewFixture: openPreviewFixture({
+      size: 2_000n * 10n ** 18n,
+      notionalUsdc: 1_966n * USDC,
+      marginDeltaUsdc: 393_200_000n,
+      postSize: 2_000n * 10n ** 18n,
+      postMarginUsdc: 393_200_000n,
+    }),
   },
   render: (args) => <TicketFrame {...args} />,
 }
@@ -417,9 +525,33 @@ export const SelfExecuteFailed: Story = {
 }
 
 export const Executed: Story = {
+  name: 'Close Long · Finalized VPI Credit',
   args: {
+    ...documentationMarketArgs,
     initialLifecycleState: 'executed',
     initialReviewOpen: true,
+    initialDirection: 'short',
+    initialSize: '8 200',
+    initialReduceOnly: true,
+    initialCommittedIsFullClose: true,
+    initialCommittedPositionVpiAccrued: 60n * USDC,
+    initialOrderId: 62n,
+    initialCommittedSizeDelta: POSITION_SIZE,
+    initialFinalExecutionPrice: 98_320_000n,
+    initialFinalExecutionOraclePrice: ORACLE_PRICE,
+    initialFinalExecutionOracleFrozen: false,
+    initialFinalExecutionEconomicsVersion: 1,
+    initialFinalVpiUsdc: -12_300_000n,
+    currentPositionAmount: '0',
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const ExecutedWithVpiCharge: Story = {
+  name: 'Close Long · Finalized VPI Charge',
+  args: {
+    ...Executed.args,
+    initialFinalVpiUsdc: 4_250_000n,
   },
   render: (args) => <TicketFrame {...args} />,
 }

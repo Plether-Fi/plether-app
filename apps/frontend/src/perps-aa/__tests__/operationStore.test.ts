@@ -718,15 +718,18 @@ describe('sponsored operation store', () => {
   })
 
   it('backs automatic recovery off exponentially with a bounded delay', () => {
-    const now = Date.now()
     begin('operation-1')
     useSponsoredOperationStore.getState().recordUserOperationHash(
       'operation-1',
       `0x${'12'.repeat(32)}`
     )
     const operation = useSponsoredOperationStore.getState().operations[0]!
+    const recoveryStartedAt = operation.hashRecordedAt!
 
-    expect(sponsoredOperationAutomaticRecoveryIsDue(operation, now)).toBe(true)
+    expect(sponsoredOperationAutomaticRecoveryIsDue(
+      operation,
+      recoveryStartedAt
+    )).toBe(true)
     expect(sponsoredOperationAutomaticRecoveryDelayMs(1)).toBe(5_000)
     expect(sponsoredOperationAutomaticRecoveryDelayMs(2)).toBe(10_000)
     expect(sponsoredOperationAutomaticRecoveryDelayMs(3)).toBe(20_000)
@@ -735,11 +738,11 @@ describe('sponsored operation store', () => {
     )
     expect(sponsoredOperationAutomaticRecoveryIsExhausted(
       operation,
-      now + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+      recoveryStartedAt + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
     )).toBe(true)
     expect(sponsoredOperationAutomaticRecoveryIsDue(
       operation,
-      now + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
+      recoveryStartedAt + SPONSORED_OPERATION_AUTOMATIC_RECOVERY_WINDOW_MS
     )).toBe(false)
   })
 

@@ -31,6 +31,59 @@
 }
 
 /*
+ * Keep both TradingView hint systems on a neutral surface. Chart event hints
+ * are bottom-positioned and have a close icon, while press-and-hold hints use
+ * data-role="hint" and may contain an action button.
+ */
+.theme-dark [style*='bottom:'] div:has(> [role='img']),
+.theme-dark [data-role='hint'] > div:has(> div) {
+  background: #3b212d !important;
+  border: 1px solid rgba(255, 171, 150, 0.5) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: #fff5f9 !important;
+}
+
+.theme-dark [style*='bottom:'] div:has(> [role='img']) > div,
+.theme-dark [data-role='hint'] > div:has(> div) > div {
+  color: #fff5f9 !important;
+}
+
+.theme-dark [style*='bottom:'] div:has(> [role='img']) > [role='img'] {
+  color: #d8cbd0 !important;
+}
+
+.theme-dark [style*='bottom:'] div:has(> [role='img']) > [role='img']:hover {
+  color: #ffab96 !important;
+}
+
+.theme-dark [data-role='hint'] {
+  /* Keep a visible arrow in sync with the neutral hint surface. */
+  --_0-BlgL: #3b212d;
+  --_0-wG8z: #fff5f9;
+}
+
+.theme-dark [data-role='hint'] button {
+  --ui-lib-light-button-color-bg: #ffab96;
+  --ui-lib-light-button-color-border: #ffab96;
+  --ui-lib-light-button-color-content: #250917;
+  border-radius: 0 !important;
+}
+
+@media (any-hover: hover) {
+  .theme-dark [data-role='hint'] button:hover {
+    --ui-lib-light-button-color-bg: #ff572d;
+    --ui-lib-light-button-color-border: #ff572d;
+    --ui-lib-light-button-color-content: #fff5f9;
+  }
+}
+
+.theme-dark [data-role='hint'] button:focus-visible {
+  outline: 2px solid #ffab96 !important;
+  outline-offset: 2px;
+}
+
+/*
  * TradingView does not expose dialog geometry through its theme API. These
  * selectors use semantic roles and form attributes so they do not depend on
  * generated CSS-module class names.

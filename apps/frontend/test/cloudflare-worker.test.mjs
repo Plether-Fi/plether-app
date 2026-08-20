@@ -5,6 +5,12 @@ import worker from '../public/_worker.js';
 
 const REQUEST_URL =
   'https://app.plether.com/api/perps/v1/perps/basket/history?range=7d&interval=300';
+const CLOSED_CANDLE_URL =
+  'https://app.plether.com/api/perps/v1/perps/basket/candles?cursor=1800000000&interval=300';
+const ACTIVE_CANDLE_URL =
+  'https://app.plether.com/api/perps/v1/perps/basket/candles?interval=300&cursor=1800150000';
+const CURRENT_CANDLE_URL =
+  'https://app.plether.com/api/perps/v1/perps/basket/candles/current?interval=300';
 
 afterEach(() => {
   mock.restoreAll();
@@ -29,7 +35,7 @@ function workerEnv() {
 }
 
 describe('Cloudflare API proxy history caching and Server-Timing', () => {
-  it('caches public history briefly and preserves an origin response', async () => {
+  it('caches anonymous public history briefly and preserves an origin response', async () => {
     const originResponse = new Response('history payload', {
       headers: {
         'Content-Type': 'application/json',
@@ -38,15 +44,7 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
     });
     const fetchMock = mockOriginFetch(originResponse, 37.4564);
 
-    const response = await worker.fetch(
-      new Request(REQUEST_URL, {
-        headers: {
-          Authorization: 'Bearer browser-token',
-          Cookie: 'session=browser-session',
-        },
-      }),
-      workerEnv(),
-    );
+    const response = await worker.fetch(new Request(REQUEST_URL), workerEnv());
 
     assert.equal(fetchMock.mock.callCount(), 1);
     assert.equal(
@@ -56,13 +54,10 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
     const fetchOptions = fetchMock.mock.calls[0].arguments[1];
     assert.equal(fetchOptions.headers.has('Authorization'), false);
     assert.equal(fetchOptions.headers.has('Cookie'), false);
-    assert.deepEqual(fetchOptions.cf, {
-      cacheEverything: true,
-      cacheTtlByStatus: {
-        '200-299': 30,
-        '300-599': -1,
-      },
-    });
+    // Origin responses are admitted only after response headers are inspected
+    // by the Worker's manual Cache API path. Forced subrequest caching would
+    // override private/no-store/Set-Cookie safeguards before that inspection.
+    assert.equal(fetchOptions.cf, undefined);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('Content-Type'), 'application/json');
     assert.equal(response.headers.get('X-Origin-Request'), 'history-123');
@@ -140,6 +135,33 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
     );
   });
 
+  it('does not share-cache credential-bearing history requests', async () => {
+    const originResponse = new Response('{"ok":true}');
+    const fetchMock = mockOriginFetch(originResponse, 14.25);
+
+    const response = await worker.fetch(
+      new Request(REQUEST_URL, {
+        headers: {
+          Authorization: 'Bearer backend-token',
+          Cookie: 'session=backend-session',
+        },
+      }),
+      workerEnv(),
+    );
+
+    const fetchOptions = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(fetchOptions.cf, undefined);
+    assert.equal(
+      fetchOptions.headers.get('Authorization'),
+      'Bearer backend-token',
+    );
+    assert.equal(fetchOptions.headers.get('Cookie'), 'session=backend-session');
+    assert.equal(
+      response.headers.get('Server-Timing'),
+      'plether_edge_origin;dur=14.250',
+    );
+  });
+
   it('does not add timing to unrelated API responses', async () => {
     const originResponse = new Response('{"ok":true}');
     const fetchMock = mockOriginFetch(originResponse, 12.5);
@@ -151,5 +173,137 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
 
     assert.equal(response.headers.get('Server-Timing'), null);
     assert.equal(fetchMock.mock.calls[0].arguments[1].cf, undefined);
+  });
+});
+
+describe('Cloudflare API proxy candle caching', () => {
+  for (const status of [200, 503]) {
+    it(`preserves exact origin candle-clock evidence on a no-store ${status} current response`, async () => {
+      mock.method(Date, 'now', () => 1_800_000_100_000);
+      const cacheMatch = mock.fn(async () => new Response('{"cached":true}', {
+        status: 200,
+        headers: {
+          'X-Plether-Candle-Validated-At': '1799999999',
+        },
+      }));
+      const cachePut = mock.fn(async () => undefined);
+      const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+      Object.defineProperty(globalThis, 'caches', {
+        configurable: true,
+        value: {
+          default: {
+            match: cacheMatch,
+            put: cachePut,
+          },
+        },
+      });
+      const originResponse = new Response('{"data":{"coverageComplete":true}}', {
+        status,
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Plether-Candle-Validated-At': '1800000100',
+        },
+      });
+      const fetchMock = mockOriginFetch(originResponse, 17.25);
+
+      let response;
+      try {
+        response = await worker.fetch(
+          new Request(CURRENT_CANDLE_URL, {
+            headers: {
+              'Cache-Control': 'no-store',
+              Pragma: 'no-cache',
+            },
+          }),
+          workerEnv(),
+        );
+      } finally {
+        if (originalCaches === undefined) delete globalThis.caches;
+        else Object.defineProperty(globalThis, 'caches', originalCaches);
+      }
+
+      assert.equal(fetchMock.mock.callCount(), 1);
+      assert.equal(cacheMatch.mock.callCount(), 0);
+      assert.equal(cachePut.mock.callCount(), 0);
+      assert.equal(
+        fetchMock.mock.calls[0].arguments[1].headers.get('Cache-Control'),
+        'no-store',
+      );
+      assert.equal(response.status, status);
+      assert.equal(
+        response.headers.get('X-Plether-Candle-Validated-At'),
+        '1800000100',
+      );
+      assert.equal(
+        response.headers.get('Server-Timing'),
+        'plether_edge_origin;dur=17.250',
+      );
+    });
+  }
+
+  for (const [kind, requestUrl] of [
+    ['page', ACTIVE_CANDLE_URL],
+    ['current', CURRENT_CANDLE_URL],
+  ]) {
+    it(`replaces stale origin timing with edge cache timing for a cached candle ${kind}`, async () => {
+      mock.method(Date, 'now', () => 1_800_000_100_000);
+      const cachedResponse = new Response('{"cached":true}', {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Plether-Edge-Cache': 'HIT',
+          'Server-Timing': 'plether_app;dur=80.000, plether_db_candles;dur=50.000',
+        },
+      });
+      mockOriginFetch(cachedResponse, 2.75);
+
+      const response = await worker.fetch(new Request(requestUrl), workerEnv());
+
+      assert.equal(response.headers.get('Server-Timing'), 'plether_edge_cache;dur=2.750');
+      assert.equal(await response.text(), '{"cached":true}');
+    });
+  }
+
+  it('routes candle reads without forcing pre-validation subrequest caching', async () => {
+    mock.method(Date, 'now', () => 1_800_000_100_000);
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(
+      '{"data":[]}',
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    await worker.fetch(new Request(CURRENT_CANDLE_URL), workerEnv());
+    await worker.fetch(new Request(ACTIVE_CANDLE_URL), workerEnv());
+    await worker.fetch(new Request(CLOSED_CANDLE_URL), workerEnv());
+
+    assert.equal(
+      fetchMock.mock.calls[0].arguments[0].href,
+      'https://sepolia-api.plether.test/api/perps/basket/candles/current?interval=300',
+    );
+    assert.equal(
+      fetchMock.mock.calls[1].arguments[0].href,
+      'https://sepolia-api.plether.test/api/perps/basket/candles?interval=300&cursor=1800150000',
+    );
+    assert.equal(fetchMock.mock.calls[0].arguments[1].cf, undefined);
+    assert.equal(fetchMock.mock.calls[1].arguments[1].cf, undefined);
+    assert.equal(fetchMock.mock.calls[2].arguments[1].cf, undefined);
+  });
+
+  it('bypasses shared caching for credential-bearing candle requests', async () => {
+    mock.method(Date, 'now', () => 1_800_000_000_000);
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(
+      '{"data":[]}',
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    await worker.fetch(new Request(CLOSED_CANDLE_URL, {
+      headers: {
+        Authorization: 'Bearer backend-token',
+        Cookie: 'session=backend-session',
+      },
+    }), workerEnv());
+
+    const fetchOptions = fetchMock.mock.calls[0].arguments[1];
+    assert.equal(fetchOptions.cf, undefined);
+    assert.equal(fetchOptions.headers.get('Authorization'), 'Bearer backend-token');
+    assert.equal(fetchOptions.headers.get('Cookie'), 'session=backend-session');
   });
 });

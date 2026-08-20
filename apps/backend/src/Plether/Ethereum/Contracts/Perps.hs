@@ -391,6 +391,8 @@ parsePriceFeedUpdatesCallWith signature updateData feedIds minPublishTime maxPub
   if minPublishTime < 0 || maxPublishTime < minPublishTime || maxPublishTime > maxUint64
     then Left $ RpcJsonError "Pyth publish-time bounds must form a valid uint64 range"
     else Right ()
+  -- Pyth applies both EVM bounds inclusively. In particular, an exact-time
+  -- query with minPublishTime == maxPublishTime is valid and must remain so.
   let encodedUpdateData = encodeBytesArray updateData
       encodedFeedIds = encodeBytes32Array feedIds
       updateDataOffset = 4 * 32

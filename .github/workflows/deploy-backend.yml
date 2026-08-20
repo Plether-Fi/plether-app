@@ -1,9 +1,6 @@
 name: Deploy Backend
 
 on:
-  push:
-    branches: [master]
-    paths: [apps/backend/**]
   workflow_dispatch:
     inputs:
       environment:
@@ -19,9 +16,15 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  # Shared with candle-admin.yml; never replace the deployed writer mode while
+  # an approved candle mutation is still running.
+  group: plether-backend-mutation-${{ inputs.environment }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
+  TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   pyth-config-preflight:
@@ -40,7 +43,7 @@ jobs:
 
       - name: Validate deployed Pyth configuration
         env:
-          ALLOW_MISSING_TASK_DEFINITIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && 'true' || 'false' }}
+          ALLOW_MISSING_TASK_DEFINITIONS: ${{ inputs.bootstrap && 'true' || 'false' }}
           AWS_MAX_ATTEMPTS: '3'
           AWS_PAGER: ''
           AWS_RETRY_MODE: standard
@@ -346,8 +349,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      image: ${{ steps.build.outputs.image }}
-      log_router_image: ${{ steps.build.outputs.log_router_image }}
+      image: ${{ steps.images.outputs.image }}
+      log_router_image: ${{ steps.images.outputs.log_router_image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -366,8 +369,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push application and log router images
-        id: build
+      - name: Resolve backend image tags
+        id: images
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -380,30 +383,40 @@ jobs:
             LOG_ROUTER_REPOSITORY=plether-otel-log-router-$TARGET_ENV
           fi
 
-          IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          LOG_ROUTER_IMAGE=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG
-          docker buildx build \
-            --platform linux/arm64 \
-            -f apps/backend/Dockerfile \
-            -t $IMAGE \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            --push \
-            .
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_latest=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
+          echo "log_router_image=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "log_router_image_latest=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
 
-          docker buildx build \
-            --platform linux/arm64 \
-            -f apps/backend/otel-log-router/Dockerfile \
-            -t $LOG_ROUTER_IMAGE \
-            -t $ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest \
-            --push \
-            .
+      - name: Build and push application image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.images.outputs.image }}
+            ${{ steps.images.outputs.image_latest }}
+          cache-from: type=gha,scope=plether-backend-linux-arm64
+          cache-to: type=gha,mode=max,scope=plether-backend-linux-arm64,ignore-error=true
 
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "log_router_image=$LOG_ROUTER_IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Build and push log router image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/backend/otel-log-router/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.images.outputs.log_router_image }}
+            ${{ steps.images.outputs.log_router_image_latest }}
+          cache-from: type=gha,scope=plether-otel-log-router-linux-arm64
+          cache-to: type=gha,mode=max,scope=plether-otel-log-router-linux-arm64,ignore-error=true
 
   deploy:
     needs: build
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap != true }}
+    if: ${{ inputs.bootstrap != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -411,7 +424,7 @@ jobs:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
+        include: ${{ fromJson((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials
@@ -560,6 +573,30 @@ jobs:
           task-definition: task-def.json
           container-name: otel-log-router
           image: ${{ needs.build.outputs.log_router_image }}
+
+      - name: Ensure API health check grace period
+        if: matrix.service_name == 'plether-api' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
+          ECS_SERVICE: ${{ matrix.service_name }}
+          ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS: "300"
+        run: |
+          set -euo pipefail
+
+          applied_grace_period="$(
+            aws ecs update-service \
+              --cluster "$ECS_CLUSTER" \
+              --service "$ECS_SERVICE" \
+              --health-check-grace-period-seconds "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" \
+              --query 'service.healthCheckGracePeriodSeconds' \
+              --output text \
+              --no-cli-pager
+          )"
+
+          if [ "$applied_grace_period" != "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" ]; then
+            echo "::error title=ECS health-check grace update failed::Expected ${ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS}s, got ${applied_grace_period}s."
+            exit 1
+          fi
 
       - name: Deploy to ECS
         if: steps.task-definition-status.outputs.exists == 'true'

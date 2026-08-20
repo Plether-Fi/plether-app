@@ -64,7 +64,15 @@ The steady-state volume controls are:
   minute. Individual 5xx responses are limited to one every 10 seconds, and
   slow-request warnings to one per minute.
 - Indexer and basket-cache success progress emits at most once every five
-  minutes per event type.
+  minutes per event type. In candle dual-write mode, successful price and
+  volume source polls also provide five-minute writer heartbeats even when a
+  market is closed, a block range has no trades, or the indexer is caught up.
+  Terraform alarms only after three consecutive five-minute windows contain no
+  heartbeat. Each heartbeat also reports base-minute coverage state and excess
+  finalization lag after subtracting normal bucket alignment and configured
+  source lateness; this detects a live loop whose durable coverage has frozen
+  without making hourly or daily candle resolution part of the liveness
+  calculation.
 - Recurring worker warnings and errors emit at most once per minute per event
   type. The next emitted record includes `suppressed_count` so repeated failures
   remain visible without producing one log per poll.
@@ -119,13 +127,45 @@ PostgreSQL is required for transaction history. Without it, history endpoints re
 createdb plether
 
 # Initialize schema
-psql plether < schema.sql
+psql --set=ON_ERROR_STOP=1 plether < schema.sql
 
 # Add DATABASE_URL to .env
 echo 'DATABASE_URL=postgresql://localhost/plether' >> .env
 ```
 
 The indexer runs automatically on startup and polls for new blocks every 12 seconds.
+
+The static bootstrap creates the additive candle read-model and history-target
+tables, but
+intentionally does not build the Perps event/activity history indexes because a
+fresh database does not have their source tables yet. After the API or Perps
+indexer has initialized its history schema, run `plether-candle-admin migrate`;
+the command validates both prerequisite tables and builds and verifies four
+indexes concurrently: bounded-time backfill access plus block-number access for
+reorg discovery and deletion on both history tables.
+The protected workflow defaults `migrate` to a 60-second lock timeout; this
+schema/index operation is distinct from candle data backfill.
+
+Production backfill, repair, and controlled indexer replay run only through the
+protected `candle-admin.yml` workflow. They require
+`PERPS_CANDLE_WRITE_MODE=dual` and enforce lock, statement, and absolute runtime
+limits; backfill and repair also refuse an empty canonical source domain. The
+admin and backend deployment workflows share an environment-specific
+concurrency group so a deployment cannot change write mode during a mutation.
+Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
+runs from a stable deployed indexer digest without moving its canonical cursor
+or coverage certification.
+
+An arbitrary price-history start is selected with the protected
+`set-history-target` action. Selection is desired state only: the basket worker
+bulk-fetches and proves the exact frozen range while the previous published
+target remains live. After `status` reports `publication_ready=true`, run a
+price-only backfill with no narrowed bounds; CandleAdmin builds any missing
+rollups and atomically publishes coverage, generation, and the new active
+target. Selecting an earlier start adds a history prefix, while selecting a
+later start moves the public lower bound without deleting physical history.
+This does not ingest old contract releases. Candles before the current router's
+proven volume coverage expose unknown volume rather than zero.
 
 ## Local Perps Stack
 
@@ -244,16 +284,25 @@ CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-perps-indexer -- --once
 
-# Backfill a known range.
-RPC_URL="$ARB_SEPOLIA_RPC_URL" \
-CHAIN_ID=421614 \
-DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-cabal run plether-perps-indexer -- --backfill --from 123 --to 456
+# Production replay is dispatched only through the protected workflow from
+# master, with exact inclusive block bounds and scope=none.
+gh workflow run candle-admin.yml \
+  --repo Plether-Fi/plether-app \
+  --ref master \
+  -f environment=sepolia \
+  -f action=replay \
+  -f scope=none \
+  -f from_block=123 \
+  -f to_block=456 \
+  -f confirmation='RUN REPLAY ON SEPOLIA'
 ```
 
 Notes:
 
 - The indexer only writes finalized/safe history. Default finality delay is `1` block.
+- Never use the legacy `--backfill --from ... --to ...` invocation for an
+  operational replay. It lacks the protected workflow's range, topology,
+  digest, deadline, cancellation, and cleanup guardrails.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
 - Exact execution economics use `debug_traceTransaction`; on Arbitrum Sepolia the
   indexer falls back to the public Blockscout raw-trace API. Override or disable
@@ -511,6 +560,13 @@ Local URLs:
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
+| `PERPS_CANDLE_WRITE_MODE` | No | `off` | OHLCV write mode: `off` keeps legacy-only ingestion; `dual` writes legacy data and rollups |
+| `PERPS_CANDLE_READ_MODE` | No | `legacy` | Candle API read mode: `legacy` keeps rollup routes closed; `rollup` enables allowlisted intervals only with strict coverage. `shadow` is reserved and currently performs no comparison or traffic switch. |
+| `PERPS_CANDLE_READ_INTERVALS` | No | empty | Comma/space-separated canonical intervals eligible for strict rollup reads; empty exposes no rollup interval |
+| `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | `0` | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
+| `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
+| `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
+| `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
 
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set
@@ -545,8 +601,9 @@ After changing the Terraform AA variables:
 4. Set Pages `SEPOLIA_BACKEND_URL` to the HTTPS API hostname and use the same
    `AA_PROXY_ORIGIN_TOKEN` in Pages and the backend.
 
-Set `operations_alarm_sns_topic_arn` to route the Terraform-managed sponsored
-gas and keeper-task CloudWatch alarms to an operations channel. Keep Pimlico's
+Set `operations_alarm_sns_topic_arn` to route all Terraform-managed service,
+database, candle, sponsored-gas, and keeper alarms to an operations channel;
+it is required for `mainnet`. Keep Pimlico's
 policy-level budget alerts enabled as the authoritative view of sponsored gas;
 the backend alert is a receipt-based secondary signal.
 
@@ -594,10 +651,57 @@ the backend alert is a receipt-based secondary signal.
 | `GET /api/perps/accounts/:address/orders` | Indexed Perps order history |
 | `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
 | `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
+| `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration; both query parameters are required exactly once |
+| `GET /api/perps/basket/candles?interval=&cursor=` | Finalized OHLCV rollups in a fixed 500-bucket window ending at the exclusive cursor |
+| `GET /api/perps/basket/candles/current?interval=` | Mutable current OHLCV candle and dataset generation |
 
 Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
 
 Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
+
+Candle intervals are restricted to `60`, `180`, `300`, `900`, `1800`, `3600`,
+and `86400` seconds. Intervals and historical candle cursors use their unique
+positive decimal representation: signs, whitespace, and leading zeroes are
+rejected. Historical candle cursors are positive Unix timestamps
+aligned to `interval * 500`; responses are ascending and expose
+`previousCursor`, coverage/finalization watermarks, and `datasetGeneration`.
+Historical pages contain finalized price rows only. `volumeUsdc` and
+`tradeCount` are nullable on both native historical and mutable current candles:
+before current-router volume coverage, null means unknown; inside complete
+coverage, zero means the indexer proved no trades in that bucket. Per-candle
+`complete` remains the legacy combined value `priceComplete && volumeComplete`;
+therefore a valid pre-router price candle intentionally has `complete: false`.
+Native chart consumers use page-level price coverage and `priceComplete`, with
+`volumeComplete` interpreted independently. Native candle responses identify
+the immutable basket definition with
+`seriesId`, `configurationHash`, and the lossless `displayPriceCap`, plus the
+current volume scope in `volumeChainId` and normalized `volumeRouter`. The
+same response exposes trusted `volumeCoverageStart`, `volumeCoverageEnd`,
+`volumeFinalizedThrough`, and `volumeCoverageComplete` for that exact scope;
+unusable or absent volume coverage is represented by three null bounds and
+`volumeCoverageComplete: false`. OHLC
+fields use explicit `raw*Price` names and lossless decimal strings.
+
+When strict rollup reads are enabled for an effective interval, the legacy
+`/basket/history` route is served from bounded candle pages and performs no raw
+snapshot/volume scan. Oversized requests snap upward to the smallest canonical
+resolution that keeps the response bounded (for example, 30-day minute requests
+use five-minute rollups and one-year minute requests use hourly rollups).
+The route accepts canonical `range` values (`24h`, `7d`, `30d`, or `1y`) and a
+canonical positive decimal `interval`, each exactly once. `includeComponents`
+may appear at most once and must be exactly `true` or `false`; missing,
+duplicate, unknown, or malformed query parameters return `400` before database
+access.
+Component-bearing history remains on the legacy source because candle rollups
+do not store per-component point metadata, and is therefore accepted only for
+the UI's bounded `range=24h`, `interval=3600`,
+`includeComponents=true` request. Other component shapes return `400` rather
+than starting an unbounded raw-source scan. This compatibility response does
+not query market activity: its point `volumeUsdc` values are deliberately zero
+and non-authoritative, and its volume query timing/row metrics remain zero.
+`GET /api/perps/market/stats` is the authoritative source for rolling 24-hour
+volume. Browsers refresh the component payload no more often than every five
+minutes.
 
 ### Insights (requires PostgreSQL)
 
@@ -634,11 +738,14 @@ All responses follow this structure:
 
 ## Caching
 
-Responses are cached in-memory using STM. Cache invalidates when block number advances:
+Responses are cached in-memory using STM:
 
-- `/protocol/status` - Global cache
-- `/user/:address/dashboard` - Per-address cache
-- `/user/:address/allowances` - Per-address cache
+- `/protocol/status` - Global cache invalidated when the block advances
+- `/user/:address/dashboard` - Per-address cache invalidated when the block advances
+- `/user/:address/allowances` - Per-address cache invalidated when the block advances
+- `/api/perps/basket/candles` - Successful finalized pages only, for five seconds
+  with a 64-page process-local bound; concurrent requests for the same page
+  share one database load. `/api/perps/basket/candles/current` remains uncached.
 
 Cached responses include `meta.cached: true` and `meta.cachedAt` timestamp.
 

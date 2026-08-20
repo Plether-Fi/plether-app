@@ -7,7 +7,11 @@ import Data.Aeson (Value, object, toJSON, (.=))
 import qualified Data.ByteString as BS
 import Data.IORef (newIORef, readIORef, writeIORef)
 import Data.Text (Text)
-import Plether.Config (Config (..))
+import Plether.Config
+  ( Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Database.Schema
   ( BasketSnapshotRow (..)
   , PythUpdatePayloadRow (..)
@@ -591,6 +595,13 @@ testConfig =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"

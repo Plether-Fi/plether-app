@@ -88,6 +88,9 @@ jobs:
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
           VITE_DEPLOYMENT_ENV: ${{ env.TARGET_ENV }}
           VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
+          # Repository variables are selected explicitly because this job does
+          # not bind to GitHub environments. Each target defaults fail-closed.
+          VITE_PERPS_CANDLE_API_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false') || (vars.VITE_PERPS_CANDLE_API_ENABLED_MAINNET || 'false') }}
         run: npm run build
 
       - name: Validate TradingView runtime payload

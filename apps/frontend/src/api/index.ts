@@ -43,6 +43,11 @@ export type {
   BasketLatest,
   BasketComponentPrice,
   BasketHistoryRange,
+  PerpsBasketCandle,
+  PerpsBasketCandleQuality,
+  PerpsBasketCandlePage,
+  PerpsBasketCurrentCandle,
+  PerpsCandleIntervalSeconds,
   PerpsRevealPayload,
   PerpsMarketStats,
   // User types
@@ -87,6 +92,7 @@ export {
   useProtocolConfig,
   usePerpsBasketHistory,
   usePerpsBasketLatest,
+  usePerpsBasketCurrentCandle,
   usePerpsMarketStats,
   // User hooks
   useUserDashboard,

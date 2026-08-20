@@ -1,12 +1,32 @@
 module Plether.Handlers.Perps
   ( getBasketHistory
   , getBasketHistoryTimed
+  , getBasketHistoryWithSourcesTimed
+  , getLegacyBasketHistoryVolumeRowsTimed
+  , getBasketCandlePageTimed
+  , getBasketCurrentCandleTimedAt
   , BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
+  , BasketCandleFetch (..)
+  , BasketCandleTimings (..)
+  , basketCandleServerTiming
+  , basketCandleTimingMetrics
+  , coverageLagSeconds
+  , validateBasketCandlePage
+  , validateBasketCandlePageWithCap
+  , validateBasketCandlePageWithPolicy
+  , validateBasketCurrentCandle
+  , validateBasketCurrentCandleWithCap
+  , validateBasketCurrentCandleWithPolicy
   , basketHistoryServerTiming
   , basketHistoryTimingMetrics
   , durationMilliseconds
   , basketHistoryPointsWithVolume
+  , basketHistoryFromCandleRows
+  , boundedBasketHistoryInterval
+  , isBoundedComponentHistoryRequest
+  , validateRollupHistoryRange
+  , validateRollupHistoryRangeWithPolicy
   , getBasketLatest
   , getCachedLatestPythUpdate
   , getPythUpdate
@@ -30,7 +50,7 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as LBS
 import Data.List (sort)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8)
@@ -48,9 +68,37 @@ import Network.HTTP.Client
   , setQueryString
   )
 import Network.HTTP.Types.Status (statusCode)
-import Plether.Cache (AppCache (..))
-import Plether.Config (Config (..))
+import Plether.Cache
+  ( AppCache (..)
+  , CandlePageCacheValue (..)
+  , SingleFlightSource (..)
+  , runSingleFlightCache
+  , runSingleFlightCacheFresh
+  )
+import Plether.Config
+  ( Config (..)
+  , perpsCandleRollupReadEnabled
+  )
 import Plether.Database (DbPool, withDb)
+import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple.Transaction
+  ( IsolationLevel (RepeatableRead)
+  , ReadWriteMode (ReadOnly)
+  , TransactionMode (..)
+  , withTransactionMode
+  )
+import Plether.Database.Candles
+  ( BasketCandleRow (..)
+  , BasketDefinitionIdentity (..)
+  , CandleCurrent (..)
+  , CandlePage (..)
+  , CandleRange (..)
+  , CandleQuality (..)
+  , getActiveBasketDefinitionIdentity
+  , getBasketCandlePageSnapshot
+  , getBasketCurrentCandleSnapshot
+  , getBasketCandleRange
+  )
 import Plether.Database.Schema
   ( BasketHistorySnapshotRow (..)
   , BasketSnapshotRow (..)
@@ -63,6 +111,7 @@ import Plether.Database.Schema
   , getPythUpdatePayloadForWindow
   , isHistoricalRevealPayload
   )
+import Plether.Logging (field, logWarnEvery)
 import Plether.Types
 import qualified Plether.Types.Error as E
 import Plether.Ethereum.Client (EthClient)
@@ -74,6 +123,7 @@ import Plether.Utils.Hex (hexToByteStringEither)
 
 data BasketHistoryFetch = BasketHistoryFetch
   { bhfResponse :: ApiResponse BasketHistory
+  , bhfReadSource :: Text
   , bhfPoolWaitNs :: Word64
   , bhfSnapshotQueryNs :: Word64
   , bhfVolumeQueryNs :: Word64
@@ -81,6 +131,702 @@ data BasketHistoryFetch = BasketHistoryFetch
   , bhfVolumeRows :: Int
   }
   deriving stock (Show)
+
+data BasketCandleFetch a = BasketCandleFetch
+  { bcfResponse :: ApiResponse a
+  , bcfReadSource :: Text
+  , bcfPoolWaitNs :: Word64
+  , bcfQueryNs :: Word64
+  , bcfRowCount :: Int
+  , bcfFinalizedThrough :: Maybe Integer
+  , bcfDatasetGeneration :: Integer
+  }
+  deriving stock (Show)
+
+defaultBasketDisplayPriceCap :: Integer
+defaultBasketDisplayPriceCap = 200_000_000
+
+data BasketCandleTimings = BasketCandleTimings
+  { bctBackendTotalNs :: Word64
+  , bctDbPoolWaitNs :: Word64
+  , bctQueryNs :: Word64
+  , bctResponseEncodeNs :: Word64
+  }
+  deriving stock (Eq, Show)
+
+basketCandleTimingMetrics :: BasketCandleTimings -> [(Text, Word64)]
+basketCandleTimingMetrics timings =
+  [ ("plether_app", bctBackendTotalNs timings)
+  , ("plether_db_pool_wait", bctDbPoolWaitNs timings)
+  , ("plether_db_candles", bctQueryNs timings)
+  , ("plether_response_encode", bctResponseEncodeNs timings)
+  , ("plether_other", unattributedCandleDuration timings)
+  ]
+
+basketCandleServerTiming :: BasketCandleTimings -> Text
+basketCandleServerTiming =
+  T.intercalate ", "
+    . map (\(metric, duration) -> metric <> ";dur=" <> renderDurationMilliseconds duration)
+    . basketCandleTimingMetrics
+
+unattributedCandleDuration :: BasketCandleTimings -> Word64
+unattributedCandleDuration BasketCandleTimings {..} =
+  bctBackendTotalNs
+    - min
+      bctBackendTotalNs
+      (bctDbPoolWaitNs + bctQueryNs + bctResponseEncodeNs)
+
+getBasketCandlePageTimed
+  :: AppCache
+  -> DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> Bool
+  -> IO (Either ApiError (BasketCandleFetch BasketCandlePage))
+getBasketCandlePageTimed cache pool cfg interval cursor requireFresh = do
+  (cacheSource, result) <-
+    (if requireFresh then runSingleFlightCacheFresh else runSingleFlightCache)
+      (cacheBasketCandlePages cache)
+      (interval, cursor)
+      (either (const False) (const True))
+      loadPage
+  pure $ fmap (candlePageFetch cacheSource) result
+  where
+    loadPage = do
+      result <- loadBasketCandlePage pool cfg interval cursor
+      case result of
+        Left err -> pure $ Left err
+        Right value -> do
+          cachedAt <- getPOSIXTime
+          pure $ Right value {cpcvCachedAt = cachedAt}
+
+loadBasketCandlePage
+  :: DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> IO (Either ApiError CandlePageCacheValue)
+loadBasketCandlePage pool cfg interval cursor = do
+  now <- floor <$> getPOSIXTime
+  poolStartedAt <- getMonotonicTimeNSec
+  (mDefinition, page, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
+    connectionReadyAt <- getMonotonicTimeNSec
+    let poolWaitNs = connectionReadyAt - poolStartedAt
+    queryStartedAt <- getMonotonicTimeNSec
+    -- A client may request the bounded page ahead of the wall clock. Never use
+    -- that future timestamp to select a scheduled basket definition.
+    (mDefinition, page) <-
+      getBasketCandlePageSnapshot
+        conn
+        (min (cursor - 1) now)
+        (cfgPerpsChainId cfg)
+        (cfgPerpsOrderRouter cfg)
+        interval
+        cursor
+    queryFinishedAt <- getMonotonicTimeNSec
+    pure (mDefinition, page, poolWaitNs, queryFinishedAt - queryStartedAt)
+  case mDefinition of
+    Nothing ->
+      pure $ Left $ E.networkError "Active basket definition identity is unavailable"
+    Just definition ->
+      case
+          validateBasketCandlePageWithPolicy
+            (bdiDisplayPriceCap definition)
+            (cfgPerpsCandleLatenessSeconds cfg)
+            (cfgPerpsCandleFinalizationGraceSeconds cfg)
+            now
+            interval
+            cursor
+            page
+        of
+        Left reason -> do
+          logUnhealthyCandleCoverage "historical" now interval page reason
+          pure $
+            Left $
+              E.networkError $
+                "Candle rollup page failed strict coverage validation: " <> reason
+        Right () ->
+          pure $
+            Right
+              CandlePageCacheValue
+                { cpcvResponse =
+                    mkResponse 0 (cfgPerpsChainId cfg) $
+                      candlePageToResponse
+                        definition
+                        (cfgPerpsChainId cfg)
+                        (normalizedVolumeRouter cfg)
+                        interval
+                        cursor
+                        page
+                , cpcvPoolWaitNs = poolWaitNs
+                , cpcvQueryNs = queryNs
+                , cpcvRowCount = length $ cpCandles page
+                , cpcvFinalizedThrough = cpFinalizedThrough page
+                , cpcvDatasetGeneration = cpDatasetGeneration page
+                , cpcvCachedAt = 0
+                }
+
+candlePageFetch
+  :: SingleFlightSource
+  -> CandlePageCacheValue
+  -> BasketCandleFetch BasketCandlePage
+candlePageFetch source CandlePageCacheValue {..} =
+  BasketCandleFetch
+    { bcfResponse =
+        case source of
+          SingleFlightLoaded -> cpcvResponse
+          _ ->
+            markCandlePageResponseCached
+              (source == SingleFlightStale)
+              cpcvCachedAt
+              cpcvResponse
+    , bcfReadSource =
+        case source of
+          SingleFlightLoaded -> "rollup"
+          SingleFlightMemory -> "rollup_memory_cache"
+          SingleFlightCoalesced -> "rollup_coalesced"
+          SingleFlightStale -> "rollup_stale_memory_cache"
+    , bcfPoolWaitNs = if source == SingleFlightLoaded then cpcvPoolWaitNs else 0
+    , bcfQueryNs = if source == SingleFlightLoaded then cpcvQueryNs else 0
+    , bcfRowCount = cpcvRowCount
+    , bcfFinalizedThrough = cpcvFinalizedThrough
+    , bcfDatasetGeneration = cpcvDatasetGeneration
+    }
+
+markCandlePageResponseCached :: Bool -> POSIXTime -> ApiResponse a -> ApiResponse a
+markCandlePageResponseCached stale cachedAt response =
+  response
+    { respMeta =
+        (respMeta response)
+          { metaCached = True
+          , metaCachedAt = Just cachedAt
+          , metaStale = Just stale
+          }
+    }
+
+-- | Fetch and validate the mutable candle using the exact wall-clock second
+-- supplied by the HTTP route. Keeping the clock sample outside this function
+-- lets the route expose that same value as response evidence on both success
+-- and strict-coverage failure paths.
+getBasketCurrentCandleTimedAt
+  :: DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
+getBasketCurrentCandleTimedAt pool cfg now interval = do
+  poolStartedAt <- getMonotonicTimeNSec
+  (mDefinition, current, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
+    connectionReadyAt <- getMonotonicTimeNSec
+    let poolWaitNs = connectionReadyAt - poolStartedAt
+    queryStartedAt <- getMonotonicTimeNSec
+    (mDefinition, current) <-
+      getBasketCurrentCandleSnapshot
+        conn
+        now
+        (cfgPerpsChainId cfg)
+        (cfgPerpsOrderRouter cfg)
+        interval
+    queryFinishedAt <- getMonotonicTimeNSec
+    pure (mDefinition, current, poolWaitNs, queryFinishedAt - queryStartedAt)
+  case mDefinition of
+    Nothing -> pure $ Left $ E.networkError "Active basket definition identity is unavailable"
+    Just definition ->
+      case
+          validateBasketCurrentCandleWithPolicy
+            (bdiDisplayPriceCap definition)
+            (cfgPerpsCandleLatenessSeconds cfg)
+            (cfgPerpsCandleFinalizationGraceSeconds cfg)
+            now
+            interval
+            current
+        of
+        Left reason -> do
+          logUnhealthyCurrentCoverage now interval current reason
+          pure $
+            Left $
+              E.networkError $ "Current candle rollup failed strict validation: " <> reason
+        Right () -> do
+          let response =
+                BasketCurrentCandle
+                  { bccIntervalSeconds = interval
+                  , bccSeriesId = bdiSeriesId definition
+                  , bccConfigurationHash = bdiConfigurationHash definition
+                  , bccDisplayPriceCap = bdiDisplayPriceCap definition
+                  , bccVolumeChainId = cfgPerpsChainId cfg
+                  , bccVolumeRouter = normalizedVolumeRouter cfg
+                  , bccVolumeCoverageStart = ccVolumeCoverageStart current
+                  , bccVolumeCoverageEnd = ccVolumeCoverageEnd current
+                  , bccVolumeFinalizedThrough = ccVolumeFinalizedThrough current
+                  , bccVolumeCoverageComplete = ccVolumeCoverageComplete current
+                  , bccDatasetGeneration = ccDatasetGeneration current
+                  , bccCoverageStart = ccCoverageStart current
+                  , bccCoverageEnd = ccCoverageEnd current
+                  , bccFinalizedThrough = ccFinalizedThrough current
+                  , bccCoverageComplete = ccCoverageComplete current
+                  , bccCandle = candleRowToApi <$> ccCandle current
+                  }
+          pure $
+            Right
+              BasketCandleFetch
+                { bcfResponse = mkResponse 0 (cfgPerpsChainId cfg) response
+                , bcfReadSource = "rollup_current"
+                , bcfPoolWaitNs = poolWaitNs
+                , bcfQueryNs = queryNs
+                , bcfRowCount = maybe 0 (const 1) $ ccCandle current
+                , bcfFinalizedThrough = ccFinalizedThrough current
+                , bcfDatasetGeneration = ccDatasetGeneration current
+                }
+
+candlePageToResponse
+  :: BasketDefinitionIdentity
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> CandlePage
+  -> BasketCandlePage
+candlePageToResponse definition volumeChainId volumeRouter interval cursor CandlePage {..} =
+  BasketCandlePage
+    { bcpIntervalSeconds = interval
+    , bcpCursor = cursor
+    , bcpSeriesId = bdiSeriesId definition
+    , bcpConfigurationHash = bdiConfigurationHash definition
+    , bcpDisplayPriceCap = bdiDisplayPriceCap definition
+    , bcpVolumeChainId = volumeChainId
+    , bcpVolumeRouter = volumeRouter
+    , bcpVolumeCoverageStart = cpVolumeCoverageStart
+    , bcpVolumeCoverageEnd = cpVolumeCoverageEnd
+    , bcpVolumeFinalizedThrough = cpVolumeFinalizedThrough
+    , bcpVolumeCoverageComplete = cpVolumeCoverageComplete
+    , bcpPreviousCursor = cpPreviousCursor
+    , bcpHasEarlier = cpHasEarlier
+    , bcpCoverageStart = cpCoverageStart
+    , bcpCoverageEnd = cpCoverageEnd
+    , bcpFinalizedThrough = cpFinalizedThrough
+    , bcpDatasetGeneration = cpDatasetGeneration
+    , bcpCoverageComplete = cpCoverageComplete
+    , bcpCandles = map candleRowToApi cpCandles
+    }
+
+normalizedVolumeRouter :: Config -> Text
+normalizedVolumeRouter = T.toLower . T.strip . cfgPerpsOrderRouter
+
+candleRowToApi :: BasketCandleRow -> BasketCandle
+candleRowToApi BasketCandleRow {..} =
+  BasketCandle
+    { bcTimestamp = bcrBucketStart
+    , bcRawOpenPrice = bcrRawOpenPrice
+    , bcRawHighPrice = bcrRawHighPrice
+    , bcRawLowPrice = bcrRawLowPrice
+    , bcRawClosePrice = bcrRawClosePrice
+    , bcVolumeUsdc = (`div` 10 ^ (20 :: Int)) <$> bcrVolumeNumerator
+    , bcTradeCount = bcrTradeCount
+    , bcSampleCount = fromIntegral bcrSampleCount
+    , bcQuality = candleQualityText bcrQuality
+    , bcRevision = bcrRevision
+    , bcPriceComplete = bcrPriceComplete
+    , bcVolumeComplete = bcrVolumeComplete
+    }
+
+candleQualityText :: CandleQuality -> Text
+candleQualityText = \case
+  CandleObserved -> "observed"
+  CandleLegacySampled -> "legacy_sampled"
+  CandleMixed -> "mixed"
+
+-- | Validate the storage page before exposing it through the public API. A
+-- page that reaches the wall-clock boundary is intentionally allowed to stop
+-- at its finalized watermark; it must never include the mutable bucket. Fully
+-- historical pages, by contrast, must be finalized through their cursor.
+-- Coverage may begin within the oldest page, but only when pagination metadata
+-- proves that this is the inception page.
+validateBasketCandlePage
+  :: Integer
+  -> Integer
+  -> Integer
+  -> CandlePage
+  -> Either Text ()
+validateBasketCandlePage = validateBasketCandlePageWithCap defaultBasketDisplayPriceCap
+
+validateBasketCandlePageWithCap
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> CandlePage
+  -> Either Text ()
+validateBasketCandlePageWithCap displayPriceCap now interval cursor CandlePage {..}
+  | displayPriceCap <= 0 = Left "basket display price cap is not positive"
+  | interval <= 0 = Left "interval must be positive"
+  | now < 0 = Left "backend clock is before the Unix epoch"
+  | cursor <= 0 || cursor `mod` (interval * 500) /= 0 = Left "cursor is not page-aligned"
+  | not cpCoverageComplete = Left "price coverage is incomplete"
+  | cpDatasetGeneration <= 0 = Left "dataset generation is unavailable"
+  | length cpCandles > 500 = Left "page contains more than 500 candles"
+  | otherwise = do
+      coverageStart <- maybe (Left "coverage start is unavailable") Right cpCoverageStart
+      coverageEnd <- maybe (Left "coverage end is unavailable") Right cpCoverageEnd
+      finalizedThrough <- maybe (Left "finalized watermark is unavailable") Right cpFinalizedThrough
+      requireAligned "coverage start" coverageStart
+      requireAligned "coverage end" coverageEnd
+      requireAligned "finalized watermark" finalizedThrough
+      if coverageStart >= coverageEnd
+        then Left "coverage window is empty or reversed"
+        else Right ()
+      if finalizedThrough < coverageStart || finalizedThrough > coverageEnd
+        then Left "finalized watermark is outside the coverage window"
+        else Right ()
+      let pageStart = cursor - interval * 500
+          wallClockBoundary = (now `div` interval) * interval
+          requestedClosedEnd = min cursor wallClockBoundary
+          inceptionClipped = coverageStart > pageStart
+          effectiveStart = max pageStart coverageStart
+          effectiveEnd = minimum [requestedClosedEnd, coverageEnd, finalizedThrough]
+          terminalClipped = coverageEnd < cursor
+          validSparsePreviousCursor = case cpPreviousCursor of
+            Just previousCursor ->
+              previousCursor > 0
+                && previousCursor `mod` (interval * 500) == 0
+                && previousCursor < cursor
+                && previousCursor <= pageStart
+            Nothing -> False
+          -- A request can land entirely after the latest covered bucket (for
+          -- example during a weekend market gap). Storage deliberately
+          -- returns an empty bridge page whose sparse cursor jumps directly
+          -- to the most recent page that can contain data.
+          sparseBridgePage =
+            null cpCandles
+              && cpHasEarlier
+              && validSparsePreviousCursor
+      if pageStart < 0
+        then Left "page starts before the Unix epoch"
+        else Right ()
+      if effectiveStart >= effectiveEnd && not sparseBridgePage
+        then Left "covered page window has no finalized buckets"
+        else Right ()
+      if cursor <= wallClockBoundary
+          && finalizedThrough < min cursor coverageEnd
+        then Left "closed page is not finalized through its covered end"
+        else Right ()
+      if inceptionClipped && (cpHasEarlier || isJust cpPreviousCursor)
+        then Left "inception-clipped page claims an earlier page"
+        else Right ()
+      if cpHasEarlier && coverageStart >= pageStart
+        then Left "page claims earlier data outside its coverage window"
+        else Right ()
+      if cpHasEarlier && pageStart <= 0
+        then Left "page claims earlier data before the Unix epoch"
+        else Right ()
+      case (cpHasEarlier, cpPreviousCursor) of
+        (False, Nothing) -> Right ()
+        (False, Just _) -> Left "pagination cursor is present without earlier data"
+        (True, Nothing) -> Left "pagination cursor is missing despite earlier data"
+        (True, Just previousCursor)
+          | previousCursor <= 0
+              || previousCursor `mod` (interval * 500) /= 0 ->
+              Left "previous cursor is not page-aligned"
+          | previousCursor >= cursor || previousCursor > pageStart ->
+              Left "previous cursor does not point to an earlier page"
+          | otherwise -> Right ()
+      if terminalClipped && coverageEnd <= pageStart && not sparseBridgePage
+        then Left "requested page starts at or after the coverage terminal"
+        else Right ()
+      validateAscendingRows cpCandles
+      mapM_
+        (validateHistoricalRow displayPriceCap interval effectiveStart effectiveEnd finalizedThrough)
+        cpCandles
+  where
+    requireAligned label timestamp
+      | timestamp >= 0 && timestamp `mod` interval == 0 = Right ()
+      | otherwise = Left $ label <> " is not interval-aligned"
+
+-- | Apply deployment freshness policy in addition to the page-shape and
+-- finalization checks. Historical rows can be immutable while the global
+-- source watermark still goes stale, so every public native page must prove
+-- that the price writer has checked in recently. Volume availability is
+-- reported per candle and never suppresses otherwise valid price history.
+validateBasketCandlePageWithPolicy
+  :: Integer -- immutable display-price cap
+  -> Integer -- configured candle lateness tolerance
+  -> Integer -- bounded finalization-publication grace
+  -> Integer -- backend clock
+  -> Integer -- candle interval
+  -> Integer -- fixed-page cursor
+  -> CandlePage
+  -> Either Text ()
+validateBasketCandlePageWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval cursor page = do
+  validateBasketCandlePageWithCap displayPriceCap now interval cursor page
+  coverageEnd <- maybe (Left "coverage end is unavailable") Right $ cpCoverageEnd page
+  finalizedThrough <- maybe (Left "finalized watermark is unavailable") Right $ cpFinalizedThrough page
+  validateCoverageFreshness latenessSeconds now interval coverageEnd
+  validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
+
+-- | The current response is allowed to contain incomplete/nullable OHLCV,
+-- but its metadata and row shape must still be coherent. Storage returns
+-- metadata independently of the nullable row, so row checks apply only when an
+-- active-bucket observation exists.
+validateBasketCurrentCandle :: Integer -> Integer -> CandleCurrent -> Either Text ()
+validateBasketCurrentCandle = validateBasketCurrentCandleWithCap defaultBasketDisplayPriceCap
+
+validateBasketCurrentCandleWithCap
+  :: Integer -> Integer -> Integer -> CandleCurrent -> Either Text ()
+validateBasketCurrentCandleWithCap displayPriceCap =
+  validateBasketCurrentCandleWithPolicy displayPriceCap 0 0
+
+-- | Validate the mutable response against the source-watermark freshness
+-- policy used by this deployment. Coverage timestamps are interval-aligned and
+-- remain subject to the source-lateness floor. Finalization additionally gets
+-- the bounded publication grace needed by the asynchronous writer loop, while
+-- a stopped writer still makes an otherwise complete dataset fail closed.
+validateBasketCurrentCandleWithPolicy
+  :: Integer -- immutable display-price cap
+  -> Integer -- configured candle lateness tolerance
+  -> Integer -- bounded finalization-publication grace
+  -> Integer -- backend clock
+  -> Integer -- candle interval
+  -> CandleCurrent
+  -> Either Text ()
+validateBasketCurrentCandleWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval current@CandleCurrent {..}
+  | displayPriceCap <= 0 = Left "basket display price cap is not positive"
+  | interval <= 0 = Left "interval must be positive"
+  | latenessSeconds < 0 = Left "candle lateness tolerance is negative"
+  | finalizationGraceSeconds < 0 = Left "candle finalization grace is negative"
+  | now < 0 = Left "backend clock is before the Unix epoch"
+  | not ccCoverageComplete = Left "price coverage is incomplete"
+  | ccDatasetGeneration <= 0 = Left "dataset generation is unavailable"
+  | otherwise = do
+      coverageStart <- maybe (Left "coverage start is unavailable") Right ccCoverageStart
+      coverageEnd <- maybe (Left "coverage end is unavailable") Right ccCoverageEnd
+      finalizedThrough <- maybe (Left "finalized watermark is unavailable") Right ccFinalizedThrough
+      let currentBucketStart = (now `div` interval) * interval
+      if any (\timestamp -> timestamp < 0 || timestamp `mod` interval /= 0) [coverageStart, coverageEnd, finalizedThrough]
+        then Left "current coverage metadata is not interval-aligned"
+        else Right ()
+      if coverageStart >= coverageEnd
+        then Left "current coverage window is empty or reversed"
+        else Right ()
+      validateCoverageFreshness latenessSeconds now interval coverageEnd
+      if finalizedThrough < coverageStart || finalizedThrough > coverageEnd
+        then Left "finalized watermark is outside the coverage window"
+        else Right ()
+      validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
+      if finalizedThrough > currentBucketStart
+        then Left "finalized watermark extends into the mutable bucket"
+        else Right ()
+      validateCurrentVolume interval current
+      case ccCandle of
+        Nothing -> Right ()
+        Just candle
+          | bcrBucketStart candle /= currentBucketStart ->
+              Left "current candle timestamp does not match the mutable bucket"
+          | bcrPriceComplete candle || bcrVolumeComplete candle ->
+              Left "current candle is incorrectly marked finalized"
+          | otherwise -> validateCandleRow displayPriceCap False candle
+
+-- The mutable bucket may expose the volume accumulated so far, but only when
+-- the exact configured chain/router coverage is usable and its checked
+-- envelope has reached that bucket. Unlike historical range membership, the
+-- provisional check intentionally accepts bucket_start == coverage_end: live
+-- advancement aligns the checked source watermark down to the active bucket.
+-- Final completion still requires the whole bucket to precede the exclusive
+-- finalized watermark.
+validateCurrentVolume :: Integer -> CandleCurrent -> Either Text ()
+validateCurrentVolume interval CandleCurrent {..}
+  | not ccVolumeCoverageComplete = do
+      if any isJust
+          [ ccVolumeCoverageStart
+          , ccVolumeCoverageEnd
+          , ccVolumeFinalizedThrough
+          ]
+        then Left "unusable current volume coverage exposes trusted bounds"
+        else Right ()
+      case ccCandle of
+        Just BasketCandleRow {..}
+          | isJust bcrVolumeNumerator || isJust bcrTradeCount || bcrVolumeComplete ->
+              Left "current candle exposes volume without usable coverage"
+        _ -> Right ()
+  | otherwise = do
+      coverageStart <-
+        maybe (Left "current volume coverage start is unavailable") Right
+          ccVolumeCoverageStart
+      coverageEnd <-
+        maybe (Left "current volume coverage end is unavailable") Right
+          ccVolumeCoverageEnd
+      finalizedThrough <-
+        maybe (Left "current volume finalized watermark is unavailable") Right
+          ccVolumeFinalizedThrough
+      if any
+          (\timestamp -> timestamp < 0 || timestamp `mod` interval /= 0)
+          [coverageStart, coverageEnd, finalizedThrough]
+        then Left "current volume coverage metadata is not interval-aligned"
+        else Right ()
+      if coverageStart >= coverageEnd
+        then Left "current volume coverage window is empty or reversed"
+        else Right ()
+      if finalizedThrough < coverageStart || finalizedThrough > coverageEnd
+        then Left "current volume finalized watermark is outside the coverage window"
+        else Right ()
+      case ccCandle of
+        Nothing -> Right ()
+        Just BasketCandleRow {..} ->
+          case (bcrVolumeNumerator, bcrTradeCount, bcrVolumeComplete) of
+            (Nothing, Nothing, False) -> Right ()
+            (Just _, Just _, False)
+              | bcrBucketStart >= coverageStart
+                  && bcrBucketStart <= coverageEnd -> Right ()
+              | otherwise ->
+                  Left "current candle volume is outside the checked coverage envelope"
+            (Just _, Just _, True)
+              | bcrBucketStart >= coverageStart
+                  && bcrBucketStart + interval <= finalizedThrough -> Right ()
+              | otherwise ->
+                  Left "complete current candle volume exceeds the finalized watermark"
+            _ -> Left "current candle volume fields are inconsistent"
+
+validateHistoricalRow
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> BasketCandleRow
+  -> Either Text ()
+validateHistoricalRow displayPriceCap interval effectiveStart effectiveEnd finalizedThrough row
+  | bcrBucketStart row `mod` interval /= 0 = Left "candle timestamp is not interval-aligned"
+  | bcrBucketStart row < effectiveStart = Left "candle precedes the covered page window"
+  | bcrBucketStart row >= effectiveEnd = Left "candle exceeds the finalized page window"
+  | bcrBucketStart row + interval > finalizedThrough = Left "candle extends past the finalized watermark"
+  | not (bcrPriceComplete row) = Left "historical candle price is incomplete"
+  | otherwise = do
+      validateHistoricalVolume False row
+      validateCandleRow displayPriceCap False row
+
+validateCompatibilityHistoricalRow
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> BasketCandleRow
+  -> Either Text ()
+validateCompatibilityHistoricalRow displayPriceCap interval effectiveStart effectiveEnd finalizedThrough row = do
+  validateHistoricalRow
+    displayPriceCap interval effectiveStart effectiveEnd finalizedThrough row
+  validateHistoricalVolume True row
+
+validateHistoricalVolume :: Bool -> BasketCandleRow -> Either Text ()
+validateHistoricalVolume requireVolume BasketCandleRow {..} =
+  case (bcrVolumeNumerator, bcrTradeCount, bcrVolumeComplete) of
+    (Nothing, Nothing, False)
+      | requireVolume -> Left "historical compatibility candle has unknown volume"
+      | otherwise -> Right ()
+    (Just _, Just _, True) -> Right ()
+    _ -> Left "historical candle volume fields are inconsistent"
+
+validateAscendingRows :: [BasketCandleRow] -> Either Text ()
+validateAscendingRows rows
+  | and $ zipWith (<) timestamps (drop 1 timestamps) = Right ()
+  | otherwise = Left "candle timestamps are not strictly ascending"
+  where
+    timestamps = map bcrBucketStart rows
+
+validateCandleRow :: Integer -> Bool -> BasketCandleRow -> Either Text ()
+validateCandleRow displayPriceCap requireComplete BasketCandleRow {..}
+  | bcrBucketStart < 0 = Left "candle timestamp is negative"
+  | any (<= 0) prices = Left "candle contains a non-positive price"
+  | any (>= displayPriceCap) prices = Left "candle price is outside the display domain"
+  | bcrRawLowPrice > minimum [bcrRawOpenPrice, bcrRawClosePrice] = Left "candle low exceeds open or close"
+  | bcrRawHighPrice < maximum [bcrRawOpenPrice, bcrRawClosePrice] = Left "candle high is below open or close"
+  | bcrRawLowPrice > bcrRawHighPrice = Left "candle low exceeds high"
+  | bcrSampleCount <= 0 = Left "candle sample count is not positive"
+  | bcrRevision <= 0 = Left "candle revision is not positive"
+  | maybe False (< 0) bcrVolumeNumerator = Left "candle volume is negative"
+  | maybe False (< 0) bcrTradeCount = Left "candle trade count is negative"
+  | bcrVolumeComplete && (not (isJust bcrVolumeNumerator) || not (isJust bcrTradeCount)) =
+      Left "complete candle has unknown volume"
+  | requireComplete && not (bcrPriceComplete && bcrVolumeComplete) = Left "historical candle is incomplete"
+  | otherwise = Right ()
+  where
+    prices = [bcrRawOpenPrice, bcrRawHighPrice, bcrRawLowPrice, bcrRawClosePrice]
+
+coverageLagSeconds :: Integer -> Maybe Integer -> Integer
+coverageLagSeconds now = maybe (max 0 now) (max 0 . (now -))
+
+withCandleReadSnapshot :: Connection -> IO value -> IO value
+withCandleReadSnapshot =
+  withTransactionMode $
+    TransactionMode
+      { isolationLevel = RepeatableRead
+      , readWriteMode = ReadOnly
+      }
+
+logUnhealthyCandleCoverage :: Text -> Integer -> Integer -> CandlePage -> Text -> IO ()
+logUnhealthyCandleCoverage requestKind now interval CandlePage {..} reason =
+  logWarnEvery
+    30
+    "perps_candle_coverage_unhealthy"
+    "Perps candle rollup coverage failed public-read validation"
+    [ field "request_kind" requestKind
+    , field "interval_seconds" interval
+    , field "coverage_available" $
+        isJust cpCoverageStart && isJust cpCoverageEnd && isJust cpFinalizedThrough
+    , field "coverage_start" cpCoverageStart
+    , field "coverage_end" cpCoverageEnd
+    , field "finalized_through" cpFinalizedThrough
+    , field "lag_seconds" $ coverageLagSeconds now cpFinalizedThrough
+    , field "dataset_generation" cpDatasetGeneration
+    , field "complete" cpCoverageComplete
+    , field "reason" reason
+    ]
+
+logUnhealthyCurrentCoverage :: Integer -> Integer -> CandleCurrent -> Text -> IO ()
+logUnhealthyCurrentCoverage now interval current reason =
+  logWarnEvery
+    30
+    "perps_candle_coverage_unhealthy"
+    "Current Perps candle coverage failed public-read validation"
+    [ field "request_kind" ("current" :: Text)
+    , field "interval_seconds" interval
+    , field "coverage_available" $
+        isJust (ccCoverageStart current)
+          && isJust (ccCoverageEnd current)
+          && isJust (ccFinalizedThrough current)
+    , field "coverage_start" $ ccCoverageStart current
+    , field "coverage_end" $ ccCoverageEnd current
+    , field "finalized_through" $ ccFinalizedThrough current
+    , field "lag_seconds" $ coverageLagSeconds now $ ccFinalizedThrough current
+    , field "dataset_generation" $ ccDatasetGeneration current
+    , field "complete" $ ccCoverageComplete current
+    , field "reason" reason
+    ]
+
+maxBasketHistoryPoints :: Integer
+maxBasketHistoryPoints = 12_000
+
+-- Preserve every normal chart shape (the largest is seven days of minute
+-- bars) while preventing direct callers from requesting hundreds of thousands
+-- of snapshots, for example one year at a one-minute interval.
+boundedBasketHistoryInterval :: Integer -> Integer -> Integer
+boundedBasketHistoryInterval rangeSeconds requestedInterval =
+  case filter (>= requiredInterval) canonicalBasketCandleIntervals of
+    interval : _ -> interval
+    [] -> 86_400
+  where
+    normalizedInterval = max 60 requestedInterval
+    targetBuckets = max 1 (maxBasketHistoryPoints - 4)
+    minimumBoundedInterval =
+      (max 0 rangeSeconds + targetBuckets - 1) `div` targetBuckets
+    requiredInterval = max normalizedInterval minimumBoundedInterval
+
+-- Component payloads are not part of the OHLCV read model. Keep the only
+-- remaining raw-source public shape deliberately small and cacheable instead
+-- of permitting arbitrary long-range snapshot/activity scans.
+isBoundedComponentHistoryRequest :: BasketHistoryParams -> Bool
+isBoundedComponentHistoryRequest params =
+  not (bhpIncludeComponents params)
+    || (bhpRange params == "24h" && bhpIntervalSeconds params == 3_600)
 
 data BasketHistoryTimings = BasketHistoryTimings
   { bhtBackendTotalNs :: Word64
@@ -143,12 +889,66 @@ getBasketHistoryTimed
   -> Config
   -> BasketHistoryParams
   -> IO (Either ApiError BasketHistoryFetch)
-getBasketHistoryTimed pool cfg params = do
+getBasketHistoryTimed pool cfg params =
+  getBasketHistoryWithSourcesTimed
+    (getLegacyBasketHistoryTimed pool cfg)
+    (getRollupBasketHistoryTimed pool cfg)
+    cfg
+    params
+
+-- | Select a source before evaluating either fetch action. Besides avoiding raw
+-- scans in rollup mode, this shape makes that property testable without a DB.
+getBasketHistoryWithSourcesTimed
+  :: (BasketHistoryParams -> IO (Either ApiError BasketHistoryFetch))
+  -> (BasketHistoryParams -> IO (Either ApiError BasketHistoryFetch))
+  -> Config
+  -> BasketHistoryParams
+  -> IO (Either ApiError BasketHistoryFetch)
+getBasketHistoryWithSourcesTimed legacyFetch rollupFetch cfg params
+  | historyRollupReadEnabled cfg params = rollupFetch params
+  | otherwise = legacyFetch params
+
+-- | Component history is a bounded price/composition compatibility payload,
+-- not an OHLCV source. Skipping its independent activity scan also makes the
+-- absence explicit in request telemetry instead of timing an empty action.
+getLegacyBasketHistoryVolumeRowsTimed
+  :: Bool
+  -> IO [PerpsMarketVolumeBucketRow]
+  -> IO ([PerpsMarketVolumeBucketRow], Word64, Int)
+getLegacyBasketHistoryVolumeRowsTimed includeComponents fetchVolumeRows
+  | includeComponents = pure ([], 0, 0)
+  | otherwise = do
+      queryStartedAt <- getMonotonicTimeNSec
+      rows <- fetchVolumeRows
+      rowCount <- evaluate $ length rows
+      queryFinishedAt <- getMonotonicTimeNSec
+      pure (rows, queryFinishedAt - queryStartedAt, rowCount)
+
+historyRollupReadEnabled :: Config -> BasketHistoryParams -> Bool
+historyRollupReadEnabled cfg params =
+  let effectiveInterval =
+        boundedBasketHistoryInterval
+          (basketRangeSeconds $ bhpRange params)
+          (bhpIntervalSeconds params)
+   in not (bhpIncludeComponents params)
+    && perpsCandleRollupReadEnabled
+      (cfgPerpsCandleReadMode cfg)
+      (cfgPerpsCandleStrictCoverage cfg)
+      (cfgPerpsCandleReadIntervals cfg)
+      effectiveInterval
+
+getLegacyBasketHistoryTimed
+  :: DbPool
+  -> Config
+  -> BasketHistoryParams
+  -> IO (Either ApiError BasketHistoryFetch)
+getLegacyBasketHistoryTimed pool cfg params = do
   now <- getPOSIXTime
   let nowUnix = round now
-      fromUnix = nowUnix - basketRangeSeconds (bhpRange params)
-      interval = max 60 (bhpIntervalSeconds params)
-      maxPoints = fromIntegral ((basketRangeSeconds (bhpRange params) `div` interval) + 4)
+      rangeSeconds = basketRangeSeconds (bhpRange params)
+      fromUnix = nowUnix - rangeSeconds
+      interval = boundedBasketHistoryInterval rangeSeconds (bhpIntervalSeconds params)
+      maxPoints = fromIntegral $ min maxBasketHistoryPoints ((rangeSeconds `div` interval) + 4)
 
   poolStartedAt <- getMonotonicTimeNSec
   (rows, volumeRows, poolWaitNs, snapshotQueryNs, volumeQueryNs, snapshotRows, volumeRowsCount) <- withDb pool $ \conn -> do
@@ -161,24 +961,24 @@ getBasketHistoryTimed pool cfg params = do
     snapshotRows <- evaluate $ length snapshots
     snapshotQueryFinishedAt <- getMonotonicTimeNSec
 
-    volumeQueryStartedAt <- getMonotonicTimeNSec
-    volumes <-
-      getPerpsMarketVolumeBuckets
-        conn
-        (cfgPerpsChainId cfg)
-        (cfgPerpsOrderRouter cfg)
-        fromUnix
-        nowUnix
-        interval
-    volumeRowsCount <- evaluate $ length volumes
-    volumeQueryFinishedAt <- getMonotonicTimeNSec
+    (volumes, volumeQueryNs, volumeRowsCount) <-
+      getLegacyBasketHistoryVolumeRowsTimed
+        (bhpIncludeComponents params)
+        ( getPerpsMarketVolumeBuckets
+            conn
+            (cfgPerpsChainId cfg)
+            (cfgPerpsOrderRouter cfg)
+            fromUnix
+            nowUnix
+            interval
+        )
 
     pure
       ( snapshots
       , volumes
       , poolWaitNs
       , snapshotQueryFinishedAt - snapshotQueryStartedAt
-      , volumeQueryFinishedAt - volumeQueryStartedAt
+      , volumeQueryNs
       , snapshotRows
       , volumeRowsCount
       )
@@ -203,12 +1003,231 @@ getBasketHistoryTimed pool cfg params = do
     Right $
       BasketHistoryFetch
         { bhfResponse = mkResponse 0 (cfgChainId cfg) history
+        , bhfReadSource = "legacy_raw"
         , bhfPoolWaitNs = poolWaitNs
         , bhfSnapshotQueryNs = snapshotQueryNs
         , bhfVolumeQueryNs = volumeQueryNs
         , bhfSnapshotRows = snapshotRows
         , bhfVolumeRows = volumeRowsCount
         }
+
+getRollupBasketHistoryTimed
+  :: DbPool
+  -> Config
+  -> BasketHistoryParams
+  -> IO (Either ApiError BasketHistoryFetch)
+getRollupBasketHistoryTimed pool cfg params = do
+  generatedAt <- getPOSIXTime
+  let now = floor generatedAt
+      rangeSeconds = basketRangeSeconds $ bhpRange params
+      fromTimestamp = max 0 $ now - rangeSeconds
+      interval = boundedBasketHistoryInterval rangeSeconds $ bhpIntervalSeconds params
+      effectiveParams = params {bhpIntervalSeconds = interval}
+      closedThrough = (now `div` interval) * interval
+      maximumRows = fromIntegral maxBasketHistoryPoints
+  poolStartedAt <- getMonotonicTimeNSec
+  (result, poolWaitNs, queryNs) <- withDb pool $ \conn -> withCandleReadSnapshot conn $ do
+    connectionReadyAt <- getMonotonicTimeNSec
+    let poolWaitNs = connectionReadyAt - poolStartedAt
+    queryStartedAt <- getMonotonicTimeNSec
+    mDefinition <- getActiveBasketDefinitionIdentity conn now
+    result <- case mDefinition of
+      Nothing -> pure $ Left $ E.networkError "Active basket definition identity is unavailable"
+      Just definition
+        | bdiEffectiveFrom definition > fromTimestamp ->
+            pure $ Left $ E.networkError "Requested history crosses a basket definition boundary"
+        | otherwise ->
+            validateRollupHistoryRangeWithPolicy
+              (bdiDisplayPriceCap definition)
+              (cfgPerpsCandleLatenessSeconds cfg)
+              (cfgPerpsCandleFinalizationGraceSeconds cfg)
+              now
+              interval
+              fromTimestamp
+              closedThrough
+              maximumRows
+              <$> getBasketCandleRange
+                conn
+                (bdiSeriesId definition)
+                (cfgPerpsChainId cfg)
+                (cfgPerpsOrderRouter cfg)
+                interval
+                fromTimestamp
+                closedThrough
+                (maximumRows + 1)
+    queryFinishedAt <- getMonotonicTimeNSec
+    pure (result, poolWaitNs, queryFinishedAt - queryStartedAt)
+  pure $ do
+    rows <- result
+    Right
+      BasketHistoryFetch
+        { bhfResponse =
+            mkResponse 0 (cfgChainId cfg) $
+              basketHistoryFromCandleRows generatedAt effectiveParams rows
+        , bhfReadSource = "rollup_compat"
+        , bhfPoolWaitNs = poolWaitNs
+        , bhfSnapshotQueryNs = queryNs
+        , bhfVolumeQueryNs = 0
+        , bhfSnapshotRows = length rows
+        , bhfVolumeRows = length rows
+        }
+
+validateRollupHistoryRange
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Int
+  -> CandleRange
+  -> Either ApiError [BasketCandleRow]
+validateRollupHistoryRange displayPriceCap interval requestedStart requestedEnd maximumRows range
+  | not $ crCoverageComplete range = unhealthy "combined price and volume coverage is incomplete"
+  | crDatasetGeneration range <= 0 = unhealthy "dataset generation is unavailable"
+  | length rows > maximumRows = unhealthy "compatibility result exceeds its bounded row budget"
+  | otherwise = case validateMetadataAndRows of
+      Left reason -> unhealthy reason
+      Right () -> Right rows
+ where
+  rows = crCandles range
+  unhealthy reason =
+    Left $ E.networkError $ "Candle rollup compatibility range failed strict validation: " <> reason
+  validateMetadataAndRows = do
+    coverageStart <- maybe (Left "coverage start is unavailable") Right $ crCoverageStart range
+    coverageEnd <- maybe (Left "coverage end is unavailable") Right $ crCoverageEnd range
+    finalizedThrough <- maybe (Left "finalized watermark is unavailable") Right $ crFinalizedThrough range
+    let effectiveStart = max requestedStart coverageStart
+        effectiveEnd = minimum [requestedEnd, coverageEnd, finalizedThrough]
+        aligned timestamp = timestamp >= 0 && timestamp `mod` interval == 0
+    if interval <= 0 then Left "interval must be positive" else Right ()
+    if not $ all aligned [coverageStart, coverageEnd, finalizedThrough]
+      then Left "coverage metadata is not interval-aligned"
+      else Right ()
+    if coverageStart >= coverageEnd
+      then Left "coverage window is empty or reversed"
+      else Right ()
+    if finalizedThrough < coverageStart || finalizedThrough > coverageEnd
+      then Left "finalized watermark is outside the coverage window"
+      else Right ()
+    if effectiveStart >= effectiveEnd
+      then Left "requested history has no finalized covered buckets"
+      else Right ()
+    validateAscendingRows rows
+    mapM_
+      (validateCompatibilityHistoricalRow displayPriceCap interval effectiveStart effectiveEnd finalizedThrough)
+      rows
+
+-- | The compatibility route is time-relative rather than a request for one
+-- immutable closed page. Require a current global source watermark before
+-- projecting rollups into the legacy response shape.
+validateRollupHistoryRangeWithPolicy
+  :: Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Int
+  -> CandleRange
+  -> Either ApiError [BasketCandleRow]
+validateRollupHistoryRangeWithPolicy displayPriceCap latenessSeconds finalizationGraceSeconds now interval requestedStart requestedEnd maximumRows range = do
+  rows <-
+    validateRollupHistoryRange
+      displayPriceCap
+      interval
+      requestedStart
+      requestedEnd
+      maximumRows
+      range
+  coverageEnd <-
+    maybe
+      (Left $ E.networkError "Candle rollup compatibility range failed strict validation: coverage end is unavailable")
+      Right
+      (crCoverageEnd range)
+  case validateCoverageFreshness latenessSeconds now interval coverageEnd of
+    Left reason ->
+      Left $
+        E.networkError $
+          "Candle rollup compatibility range failed strict validation: " <> reason
+    Right () -> do
+      finalizedThrough <-
+        maybe
+          (Left $ E.networkError "Candle rollup compatibility range failed strict validation: finalized watermark is unavailable")
+          Right
+          (crFinalizedThrough range)
+      case validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough of
+        Left reason ->
+          Left $
+            E.networkError $
+              "Candle rollup compatibility range failed strict validation: " <> reason
+        Right () -> Right rows
+
+validateCoverageFreshness :: Integer -> Integer -> Integer -> Integer -> Either Text ()
+validateCoverageFreshness latenessSeconds now interval coverageEnd
+  | interval <= 0 = Left "interval must be positive"
+  | latenessSeconds < 0 = Left "candle lateness tolerance is negative"
+  | now < 0 = Left "backend clock is before the Unix epoch"
+  | coverageEnd < freshnessFloor =
+      Left "coverage watermark is stale for the configured lateness tolerance"
+  | otherwise = Right ()
+ where
+  freshnessFloor = ((max 0 (now - latenessSeconds)) `div` interval) * interval
+
+-- Coverage proves that both writers have checked in; finalization separately
+-- proves that closed buckets are publishable. The writer may only advance once
+-- source lateness has elapsed and publishes asynchronously, so readers allow a
+-- small, bounded publication grace before requiring the next aligned watermark.
+-- Rows remain clipped to the stored finalized watermark throughout the grace.
+validateFinalizationFreshness :: Integer -> Integer -> Integer -> Integer -> Integer -> Either Text ()
+validateFinalizationFreshness latenessSeconds finalizationGraceSeconds now interval finalizedThrough
+  | interval <= 0 = Left "interval must be positive"
+  | latenessSeconds < 0 = Left "candle lateness tolerance is negative"
+  | finalizationGraceSeconds < 0 = Left "candle finalization grace is negative"
+  | now < 0 = Left "backend clock is before the Unix epoch"
+  | finalizedThrough < freshnessFloor =
+      Left "finalized watermark is stale after the configured publication grace"
+  | otherwise = Right ()
+ where
+  freshnessFloor =
+    ((max 0 (now - latenessSeconds - finalizationGraceSeconds)) `div` interval) * interval
+
+basketHistoryFromCandleRows
+  :: POSIXTime
+  -> BasketHistoryParams
+  -> [BasketCandleRow]
+  -> BasketHistory
+basketHistoryFromCandleRows generatedAt params rows =
+  BasketHistory
+    { bhRange = bhpRange params
+    , bhIntervalSeconds = bhpIntervalSeconds params
+    -- Preserve the legacy discriminator until clients migrate to the native
+    -- candle endpoint; the actual source is exposed in request telemetry.
+    , bhSource = "pyth_benchmarks"
+    , bhGeneratedAt = generatedAt
+    , bhLatestPrice = bcrRawClosePrice <$> lastMaybe rows
+    , bhChangePct = candleRowsChange rows
+    , bhPoints = map candleRowToHistoryPoint rows
+    }
+  where
+    candleRowToHistoryPoint row =
+      BasketHistoryPoint
+        { bhpTimestamp = bcrBucketStart row
+        , bhpBasketPrice = bcrRawClosePrice row
+        , bhpVolumeUsdc = maybe 0 (`div` 10 ^ (20 :: Int)) $ bcrVolumeNumerator row
+        , bhpComponents = Nothing
+        }
+
+    candleRowsChange candleRows =
+      case (candleRows, reverse candleRows) of
+        (first : _, lastRow : _) | bcrRawOpenPrice first > 0 ->
+          Just $
+            fromIntegral (bcrRawClosePrice lastRow - bcrRawOpenPrice first)
+              / fromIntegral (bcrRawOpenPrice first)
+        _ -> Nothing
+
+    lastMaybe values = case reverse values of
+      value : _ -> Just value
+      [] -> Nothing
 
 basketHistoryPointsWithVolume
   :: Integer

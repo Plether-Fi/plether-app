@@ -374,9 +374,45 @@ export function PerpsIdentityProvider({
       return
     }
 
-    const interval = globalThis.setInterval(reloadIdentity, refreshIntervalMs)
-    return () => {
+    let interval: ReturnType<typeof globalThis.setInterval> | undefined
+
+    const stopInterval = () => {
+      if (interval === undefined) return
       globalThis.clearInterval(interval)
+      interval = undefined
+    }
+
+    const startInterval = () => {
+      stopInterval()
+      interval = globalThis.setInterval(reloadIdentity, refreshIntervalMs)
+    }
+
+    if (typeof document === 'undefined') {
+      startInterval()
+      return stopInterval
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        stopInterval()
+        return
+      }
+
+      // A deployment or sponsorship kill-switch may have changed while this
+      // tab was suspended. Revalidate immediately, then keep the usual cadence
+      // for as long as the document remains visible.
+      reloadIdentity()
+      startInterval()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    if (document.visibilityState !== 'hidden') {
+      startInterval()
+    }
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      stopInterval()
     }
   }, [isAaManifestConfigured, refreshIntervalMs, reloadIdentity])
 

@@ -3,7 +3,11 @@ module Plether.Handlers.PerpsHistorySpec (spec) where
 import Data.Aeson (object, (.=))
 import Data.List (isInfixOf)
 import Database.PostgreSQL.Simple (Query)
-import Plether.Config (Config (..))
+import Plether.Config
+  ( Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Database.Schema
   ( PerpsIndexerStatusRow (..)
   , PerpsKeeperTerminalOrderRow (..)
@@ -242,6 +246,13 @@ testConfig =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"

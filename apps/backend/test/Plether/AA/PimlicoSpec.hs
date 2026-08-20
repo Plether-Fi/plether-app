@@ -23,7 +23,12 @@ import Plether.AA.Pimlico
   , validateActionSequence
   , validateMethodParams
   )
-import Plether.Config (AaConfig (..), Config (..))
+import Plether.Config
+  ( AaConfig (..)
+  , Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Ethereum.Abi
   ( encodeAddress
   , encodeCall
@@ -373,6 +378,13 @@ testConfig =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = usdc

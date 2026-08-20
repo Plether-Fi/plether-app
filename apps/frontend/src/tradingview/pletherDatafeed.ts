@@ -8,11 +8,21 @@ import {
   type BasketHistoryPoint,
   type BasketHistoryRange,
   type BasketLatest,
+  type PerpsBasketCandle,
+  type PerpsBasketCandlePage,
+  type PerpsBasketCurrentCandle,
+  type PerpsCandleIntervalSeconds,
 } from '../api'
+import {
+  PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS,
+  PERPS_CANDLE_PAGE_BUCKETS,
+} from '../api/candlePolicy'
 import {
   alignBasketPointsToOracleMark,
   buildCandles,
   oracleNumberToDisplayDxyPrice,
+  parsePerpsDisplayPriceCap,
+  perpsBasketCandleToChartCandle,
   type OracleMarkPoint,
 } from '../utils/dxyBasketChart'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
@@ -36,16 +46,27 @@ export const TRADINGVIEW_RESOLUTIONS: TradingViewResolution[] = [
   '1D',
 ]
 export const TRADINGVIEW_FAVORITE_RESOLUTIONS: TradingViewResolution[] = ['5', '60', '1D']
+export const PERPS_CANDLE_MAX_HISTORY_PAGES = 24
 
 const MICRO_USDC_PER_USDC = 1_000_000n
 const LIVE_VOLUME_REFRESH_MS = 60_000
+const INITIAL_CURRENT_CANDLE_WAIT_MS = 250
+
+export function isPerpsCandleApiEnabled(
+  value = import.meta.env.VITE_PERPS_CANDLE_API_ENABLED as string | undefined
+): boolean {
+  const normalized = value?.trim().toLowerCase()
+  return normalized === 'true' || normalized === '1'
+}
 
 const SYMBOL_INFO: TradingViewSymbolInfo = {
   name: 'plDXY.P',
   ticker: PLDXY_TRADINGVIEW_SYMBOL,
   description: 'plDXY Perpetual',
   type: 'futures',
-  session: '24x7',
+  // The FX basket can publish partial Sunday buckets after the weekly market
+  // opens. Saturday remains closed, and missing bars are never synthesized.
+  session: '0000-0000:123456',
   timezone: 'Etc/UTC',
   exchange: 'Plether',
   listed_exchange: 'Plether',
@@ -53,13 +74,14 @@ const SYMBOL_INFO: TradingViewSymbolInfo = {
   pricescale: 10_000,
   minmov: 1,
   has_intraday: true,
-  intraday_multipliers: ['1', '5', '60'],
+  intraday_multipliers: ['1', '3', '5', '15', '30', '60'],
   has_daily: true,
   daily_multipliers: ['1'],
   supported_resolutions: TRADINGVIEW_RESOLUTIONS,
   data_status: 'streaming',
   visible_plots_set: 'ohlcv',
   volume_precision: 2,
+  has_empty_bars: false,
 }
 
 const DATAFEED_CONFIGURATION: TradingViewDatafeedConfiguration = {
@@ -72,16 +94,36 @@ const DATAFEED_CONFIGURATION: TradingViewDatafeedConfiguration = {
 }
 
 export interface PletherChartDataSource {
-  getHistory: (range: BasketHistoryRange, intervalSeconds: number) => Promise<BasketHistory>
-  getLatest: () => Promise<BasketLatest | undefined>
+  getHistory: (
+    range: BasketHistoryRange,
+    intervalSeconds: number,
+    signal?: AbortSignal
+  ) => Promise<BasketHistory>
+  getLatest: (signal?: AbortSignal) => Promise<BasketLatest | undefined>
+  getCandlePage?: (
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    cursor: number,
+    signal?: AbortSignal,
+    revalidate?: boolean
+  ) => Promise<PerpsBasketCandlePage>
+  getCurrentCandle?: (
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    signal?: AbortSignal,
+    revalidate?: boolean
+  ) => Promise<PerpsBasketCurrentCandle>
+  clearCandlePageCache?: (intervalSeconds?: PerpsCandleIntervalSeconds) => void
 }
 
 interface Subscription {
+  listenerGuid: string
   resolution: TradingViewResolution
   onTick: (bar: TradingViewBar) => void
   onResetCacheNeeded: () => void
-  timer: ReturnType<typeof setInterval>
+  timer?: ReturnType<typeof setInterval>
   polling: boolean
+  failureCount: number
+  nextPollAt: number
+  requestControllers: Set<AbortController>
   currentBar?: TradingViewBar
 }
 
@@ -89,56 +131,224 @@ interface VolumeSnapshot {
   byTime: Map<number, number>
 }
 
+interface CandleDatasetIdentity {
+  seriesId: string
+  configurationHash: string
+  displayPriceCap: string
+  volumeChainId: number
+  volumeRouter: string
+}
+
+interface CandleCoverageBoundary {
+  coverageStart: number
+  datasetGeneration: number
+}
+
+interface PrimedCurrentCandle {
+  bar: TradingViewBar
+  primedAt: number
+}
+
 export interface PletherDxyDatafeedOptions {
   dataSource?: PletherChartDataSource
   queryClient?: QueryClient
   pollIntervalMs?: number
   oracleMark?: OracleMarkPoint
-  onHistoryGap?: () => void
+  onHistoryGap?: (intervalSeconds?: PerpsCandleIntervalSeconds) => void
+  useCandleApi?: boolean
 }
 
 async function fetchBasketHistory(
   range: BasketHistoryRange,
-  intervalSeconds: number
+  intervalSeconds: number,
+  signal?: AbortSignal
 ): Promise<ApiResponse<BasketHistory>> {
-  const result = await perpsApi.getPerpsBasketHistory(range, intervalSeconds)
+  const result = await perpsApi.getPerpsBasketHistory(
+    range,
+    intervalSeconds,
+    false,
+    signal
+  )
   if (Result.isError(result)) throw result.error
   return result.value
 }
 
-async function fetchBasketLatest(): Promise<ApiResponse<BasketLatest>> {
-  const result = await perpsApi.getPerpsBasketLatest()
+async function fetchBasketLatest(signal?: AbortSignal): Promise<ApiResponse<BasketLatest>> {
+  const result = await perpsApi.getPerpsBasketLatest(signal)
+  if (Result.isError(result)) throw result.error
+  return result.value
+}
+
+async function fetchBasketCandlePage(
+  intervalSeconds: PerpsCandleIntervalSeconds,
+  cursor: number,
+  signal?: AbortSignal,
+  revalidate = false
+): Promise<ApiResponse<PerpsBasketCandlePage>> {
+  const result = await perpsApi.getPerpsBasketCandles(
+    intervalSeconds,
+    cursor,
+    signal,
+    revalidate
+  )
+  if (Result.isError(result)) throw result.error
+  return result.value
+}
+
+async function fetchBasketCurrentCandle(
+  intervalSeconds: PerpsCandleIntervalSeconds,
+  signal?: AbortSignal,
+  revalidate = false
+): Promise<ApiResponse<PerpsBasketCurrentCandle>> {
+  const result = await perpsApi.getPerpsBasketCurrentCandle(
+    intervalSeconds,
+    signal,
+    revalidate
+  )
   if (Result.isError(result)) throw result.error
   return result.value
 }
 
 function createApiDataSource(queryClient: QueryClient | undefined): PletherChartDataSource {
   return {
-    async getHistory(range, intervalSeconds) {
-      if (!queryClient) return (await fetchBasketHistory(range, intervalSeconds)).data
+    async getHistory(range, intervalSeconds, signal) {
+      if (!queryClient) return (await fetchBasketHistory(range, intervalSeconds, signal)).data
 
-      const response = await queryClient.fetchQuery({
-        queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
-        queryFn: () => fetchBasketHistory(range, intervalSeconds),
-        staleTime: 60_000,
-      })
+      const response = await awaitWithAbort(
+        queryClient.fetchQuery({
+          queryKey: apiQueryKeys.perps.basketHistory(range, intervalSeconds),
+          queryFn: ({ signal: querySignal }) => fetchBasketHistory(
+            range,
+            intervalSeconds,
+            querySignal
+          ),
+          staleTime: 60_000,
+          retry: retryTransientFailureOnce,
+        }),
+        signal
+      )
       return response.data
     },
-    async getLatest() {
-      try {
-        if (!queryClient) return (await fetchBasketLatest()).data
+    async getLatest(signal) {
+      if (!queryClient) return (await fetchBasketLatest(signal)).data
 
-        const response = await queryClient.fetchQuery({
+      const response = await awaitWithAbort(
+        queryClient.fetchQuery({
           queryKey: apiQueryKeys.perps.basketLatest(),
-          queryFn: fetchBasketLatest,
+          queryFn: ({ signal: querySignal }) => fetchBasketLatest(querySignal),
           staleTime: 5_000,
-        })
-        return response.data
-      } catch {
-        return undefined
+          retry: retryTransientFailureOnce,
+        }),
+        signal
+      )
+      return response.data
+    },
+    async getCandlePage(intervalSeconds, cursor, signal, revalidate = false) {
+      // The Worker already caches fixed pages against an authoritative origin
+      // identity and generation. Reusing a page locally under only
+      // (interval,cursor) could bypass that probe after a correction, reorg, or
+      // chart remount, so every chart history read must reach the Worker.
+      return (
+        await fetchBasketCandlePage(intervalSeconds, cursor, signal, revalidate)
+      ).data
+    },
+    async getCurrentCandle(intervalSeconds, signal, revalidate = false) {
+      if (!queryClient || revalidate) {
+        return (
+          await fetchBasketCurrentCandle(intervalSeconds, signal, revalidate)
+        ).data
       }
+
+      const response = await awaitWithAbort(
+        queryClient.fetchQuery({
+          queryKey: apiQueryKeys.perps.basketCurrentCandle(intervalSeconds),
+          queryFn: ({ signal: querySignal }) => fetchBasketCurrentCandle(
+            intervalSeconds,
+            querySignal
+          ),
+          // The edge cache supplies the bounded reuse window. Keeping this
+          // query immediately stale ensures every visible polling tick reaches
+          // that boundary instead of skipping alternate ticks locally.
+          staleTime: 0,
+          retry: retryTransientFailureOnce,
+        }),
+        signal
+      )
+      return response.data
+    },
+    clearCandlePageCache(intervalSeconds) {
+      const candleKey = apiQueryKeys.perps.basketCandlesAll()
+      queryClient?.removeQueries({
+        queryKey: candleKey,
+        predicate: intervalSeconds === undefined
+          ? undefined
+          : (query) => {
+              const suffix = query.queryKey.slice(candleKey.length)
+              return suffix[0] === intervalSeconds || (
+                suffix[0] === 'current' && suffix[1] === intervalSeconds
+              )
+            },
+      })
     },
   }
+}
+
+function awaitWithAbort<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return promise
+  if (signal.aborted) return Promise.reject(abortReason(signal))
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener('abort', onAbort)
+      reject(abortReason(signal))
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort)
+        resolve(value)
+      },
+      (error: unknown) => {
+        signal.removeEventListener('abort', onAbort)
+        reject(error instanceof Error ? error : new Error('Chart data request failed'))
+      }
+    )
+  })
+}
+
+function settleWithin<T>(promise: Promise<T | undefined>, waitMs: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (value: T | undefined) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      resolve(value)
+    }
+    const timer = setTimeout(() => {
+      finish(undefined)
+    }, waitMs)
+    void promise.then(finish, () => {
+      finish(undefined)
+    })
+  })
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error
+    ? signal.reason
+    : new DOMException('The operation was aborted', 'AbortError')
+}
+
+function retryTransientFailureOnce(failureCount: number, error: unknown): boolean {
+  if (isAbortError(error)) return false
+  const status = (error as { status?: number }).status
+  if (status !== undefined && status >= 400 && status < 500) return false
+  return failureCount < 1
+}
+
+function isAbortError(error: unknown): boolean {
+  return (error as { name?: string }).name === 'AbortError'
 }
 
 export function tradingViewResolutionForInterval(
@@ -178,6 +388,50 @@ export function secondsForTradingViewResolution(resolution: TradingViewResolutio
   return seconds[resolution]
 }
 
+function candleIntervalForTradingViewResolution(
+  resolution: TradingViewResolution
+): PerpsCandleIntervalSeconds {
+  return secondsForTradingViewResolution(resolution) as PerpsCandleIntervalSeconds
+}
+
+export function candlePageCursorForRequest(
+  to: number,
+  intervalSeconds: PerpsCandleIntervalSeconds
+): number {
+  const pageSeconds = intervalSeconds * PERPS_CANDLE_PAGE_BUCKETS
+  if (!Number.isFinite(to) || to <= 0) return pageSeconds
+  return Math.max(pageSeconds, Math.ceil(to / pageSeconds) * pageSeconds)
+}
+
+export function perpsBasketCandlesToTradingViewBars(
+  candles: PerpsBasketCandle[],
+  intervalSeconds: PerpsCandleIntervalSeconds,
+  displayPriceCap: string
+): TradingViewBar[] {
+  const barsByTime = new Map<number, TradingViewBar>()
+
+  for (const candle of candles) {
+    if (candle.timestamp % intervalSeconds !== 0) continue
+    const chartCandle = perpsBasketCandleToChartCandle(candle, displayPriceCap)
+    if (!chartCandle) continue
+
+    const volumeUsdc = parseOptionalMicroUsdc(candle.volumeUsdc)
+    const bar: TradingViewBar = {
+      time: chartCandle.timestamp * 1000,
+      open: chartCandle.open,
+      high: chartCandle.high,
+      low: chartCandle.low,
+      close: chartCandle.close,
+      ...(volumeUsdc === undefined
+        ? {}
+        : { volume: microUsdcToHumanUsdc(volumeUsdc) }),
+    }
+    barsByTime.set(bar.time, bar)
+  }
+
+  return [...barsByTime.values()].sort((left, right) => left.time - right.time)
+}
+
 export function historyRangeForRequest(
   from: number,
   to: number,
@@ -194,13 +448,28 @@ export function historyRangeForRequest(
     '60': 30 * 24 * 60 * 60,
     '1D': 365 * 24 * 60 * 60,
   }
+  // Fine-grained bars are intentionally available for shorter lookback
+  // windows. Without this cap, scrolling a one-minute chart far enough back
+  // would ask the backend to materialize up to a year of minute snapshots.
+  const maximumSeconds: Record<TradingViewResolution, number> = {
+    '1': 7 * 24 * 60 * 60,
+    '3': 7 * 24 * 60 * 60,
+    '5': 30 * 24 * 60 * 60,
+    '15': 30 * 24 * 60 * 60,
+    '30': 30 * 24 * 60 * 60,
+    '60': 365 * 24 * 60 * 60,
+    '1D': 365 * 24 * 60 * 60,
+  }
   const countBackSeconds = Math.max(0, countBack) * secondsForTradingViewResolution(resolution)
   const earliestRequestedTime = Math.min(from, to - countBackSeconds)
-  const requestedSeconds = Math.max(
-    minimumSeconds[resolution],
-    Math.max(0, to - from),
-    countBackSeconds,
-    Math.max(0, now - earliestRequestedTime)
+  const requestedSeconds = Math.min(
+    maximumSeconds[resolution],
+    Math.max(
+      minimumSeconds[resolution],
+      Math.max(0, to - from),
+      countBackSeconds,
+      Math.max(0, now - earliestRequestedTime)
+    )
   )
 
   if (requestedSeconds <= 24 * 60 * 60) return '24h'
@@ -246,15 +515,19 @@ export function basketPointsToTradingViewBars(
   }))
 }
 
-function parseMicroUsdc(value: string | undefined): bigint {
+function parseOptionalMicroUsdc(value: string | null | undefined): bigint | undefined {
   const normalized = value?.trim()
-  if (!normalized || !/^\d+$/.test(normalized)) return 0n
+  if (!normalized || !/^\d+$/.test(normalized)) return undefined
 
   try {
     return BigInt(normalized)
   } catch {
-    return 0n
+    return undefined
   }
+}
+
+function parseMicroUsdc(value: string | null | undefined): bigint {
+  return parseOptionalMicroUsdc(value) ?? 0n
 }
 
 function microUsdcToHumanUsdc(value: bigint): number {
@@ -322,19 +595,57 @@ function barFromLivePoint(
 export class PletherDxyDatafeed implements TradingViewDatafeed {
   private readonly dataSource: PletherChartDataSource
   private readonly pollIntervalMs: number
-  private readonly onHistoryGap: (() => void) | undefined
+  private readonly onHistoryGap:
+    ((intervalSeconds?: PerpsCandleIntervalSeconds) => void) | undefined
+  private readonly useCandleApi: boolean
   private readonly subscriptions = new Map<string, Subscription>()
   private readonly lastBars = new Map<TradingViewResolution, TradingViewBar>()
   private readonly volumeSnapshots = new Map<TradingViewResolution, VolumeSnapshot>()
-  private readonly volumeRefreshes = new Map<TradingViewResolution, Promise<VolumeSnapshot>>()
+  private readonly volumeRefreshes = new Map<
+    TradingViewResolution,
+    Promise<VolumeSnapshot | undefined>
+  >()
   private readonly liveVolumeRefreshedAt = new Map<TradingViewResolution, number>()
+  private readonly requestControllers = new Set<AbortController>()
+  private readonly handleVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') {
+      for (const subscription of this.subscriptions.values()) {
+        this.stopSubscriptionTimer(subscription)
+      }
+      for (const controller of this.requestControllers) controller.abort()
+      return
+    }
+
+    for (const [listenerGuid, subscription] of this.subscriptions) {
+      this.startSubscriptionTimer(listenerGuid, subscription)
+      void this.pollSubscription(listenerGuid)
+    }
+  }
   private oracleMark?: OracleMarkPoint
+  private readonly datasetGenerations = new Map<PerpsCandleIntervalSeconds, number>()
+  private readonly candleDatasetIdentities = new Map<
+    PerpsCandleIntervalSeconds,
+    CandleDatasetIdentity
+  >()
+  private readonly candleCoverageBoundaries = new Map<
+    PerpsCandleIntervalSeconds,
+    CandleCoverageBoundary
+  >()
+  private readonly initializedCandleIntervals = new Set<PerpsCandleIntervalSeconds>()
+  private readonly primedCurrentCandles = new Map<TradingViewResolution, PrimedCurrentCandle>()
+  private readonly candleIntervalsNeedingRevalidation = new Set<PerpsCandleIntervalSeconds>()
+  private readonly pendingCandleHistoryResets = new Set<PerpsCandleIntervalSeconds>()
+  private destroyed = false
 
   constructor(options: PletherDxyDatafeedOptions = {}) {
     this.dataSource = options.dataSource ?? createApiDataSource(options.queryClient)
-    this.pollIntervalMs = options.pollIntervalMs ?? 5_000
+    this.pollIntervalMs = options.pollIntervalMs ?? PERPS_CANDLE_CURRENT_POLL_INTERVAL_MS
     this.oracleMark = options.oracleMark
     this.onHistoryGap = options.onHistoryGap
+    this.useCandleApi = options.useCandleApi ?? isPerpsCandleApiEnabled()
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.handleVisibilityChange)
+    }
   }
 
   onReady(callback: (configuration: TradingViewDatafeedConfiguration) => void): void {
@@ -377,12 +688,25 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     onResult: (bars: TradingViewBar[], metadata: { noData: boolean }) => void,
     onError: (message: string) => void
   ): void {
-    void this.loadBars(resolution, periodParams)
+    if (!this.isDocumentVisible()) {
+      setTimeout(() => {
+        if (!this.destroyed) onError('Chart data loading is paused while this tab is hidden')
+      }, 0)
+      return
+    }
+
+    void this.runRequest((signal) => this.loadBars(resolution, periodParams, signal))
       .then((bars) => {
-        onResult(bars, { noData: bars.length === 0 })
+        setTimeout(() => {
+          if (!this.destroyed) {
+            onResult(bars.map((bar) => ({ ...bar })), { noData: bars.length === 0 })
+          }
+        }, 0)
       })
       .catch((error: unknown) => {
-        onError(errorMessage(error))
+        setTimeout(() => {
+          if (!this.destroyed) onError(errorMessage(error))
+        }, 0)
       })
   }
 
@@ -395,47 +719,91 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
   ): void {
     this.unsubscribeBars(listenerGuid)
 
+    const primedCurrent = this.useCandleApi
+      ? this.consumePrimedCurrentCandle(resolution)
+      : undefined
+
     const subscription: Subscription = {
+      listenerGuid,
       resolution,
       onTick,
       onResetCacheNeeded: onResetCacheNeededCallback,
       polling: false,
-      currentBar: this.lastBars.get(resolution),
-      timer: setInterval(() => {
-        void this.pollSubscription(listenerGuid)
-      }, this.pollIntervalMs),
+      failureCount: 0,
+      nextPollAt: 0,
+      requestControllers: new Set(),
+      currentBar: primedCurrent?.bar ?? this.lastBars.get(resolution),
     }
     this.subscriptions.set(listenerGuid, subscription)
-    void this.pollSubscription(listenerGuid)
+    if (this.isDocumentVisible()) {
+      this.startSubscriptionTimer(listenerGuid, subscription)
+      if (!primedCurrent) void this.pollSubscription(listenerGuid)
+    }
   }
 
   unsubscribeBars(listenerGuid: string): void {
     const subscription = this.subscriptions.get(listenerGuid)
     if (!subscription) return
 
-    clearInterval(subscription.timer)
+    this.stopSubscriptionTimer(subscription)
+    for (const controller of subscription.requestControllers) controller.abort()
+    subscription.requestControllers.clear()
     this.subscriptions.delete(listenerGuid)
   }
 
   setOracleMark(oracleMark: OracleMarkPoint | undefined): void {
     this.oracleMark = oracleMark
+    // Rollup candles are a coherent Pyth reference series. The independently
+    // sourced onchain mark remains separate trading UI state and must not
+    // rewrite historical or current OHLC.
+    if (this.useCandleApi) return
     if (!oracleMark) return
 
+    let needsHistoryReset = false
     for (const subscription of this.subscriptions.values()) {
+      const markTime = this.barTimeForTimestamp(subscription.resolution, oracleMark.timestamp)
+      if (subscription.currentBar && markTime < subscription.currentBar.time) {
+        subscription.currentBar = undefined
+        this.lastBars.delete(subscription.resolution)
+        this.scheduleCacheReset(subscription)
+        needsHistoryReset = true
+        continue
+      }
       this.emitLiveBar(subscription, oracleMark.basketPrice, oracleMark.timestamp)
+    }
+    if (needsHistoryReset) {
+      setTimeout(() => {
+        if (!this.destroyed) this.onHistoryGap?.()
+      }, 0)
     }
   }
 
   destroy(): void {
+    this.destroyed = true
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.handleVisibilityChange)
+    }
     for (const listenerGuid of [...this.subscriptions.keys()]) {
       this.unsubscribeBars(listenerGuid)
     }
+    for (const controller of this.requestControllers) controller.abort()
+    this.requestControllers.clear()
   }
 
   private async loadBars(
     resolution: TradingViewResolution,
-    periodParams: { from: number; to: number; countBack: number }
+    periodParams: {
+      from: number
+      to: number
+      countBack: number
+      firstDataRequest: boolean
+    },
+    signal?: AbortSignal
   ): Promise<TradingViewBar[]> {
+    if (this.useCandleApi) {
+      return await this.loadCandleBars(resolution, periodParams, signal)
+    }
+
     const intervalSeconds = secondsForTradingViewResolution(resolution)
     const range = historyRangeForRequest(
       periodParams.from,
@@ -444,8 +812,11 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       resolution
     )
     const [history, latest] = await Promise.all([
-      this.dataSource.getHistory(range, intervalSeconds),
-      this.dataSource.getLatest(),
+      this.dataSource.getHistory(range, intervalSeconds, signal),
+      this.dataSource.getLatest(signal).catch((error: unknown) => {
+        if (isAbortError(error)) throw error
+        return undefined
+      }),
     ])
     const points = alignBasketPointsToOracleMark(history.points, latest, this.oracleMark)
     const bars = basketPointsToTradingViewBars(points, resolution, history.points)
@@ -469,15 +840,260 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     return bars
   }
 
+  private async loadCandleBars(
+    resolution: TradingViewResolution,
+    periodParams: {
+      from: number
+      to: number
+      countBack: number
+      firstDataRequest: boolean
+    },
+    signal?: AbortSignal
+  ): Promise<TradingViewBar[]> {
+    const getCandlePage = this.dataSource.getCandlePage
+    if (!getCandlePage) {
+      throw new Error('The Perps candle API data source is unavailable')
+    }
+
+    const intervalSeconds = candleIntervalForTradingViewResolution(resolution)
+    const knownCoverageBoundary = this.candleCoverageBoundaries.get(intervalSeconds)
+    if (
+      knownCoverageBoundary &&
+      knownCoverageBoundary.datasetGeneration === this.datasetGenerations.get(intervalSeconds) &&
+      Number.isFinite(periodParams.to) &&
+      periodParams.to <= knownCoverageBoundary.coverageStart
+    ) {
+      // TradingView asks again when the first response contains fewer bars than
+      // countBack. Once the API has proved the series inception, an older
+      // follow-up is a normal end-of-history condition rather than an API
+      // error. Avoid requesting a fixed page that cannot intersect coverage.
+      return []
+    }
+    const targetCount = Math.max(1, periodParams.countBack)
+    const requestedToMs = periodParams.to * 1000
+    const shouldPrimeCurrent = periodParams.firstDataRequest &&
+      !this.initializedCandleIntervals.has(intervalSeconds) &&
+      this.dataSource.getCurrentCandle !== undefined
+    const currentCandleRequest = shouldPrimeCurrent
+      ? this.dataSource.getCurrentCandle?.(
+          intervalSeconds,
+          signal,
+          this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
+        ).catch(() => undefined)
+      : undefined
+    const barsByTime = new Map<number, TradingViewBar>()
+    const visitedCursors = new Set<number>()
+    const requestedCursor = candlePageCursorForRequest(periodParams.to, intervalSeconds)
+    const localCurrentCursor = candlePageCursorForRequest(Date.now() / 1000, intervalSeconds)
+    let cursor = Math.min(requestedCursor, localCurrentCursor)
+    let pageRequestCount = 0
+    let requestGeneration: number | undefined
+    let requestIdentity: CandleDatasetIdentity | undefined
+    let requestCoverageStart: number | undefined
+    let forceRevalidate = this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
+
+    while (
+      barsByTime.size < targetCount &&
+      pageRequestCount < PERPS_CANDLE_MAX_HISTORY_PAGES &&
+      !visitedCursors.has(cursor)
+    ) {
+      visitedCursors.add(cursor)
+      const loadPage = (revalidate: boolean) => {
+        if (pageRequestCount >= PERPS_CANDLE_MAX_HISTORY_PAGES) {
+          throw new Error('The Perps candle history request budget was exhausted')
+        }
+        pageRequestCount += 1
+        return revalidate
+          ? getCandlePage(intervalSeconds, cursor, signal, true)
+          : getCandlePage(intervalSeconds, cursor, signal)
+      }
+      let page = await loadPage(forceRevalidate)
+      this.validateCandlePage(page, intervalSeconds, cursor)
+      let pageIdentity = this.candleIdentity(page)
+
+      if (requestIdentity === undefined) {
+        const knownIdentity = this.candleDatasetIdentities.get(intervalSeconds)
+        if (knownIdentity && !this.candleIdentitiesEqual(knownIdentity, pageIdentity)) {
+          // Only the fixed page containing the local wall clock may reveal a
+          // newly activated basket definition authoritatively. A closed page
+          // can legitimately belong to an older definition and must never
+          // replace the live interval identity.
+          this.prepareCandleRevalidation(intervalSeconds)
+          const isCurrentContainingPage =
+            cursor === candlePageCursorForRequest(Date.now() / 1000, intervalSeconds)
+          if (!isCurrentContainingPage) {
+            throw new Error('The Perps candle identity changed while history was loading')
+          }
+          if (!forceRevalidate) {
+            const firstIdentity = pageIdentity
+            page = await loadPage(true)
+            forceRevalidate = true
+            this.validateCandlePage(page, intervalSeconds, cursor)
+            pageIdentity = this.candleIdentity(page)
+            if (!this.candleIdentitiesEqual(firstIdentity, pageIdentity)) {
+              throw new Error('The Perps candle identity changed while history was loading')
+            }
+          }
+          this.observeCandleIdentity(intervalSeconds, pageIdentity)
+        }
+        requestIdentity = pageIdentity
+      } else if (!this.candleIdentitiesEqual(requestIdentity, pageIdentity)) {
+        this.prepareCandleRevalidation(intervalSeconds)
+        throw new Error('The Perps candle identity changed while history was loading')
+      }
+
+      const knownGeneration = this.datasetGenerations.get(intervalSeconds)
+      if (knownGeneration !== undefined && page.datasetGeneration < knownGeneration) {
+        this.prepareCandleRevalidation(intervalSeconds)
+        if (forceRevalidate) {
+          this.requestCandleHistoryReset(intervalSeconds)
+          throw new Error('The Perps candle API returned a stale dataset generation')
+        }
+
+        forceRevalidate = true
+        page = await loadPage(true)
+        this.validateCandlePage(page, intervalSeconds, cursor)
+        const revalidatedIdentity = this.candleIdentity(page)
+        if (!this.candleIdentitiesEqual(pageIdentity, revalidatedIdentity)) {
+          // A rejected mixed page is never authoritative for interval state.
+          // Keep the previously established live identity and merely force a
+          // clean refetch on the next request.
+          this.prepareCandleRevalidation(intervalSeconds)
+          throw new Error('The Perps candle identity changed while history was loading')
+        }
+        if (page.datasetGeneration < knownGeneration) {
+          this.requestCandleHistoryReset(intervalSeconds)
+          throw new Error('The Perps candle API returned a stale dataset generation')
+        }
+      }
+
+      requestCoverageStart ??= this.candleCoverageStart(page)
+      if (requestGeneration === undefined) {
+        requestGeneration = page.datasetGeneration
+      } else if (requestGeneration !== page.datasetGeneration) {
+        this.observeDatasetGeneration(
+          intervalSeconds,
+          Math.max(requestGeneration, page.datasetGeneration)
+        )
+        this.requestCandleHistoryReset(intervalSeconds)
+        throw new Error('The Perps candle dataset changed while history was loading')
+      }
+
+      for (const bar of perpsBasketCandlesToTradingViewBars(
+        page.candles,
+        intervalSeconds,
+        page.displayPriceCap
+      )) {
+        if (bar.time < requestedToMs) barsByTime.set(bar.time, bar)
+      }
+
+      const previousCursor = page.previousCursor
+      if (
+        barsByTime.size >= targetCount ||
+        !page.hasEarlier ||
+        previousCursor === null ||
+        previousCursor <= 0 ||
+        previousCursor >= cursor
+      ) {
+        break
+      }
+      cursor = previousCursor
+    }
+
+    if (requestGeneration !== undefined && requestIdentity !== undefined) {
+      this.observeCandleIdentity(intervalSeconds, requestIdentity)
+      this.observeDatasetGeneration(intervalSeconds, requestGeneration)
+      if (requestCoverageStart !== undefined) {
+        this.candleCoverageBoundaries.set(intervalSeconds, {
+          coverageStart: requestCoverageStart,
+          datasetGeneration: requestGeneration,
+        })
+      }
+      // Every page used by this response was checked against one generation.
+      // A future older-page request still detects and repairs an old edge entry.
+      this.candleIntervalsNeedingRevalidation.delete(intervalSeconds)
+    }
+    let primedCurrentBar: TradingViewBar | undefined
+    if (currentCandleRequest) {
+      const currentResponse = await settleWithin(
+        currentCandleRequest,
+        INITIAL_CURRENT_CANDLE_WAIT_MS
+      )
+      if (currentResponse && requestGeneration !== undefined && requestIdentity !== undefined) {
+        try {
+          this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+          const currentIdentity = this.candleIdentity(currentResponse)
+          if (
+            currentResponse.datasetGeneration === requestGeneration &&
+            this.candleIdentitiesEqual(currentIdentity, requestIdentity)
+          ) {
+            const currentBar = currentResponse.candle
+              ? perpsBasketCandlesToTradingViewBars(
+                  [currentResponse.candle],
+                  intervalSeconds,
+                  currentResponse.displayPriceCap
+                ).at(0)
+              : undefined
+            if (currentBar && currentBar.time < requestedToMs) {
+              barsByTime.set(currentBar.time, currentBar)
+              primedCurrentBar = currentBar
+            }
+          }
+        } catch {
+          // Finalized history remains usable when the optional live snapshot is
+          // malformed or changes generation while the first page is loading.
+          // The normal subscription poll will revalidate and recover it.
+        }
+      }
+    }
+    this.initializedCandleIntervals.add(intervalSeconds)
+
+    const bars = [...barsByTime.values()]
+      .sort((left, right) => left.time - right.time)
+      .slice(-targetCount)
+    const lastBar = bars.at(-1)
+    const previousLastBar = this.lastBars.get(resolution)
+    if (lastBar && (!previousLastBar || lastBar.time >= previousLastBar.time)) {
+      this.lastBars.set(resolution, { ...lastBar })
+    }
+    if (primedCurrentBar && bars.some((bar) => bar.time === primedCurrentBar.time)) {
+      this.primedCurrentCandles.set(resolution, {
+        bar: { ...primedCurrentBar },
+        primedAt: Date.now(),
+      })
+    }
+    return bars
+  }
+
+  private consumePrimedCurrentCandle(
+    resolution: TradingViewResolution
+  ): PrimedCurrentCandle | undefined {
+    const primed = this.primedCurrentCandles.get(resolution)
+    this.primedCurrentCandles.delete(resolution)
+    if (!primed || Date.now() - primed.primedAt > this.pollIntervalMs) return undefined
+    return primed
+  }
+
   private async pollSubscription(listenerGuid: string): Promise<void> {
     const subscription = this.subscriptions.get(listenerGuid)
     if (!subscription || subscription.polling) return
+    if (Date.now() < subscription.nextPollAt) return
 
     subscription.polling = true
     try {
-      const latest = await this.dataSource.getLatest()
+      if (this.useCandleApi) {
+        await this.pollCurrentCandle(listenerGuid, subscription)
+        return
+      }
+
+      const latest = await this.runRequest(
+        (signal) => this.dataSource.getLatest(signal),
+        subscription
+      )
       const current = this.subscriptions.get(listenerGuid)
       if (!current) return
+      current.failureCount = 0
+      current.nextPollAt = 0
 
       const livePoint = this.oracleMark ?? latest
       if (livePoint) {
@@ -488,12 +1104,299 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
         this.emitLiveBar(current, livePoint.basketPrice, livePoint.timestamp, cachedVolume)
         this.queueLiveVolumeRefresh(listenerGuid, current.resolution, barTime)
       }
-    } catch {
-      // Keep the last bar visible and retry on the next polling interval.
+    } catch (error) {
+      const current = this.subscriptions.get(listenerGuid)
+      if (current && !isAbortError(error)) {
+        current.failureCount += 1
+        current.nextPollAt = Date.now() + Math.min(
+          60_000,
+          this.pollIntervalMs * 3 * (2 ** (current.failureCount - 1))
+        )
+      }
+      // Keep the last bar visible; repeated failures back off to one minute.
     } finally {
       const current = this.subscriptions.get(listenerGuid)
       if (current) current.polling = false
     }
+  }
+
+  private async pollCurrentCandle(
+    listenerGuid: string,
+    subscription: Subscription
+  ): Promise<void> {
+    const getCurrentCandle = this.dataSource.getCurrentCandle
+    if (!getCurrentCandle) {
+      throw new Error('The Perps current-candle API data source is unavailable')
+    }
+
+    const intervalSeconds = candleIntervalForTradingViewResolution(subscription.resolution)
+    const loadCurrent = (revalidate: boolean) => this.runRequest(
+      (signal) => revalidate
+        ? getCurrentCandle(intervalSeconds, signal, true)
+        : getCurrentCandle(intervalSeconds, signal),
+      subscription
+    )
+    let currentResponse = await loadCurrent(
+      this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
+    )
+    this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+    let currentIdentity = this.candleIdentity(currentResponse)
+    let didRevalidate = this.candleIntervalsNeedingRevalidation.has(intervalSeconds)
+    const knownIdentity = this.candleDatasetIdentities.get(intervalSeconds)
+    if (knownIdentity && !this.candleIdentitiesEqual(knownIdentity, currentIdentity)) {
+      this.dataSource.clearCandlePageCache?.(intervalSeconds)
+      if (this.subscriptions.get(listenerGuid) !== subscription) return
+      currentResponse = await loadCurrent(true)
+      didRevalidate = true
+      this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+      currentIdentity = this.candleIdentity(currentResponse)
+    }
+    let identityChanged = this.observeCandleIdentity(intervalSeconds, currentIdentity)
+
+    const knownGeneration = this.datasetGenerations.get(intervalSeconds)
+    if (
+      knownGeneration !== undefined &&
+      currentResponse.datasetGeneration < knownGeneration
+    ) {
+      this.dataSource.clearCandlePageCache?.(intervalSeconds)
+      if (didRevalidate) {
+        this.requestCandleHistoryReset(intervalSeconds)
+        throw new Error('The Perps candle API returned a stale dataset generation')
+      }
+      if (this.subscriptions.get(listenerGuid) !== subscription) return
+      currentResponse = await loadCurrent(true)
+      didRevalidate = true
+      this.validateCurrentCandleResponse(currentResponse, intervalSeconds)
+      currentIdentity = this.candleIdentity(currentResponse)
+      identityChanged = this.observeCandleIdentity(intervalSeconds, currentIdentity) ||
+        identityChanged
+      const revalidatedKnownGeneration = this.datasetGenerations.get(intervalSeconds)
+      if (
+        revalidatedKnownGeneration !== undefined &&
+        currentResponse.datasetGeneration < revalidatedKnownGeneration
+      ) {
+        this.requestCandleHistoryReset(intervalSeconds)
+        throw new Error('The Perps candle API returned a stale dataset generation')
+      }
+    }
+
+    const current = this.subscriptions.get(listenerGuid)
+    if (!current) return
+
+    const generationAdvanced = this.observeDatasetGeneration(
+      intervalSeconds,
+      currentResponse.datasetGeneration
+    )
+    current.failureCount = 0
+    current.nextPollAt = 0
+    const candle = currentResponse.candle
+    if (!candle) return
+
+    const bar = perpsBasketCandlesToTradingViewBars(
+      [candle],
+      intervalSeconds,
+      currentResponse.displayPriceCap
+    ).at(0)
+    if (!bar || (current.currentBar && bar.time < current.currentBar.time)) return
+    const intervalMilliseconds = intervalSeconds * 1000
+    if (
+      !identityChanged &&
+      !generationAdvanced &&
+      current.currentBar &&
+      bar.time > current.currentBar.time + intervalMilliseconds
+    ) {
+      // Polling intentionally pauses in hidden tabs and backs off on failures.
+      // Refetch finalized history when time jumped; do not invent gap candles.
+      this.requestCandleHistoryReset(intervalSeconds)
+    }
+    current.currentBar = { ...bar }
+    this.lastBars.set(current.resolution, { ...bar })
+    this.scheduleTick(current, bar)
+  }
+
+  private validateCandlePage(
+    page: PerpsBasketCandlePage,
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    cursor: number
+  ): void {
+    if (page.intervalSeconds !== intervalSeconds || page.cursor !== cursor) {
+      throw new Error('The Perps candle API returned a mismatched page')
+    }
+    if (!Number.isSafeInteger(page.datasetGeneration) || page.datasetGeneration <= 0) {
+      throw new Error('The Perps candle API returned an invalid dataset generation')
+    }
+    this.candleIdentity(page)
+    if (!page.coverageComplete) {
+      throw new Error('The Perps candle API returned incomplete page coverage')
+    }
+    this.candleCoverageStart(page)
+
+    const pageSpan = intervalSeconds * PERPS_CANDLE_PAGE_BUCKETS
+    const previousCursor = page.previousCursor
+    if (
+      (previousCursor === null && page.hasEarlier) ||
+      (previousCursor !== null && (
+        !page.hasEarlier ||
+        !Number.isSafeInteger(previousCursor) ||
+        previousCursor <= 0 ||
+        previousCursor >= cursor ||
+        previousCursor % pageSpan !== 0
+      ))
+    ) {
+      throw new Error('The Perps candle API returned invalid page pagination')
+    }
+
+    const pageStart = cursor - pageSpan
+    if (page.candles.some((candle) => (
+      candle.timestamp < pageStart || candle.timestamp >= cursor
+    ))) {
+      throw new Error('The Perps candle API returned a candle outside its page')
+    }
+  }
+
+  private validateCurrentCandleResponse(
+    response: PerpsBasketCurrentCandle,
+    intervalSeconds: PerpsCandleIntervalSeconds
+  ): void {
+    if (response.intervalSeconds !== intervalSeconds) {
+      throw new Error('The Perps candle API returned a mismatched current interval')
+    }
+    if (!Number.isSafeInteger(response.datasetGeneration) || response.datasetGeneration <= 0) {
+      throw new Error('The Perps candle API returned an invalid dataset generation')
+    }
+    this.candleIdentity(response)
+    if (!response.coverageComplete) {
+      throw new Error('The Perps candle API returned incomplete current coverage')
+    }
+  }
+
+  private observeDatasetGeneration(
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    datasetGeneration: number
+  ): boolean {
+    if (!Number.isSafeInteger(datasetGeneration) || datasetGeneration <= 0) {
+      throw new Error('The Perps candle API returned an invalid dataset generation')
+    }
+    const previousGeneration = this.datasetGenerations.get(intervalSeconds)
+    if (previousGeneration === undefined) {
+      this.datasetGenerations.set(intervalSeconds, datasetGeneration)
+      return false
+    }
+    if (datasetGeneration === previousGeneration) return false
+    if (datasetGeneration < previousGeneration) {
+      throw new Error('The Perps candle API returned a stale dataset generation')
+    }
+
+    this.datasetGenerations.set(intervalSeconds, datasetGeneration)
+    this.requestCandleHistoryReset(intervalSeconds)
+    return true
+  }
+
+  private candleIdentity(
+    response: Pick<
+      PerpsBasketCandlePage | PerpsBasketCurrentCandle,
+      'seriesId' | 'configurationHash' | 'displayPriceCap' |
+      'volumeChainId' | 'volumeRouter'
+    >
+  ): CandleDatasetIdentity {
+    const seriesId = response.seriesId.trim()
+    const configurationHash = response.configurationHash.trim()
+    const volumeRouter = typeof response.volumeRouter === 'string'
+      ? response.volumeRouter.trim().toLowerCase()
+      : ''
+    if (
+      !seriesId ||
+      !configurationHash ||
+      !Number.isSafeInteger(response.volumeChainId) ||
+      response.volumeChainId <= 0 ||
+      !/^0x[0-9a-f]{40}$/.test(volumeRouter)
+    ) {
+      throw new Error('The Perps candle API returned an invalid dataset identity')
+    }
+    if (parsePerpsDisplayPriceCap(response.displayPriceCap) === undefined) {
+      throw new Error('The Perps candle API returned an invalid display-price cap')
+    }
+    return {
+      seriesId,
+      configurationHash,
+      displayPriceCap: response.displayPriceCap,
+      volumeChainId: response.volumeChainId,
+      volumeRouter,
+    }
+  }
+
+  private candleCoverageStart(
+    response: Pick<PerpsBasketCandlePage, 'coverageStart'>
+  ): number {
+    const coverageStart = response.coverageStart
+    if (
+      typeof coverageStart !== 'number' ||
+      !Number.isSafeInteger(coverageStart) ||
+      coverageStart < 0
+    ) {
+      throw new Error('The Perps candle API returned an invalid coverage start')
+    }
+    return coverageStart
+  }
+
+  private candleIdentitiesEqual(
+    left: CandleDatasetIdentity,
+    right: CandleDatasetIdentity
+  ): boolean {
+    return left.seriesId === right.seriesId &&
+      left.configurationHash === right.configurationHash &&
+      left.displayPriceCap === right.displayPriceCap &&
+      left.volumeChainId === right.volumeChainId &&
+      left.volumeRouter === right.volumeRouter
+  }
+
+  private observeCandleIdentity(
+    intervalSeconds: PerpsCandleIntervalSeconds,
+    identity: CandleDatasetIdentity
+  ): boolean {
+    const previousIdentity = this.candleDatasetIdentities.get(intervalSeconds)
+    if (previousIdentity === undefined) {
+      this.candleDatasetIdentities.set(intervalSeconds, identity)
+      return false
+    }
+    if (this.candleIdentitiesEqual(previousIdentity, identity)) return false
+
+    this.candleDatasetIdentities.set(intervalSeconds, identity)
+    this.datasetGenerations.delete(intervalSeconds)
+    this.requestCandleHistoryReset(intervalSeconds)
+    return true
+  }
+
+  private requestCandleHistoryReset(intervalSeconds: PerpsCandleIntervalSeconds): void {
+    this.candleCoverageBoundaries.delete(intervalSeconds)
+    this.initializedCandleIntervals.delete(intervalSeconds)
+    if (this.pendingCandleHistoryResets.has(intervalSeconds)) return
+    this.pendingCandleHistoryResets.add(intervalSeconds)
+    this.prepareCandleRevalidation(intervalSeconds)
+
+    for (const resolution of TRADINGVIEW_RESOLUTIONS) {
+      if (secondsForTradingViewResolution(resolution) !== intervalSeconds) continue
+      this.lastBars.delete(resolution)
+      this.primedCurrentCandles.delete(resolution)
+      this.volumeSnapshots.delete(resolution)
+      this.liveVolumeRefreshedAt.delete(resolution)
+    }
+    for (const subscription of this.subscriptions.values()) {
+      if (secondsForTradingViewResolution(subscription.resolution) !== intervalSeconds) continue
+      subscription.currentBar = undefined
+      this.scheduleCacheReset(subscription)
+    }
+
+    setTimeout(() => {
+      this.pendingCandleHistoryResets.delete(intervalSeconds)
+      if (!this.destroyed) this.onHistoryGap?.(intervalSeconds)
+    }, 0)
+  }
+
+  private prepareCandleRevalidation(intervalSeconds: PerpsCandleIntervalSeconds): void {
+    this.candleCoverageBoundaries.delete(intervalSeconds)
+    this.candleIntervalsNeedingRevalidation.add(intervalSeconds)
+    this.dataSource.clearCandlePageCache?.(intervalSeconds)
   }
 
   private emitLiveBar(
@@ -514,13 +1417,15 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
 
     const intervalMilliseconds = secondsForTradingViewResolution(subscription.resolution) * 1000
     if (previousBar && bar.time > previousBar.time + intervalMilliseconds) {
-      subscription.onResetCacheNeeded()
-      this.onHistoryGap?.()
+      this.scheduleCacheReset(subscription)
+      setTimeout(() => {
+        if (!this.destroyed) this.onHistoryGap?.()
+      }, 0)
     }
 
     subscription.currentBar = bar
     this.lastBars.set(subscription.resolution, bar)
-    subscription.onTick(bar)
+    this.scheduleTick(subscription, bar)
   }
 
   private rememberVolumeBars(
@@ -553,9 +1458,15 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       const refreshedAt = this.liveVolumeRefreshedAt.get(resolution)
       if (refreshedAt !== undefined && Date.now() - refreshedAt < LIVE_VOLUME_REFRESH_MS) return
 
-      this.liveVolumeRefreshedAt.set(resolution, Date.now())
-      refresh = this.dataSource
-        .getHistory('24h', secondsForTradingViewResolution(resolution))
+      const subscription = this.subscriptions.get(listenerGuid)
+      if (!subscription) return
+      refresh = this.runRequest(
+        (signal) => this.dataSource.getHistory(
+            '24h',
+            secondsForTradingViewResolution(resolution),
+            signal
+          )
+      )
         .then((history) => {
           const byTime = new Map<number, number>()
           for (const bar of basketPointsToTradingViewBars(history.points, resolution)) {
@@ -563,9 +1474,10 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
           }
           const snapshot = { byTime }
           this.volumeSnapshots.set(resolution, snapshot)
+          this.liveVolumeRefreshedAt.set(resolution, Date.now())
           return snapshot
         })
-        .catch(() => this.volumeSnapshots.get(resolution) ?? { byTime: new Map() })
+        .catch(() => undefined)
         .finally(() => {
           this.volumeRefreshes.delete(resolution)
         })
@@ -574,6 +1486,7 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
     }
 
     void refresh.then((snapshot) => {
+      if (!snapshot) return
       const volume = snapshot.byTime.get(barTime)
       if (volume === undefined) return
 
@@ -585,7 +1498,66 @@ export class PletherDxyDatafeed implements TradingViewDatafeed {
       const correctedBar = { ...currentBar, volume }
       subscription.currentBar = correctedBar
       this.lastBars.set(resolution, correctedBar)
-      subscription.onTick(correctedBar)
+      this.scheduleTick(subscription, correctedBar)
     })
+  }
+
+  private isDocumentVisible(): boolean {
+    return typeof document === 'undefined' || document.visibilityState !== 'hidden'
+  }
+
+  private startSubscriptionTimer(
+    listenerGuid: string,
+    subscription: Subscription
+  ): void {
+    if (subscription.timer !== undefined || !this.isDocumentVisible()) return
+    subscription.timer = setInterval(() => {
+      void this.pollSubscription(listenerGuid)
+    }, this.pollIntervalMs)
+  }
+
+  private stopSubscriptionTimer(subscription: Subscription): void {
+    if (subscription.timer === undefined) return
+    clearInterval(subscription.timer)
+    subscription.timer = undefined
+  }
+
+  private scheduleTick(subscription: Subscription, bar: TradingViewBar): void {
+    const snapshot = { ...bar }
+    setTimeout(() => {
+      if (
+        !this.destroyed &&
+        this.subscriptions.get(subscription.listenerGuid) === subscription
+      ) {
+        subscription.onTick({ ...snapshot })
+      }
+    }, 0)
+  }
+
+  private scheduleCacheReset(subscription: Subscription): void {
+    setTimeout(() => {
+      if (
+        !this.destroyed &&
+        this.subscriptions.get(subscription.listenerGuid) === subscription
+      ) {
+        subscription.onResetCacheNeeded()
+      }
+    }, 0)
+  }
+
+  private async runRequest<T>(
+    operation: (signal: AbortSignal) => Promise<T>,
+    subscription?: Subscription
+  ): Promise<T> {
+    const controller = new AbortController()
+    if (this.destroyed) controller.abort()
+    this.requestControllers.add(controller)
+    subscription?.requestControllers.add(controller)
+    try {
+      return await awaitWithAbort(operation(controller.signal), controller.signal)
+    } finally {
+      this.requestControllers.delete(controller)
+      subscription?.requestControllers.delete(controller)
+    }
   }
 }

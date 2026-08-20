@@ -32,6 +32,30 @@ liquidation_worker_index_batch_size = "5000"
 liquidation_worker_reorg_overlap_blocks = "12"
 liquidation_worker_pending_replacement_seconds = "120"
 liquidation_worker_desired_count     = 1
+api_container_cpu   = 1024
+api_container_memory = 2048
 container_cpu       = 256
 container_memory    = 1024
-db_instance_class   = "db.t4g.micro"
+db_instance_class   = "db.t4g.medium"
+db_allocated_storage = 40
+# Desired final/new-instance type. Keep an existing gp2 instance on gp2 until
+# backup retention and PITR are active, then plan the gp3 conversion separately.
+db_storage_type      = "gp3"
+db_apply_immediately = false
+db_backup_retention_days = 7
+db_max_allocated_storage = 100
+db_deletion_protection   = true
+db_skip_final_snapshot   = false
+# Must be unique in this AWS region for the current DB lifecycle. Choose a new
+# suffix before recreating the instance so the prior final snapshot is retained.
+db_final_snapshot_identifier = "plether-sepolia-final-20260812-a"
+
+# Keep these safe during the additive schema deployment. Enable dual writes and
+# rollup reads only after the environment's migration and coverage checks pass.
+perps_candle_write_mode                 = "off"
+perps_candle_read_mode                  = "legacy"
+perps_candle_read_intervals             = ""
+perps_candle_shadow_sample_bps          = 0
+perps_candle_strict_coverage            = true
+perps_candle_lateness_seconds           = 120
+perps_candle_finalization_grace_seconds = 15

@@ -6,9 +6,13 @@ import type {
   TradingViewChart,
   TradingViewCustomStatusDropDownContent,
   TradingViewCustomSymbolStatusAdapter,
+  TradingViewIntervalChangeParameters,
+  TradingViewIntervalChangedCallback,
   TradingViewIntervalSubscription,
   TradingViewNamespace,
   TradingViewResolution,
+  TradingViewVisibleRangeChangedCallback,
+  TradingViewVisibleRangeSubscription,
   TradingViewWidgetOptions,
 } from './types'
 
@@ -23,19 +27,19 @@ function deferred() {
 }
 
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   delete window.TradingView
 })
 
 describe('TradingViewAdvancedChart', () => {
   it('uses native controls and synchronizes their interval with the parent', async () => {
-    vi.stubEnv('MODE', 'development')
-    vi.stubEnv('VITE_TRADINGVIEW_CHARTS_ENABLED', 'true')
-
     const chartReady = deferred()
     const headerReady = deferred()
     const unsubscribe = vi.fn()
-    let intervalCallback: ((resolution: string) => void) | undefined
+    const unsubscribeVisibleRange = vi.fn()
+    let intervalCallback: TradingViewIntervalChangedCallback | undefined
+    let visibleRangeCallback: TradingViewVisibleRangeChangedCallback | undefined
     let currentResolution: string = '1'
     let widgetOptions: TradingViewWidgetOptions | undefined
     const setVisible = vi.fn()
@@ -73,16 +77,29 @@ describe('TradingViewAdvancedChart', () => {
       },
       unsubscribe,
     }
+    const visibleRangeSubscription: TradingViewVisibleRangeSubscription = {
+      subscribe: (_context, callback) => {
+        visibleRangeCallback = callback
+      },
+      unsubscribe: unsubscribeVisibleRange,
+    }
     const chart: TradingViewChart = {
       resetData: vi.fn(),
       resolution: () => currentResolution,
       symbol: () => 'PLETHER:PLDXY.P',
+      getVisibleRange: vi.fn(() => ({
+        from: 1_800_000_000,
+        to: 1_800_432_000,
+      })),
       setResolution: vi.fn(async (resolution: TradingViewResolution) => {
         currentResolution = resolution
-        intervalCallback?.(resolution)
+        intervalCallback?.(resolution, {})
         return true
       }),
       onIntervalChanged: () => subscription,
+      onVisibleRangeChanged: () => visibleRangeSubscription,
+      createShape: vi.fn(async () => 'liquidation-line'),
+      removeEntity: vi.fn(),
     }
     const remove = vi.fn()
 
@@ -110,20 +127,19 @@ describe('TradingViewAdvancedChart', () => {
       defaultOptions: { queries: { retry: false } },
     })
     const onIntervalChange = vi.fn()
-    const onReadyChange = vi.fn()
     const chartElement = (
       interval: '1m' | '5m' | '1h' | '1d',
       marketPhase: 'open' | 'close-only' | 'closed' | 'degraded' | 'paused' = 'open',
-      marketCurrentDuration?: string
+      marketCurrentDuration?: string,
+      showLiquidationLine = true
     ) => (
       <QueryClientProvider client={queryClient}>
         <TradingViewAdvancedChart
           interval={interval}
           marketPhase={marketPhase}
           marketCurrentDuration={marketCurrentDuration}
-          fallback={<div>Fallback chart</div>}
+          liquidationPrice={showLiquidationLine ? 1.0169 : undefined}
           onIntervalChange={onIntervalChange}
-          onReadyChange={onReadyChange}
         />
       </QueryClientProvider>
     )
@@ -142,6 +158,7 @@ describe('TradingViewAdvancedChart', () => {
     expect(widgetOptions?.disabled_features).toContain('volume_force_overlay')
     expect(widgetOptions?.timeframe).toBe('5D')
     expect(widgetOptions?.enabled_features).toEqual(expect.arrayContaining([
+      'determine_first_data_request_size_using_visible_range',
       'hide_left_toolbar_by_default',
       'move_logo_to_main_pane',
       'remove_library_container_border',
@@ -154,6 +171,7 @@ describe('TradingViewAdvancedChart', () => {
       { text: '1d', resolution: '1', description: '1 Day' },
     ])
     expect(widgetOptions?.toolbar_bg).toBe('#3B212D')
+    expect(widgetOptions?.custom_css_url).toBe('../tradingview-chart.css?v=20260808-2')
     expect(widgetOptions?.custom_themes.dark.color2).toMatchObject({
       3: '#FFF5F9',
       8: '#D8CBD0',
@@ -203,13 +221,11 @@ describe('TradingViewAdvancedChart', () => {
       chartReady.resolve()
       await Promise.resolve()
     })
-    expect(onReadyChange).not.toHaveBeenCalledWith(true)
 
     await act(async () => {
       headerReady.resolve()
       await Promise.resolve()
     })
-    expect(onReadyChange).toHaveBeenCalledWith(true)
     expect(statusSymbol).toHaveBeenCalledWith('PLETHER:PLDXY.P')
     expect(setColor).toHaveBeenLastCalledWith('#00FF99')
     expect(setTooltip).toHaveBeenLastCalledWith('Market open')
@@ -221,6 +237,23 @@ describe('TradingViewAdvancedChart', () => {
       }) as TradingViewCustomStatusDropDownContent,
     ])
     expect(setVisible).toHaveBeenLastCalledWith(true)
+    expect(chart.createShape).toHaveBeenCalledWith(
+      { price: 1.0169 },
+      expect.objectContaining({
+        shape: 'horizontal_line',
+        text: 'Liquidation',
+        lock: true,
+        disableSelection: true,
+        disableSave: true,
+        disableUndo: true,
+        showInObjectsTree: false,
+        overrides: expect.objectContaining({
+          linecolor: '#F7D977',
+          linestyle: 2,
+          showPrice: true,
+        }),
+      })
+    )
 
     view.rerender(chartElement('1m', 'close-only', '1d 3h'))
     expect(setColor).toHaveBeenLastCalledWith('#FF572D')
@@ -273,18 +306,52 @@ describe('TradingViewAdvancedChart', () => {
     ])
 
     act(() => {
+      visibleRangeCallback?.({
+        from: 1_800_010_000,
+        to: 1_800_420_000,
+      })
+    })
+
+    // TradingView can begin recalculating the time scale before it emits the
+    // interval event. Ignore that intermediate range because it belongs to a
+    // resolution the parent has not accepted yet.
+    act(() => {
       currentResolution = '5'
-      intervalCallback?.('5')
+      visibleRangeCallback?.({
+        from: 1_799_000_000,
+        to: 1_801_000_000,
+      })
+    })
+
+    const resolutionOnlyChange: TradingViewIntervalChangeParameters = {}
+    act(() => {
+      intervalCallback?.('5', resolutionOnlyChange)
+    })
+    expect(resolutionOnlyChange.timeframe).toEqual({
+      type: 'time-range',
+      from: 1_800_010_000,
+      to: 1_800_420_000,
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
     expect(onIntervalChange).toHaveBeenCalledWith('5m')
+
+    const explicitRangeChange: TradingViewIntervalChangeParameters = {
+      timeframe: { type: 'period-back', value: '5D' },
+    }
+    act(() => {
+      intervalCallback?.('5', explicitRangeChange)
+    })
+    expect(explicitRangeChange.timeframe).toEqual({
+      type: 'period-back',
+      value: '5D',
+    })
 
     view.rerender(chartElement('5m'))
     expect(chart.setResolution).not.toHaveBeenCalled()
 
     act(() => {
       currentResolution = '15'
-      intervalCallback?.('15')
+      intervalCallback?.('15', {})
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
 
@@ -297,11 +364,44 @@ describe('TradingViewAdvancedChart', () => {
     })
     expect(onIntervalChange).toHaveBeenCalledTimes(1)
 
+    view.rerender(chartElement('1h', 'open', undefined, false))
+    await waitFor(() => {
+      expect(chart.removeEntity).toHaveBeenCalledWith('liquidation-line')
+    })
+
     view.unmount()
     expect(unsubscribe).toHaveBeenCalledWith(null, intervalCallback)
+    expect(unsubscribeVisibleRange).toHaveBeenCalledWith(null, visibleRangeCallback)
     expect(setVisible).toHaveBeenLastCalledWith(false)
     expect(remove).toHaveBeenCalledOnce()
-    expect(onReadyChange).toHaveBeenLastCalledWith(false)
+    queryClient.clear()
+  })
+
+  it('shows an explicit unavailable state when the licensed runtime cannot load', async () => {
+    vi.stubEnv('VITE_TRADINGVIEW_LIBRARY_PATH', '/missing-charting-library/')
+    const append = vi.spyOn(document.head, 'append').mockImplementation(() => {})
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const view = render(
+      <QueryClientProvider client={queryClient}>
+        <TradingViewAdvancedChart interval="5m" />
+      </QueryClientProvider>
+    )
+
+    await waitFor(() => {
+      expect(append).toHaveBeenCalledOnce()
+    })
+    const script = append.mock.calls[0][0] as HTMLScriptElement
+    act(() => {
+      script.dispatchEvent(new Event('error'))
+    })
+
+    expect(await view.findByText('TradingView chart unavailable')).toBeInTheDocument()
+    expect(view.queryByRole('img', { name: /price performance chart/i })).not.toBeInTheDocument()
+
+    view.unmount()
     queryClient.clear()
   })
 })

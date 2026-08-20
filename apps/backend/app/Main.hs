@@ -60,9 +60,13 @@ main = do
             let basketCfg = BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
                   , bicApiKey = cfgPythApiKey cfg
+                  , bicChainId = cfgPerpsChainId cfg
                   , bicBackfillDays = cfgPythBackfillDays cfg
+                  , bicOwnHistoryTargets = False
                   , bicSampleIntervalSeconds = cfgPythSampleIntervalSeconds cfg
                   , bicPollSeconds = 15 * 60
+                  , bicCandleWriteMode = cfgPerpsCandleWriteMode cfg
+                  , bicCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   }
             logInfo
               "pyth_history_ingestor_started"

@@ -1396,6 +1396,22 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByText('No position data')).not.toBeInTheDocument()
   })
 
+  it('reports when transaction history becomes active and inactive', () => {
+    const onActiveTabChange = vi.fn()
+    render(<PerpsAccountPanel onActiveTabChange={onActiveTabChange} />)
+
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('position')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Transaction History' }))
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('tradeHistory')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(2)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Order History' }))
+    expect(onActiveTabChange).toHaveBeenLastCalledWith('orderHistory')
+    expect(onActiveTabChange).toHaveBeenCalledTimes(3)
+  })
+
   it('hides manual finalization during the automatic finalization grace period', async () => {
     vi.useFakeTimers()
     const onAccountRefresh = vi.fn()
@@ -1551,6 +1567,83 @@ describe('perps lifecycle labels', () => {
     expect(screen.queryByRole('button', { name: 'Finalize Trade' })).not.toBeInTheDocument()
   })
 
+  it('updates the account position before publishing the execution result', async () => {
+    mockIsConnected = true
+    let resolveAccountRefresh = () => {}
+    const accountRefreshGate = new Promise<void>((resolve) => {
+      resolveAccountRefresh = resolve
+    })
+    const onAccountRefresh = vi.fn(async () => {
+      await accountRefreshGate
+    })
+    perpsTradingMocks.waitForPerpsOrderTerminal.mockResolvedValue({
+      timedOut: false,
+      order: {
+        orderId: 59n,
+        time: '22 Jun, 12:02',
+        market: 'plDXY Perp',
+        side: 'Long',
+        type: 'Open',
+        price: '0.9733',
+        size: '1 000',
+        status: 'Executed',
+        commitTxHash: '0x46cb000000000000000000000000000000001cbb',
+        revealTxHash: '0x6c0d00000000000000000000000000000000b7d3',
+        executionPriceRaw: 97_330_315n,
+        executionOracleFrozen: false,
+        oracleDerivationVersion: 1,
+        executionEconomicsVersion: 1,
+      },
+    })
+
+    function PositionRefreshHarness() {
+      const [position, setPosition] = useState('No position')
+
+      return (
+        <>
+          <output aria-label="Current position">{position}</output>
+          <PerpsTradeTicket
+            enableLiveTrading
+            initialLifecycleState="revealPending"
+            initialReviewOpen
+            initialDirection="long"
+            initialSize="1 000"
+            initialOrderId={59n}
+            oraclePriceRaw={97_330_315n}
+            oraclePublishTime={Math.floor(Date.now() / 1000)}
+            availableToTradeRaw={2_000_000_000n}
+            walletUsdcRaw={2_000_000_000n}
+            portfolioValueRaw={2_000_000_000n}
+            withdrawableUsdcRaw={2_000_000_000n}
+            minOpenNotionalUsdc={100_000_000n}
+            minNewPositionNotionalUsdc={100_000_000n}
+            onAccountRefresh={async () => {
+              await onAccountRefresh()
+              setPosition('1 000 USDC')
+            }}
+          />
+        </>
+      )
+    }
+
+    render(<PositionRefreshHarness />)
+
+    await waitFor(() => {
+      expect(onAccountRefresh).toHaveBeenCalledOnce()
+    })
+    expect(screen.getByLabelText('Current position')).toHaveTextContent('No position')
+    expect(screen.queryByText('Final Result')).not.toBeInTheDocument()
+
+    await act(async () => {
+      resolveAccountRefresh()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Current position')).toHaveTextContent('1 000 USDC')
+      expect(screen.getByText('Final Result')).toBeInTheDocument()
+    })
+  })
+
   it('keeps settlement hashes compact and links both hashes to Blockscout', () => {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
@@ -1677,7 +1770,7 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     expect(within(finalResult!).getByText('0xec0c...d745')).toBeInTheDocument()
-    expect(within(finalResult!).getByText('VPI / Price impact')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('VPI')).toBeInTheDocument()
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
     const oracleSpreadRow = within(finalResult!).getByText('Oracle confidence spread').closest('div')
     expect(oracleSpreadRow?.querySelector('dd')).toHaveTextContent('~0.1974%')
@@ -1851,12 +1944,12 @@ describe('perps lifecycle labels', () => {
     })
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
-    const vpiRow = within(finalResult!).getByText('VPI / Price impact').closest('div')
+    const vpiRow = within(finalResult!).getByText('VPI').closest('div')
     expect(vpiRow?.querySelector('dd')).toHaveTextContent('Unavailable')
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)
 
     await waitFor(() => {
-      expect(vpiRow?.querySelector('dd')).toHaveTextContent('182.8')
+      expect(within(vpiRow!).getByLabelText('Paid 182.8 USDC')).toBeInTheDocument()
       expect(perpsTradingMocks.waitForPerpsOrderTerminal).toHaveBeenCalledTimes(2)
     }, { timeout: 4_000 })
     expect(onAccountRefresh).toHaveBeenCalledTimes(1)

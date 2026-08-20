@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import type { BasketComponentPrice } from '../api'
+import { DOCS_LINKS } from '../config/docs'
 import { DxyBasketComponentsRail } from './DxyBasketComponentsRail'
 
 const components: BasketComponentPrice[] = [
@@ -42,6 +43,7 @@ describe('DxyBasketComponentsRail', () => {
           'usd-jpy': -0.0003,
         }}
         nowSeconds={1000}
+        docsLink={DOCS_LINKS.direction}
       />
     )
 
@@ -57,6 +59,12 @@ describe('DxyBasketComponentsRail', () => {
     expect(screen.queryByText('USD/JPY inv')).not.toBeInTheDocument()
     expect(screen.getByLabelText('Price fresh')).toBeInTheDocument()
     expect(screen.getByLabelText('Price stale')).toBeInTheDocument()
+    expect(screen.getByText(
+      'These six Pyth FX feeds form the basket behind plDXY. Percentages are reference coefficients, not live weights. Green means the foreign currency strengthened against USD, which pushes the displayed dollar-oriented plDXY price down. Component values are not execution quotes.'
+    )).toBeVisible()
+    expect(screen.getByRole('link', {
+      name: `Read: ${DOCS_LINKS.direction.title}`,
+    })).toHaveAttribute('href', DOCS_LINKS.direction.href)
 
     for (const card of screen.getAllByRole('listitem')) {
       expect(card).toHaveClass('snap-start')

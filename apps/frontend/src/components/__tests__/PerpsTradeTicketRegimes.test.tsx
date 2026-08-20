@@ -115,13 +115,16 @@ const currentPosition = {
   estimatedNotionalUsdc: 1_000_000_000n,
   entryNotionalUsdc: 1_000_000_000n,
   dxyExposureUsdc: 1_000_000_000n,
+  vpiAccrued: 60_000_000n,
 }
 
 function closePreviewTuple({
+  vpiDeltaUsdc = -1_000_000n,
   frozenSpreadUsdc = 0n,
   frozenSpreadPaidUsdc = 0n,
   frozenSpreadWaivedUsdc = 0n,
 }: {
+  vpiDeltaUsdc?: bigint
   frozenSpreadUsdc?: bigint
   frozenSpreadPaidUsdc?: bigint
   frozenSpreadWaivedUsdc?: bigint
@@ -132,7 +135,7 @@ function closePreviewTuple({
     100_000_000n,
     500n * 10n ** 18n,
     0n,
-    -1_000_000n,
+    vpiDeltaUsdc,
     0n,
     40_000n,
     0n,
@@ -160,12 +163,20 @@ function closeTicket({
   marketPhase,
   oraclePriceRaw = 100_000_000n,
   oracleFrozen,
+  finalVpiUsdc,
+  positionVpiAccrued = 60_000_000n,
+  showCurrentPosition = true,
+  size = '500',
 }: {
   enableLiveTrading?: boolean
   lifecycleState?: 'executed' | 'preview'
   marketPhase: 'close-only' | 'open'
   oraclePriceRaw?: bigint
   oracleFrozen: boolean
+  finalVpiUsdc?: bigint
+  positionVpiAccrued?: bigint
+  showCurrentPosition?: boolean
+  size?: string
 }) {
   return (
     <PerpsTradeTicket
@@ -173,9 +184,14 @@ function closeTicket({
       initialReviewOpen
       initialLifecycleState={lifecycleState}
       initialDirection="short"
-      initialSize="500"
+      initialReduceOnly
+      initialSize={size}
       initialOrderId={42n}
       initialCommittedSizeDelta={500n * 10n ** 18n}
+      initialCommittedIsFullClose={lifecycleState === 'executed'}
+      initialCommittedPositionVpiAccrued={
+        lifecycleState === 'executed' ? positionVpiAccrued : undefined
+      }
       initialFinalExecutionPrice={
         lifecycleState === 'executed' ? 100_000_000n : undefined
       }
@@ -191,13 +207,18 @@ function closeTicket({
       initialFinalExecutionEconomicsVersion={
         lifecycleState === 'executed' ? 1 : undefined
       }
+      initialFinalVpiUsdc={
+        lifecycleState === 'executed' ? finalVpiUsdc : undefined
+      }
       oraclePriceRaw={oraclePriceRaw}
       oraclePriceDisplay="1.0000"
       latestBasket={latestBasket}
       adverseConfidenceMultiplierBps="10000"
       oracleFrozen={oracleFrozen}
       availableToTradeRaw={1_000_000_000n}
-      currentPosition={currentPosition}
+      currentPosition={showCurrentPosition
+        ? { ...currentPosition, vpiAccrued: positionVpiAccrued }
+        : undefined}
       marketPhase={marketPhase}
     />
   )
@@ -238,12 +259,116 @@ describe('perps ticket oracle regime matrix', () => {
     expect(preview.queryByText('Waived')).not.toBeInTheDocument()
     expect(preview.queryByText('Estimated frozen close spread')).not.toBeInTheDocument()
 
+    const oracleConfidenceLabel = preview.getByText('Adverse oracle confidence spread')
+    expect(oracleConfidenceLabel).toHaveClass('overflow-hidden', 'text-ellipsis', 'whitespace-nowrap')
+    expect(oracleConfidenceLabel).toHaveAttribute('title', 'Adverse oracle confidence spread')
+
     fireEvent.focus(preview.getByLabelText('Adverse oracle confidence spread info'))
     expect(screen.getByRole('tooltip')).toHaveTextContent(
       'It applies to opens and to close/reduce execution in live and FAD-only regimes.'
     )
     expect(screen.getByRole('link', { name: `Read: ${DOCS_LINKS.oracleConfidence.title}` }))
       .toHaveAttribute('href', DOCS_LINKS.oracleConfidence.href)
+  })
+
+  it.each([
+    {
+      caseName: 'net-paid balance',
+      positionVpiAccrued: 60_000_000n,
+      positionBalance: 'Net paid 60.0 USDC',
+    },
+    {
+      caseName: 'existing provisional credit',
+      positionVpiAccrued: -40_000_000n,
+      positionBalance: 'Provisional credit 40.0 USDC',
+    },
+  ])('shows the position VPI balance for a $caseName', ({
+    positionVpiAccrued,
+    positionBalance,
+  }) => {
+    renderCloseTicket({
+      marketPhase: 'open',
+      oracleFrozen: false,
+      positionVpiAccrued,
+    })
+
+    const preview = commitPreviewQueries()
+    expect(preview.getByLabelText(positionBalance)).toBeInTheDocument()
+    expect(preview.queryByText('VPI allocated to reduction')).not.toBeInTheDocument()
+    expect(preview.queryByText('Maximum eligible VPI credit')).not.toBeInTheDocument()
+
+    const positionVpiLabel = preview.getByText('Position VPI balance')
+    const positionVpiRow = positionVpiLabel.closest('div')
+    expect(positionVpiRow).toHaveClass('flex-nowrap')
+    expect(positionVpiLabel).toHaveClass('overflow-hidden', 'text-ellipsis', 'whitespace-nowrap')
+    expect(positionVpiLabel).toHaveAttribute('title', 'Position VPI balance')
+    expect(positionVpiRow?.querySelector('dd')).toHaveClass('whitespace-nowrap')
+
+    const positionVpiInfo = preview.getByLabelText('Position VPI balance info')
+    fireEvent.focus(positionVpiInfo)
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'A provisional credit has already been added to settlement, remains excluded from risk equity'
+    )
+  })
+
+  it.each([
+    ['charge', 1_250_000n, 'Pay 1.3 USDC'],
+    ['credit', -1_250_000n, 'Credit 1.3 USDC'],
+    ['zero adjustment', 0n, 'No VPI'],
+  ] as const)('shows an estimated close VPI %s as an account action', (_case, vpiDeltaUsdc, expected) => {
+    mockReadContractsData = [{
+      status: 'success',
+      result: closePreviewTuple({ vpiDeltaUsdc }),
+    }]
+
+    renderCloseTicket({
+      marketPhase: 'open',
+      oracleFrozen: false,
+    })
+
+    expect(screen.getAllByText('VPI')).toHaveLength(2)
+    const preview = commitPreviewQueries()
+    const vpiRow = preview.getByText('VPI').closest('div')
+    if (vpiDeltaUsdc === 0n) {
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
+    } else {
+      expect(within(vpiRow!).getByLabelText(expected)).toBeInTheDocument()
+    }
+
+    fireEvent.focus(preview.getByLabelText('VPI info'))
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'positive VPI is paid from the Margin Account and negative VPI is credited to the Margin Account settlement'
+    )
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'not sent directly to the owner wallet'
+    )
+  })
+
+  it('keeps close intent after a full-close refresh removes the live position', () => {
+    const input = {
+      enableLiveTrading: false,
+      marketPhase: 'open' as const,
+      oracleFrozen: false,
+      size: '1000',
+    }
+    const { rerender } = renderCloseTicket(input)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
+    rerender(closeTicket({ ...input, showCurrentPosition: false }))
+    fireEvent.click(screen.getByRole('button', { name: 'Transaction Confirmed' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Auto Finalized' }))
+
+    const finalResult = screen.getByText('Final Result').parentElement
+    expect(finalResult).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
+      .toHaveTextContent('Long plDXY Perp position closed')
+    expect(within(finalResult!).getByText('Requested close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
+    expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()
+    expect(within(finalResult!).getByLabelText('Net paid 60.0 USDC')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('VPI')).toBeInTheDocument()
+    expect(within(finalResult!).queryByText('VPI / Price impact')).not.toBeInTheDocument()
   })
 
   it('explains the dollar-oriented direction controls', () => {
@@ -414,6 +539,42 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(finalResult!).getByText('12.3')).toBeInTheDocument()
   })
 
+  it.each([
+    ['charge', 12_345_678n, 'Paid 12.3 USDC'],
+    ['credit', -12_345_678n, 'Credited 12.3 USDC'],
+    ['zero adjustment', 0n, 'No VPI'],
+  ] as const)('shows settled close VPI as a %s', (_case, finalVpiUsdc, expected) => {
+    renderCloseTicket({
+      lifecycleState: 'executed',
+      marketPhase: 'open',
+      oracleFrozen: false,
+      finalVpiUsdc,
+    })
+
+    const finalResult = screen.getByText('Final Result').parentElement
+    expect(finalResult).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
+      .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDC')
+    expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Requested close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
+    expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()
+    expect(within(finalResult!).getByLabelText('Net paid 60.0 USDC')).toBeInTheDocument()
+    const vpiRow = within(finalResult!).getByText('VPI').closest('div')
+    if (finalVpiUsdc === 0n) {
+      expect(vpiRow?.querySelector('dd')).toHaveTextContent(expected)
+    } else {
+      expect(within(vpiRow!).getByLabelText(expected)).toBeInTheDocument()
+    }
+
+    fireEvent.focus(within(finalResult!).getByLabelText('VPI info'))
+    expect(screen.getByRole('tooltip')).toHaveTextContent(
+      'credited VPI was added to the Margin Account settlement'
+    )
+  })
+
   it('keeps the committed slippage and execution limit when the live regime changes', () => {
     const frozenInput = {
       enableLiveTrading: false,
@@ -429,7 +590,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(dialog).getByText('Waiting for wallet confirmation')).toBeInTheDocument()
     expect(within(dialog).getByText('Exact')).toBeInTheDocument()
     const committedLimit = within(dialog).getByText('Execution limit')
-      .parentElement?.querySelector('dd')?.textContent
+      .closest('div')?.querySelector('dd')?.textContent
     expect(committedLimit).toBeTruthy()
 
     rerender(closeTicket({
@@ -443,7 +604,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(within(dialog).queryByText('0.1%')).not.toBeInTheDocument()
     expect(
       within(dialog).getByText('Execution limit')
-        .parentElement?.querySelector('dd')?.textContent
+        .closest('div')?.querySelector('dd')?.textContent
     ).toBe(committedLimit)
   })
 })

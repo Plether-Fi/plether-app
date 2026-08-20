@@ -34,6 +34,21 @@ locals {
     { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },
   ]
 
+  perps_candle_read_interval_tokens = regexall(
+    "[^,[:space:]]+",
+    var.perps_candle_read_intervals
+  )
+
+  perps_candle_environment = [
+    { name = "PERPS_CANDLE_WRITE_MODE", value = var.perps_candle_write_mode },
+    { name = "PERPS_CANDLE_READ_MODE", value = var.perps_candle_read_mode },
+    { name = "PERPS_CANDLE_READ_INTERVALS", value = var.perps_candle_read_intervals },
+    { name = "PERPS_CANDLE_SHADOW_SAMPLE_BPS", value = tostring(var.perps_candle_shadow_sample_bps) },
+    { name = "PERPS_CANDLE_STRICT_COVERAGE", value = tostring(var.perps_candle_strict_coverage) },
+    { name = "PERPS_CANDLE_LATENESS_SECONDS", value = tostring(var.perps_candle_lateness_seconds) },
+    { name = "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS", value = tostring(var.perps_candle_finalization_grace_seconds) },
+  ]
+
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
     {
       name      = "PYTH_API_KEY"
@@ -96,6 +111,11 @@ locals {
     name              = "otel-log-router"
     image             = "${aws_ecr_repository.otel_log_router.repository_url}:latest"
     essential         = true
+    mountPoints       = []
+    portMappings      = []
+    systemControls    = []
+    user              = "0"
+    volumesFrom       = []
     memoryReservation = 128
     stopTimeout       = 120
 
@@ -131,10 +151,14 @@ resource "aws_ecs_task_definition" "api" {
   family                   = "plether-${var.environment}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = var.container_cpu
-  memory                   = var.container_memory
+  cpu                      = var.api_container_cpu
+  memory                   = var.api_container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -148,8 +172,13 @@ resource "aws_ecs_task_definition" "api" {
 
     portMappings = [{
       containerPort = 3001
+      hostPort      = 3001
       protocol      = "tcp"
     }]
+
+    mountPoints    = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -186,7 +215,7 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
-    ], local.pyth_environment)
+    ], local.pyth_environment, local.perps_candle_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -214,11 +243,12 @@ resource "aws_ecs_task_definition" "api" {
 }
 
 resource "aws_ecs_service" "api" {
-  name            = "plether-api"
-  cluster         = aws_ecs_cluster.main.id
-  task_definition = aws_ecs_task_definition.api.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
+  name                              = "plether-api"
+  cluster                           = aws_ecs_cluster.main.id
+  task_definition                   = aws_ecs_task_definition.api.arn
+  desired_count                     = 1
+  launch_type                       = "FARGATE"
+  health_check_grace_period_seconds = 300
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -232,7 +262,7 @@ resource "aws_ecs_service" "api" {
     container_port   = 3001
   }
 
-  depends_on = [aws_lb_listener.http]
+  depends_on = [aws_lb_listener.http, terraform_data.perps_candle_rollout_guard]
 
   lifecycle {
     ignore_changes = [task_definition]
@@ -247,6 +277,8 @@ resource "aws_ecs_task_definition" "keeper" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -258,6 +290,11 @@ resource "aws_ecs_task_definition" "keeper" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-keeper"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -319,6 +356,8 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -330,6 +369,11 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-liquidation-worker"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -397,6 +441,10 @@ resource "aws_ecs_task_definition" "basket_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -408,6 +456,11 @@ resource "aws_ecs_task_definition" "basket_worker" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -431,7 +484,7 @@ resource "aws_ecs_task_definition" "basket_worker" {
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-    ], local.pyth_environment)
+    ], local.pyth_environment, local.perps_candle_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
@@ -450,6 +503,8 @@ resource "aws_ecs_service" "basket_worker" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -470,6 +525,10 @@ resource "aws_ecs_task_definition" "perps_indexer" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -481,6 +540,11 @@ resource "aws_ecs_task_definition" "perps_indexer" {
     image     = "${aws_ecr_repository.api.repository_url}:latest"
     essential = true
     command   = ["plether-perps-indexer", "--loop"]
+
+    mountPoints    = []
+    portMappings   = []
+    systemControls = []
+    volumesFrom    = []
 
     logConfiguration = local.posthog_log_configuration
 
@@ -495,7 +559,8 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       }
     ]
 
-    environment = [
+    environment = concat([
+      { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
       { name = "CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -509,7 +574,7 @@ resource "aws_ecs_task_definition" "perps_indexer" {
       { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
       { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
       { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
-    ]
+    ], local.perps_candle_environment)
   }, local.otel_log_router_container])
 }
 
@@ -521,6 +586,8 @@ resource "aws_ecs_service" "perps_indexer" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id
@@ -541,6 +608,8 @@ resource "aws_ecs_task_definition" "insights_worker" {
   memory                   = var.container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -554,6 +623,11 @@ resource "aws_ecs_task_definition" "insights_worker" {
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -611,6 +685,10 @@ resource "aws_ecs_task_definition" "workers" {
   memory                   = var.workers_container_memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = aws_iam_role.ecs_task.arn
+  enable_fault_injection   = false
+  tags                     = {}
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -624,6 +702,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["plether-keeper"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -659,6 +742,11 @@ resource "aws_ecs_task_definition" "workers" {
       command          = ["plether-basket-worker", "--latest-loop", "--poll-seconds", var.basket_worker_poll_seconds]
       logConfiguration = local.posthog_log_configuration
 
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+
       secrets = concat([
         {
           name      = "RPC_URL"
@@ -679,7 +767,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
         { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-      ], local.pyth_environment)
+      ], local.pyth_environment, local.perps_candle_environment)
     },
     {
       name             = "plether-oracle-worker"
@@ -687,6 +775,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["node", "/app/oracle/scripts/perps-oracle-worker.mjs", "--loop"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -715,6 +808,11 @@ resource "aws_ecs_task_definition" "workers" {
       command          = ["plether-perps-indexer", "--loop"]
       logConfiguration = local.posthog_log_configuration
 
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
+
       secrets = [
         {
           name      = "PERPS_RPC_URL"
@@ -726,7 +824,8 @@ resource "aws_ecs_task_definition" "workers" {
         }
       ]
 
-      environment = [
+      environment = concat([
+        { name = "DEPLOYMENT_ENVIRONMENT", value = var.environment },
         { name = "CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
         { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
@@ -739,7 +838,7 @@ resource "aws_ecs_task_definition" "workers" {
         { name = "PERPS_INDEXER_CONFIRMATIONS", value = var.perps_indexer_confirmations },
         { name = "PERPS_INDEXER_BATCH_SIZE", value = var.perps_indexer_batch_size },
         { name = "PERPS_INDEXER_POLL_SECONDS", value = var.perps_indexer_poll_seconds },
-      ]
+      ], local.perps_candle_environment)
     },
     {
       name             = "plether-insights-worker"
@@ -747,6 +846,11 @@ resource "aws_ecs_task_definition" "workers" {
       essential        = true
       command          = ["plether-insights-worker"]
       logConfiguration = local.posthog_log_configuration
+
+      mountPoints    = []
+      portMappings   = []
+      systemControls = []
+      volumesFrom    = []
 
       secrets = [
         {
@@ -791,6 +895,8 @@ resource "aws_ecs_service" "workers" {
   launch_type                        = "FARGATE"
   deployment_minimum_healthy_percent = 0
   deployment_maximum_percent         = 100
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
 
   network_configuration {
     subnets          = aws_subnet.public[*].id

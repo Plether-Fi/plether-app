@@ -14,12 +14,24 @@ module Plether.Perps.HistoryIndexer
   , validateRpcLogBlockHash
   , decodeOpenTradeCosts
   , decodeCloseTradeCosts
+  , decodeReplayTradeCosts
+  , replayPreviewCallData
   , orderFailReasonName
   , terminalStatus
+  , isMarketVolumeActivity
+  , canCertifyIndexedRange
+  , validateIndexedBoundary
+  , validateReplayBounds
+  , validateReplayLogScope
+  , parseReplayLogEntry
+  , parseReplayBlockNumber
+  , parseReplayBlockInfo
+  , parseReplayTransactionInfo
+  , validateReplayStateUnchanged
   ) where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Exception (SomeException, try)
+import Control.Exception (SomeException, throwIO, try)
 import Control.Monad (forM, forM_, forever, unless, when)
 import Data.Aeson (Value (..), object, (.=))
 import qualified Data.Aeson as Aeson
@@ -33,9 +45,12 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (catMaybes, fromMaybe)
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Network.HTTP.Client
   ( Manager
   , Request (..)
@@ -45,15 +60,37 @@ import Network.HTTP.Client
   , responseBody
   , responseTimeoutMicro
   )
+import Plether.Config (PerpsCandleWriteMode (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.Candles
+  ( RollupCoverage (..)
+  , RollupKind (VolumeRollup)
+  , advanceMarketVolumeCoverage
+  , getMarketVolumeCoverageSnapshot
+  , getMarketVolumeRollupSnapshot
+  , getRollupCoverage
+  , invalidateMarketVolumeFromBlock
+  , lockMarketVolumeDataset
+  , recomputeMarketVolumeHierarchyBatch
+  )
 import Plether.Database.Schema
   ( PerpsExecutionEvidenceRow (..)
+  , assertPerpsReplayActivityExact
+  , assertPerpsReplayEventExact
+  , assertPerpsReplayExpiredCleanupExact
+  , assertPerpsReplayExpiredCleanupIfReadyExact
+  , assertPerpsReplayOrderCommittedExact
+  , assertPerpsReplayOrderTerminalExact
+  , configurePerpsReplayTransaction
   , deletePerpsHistoryFromBlock
   , getPendingPerpsExecutionEvidence
+  , getPerpsReplayHistorySnapshot
   , getPerpsIndexerLastBlock
   , insertPerpsExpiredCleanupActivityIfReady
   , insertPerpsActivity
   , insertPerpsEvent
+  , lockPerpsIndexerTransaction
+  , lockPerpsReplayOrders
   , markPerpsExecutionEvidenceAttempt
   , setPerpsIndexerState
   , updatePerpsOrderEconomicsEvidence
@@ -65,7 +102,8 @@ import Plether.Ethereum.Abi (encodeAddress, encodeCall, encodeUint256)
 import Plether.Ethereum.Client (EthClient (..), RpcError)
 import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
 import Plether.Indexer.Contracts (keccak256Text)
-import Plether.Logging (field, logErrorEvery, logInfoEvery, logWarn, logWarnEvery)
+import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
+import Plether.Perps.IndexerOptions (ReplayOptions (..), validateReplayOptions)
 import Plether.Perps.ExecutionOracle
   ( ExecutionOracleSnapshot (..)
   , decodeExecutionUpdateData
@@ -78,6 +116,7 @@ import Plether.Perps.ExecutionTrace
   )
 import Plether.Pyth.Basket (BasketComponent (..), basketComponents)
 import Plether.Utils.Hex (hexToInteger, intToHex)
+import System.Timeout (timeout)
 
 data PerpsAddresses = PerpsAddresses
   { paOrderRouter :: Text
@@ -87,7 +126,7 @@ data PerpsAddresses = PerpsAddresses
   , paMarginClearinghouse :: Text
   , paPletherOracle :: Text
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
@@ -106,7 +145,7 @@ perpsIndexerName = "perps-history-costs-v1"
 data PerpsIndexerMode
   = PerpsIndexerLoop
   | PerpsIndexerOnce
-  | PerpsIndexerBackfill Integer Integer
+  | PerpsIndexerReplay ReplayOptions
   deriving stock (Show, Eq)
 
 data PerpsIndexerConfig = PerpsIndexerConfig
@@ -120,8 +159,11 @@ data PerpsIndexerConfig = PerpsIndexerConfig
   , picPollIntervalMicros :: Int
   , picIndexerName :: Text
   , picMode :: PerpsIndexerMode
+  , picCandleWriteMode :: PerpsCandleWriteMode
+  , picCandleLatenessSeconds :: Integer
+  , picDeploymentEnvironment :: Maybe Text
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data RpcLog = RpcLog
   { rlAddress :: Text
@@ -133,14 +175,14 @@ data RpcLog = RpcLog
   , rlTxIndex :: Integer
   , rlLogIndex :: Integer
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data BlockInfo = BlockInfo
   { biNumber :: Integer
   , biHash :: Text
   , biTimestamp :: Integer
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data TransactionInfo = TransactionInfo
   { tiHash :: Text
@@ -149,7 +191,7 @@ data TransactionInfo = TransactionInfo
   , tiBlockHash :: Text
   , tiInput :: ByteString
   }
-  deriving stock (Show)
+  deriving stock (Show, Eq)
 
 data ParsedPerpsLog
   = ParsedOrderCommitted Integer Text Int Value
@@ -164,6 +206,14 @@ data TradeCosts = TradeCosts
   , tcVpiUsdc :: Integer
   }
   deriving stock (Show, Eq)
+
+data PreparedReplayLog = PreparedReplayLog
+  { prlLog :: RpcLog
+  , prlBlockInfo :: BlockInfo
+  , prlParsed :: ParsedPerpsLog
+  , prlTransactionFrom :: Text
+  , prlTradeCosts :: Maybe TradeCosts
+  }
 
 orderCommittedTopic :: ByteString
 orderCommittedTopic = keccak256Text "OrderCommitted(uint64,address,uint8)"
@@ -214,9 +264,7 @@ runPerpsIndexer manager pool cfg =
     PerpsIndexerOnce -> do
       _ <- runOneRange manager pool cfg Nothing Nothing
       runEvidenceBatch
-    PerpsIndexerBackfill fromBlock toBlock -> do
-      runBackfill fromBlock toBlock
-      runEvidenceBatch
+    PerpsIndexerReplay replayOptions -> runReplayWithAudit replayOptions
   where
     runIndexerLoop = forever $ do
       result <- try @SomeException $ runOneRange manager pool cfg Nothing Nothing
@@ -228,7 +276,49 @@ runPerpsIndexer manager pool cfg =
             "Perps indexer iteration failed"
             [field "error" $ show err]
           threadDelay (picPollIntervalMicros cfg * 2)
-        Right indexed ->
+        Right indexed -> do
+          -- A successful poll is the volume-writer liveness primitive. Emit it
+          -- even when the indexer is already caught up: quiet chains and
+          -- zero-trade ranges must not look like a dead candle writer.
+          when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+            coverageResult <-
+              try @SomeException $
+                withDb pool $ \conn ->
+                  getRollupCoverage
+                    conn
+                    VolumeRollup
+                    Nothing
+                    (Just $ picChainId cfg)
+                    (Just $ paOrderRouter $ picAddresses cfg)
+                    60
+            case coverageResult of
+              Left err ->
+                logErrorEvery
+                  60
+                  "perps_volume_writer_heartbeat_failed"
+                  "Perps volume candle writer could not read its coverage heartbeat"
+                  [field "error" $ show err]
+              Right volumeCoverage -> do
+                now <- round <$> getPOSIXTime
+                logInfoEvery
+                  300
+                  "perps_volume_writer_heartbeat"
+                  "Perps volume candle writer completed an indexer poll"
+                  [ field "writer_kind" ("volume" :: Text)
+                  , field "service" ("plether-perps-indexer" :: Text)
+                  , field "processed_range" indexed
+                  , field "coverage_interval_seconds" (60 :: Integer)
+                  , field "coverage_expected_lateness_seconds" (0 :: Integer)
+                  , field "coverage_state" $ coverageState volumeCoverage
+                  , field "coverage_finalized_through" $ volumeCoverage >>= rcFinalizedThrough
+                  , field "coverage_lag_seconds" $
+                      normalizedCoverageLag
+                        now
+                        60
+                        0
+                        (volumeCoverage >>= rcFinalizedThrough)
+                  , field "coverage_error" $ volumeCoverage >>= rcLastError
+                  ]
           when (not indexed) $ threadDelay (picPollIntervalMicros cfg)
 
     runEvidenceLoop = forever $ do
@@ -249,12 +339,382 @@ runPerpsIndexer manager pool cfg =
             [field "error" $ show err]
         Right () -> pure ()
 
-    runBackfill fromBlock toBlock
-      | fromBlock > toBlock = pure ()
-      | otherwise = do
-          let endBlock = min toBlock (fromBlock + picBatchSize cfg - 1)
-          _ <- runOneRange manager pool cfg (Just fromBlock) (Just endBlock)
-          runBackfill (endBlock + 1) toBlock
+    runReplayWithAudit replayOptions = do
+      let baseFields = replayAuditFields replayOptions
+      logInfo
+        "perps_indexer_replay_started"
+        "Bounded Perps duplicate-ingestion replay started"
+        baseFields
+      result <-
+        try @SomeException $
+          timeout
+            (roMaxRuntimeSeconds replayOptions * 1_000_000)
+            (runBoundedReplay manager pool cfg replayOptions)
+      case result of
+        Right (Just (safeBlock, eventCount, cursorBlock)) ->
+          logInfo
+            "perps_indexer_replay_complete"
+            "Bounded Perps duplicate-ingestion replay completed"
+            ( [ field "safe_head_block" safeBlock
+              , field "event_count" eventCount
+              , field "cursor_block" cursorBlock
+              ]
+                <> baseFields
+            )
+        Right Nothing -> replayFailed baseFields "runtime_limit_exceeded"
+        -- Never render an arbitrary exception here: PostgreSQL/network
+        -- exceptions can contain connection strings. Detailed diagnosis stays
+        -- in trusted task metadata; this public audit event is credential-safe.
+        Left _ -> replayFailed baseFields "bounded_replay_rejected"
+      where
+        replayFailed :: [LogField] -> Text -> IO ()
+        replayFailed baseFields err = do
+          logError
+            "perps_indexer_replay_failed"
+            "Bounded Perps duplicate-ingestion replay failed"
+            (field "error" err : baseFields)
+          throwIO $ userError "Bounded Perps duplicate-ingestion replay failed"
+
+    replayAuditFields replayOptions =
+      [ field "from_block" $ roFromBlock replayOptions
+      , field "to_block" $ roToBlock replayOptions
+      , field "canonical_progress_certified" False
+      ]
+
+    coverageState = \case
+      Nothing -> "uninitialized" :: Text
+      Just coverage
+        | rcComplete coverage -> "complete"
+        | otherwise -> "incomplete"
+
+    normalizedCoverageLag now interval expectedLateness =
+      fmap $ \finalizedThrough ->
+        max 0 (now - finalizedThrough - interval - max 0 expectedLateness)
+
+-- Execute one exact, already bounded range as a duplicate-ingestion proof.
+-- Unlike normal indexing this path cannot clip, recurse, enrich evidence,
+-- advance/rewind the cursor, or publish/invalidate coverage. It commits only
+-- when canonical rows were already present and recomputing every affected
+-- volume bucket is a semantic no-op (including revision identity).
+runBoundedReplay
+  :: Manager
+  -> DbPool
+  -> PerpsIndexerConfig
+  -> ReplayOptions
+  -> IO (Integer, Int, Integer)
+runBoundedReplay manager pool cfg replayOptions = do
+  validatedOptions <-
+    either fail pure $ validateReplayOptions replayOptions
+  unless
+    (picDeploymentEnvironment cfg == Just "sepolia")
+    (fail "Bounded Perps replay is restricted to the Sepolia deployment")
+  unless
+    (picCandleWriteMode cfg == PerpsCandleWritesDual)
+    (fail "Bounded Perps replay requires PERPS_CANDLE_WRITE_MODE=dual")
+
+  reqIdRef <- newIORef 1
+  currentBlock <-
+    requireRpc "eth_blockNumber(replay)" $
+      getReplayCurrentBlockNumber manager (picRpcUrls cfg) reqIdRef
+  let safeBlock = max 0 (currentBlock - picConfirmations cfg)
+      fromBlock = roFromBlock validatedOptions
+      toBlock = roToBlock validatedOptions
+      releaseRouter = paOrderRouter $ picAddresses cfg
+  preliminaryCursor <-
+    fst
+      <$> withDb pool
+        ( \conn ->
+            getPerpsIndexerLastBlock
+              conn
+              (picChainId cfg)
+              (picIndexerName cfg)
+              releaseRouter
+        )
+  either (fail . T.unpack) pure $
+    validateReplayBounds (picStartBlock cfg) safeBlock preliminaryCursor validatedOptions
+
+  logs <-
+    requireRpc "eth_getLogs(replay)" $
+      getReplayLogs
+        manager
+        (picRpcUrls cfg)
+        reqIdRef
+        (perpsAddresses cfg)
+        fromBlock
+        toBlock
+  forM_ logs $ \logEntry ->
+    either (fail . T.unpack) pure $
+      validateReplayLogScope
+        fromBlock
+        toBlock
+        (perpsAddresses cfg)
+        logEntry
+  let orderedLogs =
+        sortOn
+          (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry))
+          logs
+      logBlockNumbers =
+        Map.keys $
+          Map.fromList
+            [ (rlBlockNumber logEntry, ())
+            | logEntry <- orderedLogs
+            ]
+
+  endInfoBefore <-
+    requireRpc "eth_getBlockByNumber(replay-end-before)" $
+      getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef toBlock
+  blockInfos <- forM logBlockNumbers $ \blockNumber -> do
+    blockInfo <-
+      requireRpc "eth_getBlockByNumber(replay-log)" $
+        getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef blockNumber
+    pure (blockNumber, blockInfo)
+  let blockInfoByNumber = Map.fromList blockInfos
+  validatedLogs <- forM orderedLogs $ \logEntry ->
+    case Map.lookup (rlBlockNumber logEntry) blockInfoByNumber of
+      Nothing ->
+        fail $
+          "Missing canonical block metadata for replay log block "
+            <> show (rlBlockNumber logEntry)
+      Just blockInfo ->
+        case validateRpcLogBlockHash logEntry blockInfo of
+          Left err -> fail $ T.unpack err
+          Right () -> pure (logEntry, blockInfo)
+  endInfo <-
+    requireRpc "eth_getBlockByNumber(replay-end-after)" $
+      getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef toBlock
+  unless
+    (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
+    (fail "Canonical replay end block changed while validating the exact range")
+
+  preparedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
+    either (fail . T.unpack) pure $ validateReplayLogAbi logEntry
+    parsed <-
+      maybe
+        (fail "Allowlisted Perps replay log could not be decoded")
+        pure
+        (parsePerpsLog logEntry)
+    txInfo <-
+      requireRpc "eth_getTransactionByHash(replay)" $
+        getReplayTransactionInfo manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
+    unless
+      (normalizeHex (tiHash txInfo) == normalizeHex (rlTxHash logEntry))
+      (fail "Replay transaction hash does not match its canonical log")
+    unless
+      (normalizeHex (tiBlockHash txInfo) == normalizeHex (rlBlockHash logEntry))
+      (fail "Replay transaction block hash does not match its canonical log")
+    tradeCosts <- case parsed of
+      ParsedPositionActivity kind _ _ _ _ _ _ _
+        | kind == "Open" || kind == "Close" -> do
+            costs <- getReplayTradeCosts manager cfg reqIdRef logEntry parsed
+            either (fail . T.unpack) (pure . Just) costs
+      _ -> pure Nothing
+    pure
+      PreparedReplayLog
+        { prlLog = logEntry
+        , prlBlockInfo = blockInfo
+        , prlParsed = parsed
+        , prlTransactionFrom = tiFrom txInfo
+        , prlTradeCosts = tradeCosts
+        }
+  let affectedOrderIds =
+        Set.toAscList $
+          Set.fromList $
+            catMaybes $
+              map (parsedOrderId . prlParsed) preparedLogs
+      affectedVolumeTimes =
+        [ biTimestamp (prlBlockInfo prepared)
+        | prepared <- preparedLogs
+        , isMarketVolumeActivity (prlParsed prepared)
+        ]
+  committedCursor <- withDb pool $ \conn -> withTransaction conn $ do
+    configurePerpsReplayTransaction
+      conn
+      (roStatementTimeoutMs validatedOptions)
+      (roLockTimeoutMs validatedOptions)
+    lockPerpsIndexerTransaction
+      conn
+      (picChainId cfg)
+      (picIndexerName cfg)
+      releaseRouter
+    -- The volume dataset lock must always follow the indexer lock, matching
+    -- the live writer and reorg path. It also protects explicit absence in the
+    -- semantic rollup snapshot.
+    lockMarketVolumeDataset conn (picChainId cfg) releaseRouter
+    lockPerpsReplayOrders
+      conn
+      (picChainId cfg)
+      releaseRouter
+      affectedOrderIds
+
+    cursorBefore@(cursorBlock, cursorHash) <-
+      getPerpsIndexerLastBlock
+        conn
+        (picChainId cfg)
+        (picIndexerName cfg)
+        releaseRouter
+    either (fail . T.unpack) pure $
+      validateReplayBounds (picStartBlock cfg) safeBlock cursorBlock validatedOptions
+    persistedCursorHash <-
+      maybe
+        (fail "Bounded Perps replay requires a persisted canonical cursor hash")
+        pure
+        cursorHash
+    cursorInfo <-
+      requireRpc "eth_getBlockByNumber(replay-cursor)" $
+        getReplayBlockByNumber manager (picRpcUrls cfg) reqIdRef cursorBlock
+    case validateIndexedBoundary cursorBlock persistedCursorHash cursorInfo of
+      Left err -> fail $ T.unpack err
+      Right () -> pure ()
+
+    coverageBefore <-
+      getMarketVolumeCoverageSnapshot conn (picChainId cfg) releaseRouter
+    historyBefore <-
+      getPerpsReplayHistorySnapshot
+        conn
+        (picChainId cfg)
+        releaseRouter
+        fromBlock
+        toBlock
+        affectedOrderIds
+    rollupsBefore <-
+      getMarketVolumeRollupSnapshot
+        conn
+        (picChainId cfg)
+        releaseRouter
+        affectedVolumeTimes
+
+    -- Sender and trade-cost metadata were prepared fail-closed before opening
+    -- the transaction. Every canonical event/order/activity write and all
+    -- volume recomputations share this transaction; the independent evidence
+    -- worker is deliberately not run by replay.
+    forM_ preparedLogs $ \prepared -> do
+      _ <- processParsedLog
+        conn
+        cfg
+        (prlBlockInfo prepared)
+        (Just $ prlTransactionFrom prepared)
+        (prlTradeCosts prepared)
+        (prlLog prepared)
+        (prlParsed prepared)
+      assertPreparedReplayLogExact conn cfg prepared
+    recomputeMarketVolumeHierarchyBatch
+      conn
+      (picChainId cfg)
+      releaseRouter
+      affectedVolumeTimes
+      (picCandleLatenessSeconds cfg)
+
+    cursorAfter <-
+      getPerpsIndexerLastBlock
+        conn
+        (picChainId cfg)
+        (picIndexerName cfg)
+        releaseRouter
+    coverageAfter <-
+      getMarketVolumeCoverageSnapshot conn (picChainId cfg) releaseRouter
+    historyAfter <-
+      getPerpsReplayHistorySnapshot
+        conn
+        (picChainId cfg)
+        releaseRouter
+        fromBlock
+        toBlock
+        affectedOrderIds
+    rollupsAfter <-
+      getMarketVolumeRollupSnapshot
+        conn
+        (picChainId cfg)
+        releaseRouter
+        affectedVolumeTimes
+    either (fail . T.unpack) pure $
+      validateReplayStateUnchanged
+        cursorBefore
+        cursorAfter
+        coverageBefore
+        coverageAfter
+        historyBefore
+        historyAfter
+        rollupsBefore
+        rollupsAfter
+    pure cursorBlock
+  pure (safeBlock, length orderedLogs, committedCursor)
+
+validateReplayBounds
+  :: Integer -> Integer -> Integer -> ReplayOptions -> Either Text ()
+validateReplayBounds configuredStart safeBlock cursorBlock options = do
+  _ <- firstText $ validateReplayOptions options
+  unless
+    (roFromBlock options >= configuredStart)
+    (Left "Replay range begins below the configured indexer start block")
+  unless
+    (roToBlock options <= safeBlock)
+    (Left "Replay range extends above the current confirmed safe head")
+  unless
+    (roToBlock options <= cursorBlock)
+    (Left "Replay range extends above the persisted canonical cursor")
+ where
+  firstText = either (Left . T.pack) Right
+
+validateReplayLogScope :: Integer -> Integer -> [Text] -> RpcLog -> Either Text ()
+validateReplayLogScope fromBlock toBlock allowedAddresses logEntry = do
+  unless
+    (rlBlockNumber logEntry >= fromBlock && rlBlockNumber logEntry <= toBlock)
+    (Left "RPC returned a Perps replay log outside the exact requested range")
+  unless
+    ( normalizeHex (rlAddress logEntry)
+        `elem` map normalizeHex allowedAddresses
+    )
+    (Left "RPC returned a Perps replay log outside the configured address allowlist")
+
+validateReplayLogAbi :: RpcLog -> Either Text ()
+validateReplayLogAbi logEntry =
+  case rlTopics logEntry of
+    topic : indexedTopics
+      | topic == orderCommittedTopic -> requireShape 3 32 indexedTopics
+      | topic == orderExecutedTopic -> requireShape 2 32 indexedTopics
+      | topic == orderFailedTopic -> requireShape 2 32 indexedTopics
+      | topic == positionOpenedTopic -> requireShape 2 128 indexedTopics
+      | topic == positionClosedTopic -> requireShape 2 128 indexedTopics
+      | topic == positionLiquidatedTopic -> requireShape 2 128 indexedTopics
+      | topic == marginAddedTopic -> requireShape 2 32 indexedTopics
+      | topic == depositTopic -> requireShape 3 32 indexedTopics
+      | topic == withdrawTopic -> requireShape 3 32 indexedTopics
+      | otherwise -> Left "Replay log topic is not in the allowlisted Perps ABI"
+    [] -> Left "Replay log has no event topic"
+ where
+  requireShape totalTopicCount dataBytes indexedTopics = do
+    unless (length (rlTopics logEntry) == totalTopicCount) $
+      Left "Replay log topic count does not match the allowlisted Perps ABI"
+    unless (all ((== 32) . BS.length) indexedTopics) $
+      Left "Replay log indexed topic is not exactly 32 bytes"
+    unless (BS.length (rlData logEntry) == dataBytes) $
+      Left "Replay log data length does not match the allowlisted Perps ABI"
+
+
+validateReplayStateUnchanged
+  :: (Eq cursor, Eq coverage, Eq history, Eq rollup)
+  => cursor
+  -> cursor
+  -> [coverage]
+  -> [coverage]
+  -> history
+  -> history
+  -> [rollup]
+  -> [rollup]
+  -> Either Text ()
+validateReplayStateUnchanged cursorBefore cursorAfter coverageBefore coverageAfter historyBefore historyAfter rollupsBefore rollupsAfter = do
+  unless
+    (cursorAfter == cursorBefore)
+    (Left "Bounded replay changed the canonical indexer cursor")
+  unless
+    (coverageAfter == coverageBefore)
+    (Left "Bounded replay changed market-volume coverage state")
+  unless
+    (historyAfter == historyBefore)
+    (Left "Bounded replay was not an idempotent canonical-history ingestion")
+  unless
+    (rollupsAfter == rollupsBefore)
+    (Left "Bounded replay was not an idempotent market-volume ingestion")
 
 runOneRange :: Manager -> DbPool -> PerpsIndexerConfig -> Maybe Integer -> Maybe Integer -> IO Bool
 runOneRange manager pool cfg explicitFrom explicitTo = do
@@ -310,7 +770,7 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
         (normalizeHex (biHash endInfoBefore) == normalizeHex (biHash endInfo))
         (fail "Canonical end block changed while validating the fetched log range")
 
-      forM_ validatedLogs $ \(logEntry, blockInfo) -> do
+      enrichedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
         mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
         let parsedLog = parsePerpsLog logEntry
         tradeCosts <- case parsedLog of
@@ -330,21 +790,103 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
                   ]
                 pure Nothing
           _ -> pure Nothing
-        processLog pool cfg blockInfo mTxFrom tradeCosts logEntry
-      withDb pool $ \conn -> do
-        (currentCursor, _) <- getPerpsIndexerLastBlock conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
-        when (endBlock >= currentCursor) $
+        pure (logEntry, blockInfo, mTxFrom, tradeCosts)
+      -- Persist the whole canonical range, its volume rollups, and the cursor
+      -- in one transaction. A failure cannot advance the cursor past missing
+      -- events or leave rollups only partly rebuilt.
+      certifiedCanonicalContinuity <- withDb pool $ \conn -> withTransaction conn $ do
+        lockPerpsIndexerTransaction
+          conn
+          (picChainId cfg)
+          (picIndexerName cfg)
+          (paOrderRouter $ picAddresses cfg)
+        (currentCursor, currentCursorHash) <-
+          getPerpsIndexerLastBlock
+            conn
+            (picChainId cfg)
+            (picIndexerName cfg)
+            (paOrderRouter $ picAddresses cfg)
+        let certifiesCanonicalContinuity =
+              canCertifyIndexedRange
+                (picStartBlock cfg)
+                currentCursor
+                startBlock
+                endBlock
+        -- Close the gap between the initial cursor verification and commit.
+        -- A certifying append with a persisted boundary hash must still be on
+        -- that same canonical chain immediately before the first write.
+        when certifiesCanonicalContinuity $
+          forM_ currentCursorHash $ \persistedHash -> do
+            boundaryInfo <- requireRpc "eth_getBlockByNumber(cursor-boundary)" $
+              getBlockByNumber manager (picRpcUrls cfg) reqIdRef (startBlock - 1)
+            case validateIndexedBoundary (startBlock - 1) persistedHash boundaryInfo of
+              Left err -> fail $ T.unpack err
+              Right () -> pure ()
+        affectedVolumeTimes <- fmap catMaybes $ forM enrichedLogs $ \(logEntry, blockInfo, mTxFrom, tradeCosts) ->
+          processLog conn cfg blockInfo mTxFrom tradeCosts logEntry
+        -- Rollups are recomputed from the canonical activity table after all
+        -- writes in this range. The batch primitive deduplicates both minutes
+        -- and their overlapping parent buckets, bounding write amplification
+        -- while preserving idempotence when an RPC provider replays a range.
+        let affectedVolumeMinutes =
+              Set.toAscList $
+                Set.fromList $
+                  map (\timestamp -> (timestamp `div` 60) * 60) affectedVolumeTimes
+        when (picCandleWriteMode cfg == PerpsCandleWritesDual) $ do
+          recomputeMarketVolumeHierarchyBatch
+            conn
+            (picChainId cfg)
+            (paOrderRouter $ picAddresses cfg)
+            affectedVolumeMinutes
+            (picCandleLatenessSeconds cfg)
+          -- Only a range contiguous with the persisted block cursor proves
+          -- that every intervening block was inspected. Explicit historical
+          -- or disjoint replays may repair canonical rows and rollups, but
+          -- must not certify skipped blocks as zero-volume.
+          when certifiesCanonicalContinuity $
+            advanceMarketVolumeCoverage
+              conn
+              (picChainId cfg)
+              (paOrderRouter $ picAddresses cfg)
+              (biTimestamp endInfo)
+              0
+        when certifiesCanonicalContinuity $
           setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) endBlock (Just $ biHash endInfo)
+        pure certifiesCanonicalContinuity
       logInfoEvery
         300
         "perps_indexer_progress"
-        "Perps history indexer advanced"
+        "Perps history indexer processed a block range"
         [ field "from_block" startBlock
         , field "to_block" endBlock
         , field "safe_head_block" safeBlock
         , field "event_count" $ length orderedLogs
+        , field "canonical_progress_certified" certifiedCanonicalContinuity
+        , field "indexed_through_timestamp" $ biTimestamp endInfo
         ]
       pure True
+
+-- A processed block range may advance canonical state only when it begins at
+-- the exact next block implied by the persisted cursor. The configured start
+-- block is the trusted lower boundary for a fresh or rewound indexer. This
+-- intentionally treats overlapping and disjoint explicit replays as
+-- non-certifying even though their rows can still be written idempotently.
+canCertifyIndexedRange :: Integer -> Integer -> Integer -> Integer -> Bool
+canCertifyIndexedRange configuredStart storedCursor rangeFrom rangeTo =
+  rangeFrom == expectedFrom && rangeTo >= rangeFrom
+  where
+    expectedFrom
+      | storedCursor < configuredStart = configuredStart
+      | otherwise = storedCursor + 1
+
+validateIndexedBoundary :: Integer -> Text -> BlockInfo -> Either Text ()
+validateIndexedBoundary expectedBlock persistedHash blockInfo = do
+  unless
+    (biNumber blockInfo == expectedBlock)
+    (Left "Canonical cursor boundary block number changed before commit")
+  unless
+    (normalizeHex (biHash blockInfo) == normalizeHex persistedHash)
+    (Left "Canonical cursor boundary block hash changed before commit")
 
 validateRpcLogBlockHash :: RpcLog -> BlockInfo -> Either Text ()
 validateRpcLogBlockHash logEntry blockInfo = do
@@ -364,13 +906,11 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
     Right blockInfo | normalizeHex (biHash blockInfo) == normalizeHex storedHash -> pure ()
     Right _ -> rewind
     Left err ->
-      logWarnEvery
-        60
-        "perps_indexer_cursor_verification_failed"
-        "Perps indexer could not verify its cursor block hash"
-        [ field "cursor_block" lastBlock
-        , field "error" err
-        ]
+      fail $
+        "Perps indexer could not verify canonical cursor block "
+          <> show lastBlock
+          <> ": "
+          <> show err
   where
     rewind = do
       -- A mismatch at the cursor proves that some ancestor may also have been
@@ -384,8 +924,31 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
         [ field "mismatch_block" lastBlock
         , field "rewind_to_block" newCursor
         ]
-      withDb pool $ \conn -> do
+      withDb pool $ \conn -> withTransaction conn $ do
+        lockPerpsIndexerTransaction
+          conn
+          (picChainId cfg)
+          (picIndexerName cfg)
+          (paOrderRouter $ picAddresses cfg)
+        affectedVolumeMinutes <-
+          if picCandleWriteMode cfg == PerpsCandleWritesDual
+            then
+              invalidateMarketVolumeFromBlock
+                conn
+                (picChainId cfg)
+                (paOrderRouter $ picAddresses cfg)
+                rewindBlock
+            else pure []
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
+        -- Rebuild while the dataset is still coverage-gated. A minute may now
+        -- be empty because its sole trade was orphaned; recomputing it also
+        -- reconstructs affected parent buckets from retained pre-rewind rows.
+        recomputeMarketVolumeHierarchyBatch
+          conn
+          (picChainId cfg)
+          (paOrderRouter $ picAddresses cfg)
+          affectedVolumeMinutes
+          (picCandleLatenessSeconds cfg)
         setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
 
 enrichPendingExecutionEvidence
@@ -669,17 +1232,29 @@ executionOraclePayloadDerivationVersion = 1
 executionEconomicsDerivationVersion = 1
 
 processLog
-  :: DbPool
+  :: Connection
   -> PerpsIndexerConfig
   -> BlockInfo
   -> Maybe Text
   -> Maybe TradeCosts
   -> RpcLog
-  -> IO ()
-processLog pool cfg blockInfo txFrom tradeCosts logEntry =
+  -> IO (Maybe Integer)
+processLog conn cfg blockInfo txFrom tradeCosts logEntry =
   case parsePerpsLog logEntry of
-    Nothing -> pure ()
-    Just parsed -> withDb pool $ \conn -> do
+    Nothing -> pure Nothing
+    Just parsed ->
+      processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
+
+processParsedLog
+  :: Connection
+  -> PerpsIndexerConfig
+  -> BlockInfo
+  -> Maybe Text
+  -> Maybe TradeCosts
+  -> RpcLog
+  -> ParsedPerpsLog
+  -> IO (Maybe Integer)
+processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed = do
       let eventName = parsedEventName parsed
           account = parsedAccount parsed
           orderId = parsedOrderId parsed
@@ -733,6 +1308,139 @@ processLog pool cfg blockInfo txFrom tradeCosts logEntry =
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
+      pure $
+        if isMarketVolumeActivity parsed
+          then Just $ biTimestamp blockInfo
+          else Nothing
+
+-- Conflict handlers make live ingestion idempotent, but they can also leave a
+-- pre-existing row untouched when its identity collides with different
+-- semantics. Replay therefore verifies the exact canonical projection after
+-- every prepared log. Any mismatch aborts and rolls back the whole range.
+assertPreparedReplayLogExact :: Connection -> PerpsIndexerConfig -> PreparedReplayLog -> IO ()
+assertPreparedReplayLogExact conn cfg prepared = do
+  let logEntry = prlLog prepared
+      blockInfo = prlBlockInfo prepared
+      parsed = prlParsed prepared
+      releaseRouter = paOrderRouter $ picAddresses cfg
+      chainId = picChainId cfg
+      timestamp = biTimestamp blockInfo
+      txHash = rlTxHash logEntry
+      blockNumber = rlBlockNumber logEntry
+      blockHash = rlBlockHash logEntry
+      txIndex = rlTxIndex logEntry
+      logIndex = rlLogIndex logEntry
+  assertPerpsReplayEventExact
+    conn
+    chainId
+    releaseRouter
+    (rlAddress logEntry)
+    (parsedEventName parsed)
+    txHash
+    blockNumber
+    blockHash
+    txIndex
+    logIndex
+    timestamp
+    (parsedAccount parsed)
+    (parsedOrderId parsed)
+    (parsedSide parsed)
+    (parsedPayload parsed)
+  case parsed of
+    ParsedOrderCommitted orderId account side _ -> do
+      assertPerpsReplayOrderCommittedExact
+        conn
+        chainId
+        releaseRouter
+        orderId
+        account
+        side
+        txHash
+        blockNumber
+        timestamp
+      assertPerpsReplayExpiredCleanupIfReadyExact conn chainId releaseRouter orderId
+    ParsedOrderExecuted orderId executionPrice _ ->
+      assertPerpsReplayOrderTerminalExact
+        conn
+        chainId
+        releaseRouter
+        orderId
+        "Executed"
+        Nothing
+        (Just executionPrice)
+        Nothing
+        txHash
+        blockNumber
+        timestamp
+    ParsedOrderFailed orderId reason reasonName _ -> do
+      assertPerpsReplayOrderTerminalExact
+        conn
+        chainId
+        releaseRouter
+        orderId
+        (terminalStatus reasonName)
+        (Just reasonName)
+        Nothing
+        (Just $ prlTransactionFrom prepared)
+        txHash
+        blockNumber
+        timestamp
+      when (reason == 0) $
+        assertPerpsReplayExpiredCleanupExact conn chainId releaseRouter orderId
+    ParsedPositionActivity kind account side price sizeDelta amountUsdc pnl payload ->
+      assertPerpsReplayActivityExact
+        conn
+        chainId
+        releaseRouter
+        (rlAddress logEntry)
+        (activityKey logEntry kind Nothing)
+        account
+        kind
+        Nothing
+        Nothing
+        (Just side)
+        price
+        sizeDelta
+        amountUsdc
+        pnl
+        txHash
+        blockNumber
+        blockHash
+        txIndex
+        logIndex
+        timestamp
+        (addTradeCosts (prlTradeCosts prepared) payload)
+    ParsedMarginActivity kind account amount payload ->
+      assertPerpsReplayActivityExact
+        conn
+        chainId
+        releaseRouter
+        (rlAddress logEntry)
+        (activityKey logEntry kind Nothing)
+        account
+        kind
+        Nothing
+        Nothing
+        Nothing
+        Nothing
+        Nothing
+        (Just amount)
+        Nothing
+        txHash
+        blockNumber
+        blockHash
+        txIndex
+        logIndex
+        timestamp
+        payload
+
+-- Keep this predicate aligned with the canonical volume query. Only position
+-- lifecycle events that contain both notional inputs contribute to OHLCV.
+isMarketVolumeActivity :: ParsedPerpsLog -> Bool
+isMarketVolumeActivity = \case
+  ParsedPositionActivity kind _ _ (Just _) (Just _) _ _ _ ->
+    kind `elem` ["Open", "Close", "Liquidated"]
+  _ -> False
 
 parsePerpsLog :: RpcLog -> Maybe ParsedPerpsLog
 parsePerpsLog logEntry =
@@ -814,24 +1522,7 @@ getTradeCosts
 getTradeCosts manager cfg reqIdRef logEntry parsed
   | rlBlockNumber logEntry <= 0 = pure $ Left "Cannot preview trade costs before genesis"
   | otherwise = do
-      let callData = case parsed of
-            ParsedPositionActivity "Open" account side (Just price) (Just sizeDelta) (Just marginDelta) _ _ ->
-              Just $
-                encodeCall
-                  "previewOpen(address,uint8,uint256,uint256,uint256,uint64)"
-                  [ encodeAddress account
-                  , encodeUint256 $ toInteger side
-                  , encodeUint256 sizeDelta
-                  , encodeUint256 marginDelta
-                  , encodeUint256 price
-                  , encodeUint256 0
-                  ]
-            ParsedPositionActivity "Close" account _ (Just price) (Just sizeDelta) _ _ _ ->
-              Just $
-                encodeCall
-                  "previewClose(address,uint256,uint256)"
-                  [encodeAddress account, encodeUint256 sizeDelta, encodeUint256 price]
-            _ -> Nothing
+      let callData = replayPreviewCallData parsed
       case callData of
         Nothing -> pure $ Left "Unsupported position activity for trade-cost preview"
         Just encoded -> do
@@ -857,6 +1548,61 @@ getTradeCosts manager cfg reqIdRef logEntry parsed
               ParsedPositionActivity "Close" _ _ _ _ _ _ _ -> decodeCloseTradeCosts response
               _ -> Left "Unsupported position activity for trade-cost preview"
 
+getReplayTradeCosts
+  :: Manager
+  -> PerpsIndexerConfig
+  -> IORef Integer
+  -> RpcLog
+  -> ParsedPerpsLog
+  -> IO (Either Text TradeCosts)
+getReplayTradeCosts manager cfg reqIdRef logEntry parsed
+  | rlBlockNumber logEntry <= 0 = pure $ Left "Cannot preview replay trade costs before genesis"
+  | otherwise =
+      case replayPreviewCallData parsed of
+        Nothing -> pure $ Left "Unsupported position activity for replay trade-cost preview"
+        Just encoded -> do
+          result <-
+            rpcCallAny
+              manager
+              (picRpcUrls cfg)
+              reqIdRef
+              "eth_call"
+              [ object
+                  [ "to" .= paCfdEngineLens (picAddresses cfg)
+                  , "data" .= ("0x" <> bytesToHex encoded)
+                  ]
+              , String $ "0x" <> intToHex (rlBlockNumber logEntry - 1)
+              ]
+          pure $ do
+            response <- case result of
+              Left err -> Left err
+              Right (String value) -> requiredHexBytes "trade-cost preview" value
+              Right _ -> Left "Replay eth_call result must be canonical hex bytes"
+            case parsed of
+              ParsedPositionActivity kind _ _ _ _ _ _ _ ->
+                decodeReplayTradeCosts kind response
+              _ -> Left "Unsupported position activity for replay trade-cost preview"
+
+replayPreviewCallData :: ParsedPerpsLog -> Maybe ByteString
+replayPreviewCallData = \case
+  ParsedPositionActivity "Open" account side (Just price) (Just sizeDelta) (Just marginDelta) _ _ ->
+    Just $
+      encodeCall
+        "previewOpen(address,uint8,uint256,uint256,uint256,uint64)"
+        [ encodeAddress account
+        , encodeUint256 $ toInteger side
+        , encodeUint256 sizeDelta
+        , encodeUint256 marginDelta
+        , encodeUint256 price
+        , encodeUint256 0
+        ]
+  ParsedPositionActivity "Close" account _ (Just price) (Just sizeDelta) _ _ _ ->
+    Just $
+      encodeCall
+        "previewClose(address,uint256,uint256)"
+        [encodeAddress account, encodeUint256 sizeDelta, encodeUint256 price]
+  _ -> Nothing
+
 decodeOpenTradeCosts :: ByteString -> Either Text TradeCosts
 decodeOpenTradeCosts bytes
   | BS.length bytes < 10 * 32 = Left "Open preview result is shorter than 10 ABI words"
@@ -871,6 +1617,18 @@ decodeCloseTradeCosts :: ByteString -> Either Text TradeCosts
 decodeCloseTradeCosts bytes
   | BS.length bytes < 8 * 32 = Left "Close preview result is shorter than 8 ABI words"
   | otherwise = Right $ TradeCosts (wordAt bytes 7) (intWordAt bytes 5)
+
+decodeReplayTradeCosts :: Text -> ByteString -> Either Text TradeCosts
+decodeReplayTradeCosts "Open" bytes
+  | BS.length bytes /= 10 * 32 =
+      Left "Replay open preview result must contain exactly 10 ABI words"
+  | otherwise = decodeOpenTradeCosts bytes
+decodeReplayTradeCosts "Close" bytes
+  | BS.length bytes /= 8 * 32 =
+      Left "Replay close preview result must contain exactly 8 ABI words"
+  | otherwise = decodeCloseTradeCosts bytes
+decodeReplayTradeCosts _ _ =
+  Left "Unsupported position activity for replay trade-cost preview"
 
 addTradeCosts :: Maybe TradeCosts -> Value -> Value
 addTradeCosts Nothing payload = payload
@@ -1010,6 +1768,16 @@ getCurrentBlockNumber manager rpcUrls reqIdRef = do
     Right (String hex) -> Right $ hexToInteger $ strip0x hex
     Right _ -> Left "Expected hex string"
 
+getReplayCurrentBlockNumber :: Manager -> [Text] -> IORef Integer -> IO (Either Text Integer)
+getReplayCurrentBlockNumber manager rpcUrls reqIdRef = do
+  result <- rpcCallAny manager rpcUrls reqIdRef "eth_blockNumber" ([] :: [Value])
+  pure $ result >>= parseReplayBlockNumber
+
+parseReplayBlockNumber :: Value -> Either Text Integer
+parseReplayBlockNumber = \case
+  String quantity -> parseCanonicalHexQuantity "block number" quantity
+  _ -> Left "Replay block number response must be a canonical hex string"
+
 getBlockByNumber :: Manager -> [Text] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
 getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
   result <- rpcCallAny manager rpcUrls reqIdRef "eth_getBlockByNumber" [String $ "0x" <> intToHex blockNumber, Bool False]
@@ -1022,6 +1790,49 @@ getBlockByNumber manager rpcUrls reqIdRef blockNumber = do
         , biTimestamp = hexToInteger $ strip0x $ getString "timestamp" obj
         }
     Right _ -> Left "Expected block object"
+
+getReplayBlockByNumber
+  :: Manager -> [Text] -> IORef Integer -> Integer -> IO (Either Text BlockInfo)
+getReplayBlockByNumber manager rpcUrls reqIdRef expectedBlock = do
+  result <-
+    rpcCallAny
+      manager
+      rpcUrls
+      reqIdRef
+      "eth_getBlockByNumber"
+      [String $ "0x" <> intToHex expectedBlock, Bool False]
+  pure $ result >>= parseReplayBlockInfo expectedBlock
+
+parseReplayBlockInfo :: Integer -> Value -> Either Text BlockInfo
+parseReplayBlockInfo expectedBlock = \case
+  Object obj -> do
+    numberText <- requiredString "number" obj
+    number <- parseCanonicalHexQuantity "block number" numberText
+    unless (number == expectedBlock) $
+      Left "Replay block response number does not match the requested block"
+    blockHash <- requiredString "hash" obj
+    unless (isCanonicalHash blockHash) $
+      Left "Replay block hash is not a canonical 32-byte hash"
+    timestampText <- requiredString "timestamp" obj
+    timestamp <- parseCanonicalHexQuantity "block timestamp" timestampText
+    pure
+      BlockInfo
+        { biNumber = number
+        , biHash = blockHash
+        , biTimestamp = timestamp
+        }
+  _ -> Left "Replay block response must be a JSON object"
+
+parseCanonicalHexQuantity :: Text -> Text -> Either Text Integer
+parseCanonicalHexQuantity label value = do
+  unless
+    ( T.length value >= 3
+        && "0x" `T.isPrefixOf` value
+        && T.all isLowerHexDigit (T.drop 2 value)
+        && (T.length value == 3 || T.index value 2 /= '0')
+    )
+    (Left $ "Replay " <> label <> " is not a canonical hex quantity")
+  pure $ hexToInteger $ T.drop 2 value
 
 getTransactionInfo :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
 getTransactionInfo manager rpcUrls reqIdRef txHash = do
@@ -1044,6 +1855,36 @@ getTransactionInfo manager rpcUrls reqIdRef txHash = do
           }
     Right Null -> Left $ "Transaction not found: " <> txHash
     Right _ -> Left "Expected transaction object"
+
+getReplayTransactionInfo
+  :: Manager -> [Text] -> IORef Integer -> Text -> IO (Either Text TransactionInfo)
+getReplayTransactionInfo manager rpcUrls reqIdRef txHash = do
+  result <- rpcCallAny manager rpcUrls reqIdRef "eth_getTransactionByHash" [String txHash]
+  pure $ result >>= parseReplayTransactionInfo
+
+parseReplayTransactionInfo :: Value -> Either Text TransactionInfo
+parseReplayTransactionInfo = \case
+  Object obj -> do
+    transactionHash <- requiredString "hash" obj
+    fromAddress <- requiredString "from" obj
+    toAddress <- requiredString "to" obj
+    blockHash <- requiredString "blockHash" obj
+    inputText <- requiredString "input" obj
+    unless (isCanonicalHash transactionHash && isCanonicalHash blockHash) $
+      Left "Replay transaction hash/block hash is not a canonical 32-byte hash"
+    unless (isCanonicalAddress fromAddress && isCanonicalAddress toAddress) $
+      Left "Replay transaction sender/target is not a canonical 20-byte address"
+    input <- requiredHexBytes "transaction input" inputText
+    pure
+      TransactionInfo
+        { tiHash = transactionHash
+        , tiFrom = fromAddress
+        , tiTo = toAddress
+        , tiBlockHash = blockHash
+        , tiInput = input
+        }
+  Null -> Left "Replay transaction was not found"
+  _ -> Left "Replay transaction response must be a JSON object"
 
 getTransactionFrom :: Manager -> [Text] -> IORef Integer -> Text -> IO (Maybe Text)
 getTransactionFrom manager rpcUrls reqIdRef txHash = do
@@ -1143,6 +1984,105 @@ getLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
     Left err -> Left err
     Right (Array arr) -> Right $ catMaybes $ map parseLogEntry (toList arr)
     Right _ -> Left "Expected logs array"
+
+getReplayLogs
+  :: Manager -> [Text] -> IORef Integer -> [Text] -> Integer -> Integer -> IO (Either Text [RpcLog])
+getReplayLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
+  let topics = map (String . ("0x" <>) . bytesToHex) perpsEventTopics
+      filterObject = object
+        [ "address" .= addresses
+        , "topics" .= [topics]
+        , "fromBlock" .= ("0x" <> intToHex fromBlock)
+        , "toBlock" .= ("0x" <> intToHex toBlock)
+        ]
+  result <- rpcCallAny manager rpcUrls reqIdRef "eth_getLogs" [filterObject]
+  pure $ case result of
+    Left err -> Left err
+    Right (Array arr) -> traverse parseReplayLogEntry $ toList arr
+    Right _ -> Left "Expected logs array"
+
+parseReplayLogEntry :: Value -> Either Text RpcLog
+parseReplayLogEntry = \case
+  Object obj -> do
+    address <- requiredString "address" obj
+    topics <- requiredStringArray "topics" obj
+    dataText <- requiredString "data" obj
+    txHash <- requiredString "transactionHash" obj
+    blockNumber <- requiredHexQuantity "blockNumber" obj
+    blockHash <- requiredString "blockHash" obj
+    txIndex <- requiredHexQuantity "transactionIndex" obj
+    logIndex <- requiredHexQuantity "logIndex" obj
+    decodedTopics <- traverse (requiredHexBytes "topic") topics
+    decodedData <- requiredHexBytes "data" dataText
+    unless (isCanonicalAddress address) $
+      Left "Replay log address is not a canonical 20-byte hex address"
+    unless (isCanonicalHash txHash && isCanonicalHash blockHash) $
+      Left "Replay log transaction/block hash is not a canonical 32-byte hash"
+    unless (not $ null decodedTopics) $
+      Left "Replay log has no event topic"
+    pure
+      RpcLog
+        { rlAddress = address
+        , rlTopics = decodedTopics
+        , rlData = decodedData
+        , rlTxHash = txHash
+        , rlBlockNumber = blockNumber
+        , rlBlockHash = blockHash
+        , rlTxIndex = txIndex
+        , rlLogIndex = logIndex
+        }
+  _ -> Left "Replay log entry must be a JSON object"
+
+requiredStringArray :: Text -> KM.KeyMap Value -> Either Text [Text]
+requiredStringArray name obj =
+  case KM.lookup (Key.fromText name) obj of
+    Just (Array values) -> traverse requireString $ toList values
+    _ -> Left $ "Missing or invalid replay log field: " <> name
+ where
+  requireString = \case
+    String value -> Right value
+    _ -> Left $ "Replay log array field contains a non-string: " <> name
+
+requiredHexQuantity :: Text -> KM.KeyMap Value -> Either Text Integer
+requiredHexQuantity name obj = do
+  value <- requiredString name obj
+  case parseCanonicalHexQuantity ("log field " <> name) value of
+    Left _ -> Left $ "Replay log field is not a canonical hex quantity: " <> name
+    Right parsed -> Right parsed
+
+requiredHexBytes :: Text -> Text -> Either Text ByteString
+requiredHexBytes name value = do
+  unless
+    ( "0x" `T.isPrefixOf` value
+        && even (T.length $ T.drop 2 value)
+        && T.all isLowerHexDigit (T.drop 2 value)
+    )
+    (Left $ "Replay log field is not canonical hex bytes: " <> name)
+  case B16.decode (TE.encodeUtf8 $ T.drop 2 value) of
+    Right bytes -> Right bytes
+    Left _ -> Left $ "Replay log field could not be decoded: " <> name
+
+isCanonicalAddress :: Text -> Bool
+isCanonicalAddress value =
+  T.length value == 42
+    && "0x" `T.isPrefixOf` value
+    && T.all isHexDigit (T.drop 2 value)
+
+isCanonicalHash :: Text -> Bool
+isCanonicalHash value =
+  T.length value == 66
+    && "0x" `T.isPrefixOf` value
+    && T.all isHexDigit (T.drop 2 value)
+
+isHexDigit :: Char -> Bool
+isHexDigit value =
+  (value >= '0' && value <= '9')
+    || (value >= 'a' && value <= 'f')
+    || (value >= 'A' && value <= 'F')
+
+isLowerHexDigit :: Char -> Bool
+isLowerHexDigit value =
+  (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
 
 parseLogEntry :: Value -> Maybe RpcLog
 parseLogEntry = \case

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
 import { usePerpsIdentity } from '../perps-aa'
@@ -42,19 +43,39 @@ export interface PerpsTradeHistoryRow {
   txHash: Hex
 }
 
-interface PerpsHistoryData {
+interface PerpsOrdersHistoryData {
   orderHistory: PerpsOrderHistoryRow[]
-  tradeHistory: PerpsTradeHistoryRow[]
   ordersIndexedThroughBlockRaw?: bigint
 }
 
-interface PerpsHistorySnapshot extends PerpsHistoryData {
-  accountAddress?: string
+interface PerpsActivityHistoryData {
+  tradeHistory: PerpsTradeHistoryRow[]
 }
 
-const EMPTY_PERPS_HISTORY: PerpsHistorySnapshot = {
+const EMPTY_PERPS_HISTORY = {
   orderHistory: [],
   tradeHistory: [],
+} satisfies PerpsOrdersHistoryData & PerpsActivityHistoryData
+
+const PERPS_HISTORY_REFETCH_INTERVAL_MS = 30_000
+
+const perpsHistoryQueryKeys = {
+  orders: (accountAddress: string) => [
+    'perps',
+    'history',
+    accountAddress.toLowerCase(),
+    'orders',
+  ] as const,
+  activity: (accountAddress: string) => [
+    'perps',
+    'history',
+    accountAddress.toLowerCase(),
+    'activity',
+  ] as const,
+}
+
+export interface UsePerpsHistoryOptions {
+  activityEnabled?: boolean
 }
 
 interface BackendOrdersResponse {
@@ -325,7 +346,7 @@ async function fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   try {
     response = await fetch(url, { signal })
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       throw error
     }
     throw new Error(
@@ -368,24 +389,17 @@ export async function waitForPerpsOrderTerminal({
   }
 }
 
-async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryData> {
+async function fetchPerpsOrdersHistory(
+  accountAddress: string,
+  signal?: AbortSignal
+): Promise<PerpsOrdersHistoryData> {
   const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
   ordersUrl.searchParams.set('limit', '30')
-  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
-  activityUrl.searchParams.set('limit', '30')
-
-  const [ordersResponse, activityResponse] = await Promise.all([
-    fetchJson<BackendOrdersResponse>(ordersUrl),
-    fetchJson<BackendActivityResponse>(activityUrl),
-  ])
+  const ordersResponse = await fetchJson<BackendOrdersResponse>(ordersUrl, signal)
 
   return {
     orderHistory: (ordersResponse.data?.orders ?? []).flatMap((row) => {
       const mapped = mapOrderRow(row)
-      return mapped ? [mapped] : []
-    }),
-    tradeHistory: (activityResponse.data?.activity ?? []).flatMap((row) => {
-      const mapped = mapActivityRow(row)
       return mapped ? [mapped] : []
     }),
     ordersIndexedThroughBlockRaw: parseBigInt(
@@ -394,131 +408,123 @@ async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryDa
   }
 }
 
-export function usePerpsHistory() {
+async function fetchPerpsActivityHistory(
+  accountAddress: string,
+  signal?: AbortSignal
+): Promise<PerpsActivityHistoryData> {
+  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
+  activityUrl.searchParams.set('limit', '30')
+  const activityResponse = await fetchJson<BackendActivityResponse>(activityUrl, signal)
+
+  return {
+    tradeHistory: (activityResponse.data?.activity ?? []).flatMap((row) => {
+      const mapped = mapActivityRow(row)
+      return mapped ? [mapped] : []
+    }),
+  }
+}
+
+export function usePerpsHistory({
+  activityEnabled = false,
+}: UsePerpsHistoryOptions = {}) {
   const { ownerAddress, accountAddress } = usePerpsIdentity()
-  const isConnected = ownerAddress !== undefined
-  const [historySnapshot, setHistorySnapshot] =
-    useState<PerpsHistorySnapshot>(EMPTY_PERPS_HISTORY)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | undefined>()
-  const requestGenerationRef = useRef(0)
-
-  const refetch = useCallback(async () => {
-    if (!isConnected || !accountAddress) {
-      requestGenerationRef.current += 1
-      setHistorySnapshot(EMPTY_PERPS_HISTORY)
-      setError(undefined)
-      setIsLoading(false)
-      return
-    }
-
-    const requestGeneration = requestGenerationRef.current + 1
-    requestGenerationRef.current = requestGeneration
-    setIsLoading(true)
-    setError(undefined)
-
-    try {
-      const nextHistory = await fetchPerpsHistory(accountAddress)
-      if (requestGenerationRef.current !== requestGeneration) return
-      setHistorySnapshot({
-        ...nextHistory,
-        accountAddress,
-      })
-      setIsLoading(false)
-    } catch (cause) {
-      if (requestGenerationRef.current !== requestGeneration) return
-      setError(cause instanceof Error ? cause : new Error(String(cause)))
-      setHistorySnapshot(EMPTY_PERPS_HISTORY)
-      setIsLoading(false)
-    }
-  }, [accountAddress, isConnected])
+  const queryClient = useQueryClient()
+  const historyAccountAddress = ownerAddress === undefined
+    ? undefined
+    : accountAddress
+  const ordersQuery = useQuery({
+    queryKey: perpsHistoryQueryKeys.orders(historyAccountAddress ?? 'disconnected'),
+    queryFn: ({ signal }) => {
+      if (!historyAccountAddress) {
+        throw new Error('A Perps account address is required to load order history')
+      }
+      return fetchPerpsOrdersHistory(historyAccountAddress, signal)
+    },
+    enabled: historyAccountAddress !== undefined,
+    staleTime: 10_000,
+    refetchInterval: PERPS_HISTORY_REFETCH_INTERVAL_MS,
+    // The interval is the retry policy; avoid multiplying traffic during an
+    // indexer/backend outage via the app-wide retry default.
+    retry: false,
+  })
+  const activityQuery = useQuery({
+    queryKey: perpsHistoryQueryKeys.activity(historyAccountAddress ?? 'disconnected'),
+    queryFn: ({ signal }) => {
+      if (!historyAccountAddress) {
+        throw new Error('A Perps account address is required to load activity history')
+      }
+      return fetchPerpsActivityHistory(historyAccountAddress, signal)
+    },
+    enabled: historyAccountAddress !== undefined && activityEnabled,
+    // Always refresh when the tab is reopened, while retaining cached rows during
+    // that background refresh.
+    staleTime: 0,
+    refetchInterval: activityEnabled
+      ? PERPS_HISTORY_REFETCH_INTERVAL_MS
+      : false,
+    retry: false,
+  })
+  const refetchOrdersHistory = ordersQuery.refetch
+  const refetchActivityHistory = activityQuery.refetch
 
   useEffect(() => {
-    if (!isConnected || !accountAddress) {
-      const requestGeneration = requestGenerationRef.current + 1
-      requestGenerationRef.current = requestGeneration
-      const resetTimeout = window.setTimeout(() => {
-        if (requestGenerationRef.current !== requestGeneration) return
-        setHistorySnapshot(EMPTY_PERPS_HISTORY)
-        setError(undefined)
-        setIsLoading(false)
-      }, 0)
-      return () => {
-        window.clearTimeout(resetTimeout)
-      }
-    }
+    if (activityEnabled || !historyAccountAddress) return
 
-    let cancelled = false
-    const canonicalAccountAddress = accountAddress
+    void queryClient.cancelQueries({
+      queryKey: perpsHistoryQueryKeys.activity(historyAccountAddress),
+      exact: true,
+    })
+  }, [activityEnabled, historyAccountAddress, queryClient])
 
-    async function loadHistory() {
-      const requestGeneration = requestGenerationRef.current + 1
-      requestGenerationRef.current = requestGeneration
-      setIsLoading(true)
-      setError(undefined)
+  const refetch = useCallback(async () => {
+    if (!historyAccountAddress) return
 
-      try {
-        const nextHistory = await fetchPerpsHistory(canonicalAccountAddress)
+    const requests: Promise<unknown>[] = [refetchOrdersHistory()]
+    if (activityEnabled) requests.push(refetchActivityHistory())
+    await Promise.all(requests)
+  }, [
+    activityEnabled,
+    historyAccountAddress,
+    refetchActivityHistory,
+    refetchOrdersHistory,
+  ])
 
-        if (
-          !cancelled
-          && requestGenerationRef.current === requestGeneration
-        ) {
-          setHistorySnapshot({
-            ...nextHistory,
-            accountAddress: canonicalAccountAddress,
-          })
-          setIsLoading(false)
-        }
-      } catch (cause) {
-        if (
-          !cancelled
-          && requestGenerationRef.current === requestGeneration
-        ) {
-          setError(cause instanceof Error ? cause : new Error(String(cause)))
-          setHistorySnapshot(EMPTY_PERPS_HISTORY)
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadHistory()
-    const interval = window.setInterval(() => {
-      void loadHistory()
-    }, 30_000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [accountAddress, isConnected])
-
-  const hasCurrentAccountSnapshot =
-    accountAddress !== undefined
-    && historySnapshot.accountAddress?.toLowerCase() === accountAddress.toLowerCase()
-  const orderHistory = hasCurrentAccountSnapshot
-    ? historySnapshot.orderHistory
-    : EMPTY_PERPS_HISTORY.orderHistory
-  const tradeHistory = hasCurrentAccountSnapshot
-    ? historySnapshot.tradeHistory
-    : EMPTY_PERPS_HISTORY.tradeHistory
-  const ordersIndexedThroughBlockRaw = hasCurrentAccountSnapshot
-    ? historySnapshot.ordersIndexedThroughBlockRaw
+  const orderHistory = ordersQuery.data?.orderHistory
+    ?? EMPTY_PERPS_HISTORY.orderHistory
+  const tradeHistory = activityQuery.data?.tradeHistory
+    ?? EMPTY_PERPS_HISTORY.tradeHistory
+  const ordersIndexedThroughBlockRaw =
+    ordersQuery.data?.ordersIndexedThroughBlockRaw
+  const orderHistoryError = ordersQuery.error ?? undefined
+  const tradeHistoryError = activityEnabled
+    ? activityQuery.error ?? undefined
     : undefined
+  const isOrderHistoryLoading = ordersQuery.isLoading
+  const isTradeHistoryLoading = activityEnabled && activityQuery.isLoading
+  const error = orderHistoryError ?? tradeHistoryError
+  const isLoading = isOrderHistoryLoading || isTradeHistoryLoading
 
   return useMemo(() => ({
     orderHistory,
     tradeHistory,
     ordersIndexedThroughBlockRaw,
+    isOrderHistoryLoading,
+    isTradeHistoryLoading,
+    orderHistoryError,
+    tradeHistoryError,
     isLoading,
     error,
     refetch,
   }), [
     error,
     isLoading,
+    isOrderHistoryLoading,
+    isTradeHistoryLoading,
     orderHistory,
+    orderHistoryError,
     ordersIndexedThroughBlockRaw,
     refetch,
     tradeHistory,
+    tradeHistoryError,
   ])
 }
