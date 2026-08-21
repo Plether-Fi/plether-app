@@ -11,11 +11,16 @@ import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
+import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
+import Plether.Vaults.PerformanceIndexer
+  ( VaultPerformanceIndexerConfig (..)
+  , startVaultPerformanceIndexer
+  )
 import Web.Scotty (middleware, scotty)
 
 main :: IO ()
@@ -30,12 +35,16 @@ main = do
         [field "error" err]
     Right cfg -> do
       manager <- newManager tlsManagerSettings
+      client <- newClient (cfgRpcUrl cfg)
+      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
+      vaultHistoryClient <- newClient (cfgVaultHistoryRpcUrl cfg)
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           pool <- newDbPool dbUrl
           withDb pool ensureBasketSnapshotSchema
           withDb pool ensurePerpsHistorySchema
           withDb pool ensureTestnetFaucetSchema
+          withDb pool ensureVaultPerformanceSchema
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
@@ -56,6 +65,31 @@ main = do
                 , icPollInterval = 12000000
                 }
           _ <- forkIO $ startIndexer manager pool indexerCfg
+          let vaultHistoryCfg =
+                VaultPerformanceIndexerConfig
+                  { vpicChainId = cfgPerpsChainId cfg
+                  , vpicAssetAddress = cfgPerpsUsdc cfg
+                  , vpicHousePoolAddress = cfgVaultHistoryHousePoolAddress cfg
+                  , vpicSeniorVaultAddress = cfgVaultHistorySeniorVaultAddress cfg
+                  , vpicJuniorVaultAddress = cfgVaultHistoryJuniorVaultAddress cfg
+                  , vpicDeploymentBlock = cfgVaultHistoryDeploymentBlock cfg
+                  , vpicConfirmations = cfgVaultHistoryConfirmations cfg
+                  }
+          logInfo
+            "vault_performance_indexer_started"
+            "Vault performance indexer started"
+            [ field "chain_id" $ vpicChainId vaultHistoryCfg
+            , field "house_pool" $ vpicHousePoolAddress vaultHistoryCfg
+            , field "deployment_block" $ vpicDeploymentBlock vaultHistoryCfg
+            , field "confirmations" $ vpicConfirmations vaultHistoryCfg
+            ]
+          _ <-
+            forkIO $
+              startVaultPerformanceIndexer
+                perpsClient
+                vaultHistoryClient
+                pool
+                vaultHistoryCfg
           when (cfgPythIngestionEnabled cfg) $ do
             let basketCfg = BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
@@ -85,8 +119,6 @@ main = do
             [field "history_enabled" False]
           pure Nothing
 
-      client <- newClient (cfgRpcUrl cfg)
-      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
       pimlicoProxyState <- newPimlicoProxyState
       requestLogging <- newRequestLoggingMiddleware

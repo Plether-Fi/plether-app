@@ -1,17 +1,39 @@
-import { useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { useAppKit } from '@reown/appkit/react'
 import { formatUnits, parseUnits, zeroAddress, type Address } from 'viem'
 import { useAccount, useChainId, useReadContracts } from 'wagmi'
 import { Link, useParams } from 'react-router-dom'
+import {
+  usePerpsVaultHistory,
+  type VaultHistory,
+  type VaultHistoryPoint,
+  type VaultHistoryTranche,
+} from '../api'
 import { TokenInput } from '../components/TokenInput'
-import { Alert, Badge, Button, Modal, Tooltip } from '../components/ui'
+import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
+import { Alert, Badge, Button, Modal, TokenAmount, TokenLabel, Tooltip } from '../components/ui'
+import { DOCS_LINKS } from '../config/docs'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
-import { ERC20_ABI, PERPS_HOUSE_POOL_ABI, TRANCHE_VAULT_READ_ABI } from '../contracts/abis'
+import {
+  ERC20_ABI,
+  PERPS_CFD_ENGINE_ABI,
+  PERPS_HOUSE_POOL_ABI,
+  PERPS_PUBLIC_LENS_ABI,
+  TRANCHE_VAULT_READ_ABI,
+} from '../contracts/abis'
 import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
-import { useSwitchToArbitrumSepolia, useVaultTransactions } from '../hooks'
+import { PERPS_POSITION_SIZE_TO_USDC_SCALE } from '../contracts/perpsConstants'
+import {
+  usePendingVaultDeposits,
+  useSwitchToArbitrumSepolia,
+  useVaultTransactions,
+  type PendingVaultDeposit,
+} from '../hooks'
+import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
+import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 type TrancheId = 'senior' | 'junior'
 type DetailTab = 'overview' | 'performance' | 'risk' | 'activity'
@@ -22,7 +44,6 @@ interface TrancheDefinition {
   id: TrancheId
   name: string
   token: string
-  icon: string
   eyebrow: string
   shortDescription: string
   description: string
@@ -34,11 +55,13 @@ interface TrancheDefinition {
   riskLabel: string
   riskVariant: 'info' | 'warning'
   targetReturn: string
-  chartColor: string
   markClassName: string
   valueClassName: string
   barClassName: string
-  featureItems: string[]
+  featureItems: {
+    label: string
+    text: string
+  }[]
   riskItems: string[]
   address: Address
 }
@@ -64,6 +87,9 @@ interface PoolSnapshot {
   seniorImpairmentGapUsdc?: bigint
   seniorPoolWithdrawCapUsdc?: bigint
   juniorPoolWithdrawCapUsdc?: bigint
+  markPrice?: bigint
+  longOpenCapacityUsdc?: bigint
+  shortOpenCapacityUsdc?: bigint
 }
 
 interface TrancheLiveData {
@@ -74,6 +100,7 @@ interface TrancheLiveData {
   maxRequestDeposit?: bigint
   maxWithdraw?: bigint
   allowance?: bigint
+  currentDepositEpoch?: bigint
   sharePrice?: number
   hasCoreData: boolean
   hasDepositData: boolean
@@ -91,35 +118,47 @@ interface VaultsSnapshot {
 
 const USDC_DECIMALS = 6
 const SHARE_DECIMALS = 9
+const SHARE_PRICE_PROBE = 10n ** 27n
+const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60
+const VAULT_EPOCH_DURATION_SECONDS = 60 * 60
+const VAULT_PERFORMANCE_CHART_COLOR = '#FFAB96'
 const EXPLORER_BASE_URL = 'https://sepolia.arbiscan.io/address'
 const DEPOSIT_PROBE_ACCOUNT = '0x000000000000000000000000000000000000dEaD' as Address
+const WAD = 10n ** 18n
 
 const TRANCHES: Record<TrancheId, TrancheDefinition> = {
   senior: {
     id: 'senior',
     name: 'Senior Vault',
     token: 'psLP',
-    icon: 'shield',
     eyebrow: 'Priority capital',
     shortDescription: 'Targeted return with first access to free LP liquidity.',
     description:
       'Senior exchanges residual upside for relative protection. It receives a Junior-funded target coupon, is restored toward its high-water mark before Junior receives new revenue, and absorbs losses only after Junior is exhausted.',
     returnModel: 'Target coupon funded by Junior capital',
     lossPriority: 'Second loss, after Junior',
-    withdrawalPriority: 'First LP claim on free liquidity',
+    withdrawalPriority: 'Matured requests settle before Junior',
     upside: 'Target coupon and restoration priority',
     primaryRisk: 'Coupon can stop and principal can still be impaired',
     riskLabel: 'Lower relative risk',
     riskVariant: 'info',
     targetReturn: 'Target coupon',
-    chartColor: '#FFAB96',
     markClassName: 'border-brand-peach/60 bg-brand-peach/10 text-brand-peach',
     valueClassName: 'text-brand-peach',
     barClassName: 'bg-brand-peach',
     featureItems: [
-      'Protected by the Junior first-loss buffer',
-      'Restored to its high-water mark before Junior receives residual revenue',
-      'First LP claim on physically free HousePool liquidity',
+      {
+        label: 'Loss order',
+        text: 'Junior absorbs realized losses before Senior',
+      },
+      {
+        label: 'Return',
+        text: 'Receives its target coupon when available; impairment is restored before Junior receives residual revenue',
+      },
+      {
+        label: 'Withdrawals',
+        text: 'Matured Senior withdrawal requests are funded first from available LP liquidity each epoch',
+      },
     ],
     riskItems: [
       'The target coupon is not guaranteed and is limited by available Junior capital.',
@@ -133,27 +172,34 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     id: 'junior',
     name: 'Junior Vault',
     token: 'pjLP',
-    icon: 'rocket_launch',
     eyebrow: 'Residual capital',
     shortDescription: 'First-loss capital with variable residual upside.',
     description:
       'Junior funds the Senior target coupon and absorbs HousePool losses first. In exchange, it receives residual realized trading revenue after Senior restoration and coupon obligations are satisfied.',
     returnModel: 'Residual HousePool performance',
     lossPriority: 'First loss',
-    withdrawalPriority: 'Liquidity remaining above the Senior claim',
+    withdrawalPriority: 'Remainder after matured Senior requests and the required buffer',
     upside: 'Variable residual trading revenue',
     primaryRisk: 'Can be partially or completely wiped before Senior is impaired',
     riskLabel: 'Higher relative risk',
     riskVariant: 'warning',
     targetReturn: 'Variable residual',
-    chartColor: '#00FF99',
-    markClassName: 'border-positive/60 bg-positive/10 text-positive',
-    valueClassName: 'text-positive',
-    barClassName: 'bg-positive',
+    markClassName: 'border-brand-orange/60 bg-brand-orange/10 text-brand-orange',
+    valueClassName: 'text-brand-orange',
+    barClassName: 'bg-brand-orange',
     featureItems: [
-      'Receives residual realized trading revenue',
-      'Higher upside participation after Senior obligations',
-      'Direct exposure to carry, positive VPI, and collected trader losses',
+      {
+        label: 'Loss order',
+        text: 'Absorbs realized losses first, protecting Senior',
+      },
+      {
+        label: 'Return',
+        text: 'Receives residual revenue after Senior coupon and restoration obligations',
+      },
+      {
+        label: 'Withdrawals',
+        text: 'Matured Junior withdrawals receive eligible liquidity remaining after Senior requests and the required first-loss buffer; they may remain queued',
+      },
     ],
     riskItems: [
       'Junior pays the Senior target coupon from its own accounting principal.',
@@ -195,6 +241,40 @@ function minBigInt(left: bigint, right: bigint): bigint {
   return left < right ? left : right
 }
 
+function openInterestNotionalUsdc(
+  openInterest: bigint | undefined,
+  markPrice: bigint | undefined
+): bigint | undefined {
+  if (openInterest === undefined || markPrice === undefined) return undefined
+  return (openInterest * markPrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
+}
+
+function openCapacityUsdc({
+  selectedOpenInterestUsdc,
+  oppositeOpenInterestUsdc,
+  poolAssetsUsdc,
+  maxSkewRatio,
+}: {
+  selectedOpenInterestUsdc: bigint | undefined
+  oppositeOpenInterestUsdc: bigint | undefined
+  poolAssetsUsdc: bigint | undefined
+  maxSkewRatio: bigint | undefined
+}): bigint | undefined {
+  if (
+    selectedOpenInterestUsdc === undefined
+    || oppositeOpenInterestUsdc === undefined
+    || poolAssetsUsdc === undefined
+    || maxSkewRatio === undefined
+  ) {
+    return undefined
+  }
+
+  const maxSkewUsdc = (poolAssetsUsdc * maxSkewRatio) / WAD
+  return maxSkewUsdc + oppositeOpenInterestUsdc > selectedOpenInterestUsdc
+    ? maxSkewUsdc + oppositeOpenInterestUsdc - selectedOpenInterestUsdc
+    : 0n
+}
+
 function calculateSharePrice(
   totalAssets: bigint | undefined,
   totalSupply: bigint | undefined
@@ -205,6 +285,13 @@ function calculateSharePrice(
   const assets = Number(formatUnits(totalAssets, USDC_DECIMALS))
   const shares = Number(formatUnits(totalSupply, SHARE_DECIMALS))
   return shares > 0 ? assets / shares : undefined
+}
+
+function calculateConvertedSharePrice(convertedAssets: bigint | undefined): number | undefined {
+  if (convertedAssets === undefined) return undefined
+  const assets = Number(formatUnits(convertedAssets, USDC_DECIMALS))
+  const shares = Number(formatUnits(SHARE_PRICE_PROBE, SHARE_DECIMALS))
+  return Number.isFinite(assets) && shares > 0 ? assets / shares : undefined
 }
 
 function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
@@ -319,9 +406,61 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         functionName: 'allowance',
         args: [readAccount, PERPS_ARBITRUM_SEPOLIA.juniorVault],
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'currentDepositEpoch',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'currentDepositEpoch',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'convertToAssets',
+        args: [SHARE_PRICE_PROBE],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'convertToAssets',
+        args: [SHARE_PRICE_PROBE],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getProtocolStatus',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'sides',
+        args: [0n],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'sides',
+        args: [1n],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+        abi: PERPS_CFD_ENGINE_ABI,
+        functionName: 'riskParams',
+      },
     ],
     query: {
-      refetchInterval: 30_000,
+      refetchInterval: 60_000,
     },
   })
 
@@ -360,6 +499,32 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const juniorMaxRequestDeposit = asBigInt(readResult(results, 13))
     const seniorAllowance = asBigInt(readResult(results, 14))
     const juniorAllowance = asBigInt(readResult(results, 15))
+    const seniorCurrentDepositEpoch = asBigInt(readResult(results, 16))
+    const juniorCurrentDepositEpoch = asBigInt(readResult(results, 17))
+    const seniorConvertedAssets = asBigInt(readResult(results, 18))
+    const juniorConvertedAssets = asBigInt(readResult(results, 19))
+    const protocolStatus = readResult(results, 20)
+    const bullSide = readResult(results, 21)
+    const bearSide = readResult(results, 22)
+    const riskParams = readResult(results, 23)
+    const markPrice = asBigInt(tupleValue(protocolStatus, 1, 'lastMarkPrice'))
+    const bullOpenInterest = asBigInt(tupleValue(bullSide, 1, 'openInterest'))
+    const bearOpenInterest = asBigInt(tupleValue(bearSide, 1, 'openInterest'))
+    const maxSkewRatio = asBigInt(tupleValue(riskParams, 1, 'maxSkewRatio'))
+    const bullOpenInterestUsdc = openInterestNotionalUsdc(bullOpenInterest, markPrice)
+    const bearOpenInterestUsdc = openInterestNotionalUsdc(bearOpenInterest, markPrice)
+    const longOpenCapacityUsdc = openCapacityUsdc({
+      selectedOpenInterestUsdc: bullOpenInterestUsdc,
+      oppositeOpenInterestUsdc: bearOpenInterestUsdc,
+      poolAssetsUsdc: totalAssetsUsdc,
+      maxSkewRatio,
+    })
+    const shortOpenCapacityUsdc = openCapacityUsdc({
+      selectedOpenInterestUsdc: bearOpenInterestUsdc,
+      oppositeOpenInterestUsdc: bullOpenInterestUsdc,
+      poolAssetsUsdc: totalAssetsUsdc,
+      maxSkewRatio,
+    })
     const seniorImpaired = seniorPrincipalUsdc !== undefined
       && seniorHighWaterMarkUsdc !== undefined
       ? seniorPrincipalUsdc < seniorHighWaterMarkUsdc
@@ -431,6 +596,9 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         seniorImpairmentGapUsdc,
         seniorPoolWithdrawCapUsdc,
         juniorPoolWithdrawCapUsdc,
+        markPrice,
+        longOpenCapacityUsdc,
+        shortOpenCapacityUsdc,
       },
       walletUsdc,
       hasLivePoolData,
@@ -443,7 +611,9 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           maxRequestDeposit: seniorMaxRequestDeposit,
           maxWithdraw: seniorMaxWithdraw,
           allowance: seniorAllowance,
-          sharePrice: calculateSharePrice(seniorAssets, seniorSupply),
+          currentDepositEpoch: seniorCurrentDepositEpoch,
+          sharePrice: calculateConvertedSharePrice(seniorConvertedAssets)
+            ?? calculateSharePrice(seniorAssets, seniorSupply),
           hasCoreData: hasSeniorCoreData,
           hasDepositData: seniorAllowance !== undefined,
           hasUserData: seniorUserShares !== undefined && seniorMaxWithdraw !== undefined,
@@ -456,7 +626,9 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           maxRequestDeposit: juniorMaxRequestDeposit,
           maxWithdraw: juniorMaxWithdraw,
           allowance: juniorAllowance,
-          sharePrice: calculateSharePrice(juniorAssets, juniorSupply),
+          currentDepositEpoch: juniorCurrentDepositEpoch,
+          sharePrice: calculateConvertedSharePrice(juniorConvertedAssets)
+            ?? calculateSharePrice(juniorAssets, juniorSupply),
           hasCoreData: hasJuniorCoreData,
           hasDepositData: juniorAllowance !== undefined,
           hasUserData: juniorUserShares !== undefined && juniorMaxWithdraw !== undefined,
@@ -487,20 +659,40 @@ function formatFullUsdc(amount: bigint | undefined, maximumFractionDigits = 2): 
   }).format(value)
 }
 
-function formatCompactUsd(amount: bigint | undefined): string {
+function formatCompactUsd(amount: bigint | undefined): ReactNode {
   const formatted = formatCompactUsdc(amount)
-  return formatted === '--' ? formatted : `$${formatted}`
+  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
 }
 
-function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): string {
+function formatFullUsd(amount: bigint | undefined, maximumFractionDigits = 2): ReactNode {
   const formatted = formatFullUsdc(amount, maximumFractionDigits)
-  return formatted === '--' ? formatted : `$${formatted}`
+  return formatted === '--' ? formatted : <TokenAmount amount={formatted} />
 }
 
-function formatVaultLimit(amount: bigint | undefined): string {
+function formatPoolCapacity(amount: bigint | undefined, markPrice: bigint | undefined): ReactNode {
+  if (amount === undefined) return '--'
+  const formatted = formatPerpsUsdc(dxyExposureFromContractNotional(amount, markPrice) ?? amount)
+  return <TokenAmount amount={formatted} />
+}
+
+function formatVaultLimit(amount: bigint | undefined): ReactNode {
   if (amount === undefined) return '--'
   if (amount >= 2n ** 255n) return 'No contract cap'
   return formatFullUsd(amount)
+}
+
+function secondsUntilNextVaultEpoch(nowMs = Date.now()): number {
+  const nowSeconds = Math.floor(nowMs / 1_000)
+  const secondsIntoEpoch = nowSeconds % VAULT_EPOCH_DURATION_SECONDS
+  return secondsIntoEpoch === 0
+    ? VAULT_EPOCH_DURATION_SECONDS
+    : VAULT_EPOCH_DURATION_SECONDS - secondsIntoEpoch
+}
+
+function formatEpochCountdown(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
 function formatShares(amount: bigint | undefined): string {
@@ -511,9 +703,104 @@ function formatShares(amount: bigint | undefined): string {
   }).format(value)
 }
 
-function formatSharePrice(value: number | undefined): string {
+function formatSharePrice(value: number | undefined): ReactNode {
   if (value === undefined) return '--'
-  return `$${value.toFixed(4)}`
+  return <TokenAmount amount={value.toFixed(4)} />
+}
+
+interface VaultChartPoint {
+  timestamp: number
+  blockNumber: string
+  sharePrice: number
+}
+
+interface CompleteVaultPerformance {
+  apy7d: number
+  return7d: number
+  periodStart: number
+  periodEnd: number
+  points: VaultChartPoint[]
+}
+
+function formatSignedPercent(value: number): string {
+  const percent = value * 100
+  const rounded = Math.abs(percent) < 0.005 ? 0 : percent
+  const sign = rounded > 0 ? '+' : ''
+  return `${sign}${rounded.toFixed(2)}%`
+}
+
+function formatHistorySharePrice(value: number): ReactNode {
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 4,
+    maximumFractionDigits: 6,
+  }).format(value)
+  return <TokenAmount amount={formatted} />
+}
+
+function performanceTone(value: number): 'default' | 'positive' | 'negative' {
+  if (Math.abs(value) < 0.00005) return 'default'
+  return value > 0 ? 'positive' : 'negative'
+}
+
+function performanceValueClassName(value: number): string {
+  const tone = performanceTone(value)
+  if (tone === 'positive') return 'text-positive'
+  if (tone === 'negative') return 'text-brand-orange'
+  return 'text-content-primary'
+}
+
+function normalizeHistoryPoints(points: VaultHistoryPoint[]): VaultChartPoint[] {
+  const byTimestamp = new Map<number, VaultChartPoint>()
+
+  points.forEach((point) => {
+    let sharePrice: number
+    try {
+      sharePrice = Number(formatUnits(BigInt(point.sharePrice), 18))
+    } catch {
+      return
+    }
+    if (!Number.isFinite(point.timestamp) || !Number.isFinite(sharePrice) || sharePrice < 0) return
+    byTimestamp.set(point.timestamp, {
+      timestamp: point.timestamp,
+      blockNumber: point.blockNumber,
+      sharePrice,
+    })
+  })
+
+  return [...byTimestamp.values()].sort((left, right) => left.timestamp - right.timestamp)
+}
+
+function historyMatchesConfiguredDeployment(history: VaultHistory): boolean {
+  return history.deployment.chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
+    && history.deployment.housePool.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.housePool.toLowerCase()
+    && history.deployment.seniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.seniorVault.toLowerCase()
+    && history.deployment.juniorVault.toLowerCase() === PERPS_ARBITRUM_SEPOLIA.juniorVault.toLowerCase()
+}
+
+function getCompleteVaultPerformance(
+  history: VaultHistory | undefined,
+  trancheId: TrancheId
+): CompleteVaultPerformance | undefined {
+  if (!history
+    || !history.coverage.complete
+    || !historyMatchesConfiguredDeployment(history)
+    || history.coverage.start === null
+    || history.coverage.end === null) {
+    return undefined
+  }
+
+  const tranche: VaultHistoryTranche = history[trancheId]
+  if (tranche.apy7d === null || tranche.return7d === null) return undefined
+  const points = normalizeHistoryPoints(tranche.points)
+  if (points.length < 2 || points[0].sharePrice <= 0) return undefined
+
+  return {
+    apy7d: tranche.apy7d,
+    return7d: tranche.return7d,
+    periodStart: history.coverage.start,
+    periodEnd: history.coverage.end,
+    points,
+  }
 }
 
 function parseUsdc(value: string): bigint {
@@ -598,23 +885,59 @@ function PoolStat({
   subvalue,
   tooltip,
   valueClassName = 'text-content-primary',
+  stackedOnMobile = false,
+  startsTabletRow = false,
 }: {
   label: string
   value: ReactNode
   subvalue?: ReactNode
   tooltip?: ReactNode
   valueClassName?: string
+  stackedOnMobile?: boolean
+  startsTabletRow?: boolean
 }) {
+  const separatorClassName = stackedOnMobile
+    ? startsTabletRow
+      ? 'sm:border-l-0 sm:pl-0 lg:border-l lg:border-brand-border/25 lg:pl-4'
+      : 'sm:border-l sm:border-brand-border/25 sm:pl-4 sm:first:border-l-0 sm:first:pl-0'
+    : 'border-l border-brand-border/25 pl-4 first:border-l-0 first:pl-0'
+
   return (
-    <div className="min-w-0 border-l border-brand-border/25 pl-4 first:border-l-0 first:pl-0">
+    <div className={`min-w-0 ${separatorClassName}`}>
       <StatLabel tooltip={tooltip}>{label}</StatLabel>
-      <dd className={`mt-2 truncate text-2xl font-semibold ${valueClassName}`}>{value}</dd>
+      <dd className={`mt-2 text-2xl font-semibold ${valueClassName}`}>{value}</dd>
       {subvalue ? <p className="mt-1 text-xs text-content-secondary">{subvalue}</p> : null}
     </div>
   )
 }
 
+function VaultEpochCountdown() {
+  const [remainingSeconds, setRemainingSeconds] = useState(secondsUntilNextVaultEpoch)
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setRemainingSeconds(secondsUntilNextVaultEpoch())
+    }, 1_000)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  return (
+    <time
+      dateTime={`PT${String(remainingSeconds)}S`}
+      aria-label={`${String(remainingSeconds)} seconds until the next vault epoch`}
+      className="font-mono tabular-nums"
+    >
+      {formatEpochCountdown(remainingSeconds)}
+    </time>
+  )
+}
+
 function TrancheMark({ tranche, size = 'lg' }: { tranche: TrancheDefinition; size?: 'md' | 'lg' }) {
+  const senior = tranche.id === 'senior'
+
   return (
     <div
       className={`flex shrink-0 items-center justify-center border ${tranche.markClassName} ${
@@ -622,24 +945,242 @@ function TrancheMark({ tranche, size = 'lg' }: { tranche: TrancheDefinition; siz
       }`}
       aria-hidden="true"
     >
-      <span className={`material-symbols-outlined ${size === 'lg' ? 'text-3xl' : 'text-2xl'}`}>
-        {tranche.icon}
-      </span>
+      <svg
+        viewBox="0 0 28 28"
+        className={size === 'lg' ? 'h-8 w-8' : 'h-7 w-7'}
+        fill="none"
+        role="presentation"
+      >
+        <rect
+          x="6"
+          y="4.5"
+          width="16"
+          height="7"
+          fill={senior ? 'currentColor' : 'none'}
+          stroke="currentColor"
+          strokeWidth="1.5"
+          opacity={senior ? 1 : 0.45}
+        />
+        <rect
+          x="3"
+          y="16.5"
+          width="22"
+          height="7"
+          fill={senior ? 'none' : 'currentColor'}
+          stroke="currentColor"
+          strokeWidth="1.5"
+          opacity={senior ? 0.45 : 1}
+        />
+      </svg>
     </div>
   )
 }
 
-function MiniPerformanceChart({ tranche }: { tranche: TrancheDefinition }) {
+function chartYDomain(points: VaultChartPoint[]): { min: number; max: number } {
+  const prices = points.map((point) => point.sharePrice)
+  const minimum = Math.min(...prices)
+  const maximum = Math.max(...prices)
+  if (minimum !== maximum) {
+    const padding = (maximum - minimum) * 0.12
+    return { min: Math.max(0, minimum - padding), max: maximum + padding }
+  }
+
+  const padding = Math.max(Math.abs(minimum) * 0.005, 0.000001)
+  return { min: Math.max(0, minimum - padding), max: maximum + padding }
+}
+
+function chartReturnDomain(points: VaultChartPoint[], startingPrice: number): { min: number; max: number } {
+  const returns = points.map((point) => point.sharePrice / startingPrice - 1)
+  const minimum = Math.min(0, ...returns)
+  const maximum = Math.max(0, ...returns)
+
+  if (minimum === maximum) {
+    return { min: -0.00005, max: 0.00005 }
+  }
+
+  return {
+    min: minimum < 0 ? minimum * 1.12 : 0,
+    max: maximum > 0 ? maximum * 1.12 : 0,
+  }
+}
+
+function chartPointX(timestamp: number, start: number, end: number, left: number, width: number) {
+  if (end <= start) return left
+  return left + ((timestamp - start) / (end - start)) * width
+}
+
+function chartPointY(value: number, min: number, max: number, top: number, height: number) {
+  if (max <= min) return top + height / 2
+  return top + (1 - (value - min) / (max - min)) * height
+}
+
+function MiniPerformanceChart({
+  trancheName,
+  performance,
+}: {
+  trancheName: string
+  performance: CompleteVaultPerformance
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const width = 600
+  const height = 132
+  const plot = { left: 8, right: 60, top: 8, bottom: 26 }
+  const plotWidth = width - plot.left - plot.right
+  const plotHeight = height - plot.top - plot.bottom
+  const domainStart = performance.periodEnd - SEVEN_DAYS_SECONDS
+  const startingPrice = performance.points[0].sharePrice
+  const domain = chartReturnDomain(performance.points, startingPrice)
+  const coordinates = performance.points.map((point) => ({
+    point,
+    x: chartPointX(point.timestamp, domainStart, performance.periodEnd, plot.left, plotWidth),
+    y: chartPointY(point.sharePrice / startingPrice - 1, domain.min, domain.max, plot.top, plotHeight),
+  }))
+  const path = coordinates.map(({ x, y }, index) => (
+    `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
+  )).join(' ')
+  const last = coordinates[coordinates.length - 1]
+  const active = activeIndex === null ? undefined : coordinates[activeIndex]
+  const yTicks = [domain.max, (domain.min + domain.max) / 2, domain.min]
+  const xTicks = [domainStart, domainStart + SEVEN_DAYS_SECONDS / 2, performance.periodEnd]
+
+  function selectNearestPoint(clientX: number, element: SVGSVGElement) {
+    const bounds = element.getBoundingClientRect()
+    const viewBoxX = bounds.width > 0
+      ? ((clientX - bounds.left) / bounds.width) * width
+      : clientX
+    let nearestIndex = 0
+    let nearestDistance = Number.POSITIVE_INFINITY
+    coordinates.forEach(({ x }, index) => {
+      const distance = Math.abs(x - viewBoxX)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = index
+      }
+    })
+    setActiveIndex(nearestIndex)
+  }
+
   return (
-    <div
-      className="relative flex h-20 items-center justify-center overflow-hidden"
-      aria-label={`${tranche.name} seven-day performance history unavailable`}
-      role="status"
-    >
-      <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-brand-border/25" />
-      <span className="relative bg-surface-panel px-3 text-xs font-medium uppercase tracking-[0.12em] text-content-secondary">
-        7d history unavailable
-      </span>
+    <div className="relative h-[8.25rem] overflow-hidden">
+      <svg
+        viewBox="0 0 600 132"
+        className="h-[8.25rem] w-full"
+        preserveAspectRatio="none"
+        aria-label={`${trancheName} seven-day share price chart`}
+        role="img"
+        onPointerMove={(event) => {
+          selectNearestPoint(event.clientX, event.currentTarget)
+        }}
+        onPointerLeave={() => {
+          setActiveIndex(null)
+        }}
+      >
+        <title>{trancheName} USDC share price over the last seven days</title>
+        {yTicks.map((tick) => {
+          const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
+          return (
+            <g key={tick}>
+              <line
+                x1={plot.left}
+                y1={y}
+                x2={width - plot.right}
+                y2={y}
+                stroke="rgba(255,171,150,0.12)"
+                strokeWidth="1"
+              />
+              <text
+                data-vault-chart-y-tick
+                x={width - plot.right + 7}
+                y={y + 3.5}
+                fill="rgba(244,235,239,0.62)"
+                fontSize="9.5"
+                textAnchor="start"
+              >
+                {formatSignedPercent(tick)}
+              </text>
+            </g>
+          )
+        })}
+        <line
+          data-vault-chart-axis="y"
+          x1={width - plot.right}
+          y1={plot.top}
+          x2={width - plot.right}
+          y2={plot.top + plotHeight}
+          stroke="rgba(255,171,150,0.32)"
+          strokeWidth="1"
+        />
+        <line
+          data-vault-chart-axis="x"
+          x1={plot.left}
+          y1={plot.top + plotHeight}
+          x2={width - plot.right}
+          y2={plot.top + plotHeight}
+          stroke="rgba(255,171,150,0.32)"
+          strokeWidth="1"
+        />
+        {xTicks.map((tick, index) => (
+          <text
+            key={tick}
+            x={chartPointX(tick, domainStart, performance.periodEnd, plot.left, plotWidth)}
+            y={height - 7}
+            fill="rgba(244,235,239,0.62)"
+            fontSize="9.5"
+            textAnchor={index === 0 ? 'start' : index === xTicks.length - 1 ? 'end' : 'middle'}
+          >
+            {new Date(tick * 1_000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+          </text>
+        ))}
+        <path
+          data-vault-performance-series
+          d={path}
+          fill="none"
+          stroke={VAULT_PERFORMANCE_CHART_COLOR}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="2.5"
+          vectorEffect="non-scaling-stroke"
+        />
+        <circle cx={last.x} cy={last.y} r="3" fill={VAULT_PERFORMANCE_CHART_COLOR} />
+        {active ? (
+          <g aria-hidden="true">
+            <line
+              x1={active.x}
+              y1={plot.top}
+              x2={active.x}
+              y2={plot.top + plotHeight}
+              stroke={VAULT_PERFORMANCE_CHART_COLOR}
+              strokeDasharray="3 4"
+              strokeOpacity="0.65"
+            />
+            <circle
+              cx={active.x}
+              cy={active.y}
+              r="4"
+              fill={VAULT_PERFORMANCE_CHART_COLOR}
+              stroke="#2A0613"
+              strokeWidth="2"
+            />
+          </g>
+        ) : null}
+      </svg>
+      {active ? (
+        <div
+          data-vault-chart-tooltip
+          className="pointer-events-none absolute top-1 z-10 min-w-36 -translate-x-1/2 border border-brand-border/40 bg-app-bg px-2.5 py-2 shadow-xl"
+          style={{
+            left: `${String((Math.min(width - 76, Math.max(76, active.x)) / width) * 100)}%`,
+          }}
+          role="status"
+        >
+          <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-content-secondary">
+            {formatChartTimestamp(active.point.timestamp)}
+          </p>
+          <p className="mt-1 text-xs font-semibold text-content-primary">
+            {formatHistorySharePrice(active.point.sharePrice)}
+          </p>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -647,18 +1188,20 @@ function MiniPerformanceChart({ tranche }: { tranche: TrancheDefinition }) {
 function TrancheCard({
   tranche,
   liveData,
+  performance,
 }: {
   tranche: TrancheDefinition
   liveData: TrancheLiveData
+  performance?: CompleteVaultPerformance
 }) {
   return (
     <Link
       to={`/vaults/${tranche.id}`}
       aria-label={`View ${tranche.name}`}
-      className="group block border border-brand-border/30 bg-surface-panel transition-colors hover:border-brand-peach/70 focus-visible:border-brand-peach focus-visible:outline-none"
+      className="group block h-full border border-brand-border/30 bg-surface-panel transition-colors hover:border-brand-peach/70 focus-visible:border-brand-peach focus-visible:outline-none"
     >
-      <article>
-        <div className="flex items-start justify-between gap-4 border-b border-brand-border/25 p-5">
+      <article className="flex h-full flex-col">
+        <div className="flex items-start gap-4 border-b border-brand-border/25 p-5">
           <div className="flex min-w-0 items-start gap-3">
             <TrancheMark tranche={tranche} size="md" />
             <div className="min-w-0">
@@ -668,15 +1211,14 @@ function TrancheCard({
               <h2 className="mt-1 text-2xl font-semibold text-content-primary">{tranche.name}</h2>
             </div>
           </div>
-          <Badge variant={tranche.riskVariant}>{tranche.riskLabel}</Badge>
         </div>
 
-        <div className="space-y-5 p-5">
+        <div className="flex-1 space-y-5 p-5">
           <p className="min-h-12 text-sm leading-6 text-content-secondary">
             {tranche.shortDescription}
           </p>
 
-          <dl className="grid grid-cols-3 gap-3">
+          <dl className={`grid gap-3 ${performance ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <div>
               <dt
                 className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
@@ -688,18 +1230,19 @@ function TrancheCard({
                 {formatCompactUsd(liveData.totalAssets)}
               </dd>
             </div>
-            <div>
-              <dt
-                className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
-                title="Seven-day annualized performance will appear when the tranche-history indexer is connected."
-              >
-                7d APY
-              </dt>
-              <dd className={`mt-2 text-xl font-semibold ${tranche.valueClassName}`}>
-                --
-              </dd>
-              <p className="mt-1 text-[10px] uppercase tracking-[0.12em] text-content-secondary">Not indexed</p>
-            </div>
+            {performance ? (
+              <div>
+                <dt
+                  className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
+                  title="Annualized return calculated from the last seven days of vault share-price history."
+                >
+                  7d APY
+                </dt>
+                <dd className={`mt-2 text-xl font-semibold ${performanceValueClassName(performance.apy7d)}`}>
+                  {formatSignedPercent(performance.apy7d)}
+                </dd>
+              </div>
+            ) : null}
             <div>
               <dt
                 className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
@@ -713,24 +1256,32 @@ function TrancheCard({
             </div>
           </dl>
 
-          <div className="border-y border-brand-border/20 py-2">
-            <MiniPerformanceChart tranche={tranche} />
-          </div>
+          {performance ? (
+            <div className="border-y border-brand-border/20 py-2">
+              <MiniPerformanceChart trancheName={tranche.name} performance={performance} />
+              <span className="sr-only">
+                {tranche.name} seven-day share price changed {formatSignedPercent(performance.return7d)},
+                with a realized APY of {formatSignedPercent(performance.apy7d)}.
+              </span>
+            </div>
+          ) : null}
 
-          <ul className="space-y-2">
+          <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-4 gap-y-3">
             {tranche.featureItems.map((item) => (
-              <li key={item} className="flex gap-2 text-sm leading-5 text-content-secondary">
-                <span className={`material-symbols-outlined mt-0.5 text-base ${tranche.valueClassName}`}>
-                  check
-                </span>
-                <span>{item}</span>
-              </li>
+              <div key={item.label} className="contents">
+                <dt className="pt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
+                  {item.label}
+                </dt>
+                <dd className="text-sm leading-5 text-content-secondary">{item.text}</dd>
+              </div>
             ))}
-          </ul>
+          </dl>
         </div>
 
-        <div className="flex items-center justify-between border-t border-brand-border/25 px-5 py-4 text-sm font-semibold text-content-primary">
-          <span>Explore {tranche.name}</span>
+        <div className="flex items-center justify-between border-t border-brand-border/25 px-5 py-4 text-sm font-semibold text-content-primary transition-colors group-hover:text-brand-peach group-focus-visible:text-brand-peach">
+          <span className="group-hover:underline group-hover:underline-offset-4 group-focus-visible:underline group-focus-visible:underline-offset-4">
+            Explore {tranche.name}
+          </span>
           <span className="material-symbols-outlined transition-transform group-hover:translate-x-1">
             arrow_forward
           </span>
@@ -740,88 +1291,34 @@ function TrancheCard({
   )
 }
 
-function VaultsOverview({ snapshot }: { snapshot: VaultsSnapshot }) {
+function VaultsOverview({
+  snapshot,
+  history,
+}: {
+  snapshot: VaultsSnapshot
+  history?: VaultHistory
+}) {
   const pool = snapshot.pool
-  const totalCapital = pool.seniorPrincipalUsdc !== undefined
-    && pool.juniorPrincipalUsdc !== undefined
-    ? pool.seniorPrincipalUsdc + pool.juniorPrincipalUsdc
-    : undefined
-  const seniorShare = totalCapital !== undefined
-    && totalCapital > 0n
-    && pool.seniorPrincipalUsdc !== undefined
-    ? (Number(pool.seniorPrincipalUsdc) / Number(totalCapital)) * 100
-    : undefined
+  const seniorPerformance = getCompleteVaultPerformance(history, 'senior')
+  const juniorPerformance = getCompleteVaultPerformance(history, 'junior')
+  const poolCapital = calculatePerpsPoolCapital({
+    juniorPrincipalUsdc: pool.juniorPrincipalUsdc,
+    seniorPrincipalUsdc: pool.seniorPrincipalUsdc,
+    seniorHighWaterMarkUsdc: pool.seniorHighWaterMarkUsdc,
+  })
   const freeLiquidityRatio = pool.totalAssetsUsdc !== undefined
     && pool.totalAssetsUsdc > 0n
     && pool.freeUsdc !== undefined
     ? (Number(pool.freeUsdc) / Number(pool.totalAssetsUsdc)) * 100
     : undefined
-  const seniorMaxDeposit = snapshot.tranches.senior.maxDeposit
-  const juniorMaxDeposit = snapshot.tranches.junior.maxDeposit
-  const seniorMaxRequestDeposit = snapshot.tranches.senior.maxRequestDeposit
-  const juniorMaxRequestDeposit = snapshot.tranches.junior.maxRequestDeposit
-  const depositAvailabilityKnown = seniorMaxDeposit !== undefined
-    && juniorMaxDeposit !== undefined
-    && seniorMaxRequestDeposit !== undefined
-    && juniorMaxRequestDeposit !== undefined
-  const allImmediate = depositAvailabilityKnown
-    && seniorMaxDeposit > 0n
-    && juniorMaxDeposit > 0n
-  const allPending = depositAvailabilityKnown
-    && seniorMaxDeposit === 0n
-    && juniorMaxDeposit === 0n
-    && seniorMaxRequestDeposit > 0n
-    && juniorMaxRequestDeposit > 0n
-  const allUnavailable = depositAvailabilityKnown
-    && seniorMaxDeposit === 0n
-    && juniorMaxDeposit === 0n
-    && seniorMaxRequestDeposit === 0n
-    && juniorMaxRequestDeposit === 0n
-  const depositRoute = !snapshot.hasLivePoolData || !depositAvailabilityKnown
-    ? 'Availability unavailable'
-    : pool.seniorImpaired === true
-      ? 'Unavailable'
-      : pool.degradedMode === true || pool.markFresh === false
-        ? 'Check live gate'
-        : allImmediate
-          ? 'Immediate'
-          : allPending
-            ? 'Pending epoch'
-            : allUnavailable
-              ? 'Unavailable'
-              : 'Varies by tranche'
-  const depositRouteDetail = depositRoute === 'Immediate'
-    ? 'Both tranches mint shares in the deposit transaction'
-    : depositRoute === 'Varies by tranche'
-      ? 'Open a tranche to inspect its live entry path'
-      : depositRoute === 'Availability unavailable'
-        ? 'Awaiting complete HousePool and vault reads'
-        : depositRoute === 'Pending epoch'
-          ? 'Requests activate in a future epoch; lifecycle controls are not enabled yet'
-          : 'Open a tranche to inspect its live entry path'
-  const marketState = pool.degradedMode === undefined
-    || pool.oracleFrozen === undefined
-    || pool.markFresh === undefined
-    ? 'Unavailable'
-    : pool.degradedMode
-      ? 'Degraded'
-      : pool.oracleFrozen
-        ? 'Oracle frozen'
-        : !pool.markFresh
-          ? 'Mark stale'
-          : 'Operational'
-
   return (
     <div className="space-y-8">
       <section className="border border-brand-border/30 bg-surface-panel">
         <div className="flex flex-col gap-6 border-b border-brand-border/25 p-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-peach">
-                Plether HousePool
-              </p>
-              {dataStatusBadge(snapshot.status)}
-            </div>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-peach">
+              Plether HousePool
+            </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight text-content-primary sm:text-4xl">
               Supply the balance sheet behind the market.
             </h1>
@@ -832,176 +1329,105 @@ function VaultsOverview({ snapshot }: { snapshot: VaultsSnapshot }) {
             </p>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <a
-              href="https://docs.plether.com"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach hover:underline hover:underline-offset-4"
-            >
+          <a
+            href="https://docs.plether.com/get-started/liquidity-provider-quickstart"
+            target="_blank"
+            rel="noreferrer"
+            className="group inline-flex self-start items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach"
+          >
+            <span className="group-hover:underline group-hover:underline-offset-4">
               Read the LP guide
-              <span className="material-symbols-outlined text-lg">open_in_new</span>
-            </a>
-            <button
-              type="button"
-              onClick={snapshot.refresh}
-              className="inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-secondary transition-colors hover:border-brand-peach hover:text-content-primary hover:underline hover:underline-offset-4"
-            >
-              <span className="material-symbols-outlined text-lg">refresh</span>
-              Refresh
-            </button>
-          </div>
+            </span>
+            <span className="material-symbols-outlined text-lg">open_in_new</span>
+          </a>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-6 p-6 lg:grid-cols-5">
+        <dl className="grid grid-cols-1 gap-x-4 gap-y-6 p-6 sm:grid-cols-2 lg:grid-cols-4">
           <PoolStat
             label="HousePool assets"
             value={formatCompactUsd(pool.totalAssetsUsdc)}
-            subvalue={`${formatFullUsdc(pool.totalAssetsUsdc, 0)} USDC`}
             tooltip="Canonical physical HousePool assets. This can differ from the sum of tranche accounting NAV."
-          />
-          <PoolStat
-            label="Free liquidity"
-            value={formatCompactUsd(pool.freeUsdc)}
-            subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of total assets`}
-            tooltip="Physical USDC remaining after protected withdrawal reserves. This is not the same as total tranche NAV."
+            stackedOnMobile
           />
           <PoolStat
             label="Withdrawal reserve"
             value={formatCompactUsd(pool.withdrawalReservedUsdc)}
             subvalue="Trader liabilities protected first"
             tooltip="Capital reserved for bounded trader liability, claims, and other protected amounts."
+            stackedOnMobile
           />
           <PoolStat
-            label="Deposit route"
-            value={depositRoute}
-            subvalue={depositRouteDetail}
-            valueClassName={pool.seniorImpaired ? 'text-brand-orange' : 'text-warning'}
-            tooltip="A zero ERC-4626 maxDeposit means immediate entry is unavailable. It does not prove that a pending epoch request is currently allowed."
+            label="Free liquidity"
+            value={formatCompactUsd(pool.freeUsdc)}
+            subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of total assets`}
+            tooltip="Physical USDC remaining after protected withdrawal reserves. This is not the same as total tranche NAV."
+            stackedOnMobile
+            startsTabletRow
           />
           <PoolStat
-            label="Market state"
-            value={marketState}
-            subvalue={pool.markFresh === undefined ? 'Awaiting HousePool read' : pool.markFresh ? 'Oracle mark fresh' : 'Reconciliation may be restricted'}
-            valueClassName={
-              marketState === 'Operational'
-                ? 'text-positive'
-                : marketState === 'Unavailable'
-                  ? 'text-content-secondary'
-                  : 'text-warning'
-            }
+            label="Next epoch"
+            value={<VaultEpochCountdown />}
+            subvalue="Queued deposits and withdrawals are processed when the timer ends"
+            tooltip="Time until the next hourly vault epoch boundary. Deposit and withdrawal lifecycles use independent queues."
+            stackedOnMobile
           />
         </dl>
       </section>
 
       <section>
-        <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
-              Choose a tranche
-            </p>
-            <h2 className="mt-1 text-2xl font-semibold text-content-primary">USDC vaults</h2>
-          </div>
-          <p className="max-w-xl text-sm leading-5 text-content-secondary">
-            Do not choose on APY alone. Senior and Junior are different claims on the same pool,
-            not separate yield strategies.
+        <div className="mb-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
+            Choose a tranche
           </p>
+          <h2 className="mt-1 text-2xl font-semibold text-content-primary">USDC vaults</h2>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
-          <TrancheCard tranche={TRANCHES.senior} liveData={snapshot.tranches.senior} />
-          <TrancheCard tranche={TRANCHES.junior} liveData={snapshot.tranches.junior} />
+          <TrancheCard
+            tranche={TRANCHES.senior}
+            liveData={snapshot.tranches.senior}
+            performance={seniorPerformance}
+          />
+          <TrancheCard
+            tranche={TRANCHES.junior}
+            liveData={snapshot.tranches.junior}
+            performance={juniorPerformance}
+          />
         </div>
       </section>
 
-      <section className="border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
+      <section
+        aria-labelledby="pool-liquidity-heading"
+      >
+        <div className="mb-4">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
-            Capital structure
+            HousePool liquidity
           </p>
-          <h2 className="mt-1 text-2xl font-semibold text-content-primary">
-            One pool, two economic claims
+          <h2
+            id="pool-liquidity-heading"
+            className="mt-1 text-2xl font-semibold text-content-primary"
+          >
+            Capacity and capital waterfall
           </h2>
         </div>
-
-        <div className="grid gap-px bg-brand-border/20 lg:grid-cols-3">
-          <div className="bg-surface-panel p-5">
-            <span className="material-symbols-outlined text-3xl text-brand-orange">trending_down</span>
-            <h3 className="mt-3 text-lg font-semibold text-content-primary">When the pool loses</h3>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">
-              Junior absorbs realized losses first. Senior is affected only after Junior capital
-              reaches zero.
-            </p>
-            <div className="mt-4 flex items-center gap-2 text-xs font-semibold">
-              <span className="border border-positive/40 bg-positive/10 px-2 py-1 text-positive">1 Junior</span>
-              <span className="material-symbols-outlined text-base text-content-secondary">arrow_forward</span>
-              <span className="border border-brand-peach/40 bg-brand-peach/10 px-2 py-1 text-brand-peach">2 Senior</span>
-            </div>
-          </div>
-
-          <div className="bg-surface-panel p-5">
-            <span className="material-symbols-outlined text-3xl text-positive">trending_up</span>
-            <h3 className="mt-3 text-lg font-semibold text-content-primary">When the pool earns</h3>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">
-              Any Senior impairment is restored first. Residual realized revenue then accrues to
-              Junior.
-            </p>
-            <div className="mt-4 flex items-center gap-2 text-xs font-semibold">
-              <span className="border border-brand-peach/40 bg-brand-peach/10 px-2 py-1 text-brand-peach">1 Restore Senior</span>
-              <span className="material-symbols-outlined text-base text-content-secondary">arrow_forward</span>
-              <span className="border border-positive/40 bg-positive/10 px-2 py-1 text-positive">2 Junior residual</span>
-            </div>
-          </div>
-
-          <div className="bg-surface-panel p-5">
-            <span className="material-symbols-outlined text-3xl text-warning">account_balance</span>
-            <h3 className="mt-3 text-lg font-semibold text-content-primary">When LPs withdraw</h3>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">
-              Trader claims and reserved liabilities come first. Senior then has priority over
-              Junior for the remaining free LP cash.
-            </p>
-            <div className="mt-4 flex items-center gap-2 text-xs font-semibold">
-              <span className="border border-warning/40 bg-warning-bg px-2 py-1 text-warning">1 Traders</span>
-              <span className="material-symbols-outlined text-base text-content-secondary">arrow_forward</span>
-              <span className="border border-brand-peach/40 bg-brand-peach/10 px-2 py-1 text-brand-peach">2 Senior</span>
-              <span className="material-symbols-outlined text-base text-content-secondary">arrow_forward</span>
-              <span className="border border-positive/40 bg-positive/10 px-2 py-1 text-positive">3 Junior</span>
-            </div>
-          </div>
+        <div className="border border-brand-border/30 bg-surface-panel p-5">
+          <PerpsPoolLiquidityDetails
+            longCapacity={formatPoolCapacity(pool.longOpenCapacityUsdc, pool.markPrice)}
+            shortCapacity={formatPoolCapacity(pool.shortOpenCapacityUsdc, pool.markPrice)}
+            juniorPrincipal={formatCompactUsd(pool.juniorPrincipalUsdc)}
+            seniorPrincipal={formatCompactUsd(pool.seniorPrincipalUsdc)}
+            juniorSharePercent={poolCapital?.juniorSharePercent}
+            seniorSharePercent={poolCapital?.seniorSharePercent}
+            seniorStatus={poolCapital?.seniorStatus}
+            seniorImpairment={formatCompactUsd(poolCapital?.seniorImpairmentUsdc)}
+            isJuniorExhausted={poolCapital?.isJuniorExhausted}
+            isEmpty={poolCapital?.isEmpty}
+            isLoading={snapshot.status === 'syncing'}
+            docsLink={DOCS_LINKS.poolLiquidity}
+          />
         </div>
-
-        {seniorShare === undefined ? (
-          <div className="border-t border-brand-border/25 p-5 text-sm text-content-secondary">
-            Current tranche-capital allocation is unavailable until the HousePool read succeeds.
-          </div>
-        ) : (
-          <div className="space-y-3 border-t border-brand-border/25 p-5">
-            <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.12em] text-content-secondary">
-              <span>Current tranche capital</span>
-              <span>{seniorShare.toFixed(1)}% Senior / {(100 - seniorShare).toFixed(1)}% Junior</span>
-            </div>
-            <div className="flex h-3 w-full overflow-hidden border border-brand-border/30 bg-app-bg">
-              <div className="bg-brand-peach" style={{ width: `${seniorShare.toFixed(2)}%` }} />
-              <div className="bg-positive" style={{ width: `${(100 - seniorShare).toFixed(2)}%` }} />
-            </div>
-            <div className="flex flex-wrap justify-between gap-3 text-sm">
-              <span className="text-brand-peach">
-                Senior {formatCompactUsd(pool.seniorPrincipalUsdc)}
-              </span>
-              <span className="text-positive">
-                Junior {formatCompactUsd(pool.juniorPrincipalUsdc)}
-              </span>
-            </div>
-          </div>
-        )}
       </section>
 
-      <Alert variant="warning" title="Vault shares can lose value">
-        Neither tranche is a savings account. Senior changes the order in which risk is absorbed;
-        it does not remove smart-contract, stablecoin, oracle, liquidity, or trading-loss risk.
-        Seven-day APY is intentionally left unavailable until a live tranche-performance indexer is
-        connected.
-      </Alert>
     </div>
   )
 }
@@ -1081,7 +1507,9 @@ function OverviewTab({
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <DetailMetric
           label="Your position"
-          value={isConnected && positionValue !== undefined ? `$${positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '--'}
+          value={isConnected && positionValue !== undefined
+            ? <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />
+            : '--'}
           detail={isConnected ? `${formatShares(liveData.userShares)} ${tranche.token}` : 'Connect a wallet to view'}
         />
         <DetailMetric
@@ -1136,9 +1564,9 @@ function OverviewTab({
                   href={`${EXPLORER_BASE_URL}/${tranche.address}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1 text-brand-peach hover:underline"
+                  className="group inline-flex items-center gap-1 text-brand-peach"
                 >
-                  {formatAddress(tranche.address)}
+                  <span className="group-hover:underline">{formatAddress(tranche.address)}</span>
                   <span className="material-symbols-outlined text-sm">open_in_new</span>
                 </a>
               )}
@@ -1254,97 +1682,280 @@ function OverviewTab({
   )
 }
 
-function PerformanceChart({ tranche }: { tranche: TrancheDefinition }) {
+function formatChartTimestamp(timestamp: number): string {
+  return new Date(timestamp * 1_000).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function PerformanceChart({
+  tranche,
+  performance,
+}: {
+  tranche: TrancheDefinition
+  performance: CompleteVaultPerformance
+}) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const width = 640
+  const height = 240
+  const plot = { left: 62, right: 18, top: 18, bottom: 38 }
+  const plotWidth = width - plot.left - plot.right
+  const plotHeight = height - plot.top - plot.bottom
+  const domainStart = performance.periodEnd - SEVEN_DAYS_SECONDS
+  const domain = chartYDomain(performance.points)
+  const coordinates = performance.points.map((point) => ({
+    point,
+    x: chartPointX(point.timestamp, domainStart, performance.periodEnd, plot.left, plotWidth),
+    y: chartPointY(point.sharePrice, domain.min, domain.max, plot.top, plotHeight),
+  }))
+  const path = coordinates.map(({ x, y }, index) => (
+    `${index === 0 ? 'M' : 'L'} ${x.toFixed(2)} ${y.toFixed(2)}`
+  )).join(' ')
+  const active = activeIndex === null ? undefined : coordinates[activeIndex]
+  const startingPrice = performance.points[0].sharePrice
+  const activeReturn = active ? active.point.sharePrice / startingPrice - 1 : undefined
+  const yTicks = [domain.max, (domain.min + domain.max) / 2, domain.min]
+  const xTicks = [domainStart, domainStart + SEVEN_DAYS_SECONDS / 2, performance.periodEnd]
+
+  function selectNearestPoint(clientX: number, element: SVGSVGElement) {
+    const bounds = element.getBoundingClientRect()
+    const viewBoxX = bounds.width > 0
+      ? ((clientX - bounds.left) / bounds.width) * width
+      : clientX
+    let nearestIndex = 0
+    let nearestDistance = Number.POSITIVE_INFINITY
+    coordinates.forEach(({ x }, index) => {
+      const distance = Math.abs(x - viewBoxX)
+      if (distance < nearestDistance) {
+        nearestDistance = distance
+        nearestIndex = index
+      }
+    })
+    setActiveIndex(nearestIndex)
+  }
+
+  function handleChartKeyDown(event: KeyboardEvent<SVGSVGElement>) {
+    if (event.key === 'ArrowLeft') {
+      event.preventDefault()
+      setActiveIndex((current) => Math.max(0, (current ?? coordinates.length - 1) - 1))
+    } else if (event.key === 'ArrowRight') {
+      event.preventDefault()
+      setActiveIndex((current) => Math.min(coordinates.length - 1, (current ?? 0) + 1))
+    } else if (event.key === 'Home') {
+      event.preventDefault()
+      setActiveIndex(0)
+    } else if (event.key === 'End') {
+      event.preventDefault()
+      setActiveIndex(coordinates.length - 1)
+    }
+  }
+
   return (
-    <section className="border border-brand-border/30 bg-surface-panel">
+    <figure className="border border-brand-border/30 bg-surface-panel">
       <div className="flex flex-col gap-4 border-b border-brand-border/25 p-5 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-lg font-semibold text-content-primary">Return history</h3>
-            <Badge variant="default">Indexer unavailable</Badge>
-          </div>
+          <h3 className="text-lg font-semibold text-content-primary">Seven-day share price</h3>
           <p className="mt-1 text-sm text-content-secondary">
-            Historical share-price checkpoints will populate this chart once the LP performance
-            endpoint is connected.
+            Actual USDC accounting value per vault share at hourly checkpoints.
           </p>
         </div>
-        <span className="border border-brand-border/30 bg-app-bg px-3 py-1.5 text-xs font-semibold uppercase text-content-secondary">
-          7d / 30d
+        <span className="self-start border border-brand-border/30 bg-app-bg px-3 py-1.5 text-xs font-semibold uppercase text-content-secondary">
+          7 days
         </span>
       </div>
 
-      <div className="relative p-5">
+      <div className="relative p-3 sm:p-5">
         <svg
-          viewBox="0 0 600 210"
-          className="h-64 w-full"
-          preserveAspectRatio="none"
-          aria-label={`${tranche.name} performance history unavailable`}
+          viewBox="0 0 640 240"
+          className="h-56 w-full sm:h-64"
+          aria-label={`${tranche.name} interactive seven-day share price chart`}
+          aria-describedby={`${tranche.id}-performance-summary`}
+          aria-keyshortcuts="ArrowLeft ArrowRight Home End"
           role="img"
+          tabIndex={0}
+          onFocus={() => {
+            setActiveIndex((current) => current ?? coordinates.length - 1)
+          }}
+          onBlur={() => {
+            setActiveIndex(null)
+          }}
+          onKeyDown={handleChartKeyDown}
+          onPointerDown={(event) => {
+            selectNearestPoint(event.clientX, event.currentTarget)
+          }}
+          onPointerMove={(event) => {
+            if (event.pointerType === 'mouse' || event.buttons > 0) {
+              selectNearestPoint(event.clientX, event.currentTarget)
+            }
+          }}
+          onPointerLeave={(event) => {
+            if (event.pointerType === 'mouse') setActiveIndex(null)
+          }}
+          style={{ touchAction: 'pan-y' }}
         >
-          {[46, 92, 138, 184].map((y) => (
-            <line
-              key={y}
-              x1="16"
-              y1={y}
-              x2="584"
-              y2={y}
-              stroke="rgba(255,171,150,0.12)"
-              strokeWidth="1"
-            />
-          ))}
+          <title>{tranche.name} USDC share price over the last seven days</title>
+          {yTicks.map((tick) => {
+            const y = chartPointY(tick, domain.min, domain.max, plot.top, plotHeight)
+            return (
+              <g key={tick}>
+                <line
+                  x1={plot.left}
+                  y1={y}
+                  x2={width - plot.right}
+                  y2={y}
+                  stroke="rgba(255,171,150,0.12)"
+                  strokeWidth="1"
+                />
+                <text
+                  x={plot.left - 8}
+                  y={y + 4}
+                  fill="rgba(244,235,239,0.62)"
+                  fontSize="11"
+                  textAnchor="end"
+                >
+                  {tick.toFixed(4)}
+                </text>
+              </g>
+            )
+          })}
           <line
-            x1="16"
-            y1="105"
-            x2="584"
-            y2="105"
-            stroke={tranche.chartColor}
-            strokeDasharray="6 8"
-            strokeOpacity="0.35"
-            strokeWidth="2"
+            data-vault-chart-axis="y"
+            x1={plot.left}
+            y1={plot.top}
+            x2={plot.left}
+            y2={plot.top + plotHeight}
+            stroke="rgba(255,171,150,0.32)"
+            strokeWidth="1"
           />
+          <line
+            data-vault-chart-axis="x"
+            x1={plot.left}
+            y1={plot.top + plotHeight}
+            x2={width - plot.right}
+            y2={plot.top + plotHeight}
+            stroke="rgba(255,171,150,0.32)"
+            strokeWidth="1"
+          />
+          {xTicks.map((tick, index) => (
+            <text
+              key={tick}
+              x={chartPointX(tick, domainStart, performance.periodEnd, plot.left, plotWidth)}
+              y={height - 10}
+              fill="rgba(244,235,239,0.62)"
+              fontSize="11"
+              textAnchor={index === 0 ? 'start' : index === xTicks.length - 1 ? 'end' : 'middle'}
+            >
+              {new Date(tick * 1_000).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+            </text>
+          ))}
+          <path
+            data-vault-performance-series
+            d={path}
+            fill="none"
+            stroke={VAULT_PERFORMANCE_CHART_COLOR}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth="2.5"
+          />
+          {active ? (
+            <g aria-hidden="true">
+              <line
+                x1={active.x}
+                y1={plot.top}
+                x2={active.x}
+                y2={plot.top + plotHeight}
+                stroke={VAULT_PERFORMANCE_CHART_COLOR}
+                strokeDasharray="4 5"
+                strokeOpacity="0.6"
+              />
+              <circle
+                cx={active.x}
+                cy={active.y}
+                r="5"
+                fill={VAULT_PERFORMANCE_CHART_COLOR}
+                stroke="#2A0613"
+                strokeWidth="2"
+              />
+            </g>
+          ) : null}
         </svg>
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <span className="border border-brand-border/30 bg-app-bg px-4 py-2 text-sm font-medium text-content-secondary">
-            No indexed performance data
-          </span>
-        </div>
+        {active ? (
+          <div
+            className="pointer-events-none absolute top-3 z-10 min-w-44 -translate-x-1/2 border border-brand-border/40 bg-app-bg px-3 py-2 shadow-xl sm:top-5"
+            style={{
+              left: `${String((Math.min(width - 90, Math.max(90, active.x)) / width) * 100)}%`,
+            }}
+            role="status"
+            aria-live="polite"
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-content-secondary">
+              {formatChartTimestamp(active.point.timestamp)}
+            </p>
+            <p className="mt-1 text-sm font-semibold text-content-primary">
+              {formatHistorySharePrice(active.point.sharePrice)}
+            </p>
+            <p className={`mt-1 text-xs font-semibold ${
+              performanceTone(activeReturn ?? 0) === 'positive'
+                ? 'text-positive'
+                : performanceTone(activeReturn ?? 0) === 'negative'
+                  ? 'text-brand-orange'
+                  : 'text-content-secondary'
+            }`}>
+              {formatSignedPercent(activeReturn ?? 0)} since start
+            </p>
+          </div>
+        ) : null}
       </div>
-    </section>
+      <figcaption id={`${tranche.id}-performance-summary`} className="sr-only">
+        {tranche.name} share price moved from {startingPrice.toFixed(6)} USDC to{' '}
+        {performance.points[performance.points.length - 1].sharePrice.toFixed(6)} USDC over seven
+        days, a return of {formatSignedPercent(performance.return7d)} and a realized APY of{' '}
+        {formatSignedPercent(performance.apy7d)}. Focus the chart and use the arrow, Home, or End keys
+        to inspect hourly checkpoints.
+      </figcaption>
+    </figure>
   )
 }
 
 function PerformanceTab({
   tranche,
-  liveData,
+  performance,
 }: {
   tranche: TrancheDefinition
-  liveData: TrancheLiveData
+  performance: CompleteVaultPerformance
 }) {
+  const firstPoint = performance.points[0]
+  const lastPoint = performance.points[performance.points.length - 1]
+
   return (
     <div className="space-y-6">
-      <PerformanceChart tranche={tranche} />
+      <PerformanceChart tranche={tranche} performance={performance} />
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <DetailMetric
-          label="7d APY"
-          value="--"
-          detail="Performance indexer unavailable"
+          label="7d realized APY"
+          value={formatSignedPercent(performance.apy7d)}
+          detail="Annualized historical result"
+          tone={performanceTone(performance.apy7d)}
         />
         <DetailMetric
-          label="30d APY"
-          value="--"
-          detail="Performance indexer unavailable"
+          label="7d return"
+          value={formatSignedPercent(performance.return7d)}
+          detail="Actual share-price change"
+          tone={performanceTone(performance.return7d)}
         />
         <DetailMetric
-          label="Share price"
-          value={formatSharePrice(liveData.sharePrice)}
-          detail="Live accounting value"
+          label="Start share price"
+          value={formatHistorySharePrice(firstPoint.sharePrice)}
+          detail={formatChartTimestamp(firstPoint.timestamp)}
         />
         <DetailMetric
-          label="Return model"
-          value={tranche.targetReturn}
-          detail={tranche.id === 'senior' ? 'Not guaranteed' : 'After Senior obligations'}
-          tone="warning"
+          label="Current share price"
+          value={formatHistorySharePrice(lastPoint.sharePrice)}
+          detail={formatChartTimestamp(lastPoint.timestamp)}
         />
       </div>
 
@@ -1400,10 +2011,9 @@ function PerformanceTab({
         </section>
       </div>
 
-      <Alert variant="info" title="How performance will be calculated">
-        Seven-day and 30-day APY should be annualized from indexed vault share-price checkpoints.
-        Actual returns are expressed through changing share value, not a separate reward, and can
-        be negative.
+      <Alert variant="info" title="How performance is calculated">
+        Seven-day realized APY annualizes the actual change between indexed vault share-price
+        checkpoints. It is historical, can be negative, and is not a forecast or guaranteed return.
       </Alert>
     </div>
   )
@@ -1458,7 +2068,7 @@ function RiskTab({ tranche }: { tranche: TrancheDefinition }) {
                 ['Return', 'Target coupon funded by Junior', 'Residual pool performance'],
                 ['Loss order', 'After Junior is exhausted', 'First loss'],
                 ['Revenue order', 'Restored to high-water mark first', 'Residual after Senior'],
-                ['Withdrawal priority', 'First LP claim on free cash', 'Cash above full Senior claim'],
+                ['Withdrawal priority', 'Matured requests settle first', 'Remainder after Senior requests and buffer'],
                 ['Can lose principal?', 'Yes', 'Yes'],
                 ['Can be wiped out?', 'Yes', 'Yes'],
               ].map(([dimension, senior, junior]) => (
@@ -1510,16 +2120,47 @@ function RiskTab({ tranche }: { tranche: TrancheDefinition }) {
 function ActivityTab({
   tranche,
   liveData,
+  snapshot,
   isConnected,
+  isWrongNetwork,
+  pendingDeposits,
+  pendingDepositsLoading,
+  pendingDiscoveryError,
+  onRefreshPendingDeposits,
+  onSwitchNetwork,
 }: {
   tranche: TrancheDefinition
   liveData: TrancheLiveData
+  snapshot: VaultsSnapshot
   isConnected: boolean
+  isWrongNetwork: boolean
+  pendingDeposits: PendingVaultDeposit[]
+  pendingDepositsLoading: boolean
+  pendingDiscoveryError: boolean
+  onRefreshPendingDeposits: () => void
+  onSwitchNetwork: () => void
 }) {
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
   const hasUserBalance = isConnected && liveData.userShares !== undefined
+  const vaultTransactions = useVaultTransactions({
+    vaultAddress: tranche.address,
+    allowance: liveData.allowance,
+    onSuccess: () => {
+      snapshot.refresh()
+      onRefreshPendingDeposits()
+    },
+  })
+
+  function activationLabel(timestamp: number): string {
+    return new Date(timestamp * 1_000).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
 
   return (
     <div className="space-y-6">
@@ -1547,7 +2188,9 @@ function ActivityTab({
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <DetailMetric
             label="Current value"
-            value={isConnected && positionValue !== undefined ? `$${positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}` : '--'}
+            value={isConnected && positionValue !== undefined
+              ? <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />
+              : '--'}
           />
           <DetailMetric
             label="Share price"
@@ -1563,25 +2206,213 @@ function ActivityTab({
 
       <section className="border border-brand-border/30 bg-surface-panel">
         <div className="border-b border-brand-border/25 p-5">
-          <h3 className="text-lg font-semibold text-content-primary">Vault activity</h3>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-content-primary">Queued deposits</h3>
+              <p className="mt-1 text-sm text-content-secondary">
+                Requests waiting for activation, finalization, or share claiming.
+              </p>
+            </div>
+            {pendingDeposits.length > 0 ? (
+              <Badge variant="info">
+                {pendingDeposits.length} active {pendingDeposits.length === 1 ? 'request' : 'requests'}
+              </Badge>
+            ) : null}
+          </div>
+        </div>
+
+        {pendingDiscoveryError ? (
+          <div className="border-b border-brand-border/25 p-5">
+            <Alert variant="warning" title="Older request history is unavailable">
+              Recent epochs are still checked directly onchain. Retry to restore older unclaimed
+              requests from the explorer event history.
+            </Alert>
+            <Button
+              type="button"
+              variant="secondary"
+              className="mt-3"
+              onClick={onRefreshPendingDeposits}
+            >
+              Retry history
+            </Button>
+          </div>
+        ) : null}
+
+        {pendingDepositsLoading && pendingDeposits.length === 0 ? (
+          <div className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
+            <span className="material-symbols-outlined animate-spin text-3xl text-content-secondary">
+              progress_activity
+            </span>
+            <p className="mt-3 text-sm text-content-secondary">Checking your deposit epochs…</p>
+          </div>
+        ) : pendingDeposits.length > 0 ? (
+          <div className="divide-y divide-brand-border/25">
+            {pendingDeposits.map((deposit) => {
+              const finalizedPrice = deposit.epochShares > 0n
+                ? Number(formatUnits(deposit.epochAssets, USDC_DECIMALS))
+                  / Number(formatUnits(deposit.epochShares, SHARE_DECIMALS))
+                : undefined
+              const canCancelAfterActivation = snapshot.pool.seniorImpaired === true
+              const statusLabel = deposit.status === 'waiting'
+                ? 'Waiting for activation'
+                : deposit.status === 'ready'
+                  ? 'Ready to finalize'
+                  : 'Ready to claim'
+              const statusVariant = deposit.status === 'waiting'
+                ? 'warning'
+                : deposit.status === 'ready'
+                  ? 'info'
+                  : 'success'
+
+              return (
+                <article key={String(deposit.epochId)} className="space-y-5 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+                        Deposit epoch {String(deposit.epochId)}
+                      </p>
+                      <h4 className="mt-1 text-xl font-semibold text-content-primary">
+                        {formatFullUsd(deposit.assets)} queued
+                      </h4>
+                    </div>
+                    <Badge variant={statusVariant}>{statusLabel}</Badge>
+                  </div>
+
+                  <dl className="grid gap-3 sm:grid-cols-2">
+                    <DetailRow
+                      label="Your funded request"
+                      value={<TokenAmount amount={formatFullUsdc(deposit.assets)} />}
+                    />
+                    <DetailRow
+                      label="Activation time"
+                      value={activationLabel(deposit.activationTimestamp)}
+                    />
+                    <DetailRow
+                      label="Complete epoch batch"
+                      value={<TokenAmount amount={formatFullUsdc(deposit.epochAssets)} />}
+                    />
+                    <DetailRow
+                      label={deposit.finalized ? 'Finalized batch shares' : 'Shares'}
+                      value={deposit.finalized ? `${formatShares(deposit.epochShares)} ${tranche.token}` : 'Priced at finalization'}
+                    />
+                    {deposit.finalized ? (
+                      <>
+                        <DetailRow
+                          label="Finalized share price"
+                          value={formatSharePrice(finalizedPrice)}
+                        />
+                        <DetailRow
+                          label="Your claimable shares"
+                          value={`${formatShares(deposit.claimableShares)} ${tranche.token}`}
+                          valueClassName="text-positive"
+                        />
+                      </>
+                    ) : null}
+                  </dl>
+
+                  <p className="text-sm leading-6 text-content-secondary">
+                    {deposit.status === 'waiting'
+                      ? 'Your USDC is held in vault escrow. You may cancel and receive it back until the activation time.'
+                      : deposit.status === 'ready'
+                        ? 'The epoch is active. Finalizing fixes the batch share price and moves the batch into the HousePool.'
+                        : 'The epoch is finalized. Claim to move your allocated vault shares from escrow into your wallet.'}
+                  </p>
+
+                  {isWrongNetwork ? (
+                    <Button type="button" variant="secondary" onClick={onSwitchNetwork}>
+                      Switch to Arbitrum Sepolia
+                    </Button>
+                  ) : (
+                    <div className="flex flex-wrap gap-3">
+                      {deposit.status === 'waiting' ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            vaultTransactions.reset()
+                            vaultTransactions.cancelPendingDeposit(deposit.epochId)
+                          }}
+                          aria-label={`Cancel request for epoch ${String(deposit.epochId)}`}
+                        >
+                          Cancel request
+                        </Button>
+                      ) : null}
+                      {deposit.status === 'ready' ? (
+                        <Button
+                          type="button"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            vaultTransactions.reset()
+                            vaultTransactions.finalizeDepositEpoch(deposit.epochId)
+                          }}
+                          aria-label={`Finalize epoch ${String(deposit.epochId)}`}
+                        >
+                          Finalize epoch
+                        </Button>
+                      ) : null}
+                      {deposit.status === 'ready' && canCancelAfterActivation ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            vaultTransactions.reset()
+                            vaultTransactions.cancelPendingDeposit(deposit.epochId)
+                          }}
+                          aria-label={`Recover deposit from epoch ${String(deposit.epochId)}`}
+                        >
+                          Recover USDC
+                        </Button>
+                      ) : null}
+                      {deposit.status === 'claimable' ? (
+                        <Button
+                          type="button"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            vaultTransactions.reset()
+                            vaultTransactions.claimDepositShares(deposit.epochId)
+                          }}
+                          aria-label={`Claim shares from epoch ${String(deposit.epochId)}`}
+                        >
+                          Claim shares
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
+            <span className="material-symbols-outlined text-4xl text-content-secondary">schedule</span>
+            <h4 className="mt-3 text-base font-semibold text-content-primary">No queued deposits</h4>
+            <p className="mt-2 max-w-md text-sm leading-6 text-content-secondary">
+              A funded epoch request will appear here with its activation time and next available action.
+            </p>
+          </div>
+        )}
+      </section>
+
+      <section className="border border-brand-border/30 bg-surface-panel">
+        <div className="border-b border-brand-border/25 p-5">
+          <h3 className="text-lg font-semibold text-content-primary">Contract activity</h3>
           <p className="mt-1 text-sm text-content-secondary">
-            Deposits, pending epochs, claims, and withdrawals.
+            Full transaction history remains available on the block explorer.
           </p>
         </div>
-        <div className="flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
+        <div className="flex flex-col items-center justify-center px-6 py-8 text-center">
           <span className="material-symbols-outlined text-4xl text-content-secondary">receipt_long</span>
-          <h4 className="mt-3 text-base font-semibold text-content-primary">Activity indexer not connected</h4>
-          <p className="mt-2 max-w-md text-sm leading-6 text-content-secondary">
-            Active share balances and withdrawal limits are read directly from the vault. Historical
-            deposits and epoch events will appear here when the LP activity endpoint is available.
-          </p>
           <a
             href={`${EXPLORER_BASE_URL}/${tranche.address}`}
             target="_blank"
             rel="noreferrer"
-            className="mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach hover:underline hover:underline-offset-4"
+            className="group mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach"
           >
-            View contract activity
+            <span className="group-hover:underline group-hover:underline-offset-4">
+              View contract activity
+            </span>
             <span className="material-symbols-outlined text-lg">open_in_new</span>
           </a>
         </div>
@@ -1590,11 +2421,19 @@ function ActivityTab({
   )
 }
 
-function PreviewRow({ label, value }: { label: string; value: ReactNode }) {
+function PreviewRow({
+  label,
+  value,
+  valueClassName = 'text-content-primary',
+}: {
+  label: string
+  value: ReactNode
+  valueClassName?: string
+}) {
   return (
     <div className="flex items-start justify-between gap-4 text-sm">
       <span className="text-content-secondary">{label}</span>
-      <span className="max-w-56 text-right font-semibold text-content-primary">{value}</span>
+      <span className={`max-w-56 text-right font-semibold ${valueClassName}`}>{value}</span>
     </div>
   )
 }
@@ -1608,7 +2447,9 @@ function VaultPreviewModal({
   estimatedShares,
   depositMode,
   sharePrice,
+  performance,
   oracleFrozen,
+  pendingActivationTimestamp,
   quoteCapturedAt,
   canSubmit,
   needsApproval,
@@ -1624,7 +2465,9 @@ function VaultPreviewModal({
   estimatedShares?: number
   depositMode: string
   sharePrice?: number
+  performance?: CompleteVaultPerformance
   oracleFrozen?: boolean
+  pendingActivationTimestamp?: number
   quoteCapturedAt?: number
   canSubmit: boolean
   needsApproval: boolean
@@ -1636,9 +2479,13 @@ function VaultPreviewModal({
   const isPendingDeposit = mode === 'deposit' && depositMode === 'Pending deposit epoch'
   const submitLabel = mode === 'withdraw'
     ? 'Withdraw USDC'
-    : needsApproval
-      ? 'Approve & deposit'
-      : 'Deposit USDC'
+    : isPendingDeposit
+      ? needsApproval
+        ? 'Approve & queue'
+        : 'Queue deposit'
+      : needsApproval
+        ? 'Approve & deposit'
+        : 'Deposit USDC'
 
   return (
     <Modal
@@ -1661,7 +2508,10 @@ function VaultPreviewModal({
         </div>
 
         <div className="space-y-3">
-          <PreviewRow label={mode === 'deposit' ? 'USDC deposited' : 'USDC requested'} value={`${amount || '0.00'} USDC`} />
+          <PreviewRow
+            label={mode === 'deposit' ? 'USDC deposited' : 'USDC requested'}
+            value={<TokenAmount amount={amount || '0.00'} />}
+          />
           <PreviewRow
             label={
               mode === 'withdraw'
@@ -1677,6 +2527,13 @@ function VaultPreviewModal({
             }
           />
           <PreviewRow label="Current share price" value={formatSharePrice(sharePrice)} />
+          {performance ? (
+            <PreviewRow
+              label="7d realized APY"
+              value={formatSignedPercent(performance.apy7d)}
+              valueClassName={performanceValueClassName(performance.apy7d)}
+            />
+          ) : null}
           <PreviewRow
             label={mode === 'deposit' ? 'Deposit path' : 'Settlement'}
             value={mode === 'deposit' ? depositMode : 'Synchronous when permitted'}
@@ -1684,7 +2541,18 @@ function VaultPreviewModal({
           {mode === 'deposit' ? (
             <PreviewRow
               label="Expected activation"
-              value={depositMode === 'Immediate deposit' ? 'In this transaction' : 'Depends on epoch-request eligibility'}
+              value={
+                depositMode === 'Immediate deposit'
+                  ? 'In this transaction'
+                  : pendingActivationTimestamp === undefined
+                    ? 'About 1–2 hours after request'
+                    : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })
+              }
             />
           ) : (
             <PreviewRow label="Cooldown" value="Live max already reflects holder cooldown" />
@@ -1719,14 +2587,12 @@ function VaultPreviewModal({
         {canSubmit ? (
           <Alert variant="info" title="Onchain action">
             Confirming starts {needsApproval ? 'an exact USDC approval followed by ' : ''}
-            {mode === 'deposit' ? 'an immediate vault deposit' : 'a synchronous vault withdrawal'}.
+            {mode === 'deposit'
+              ? isPendingDeposit
+                ? 'a funded vault-deposit request'
+                : 'an immediate vault deposit'
+              : 'a synchronous vault withdrawal'}.
             The app simulates each transaction before asking your wallet to submit it.
-          </Alert>
-        ) : isPendingDeposit ? (
-          <Alert variant="warning" title="Pending lifecycle not enabled">
-            This vault can accept a funded epoch request, but this release will not escrow your USDC
-            until request discovery, cancellation, finalization, and share claiming are available
-            together.
           </Alert>
         ) : (
           <Alert variant="warning" title="Action unavailable">
@@ -1761,7 +2627,7 @@ function VaultPreviewModal({
           analyticsSurface="vaults"
           analyticsProperties={{ tranche: tranche.id }}
         >
-          {canSubmit ? submitLabel : isPendingDeposit ? 'Lifecycle coming soon' : 'Unavailable'}
+          {canSubmit ? submitLabel : 'Unavailable'}
         </Button>
       </div>
     </Modal>
@@ -1772,22 +2638,30 @@ function VaultActionPanel({
   tranche,
   liveData,
   snapshot,
+  performance,
   isConnected,
   isWrongNetwork,
   onConnect,
   onSwitchNetwork,
   isSwitchingNetwork,
   switchError,
+  pendingDeposits,
+  onRefreshPendingDeposits,
+  onViewPendingDeposits,
 }: {
   tranche: TrancheDefinition
   liveData: TrancheLiveData
   snapshot: VaultsSnapshot
+  performance?: CompleteVaultPerformance
   isConnected: boolean
   isWrongNetwork: boolean
   onConnect: () => void
   onSwitchNetwork: () => void
   isSwitchingNetwork: boolean
   switchError?: string
+  pendingDeposits: PendingVaultDeposit[]
+  onRefreshPendingDeposits: () => void
+  onViewPendingDeposits: () => void
 }) {
   const [mode, setMode] = useState<ActionMode>('deposit')
   const [amount, setAmount] = useState('')
@@ -1801,6 +2675,10 @@ function VaultActionPanel({
   const amountRaw = parseUsdc(amount)
   const maxAmount = mode === 'deposit' ? snapshot.walletUsdc : liveData.maxWithdraw
   const depositMode = getDepositMode(liveData)
+  const pendingActivationTimestamp = depositMode === 'Pending deposit epoch'
+    && liveData.currentDepositEpoch !== undefined
+    ? Number((liveData.currentDepositEpoch + 2n) * 3_600n)
+    : undefined
   const vaultTransactions = useVaultTransactions({
     vaultAddress: tranche.address,
     allowance: liveData.allowance,
@@ -1809,6 +2687,7 @@ function VaultActionPanel({
       setShowPreview(false)
       setReviewQuote(undefined)
       snapshot.refresh()
+      onRefreshPendingDeposits()
     },
   })
   const {
@@ -1890,8 +2769,14 @@ function VaultActionPanel({
   const canSubmitTransaction = isConnected
     && !isWrongNetwork
     && !formInvalid
-    && (mode === 'withdraw' || depositMode === 'Immediate deposit')
-  const hasExecutablePath = mode === 'withdraw' || depositMode === 'Immediate deposit'
+    && (
+      mode === 'withdraw'
+      || depositMode === 'Immediate deposit'
+      || depositMode === 'Pending deposit epoch'
+    )
+  const hasExecutablePath = mode === 'withdraw'
+    || depositMode === 'Immediate deposit'
+    || depositMode === 'Pending deposit epoch'
   const inputError = exceedsAvailable
     ? `Exceeds available ${mode === 'deposit' ? 'balance' : 'withdrawal limit'}.`
     : depositLimitExceeded
@@ -1954,7 +2839,11 @@ function VaultActionPanel({
     setShowPreview(false)
     vaultTransactions.reset()
     if (mode === 'deposit') {
-      vaultTransactions.deposit(amountRaw)
+      if (depositMode === 'Pending deposit epoch') {
+        vaultTransactions.requestDeposit(amountRaw)
+      } else {
+        vaultTransactions.deposit(amountRaw)
+      }
     } else {
       vaultTransactions.withdraw(amountRaw)
     }
@@ -1969,11 +2858,7 @@ function VaultActionPanel({
             <p className="mt-1 text-sm text-content-secondary">{tranche.name}</p>
           </div>
           <Badge variant={hasExecutablePath ? 'success' : 'warning'}>
-            {mode === 'deposit' && depositMode === 'Pending deposit epoch'
-              ? 'Epoch preview'
-              : hasExecutablePath
-                ? 'Onchain action'
-                : 'Read-only'}
+            {hasExecutablePath ? 'Onchain action' : 'Read-only'}
           </Badge>
         </div>
 
@@ -2038,23 +2923,42 @@ function VaultActionPanel({
                 <PreviewRow label="Deposit path" value={depositMode} />
                 <PreviewRow
                   label="Activation"
-                  value={depositMode === 'Immediate deposit' ? 'In transaction' : 'Epoch eligibility requires a live gate'}
+                  value={
+                    depositMode === 'Immediate deposit'
+                      ? 'In transaction'
+                      : pendingActivationTimestamp === undefined
+                        ? 'About 1–2 hours after request'
+                        : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                  }
                 />
-                <PreviewRow label="7d APY" value="Not indexed" />
               </>
             ) : (
               <>
                 <PreviewRow
                   label="Position value"
-                  value={positionValue === undefined ? '--' : `$${positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}`}
+                  value={positionValue === undefined
+                    ? '--'
+                    : <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
                 />
                 <PreviewRow
                   label="Requested wallet receipt"
-                  value={`${amount || '0.00'} USDC`}
+                  value={<TokenAmount amount={amount || '0.00'} />}
                 />
                 <PreviewRow label="Settlement" value="Immediate if live cap permits" />
               </>
             )}
+            {performance ? (
+              <PreviewRow
+                label="7d realized APY"
+                value={formatSignedPercent(performance.apy7d)}
+                valueClassName={performanceValueClassName(performance.apy7d)}
+              />
+            ) : null}
             <PreviewRow
               label="Oracle surcharge"
               value={snapshot.pool.oracleFrozen === undefined ? 'State unavailable' : snapshot.pool.oracleFrozen ? 'Reflected by vault preview where supported' : 'Inactive'}
@@ -2062,10 +2966,9 @@ function VaultActionPanel({
           </div>
 
           {mode === 'deposit' && depositMode === 'Pending deposit epoch' ? (
-            <Alert variant="info" title="Pending deposit available">
-              Open positions require a funded epoch request. This release previews that path but
-              keeps submission disabled until request discovery, cancellation, finalization, and
-              share claiming ship together.
+            <Alert variant="info" title="This deposit will be queued">
+              USDC moves into vault escrow now. You can cancel before activation; after activation,
+              finalize the epoch and claim your shares from Your position.
             </Alert>
           ) : null}
 
@@ -2138,6 +3041,37 @@ function VaultActionPanel({
             immediate redemption, and recent APY is not a forecast.
           </p>
         </div>
+
+        {pendingDeposits.length > 0 ? (
+          <div className="border-t border-brand-border/30 p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+                  Your deposit queue
+                </p>
+                <p className="mt-1 text-lg font-semibold text-content-primary">
+                  {pendingDeposits.length} active {pendingDeposits.length === 1 ? 'request' : 'requests'}
+                </p>
+                <p className="mt-1 text-xs leading-5 text-content-secondary">
+                  {formatFullUsd(pendingDeposits.reduce((total, deposit) => total + deposit.assets, 0n))} in escrow
+                </p>
+              </div>
+              <Badge variant={pendingDeposits.some(({ status }) => status === 'claimable') ? 'success' : 'warning'}>
+                {pendingDeposits.some(({ status }) => status === 'claimable')
+                  ? 'Action ready'
+                  : 'In progress'}
+              </Badge>
+            </div>
+            <Button
+              type="button"
+              variant="secondary"
+              className="mt-4 w-full"
+              onClick={onViewPendingDeposits}
+            >
+              View & manage
+            </Button>
+          </div>
+        ) : null}
       </aside>
 
       <VaultPreviewModal
@@ -2151,7 +3085,9 @@ function VaultActionPanel({
         estimatedShares={reviewQuote?.estimatedShares}
         depositMode={depositMode}
         sharePrice={liveData.sharePrice}
+        performance={performance}
         oracleFrozen={snapshot.pool.oracleFrozen}
+        pendingActivationTimestamp={pendingActivationTimestamp}
         quoteCapturedAt={reviewQuote?.capturedAt}
         canSubmit={canSubmitTransaction}
         needsApproval={needsApproval}
@@ -2166,6 +3102,8 @@ function VaultActionPanel({
 function VaultDetail({
   tranche,
   snapshot,
+  history,
+  ownerAddress,
   isConnected,
   isWrongNetwork,
   onConnect,
@@ -2175,6 +3113,8 @@ function VaultDetail({
 }: {
   tranche: TrancheDefinition
   snapshot: VaultsSnapshot
+  history?: VaultHistory
+  ownerAddress?: Address
   isConnected: boolean
   isWrongNetwork: boolean
   onConnect: () => void
@@ -2184,15 +3124,23 @@ function VaultDetail({
 }) {
   const [activeTab, setActiveTab] = useState<DetailTab>('overview')
   const liveData = snapshot.tranches[tranche.id]
+  const performance = getCompleteVaultPerformance(history, tranche.id)
+  const hasPerformance = performance !== undefined
+  const pendingVaultDeposits = usePendingVaultDeposits({
+    owner: ownerAddress,
+    vaultAddress: tranche.address,
+    currentEpoch: liveData.currentDepositEpoch,
+  })
   const poolWithdrawCap = tranche.id === 'senior'
     ? snapshot.pool.seniorPoolWithdrawCapUsdc
     : snapshot.pool.juniorPoolWithdrawCapUsdc
   const tabs: { id: DetailTab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
-    { id: 'performance', label: 'Performance' },
+    ...(hasPerformance ? [{ id: 'performance' as const, label: 'Performance' }] : []),
     { id: 'risk', label: 'Risk' },
     { id: 'activity', label: 'Your position' },
   ]
+  const displayedTab = activeTab === 'performance' && !hasPerformance ? 'overview' : activeTab
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
     let nextIndex: number | undefined
@@ -2215,10 +3163,10 @@ function VaultDetail({
     <div className="space-y-6">
       <Link
         to="/vaults"
-        className="inline-flex items-center gap-2 text-sm font-semibold text-content-secondary transition-colors hover:text-brand-peach hover:underline hover:underline-offset-4"
+        className="group inline-flex items-center gap-2 text-sm font-semibold text-content-secondary transition-colors hover:text-brand-peach"
       >
         <span className="material-symbols-outlined text-lg">arrow_back</span>
-        All vaults
+        <span className="group-hover:underline group-hover:underline-offset-4">All vaults</span>
       </Link>
 
       <section className="border border-brand-border/30 bg-surface-panel">
@@ -2238,10 +3186,7 @@ function VaultDetail({
                 {tranche.description}
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-content-secondary">
-                <span className="inline-flex items-center gap-1.5 border border-brand-border/30 bg-app-bg px-2 py-1">
-                  <span className="material-symbols-outlined text-sm">token</span>
-                  USDC
-                </span>
+                <TokenLabel token="USDC" />
                 <span className="inline-flex items-center gap-1.5 border border-brand-border/30 bg-app-bg px-2 py-1">
                   <span className="material-symbols-outlined text-sm">hub</span>
                   Arbitrum Sepolia
@@ -2250,9 +3195,9 @@ function VaultDetail({
                   href={`${EXPLORER_BASE_URL}/${tranche.address}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 border border-brand-border/30 bg-app-bg px-2 py-1 text-brand-peach hover:border-brand-peach hover:underline"
+                  className="group inline-flex items-center gap-1.5 border border-brand-border/30 bg-app-bg px-2 py-1 text-brand-peach hover:border-brand-peach"
                 >
-                  {formatAddress(tranche.address)}
+                  <span className="group-hover:underline">{formatAddress(tranche.address)}</span>
                   <span className="material-symbols-outlined text-sm">open_in_new</span>
                 </a>
               </div>
@@ -2260,20 +3205,26 @@ function VaultDetail({
           </div>
         </div>
 
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-6 p-6 lg:grid-cols-5">
+        <dl className={`grid grid-cols-2 gap-x-4 gap-y-6 p-6 ${
+          hasPerformance ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+        }`}>
           <PoolStat
             label="Tranche TVL / NAV"
             value={formatCompactUsd(liveData.totalAssets)}
-            subvalue={`${formatFullUsdc(liveData.totalAssets, 0)} USDC`}
+            subvalue={liveData.totalAssets === undefined
+              ? '--'
+              : <TokenAmount amount={formatFullUsdc(liveData.totalAssets, 0)} />}
             tooltip="Current ERC-4626 totalAssets accounting value. This can rise or fall and is not cumulative deposits."
           />
-          <PoolStat
-            label="7d APY"
-            value="--"
-            subvalue="Performance indexer unavailable"
-            valueClassName="text-content-secondary"
-            tooltip="Seven-day annualized performance will appear after historical share-price checkpoints are indexed."
-          />
+          {performance ? (
+            <PoolStat
+              label="7d realized APY"
+              value={formatSignedPercent(performance.apy7d)}
+              subvalue={`${formatSignedPercent(performance.return7d)} actual 7d return`}
+              valueClassName={performanceValueClassName(performance.apy7d)}
+              tooltip="Annualized historical return calculated from seven days of indexed share-price checkpoints."
+            />
+          ) : null}
           <PoolStat
             label="Share price"
             value={formatSharePrice(liveData.sharePrice)}
@@ -2306,9 +3257,9 @@ function VaultDetail({
                 id={`vault-tab-${tranche.id}-${tab.id}`}
                 type="button"
                 role="tab"
-                aria-selected={activeTab === tab.id}
+                aria-selected={displayedTab === tab.id}
                 aria-controls={`vault-panel-${tranche.id}`}
-                tabIndex={activeTab === tab.id ? 0 : -1}
+                tabIndex={displayedTab === tab.id ? 0 : -1}
                 onClick={() => {
                   setActiveTab(tab.id)
                 }}
@@ -2316,7 +3267,7 @@ function VaultDetail({
                   handleTabKeyDown(event, index)
                 }}
                 className={`shrink-0 px-4 py-2 text-sm font-semibold transition-colors ${
-                  activeTab === tab.id
+                  displayedTab === tab.id
                     ? 'bg-app-bg text-content-primary'
                     : 'text-content-secondary hover:text-brand-peach'
                 }`}
@@ -2329,9 +3280,9 @@ function VaultDetail({
           <div
             id={`vault-panel-${tranche.id}`}
             role="tabpanel"
-            aria-labelledby={`vault-tab-${tranche.id}-${activeTab}`}
+            aria-labelledby={`vault-tab-${tranche.id}-${displayedTab}`}
           >
-            {activeTab === 'overview' ? (
+            {displayedTab === 'overview' ? (
               <OverviewTab
                 tranche={tranche}
                 liveData={liveData}
@@ -2339,12 +3290,23 @@ function VaultDetail({
                 isConnected={isConnected}
               />
             ) : null}
-            {activeTab === 'performance' ? (
-              <PerformanceTab tranche={tranche} liveData={liveData} />
+            {displayedTab === 'performance' && performance ? (
+              <PerformanceTab tranche={tranche} performance={performance} />
             ) : null}
-            {activeTab === 'risk' ? <RiskTab tranche={tranche} /> : null}
-            {activeTab === 'activity' ? (
-              <ActivityTab tranche={tranche} liveData={liveData} isConnected={isConnected} />
+            {displayedTab === 'risk' ? <RiskTab tranche={tranche} /> : null}
+            {displayedTab === 'activity' ? (
+              <ActivityTab
+                tranche={tranche}
+                liveData={liveData}
+                snapshot={snapshot}
+                isConnected={isConnected}
+                isWrongNetwork={isWrongNetwork}
+                pendingDeposits={pendingVaultDeposits.deposits}
+                pendingDepositsLoading={pendingVaultDeposits.isLoading}
+                pendingDiscoveryError={pendingVaultDeposits.discoveryError}
+                onRefreshPendingDeposits={pendingVaultDeposits.refresh}
+                onSwitchNetwork={onSwitchNetwork}
+              />
             ) : null}
           </div>
         </div>
@@ -2355,12 +3317,18 @@ function VaultDetail({
             tranche={tranche}
             liveData={liveData}
             snapshot={snapshot}
+            performance={performance}
             isConnected={isConnected}
             isWrongNetwork={isWrongNetwork}
             onConnect={onConnect}
             onSwitchNetwork={onSwitchNetwork}
             isSwitchingNetwork={isSwitchingNetwork}
             switchError={switchError}
+            pendingDeposits={pendingVaultDeposits.deposits}
+            onRefreshPendingDeposits={pendingVaultDeposits.refresh}
+            onViewPendingDeposits={() => {
+              setActiveTab('activity')
+            }}
           />
         </div>
       </div>
@@ -2398,6 +3366,8 @@ export function Vaults() {
     clearSwitchError,
   } = useSwitchToArbitrumSepolia()
   const snapshot = useVaultsSnapshot(address)
+  const vaultHistoryQuery = usePerpsVaultHistory()
+  const vaultHistory = vaultHistoryQuery.data?.data
   const selectedTranche = trancheId === 'senior' || trancheId === 'junior'
     ? TRANCHES[trancheId]
     : undefined
@@ -2415,13 +3385,15 @@ export function Vaults() {
   }
 
   if (!selectedTranche) {
-    return <VaultsOverview snapshot={snapshot} />
+    return <VaultsOverview snapshot={snapshot} history={vaultHistory} />
   }
 
   return (
     <VaultDetail
       tranche={selectedTranche}
       snapshot={snapshot}
+      history={vaultHistory}
+      ownerAddress={address}
       isConnected={isConnected}
       isWrongNetwork={isWrongNetwork}
       onConnect={openWallet}

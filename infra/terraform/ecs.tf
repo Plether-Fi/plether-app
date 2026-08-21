@@ -63,6 +63,13 @@ locals {
     }
   ] : []
 
+  vault_history_rpc_secret = trimspace(var.vault_history_rpc_url) != "" ? [
+    {
+      name      = "VAULT_HISTORY_RPC_URL"
+      valueFrom = aws_ssm_parameter.vault_history_rpc_url[0].arn
+    }
+  ] : []
+
   aa_proxy_secrets = var.provision_aa_proxy ? [
     {
       name      = "PIMLICO_API_KEY"
@@ -195,12 +202,17 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret)
 
     environment = concat([
       { name = "PORT", value = "3001" },
       { name = "CHAIN_ID", value = var.chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "VAULT_HISTORY_HOUSE_POOL_ADDRESS", value = var.vault_history_house_pool_address },
+      { name = "VAULT_HISTORY_SENIOR_VAULT_ADDRESS", value = var.vault_history_senior_vault_address },
+      { name = "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", value = var.vault_history_junior_vault_address },
+      { name = "VAULT_HISTORY_DEPLOYMENT_BLOCK", value = var.vault_history_deployment_block },
+      { name = "VAULT_HISTORY_CONFIRMATIONS", value = var.vault_history_confirmations },
       { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },

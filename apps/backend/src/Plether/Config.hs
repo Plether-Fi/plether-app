@@ -62,6 +62,12 @@ data Config = Config
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgVaultHistoryHousePoolAddress :: Text
+  , cfgVaultHistorySeniorVaultAddress :: Text
+  , cfgVaultHistoryJuniorVaultAddress :: Text
+  , cfgVaultHistoryDeploymentBlock :: Integer
+  , cfgVaultHistoryRpcUrl :: Text
+  , cfgVaultHistoryConfirmations :: Integer
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
@@ -236,6 +242,12 @@ loadConfig = do
       perpsMarginClearinghouse <- fromMaybe "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       perpsPletherOracle <- fromMaybe "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c" <$> lookupEnv "PERPS_PLETHER_ORACLE"
       perpsIndexerStartBlockStr <- fromMaybe "288439939" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      vaultHistoryHousePool <- fromMaybe "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
+      vaultHistorySeniorVault <- fromMaybe "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
+      vaultHistoryJuniorVault <- fromMaybe "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
+      vaultHistoryDeploymentBlockStr <- fromMaybe "288439939" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+      mVaultHistoryRpcUrl <- lookupEnv "VAULT_HISTORY_RPC_URL"
+      vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
@@ -361,10 +373,34 @@ loadConfig = do
               , fromIntegral finalizationGraceSeconds
               )
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig) of
-        (Left err, _, _) -> pure $ Left err
-        (_, Left err, _) -> pure $ Left err
-        (_, _, Left err) -> pure $ Left err
+          vaultHistoryConfig = do
+            deploymentBlock <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+                vaultHistoryDeploymentBlockStr
+            confirmations <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_CONFIRMATIONS"
+                vaultHistoryConfirmationsStr
+            let addresses =
+                  [ ("VAULT_HISTORY_HOUSE_POOL_ADDRESS", vaultHistoryHousePool)
+                  , ("VAULT_HISTORY_SENIOR_VAULT_ADDRESS", vaultHistorySeniorVault)
+                  , ("VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", vaultHistoryJuniorVault)
+                  ]
+            case [name | (name, address) <- addresses, not $ isCanonicalVaultAddress address] of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              [] ->
+                Right
+                  ( deploymentBlock
+                  , confirmations
+                  , fromMaybe (T.pack perpsRpcUrl) $ nonBlankText mVaultHistoryRpcUrl
+                  )
+
+      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig, vaultHistoryConfig) of
+        (Left err, _, _, _) -> pure $ Left err
+        (_, Left err, _, _) -> pure $ Left err
+        (_, _, Left err, _) -> pure $ Left err
+        (_, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -375,6 +411,11 @@ loadConfig = do
                 , candleStrictCoverage
                 , candleLatenessSeconds
                 , candleFinalizationGraceSeconds
+                )
+          , Right
+              ( vaultHistoryDeploymentBlock
+                , vaultHistoryConfirmations
+                , vaultHistoryRpcUrl
                 )
           ) -> do
           eDeployments <- loadDeployments addressFile
@@ -414,6 +455,12 @@ loadConfig = do
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgVaultHistoryHousePoolAddress = T.pack vaultHistoryHousePool
+                , cfgVaultHistorySeniorVaultAddress = T.pack vaultHistorySeniorVault
+                , cfgVaultHistoryJuniorVaultAddress = T.pack vaultHistoryJuniorVault
+                , cfgVaultHistoryDeploymentBlock = vaultHistoryDeploymentBlock
+                , cfgVaultHistoryRpcUrl = vaultHistoryRpcUrl
+                , cfgVaultHistoryConfirmations = vaultHistoryConfirmations
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
@@ -538,6 +585,23 @@ parseBoundedWholeNumber name lower upper raw =
           <> show upper
   where
     normalized = T.unpack $ T.strip $ T.pack raw
+
+parseNonNegativeInteger :: String -> String -> Either String Integer
+parseNonNegativeInteger name raw =
+  case readMaybe normalized of
+    Just value
+      | show value == normalized
+      , value >= 0 -> Right value
+    _ -> Left $ name <> " must be a non-negative whole number"
+  where
+    normalized = T.unpack $ T.strip $ T.pack raw
+
+isCanonicalVaultAddress :: String -> Bool
+isCanonicalVaultAddress raw =
+  let address = T.strip $ T.pack raw
+   in T.length address == 42
+        && T.toLower (T.take 2 address) == "0x"
+        && isValidAddress address
 
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =

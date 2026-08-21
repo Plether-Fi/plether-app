@@ -15,6 +15,13 @@ export const TRANCHE_VAULT_READ_ABI = [
   },
   {
     type: 'function',
+    name: 'convertToAssets',
+    stateMutability: 'view',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'balanceOf',
     stateMutability: 'view',
     inputs: [{ name: 'account', type: 'address' }],
@@ -152,6 +159,35 @@ export const TRANCHE_VAULT_READ_ABI = [
       { name: 'owner', type: 'address', indexed: true },
       { name: 'epochId', type: 'uint256', indexed: true },
       { name: 'assets', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'DepositRequestCancelled',
+    inputs: [
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'epochId', type: 'uint256', indexed: true },
+      { name: 'assets', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'DepositEpochFinalized',
+    inputs: [
+      { name: 'epochId', type: 'uint256', indexed: true },
+      { name: 'isSenior', type: 'bool', indexed: true },
+      { name: 'assets', type: 'uint256', indexed: false },
+      { name: 'shares', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'DepositSharesClaimed',
+    inputs: [
+      { name: 'owner', type: 'address', indexed: true },
+      { name: 'epochId', type: 'uint256', indexed: true },
+      { name: 'assets', type: 'uint256', indexed: false },
+      { name: 'shares', type: 'uint256', indexed: false },
     ],
   },
 ] as const

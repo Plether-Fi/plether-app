@@ -99,6 +99,66 @@ export function useVaultTransactions({
     })
   }, [allowance, config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
+  const requestDeposit = useCallback((amount: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Queueing USDC for Plether Vault',
+      type: 'supply',
+      buildSteps: (): TransactionStep[] => {
+        const steps: TransactionStep[] = []
+
+        if (allowance === undefined || allowance < amount) {
+          steps.push({
+            label: 'Approve USDC',
+            action: async () => {
+              const context = requireTransactionContext(expectedAddress)
+              await context.publicClient.simulateContract({
+                account: context.address,
+                address: PERPS_ARBITRUM_SEPOLIA.usdc,
+                abi: ERC20_ABI,
+                functionName: 'approve',
+                args: [vaultAddress, amount],
+              })
+              return writeContractAsync({
+                account: context.address,
+                chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+                address: PERPS_ARBITRUM_SEPOLIA.usdc,
+                abi: ERC20_ABI,
+                functionName: 'approve',
+                args: [vaultAddress, amount],
+              })
+            },
+          })
+        }
+
+        steps.push({
+          label: 'Queue deposit',
+          action: async () => {
+            const context = requireTransactionContext(expectedAddress)
+            await context.publicClient.simulateContract({
+              account: context.address,
+              address: vaultAddress,
+              abi: TRANCHE_VAULT_READ_ABI,
+              functionName: 'requestDeposit',
+              args: [amount, context.address],
+            })
+            return writeContractAsync({
+              account: context.address,
+              chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+              address: vaultAddress,
+              abi: TRANCHE_VAULT_READ_ABI,
+              functionName: 'requestDeposit',
+              args: [amount, context.address],
+            })
+          },
+        })
+
+        return steps
+      },
+      onSuccess,
+    })
+  }, [allowance, config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
   const withdraw = useCallback((amount: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
@@ -129,9 +189,103 @@ export function useVaultTransactions({
     })
   }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
+  const cancelPendingDeposit = useCallback((epochId: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Cancelling queued vault deposit',
+      type: 'withdraw',
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Cancel request',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'cancelPendingDeposit',
+            args: [epochId],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'cancelPendingDeposit',
+            args: [epochId],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
+  const finalizeDepositEpoch = useCallback((epochId: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Finalizing vault deposit epoch',
+      type: 'supply',
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Finalize epoch',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'finalizeDepositEpoch',
+            args: [epochId],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'finalizeDepositEpoch',
+            args: [epochId],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
+  const claimDepositShares = useCallback((epochId: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Claiming Plether Vault shares',
+      type: 'supply',
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Claim shares',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimDepositShares',
+            args: [epochId],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimDepositShares',
+            args: [epochId],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
   return {
     deposit,
+    requestDeposit,
     withdraw,
+    cancelPendingDeposit,
+    finalizeDepositEpoch,
+    claimDepositShares,
     isRunning: sequence.isRunning,
     isSuccess: sequence.isSuccess,
     isError: sequence.isError,

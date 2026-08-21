@@ -10,7 +10,7 @@ LP[^lp] withdrawals are **synchronous**. There is no LP withdrawal queue: a perm
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. The labels on this page—such as `Withdraw USDC` and `Withdrawal preview`—describe that in-progress interface and should be treated as placeholders until it is deployed.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. The labels on this page—such as `Withdraw USDC` and `Withdrawal preview`—describe that in-progress interface and should be treated as placeholders until it is deployed.
 >
 > The visible `Withdraw` action on the current Perps page withdraws from the Trading Account's **Margin Account**. It does not redeem Senior or Junior Vault shares.
 >

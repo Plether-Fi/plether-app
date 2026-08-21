@@ -336,6 +336,43 @@ variable "perps_chain_id" {
   default = "421614"
 }
 
+variable "vault_history_rpc_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional archive-capable Arbitrum RPC URL used for vault-history backfills. Empty falls back to perps_rpc_url."
+}
+
+variable "vault_history_house_pool_address" {
+  type        = string
+  default     = "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
+  description = "HousePool deployment whose Senior and Junior vault performance is indexed."
+}
+
+variable "vault_history_senior_vault_address" {
+  type        = string
+  default     = "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
+  description = "Senior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_junior_vault_address" {
+  type        = string
+  default     = "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
+  description = "Junior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_deployment_block" {
+  type        = string
+  default     = "288439939"
+  description = "First Arbitrum block eligible for the configured vault deployment's performance history."
+}
+
+variable "vault_history_confirmations" {
+  type        = string
+  default     = "12"
+  description = "Blocks subtracted from the live Arbitrum head before vault-history checkpoints are sampled."
+}
+
 variable "perps_usdc" {
   type    = string
   default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"

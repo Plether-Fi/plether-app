@@ -103,6 +103,35 @@ describe('useVaultTransactions', () => {
     expect(config.buildSteps().map(({ label }) => label)).toEqual(['Deposit USDC'])
   })
 
+  it('approves exact USDC and submits a queued deposit request', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(4_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe('supply')
+    const steps = config.buildSteps()
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
+
+    await steps[0].action()
+    await steps[1].action()
+
+    expect(mocks.simulateContract).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      functionName: 'requestDeposit',
+      args: [4_000_000n, mocks.address],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      chainId: 421614,
+      functionName: 'requestDeposit',
+    }))
+  })
+
   it('simulates and submits a synchronous owner withdrawal', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
@@ -127,6 +156,38 @@ describe('useVaultTransactions', () => {
       account: mocks.address,
       chainId: 421614,
       functionName: 'withdraw',
+    }))
+  })
+
+  it.each([
+    ['cancelPendingDeposit', 'Cancel request', 'withdraw'],
+    ['finalizeDepositEpoch', 'Finalize epoch', 'supply'],
+    ['claimDepositShares', 'Claim shares', 'supply'],
+  ] as const)('simulates and submits %s for an epoch', async (method, label, type) => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current[method](500_002n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe(type)
+    const [step] = config.buildSteps()
+    expect(step.label).toBe(label)
+    await step.action()
+
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      functionName: method,
+      args: [500_002n],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      account: mocks.address,
+      chainId: 421614,
+      functionName: method,
     }))
   })
 

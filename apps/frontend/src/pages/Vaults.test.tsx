@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Vaults } from './Vaults'
@@ -22,8 +22,59 @@ const mocks = vi.hoisted(() => ({
     result?: unknown
   }[] | undefined,
   refetch: vi.fn(),
+  pendingDeposits: [] as {
+    epochId: bigint
+    assets: bigint
+    epochAssets: bigint
+    epochShares: bigint
+    claimedAssets: bigint
+    claimedShares: bigint
+    claimableShares?: bigint
+    activationTimestamp: number
+    finalized: boolean
+    status: 'waiting' | 'ready' | 'claimable'
+  }[],
+  pendingRefresh: vi.fn(),
+  pendingDiscoveryError: false,
+  vaultHistory: undefined as {
+    range: '7d'
+    intervalSeconds: 3600
+    deployment: {
+      chainId: number
+      housePool: string
+      seniorVault: string
+      juniorVault: string
+    }
+    coverage: { start: number | null; end: number | null; complete: boolean }
+    senior: {
+      apy7d: number | null
+      return7d: number | null
+      points: {
+        timestamp: number
+        blockNumber: string
+        sharePrice: string
+        totalAssets: string
+        totalSupply: string
+      }[]
+    }
+    junior: {
+      apy7d: number | null
+      return7d: number | null
+      points: {
+        timestamp: number
+        blockNumber: string
+        sharePrice: string
+        totalAssets: string
+        totalSupply: string
+      }[]
+    }
+  } | undefined,
   switchToArbitrumSepolia: vi.fn(),
+  vaultCancelPendingDeposit: vi.fn(),
+  vaultClaimDepositShares: vi.fn(),
   vaultDeposit: vi.fn(),
+  vaultFinalizeDepositEpoch: vi.fn(),
+  vaultRequestDeposit: vi.fn(),
   vaultReset: vi.fn(),
   vaultWithdraw: vi.fn(),
 }))
@@ -58,7 +109,19 @@ vi.mock('../config/wagmi', () => ({
   syncAppKitModalStyleOverrides: vi.fn(),
 }))
 
+vi.mock('../api', () => ({
+  usePerpsVaultHistory: () => ({
+    data: mocks.vaultHistory === undefined ? undefined : { data: mocks.vaultHistory },
+  }),
+}))
+
 vi.mock('../hooks', () => ({
+  usePendingVaultDeposits: () => ({
+    deposits: mocks.pendingDeposits,
+    isLoading: false,
+    discoveryError: mocks.pendingDiscoveryError,
+    refresh: mocks.pendingRefresh,
+  }),
   useSwitchToArbitrumSepolia: () => ({
     switchToArbitrumSepolia: mocks.switchToArbitrumSepolia,
     isSwitching: false,
@@ -67,7 +130,11 @@ vi.mock('../hooks', () => ({
   }),
   useVaultTransactions: () => ({
     deposit: mocks.vaultDeposit,
+    requestDeposit: mocks.vaultRequestDeposit,
     withdraw: mocks.vaultWithdraw,
+    cancelPendingDeposit: mocks.vaultCancelPendingDeposit,
+    finalizeDepositEpoch: mocks.vaultFinalizeDepositEpoch,
+    claimDepositShares: mocks.vaultClaimDepositShares,
     isRunning: false,
     isSuccess: false,
     isError: false,
@@ -147,7 +214,57 @@ function liveReadFixture({
     success(usdc(juniorMaxRequestDeposit)),
     success(0n),
     success(0n),
+    success(500_000n),
+    success(500_000n),
+    success(2n * 10n ** 24n),
+    success(10n ** 24n),
+    success([0, 10n ** 18n, 0n, false, false, true, true]),
+    success([0n, 40n * 10n ** 18n, 0n, 0n]),
+    success([0n, 30n * 10n ** 18n, 0n, 0n]),
+    success([0n, 5n * 10n ** 17n, 0n, 0n, 0n, 0n, 0n, 0n]),
   ]
+}
+
+function completeHistoryFixture() {
+  const start = 1_800_000_000
+  const end = start + 7 * 24 * 60 * 60
+  const point = (timestamp: number, blockNumber: string, price: string) => ({
+    timestamp,
+    blockNumber,
+    sharePrice: price,
+    totalAssets: '1000000000000',
+    totalSupply: '1000000000000',
+  })
+
+  return {
+    range: '7d' as const,
+    intervalSeconds: 3600 as const,
+    deployment: {
+      chainId: 421614,
+      housePool: '0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18',
+      seniorVault: '0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8',
+      juniorVault: '0x7258d6E91fbEFB8a16751575adbe9bBB3086D458',
+    },
+    coverage: { start, end, complete: true },
+    senior: {
+      apy7d: 0.0524,
+      return7d: 0.001,
+      points: [
+        point(start, '100', '1000000000000000000'),
+        point(start + 3 * 24 * 60 * 60, '200', '1000500000000000000'),
+        point(end, '300', '1001000000000000000'),
+      ],
+    },
+    junior: {
+      apy7d: -0.125,
+      return7d: -0.0025,
+      points: [
+        point(start, '100', '1000000000000000000'),
+        point(start + 3 * 24 * 60 * 60, '200', '999000000000000000'),
+        point(end, '300', '997500000000000000'),
+      ],
+    },
+  }
 }
 
 describe('Vaults page', () => {
@@ -161,6 +278,9 @@ describe('Vaults page', () => {
       data: mocks.quoteContractsData,
     }))
     mocks.readContractsData = undefined
+    mocks.pendingDeposits = []
+    mocks.pendingDiscoveryError = false
+    mocks.vaultHistory = undefined
   })
 
   it('shows both tranche choices and opens the Senior detail route', () => {
@@ -169,12 +289,53 @@ describe('Vaults page', () => {
     expect(screen.getByRole('heading', { name: /Supply the balance sheet behind the market/i })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'View Senior Vault' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'View Junior Vault' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /Read the LP guide/i })).toHaveAttribute(
+      'href',
+      'https://docs.plether.com/get-started/liquidity-provider-quickstart'
+    )
+    expect(screen.queryByRole('button', { name: 'Refresh' })).not.toBeInTheDocument()
+
+    const seniorCard = screen.getByRole('link', { name: 'View Senior Vault' })
+    const juniorCard = screen.getByRole('link', { name: 'View Junior Vault' })
+    expect(seniorCard).toHaveClass('h-full')
+    expect(juniorCard).toHaveClass('h-full')
+    expect(seniorCard.querySelector('article')).toHaveClass('flex', 'h-full', 'flex-col')
+    expect(juniorCard.querySelector('article')).toHaveClass('flex', 'h-full', 'flex-col')
+    expect(within(seniorCard).queryByText('check')).not.toBeInTheDocument()
+    expect(within(juniorCard).queryByText('check')).not.toBeInTheDocument()
+    expect(within(seniorCard).getByText('Loss order')).toBeInTheDocument()
+    expect(within(seniorCard).getByText('Return')).toBeInTheDocument()
+    expect(within(seniorCard).getByText('Withdrawals')).toBeInTheDocument()
+    expect(within(juniorCard).getByText('Loss order')).toBeInTheDocument()
+    expect(within(juniorCard).getByText('Return')).toBeInTheDocument()
+    expect(within(juniorCard).getByText('Withdrawals')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('link', { name: 'View Senior Vault' }))
 
     expect(screen.getByRole('heading', { name: 'Senior Vault', level: 1 })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Deposit USDC' })).toBeInTheDocument()
     expect(screen.getAllByText('Availability unavailable').length).toBeGreaterThan(0)
+  })
+
+  it('counts down to the next shared hourly vault epoch', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T12:34:56Z'))
+
+    const { unmount } = renderVaults()
+
+    expect(screen.getByText('Next epoch')).toBeInTheDocument()
+    expect(screen.getByText('25:04')).toBeInTheDocument()
+    expect(
+      screen.getByText('Queued deposits and withdrawals are processed when the timer ends'),
+    ).toBeInTheDocument()
+
+    act(() => {
+      vi.advanceTimersByTime(1_000)
+    })
+    expect(screen.getByText('25:03')).toBeInTheDocument()
+
+    unmount()
+    vi.useRealTimers()
   })
 
   it('exposes detail tabs, deposit and withdrawal modes, and wallet connection', () => {
@@ -205,21 +366,40 @@ describe('Vaults page', () => {
 
     renderVaults()
 
-    expect(screen.getByText('Live onchain')).toBeInTheDocument()
+    expect(screen.queryByText('Live onchain')).not.toBeInTheDocument()
     const seniorCard = screen.getByRole('link', { name: 'View Senior Vault' })
     const juniorCard = screen.getByRole('link', { name: 'View Junior Vault' })
-    expect(within(seniorCard).getByText('$70M')).toBeInTheDocument()
-    expect(within(seniorCard).getByText('$2.0000')).toBeInTheDocument()
-    expect(within(juniorCard).getByText('$50M')).toBeInTheDocument()
-    expect(within(juniorCard).getByText('$1.0000')).toBeInTheDocument()
+    expect(within(seniorCard).getByText('70M')).toBeInTheDocument()
+    expect(within(seniorCard).getByText('2.0000')).toBeInTheDocument()
+    expect(within(juniorCard).getByText('50M')).toBeInTheDocument()
+    expect(within(juniorCard).getByText('1.0000')).toBeInTheDocument()
+    expect(within(seniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
+    expect(within(juniorCard).getAllByText('USDC').length).toBeGreaterThanOrEqual(2)
+
+    expect(screen.queryByRole('button', { name: 'Pool liquidity details' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Capacity and capital waterfall' })).toBeInTheDocument()
+    expect(screen.getByText('HousePool liquidity')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Capital waterfall' })).toBeInTheDocument()
+    expect(screen.getByText('Estimated LONG capacity')).toBeInTheDocument()
+    expect(screen.getByText('Estimated SHORT capacity')).toBeInTheDocument()
+    expect(screen.getByText('Junior · first loss')).toBeInTheDocument()
+    expect(screen.getByText('Senior · last loss')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'One pool, two economic claims' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'When the pool loses' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'When the pool earns' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'When LPs withdraw' })).not.toBeInTheDocument()
 
     const readConfig = mocks.readContractsArgs.mock.calls[0][0] as {
       contracts: {
         chainId: number
         functionName: string
       }[]
+      query: {
+        refetchInterval: number
+      }
     }
-    expect(readConfig.contracts).toHaveLength(16)
+    expect(readConfig.query.refetchInterval).toBe(60_000)
+    expect(readConfig.contracts).toHaveLength(24)
     expect(readConfig.contracts.every(({ chainId }) => chainId === 421614)).toBe(true)
     expect(readConfig.contracts.map(({ functionName }) => functionName)).toEqual([
       'getPoolLiquidityView',
@@ -238,24 +418,147 @@ describe('Vaults page', () => {
       'maxRequestDeposit',
       'allowance',
       'allowance',
+      'currentDepositEpoch',
+      'currentDepositEpoch',
+      'convertToAssets',
+      'convertToAssets',
+      'getProtocolStatus',
+      'sides',
+      'sides',
+      'riskParams',
     ])
+    expect((readConfig.contracts[18] as { args?: bigint[] }).args).toEqual([10n ** 27n])
+    expect((readConfig.contracts[19] as { args?: bigint[] }).args).toEqual([10n ** 27n])
   })
 
-  it('distinguishes a shared pending path from mixed tranche availability', () => {
+  it('omits every performance surface until complete deployment-matched history exists', () => {
+    mocks.vaultHistory = {
+      ...completeHistoryFixture(),
+      coverage: { start: null, end: null, complete: false },
+      senior: { apy7d: null, return7d: null, points: [] },
+      junior: { apy7d: null, return7d: null, points: [] },
+    }
+
+    const overview = renderVaults()
+    expect(screen.queryByText(/7d APY/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/history unavailable|not indexed|indexer unavailable/i)).not.toBeInTheDocument()
+
+    overview.unmount()
+    renderVaults('/vaults/senior')
+    expect(screen.queryByRole('tab', { name: 'Performance' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/7d APY/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/history unavailable|not indexed|indexer unavailable/i)).not.toBeInTheDocument()
+  })
+
+  it('shows signed APY and seven-day charts only for complete matching history', () => {
+    mocks.vaultHistory = completeHistoryFixture()
+
+    const overview = renderVaults()
+    const seniorCard = screen.getByRole('link', { name: 'View Senior Vault' })
+    const juniorCard = screen.getByRole('link', { name: 'View Junior Vault' })
+    expect(within(seniorCard).getByText('+5.24%')).toHaveClass('text-positive')
+    expect(within(juniorCard).getByText('-12.50%')).toHaveClass('text-brand-orange')
+    expect(seniorCard.querySelector('path[data-vault-performance-series]')).toHaveAttribute(
+      'stroke',
+      '#FFAB96',
+    )
+    expect(juniorCard.querySelector('path[data-vault-performance-series]')).toHaveAttribute(
+      'stroke',
+      '#FFAB96',
+    )
+    const seniorMiniChart = within(seniorCard).getByRole('img', {
+      name: 'Senior Vault seven-day share price chart',
+    })
+    expect(seniorMiniChart.querySelector('[data-vault-chart-axis="x"]')).toBeInTheDocument()
+    expect(seniorMiniChart.querySelector('[data-vault-chart-axis="y"]')).toHaveAttribute('x1', '540')
+    const overviewYTicks = [...seniorMiniChart.querySelectorAll('[data-vault-chart-y-tick]')]
+    expect(overviewYTicks).toHaveLength(3)
+    expect(overviewYTicks.map((tick) => tick.textContent)).toContain('0.00%')
+    overviewYTicks.forEach((tick) => {
+      expect(tick).toHaveAttribute('text-anchor', 'start')
+      expect(tick.textContent).toContain('%')
+    })
+    fireEvent.pointerMove(seniorMiniChart, { pointerType: 'mouse', clientX: 291 })
+    expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).toHaveTextContent('1.0005')
+    fireEvent.pointerLeave(seniorMiniChart, { pointerType: 'mouse' })
+    expect(seniorCard.querySelector('[data-vault-chart-tooltip]')).not.toBeInTheDocument()
+    expect(within(seniorCard).getByText(/seven-day share price changed \+0.10%/i)).toBeInTheDocument()
+    expect(within(juniorCard).getByText(/seven-day share price changed -0.25%/i)).toBeInTheDocument()
+
+    overview.unmount()
+    renderVaults('/vaults/senior')
+    expect(screen.getByRole('tab', { name: 'Performance' })).toBeInTheDocument()
+    const seniorApyValues = screen.getAllByText('+5.24%')
+    expect(seniorApyValues.length).toBeGreaterThanOrEqual(2)
+    seniorApyValues.forEach((value) => {
+      expect(value).toHaveClass('text-positive')
+    })
+    expect(screen.getByText('+0.10% actual 7d return')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Performance' }))
+    const chart = screen.getByRole('img', {
+      name: 'Senior Vault interactive seven-day share price chart',
+    })
+    expect(chart.querySelector('[data-vault-chart-axis="x"]')).toBeInTheDocument()
+    expect(chart.querySelector('[data-vault-chart-axis="y"]')).toBeInTheDocument()
+    expect(screen.getAllByText('7d realized APY').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('7d return')).toBeInTheDocument()
+    expect(screen.getByText('Start share price')).toBeInTheDocument()
+    expect(screen.getByText('Current share price')).toBeInTheDocument()
+    expect(screen.queryByText(/30d/i)).not.toBeInTheDocument()
+
+    fireEvent.focus(chart)
+    expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
+    fireEvent.keyDown(chart, { key: 'Home' })
+    expect(screen.getByText('0.00% since start')).toBeInTheDocument()
+    fireEvent.keyDown(chart, { key: 'ArrowRight' })
+    expect(screen.getByText('+0.05% since start')).toBeInTheDocument()
+    fireEvent.pointerDown(chart, { pointerType: 'touch', clientX: 620 })
+    expect(screen.getByText('+0.10% since start')).toBeInTheDocument()
+  })
+
+  it('formats a near-zero negative APY without showing negative zero', () => {
+    const history = completeHistoryFixture()
+    history.senior.apy7d = -0.000001
+    mocks.vaultHistory = history
+
+    renderVaults()
+    const seniorCard = screen.getByRole('link', { name: 'View Senior Vault' })
+    const apyLabel = within(seniorCard).getByText('7d APY')
+    const apyValue = apyLabel.parentElement?.querySelector('dd')
+    expect(apyValue).toHaveTextContent('0.00%')
+    expect(apyValue).not.toHaveTextContent('-0.00%')
+  })
+
+  it('rejects otherwise complete history from a different deployment', () => {
+    mocks.vaultHistory = {
+      ...completeHistoryFixture(),
+      deployment: {
+        ...completeHistoryFixture().deployment,
+        housePool: '0x0000000000000000000000000000000000000001',
+      },
+    }
+
+    renderVaults('/vaults/junior')
+    expect(screen.queryByRole('tab', { name: 'Performance' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/7d APY/i)).not.toBeInTheDocument()
+  })
+
+  it('keeps tranche-specific deposit availability on the vault detail page', () => {
     mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
-    const { unmount } = renderVaults()
-    expect(screen.getByText('Pending epoch')).toBeInTheDocument()
+    const { unmount } = renderVaults('/vaults/senior')
+    expect(screen.getAllByText('Pending deposit epoch').length).toBeGreaterThan(0)
 
     unmount()
     mocks.readContractsData = liveReadFixture({
       seniorHighWaterMark: 70_000_000,
       seniorMaxDeposit: 1_000,
     })
-    renderVaults()
-    expect(screen.getByText('Varies by tranche')).toBeInTheDocument()
+    renderVaults('/vaults/senior')
+    expect(screen.getAllByText('Immediate deposit').length).toBeGreaterThan(0)
   })
 
-  it('keeps funded pending requests disabled until the full epoch lifecycle is available', async () => {
+  it('submits a funded pending request when the vault selects the epoch route', async () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
     mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
@@ -265,10 +568,59 @@ describe('Vaults page', () => {
     fireEvent.change(screen.getByLabelText('Amount to deposit'), { target: { value: '2' } })
     fireEvent.click(screen.getByRole('button', { name: 'Review deposit' }))
 
-    const lifecycleButton = await screen.findByRole('button', { name: 'Lifecycle coming soon' })
-    expect(lifecycleButton).toBeDisabled()
-    expect(screen.getByText('Pending lifecycle not enabled')).toBeInTheDocument()
+    const queueButton = await screen.findByRole('button', { name: 'Approve & queue' })
+    expect(queueButton).toBeEnabled()
+    fireEvent.click(queueButton)
+    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(usdc(2))
     expect(mocks.vaultDeposit).not.toHaveBeenCalled()
+  })
+
+  it('offers cancel, finalize, and claim actions for each queued-deposit stage', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
+    const baseDeposit = {
+      epochId: 500_002n,
+      assets: usdc(25),
+      epochAssets: usdc(100),
+      epochShares: shares(50),
+      claimedAssets: 0n,
+      claimedShares: 0n,
+      activationTimestamp: 1_800_007_200,
+    }
+
+    mocks.pendingDeposits = [{
+      ...baseDeposit,
+      finalized: false,
+      status: 'waiting',
+    }]
+    const { unmount } = renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel request for epoch 500002' }))
+    expect(mocks.vaultCancelPendingDeposit).toHaveBeenCalledWith(500_002n)
+
+    unmount()
+    mocks.pendingDeposits = [{
+      ...baseDeposit,
+      finalized: false,
+      status: 'ready',
+    }]
+    const readyView = renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finalize epoch 500002' }))
+    expect(mocks.vaultFinalizeDepositEpoch).toHaveBeenCalledWith(500_002n)
+
+    readyView.unmount()
+    mocks.pendingDeposits = [{
+      ...baseDeposit,
+      finalized: true,
+      status: 'claimable',
+      claimableShares: shares(12),
+    }]
+    renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Claim shares from epoch 500002' }))
+    expect(mocks.vaultClaimDepositShares).toHaveBeenCalledWith(500_002n)
   })
 
   it('reviews valid amounts on the correct network and switches a wrong-network wallet', async () => {
@@ -279,6 +631,7 @@ describe('Vaults page', () => {
       seniorMaxDeposit: 1_000,
     })
     mocks.quoteContractsData = [success(shares(50)), success(shares(50))]
+    mocks.vaultHistory = completeHistoryFixture()
 
     const { unmount } = renderVaults('/vaults/senior')
     const amountInput = screen.getByPlaceholderText('0.00')
@@ -291,6 +644,9 @@ describe('Vaults page', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'Deposit preview' })).toBeInTheDocument()
     })
+    const preview = screen.getByRole('dialog', { name: 'Deposit preview' })
+    expect(within(preview).getByText('7d realized APY')).toBeInTheDocument()
+    expect(within(preview).getByText('+5.24%')).toBeInTheDocument()
     expect(mocks.quoteRefetch).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByRole('button', { name: 'Approve & deposit' }))
     expect(mocks.vaultReset).toHaveBeenCalledTimes(1)

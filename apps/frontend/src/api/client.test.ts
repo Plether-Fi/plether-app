@@ -316,6 +316,43 @@ describe('Perps query requests', () => {
     }
   });
 
+  it('requests the fixed seven-day vault history anonymously', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      data: {
+        range: '7d',
+        intervalSeconds: 3600,
+        deployment: {
+          chainId: 421_614,
+          housePool: '0x1111111111111111111111111111111111111111',
+          seniorVault: '0x2222222222222222222222222222222222222222',
+          juniorVault: '0x3333333333333333333333333333333333333333',
+        },
+        coverage: { start: null, end: null, complete: false },
+        senior: { apy7d: null, return7d: null, points: [] },
+        junior: { apy7d: null, return7d: null, points: [] },
+      },
+      meta: { blockNumber: 0, chainId: 421614, cached: false },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new PlethApiClient({ baseUrl: '/api' });
+    const controller = new AbortController();
+
+    await client.getPerpsVaultHistory(controller.signal);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/perps/vaults/history?range=7d&interval=3600',
+      expect.objectContaining({
+        credentials: 'omit',
+        signal: expect.any(AbortSignal),
+      })
+    );
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(new Headers(init?.headers).has('Content-Type')).toBe(false);
+  });
+
   it('can force candle generation recovery through HTTP revalidation', async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: {},

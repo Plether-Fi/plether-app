@@ -5,6 +5,7 @@ const ROUTES = {
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
+const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
 const CANDLE_PAGE_SIZE = 500;
 const EDGE_CACHE_STORED_AT_HEADER = 'X-Plether-Edge-Cached-At';
 const EDGE_CACHE_STATUS_HEADER = 'X-Plether-Edge-Cache';
@@ -29,6 +30,10 @@ const PUBLIC_PERPS_CACHE_POLICIES = {
   '/api/perps/v1/perps/market/stats': {
     freshSeconds: 30,
     staleWhileRevalidateSeconds: 2 * 60,
+  },
+  [VAULT_HISTORY_PATH]: {
+    freshSeconds: 60,
+    staleWhileRevalidateSeconds: 5 * 60,
   },
 };
 const CANDLE_CURRENT_CACHE_POLICY = {
@@ -205,6 +210,14 @@ export function getPublicPerpsCachePolicy(request, url = new URL(request.url)) {
     return url.searchParams.get('includeComponents') === 'true'
       ? policy
       : ROLLUP_COMPAT_HISTORY_CACHE_POLICY;
+  }
+
+  if (url.pathname === VAULT_HISTORY_PATH) {
+    if (!hasExactQuery(url, ['range', 'interval'])) return undefined;
+    return url.searchParams.get('range') === '7d' &&
+      url.searchParams.get('interval') === '3600'
+      ? policy
+      : undefined;
   }
 
   return url.search === '' ? policy : undefined;

@@ -27,6 +27,14 @@ resource "aws_ssm_parameter" "perps_rpc_url" {
   value = var.perps_rpc_url
 }
 
+resource "aws_ssm_parameter" "vault_history_rpc_url" {
+  count = trimspace(var.vault_history_rpc_url) != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/vault-history-rpc-url"
+  type  = "SecureString"
+  value = var.vault_history_rpc_url
+}
+
 resource "aws_ssm_parameter" "keeper_private_key" {
   name  = "/plether/${var.environment}/keeper-private-key"
   type  = "SecureString"
