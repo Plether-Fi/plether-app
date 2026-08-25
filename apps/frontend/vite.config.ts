@@ -128,15 +128,6 @@ export default defineConfig(({ mode }) => {
             if (id.includes('react-dom') || id.includes('react-router')) {
               return 'react-vendor';
             }
-            if (id.includes('/viem/')) {
-              return 'web3-core';
-            }
-            if (id.includes('/wagmi/') || id.includes('@tanstack/react-query')) {
-              return 'web3-wagmi';
-            }
-            if (id.includes('@walletconnect/') || id.includes('@reown/')) {
-              return 'web3-walletconnect';
-            }
           }
         },
       },

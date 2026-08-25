@@ -2,10 +2,12 @@ import { http, type Config } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { defineChain } from 'viem'
 import { WagmiAdapter } from '@reown/appkit-adapter-wagmi'
-import { createAppKit } from '@reown/appkit/react'
 import { mainnet as appKitMainnet, sepolia as appKitSepolia } from '@reown/appkit/networks'
 import type { AppKitNetwork } from '@reown/appkit/networks'
 import { transactionManager } from '../services/transactionManager'
+
+type AppKitInstance = ReturnType<(typeof import('@reown/appkit/react'))['createAppKit']>
+type AppKitOpenOptions = Parameters<AppKitInstance['open']>[0]
 
 const envWalletConnectProjectId: unknown = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID
 const WALLETCONNECT_PROJECT_ID =
@@ -20,6 +22,7 @@ const ARBITRUM_SEPOLIA_RPC_URL =
 const APPKIT_THEME_OVERRIDE_ID = 'plether-appkit-theme-overrides'
 
 let appKitThemeObserver: MutationObserver | undefined
+let appKitPromise: Promise<AppKitInstance> | undefined
 
 export const anvil = defineChain({
   id: 31337,
@@ -61,13 +64,6 @@ const networks: [AppKitNetwork, ...AppKitNetwork[]] = [
   appKitArbitrumSepolia,
   appKitAnvil,
 ]
-
-export const appKitNetworksByChainId = {
-  [mainnet.id]: appKitMainnet,
-  [sepolia.id]: appKitSepolia,
-  [arbitrumSepolia.id]: appKitArbitrumSepolia,
-  [anvil.id]: appKitAnvil,
-} satisfies Record<number, AppKitNetwork>
 
 const metadata = {
   name: 'Plether',
@@ -173,24 +169,63 @@ export function syncAppKitModalStyleOverrides() {
   window.setTimeout(installAppKitThemeOverrides, 400)
 }
 
-createAppKit({
-  adapters: [wagmiAdapter],
-  projectId: WALLETCONNECT_PROJECT_ID,
-  networks,
-  metadata,
-  themeMode: 'dark',
-  themeVariables: {
-    '--w3m-font-family': "'Uncut Sans', ui-sans-serif, system-ui, sans-serif",
-    '--w3m-accent': '#FF572D',
-    '--w3m-color-mix': '#250917',
-    '--w3m-color-mix-strength': 18,
-    '--w3m-border-radius-master': '0px',
-    '--w3m-z-index': 80,
-  },
-})
-installAppKitThemeOverrides()
-syncAppKitModalStyleOverrides()
-setTimeout(installAppKitThemeOverrides, 0)
+export function ensureAppKit(): Promise<AppKitInstance> {
+  if (appKitPromise) return appKitPromise
+
+  appKitPromise = import('@reown/appkit/react').then(({ createAppKit }) => {
+    const appKit = createAppKit({
+      adapters: [wagmiAdapter],
+      projectId: WALLETCONNECT_PROJECT_ID,
+      networks,
+      metadata,
+      themeMode: 'dark',
+      themeVariables: {
+        '--w3m-font-family': "'Uncut Sans', ui-sans-serif, system-ui, sans-serif",
+        '--w3m-accent': '#FF572D',
+        '--w3m-color-mix': '#250917',
+        '--w3m-color-mix-strength': 18,
+        '--w3m-border-radius-master': '0px',
+        '--w3m-z-index': 80,
+      },
+    })
+    installAppKitThemeOverrides()
+    syncAppKitModalStyleOverrides()
+    return appKit
+  }).catch((error: unknown) => {
+    appKitPromise = undefined
+    throw error
+  })
+
+  return appKitPromise
+}
+
+export async function openAppKit(options?: AppKitOpenOptions): Promise<void> {
+  const appKit = await ensureAppKit()
+  syncAppKitModalStyleOverrides()
+  await appKit.open(options)
+  syncAppKitModalStyleOverrides()
+}
+
+export async function switchAppKitToArbitrumSepolia(): Promise<void> {
+  const appKit = await ensureAppKit()
+  await appKit.switchNetwork(appKitArbitrumSepolia, { throwOnFailure: true })
+}
+
+export function scheduleAppKitInitialization(): void {
+  const scheduleImport = () => {
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => { void ensureAppKit().catch(() => undefined) }, { timeout: 1_500 })
+    } else {
+      window.setTimeout(() => { void ensureAppKit().catch(() => undefined) }, 1_000)
+    }
+  }
+
+  if (document.readyState === 'complete') {
+    scheduleImport()
+  } else {
+    window.addEventListener('load', scheduleImport, { once: true })
+  }
+}
 
 type Chains = readonly [typeof mainnet, typeof sepolia, typeof arbitrumSepolia, typeof anvil]
 export const config = wagmiAdapter.wagmiConfig as Config<Chains>
