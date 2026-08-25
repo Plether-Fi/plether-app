@@ -58,20 +58,20 @@ describe('useVaultTransactions', () => {
     mocks.writeContractAsync.mockResolvedValue('0xabc')
   })
 
-  it('approves exact USDC before an immediate deposit when allowance is insufficient', async () => {
+  it('approves exact USDC before queueing a deposit when allowance is insufficient', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
       allowance: 0n,
     }))
 
     act(() => {
-      result.current.deposit(2_000_000n)
+      result.current.requestDeposit(2_000_000n)
     })
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('supply')
     const steps = config.buildSteps()
-    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Deposit USDC'])
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
 
     await steps[0].action()
     await steps[1].action()
@@ -83,24 +83,24 @@ describe('useVaultTransactions', () => {
     }))
     expect(mocks.simulateContract).toHaveBeenNthCalledWith(2, expect.objectContaining({
       address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
-      functionName: 'deposit',
+      functionName: 'requestDeposit',
       args: [2_000_000n, mocks.address],
     }))
     expect(mocks.writeContractAsync).toHaveBeenCalledTimes(2)
   })
 
-  it('skips approval when the current allowance covers the deposit', () => {
+  it('skips approval when the current allowance covers a queued deposit', () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
       allowance: 5_000_000n,
     }))
 
     act(() => {
-      result.current.deposit(2_000_000n)
+      result.current.requestDeposit(2_000_000n)
     })
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
-    expect(config.buildSteps().map(({ label }) => label)).toEqual(['Deposit USDC'])
+    expect(config.buildSteps().map(({ label }) => label)).toEqual(['Queue deposit'])
   })
 
   it('approves exact USDC and submits a queued deposit request', async () => {
@@ -132,36 +132,36 @@ describe('useVaultTransactions', () => {
     }))
   })
 
-  it('simulates and submits a synchronous owner withdrawal', async () => {
+  it('simulates and submits an asynchronous share redemption request', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
       allowance: 0n,
     }))
 
     act(() => {
-      result.current.withdraw(3_000_000n)
+      result.current.requestRedeem(3_000_000n)
     })
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.type).toBe('withdraw')
-    const [withdrawStep] = config.buildSteps()
-    await withdrawStep.action()
+    const [requestStep] = config.buildSteps()
+    expect(requestStep.label).toBe('Queue withdrawal')
+    await requestStep.action()
 
     expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
       address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-      functionName: 'withdraw',
+      functionName: 'requestRedeem',
       args: [3_000_000n, mocks.address, mocks.address],
     }))
     expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
       account: mocks.address,
       chainId: 421614,
-      functionName: 'withdraw',
+      functionName: 'requestRedeem',
     }))
   })
 
   it.each([
-    ['cancelPendingDeposit', 'Cancel request', 'withdraw'],
-    ['finalizeDepositEpoch', 'Finalize epoch', 'supply'],
+    ['cancelPendingDeposit', 'Recover USDC', 'withdraw'],
     ['claimDepositShares', 'Claim shares', 'supply'],
   ] as const)('simulates and submits %s for an epoch', async (method, label, type) => {
     const { result } = renderHook(() => useVaultTransactions({
@@ -191,6 +191,52 @@ describe('useVaultTransactions', () => {
     }))
   })
 
+  it('cancels a queued withdrawal for the connected controller', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.cancelRedeemRequest(500_002n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    const [step] = config.buildSteps()
+    await step.action()
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      functionName: 'cancelRedeemRequest',
+      args: [500_002n, mocks.address, mocks.address],
+    }))
+  })
+
+  it('claims funded withdrawal assets and an unfunded share refund', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.claimRedeem(500_002n, 3_000_000n)
+    })
+    let config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    await config.buildSteps()[0].action()
+    expect(mocks.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'claimRedeem',
+      args: [500_002n, 3_000_000n, mocks.address, mocks.address],
+    }))
+
+    act(() => {
+      result.current.claimRedeemRefund(500_003n)
+    })
+    config = mocks.execute.mock.calls[1][0] as SequenceConfig
+    await config.buildSteps()[0].action()
+    expect(mocks.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'claimRedeemRefund',
+      args: [500_003n, mocks.address, mocks.address],
+    }))
+  })
+
   it('stops a multi-step deposit if the connected account changes after approval', async () => {
     const { result } = renderHook(() => useVaultTransactions({
       vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
@@ -198,7 +244,7 @@ describe('useVaultTransactions', () => {
     }))
 
     act(() => {
-      result.current.deposit(2_000_000n)
+      result.current.requestDeposit(2_000_000n)
     })
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
@@ -218,7 +264,7 @@ describe('useVaultTransactions', () => {
     }))
 
     act(() => {
-      result.current.deposit(2_000_000n)
+      result.current.requestDeposit(2_000_000n)
     })
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig

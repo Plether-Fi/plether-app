@@ -36,10 +36,10 @@ export { useApprovalFlow } from './useApprovalFlow'
 export { useTransactionSequence, type TransactionStep } from './useTransactionSequence'
 export { useVaultTransactions } from './useVaultTransactions'
 export {
-  usePendingVaultDeposits,
-  type PendingVaultDeposit,
-  type PendingVaultDepositStatus,
-} from './usePendingVaultDeposits'
+  useVaultRequests,
+  type VaultDepositRequest,
+  type VaultRedeemRequest,
+} from './useVaultRequests'
 export { useMintFlow } from './useMintFlow'
 export { usePerpsMarket } from './usePerpsMarket'
 export { usePerpsAccount, type PerpsPendingOrder, type PerpsPosition } from './usePerpsAccount'

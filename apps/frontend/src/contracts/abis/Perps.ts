@@ -166,6 +166,50 @@ const ACCOUNT_LEDGER_SNAPSHOT_COMPONENTS = [
   { name: 'liquidatable', type: 'bool' },
 ] as const
 
+const TRANCHE_VIEW_COMPONENTS = [
+  { name: 'totalAssetsUsdc', type: 'uint256' },
+  { name: 'totalShares', type: 'uint256' },
+  { name: 'sharePrice', type: 'uint256' },
+  { name: 'maxWithdrawUsdc', type: 'uint256' },
+  { name: 'frozenLpFeeBps', type: 'uint256' },
+  { name: 'depositEnabled', type: 'bool' },
+  { name: 'withdrawEnabled', type: 'bool' },
+  { name: 'oracleFrozen', type: 'bool' },
+] as const
+
+const TRANCHE_QUEUE_VIEW_COMPONENTS = [
+  { name: 'vault', type: 'address' },
+  { name: 'currentEpoch', type: 'uint256' },
+  { name: 'cutoffEpoch', type: 'uint256' },
+  { name: 'nextRequestEpoch', type: 'uint256' },
+  { name: 'nextRequestCutoffTime', type: 'uint256' },
+  { name: 'depositHeadEpoch', type: 'uint256' },
+  { name: 'depositHeadAssets', type: 'uint256' },
+  { name: 'redeemHeadEpoch', type: 'uint256' },
+  { name: 'redeemHeadShares', type: 'uint256' },
+  { name: 'depositBacklog', type: 'bool' },
+  { name: 'redeemBacklog', type: 'bool' },
+  { name: 'settlementLive', type: 'bool' },
+  { name: 'poolPaused', type: 'bool' },
+] as const
+
+const LP_REQUEST_STATE_VIEW_COMPONENTS = [
+  { name: 'vault', type: 'address' },
+  { name: 'requestId', type: 'uint256' },
+  { name: 'controller', type: 'address' },
+  { name: 'pendingDepositAssets', type: 'uint256' },
+  { name: 'pendingDepositSharesEstimate', type: 'uint256' },
+  { name: 'claimableDepositAssets', type: 'uint256' },
+  { name: 'claimableDepositShares', type: 'uint256' },
+  { name: 'pendingRedeemShares', type: 'uint256' },
+  { name: 'pendingRedeemAssetsEstimate', type: 'uint256' },
+  { name: 'claimableRedeemShares', type: 'uint256' },
+  { name: 'claimableRedeemAssets', type: 'uint256' },
+  { name: 'refundableDepositAssets', type: 'uint256' },
+  { name: 'refundableRedeemShares', type: 'uint256' },
+  { name: 'redeemRefundPending', type: 'bool' },
+] as const
+
 export const PERPS_PUBLIC_LENS_ABI = [
   {
     type: 'function',
@@ -249,6 +293,38 @@ export const PERPS_PUBLIC_LENS_ABI = [
     stateMutability: 'view',
     inputs: [{ name: 'account', type: 'address' }],
     outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'getSeniorTranche',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'viewData', type: 'tuple', components: TRANCHE_VIEW_COMPONENTS }],
+  },
+  {
+    type: 'function',
+    name: 'getJuniorTranche',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'viewData', type: 'tuple', components: TRANCHE_VIEW_COMPONENTS }],
+  },
+  {
+    type: 'function',
+    name: 'getTrancheQueues',
+    stateMutability: 'view',
+    inputs: [{ name: 'isSenior', type: 'bool' }],
+    outputs: [{ name: 'viewData', type: 'tuple', components: TRANCHE_QUEUE_VIEW_COMPONENTS }],
+  },
+  {
+    type: 'function',
+    name: 'getLpRequestState',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'isSenior', type: 'bool' },
+      { name: 'requestId', type: 'uint256' },
+      { name: 'controller', type: 'address' },
+    ],
+    outputs: [{ name: 'viewData', type: 'tuple', components: LP_REQUEST_STATE_VIEW_COMPONENTS }],
   },
 ] as const
 
@@ -558,12 +634,67 @@ export const PERPS_HOUSE_POOL_ABI = [
           { name: 'seniorPrincipalUsdc', type: 'uint256' },
           { name: 'juniorPrincipalUsdc', type: 'uint256' },
           { name: 'seniorHighWaterMarkUsdc', type: 'uint256' },
+          { name: 'currentTerminalDeficitUsdc', type: 'uint256' },
           { name: 'markFresh', type: 'bool' },
           { name: 'oracleFrozen', type: 'bool' },
           { name: 'degradedMode', type: 'bool' },
         ],
       },
     ],
+  },
+  {
+    type: 'function',
+    name: 'getPendingTrancheState',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [
+      { name: 'seniorPrincipalUsdc', type: 'uint256' },
+      { name: 'juniorPrincipalUsdc', type: 'uint256' },
+      { name: 'maxSeniorWithdrawUsdc', type: 'uint256' },
+      { name: 'maxJuniorWithdrawUsdc', type: 'uint256' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'maxSeniorExposureUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'capacity', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxSeniorShareBps',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'capacityBps', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'getSeniorDepositCapacity',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'capacity', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'reservedSeniorDepositAssetsUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'reservedAssets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'areSeniorDepositReservationsWithinLimits',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'withinLimits', type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'minTrancheDepositUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'minimumAssets', type: 'uint256' }],
   },
 ] as const
 

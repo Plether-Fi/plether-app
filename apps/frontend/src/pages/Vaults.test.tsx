@@ -22,17 +22,26 @@ const mocks = vi.hoisted(() => ({
     result?: unknown
   }[] | undefined,
   refetch: vi.fn(),
-  pendingDeposits: [] as {
-    epochId: bigint
-    assets: bigint
-    epochAssets: bigint
-    epochShares: bigint
-    claimedAssets: bigint
-    claimedShares: bigint
-    claimableShares?: bigint
-    activationTimestamp: number
-    finalized: boolean
-    status: 'waiting' | 'ready' | 'claimable'
+  depositRequests: [] as {
+    requestId: bigint
+    targetTimestamp: number
+    pendingAssets: bigint
+    pendingSharesEstimate: bigint
+    claimableAssets: bigint
+    claimableShares: bigint
+    refundableAssets: bigint
+    matured: boolean
+  }[],
+  redeemRequests: [] as {
+    requestId: bigint
+    targetTimestamp: number
+    pendingShares: bigint
+    pendingAssetsEstimate: bigint
+    claimableShares: bigint
+    claimableAssets: bigint
+    refundableShares: bigint
+    refundPending: boolean
+    matured: boolean
   }[],
   pendingRefresh: vi.fn(),
   pendingDiscoveryError: false,
@@ -71,12 +80,13 @@ const mocks = vi.hoisted(() => ({
   } | undefined,
   switchToArbitrumSepolia: vi.fn(),
   vaultCancelPendingDeposit: vi.fn(),
+  vaultCancelRedeemRequest: vi.fn(),
   vaultClaimDepositShares: vi.fn(),
-  vaultDeposit: vi.fn(),
-  vaultFinalizeDepositEpoch: vi.fn(),
+  vaultClaimRedeem: vi.fn(),
+  vaultClaimRedeemRefund: vi.fn(),
   vaultRequestDeposit: vi.fn(),
+  vaultRequestRedeem: vi.fn(),
   vaultReset: vi.fn(),
-  vaultWithdraw: vi.fn(),
 }))
 
 vi.mock('@reown/appkit/react', () => ({
@@ -95,7 +105,7 @@ vi.mock('wagmi', () => ({
         functionName?: string
       }[]
     }
-    const isQuoteRead = config.contracts?.[0]?.functionName === 'previewDeposit'
+    const isQuoteRead = config.contracts?.[0]?.functionName === 'estimateDepositShares'
 
     return {
       data: isQuoteRead ? mocks.quoteContractsData : mocks.readContractsData,
@@ -116,8 +126,9 @@ vi.mock('../api', () => ({
 }))
 
 vi.mock('../hooks', () => ({
-  usePendingVaultDeposits: () => ({
-    deposits: mocks.pendingDeposits,
+  useVaultRequests: () => ({
+    depositRequests: mocks.depositRequests,
+    redeemRequests: mocks.redeemRequests,
     isLoading: false,
     discoveryError: mocks.pendingDiscoveryError,
     refresh: mocks.pendingRefresh,
@@ -129,12 +140,13 @@ vi.mock('../hooks', () => ({
     clearSwitchError: mocks.clearSwitchError,
   }),
   useVaultTransactions: () => ({
-    deposit: mocks.vaultDeposit,
     requestDeposit: mocks.vaultRequestDeposit,
-    withdraw: mocks.vaultWithdraw,
+    requestRedeem: mocks.vaultRequestRedeem,
     cancelPendingDeposit: mocks.vaultCancelPendingDeposit,
-    finalizeDepositEpoch: mocks.vaultFinalizeDepositEpoch,
+    cancelRedeemRequest: mocks.vaultCancelRedeemRequest,
     claimDepositShares: mocks.vaultClaimDepositShares,
+    claimRedeem: mocks.vaultClaimRedeem,
+    claimRedeemRefund: mocks.vaultClaimRedeemRefund,
     isRunning: false,
     isSuccess: false,
     isError: false,
@@ -168,19 +180,15 @@ function success(result: unknown) {
 
 function liveReadFixture({
   degradedMode = false,
-  juniorMaxDeposit = 0,
   juniorMaxRequestDeposit = 10_000,
   seniorHighWaterMark = 72_000_000,
-  seniorMaxDeposit = 0,
   seniorMaxRequestDeposit = 10_000,
   seniorPrincipal = 70_000_000,
   walletUsdc = 1_000,
 }: {
   degradedMode?: boolean
-  juniorMaxDeposit?: number
   juniorMaxRequestDeposit?: number
   seniorHighWaterMark?: number
-  seniorMaxDeposit?: number
   seniorMaxRequestDeposit?: number
   seniorPrincipal?: number
   walletUsdc?: number
@@ -195,33 +203,44 @@ function liveReadFixture({
       usdc(seniorPrincipal),
       usdc(50_000_000),
       usdc(seniorHighWaterMark),
+      0n,
       true,
       false,
       degradedMode,
     ]),
+    { status: 'failure' as const },
     success(usdc(70_000_000)),
     success(shares(35_000_000)),
     success(shares(250)),
-    success(usdc(seniorMaxDeposit)),
-    success(usdc(400)),
+    success(usdc(seniorMaxRequestDeposit)),
+    success(shares(250)),
     success(usdc(50_000_000)),
     success(shares(50_000_000)),
     success(shares(100)),
-    success(usdc(juniorMaxDeposit)),
-    success(usdc(150)),
-    success(usdc(walletUsdc)),
-    success(usdc(seniorMaxRequestDeposit)),
     success(usdc(juniorMaxRequestDeposit)),
+    success(shares(100)),
+    success(usdc(walletUsdc)),
     success(0n),
     success(0n),
-    success(500_000n),
-    success(500_000n),
+    success([500_001n, 1_800_003_300n]),
+    success([500_001n, 1_800_003_300n]),
     success(2n * 10n ** 24n),
     success(10n ** 24n),
     success([0, 10n ** 18n, 0n, false, false, true, true]),
     success([0n, 40n * 10n ** 18n, 0n, 0n]),
     success([0n, 30n * 10n ** 18n, 0n, 0n]),
     success([0n, 5n * 10n ** 17n, 0n, 0n, 0n, 0n, 0n, 0n]),
+    success([usdc(70_000_000), shares(35_000_000), 2n * 10n ** 18n, usdc(70_000_000), 25n, true, true, false]),
+    success([usdc(50_000_000), shares(50_000_000), 10n ** 18n, usdc(20_000_000), 25n, true, true, false]),
+    success(['0x0000000000000000000000000000000000000001', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, false]),
+    success(['0x0000000000000000000000000000000000000002', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, false]),
+    success([usdc(70_000_000), usdc(50_000_000), usdc(70_000_000), usdc(20_000_000)]),
+    success(usdc(100_000_000)),
+    success(7_500n),
+    success(usdc(30_000_000)),
+    success(usdc(5_000_000)),
+    success(true),
+    success(usdc(1)),
   ]
 }
 
@@ -278,7 +297,8 @@ describe('Vaults page', () => {
       data: mocks.quoteContractsData,
     }))
     mocks.readContractsData = undefined
-    mocks.pendingDeposits = []
+    mocks.depositRequests = []
+    mocks.redeemRequests = []
     mocks.pendingDiscoveryError = false
     mocks.vaultHistory = undefined
   })
@@ -323,10 +343,10 @@ describe('Vaults page', () => {
 
     const { unmount } = renderVaults()
 
-    expect(screen.getByText('Next epoch')).toBeInTheDocument()
+    expect(screen.getByText('Request cutoff')).toBeInTheDocument()
     expect(screen.getByText('25:04')).toBeInTheDocument()
     expect(
-      screen.getByText('Queued deposits and withdrawals are processed when the timer ends'),
+      screen.getByText('Requests after this timer join the following hourly batch'),
     ).toBeInTheDocument()
 
     act(() => {
@@ -399,36 +419,46 @@ describe('Vaults page', () => {
       }
     }
     expect(readConfig.query.refetchInterval).toBe(60_000)
-    expect(readConfig.contracts).toHaveLength(24)
+    expect(readConfig.contracts).toHaveLength(34)
     expect(readConfig.contracts.every(({ chainId }) => chainId === 421614)).toBe(true)
     expect(readConfig.contracts.map(({ functionName }) => functionName)).toEqual([
+      'getPoolLiquidityView',
       'getPoolLiquidityView',
       'totalAssets',
       'totalSupply',
       'balanceOf',
-      'maxDeposit',
-      'maxWithdraw',
+      'maxRequestDeposit',
+      'maxRequestRedeem',
       'totalAssets',
       'totalSupply',
       'balanceOf',
-      'maxDeposit',
-      'maxWithdraw',
+      'maxRequestDeposit',
+      'maxRequestRedeem',
       'balanceOf',
-      'maxRequestDeposit',
-      'maxRequestDeposit',
       'allowance',
       'allowance',
-      'currentDepositEpoch',
-      'currentDepositEpoch',
+      'getRequestEpochWindow',
+      'getRequestEpochWindow',
       'convertToAssets',
       'convertToAssets',
       'getProtocolStatus',
       'sides',
       'sides',
       'riskParams',
+      'getSeniorTranche',
+      'getJuniorTranche',
+      'getTrancheQueues',
+      'getTrancheQueues',
+      'getPendingTrancheState',
+      'maxSeniorExposureUsdc',
+      'maxSeniorShareBps',
+      'getSeniorDepositCapacity',
+      'reservedSeniorDepositAssetsUsdc',
+      'areSeniorDepositReservationsWithinLimits',
+      'minTrancheDepositUsdc',
     ])
+    expect((readConfig.contracts[17] as { args?: bigint[] }).args).toEqual([10n ** 27n])
     expect((readConfig.contracts[18] as { args?: bigint[] }).args).toEqual([10n ** 27n])
-    expect((readConfig.contracts[19] as { args?: bigint[] }).args).toEqual([10n ** 27n])
   })
 
   it('omits every performance surface until complete deployment-matched history exists', () => {
@@ -544,18 +574,19 @@ describe('Vaults page', () => {
     expect(screen.queryByText(/7d APY/i)).not.toBeInTheDocument()
   })
 
-  it('keeps tranche-specific deposit availability on the vault detail page', () => {
+  it('routes deposits through the epoch queue and omits obsolete detail labels', () => {
     mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
-    const { unmount } = renderVaults('/vaults/senior')
-    expect(screen.getAllByText('Pending deposit epoch').length).toBeGreaterThan(0)
-
-    unmount()
-    mocks.readContractsData = liveReadFixture({
-      seniorHighWaterMark: 70_000_000,
-      seniorMaxDeposit: 1_000,
-    })
     renderVaults('/vaults/senior')
-    expect(screen.getAllByText('Immediate deposit').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Queued deposits open').length).toBeGreaterThan(0)
+    expect(screen.getByText(/Current Senior capacity:/)).toBeInTheDocument()
+    expect(screen.getByText(/Current request window closes in/)).toBeInTheDocument()
+    expect(screen.getByText('5 minutes before each hour')).toBeInTheDocument()
+    expect(screen.queryByText('Immediate deposit max')).not.toBeInTheDocument()
+    expect(screen.queryByText('Lower relative risk')).not.toBeInTheDocument()
+    expect(screen.queryByText('Live onchain')).not.toBeInTheDocument()
+    expect(screen.queryByText('Onchain action')).not.toBeInTheDocument()
+    expect(screen.queryByText(/2 epoch IDs/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Withdrawal cooldown/i)).not.toBeInTheDocument()
   })
 
   it('submits a funded pending request when the vault selects the epoch route', async () => {
@@ -572,64 +603,67 @@ describe('Vaults page', () => {
     expect(queueButton).toBeEnabled()
     fireEvent.click(queueButton)
     expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(usdc(2))
-    expect(mocks.vaultDeposit).not.toHaveBeenCalled()
   })
 
-  it('offers cancel, finalize, and claim actions for each queued-deposit stage', () => {
+  it('manages asynchronous deposit and withdrawal requests without user finalization', () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
     mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
-    const baseDeposit = {
-      epochId: 500_002n,
-      assets: usdc(25),
-      epochAssets: usdc(100),
-      epochShares: shares(50),
-      claimedAssets: 0n,
-      claimedShares: 0n,
-      activationTimestamp: 1_800_007_200,
-    }
-
-    mocks.pendingDeposits = [{
-      ...baseDeposit,
-      finalized: false,
-      status: 'waiting',
+    mocks.depositRequests = [{
+      requestId: 500_002n,
+      targetTimestamp: 1_800_007_200,
+      pendingAssets: usdc(25),
+      pendingSharesEstimate: shares(12),
+      claimableAssets: 0n,
+      claimableShares: 0n,
+      refundableAssets: 0n,
+      matured: false,
     }]
     const { unmount } = renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Cancel request for epoch 500002' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel request' }))
     expect(mocks.vaultCancelPendingDeposit).toHaveBeenCalledWith(500_002n)
 
     unmount()
-    mocks.pendingDeposits = [{
-      ...baseDeposit,
-      finalized: false,
-      status: 'ready',
-    }]
-    const readyView = renderVaults('/vaults/senior')
-    fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Finalize epoch 500002' }))
-    expect(mocks.vaultFinalizeDepositEpoch).toHaveBeenCalledWith(500_002n)
-
-    readyView.unmount()
-    mocks.pendingDeposits = [{
-      ...baseDeposit,
-      finalized: true,
-      status: 'claimable',
+    mocks.depositRequests = [{
+      requestId: 500_002n,
+      targetTimestamp: 1_800_007_200,
+      pendingAssets: usdc(25),
+      pendingSharesEstimate: shares(12),
+      claimableAssets: usdc(25),
       claimableShares: shares(12),
+      refundableAssets: 0n,
+      matured: true,
+    }]
+    const claimView = renderVaults('/vaults/senior')
+    fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
+    expect(screen.queryByRole('button', { name: /Finalize/i })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Claim shares' }))
+    expect(mocks.vaultClaimDepositShares).toHaveBeenCalledWith(500_002n)
+
+    claimView.unmount()
+    mocks.depositRequests = []
+    mocks.redeemRequests = [{
+      requestId: 500_003n,
+      targetTimestamp: 1_800_010_800,
+      pendingShares: 0n,
+      pendingAssetsEstimate: usdc(10),
+      claimableShares: shares(5),
+      claimableAssets: usdc(10),
+      refundableShares: 0n,
+      refundPending: false,
+      matured: true,
     }]
     renderVaults('/vaults/senior')
     fireEvent.click(screen.getByRole('tab', { name: 'Your position' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Claim shares from epoch 500002' }))
-    expect(mocks.vaultClaimDepositShares).toHaveBeenCalledWith(500_002n)
+    fireEvent.click(screen.getByRole('button', { name: 'Claim USDC' }))
+    expect(mocks.vaultClaimRedeem).toHaveBeenCalledWith(500_003n, shares(5))
   })
 
   it('reviews valid amounts on the correct network and switches a wrong-network wallet', async () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
-    mocks.readContractsData = liveReadFixture({
-      seniorHighWaterMark: 70_000_000,
-      seniorMaxDeposit: 1_000,
-    })
+    mocks.readContractsData = liveReadFixture({ seniorHighWaterMark: 70_000_000 })
     mocks.quoteContractsData = [success(shares(50)), success(shares(50))]
     mocks.vaultHistory = completeHistoryFixture()
 
@@ -648,9 +682,9 @@ describe('Vaults page', () => {
     expect(within(preview).getByText('7d realized APY')).toBeInTheDocument()
     expect(within(preview).getByText('+5.24%')).toBeInTheDocument()
     expect(mocks.quoteRefetch).toHaveBeenCalledTimes(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Approve & deposit' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Approve & queue' }))
     expect(mocks.vaultReset).toHaveBeenCalledTimes(1)
-    expect(mocks.vaultDeposit).toHaveBeenCalledWith(usdc(100))
+    expect(mocks.vaultRequestDeposit).toHaveBeenCalledWith(usdc(100))
 
     unmount()
     mocks.chainId = 1
@@ -660,7 +694,7 @@ describe('Vaults page', () => {
     expect(mocks.appKitOpen).not.toHaveBeenCalled()
   })
 
-  it('blocks unsafe or unavailable previews', () => {
+  it('blocks excess deposits but still permits withdrawal requests in degraded mode', () => {
     mocks.account.address = '0x1111111111111111111111111111111111111111'
     mocks.account.isConnected = true
     mocks.readContractsData = liveReadFixture({
@@ -678,8 +712,8 @@ describe('Vaults page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
     fireEvent.change(screen.getByPlaceholderText('0.00'), { target: { value: '0.5' } })
-    expect(screen.getByRole('button', { name: 'Review withdraw' })).toBeDisabled()
-    expect(screen.getByText('Withdrawals below 1 USDC are only allowed for a complete residual exit.')).toBeInTheDocument()
-    expect(screen.getByText('Withdrawals are unavailable while the protocol is in degraded mode.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review withdraw' })).toBeEnabled()
+    expect(screen.queryByText(/Withdrawals below 1 USDC/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Withdrawals are unavailable while the protocol is in degraded mode/i)).not.toBeInTheDocument()
   })
 })

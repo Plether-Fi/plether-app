@@ -27,10 +27,11 @@ import {
 } from '../contracts/perpsAddresses'
 import { PERPS_POSITION_SIZE_TO_USDC_SCALE } from '../contracts/perpsConstants'
 import {
-  usePendingVaultDeposits,
   useSwitchToArbitrumSepolia,
+  useVaultRequests,
   useVaultTransactions,
-  type PendingVaultDeposit,
+  type VaultDepositRequest,
+  type VaultRedeemRequest,
 } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
@@ -80,6 +81,7 @@ interface PoolSnapshot {
   seniorPrincipalUsdc?: bigint
   juniorPrincipalUsdc?: bigint
   seniorHighWaterMarkUsdc?: bigint
+  currentTerminalDeficitUsdc?: bigint
   markFresh?: boolean
   oracleFrozen?: boolean
   degradedMode?: boolean
@@ -87,6 +89,12 @@ interface PoolSnapshot {
   seniorImpairmentGapUsdc?: bigint
   seniorPoolWithdrawCapUsdc?: bigint
   juniorPoolWithdrawCapUsdc?: bigint
+  maxSeniorExposureUsdc?: bigint
+  maxSeniorShareBps?: bigint
+  seniorDepositCapacityUsdc?: bigint
+  reservedSeniorDepositAssetsUsdc?: bigint
+  seniorReservationsWithinLimits?: boolean
+  minTrancheDepositUsdc?: bigint
   markPrice?: bigint
   longOpenCapacityUsdc?: bigint
   shortOpenCapacityUsdc?: bigint
@@ -96,11 +104,20 @@ interface TrancheLiveData {
   totalAssets?: bigint
   totalSupply?: bigint
   userShares?: bigint
-  maxDeposit?: bigint
   maxRequestDeposit?: bigint
-  maxWithdraw?: bigint
+  maxRequestRedeem?: bigint
   allowance?: bigint
-  currentDepositEpoch?: bigint
+  currentEpoch?: bigint
+  nextRequestEpoch?: bigint
+  nextRequestCutoffTime?: bigint
+  depositBacklog?: boolean
+  redeemBacklog?: boolean
+  settlementLive?: boolean
+  poolPaused?: boolean
+  frozenLpFeeBps?: bigint
+  depositEnabled?: boolean
+  withdrawEnabled?: boolean
+  poolWithdrawCapUsdc?: bigint
   sharePrice?: number
   hasCoreData: boolean
   hasDepositData: boolean
@@ -125,6 +142,32 @@ const VAULT_PERFORMANCE_CHART_COLOR = '#FFAB96'
 const EXPLORER_BASE_URL = 'https://sepolia.arbiscan.io/address'
 const DEPOSIT_PROBE_ACCOUNT = '0x000000000000000000000000000000000000dEaD' as Address
 const WAD = 10n ** 18n
+
+// Kept only for the pre-PR #62 Sepolia deployment so the page remains inspectable
+// while the replacement contracts are being prepared.
+const LEGACY_POOL_LIQUIDITY_ABI = [{
+  type: 'function',
+  name: 'getPoolLiquidityView',
+  stateMutability: 'view',
+  inputs: [],
+  outputs: [{
+    name: 'viewData',
+    type: 'tuple',
+    components: [
+      { name: 'totalAssetsUsdc', type: 'uint256' },
+      { name: 'freeUsdc', type: 'uint256' },
+      { name: 'withdrawalReservedUsdc', type: 'uint256' },
+      { name: 'pendingRecapitalizationUsdc', type: 'uint256' },
+      { name: 'pendingTradingRevenueUsdc', type: 'uint256' },
+      { name: 'seniorPrincipalUsdc', type: 'uint256' },
+      { name: 'juniorPrincipalUsdc', type: 'uint256' },
+      { name: 'seniorHighWaterMarkUsdc', type: 'uint256' },
+      { name: 'markFresh', type: 'bool' },
+      { name: 'oracleFrozen', type: 'bool' },
+      { name: 'degradedMode', type: 'bool' },
+    ],
+  }],
+}] as const
 
 const TRANCHES: Record<TrancheId, TrancheDefinition> = {
   senior: {
@@ -175,7 +218,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     eyebrow: 'Residual capital',
     shortDescription: 'First-loss capital with variable residual upside.',
     description:
-      'Junior funds the Senior target coupon and absorbs HousePool losses first. In exchange, it receives residual realized trading revenue after Senior restoration and coupon obligations are satisfied.',
+      'Junior funds the Senior target coupon and absorbs HousePool losses first. In exchange, it receives residual realized trading revenue, including the LP share of liquidation charges, after Senior restoration and coupon obligations are satisfied.',
     returnModel: 'Residual HousePool performance',
     lossPriority: 'First loss',
     withdrawalPriority: 'Remainder after matured Senior requests and the required buffer',
@@ -194,7 +237,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
       },
       {
         label: 'Return',
-        text: 'Receives residual revenue after Senior coupon and restoration obligations',
+        text: 'Receives residual revenue and the LP share of liquidation charges after Senior obligations',
       },
       {
         label: 'Withdrawals',
@@ -235,10 +278,6 @@ function asBigInt(value: unknown): bigint | undefined {
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined
-}
-
-function minBigInt(left: bigint, right: bigint): bigint {
-  return left < right ? left : right
 }
 
 function openInterestNotionalUsdc(
@@ -307,6 +346,12 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: LEGACY_POOL_LIQUIDITY_ABI,
+        functionName: 'getPoolLiquidityView',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
         functionName: 'totalAssets',
@@ -328,14 +373,14 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxDeposit',
+        functionName: 'maxRequestDeposit',
         args: [depositReceiver],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxWithdraw',
+        functionName: 'maxRequestRedeem',
         args: [readAccount],
       },
       {
@@ -361,14 +406,14 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxDeposit',
+        functionName: 'maxRequestDeposit',
         args: [depositReceiver],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxWithdraw',
+        functionName: 'maxRequestRedeem',
         args: [readAccount],
       },
       {
@@ -377,20 +422,6 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         abi: ERC20_ABI,
         functionName: 'balanceOf',
         args: [readAccount],
-      },
-      {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
-        abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxRequestDeposit',
-        args: [depositReceiver],
-      },
-      {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
-        abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'maxRequestDeposit',
-        args: [depositReceiver],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -410,13 +441,13 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'currentDepositEpoch',
+        functionName: 'getRequestEpochWindow',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'currentDepositEpoch',
+        functionName: 'getRequestEpochWindow',
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
@@ -458,6 +489,74 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         abi: PERPS_CFD_ENGINE_ABI,
         functionName: 'riskParams',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getSeniorTranche',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getJuniorTranche',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getTrancheQueues',
+        args: [true],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.perpsPublicLens,
+        abi: PERPS_PUBLIC_LENS_ABI,
+        functionName: 'getTrancheQueues',
+        args: [false],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'getPendingTrancheState',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'maxSeniorExposureUsdc',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'maxSeniorShareBps',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'getSeniorDepositCapacity',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'reservedSeniorDepositAssetsUsdc',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'areSeniorDepositReservationsWithinLimits',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.housePool,
+        abi: PERPS_HOUSE_POOL_ABI,
+        functionName: 'minTrancheDepositUsdc',
+      },
     ],
     query: {
       refetchInterval: 60_000,
@@ -466,7 +565,9 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
 
   return useMemo(() => {
     const results = data as readonly ContractResult[] | undefined
-    const poolResult = readResult(results, 0)
+    const currentPoolResult = readResult(results, 0)
+    const legacyPoolResult = readResult(results, 1)
+    const poolResult = currentPoolResult ?? legacyPoolResult
     const totalAssetsUsdc = asBigInt(tupleValue(poolResult, 0, 'totalAssetsUsdc'))
     const freeUsdc = asBigInt(tupleValue(poolResult, 1, 'freeUsdc'))
     const withdrawalReservedUsdc = asBigInt(tupleValue(poolResult, 2, 'withdrawalReservedUsdc'))
@@ -481,33 +582,64 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const seniorHighWaterMarkUsdc = asBigInt(
       tupleValue(poolResult, 7, 'seniorHighWaterMarkUsdc')
     )
-    const markFresh = asBoolean(tupleValue(poolResult, 8, 'markFresh'))
-    const oracleFrozen = asBoolean(tupleValue(poolResult, 9, 'oracleFrozen'))
-    const degradedMode = asBoolean(tupleValue(poolResult, 10, 'degradedMode'))
-    const seniorAssets = asBigInt(readResult(results, 1))
-    const seniorSupply = asBigInt(readResult(results, 2))
-    const seniorUserShares = asBigInt(readResult(results, 3))
-    const seniorMaxDeposit = asBigInt(readResult(results, 4))
-    const seniorMaxWithdraw = asBigInt(readResult(results, 5))
-    const juniorAssets = asBigInt(readResult(results, 6))
-    const juniorSupply = asBigInt(readResult(results, 7))
-    const juniorUserShares = asBigInt(readResult(results, 8))
-    const juniorMaxDeposit = asBigInt(readResult(results, 9))
-    const juniorMaxWithdraw = asBigInt(readResult(results, 10))
-    const walletUsdc = asBigInt(readResult(results, 11))
-    const seniorMaxRequestDeposit = asBigInt(readResult(results, 12))
-    const juniorMaxRequestDeposit = asBigInt(readResult(results, 13))
-    const seniorAllowance = asBigInt(readResult(results, 14))
-    const juniorAllowance = asBigInt(readResult(results, 15))
-    const seniorCurrentDepositEpoch = asBigInt(readResult(results, 16))
-    const juniorCurrentDepositEpoch = asBigInt(readResult(results, 17))
-    const seniorConvertedAssets = asBigInt(readResult(results, 18))
-    const juniorConvertedAssets = asBigInt(readResult(results, 19))
-    const protocolStatus = readResult(results, 20)
-    const bullSide = readResult(results, 21)
-    const bearSide = readResult(results, 22)
-    const riskParams = readResult(results, 23)
+    const currentTerminalDeficitUsdc = currentPoolResult === undefined
+      ? undefined
+      : asBigInt(tupleValue(currentPoolResult, 8, 'currentTerminalDeficitUsdc'))
+    const markFresh = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 8 : 9, 'markFresh'))
+    const oracleFrozen = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 9 : 10, 'oracleFrozen'))
+    const degradedMode = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 10 : 11, 'degradedMode'))
+    const seniorAssets = asBigInt(readResult(results, 2))
+    const seniorSupply = asBigInt(readResult(results, 3))
+    const seniorUserShares = asBigInt(readResult(results, 4))
+    const seniorMaxRequestDeposit = asBigInt(readResult(results, 5))
+    const seniorMaxRequestRedeem = asBigInt(readResult(results, 6))
+    const juniorAssets = asBigInt(readResult(results, 7))
+    const juniorSupply = asBigInt(readResult(results, 8))
+    const juniorUserShares = asBigInt(readResult(results, 9))
+    const juniorMaxRequestDeposit = asBigInt(readResult(results, 10))
+    const juniorMaxRequestRedeem = asBigInt(readResult(results, 11))
+    const walletUsdc = asBigInt(readResult(results, 12))
+    const seniorAllowance = asBigInt(readResult(results, 13))
+    const juniorAllowance = asBigInt(readResult(results, 14))
+    const seniorRequestWindow = readResult(results, 15)
+    const juniorRequestWindow = readResult(results, 16)
+    const seniorConvertedAssets = asBigInt(readResult(results, 17))
+    const juniorConvertedAssets = asBigInt(readResult(results, 18))
+    const protocolStatus = readResult(results, 19)
+    const bullSide = readResult(results, 20)
+    const bearSide = readResult(results, 21)
+    const riskParams = readResult(results, 22)
+    const seniorTranche = readResult(results, 23)
+    const juniorTranche = readResult(results, 24)
+    const seniorQueue = readResult(results, 25)
+    const juniorQueue = readResult(results, 26)
+    const pendingTrancheState = readResult(results, 27)
+    const maxSeniorExposureUsdc = asBigInt(readResult(results, 28))
+    const maxSeniorShareBps = asBigInt(readResult(results, 29))
+    const seniorDepositCapacityUsdc = asBigInt(readResult(results, 30))
+    const reservedSeniorDepositAssetsUsdc = asBigInt(readResult(results, 31))
+    const seniorReservationsWithinLimits = asBoolean(readResult(results, 32))
+    const minTrancheDepositUsdc = asBigInt(readResult(results, 33))
     const markPrice = asBigInt(tupleValue(protocolStatus, 1, 'lastMarkPrice'))
+    const inferredCurrentEpoch = BigInt(Math.floor(Date.now() / 3_600_000))
+    const seniorCurrentEpoch = asBigInt(tupleValue(seniorQueue, 1, 'currentEpoch'))
+      ?? inferredCurrentEpoch
+    const juniorCurrentEpoch = asBigInt(tupleValue(juniorQueue, 1, 'currentEpoch'))
+      ?? inferredCurrentEpoch
+    const seniorNextRequestEpoch = asBigInt(tupleValue(seniorQueue, 3, 'nextRequestEpoch'))
+      ?? asBigInt(tupleValue(seniorRequestWindow, 0, 'nextRequestEpoch'))
+    const juniorNextRequestEpoch = asBigInt(tupleValue(juniorQueue, 3, 'nextRequestEpoch'))
+      ?? asBigInt(tupleValue(juniorRequestWindow, 0, 'nextRequestEpoch'))
+    const seniorNextRequestCutoffTime = asBigInt(tupleValue(seniorQueue, 4, 'nextRequestCutoffTime'))
+      ?? asBigInt(tupleValue(seniorRequestWindow, 1, 'nextRequestCutoffTime'))
+    const juniorNextRequestCutoffTime = asBigInt(tupleValue(juniorQueue, 4, 'nextRequestCutoffTime'))
+      ?? asBigInt(tupleValue(juniorRequestWindow, 1, 'nextRequestCutoffTime'))
+    const seniorPoolWithdrawCapUsdc = asBigInt(
+      tupleValue(pendingTrancheState, 2, 'maxSeniorWithdrawUsdc')
+    ) ?? asBigInt(tupleValue(seniorTranche, 3, 'maxWithdrawUsdc'))
+    const juniorPoolWithdrawCapUsdc = asBigInt(
+      tupleValue(pendingTrancheState, 3, 'maxJuniorWithdrawUsdc')
+    ) ?? asBigInt(tupleValue(juniorTranche, 3, 'maxWithdrawUsdc'))
     const bullOpenInterest = asBigInt(tupleValue(bullSide, 1, 'openInterest'))
     const bearOpenInterest = asBigInt(tupleValue(bearSide, 1, 'openInterest'))
     const maxSkewRatio = asBigInt(tupleValue(riskParams, 1, 'maxSkewRatio'))
@@ -536,18 +668,6 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
       : seniorImpaired === false
         ? 0n
         : undefined
-    const seniorPoolWithdrawCapUsdc = freeUsdc !== undefined && seniorPrincipalUsdc !== undefined
-      ? minBigInt(freeUsdc, seniorPrincipalUsdc)
-      : undefined
-    const freeAboveSenior = freeUsdc !== undefined && seniorPrincipalUsdc !== undefined
-      ? freeUsdc > seniorPrincipalUsdc
-        ? freeUsdc - seniorPrincipalUsdc
-        : 0n
-      : undefined
-    const juniorPoolWithdrawCapUsdc = juniorPrincipalUsdc !== undefined
-      && freeAboveSenior !== undefined
-      ? minBigInt(juniorPrincipalUsdc, freeAboveSenior)
-      : undefined
     const hasLivePoolData = [
       totalAssetsUsdc,
       freeUsdc,
@@ -563,12 +683,12 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     ].every((value) => value !== undefined)
     const hasSeniorCoreData = seniorAssets !== undefined
       && seniorSupply !== undefined
-      && seniorMaxDeposit !== undefined
       && seniorMaxRequestDeposit !== undefined
+      && seniorMaxRequestRedeem !== undefined
     const hasJuniorCoreData = juniorAssets !== undefined
       && juniorSupply !== undefined
-      && juniorMaxDeposit !== undefined
       && juniorMaxRequestDeposit !== undefined
+      && juniorMaxRequestRedeem !== undefined
     const hasAnyLiveData = results?.some((result) => result.status === 'success') ?? false
     const hasCompleteLiveSnapshot = hasLivePoolData && hasSeniorCoreData && hasJuniorCoreData
 
@@ -589,6 +709,7 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         seniorPrincipalUsdc,
         juniorPrincipalUsdc,
         seniorHighWaterMarkUsdc,
+        currentTerminalDeficitUsdc,
         markFresh,
         oracleFrozen,
         degradedMode,
@@ -596,6 +717,12 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         seniorImpairmentGapUsdc,
         seniorPoolWithdrawCapUsdc,
         juniorPoolWithdrawCapUsdc,
+        maxSeniorExposureUsdc,
+        maxSeniorShareBps,
+        seniorDepositCapacityUsdc,
+        reservedSeniorDepositAssetsUsdc,
+        seniorReservationsWithinLimits,
+        minTrancheDepositUsdc,
         markPrice,
         longOpenCapacityUsdc,
         shortOpenCapacityUsdc,
@@ -607,31 +734,49 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           totalAssets: seniorAssets,
           totalSupply: seniorSupply,
           userShares: seniorUserShares,
-          maxDeposit: seniorMaxDeposit,
           maxRequestDeposit: seniorMaxRequestDeposit,
-          maxWithdraw: seniorMaxWithdraw,
+          maxRequestRedeem: seniorMaxRequestRedeem,
           allowance: seniorAllowance,
-          currentDepositEpoch: seniorCurrentDepositEpoch,
+          currentEpoch: seniorCurrentEpoch,
+          nextRequestEpoch: seniorNextRequestEpoch,
+          nextRequestCutoffTime: seniorNextRequestCutoffTime,
+          depositBacklog: asBoolean(tupleValue(seniorQueue, 9, 'depositBacklog')),
+          redeemBacklog: asBoolean(tupleValue(seniorQueue, 10, 'redeemBacklog')),
+          settlementLive: asBoolean(tupleValue(seniorQueue, 11, 'settlementLive')),
+          poolPaused: asBoolean(tupleValue(seniorQueue, 12, 'poolPaused')),
+          frozenLpFeeBps: asBigInt(tupleValue(seniorTranche, 4, 'frozenLpFeeBps')),
+          depositEnabled: asBoolean(tupleValue(seniorTranche, 5, 'depositEnabled')),
+          withdrawEnabled: asBoolean(tupleValue(seniorTranche, 6, 'withdrawEnabled')),
+          poolWithdrawCapUsdc: seniorPoolWithdrawCapUsdc,
           sharePrice: calculateConvertedSharePrice(seniorConvertedAssets)
             ?? calculateSharePrice(seniorAssets, seniorSupply),
           hasCoreData: hasSeniorCoreData,
           hasDepositData: seniorAllowance !== undefined,
-          hasUserData: seniorUserShares !== undefined && seniorMaxWithdraw !== undefined,
+          hasUserData: seniorUserShares !== undefined && seniorMaxRequestRedeem !== undefined,
         },
         junior: {
           totalAssets: juniorAssets,
           totalSupply: juniorSupply,
           userShares: juniorUserShares,
-          maxDeposit: juniorMaxDeposit,
           maxRequestDeposit: juniorMaxRequestDeposit,
-          maxWithdraw: juniorMaxWithdraw,
+          maxRequestRedeem: juniorMaxRequestRedeem,
           allowance: juniorAllowance,
-          currentDepositEpoch: juniorCurrentDepositEpoch,
+          currentEpoch: juniorCurrentEpoch,
+          nextRequestEpoch: juniorNextRequestEpoch,
+          nextRequestCutoffTime: juniorNextRequestCutoffTime,
+          depositBacklog: asBoolean(tupleValue(juniorQueue, 9, 'depositBacklog')),
+          redeemBacklog: asBoolean(tupleValue(juniorQueue, 10, 'redeemBacklog')),
+          settlementLive: asBoolean(tupleValue(juniorQueue, 11, 'settlementLive')),
+          poolPaused: asBoolean(tupleValue(juniorQueue, 12, 'poolPaused')),
+          frozenLpFeeBps: asBigInt(tupleValue(juniorTranche, 4, 'frozenLpFeeBps')),
+          depositEnabled: asBoolean(tupleValue(juniorTranche, 5, 'depositEnabled')),
+          withdrawEnabled: asBoolean(tupleValue(juniorTranche, 6, 'withdrawEnabled')),
+          poolWithdrawCapUsdc: juniorPoolWithdrawCapUsdc,
           sharePrice: calculateConvertedSharePrice(juniorConvertedAssets)
             ?? calculateSharePrice(juniorAssets, juniorSupply),
           hasCoreData: hasJuniorCoreData,
           hasDepositData: juniorAllowance !== undefined,
-          hasUserData: juniorUserShares !== undefined && juniorMaxWithdraw !== undefined,
+          hasUserData: juniorUserShares !== undefined && juniorMaxRequestRedeem !== undefined,
         },
       },
       refresh: () => {
@@ -687,6 +832,14 @@ function secondsUntilNextVaultEpoch(nowMs = Date.now()): number {
   return secondsIntoEpoch === 0
     ? VAULT_EPOCH_DURATION_SECONDS
     : VAULT_EPOCH_DURATION_SECONDS - secondsIntoEpoch
+}
+
+function secondsUntilVaultTimestamp(targetTimestamp: bigint | undefined, nowMs = Date.now()): number {
+  if (targetTimestamp === undefined) return secondsUntilNextVaultEpoch(nowMs)
+  const nowSeconds = Math.floor(nowMs / 1_000)
+  let futureTarget = Number(targetTimestamp)
+  while (futureTarget <= nowSeconds) futureTarget += VAULT_EPOCH_DURATION_SECONDS
+  return Math.max(0, futureTarget - nowSeconds)
 }
 
 function formatEpochCountdown(totalSeconds: number): string {
@@ -812,46 +965,19 @@ function parseUsdc(value: string): bigint {
 }
 
 function getDepositMode(liveData: TrancheLiveData): string {
-  if (liveData.maxDeposit === undefined || liveData.maxRequestDeposit === undefined) {
+  if (liveData.poolPaused === true) return 'Pool paused'
+  if (liveData.depositEnabled === false) return 'Deposits paused'
+  if (liveData.maxRequestDeposit === undefined) {
     return 'Availability unavailable'
   }
-  if (liveData.maxDeposit > 0n) {
-    return 'Immediate deposit'
-  }
   if (liveData.maxRequestDeposit > 0n) {
-    return 'Pending deposit epoch'
+    return 'Queued deposits open'
   }
-  return 'Deposit unavailable'
+  return 'At current capacity'
 }
 
 function formatAddress(address: Address): string {
   return `${address.slice(0, 6)}...${address.slice(-4)}`
-}
-
-function dataStatusBadge(status: DataStatus) {
-  if (status === 'live') {
-    return (
-      <Badge variant="success">
-        <span className="mr-1.5 h-1.5 w-1.5 rounded-full bg-current" />
-        Live onchain
-      </Badge>
-    )
-  }
-
-  if (status === 'syncing') {
-    return (
-      <Badge variant="warning">
-        <span className="mr-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-current" />
-        Syncing
-      </Badge>
-    )
-  }
-
-  if (status === 'partial') {
-    return <Badge variant="warning">Partial onchain data</Badge>
-  }
-
-  return <Badge variant="danger">Onchain data unavailable</Badge>
 }
 
 function StatLabel({
@@ -911,23 +1037,25 @@ function PoolStat({
   )
 }
 
-function VaultEpochCountdown() {
-  const [remainingSeconds, setRemainingSeconds] = useState(secondsUntilNextVaultEpoch)
+function VaultEpochCountdown({ targetTimestamp }: { targetTimestamp?: bigint }) {
+  const [remainingSeconds, setRemainingSeconds] = useState(() => (
+    secondsUntilVaultTimestamp(targetTimestamp)
+  ))
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setRemainingSeconds(secondsUntilNextVaultEpoch())
+      setRemainingSeconds(secondsUntilVaultTimestamp(targetTimestamp))
     }, 1_000)
 
     return () => {
       window.clearInterval(interval)
     }
-  }, [])
+  }, [targetTimestamp])
 
   return (
     <time
       dateTime={`PT${String(remainingSeconds)}S`}
-      aria-label={`${String(remainingSeconds)} seconds until the next vault epoch`}
+      aria-label={`${String(remainingSeconds)} seconds until the vault request cutoff`}
       className="font-mono tabular-nums"
     >
       {formatEpochCountdown(remainingSeconds)}
@@ -1365,10 +1493,14 @@ function VaultsOverview({
             startsTabletRow
           />
           <PoolStat
-            label="Next epoch"
-            value={<VaultEpochCountdown />}
-            subvalue="Queued deposits and withdrawals are processed when the timer ends"
-            tooltip="Time until the next hourly vault epoch boundary. Deposit and withdrawal lifecycles use independent queues."
+            label="Request cutoff"
+            value={(
+              <VaultEpochCountdown
+                targetTimestamp={snapshot.tranches.senior.nextRequestCutoffTime}
+              />
+            )}
+            subvalue="Requests after this timer join the following hourly batch"
+            tooltip="The shared deposit and withdrawal queue closes five minutes before each hourly settlement boundary."
             stackedOnMobile
           />
         </dl>
@@ -1496,11 +1628,10 @@ function OverviewTab({
     ? pool.seniorPoolWithdrawCapUsdc
     : pool.juniorPoolWithdrawCapUsdc
   const depositMode = getDepositMode(liveData)
-  const depositState = pool.seniorImpaired === true
-    ? 'Unavailable'
-    : pool.degradedMode === true || pool.markFresh === false
-      ? 'Check live gate'
-      : depositMode
+  const depositState = pool.currentTerminalDeficitUsdc !== undefined
+    && pool.currentTerminalDeficitUsdc > 0n
+    ? 'Terminal deficit'
+    : depositMode
 
   return (
     <div className="space-y-6">
@@ -1513,27 +1644,32 @@ function OverviewTab({
           detail={isConnected ? `${formatShares(liveData.userShares)} ${tranche.token}` : 'Connect a wallet to view'}
         />
         <DetailMetric
-          label="Max withdraw"
-          value={isConnected ? formatCompactUsd(liveData.maxWithdraw) : '--'}
-          detail="Holder-level live limit"
-          tone={(liveData.maxWithdraw ?? 0n) > 0n ? 'positive' : 'default'}
+          label="Requestable shares"
+          value={isConnected
+            ? `${formatShares(liveData.maxRequestRedeem)} ${tranche.token}`
+            : '--'}
+          detail="Shares that can enter the withdrawal queue now"
+          tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
         />
         <DetailMetric
-          label="Pool-level cap"
+          label="Pool funding capacity"
           value={formatCompactUsd(poolWithdrawCap)}
-          detail={tranche.id === 'senior' ? 'Before holder cooldown' : 'After complete Senior claim'}
+          detail={tranche.id === 'senior'
+            ? 'Canonical Senior capacity for the next settlement'
+            : 'Canonical Junior capacity after Senior priority'}
         />
         <DetailMetric
-          label="Deposit mode"
+          label="Deposit availability"
           value={depositState}
-          detail={
-            depositMode === 'Immediate deposit'
-              ? 'Shares mint in the deposit transaction'
-              : depositMode === 'Pending deposit epoch'
-                ? 'Funded requests activate two epoch IDs ahead'
-                : 'Live vault safety gates currently block entry'
-          }
-          tone={pool.seniorImpaired === true ? 'negative' : 'warning'}
+          detail={depositMode === 'Queued deposits open'
+            ? (
+              <span>
+                Current request window closes in{' '}
+                <VaultEpochCountdown targetTimestamp={liveData.nextRequestCutoffTime} />
+              </span>
+            )
+            : 'The contract is not accepting new deposit requests'}
+          tone={depositState === 'Terminal deficit' ? 'negative' : 'warning'}
         />
       </div>
 
@@ -1543,20 +1679,72 @@ function OverviewTab({
           <dl className="mt-3">
             <DetailRow label="Asset" value="USDC" />
             <DetailRow label="Vault share" value={tranche.token} />
-            <DetailRow label="Vault standard" value="ERC-4626 + Plether epochs" />
+            <DetailRow label="Vault standard" value="ERC-4626 shares + async epoch queue" />
             <DetailRow label="Network" value="Arbitrum Sepolia" />
             <DetailRow label="Deposit path" value={depositMode} />
+            <DetailRow label="Settlement cadence" value="Hourly shared batch" />
+            <DetailRow label="Request cutoff" value="5 minutes before each hour" />
             <DetailRow
-              label="Immediate deposit max"
-              value={formatVaultLimit(liveData.maxDeposit)}
+              label="Current target batch"
+              value={liveData.nextRequestEpoch === undefined
+                ? 'Unavailable'
+                : new Date(Number(liveData.nextRequestEpoch * 3_600n) * 1_000).toLocaleString()}
             />
             <DetailRow
-              label="Pending request max"
-              value={formatVaultLimit(liveData.maxRequestDeposit)}
+              label="Request fee"
+              value={liveData.frozenLpFeeBps === undefined
+                ? 'Unavailable'
+                : `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}%`}
             />
-            <DetailRow label="Pending epoch length" value="1 hour" />
-            <DetailRow label="Request lead time" value="2 epoch IDs" />
-            <DetailRow label="Withdrawal cooldown" value="1 hour after deposit/withdraw" />
+            {tranche.id === 'senior' ? (
+              <>
+                <DetailRow
+                  label="Senior deposit capacity"
+                  value={formatVaultLimit(pool.seniorDepositCapacityUsdc)}
+                />
+                <DetailRow
+                  label="Absolute Senior cap"
+                  value={formatVaultLimit(pool.maxSeniorExposureUsdc)}
+                />
+                <DetailRow
+                  label="Maximum Senior share"
+                  value={pool.maxSeniorShareBps === undefined
+                    ? 'Unavailable'
+                    : `${(Number(pool.maxSeniorShareBps) / 100).toFixed(2)}%`}
+                />
+                <DetailRow
+                  label="Reserved queued Senior deposits"
+                  value={formatFullUsd(pool.reservedSeniorDepositAssetsUsdc)}
+                />
+                <DetailRow
+                  label="Queued deposits within limits"
+                  value={pool.seniorReservationsWithinLimits === undefined
+                    ? 'Unavailable'
+                    : pool.seniorReservationsWithinLimits ? 'Yes' : 'No'}
+                  valueClassName={pool.seniorReservationsWithinLimits === undefined
+                    ? 'text-content-secondary'
+                    : pool.seniorReservationsWithinLimits ? 'text-positive' : 'text-brand-orange'}
+                />
+              </>
+            ) : null}
+            <DetailRow
+              label="Deposit queue backlog"
+              value={liveData.depositBacklog === undefined
+                ? 'Unavailable'
+                : liveData.depositBacklog ? 'Yes' : 'No'}
+              valueClassName={liveData.depositBacklog === undefined
+                ? 'text-content-secondary'
+                : liveData.depositBacklog ? 'text-warning' : 'text-positive'}
+            />
+            <DetailRow
+              label="Withdrawal queue backlog"
+              value={liveData.redeemBacklog === undefined
+                ? 'Unavailable'
+                : liveData.redeemBacklog ? 'Yes' : 'No'}
+              valueClassName={liveData.redeemBacklog === undefined
+                ? 'text-content-secondary'
+                : liveData.redeemBacklog ? 'text-warning' : 'text-positive'}
+            />
             <DetailRow
               label="Vault contract"
               value={(
@@ -1583,6 +1771,13 @@ function OverviewTab({
             <DetailRow label="Pending trading revenue" value={formatFullUsd(pool.pendingTradingRevenueUsdc)} />
             <DetailRow label="Pending recapitalization" value={formatFullUsd(pool.pendingRecapitalizationUsdc)} />
             <DetailRow
+              label="Terminal deficit"
+              value={formatFullUsd(pool.currentTerminalDeficitUsdc)}
+              valueClassName={(pool.currentTerminalDeficitUsdc ?? 0n) > 0n
+                ? 'text-brand-orange'
+                : 'text-positive'}
+            />
+            <DetailRow
               label="Oracle mark"
               value={pool.markFresh === undefined ? 'Unavailable' : pool.markFresh ? 'Fresh' : 'Stale'}
               valueClassName={pool.markFresh === undefined ? 'text-content-secondary' : pool.markFresh ? 'text-positive' : 'text-brand-orange'}
@@ -1596,6 +1791,22 @@ function OverviewTab({
               label="Protocol mode"
               value={pool.degradedMode === undefined ? 'Unavailable' : pool.degradedMode ? 'Degraded' : 'Normal'}
               valueClassName={pool.degradedMode === undefined ? 'text-content-secondary' : pool.degradedMode ? 'text-brand-orange' : 'text-positive'}
+            />
+            <DetailRow
+              label="Pool paused"
+              value={liveData.poolPaused === undefined ? 'Unavailable' : liveData.poolPaused ? 'Yes' : 'No'}
+              valueClassName={liveData.poolPaused === undefined
+                ? 'text-content-secondary'
+                : liveData.poolPaused ? 'text-warning' : 'text-positive'}
+            />
+            <DetailRow
+              label="Withdrawal funding"
+              value={liveData.settlementLive === undefined
+                ? 'Unavailable'
+                : liveData.settlementLive ? 'Live' : 'Deferred'}
+              valueClassName={liveData.settlementLive === undefined
+                ? 'text-content-secondary'
+                : liveData.settlementLive ? 'text-positive' : 'text-warning'}
             />
           </dl>
         </section>
@@ -2123,10 +2334,11 @@ function ActivityTab({
   snapshot,
   isConnected,
   isWrongNetwork,
-  pendingDeposits,
-  pendingDepositsLoading,
-  pendingDiscoveryError,
-  onRefreshPendingDeposits,
+  depositRequests,
+  redeemRequests,
+  requestsLoading,
+  requestDiscoveryError,
+  onRefreshRequests,
   onSwitchNetwork,
 }: {
   tranche: TrancheDefinition
@@ -2134,26 +2346,31 @@ function ActivityTab({
   snapshot: VaultsSnapshot
   isConnected: boolean
   isWrongNetwork: boolean
-  pendingDeposits: PendingVaultDeposit[]
-  pendingDepositsLoading: boolean
-  pendingDiscoveryError: boolean
-  onRefreshPendingDeposits: () => void
+  depositRequests: VaultDepositRequest[]
+  redeemRequests: VaultRedeemRequest[]
+  requestsLoading: boolean
+  requestDiscoveryError: boolean
+  onRefreshRequests: () => void
   onSwitchNetwork: () => void
 }) {
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
   const hasUserBalance = isConnected && liveData.userShares !== undefined
+  const claimableUsdc = redeemRequests.reduce(
+    (total, request) => total + request.claimableAssets,
+    0n
+  )
   const vaultTransactions = useVaultTransactions({
     vaultAddress: tranche.address,
     allowance: liveData.allowance,
     onSuccess: () => {
       snapshot.refresh()
-      onRefreshPendingDeposits()
+      onRefreshRequests()
     },
   })
 
-  function activationLabel(timestamp: number): string {
+  function settlementLabel(timestamp: number): string {
     return new Date(timestamp * 1_000).toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -2162,44 +2379,49 @@ function ActivityTab({
     })
   }
 
+  function prepareRequestAction(action: () => void) {
+    vaultTransactions.reset()
+    action()
+  }
+
   return (
     <div className="space-y-6">
       <section className="border border-brand-border/30 bg-surface-panel p-5">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-              Your active position
-            </p>
-            <h3 className="mt-1 text-xl font-semibold text-content-primary">
-              {hasUserBalance
-                ? `${formatShares(liveData.userShares)} ${tranche.token}`
-                : isConnected
-                  ? 'Balance unavailable'
-                  : 'Wallet not connected'}
-            </h3>
-          </div>
-          {hasUserBalance
-            ? <Badge variant="success">Onchain balance</Badge>
-            : isConnected
-              ? <Badge variant="warning">Balance unavailable</Badge>
-              : <Badge>Read-only</Badge>}
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+            Your active position
+          </p>
+          <h3 className="mt-1 text-xl font-semibold text-content-primary">
+            {hasUserBalance
+              ? `${formatShares(liveData.userShares)} ${tranche.token}`
+              : isConnected
+                ? 'Balance unavailable'
+                : 'Wallet not connected'}
+          </h3>
         </div>
 
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           <DetailMetric
             label="Current value"
             value={isConnected && positionValue !== undefined
-              ? <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />
+              ? (
+                <TokenAmount
+                  amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}
+                />
+              )
               : '--'}
           />
           <DetailMetric
-            label="Share price"
-            value={formatSharePrice(liveData.sharePrice)}
+            label="Requestable shares"
+            value={isConnected
+              ? `${formatShares(liveData.maxRequestRedeem)} ${tranche.token}`
+              : '--'}
+            tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
           />
           <DetailMetric
-            label="Withdrawable now"
-            value={isConnected ? formatFullUsd(liveData.maxWithdraw) : '--'}
-            tone={(liveData.maxWithdraw ?? 0n) > 0n ? 'positive' : 'default'}
+            label="Claimable withdrawal"
+            value={isConnected ? formatFullUsd(claimableUsdc) : '--'}
+            tone={claimableUsdc > 0n ? 'positive' : 'default'}
           />
         </div>
       </section>
@@ -2208,71 +2430,51 @@ function ActivityTab({
         <div className="border-b border-brand-border/25 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-content-primary">Queued deposits</h3>
+              <h3 className="text-lg font-semibold text-content-primary">Deposit requests</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                Requests waiting for activation, finalization, or share claiming.
+                Funded USDC waits in escrow until the protocol settles its hourly batch.
               </p>
             </div>
-            {pendingDeposits.length > 0 ? (
+            {depositRequests.length > 0 ? (
               <Badge variant="info">
-                {pendingDeposits.length} active {pendingDeposits.length === 1 ? 'request' : 'requests'}
+                {depositRequests.length} active {depositRequests.length === 1 ? 'request' : 'requests'}
               </Badge>
             ) : null}
           </div>
         </div>
 
-        {pendingDiscoveryError ? (
-          <div className="border-b border-brand-border/25 p-5">
-            <Alert variant="warning" title="Older request history is unavailable">
-              Recent epochs are still checked directly onchain. Retry to restore older unclaimed
-              requests from the explorer event history.
-            </Alert>
-            <Button
-              type="button"
-              variant="secondary"
-              className="mt-3"
-              onClick={onRefreshPendingDeposits}
-            >
-              Retry history
-            </Button>
-          </div>
-        ) : null}
-
-        {pendingDepositsLoading && pendingDeposits.length === 0 ? (
-          <div className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
-            <span className="material-symbols-outlined animate-spin text-3xl text-content-secondary">
-              progress_activity
-            </span>
-            <p className="mt-3 text-sm text-content-secondary">Checking your deposit epochs…</p>
-          </div>
-        ) : pendingDeposits.length > 0 ? (
+        {depositRequests.length > 0 ? (
           <div className="divide-y divide-brand-border/25">
-            {pendingDeposits.map((deposit) => {
-              const finalizedPrice = deposit.epochShares > 0n
-                ? Number(formatUnits(deposit.epochAssets, USDC_DECIMALS))
-                  / Number(formatUnits(deposit.epochShares, SHARE_DECIMALS))
-                : undefined
-              const canCancelAfterActivation = snapshot.pool.seniorImpaired === true
-              const statusLabel = deposit.status === 'waiting'
-                ? 'Waiting for activation'
-                : deposit.status === 'ready'
-                  ? 'Ready to finalize'
-                  : 'Ready to claim'
-              const statusVariant = deposit.status === 'waiting'
+            {depositRequests.map((request) => {
+              const statusLabel = request.refundableAssets > 0n
+                ? 'Refund available'
+                : request.claimableShares > 0n
+                  ? 'Shares ready'
+                  : request.matured
+                    ? 'Awaiting settlement'
+                    : 'Queued'
+              const statusVariant = request.refundableAssets > 0n
                 ? 'warning'
-                : deposit.status === 'ready'
-                  ? 'info'
-                  : 'success'
+                : request.claimableShares > 0n
+                  ? 'success'
+                  : request.matured
+                    ? 'info'
+                    : 'warning'
+              const displayedAssets = request.pendingAssets > 0n
+                ? request.pendingAssets
+                : request.refundableAssets > 0n
+                  ? request.refundableAssets
+                  : request.claimableAssets
 
               return (
-                <article key={String(deposit.epochId)} className="space-y-5 p-5">
+                <article key={String(request.requestId)} className="space-y-5 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-                        Deposit epoch {String(deposit.epochId)}
+                        Request {String(request.requestId)}
                       </p>
                       <h4 className="mt-1 text-xl font-semibold text-content-primary">
-                        {formatFullUsd(deposit.assets)} queued
+                        {formatFullUsd(displayedAssets)} deposited
                       </h4>
                     </div>
                     <Badge variant={statusVariant}>{statusLabel}</Badge>
@@ -2280,42 +2482,37 @@ function ActivityTab({
 
                   <dl className="grid gap-3 sm:grid-cols-2">
                     <DetailRow
-                      label="Your funded request"
-                      value={<TokenAmount amount={formatFullUsdc(deposit.assets)} />}
+                      label="Target settlement"
+                      value={settlementLabel(request.targetTimestamp)}
                     />
                     <DetailRow
-                      label="Activation time"
-                      value={activationLabel(deposit.activationTimestamp)}
+                      label="Current share estimate"
+                      value={`${formatShares(request.pendingSharesEstimate)} ${tranche.token}`}
                     />
-                    <DetailRow
-                      label="Complete epoch batch"
-                      value={<TokenAmount amount={formatFullUsdc(deposit.epochAssets)} />}
-                    />
-                    <DetailRow
-                      label={deposit.finalized ? 'Finalized batch shares' : 'Shares'}
-                      value={deposit.finalized ? `${formatShares(deposit.epochShares)} ${tranche.token}` : 'Priced at finalization'}
-                    />
-                    {deposit.finalized ? (
-                      <>
-                        <DetailRow
-                          label="Finalized share price"
-                          value={formatSharePrice(finalizedPrice)}
-                        />
-                        <DetailRow
-                          label="Your claimable shares"
-                          value={`${formatShares(deposit.claimableShares)} ${tranche.token}`}
-                          valueClassName="text-positive"
-                        />
-                      </>
+                    {request.claimableShares > 0n ? (
+                      <DetailRow
+                        label="Claimable shares"
+                        value={`${formatShares(request.claimableShares)} ${tranche.token}`}
+                        valueClassName="text-positive"
+                      />
+                    ) : null}
+                    {request.refundableAssets > 0n ? (
+                      <DetailRow
+                        label="Recoverable USDC"
+                        value={formatFullUsd(request.refundableAssets)}
+                        valueClassName="text-warning"
+                      />
                     ) : null}
                   </dl>
 
                   <p className="text-sm leading-6 text-content-secondary">
-                    {deposit.status === 'waiting'
-                      ? 'Your USDC is held in vault escrow. You may cancel and receive it back until the activation time.'
-                      : deposit.status === 'ready'
-                        ? 'The epoch is active. Finalizing fixes the batch share price and moves the batch into the HousePool.'
-                        : 'The epoch is finalized. Claim to move your allocated vault shares from escrow into your wallet.'}
+                    {request.refundableAssets > 0n
+                      ? 'The batch did not activate this deposit. Recover the escrowed USDC.'
+                      : request.claimableShares > 0n
+                        ? 'The protocol settled the batch. Claim the allocated shares into your wallet.'
+                        : request.matured
+                          ? 'The target time has passed, but the protocol has not settled this batch yet.'
+                          : 'You can cancel before settlement. The final share amount is fixed only when the batch settles.'}
                   </p>
 
                   {isWrongNetwork ? (
@@ -2324,58 +2521,45 @@ function ActivityTab({
                     </Button>
                   ) : (
                     <div className="flex flex-wrap gap-3">
-                      {deposit.status === 'waiting' ? (
+                      {request.claimableShares > 0n ? (
+                        <Button
+                          type="button"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            prepareRequestAction(() => {
+                              vaultTransactions.claimDepositShares(request.requestId)
+                            })
+                          }}
+                        >
+                          Claim shares
+                        </Button>
+                      ) : null}
+                      {request.refundableAssets > 0n ? (
                         <Button
                           type="button"
                           variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            vaultTransactions.reset()
-                            vaultTransactions.cancelPendingDeposit(deposit.epochId)
+                            prepareRequestAction(() => {
+                              vaultTransactions.cancelPendingDeposit(request.requestId)
+                            })
                           }}
-                          aria-label={`Cancel request for epoch ${String(deposit.epochId)}`}
-                        >
-                          Cancel request
-                        </Button>
-                      ) : null}
-                      {deposit.status === 'ready' ? (
-                        <Button
-                          type="button"
-                          disabled={vaultTransactions.isRunning}
-                          onClick={() => {
-                            vaultTransactions.reset()
-                            vaultTransactions.finalizeDepositEpoch(deposit.epochId)
-                          }}
-                          aria-label={`Finalize epoch ${String(deposit.epochId)}`}
-                        >
-                          Finalize epoch
-                        </Button>
-                      ) : null}
-                      {deposit.status === 'ready' && canCancelAfterActivation ? (
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          disabled={vaultTransactions.isRunning}
-                          onClick={() => {
-                            vaultTransactions.reset()
-                            vaultTransactions.cancelPendingDeposit(deposit.epochId)
-                          }}
-                          aria-label={`Recover deposit from epoch ${String(deposit.epochId)}`}
                         >
                           Recover USDC
                         </Button>
                       ) : null}
-                      {deposit.status === 'claimable' ? (
+                      {request.pendingAssets > 0n && !request.matured ? (
                         <Button
                           type="button"
+                          variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            vaultTransactions.reset()
-                            vaultTransactions.claimDepositShares(deposit.epochId)
+                            prepareRequestAction(() => {
+                              vaultTransactions.cancelPendingDeposit(request.requestId)
+                            })
                           }}
-                          aria-label={`Claim shares from epoch ${String(deposit.epochId)}`}
                         >
-                          Claim shares
+                          Cancel request
                         </Button>
                       ) : null}
                     </div>
@@ -2385,37 +2569,201 @@ function ActivityTab({
             })}
           </div>
         ) : (
-          <div className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
-            <span className="material-symbols-outlined text-4xl text-content-secondary">schedule</span>
-            <h4 className="mt-3 text-base font-semibold text-content-primary">No queued deposits</h4>
-            <p className="mt-2 max-w-md text-sm leading-6 text-content-secondary">
-              A funded epoch request will appear here with its activation time and next available action.
-            </p>
+          <div className="px-6 py-8 text-center">
+            <p className="text-sm text-content-secondary">No active deposit requests.</p>
           </div>
         )}
       </section>
 
       <section className="border border-brand-border/30 bg-surface-panel">
         <div className="border-b border-brand-border/25 p-5">
-          <h3 className="text-lg font-semibold text-content-primary">Contract activity</h3>
-          <p className="mt-1 text-sm text-content-secondary">
-            Full transaction history remains available on the block explorer.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-lg font-semibold text-content-primary">Withdrawal requests</h3>
+              <p className="mt-1 text-sm text-content-secondary">
+                Shares stay exposed to vault performance until their request is funded.
+              </p>
+            </div>
+            {redeemRequests.length > 0 ? (
+              <Badge variant="info">
+                {redeemRequests.length} active {redeemRequests.length === 1 ? 'request' : 'requests'}
+              </Badge>
+            ) : null}
+          </div>
         </div>
-        <div className="flex flex-col items-center justify-center px-6 py-8 text-center">
-          <span className="material-symbols-outlined text-4xl text-content-secondary">receipt_long</span>
-          <a
-            href={`${EXPLORER_BASE_URL}/${tranche.address}`}
-            target="_blank"
-            rel="noreferrer"
-            className="group mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach"
+
+        {redeemRequests.length > 0 ? (
+          <div className="divide-y divide-brand-border/25">
+            {redeemRequests.map((request) => {
+              const actionReady = request.claimableAssets > 0n || request.refundPending
+              const statusLabel = request.claimableAssets > 0n
+                ? 'USDC ready'
+                : request.refundPending
+                  ? 'Shares recoverable'
+                  : request.matured
+                    ? 'Awaiting funding'
+                    : 'Queued'
+              const displayedShares = request.pendingShares > 0n
+                ? request.pendingShares
+                : request.claimableShares > 0n
+                  ? request.claimableShares
+                  : request.refundableShares
+
+              return (
+                <article key={String(request.requestId)} className="space-y-5 p-5">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+                        Request {String(request.requestId)}
+                      </p>
+                      <h4 className="mt-1 text-xl font-semibold text-content-primary">
+                        {formatShares(displayedShares)} {tranche.token} queued
+                      </h4>
+                    </div>
+                    <Badge variant={actionReady ? 'success' : request.matured ? 'info' : 'warning'}>
+                      {statusLabel}
+                    </Badge>
+                  </div>
+
+                  <dl className="grid gap-3 sm:grid-cols-2">
+                    <DetailRow
+                      label="Target settlement"
+                      value={settlementLabel(request.targetTimestamp)}
+                    />
+                    <DetailRow
+                      label="Current USDC estimate"
+                      value={formatFullUsd(request.pendingAssetsEstimate)}
+                    />
+                    {request.claimableAssets > 0n ? (
+                      <DetailRow
+                        label="Claimable USDC"
+                        value={formatFullUsd(request.claimableAssets)}
+                        valueClassName="text-positive"
+                      />
+                    ) : null}
+                    {request.refundableShares > 0n ? (
+                      <DetailRow
+                        label="Recoverable shares"
+                        value={`${formatShares(request.refundableShares)} ${tranche.token}`}
+                        valueClassName="text-warning"
+                      />
+                    ) : null}
+                  </dl>
+
+                  <p className="text-sm leading-6 text-content-secondary">
+                    {request.claimableAssets > 0n
+                      ? 'This portion has been funded and can be claimed as USDC.'
+                      : request.refundPending
+                        ? 'This request was not funded. Reclaim the remaining escrowed shares.'
+                        : request.matured
+                          ? tranche.id === 'senior'
+                            ? 'The request is eligible and remains queued until settlement liquidity is available.'
+                            : 'The request is eligible. Senior withdrawals are funded first, so Junior may remain queued.'
+                          : 'You can cancel before settlement. The shares continue to gain or lose value while queued.'}
+                  </p>
+
+                  {isWrongNetwork ? (
+                    <Button type="button" variant="secondary" onClick={onSwitchNetwork}>
+                      Switch to Arbitrum Sepolia
+                    </Button>
+                  ) : (
+                    <div className="flex flex-wrap gap-3">
+                      {request.claimableAssets > 0n && request.claimableShares > 0n ? (
+                        <Button
+                          type="button"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            prepareRequestAction(() => {
+                              vaultTransactions.claimRedeem(
+                                request.requestId,
+                                request.claimableShares
+                              )
+                            })
+                          }}
+                        >
+                          Claim USDC
+                        </Button>
+                      ) : null}
+                      {request.refundPending ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            prepareRequestAction(() => {
+                              vaultTransactions.claimRedeemRefund(request.requestId)
+                            })
+                          }}
+                        >
+                          Reclaim shares
+                        </Button>
+                      ) : null}
+                      {request.pendingShares > 0n && !request.matured ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={vaultTransactions.isRunning}
+                          onClick={() => {
+                            prepareRequestAction(() => {
+                              vaultTransactions.cancelRedeemRequest(request.requestId)
+                            })
+                          }}
+                        >
+                          Cancel request
+                        </Button>
+                      ) : null}
+                    </div>
+                  )}
+                </article>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="px-6 py-8 text-center">
+            <p className="text-sm text-content-secondary">No active withdrawal requests.</p>
+          </div>
+        )}
+      </section>
+
+      {requestDiscoveryError ? (
+        <Alert variant="warning" title="Older request history is unavailable">
+          Current request IDs are still checked onchain. Retry to restore older unclaimed requests
+          from explorer event history.
+          <Button
+            type="button"
+            variant="secondary"
+            className="mt-3"
+            onClick={onRefreshRequests}
           >
-            <span className="group-hover:underline group-hover:underline-offset-4">
-              View contract activity
-            </span>
-            <span className="material-symbols-outlined text-lg">open_in_new</span>
-          </a>
-        </div>
+            Retry history
+          </Button>
+        </Alert>
+      ) : null}
+
+      {requestsLoading && depositRequests.length === 0 && redeemRequests.length === 0 ? (
+        <p className="text-sm text-content-secondary">Checking your vault requests…</p>
+      ) : null}
+
+      {vaultTransactions.error ? (
+        <p className="text-sm text-brand-orange">{vaultTransactions.error}</p>
+      ) : null}
+
+      <section className="border border-brand-border/30 bg-surface-panel p-5">
+        <h3 className="text-lg font-semibold text-content-primary">Contract activity</h3>
+        <p className="mt-1 text-sm text-content-secondary">
+          Full transaction history remains available on the block explorer.
+        </p>
+        <a
+          href={`${EXPLORER_BASE_URL}/${tranche.address}`}
+          target="_blank"
+          rel="noreferrer"
+          className="group mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach"
+        >
+          <span className="group-hover:underline group-hover:underline-offset-4">
+            View contract activity
+          </span>
+          <span className="material-symbols-outlined text-lg">open_in_new</span>
+        </a>
       </section>
     </div>
   )
@@ -2475,17 +2823,11 @@ function VaultPreviewModal({
   onSubmit: () => void
   submissionError?: string | null
 }) {
-  const isIndicativePendingQuote = mode === 'deposit' && depositMode !== 'Immediate deposit'
-  const isPendingDeposit = mode === 'deposit' && depositMode === 'Pending deposit epoch'
   const submitLabel = mode === 'withdraw'
-    ? 'Withdraw USDC'
-    : isPendingDeposit
-      ? needsApproval
-        ? 'Approve & queue'
-        : 'Queue deposit'
-      : needsApproval
-        ? 'Approve & deposit'
-        : 'Deposit USDC'
+    ? 'Queue withdrawal'
+    : needsApproval
+      ? 'Approve & queue'
+      : 'Queue deposit'
 
   return (
     <Modal
@@ -2516,9 +2858,7 @@ function VaultPreviewModal({
             label={
               mode === 'withdraw'
                 ? 'Estimated shares burned'
-                : isIndicativePendingQuote
-                  ? 'Current indicative shares'
-                  : 'Estimated shares'
+                : 'Current indicative shares'
             }
             value={
               estimatedShares === undefined
@@ -2536,27 +2876,21 @@ function VaultPreviewModal({
           ) : null}
           <PreviewRow
             label={mode === 'deposit' ? 'Deposit path' : 'Settlement'}
-            value={mode === 'deposit' ? depositMode : 'Synchronous when permitted'}
+            value={mode === 'deposit' ? depositMode : 'Hourly withdrawal queue'}
           />
-          {mode === 'deposit' ? (
-            <PreviewRow
-              label="Expected activation"
-              value={
-                depositMode === 'Immediate deposit'
-                  ? 'In this transaction'
-                  : pendingActivationTimestamp === undefined
-                    ? 'About 1–2 hours after request'
-                    : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
-                        month: 'short',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })
-              }
-            />
-          ) : (
-            <PreviewRow label="Cooldown" value="Live max already reflects holder cooldown" />
-          )}
+          <PreviewRow
+            label="Target settlement"
+            value={
+              pendingActivationTimestamp === undefined
+                ? 'Next eligible hourly batch'
+                : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+            }
+          />
           <PreviewRow
             label="Frozen-oracle surcharge"
             value={oracleFrozen === undefined ? 'State unavailable' : oracleFrozen ? 'Included in live vault quote where supported' : 'Inactive'}
@@ -2577,21 +2911,18 @@ function VaultPreviewModal({
           />
         </div>
 
-        {isPendingDeposit ? (
-          <Alert variant="info" title="Pending entry reprices at finalization">
-            This is a current ERC-4626 reference quote, not a guaranteed epoch outcome. The batch
-            share price and any oracle-frozen surcharge are fixed later, so final shares can differ.
+        <Alert variant="info" title="The final amount is set at settlement">
+            This is a current estimate, not a guaranteed batch outcome. {mode === 'deposit'
+              ? 'The final shares are calculated when the deposit batch settles.'
+              : 'Queued shares remain exposed to gains and losses until the withdrawal is funded.'}
           </Alert>
-        ) : null}
 
         {canSubmit ? (
-          <Alert variant="info" title="Onchain action">
+          <Alert variant="info" title="What happens next">
             Confirming starts {needsApproval ? 'an exact USDC approval followed by ' : ''}
             {mode === 'deposit'
-              ? isPendingDeposit
-                ? 'a funded vault-deposit request'
-                : 'an immediate vault deposit'
-              : 'a synchronous vault withdrawal'}.
+              ? 'a funded vault-deposit request'
+              : 'a vault-share withdrawal request'}.
             The app simulates each transaction before asking your wallet to submit it.
           </Alert>
         ) : (
@@ -2645,9 +2976,10 @@ function VaultActionPanel({
   onSwitchNetwork,
   isSwitchingNetwork,
   switchError,
-  pendingDeposits,
-  onRefreshPendingDeposits,
-  onViewPendingDeposits,
+  depositRequests,
+  redeemRequests,
+  onRefreshRequests,
+  onViewRequests,
 }: {
   tranche: TrancheDefinition
   liveData: TrancheLiveData
@@ -2659,9 +2991,10 @@ function VaultActionPanel({
   onSwitchNetwork: () => void
   isSwitchingNetwork: boolean
   switchError?: string
-  pendingDeposits: PendingVaultDeposit[]
-  onRefreshPendingDeposits: () => void
-  onViewPendingDeposits: () => void
+  depositRequests: VaultDepositRequest[]
+  redeemRequests: VaultRedeemRequest[]
+  onRefreshRequests: () => void
+  onViewRequests: () => void
 }) {
   const [mode, setMode] = useState<ActionMode>('deposit')
   const [amount, setAmount] = useState('')
@@ -2673,11 +3006,9 @@ function VaultActionPanel({
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false)
   const [quoteRefreshError, setQuoteRefreshError] = useState<string>()
   const amountRaw = parseUsdc(amount)
-  const maxAmount = mode === 'deposit' ? snapshot.walletUsdc : liveData.maxWithdraw
   const depositMode = getDepositMode(liveData)
-  const pendingActivationTimestamp = depositMode === 'Pending deposit epoch'
-    && liveData.currentDepositEpoch !== undefined
-    ? Number((liveData.currentDepositEpoch + 2n) * 3_600n)
+  const pendingActivationTimestamp = liveData.nextRequestEpoch !== undefined
+    ? Number(liveData.nextRequestEpoch * 3_600n)
     : undefined
   const vaultTransactions = useVaultTransactions({
     vaultAddress: tranche.address,
@@ -2687,7 +3018,7 @@ function VaultActionPanel({
       setShowPreview(false)
       setReviewQuote(undefined)
       snapshot.refresh()
-      onRefreshPendingDeposits()
+      onRefreshRequests()
     },
   })
   const {
@@ -2701,14 +3032,14 @@ function VaultActionPanel({
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: tranche.address,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'previewDeposit',
+        functionName: 'estimateDepositShares',
         args: [amountRaw],
       },
       {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: tranche.address,
         abi: TRANCHE_VAULT_READ_ABI,
-        functionName: 'previewWithdraw',
+        functionName: 'estimateWithdrawShares',
         args: [amountRaw],
       },
     ],
@@ -2722,26 +3053,29 @@ function VaultActionPanel({
   const estimatedShares = quotedSharesRaw === undefined
     ? undefined
     : Number(formatUnits(quotedSharesRaw, SHARE_DECIMALS))
-  const exceedsAvailable = isConnected && maxAmount !== undefined && amountRaw > maxAmount
-  const liveDepositLimit = depositMode === 'Immediate deposit'
-    ? liveData.maxDeposit
-    : depositMode === 'Pending deposit epoch'
-      ? liveData.maxRequestDeposit
-      : 0n
-  const depositLimitExceeded = mode === 'deposit'
-    && liveDepositLimit !== undefined
-    && amountRaw > liveDepositLimit
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
+  const estimatedPositionUsdc = positionValue !== undefined && Number.isFinite(positionValue)
+    ? parseUnits(positionValue.toFixed(USDC_DECIMALS), USDC_DECIMALS)
+    : undefined
+  const maxAmount = mode === 'deposit' ? snapshot.walletUsdc : estimatedPositionUsdc
+  const exceedsAvailable = isConnected && maxAmount !== undefined && amountRaw > maxAmount
+  const liveDepositLimit = depositMode === 'Queued deposits open'
+    ? liveData.maxRequestDeposit
+    : 0n
+  const depositLimitExceeded = mode === 'deposit'
+    && liveDepositLimit !== undefined
+    && amountRaw > liveDepositLimit
   const invalidAmount = amountRaw <= 0n
-  const belowMinimumDeposit = mode === 'deposit' && amountRaw > 0n && amountRaw < 1_000_000n
-  const invalidSubMinimumWithdrawal = mode === 'withdraw'
+  const belowMinimumDeposit = mode === 'deposit'
     && amountRaw > 0n
-    && amountRaw < 1_000_000n
+    && snapshot.pool.minTrancheDepositUsdc !== undefined
+    && amountRaw < snapshot.pool.minTrancheDepositUsdc
+  const redeemLimitExceeded = mode === 'withdraw'
     && quotedSharesRaw !== undefined
-    && liveData.userShares !== undefined
-    && quotedSharesRaw < liveData.userShares
+    && liveData.maxRequestRedeem !== undefined
+    && quotedSharesRaw > liveData.maxRequestRedeem
   const actionDataUnavailable = !snapshot.hasLivePoolData
     || !liveData.hasCoreData
     || (
@@ -2749,11 +3083,13 @@ function VaultActionPanel({
         ? snapshot.walletUsdc === undefined || !liveData.hasDepositData
         : !liveData.hasUserData
     )
-  const safetyBlocked = mode === 'deposit'
-    ? snapshot.pool.seniorImpaired === true
-    : snapshot.pool.degradedMode === true
+  const safetyBlocked = mode === 'deposit' && (
+    liveData.poolPaused === true
+    || liveData.depositEnabled === false
+    || (snapshot.pool.currentTerminalDeficitUsdc ?? 0n) > 0n
+  )
   const depositUnavailable = mode === 'deposit'
-    && (depositMode === 'Availability unavailable' || depositMode === 'Deposit unavailable')
+    && depositMode !== 'Queued deposits open'
   const quoteUnavailable = amountRaw > 0n && !isQuotePending && estimatedShares === undefined
   const actionBlocked = actionDataUnavailable || safetyBlocked || depositUnavailable
   const needsApproval = mode === 'deposit'
@@ -2763,28 +3099,21 @@ function VaultActionPanel({
     || exceedsAvailable
     || depositLimitExceeded
     || belowMinimumDeposit
-    || invalidSubMinimumWithdrawal
+    || redeemLimitExceeded
     || actionBlocked
     || quoteUnavailable
   const canSubmitTransaction = isConnected
     && !isWrongNetwork
     && !formInvalid
-    && (
-      mode === 'withdraw'
-      || depositMode === 'Immediate deposit'
-      || depositMode === 'Pending deposit epoch'
-    )
-  const hasExecutablePath = mode === 'withdraw'
-    || depositMode === 'Immediate deposit'
-    || depositMode === 'Pending deposit epoch'
+    && (mode === 'withdraw' || depositMode === 'Queued deposits open')
   const inputError = exceedsAvailable
     ? `Exceeds available ${mode === 'deposit' ? 'balance' : 'withdrawal limit'}.`
     : depositLimitExceeded
-      ? `Exceeds the live ${depositMode === 'Pending deposit epoch' ? 'request' : 'immediate-deposit'} maximum.`
+      ? 'Exceeds the live deposit-request maximum.'
       : belowMinimumDeposit
-        ? 'The minimum vault deposit is 1 USDC.'
-        : invalidSubMinimumWithdrawal
-          ? 'Withdrawals below 1 USDC are only allowed for a complete residual exit.'
+        ? `The minimum vault deposit is ${formatFullUsdc(snapshot.pool.minTrancheDepositUsdc)} USDC.`
+        : redeemLimitExceeded
+          ? 'Exceeds the number of shares currently eligible for a withdrawal request.'
           : undefined
 
   const buttonLabel = !isConnected
@@ -2839,27 +3168,21 @@ function VaultActionPanel({
     setShowPreview(false)
     vaultTransactions.reset()
     if (mode === 'deposit') {
-      if (depositMode === 'Pending deposit epoch') {
-        vaultTransactions.requestDeposit(amountRaw)
-      } else {
-        vaultTransactions.deposit(amountRaw)
-      }
+      vaultTransactions.requestDeposit(amountRaw)
     } else {
-      vaultTransactions.withdraw(amountRaw)
+      if (quotedSharesRaw === undefined) return
+      vaultTransactions.requestRedeem(quotedSharesRaw)
     }
   }
 
   return (
     <>
       <aside className="border border-brand-border/30 bg-surface-panel">
-        <div className="flex items-start justify-between gap-3 border-b border-brand-border/25 p-5">
+        <div className="border-b border-brand-border/25 p-5">
           <div>
             <h2 className="text-xl font-semibold text-content-primary">{mode === 'deposit' ? 'Deposit USDC' : 'Withdraw USDC'}</h2>
             <p className="mt-1 text-sm text-content-secondary">{tranche.name}</p>
           </div>
-          <Badge variant={hasExecutablePath ? 'success' : 'warning'}>
-            {hasExecutablePath ? 'Onchain action' : 'Read-only'}
-          </Badge>
         </div>
 
         <div className="space-y-5 p-5">
@@ -2895,7 +3218,7 @@ function VaultActionPanel({
             }}
             token={{ symbol: 'USDC', decimals: USDC_DECIMALS }}
             balance={isConnected ? maxAmount : undefined}
-            balanceLabel={mode === 'deposit' ? 'Wallet balance:' : 'Withdrawable now:'}
+            balanceLabel={mode === 'deposit' ? 'Wallet balance:' : 'Estimated position value:'}
             label={mode === 'deposit' ? 'Amount to deposit' : 'Amount to withdraw'}
             error={inputError}
           />
@@ -2906,9 +3229,7 @@ function VaultActionPanel({
               label={
                 mode === 'withdraw'
                   ? 'Shares burned'
-                  : depositMode === 'Immediate deposit'
-                    ? 'Estimated shares'
-                    : 'Current indicative shares'
+                  : 'Current indicative shares'
               }
               value={
                 isQuotePending
@@ -2922,18 +3243,16 @@ function VaultActionPanel({
               <>
                 <PreviewRow label="Deposit path" value={depositMode} />
                 <PreviewRow
-                  label="Activation"
+                  label="Target settlement"
                   value={
-                    depositMode === 'Immediate deposit'
-                      ? 'In transaction'
-                      : pendingActivationTimestamp === undefined
-                        ? 'About 1–2 hours after request'
-                        : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
-                            month: 'short',
-                            day: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit',
-                          })
+                    pendingActivationTimestamp === undefined
+                      ? 'Next eligible hourly batch'
+                      : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })
                   }
                 />
               </>
@@ -2946,10 +3265,10 @@ function VaultActionPanel({
                     : <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
                 />
                 <PreviewRow
-                  label="Requested wallet receipt"
+                  label="Current estimated receipt"
                   value={<TokenAmount amount={amount || '0.00'} />}
                 />
-                <PreviewRow label="Settlement" value="Immediate if live cap permits" />
+                <PreviewRow label="Settlement" value="Queued; Senior requests are funded first" />
               </>
             )}
             {performance ? (
@@ -2965,24 +3284,22 @@ function VaultActionPanel({
             />
           </div>
 
-          {mode === 'deposit' && depositMode === 'Pending deposit epoch' ? (
+          {mode === 'deposit' && depositMode === 'Queued deposits open' ? (
             <Alert variant="info" title="This deposit will be queued">
-              USDC moves into vault escrow now. You can cancel before activation; after activation,
-              finalize the epoch and claim your shares from Your position.
+              USDC moves into vault escrow now. You can cancel before settlement. After the
+              protocol settles the batch, claim the shares from Your position.
             </Alert>
           ) : null}
 
-          {mode === 'deposit' && depositMode === 'Deposit unavailable' ? (
+          {mode === 'deposit' && depositMode !== 'Queued deposits open' ? (
             <Alert variant="warning" title="Deposits unavailable">
-              Neither immediate deposits nor funded epoch requests pass the vault&apos;s current
-              safety gates.
+              The vault is not accepting new funded deposit requests right now.
             </Alert>
           ) : null}
 
-          {mode === 'withdraw' && liveData.maxWithdraw === 0n && isConnected ? (
-            <Alert variant="warning" title="Nothing withdrawable right now">
-              The holder cooldown, trader reserves, or tranche priority currently reduces the live
-              maximum to zero. Share value can remain positive while withdrawals are unavailable.
+          {mode === 'withdraw' && liveData.maxRequestRedeem === 0n && isConnected ? (
+            <Alert variant="warning" title="No shares can be queued right now">
+              The contract currently reports zero eligible shares for a new withdrawal request.
             </Alert>
           ) : null}
 
@@ -3011,9 +3328,8 @@ function VaultActionPanel({
 
           {safetyBlocked ? (
             <p className="text-xs leading-5 text-brand-orange">
-              {mode === 'deposit'
-                ? 'Deposits are unavailable while Senior is impaired.'
-                : 'Withdrawals are unavailable while the protocol is in degraded mode.'}
+              New deposits are paused by the current pool or vault safety state. Existing
+              withdrawal requests can still be queued and managed.
             </p>
           ) : null}
           {actionDataUnavailable ? (
@@ -3042,22 +3358,29 @@ function VaultActionPanel({
           </p>
         </div>
 
-        {pendingDeposits.length > 0 ? (
+        {depositRequests.length + redeemRequests.length > 0 ? (
           <div className="border-t border-brand-border/30 p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-                  Your deposit queue
+                  Your request queue
                 </p>
                 <p className="mt-1 text-lg font-semibold text-content-primary">
-                  {pendingDeposits.length} active {pendingDeposits.length === 1 ? 'request' : 'requests'}
+                  {depositRequests.length + redeemRequests.length} active{' '}
+                  {depositRequests.length + redeemRequests.length === 1 ? 'request' : 'requests'}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-content-secondary">
-                  {formatFullUsd(pendingDeposits.reduce((total, deposit) => total + deposit.assets, 0n))} in escrow
+                  {depositRequests.length} deposit · {redeemRequests.length} withdrawal
                 </p>
               </div>
-              <Badge variant={pendingDeposits.some(({ status }) => status === 'claimable') ? 'success' : 'warning'}>
-                {pendingDeposits.some(({ status }) => status === 'claimable')
+              <Badge variant={depositRequests.some(({ claimableShares }) => claimableShares > 0n)
+                || redeemRequests.some(({ claimableAssets, refundPending }) => (
+                  claimableAssets > 0n || refundPending
+                )) ? 'success' : 'warning'}>
+                {depositRequests.some(({ claimableShares }) => claimableShares > 0n)
+                  || redeemRequests.some(({ claimableAssets, refundPending }) => (
+                    claimableAssets > 0n || refundPending
+                  ))
                   ? 'Action ready'
                   : 'In progress'}
               </Badge>
@@ -3066,7 +3389,7 @@ function VaultActionPanel({
               type="button"
               variant="secondary"
               className="mt-4 w-full"
-              onClick={onViewPendingDeposits}
+              onClick={onViewRequests}
             >
               View & manage
             </Button>
@@ -3126,10 +3449,10 @@ function VaultDetail({
   const liveData = snapshot.tranches[tranche.id]
   const performance = getCompleteVaultPerformance(history, tranche.id)
   const hasPerformance = performance !== undefined
-  const pendingVaultDeposits = usePendingVaultDeposits({
-    owner: ownerAddress,
-    vaultAddress: tranche.address,
-    currentEpoch: liveData.currentDepositEpoch,
+  const vaultRequests = useVaultRequests({
+    controller: ownerAddress,
+    isSenior: tranche.id === 'senior',
+    currentEpoch: liveData.currentEpoch,
   })
   const poolWithdrawCap = tranche.id === 'senior'
     ? snapshot.pool.seniorPoolWithdrawCapUsdc
@@ -3178,8 +3501,6 @@ function VaultDetail({
                 <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
                   {tranche.eyebrow}
                 </p>
-                <Badge variant={tranche.riskVariant}>{tranche.riskLabel}</Badge>
-                {dataStatusBadge(snapshot.status)}
               </div>
               <h1 className="mt-2 text-3xl font-semibold text-content-primary">{tranche.name}</h1>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-content-secondary">
@@ -3187,10 +3508,6 @@ function VaultDetail({
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-content-secondary">
                 <TokenLabel token="USDC" />
-                <span className="inline-flex items-center gap-1.5 border border-brand-border/30 bg-app-bg px-2 py-1">
-                  <span className="material-symbols-outlined text-sm">hub</span>
-                  Arbitrum Sepolia
-                </span>
                 <a
                   href={`${EXPLORER_BASE_URL}/${tranche.address}`}
                   target="_blank"
@@ -3211,9 +3528,21 @@ function VaultDetail({
           <PoolStat
             label="Tranche TVL / NAV"
             value={formatCompactUsd(liveData.totalAssets)}
-            subvalue={liveData.totalAssets === undefined
-              ? '--'
-              : <TokenAmount amount={formatFullUsdc(liveData.totalAssets, 0)} />}
+            subvalue={tranche.id === 'senior'
+              ? (
+                <span>
+                  Current Senior capacity: {formatVaultLimit(
+                    snapshot.pool.seniorDepositCapacityUsdc
+                  )}
+                </span>
+              )
+              : liveData.maxRequestDeposit === undefined
+                ? 'Current request limit unavailable'
+                : (
+                  <span>
+                    Current request limit: {formatVaultLimit(liveData.maxRequestDeposit)}
+                  </span>
+                )}
             tooltip="Current ERC-4626 totalAssets accounting value. This can rise or fall and is not cumulative deposits."
           />
           {performance ? (
@@ -3301,10 +3630,11 @@ function VaultDetail({
                 snapshot={snapshot}
                 isConnected={isConnected}
                 isWrongNetwork={isWrongNetwork}
-                pendingDeposits={pendingVaultDeposits.deposits}
-                pendingDepositsLoading={pendingVaultDeposits.isLoading}
-                pendingDiscoveryError={pendingVaultDeposits.discoveryError}
-                onRefreshPendingDeposits={pendingVaultDeposits.refresh}
+                depositRequests={vaultRequests.depositRequests}
+                redeemRequests={vaultRequests.redeemRequests}
+                requestsLoading={vaultRequests.isLoading}
+                requestDiscoveryError={vaultRequests.discoveryError}
+                onRefreshRequests={vaultRequests.refresh}
                 onSwitchNetwork={onSwitchNetwork}
               />
             ) : null}
@@ -3324,9 +3654,10 @@ function VaultDetail({
             onSwitchNetwork={onSwitchNetwork}
             isSwitchingNetwork={isSwitchingNetwork}
             switchError={switchError}
-            pendingDeposits={pendingVaultDeposits.deposits}
-            onRefreshPendingDeposits={pendingVaultDeposits.refresh}
-            onViewPendingDeposits={() => {
+            depositRequests={vaultRequests.depositRequests}
+            redeemRequests={vaultRequests.redeemRequests}
+            onRefreshRequests={vaultRequests.refresh}
+            onViewRequests={() => {
               setActiveTab('activity')
             }}
           />

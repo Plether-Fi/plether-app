@@ -39,66 +39,6 @@ export function useVaultTransactions({
     return { address: currentAccount.address, publicClient }
   }, [config, publicClient])
 
-  const deposit = useCallback((amount: bigint) => {
-    const expectedAddress = getAccount(config).address
-    void sequence.execute({
-      title: 'Depositing USDC into Plether Vault',
-      type: 'supply',
-      buildSteps: (): TransactionStep[] => {
-        const steps: TransactionStep[] = []
-
-        if (allowance === undefined || allowance < amount) {
-          steps.push({
-            label: 'Approve USDC',
-            action: async () => {
-              const context = requireTransactionContext(expectedAddress)
-              await context.publicClient.simulateContract({
-                account: context.address,
-                address: PERPS_ARBITRUM_SEPOLIA.usdc,
-                abi: ERC20_ABI,
-                functionName: 'approve',
-                args: [vaultAddress, amount],
-              })
-              return writeContractAsync({
-                account: context.address,
-                chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-                address: PERPS_ARBITRUM_SEPOLIA.usdc,
-                abi: ERC20_ABI,
-                functionName: 'approve',
-                args: [vaultAddress, amount],
-              })
-            },
-          })
-        }
-
-        steps.push({
-          label: 'Deposit USDC',
-          action: async () => {
-            const context = requireTransactionContext(expectedAddress)
-            await context.publicClient.simulateContract({
-              account: context.address,
-              address: vaultAddress,
-              abi: TRANCHE_VAULT_READ_ABI,
-              functionName: 'deposit',
-              args: [amount, context.address],
-            })
-            return writeContractAsync({
-              account: context.address,
-              chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-              address: vaultAddress,
-              abi: TRANCHE_VAULT_READ_ABI,
-              functionName: 'deposit',
-              args: [amount, context.address],
-            })
-          },
-        })
-
-        return steps
-      },
-      onSuccess,
-    })
-  }, [allowance, config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
-
   const requestDeposit = useCallback((amount: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
@@ -159,29 +99,29 @@ export function useVaultTransactions({
     })
   }, [allowance, config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
-  const withdraw = useCallback((amount: bigint) => {
+  const requestRedeem = useCallback((shares: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
-      title: 'Withdrawing USDC from Plether Vault',
+      title: 'Queueing a Plether Vault withdrawal',
       type: 'withdraw',
       buildSteps: (): TransactionStep[] => [{
-        label: 'Withdraw USDC',
+        label: 'Queue withdrawal',
         action: async () => {
           const context = requireTransactionContext(expectedAddress)
           await context.publicClient.simulateContract({
             account: context.address,
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
-            functionName: 'withdraw',
-            args: [amount, context.address, context.address],
+            functionName: 'requestRedeem',
+            args: [shares, context.address, context.address],
           })
           return writeContractAsync({
             account: context.address,
             chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
-            functionName: 'withdraw',
-            args: [amount, context.address, context.address],
+            functionName: 'requestRedeem',
+            args: [shares, context.address, context.address],
           })
         },
       }],
@@ -189,13 +129,13 @@ export function useVaultTransactions({
     })
   }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
-  const cancelPendingDeposit = useCallback((epochId: bigint) => {
+  const cancelPendingDeposit = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Cancelling queued vault deposit',
       type: 'withdraw',
       buildSteps: (): TransactionStep[] => [{
-        label: 'Cancel request',
+        label: 'Recover USDC',
         action: async () => {
           const context = requireTransactionContext(expectedAddress)
           await context.publicClient.simulateContract({
@@ -203,7 +143,7 @@ export function useVaultTransactions({
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
             functionName: 'cancelPendingDeposit',
-            args: [epochId],
+            args: [requestId],
           })
           return writeContractAsync({
             account: context.address,
@@ -211,7 +151,7 @@ export function useVaultTransactions({
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
             functionName: 'cancelPendingDeposit',
-            args: [epochId],
+            args: [requestId],
           })
         },
       }],
@@ -219,29 +159,29 @@ export function useVaultTransactions({
     })
   }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
-  const finalizeDepositEpoch = useCallback((epochId: bigint) => {
+  const cancelRedeemRequest = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
-      title: 'Finalizing vault deposit epoch',
+      title: 'Cancelling queued vault withdrawal',
       type: 'supply',
       buildSteps: (): TransactionStep[] => [{
-        label: 'Finalize epoch',
+        label: 'Cancel withdrawal',
         action: async () => {
           const context = requireTransactionContext(expectedAddress)
           await context.publicClient.simulateContract({
             account: context.address,
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
-            functionName: 'finalizeDepositEpoch',
-            args: [epochId],
+            functionName: 'cancelRedeemRequest',
+            args: [requestId, context.address, context.address],
           })
           return writeContractAsync({
             account: context.address,
             chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
-            functionName: 'finalizeDepositEpoch',
-            args: [epochId],
+            functionName: 'cancelRedeemRequest',
+            args: [requestId, context.address, context.address],
           })
         },
       }],
@@ -249,7 +189,7 @@ export function useVaultTransactions({
     })
   }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
-  const claimDepositShares = useCallback((epochId: bigint) => {
+  const claimDepositShares = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Claiming Plether Vault shares',
@@ -263,7 +203,7 @@ export function useVaultTransactions({
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
             functionName: 'claimDepositShares',
-            args: [epochId],
+            args: [requestId],
           })
           return writeContractAsync({
             account: context.address,
@@ -271,7 +211,67 @@ export function useVaultTransactions({
             address: vaultAddress,
             abi: TRANCHE_VAULT_READ_ABI,
             functionName: 'claimDepositShares',
-            args: [epochId],
+            args: [requestId],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
+  const claimRedeem = useCallback((requestId: bigint, shares: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Claiming funded vault withdrawal',
+      type: 'withdraw',
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Claim USDC',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimRedeem',
+            args: [requestId, shares, context.address, context.address],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimRedeem',
+            args: [requestId, shares, context.address, context.address],
+          })
+        },
+      }],
+      onSuccess,
+    })
+  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+
+  const claimRedeemRefund = useCallback((requestId: bigint) => {
+    const expectedAddress = getAccount(config).address
+    void sequence.execute({
+      title: 'Reclaiming unfunded vault shares',
+      type: 'supply',
+      buildSteps: (): TransactionStep[] => [{
+        label: 'Reclaim shares',
+        action: async () => {
+          const context = requireTransactionContext(expectedAddress)
+          await context.publicClient.simulateContract({
+            account: context.address,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimRedeemRefund',
+            args: [requestId, context.address, context.address],
+          })
+          return writeContractAsync({
+            account: context.address,
+            chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+            address: vaultAddress,
+            abi: TRANCHE_VAULT_READ_ABI,
+            functionName: 'claimRedeemRefund',
+            args: [requestId, context.address, context.address],
           })
         },
       }],
@@ -280,12 +280,13 @@ export function useVaultTransactions({
   }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
 
   return {
-    deposit,
     requestDeposit,
-    withdraw,
+    requestRedeem,
     cancelPendingDeposit,
-    finalizeDepositEpoch,
+    cancelRedeemRequest,
     claimDepositShares,
+    claimRedeem,
+    claimRedeemRefund,
     isRunning: sequence.isRunning,
     isSuccess: sequence.isSuccess,
     isError: sequence.isError,
