@@ -52,7 +52,7 @@ function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
 
 describe('DXY basket chart display transform', () => {
   it('opens on the five-day chart view by default', () => {
-    expect(DEFAULT_DXY_BASKET_CHART_INTERVAL).toBe('5m')
+    expect(DEFAULT_DXY_BASKET_CHART_INTERVAL).toBe('15m')
   })
 
   it('uses hourly component snapshots for the 24h comparison payload', () => {

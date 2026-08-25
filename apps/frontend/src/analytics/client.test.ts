@@ -3,6 +3,7 @@ import {
   captureAnalyticsEvent,
   captureFrontendLog,
   createAnalyticsConfig,
+  initAnalytics,
   resetAnalyticsForTests,
   sanitizeAnalyticsProperties,
   sanitizeFrontendLogAttributes,
@@ -76,6 +77,23 @@ describe('analytics client', () => {
     })
 
     expect(posthogMock.capture).not.toHaveBeenCalled()
+  })
+
+  it('flushes captures queued while the analytics bundle loads', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+
+    const initialization = initAnalytics()
+    captureAnalyticsEvent('perps button clicked', {
+      button_id: 'review_trade',
+      surface: 'perps',
+    })
+    await initialization
+
+    expect(posthogMock.init).toHaveBeenCalledOnce()
+    expect(posthogMock.capture).toHaveBeenCalledWith('perps button clicked', {
+      button_id: 'review_trade',
+      surface: 'perps',
+    })
   })
 
   it('configures privacy-safe structured logs with deployment metadata', () => {

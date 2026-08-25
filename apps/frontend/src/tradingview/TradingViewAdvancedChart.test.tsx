@@ -128,7 +128,7 @@ describe('TradingViewAdvancedChart', () => {
     })
     const onIntervalChange = vi.fn()
     const chartElement = (
-      interval: '1m' | '5m' | '1h' | '1d',
+      interval: '1m' | '5m' | '15m' | '1h' | '1d',
       marketPhase: 'open' | 'close-only' | 'closed' | 'degraded' | 'paused' = 'open',
       marketCurrentDuration?: string,
       showLiquidationLine = true
@@ -167,8 +167,8 @@ describe('TradingViewAdvancedChart', () => {
     expect(widgetOptions?.time_frames).toEqual([
       { text: '1y', resolution: '1D', description: '1 Year' },
       { text: '30d', title: '1m', resolution: '60', description: '1 Month' },
-      { text: '5d', resolution: '5', description: '5 Days' },
-      { text: '1d', resolution: '1', description: '1 Day' },
+      { text: '5d', resolution: '15', description: '5 Days' },
+      { text: '1d', resolution: '5', description: '1 Day' },
     ])
     expect(widgetOptions?.toolbar_bg).toBe('#3B212D')
     expect(widgetOptions?.custom_css_url).toBe('../tradingview-chart.css?v=20260808-2')
@@ -353,16 +353,17 @@ describe('TradingViewAdvancedChart', () => {
       currentResolution = '15'
       intervalCallback?.('15', {})
     })
-    expect(onIntervalChange).toHaveBeenCalledTimes(1)
+    expect(onIntervalChange).toHaveBeenCalledTimes(2)
+    expect(onIntervalChange).toHaveBeenLastCalledWith('15m')
 
-    view.rerender(chartElement('5m'))
+    view.rerender(chartElement('15m'))
     expect(chart.setResolution).not.toHaveBeenCalled()
 
     view.rerender(chartElement('1h'))
     await waitFor(() => {
       expect(chart.setResolution).toHaveBeenCalledWith('60')
     })
-    expect(onIntervalChange).toHaveBeenCalledTimes(1)
+    expect(onIntervalChange).toHaveBeenCalledTimes(2)
 
     view.rerender(chartElement('1h', 'open', undefined, false))
     await waitFor(() => {
