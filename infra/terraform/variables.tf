@@ -345,25 +345,25 @@ variable "vault_history_rpc_url" {
 
 variable "vault_history_house_pool_address" {
   type        = string
-  default     = "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
   description = "HousePool deployment whose Senior and Junior vault performance is indexed."
 }
 
 variable "vault_history_senior_vault_address" {
   type        = string
-  default     = "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
+  default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
   description = "Senior TrancheVault deployment whose performance is indexed."
 }
 
 variable "vault_history_junior_vault_address" {
   type        = string
-  default     = "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
+  default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
   description = "Junior TrancheVault deployment whose performance is indexed."
 }
 
 variable "vault_history_deployment_block" {
   type        = string
-  default     = "288439939"
+  default     = "302257125"
   description = "First Arbitrum block eligible for the configured vault deployment's performance history."
 }
 
@@ -375,47 +375,47 @@ variable "vault_history_confirmations" {
 
 variable "perps_usdc" {
   type    = string
-  default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+  default = "0x1647e41f49ED6D688936092B5a291c4B28106343"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+  default = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+  default = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+  default = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 }
 
 variable "perps_cfd_engine_settlement_sidecar" {
   type    = string
-  default = "0x0b652c4D4610234e221403076C116292F935b424"
+  default = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
 }
 
 variable "perps_cfd_engine_lens" {
   type    = string
-  default = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+  default = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+  default = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
 }
 
 variable "perps_account_lens" {
   type    = string
-  default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+  default = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "288439939"
+  default = "302257125"
 }
 
 variable "perps_indexer_confirmations" {

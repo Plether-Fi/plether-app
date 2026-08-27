@@ -8,7 +8,7 @@ import {
 } from '../contracts/perpsAddresses'
 
 const BLOCKSCOUT_LOGS_URL = 'https://arbitrum-sepolia.blockscout.com/api'
-const DEFAULT_VAULT_DEPLOYMENT_BLOCK = 288_439_939
+const DEFAULT_VAULT_DEPLOYMENT_BLOCK = 302_257_125
 const NEARBY_EPOCH_LOOKBACK = 4n
 const REQUEST_EVENT_TOPICS = [
   {

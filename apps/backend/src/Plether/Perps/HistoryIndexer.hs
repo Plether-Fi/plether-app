@@ -131,12 +131,12 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
-    , paCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
-    , paCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
-    , paCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
-    , paMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
-    , paPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+    { paOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , paCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+    , paCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+    , paCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
+    , paMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+    , paPletherOracle = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
     }
 
 perpsIndexerName :: Text

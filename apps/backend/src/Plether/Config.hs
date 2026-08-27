@@ -235,17 +235,17 @@ loadConfig = do
         fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
-      perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
-      perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
-      perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
-      perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
-      perpsMarginClearinghouse <- fromMaybe "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
-      perpsPletherOracle <- fromMaybe "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c" <$> lookupEnv "PERPS_PLETHER_ORACLE"
-      perpsIndexerStartBlockStr <- fromMaybe "288439939" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
-      vaultHistoryHousePool <- fromMaybe "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
-      vaultHistorySeniorVault <- fromMaybe "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
-      vaultHistoryJuniorVault <- fromMaybe "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
-      vaultHistoryDeploymentBlockStr <- fromMaybe "288439939" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+      perpsAccountLens <- fromMaybe "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
+      perpsUsdc <- fromMaybe "0x1647e41f49ED6D688936092B5a291c4B28106343" <$> lookupEnv "PERPS_USDC"
+      perpsOrderRouter <- fromMaybe "0x97A901dE2B267c307E264FD5F71403F8072F73e7" <$> lookupEnv "PERPS_ORDER_ROUTER"
+      perpsCfdEngine <- fromMaybe "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D" <$> lookupEnv "PERPS_CFD_ENGINE"
+      perpsMarginClearinghouse <- fromMaybe "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
+      perpsPletherOracle <- fromMaybe "0xC69ec16EfB71F62984E9b2688396F34062277FdC" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsIndexerStartBlockStr <- fromMaybe "302257125" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
+      vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
+      vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
+      vaultHistoryDeploymentBlockStr <- fromMaybe "302257125" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
       mVaultHistoryRpcUrl <- lookupEnv "VAULT_HISTORY_RPC_URL"
       vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
@@ -606,10 +606,10 @@ isCanonicalVaultAddress raw =
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
-    , reviewed router "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
-    , reviewed engine "0x6a25ea1015b5f032d8a2d95d57aefcb99219bf0a"
-    , reviewed clearinghouse "0x19c2f60f6312eaf9acde4c2b04551a05ca9be76e"
+    [ reviewed usdc "0x1647e41f49ed6d688936092b5a291c4b28106343"
+    , reviewed router "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+    , reviewed engine "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
+    , reviewed clearinghouse "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
     ]
   where
     reviewed raw expected =

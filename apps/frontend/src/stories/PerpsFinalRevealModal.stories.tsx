@@ -23,13 +23,13 @@ const STORY_MANIFEST: PerpsAaDeploymentManifest = {
   smartAccountVersion: 'permissionless-simple-v0.8',
   smartAccountIndex: '0',
   smartAccountFactory: '0x13E9ed32155810FDbd067D4522C492D6f68E5944',
-  usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3',
+  usdc: '0x1647e41f49ED6D688936092B5a291c4B28106343',
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
-  marginClearinghouse: '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e',
-  cfdEngine: '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a',
-  orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+  marginClearinghouse: '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211',
+  cfdEngine: '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D',
+  orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:
