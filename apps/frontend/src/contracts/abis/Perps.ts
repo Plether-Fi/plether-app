@@ -169,6 +169,10 @@ const ACCOUNT_LEDGER_SNAPSHOT_COMPONENTS = [
 const TRANCHE_VIEW_COMPONENTS = [
   { name: 'totalAssetsUsdc', type: 'uint256' },
   { name: 'totalShares', type: 'uint256' },
+  { name: 'effectiveTotalShares', type: 'uint256' },
+  { name: 'pendingMaintenanceFeeShares', type: 'uint256' },
+  { name: 'maintenanceFeeAprBps', type: 'uint256' },
+  { name: 'maintenanceFeeRecipient', type: 'address' },
   { name: 'sharePrice', type: 'uint256' },
   { name: 'maxWithdrawUsdc', type: 'uint256' },
   { name: 'frozenLpFeeBps', type: 'uint256' },
@@ -191,6 +195,16 @@ const TRANCHE_QUEUE_VIEW_COMPONENTS = [
   { name: 'redeemBacklog', type: 'bool' },
   { name: 'settlementLive', type: 'bool' },
   { name: 'poolPaused', type: 'bool' },
+  { name: 'lpEpochSettlementPaused', type: 'bool' },
+] as const
+
+const LP_STATUS_VIEW_COMPONENTS = [
+  { name: 'tradingActive', type: 'bool' },
+  { name: 'withdrawalLive', type: 'bool' },
+  { name: 'lastMarkTime', type: 'uint64' },
+  { name: 'oracleFresh', type: 'bool' },
+  { name: 'oracleFrozen', type: 'bool' },
+  { name: 'lpEpochSettlementPaused', type: 'bool' },
 ] as const
 
 const LP_REQUEST_STATE_VIEW_COMPONENTS = [
@@ -228,9 +242,17 @@ export const PERPS_PUBLIC_LENS_ABI = [
           { name: 'fadWindow', type: 'bool' },
           { name: 'tradingActive', type: 'bool' },
           { name: 'withdrawalLive', type: 'bool' },
+          { name: 'lpEpochSettlementPaused', type: 'bool' },
         ],
       },
     ],
+  },
+  {
+    type: 'function',
+    name: 'getLpStatus',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'viewData', type: 'tuple', components: LP_STATUS_VIEW_COMPONENTS }],
   },
   {
     type: 'function',

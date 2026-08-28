@@ -523,6 +523,8 @@ Local URLs:
 | `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
 | `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
@@ -542,9 +544,12 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
+| `LP_SETTLEMENT_ENABLED` | No | `false` | Enables one health-checked, bounded LP settlement pass per eligible keeper poll |
+| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Minimum interval between LP settlement monitor cycles |
 | `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
 | `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
 | `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
+| `LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE` | No | `20` | Candidate accounts per `executeLiquidationBatch` transaction (`1`–`256`); one Pyth update is shared by the batch |
 | `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
 | `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
 | `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |

@@ -36,6 +36,9 @@ main = do
             , field "mode" $ show $ kaMode args
             , field "dry_run" $ kaDryRun args
             , field "poll_seconds" $ cfgKeeperPollSeconds cfg
+            , field "lp_settlement_enabled" $ cfgLpSettlementEnabled cfg
+            , field "lp_settlement_poll_seconds" $ cfgLpSettlementPollSeconds cfg
+            , field "settlement_monitor" $ cfgPerpsSettlementMonitorLens cfg
             ]
       pool <- newDbPool dbUrl
       withDb pool $ \conn -> do

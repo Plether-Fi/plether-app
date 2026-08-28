@@ -28,6 +28,7 @@ const PERPS_PUBLIC_LENS_ABI = [
           { name: 'fadWindow', type: 'bool' },
           { name: 'tradingActive', type: 'bool' },
           { name: 'withdrawalLive', type: 'bool' },
+          { name: 'lpEpochSettlementPaused', type: 'bool' },
         ],
       },
     ],
@@ -165,6 +166,7 @@ function formatStatus(status) {
     fadWindow: status.fadWindow,
     tradingActive: status.tradingActive,
     withdrawalLive: status.withdrawalLive,
+    lpEpochSettlementPaused: status.lpEpochSettlementPaused,
   }
 }
 

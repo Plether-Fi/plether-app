@@ -184,6 +184,10 @@ function liveReadFixture({
   seniorHighWaterMark = 72_000_000,
   seniorMaxRequestDeposit = 10_000,
   seniorPrincipal = 70_000_000,
+  settlementPaused = false,
+  poolPaused = false,
+  juniorMaintenanceFeeAprBps = 200,
+  juniorPendingMaintenanceFeeShares = 0,
   walletUsdc = 1_000,
 }: {
   degradedMode?: boolean
@@ -191,6 +195,10 @@ function liveReadFixture({
   seniorHighWaterMark?: number
   seniorMaxRequestDeposit?: number
   seniorPrincipal?: number
+  settlementPaused?: boolean
+  poolPaused?: boolean
+  juniorMaintenanceFeeAprBps?: number
+  juniorPendingMaintenanceFeeShares?: number
   walletUsdc?: number
 } = {}) {
   return [
@@ -208,7 +216,6 @@ function liveReadFixture({
       false,
       degradedMode,
     ]),
-    { status: 'failure' as const },
     success(usdc(70_000_000)),
     success(shares(35_000_000)),
     success(shares(250)),
@@ -226,14 +233,40 @@ function liveReadFixture({
     success([500_001n, 1_800_003_300n]),
     success(2n * 10n ** 24n),
     success(10n ** 24n),
-    success([0, 10n ** 18n, 0n, false, false, true, true]),
+    success([0n, 10n ** 18n, 0n, false, false, true, true, settlementPaused]),
     success([0n, 40n * 10n ** 18n, 0n, 0n]),
     success([0n, 30n * 10n ** 18n, 0n, 0n]),
     success([0n, 5n * 10n ** 17n, 0n, 0n, 0n, 0n, 0n, 0n]),
-    success([usdc(70_000_000), shares(35_000_000), 2n * 10n ** 18n, usdc(70_000_000), 25n, true, true, false]),
-    success([usdc(50_000_000), shares(50_000_000), 10n ** 18n, usdc(20_000_000), 25n, true, true, false]),
-    success(['0x0000000000000000000000000000000000000001', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, false]),
-    success(['0x0000000000000000000000000000000000000002', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, false]),
+    success([
+      usdc(70_000_000),
+      shares(35_000_000),
+      shares(35_000_000),
+      0n,
+      0n,
+      '0x0000000000000000000000000000000000000003',
+      2n * 10n ** 15n,
+      usdc(70_000_000),
+      25n,
+      !poolPaused,
+      true,
+      false,
+    ]),
+    success([
+      usdc(50_000_000),
+      shares(50_000_000),
+      shares(50_000_000 + juniorPendingMaintenanceFeeShares),
+      shares(juniorPendingMaintenanceFeeShares),
+      BigInt(juniorMaintenanceFeeAprBps),
+      '0x0000000000000000000000000000000000000004',
+      10n ** 15n,
+      usdc(20_000_000),
+      25n,
+      !poolPaused,
+      true,
+      false,
+    ]),
+    success(['0x0000000000000000000000000000000000000001', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, poolPaused, settlementPaused]),
+    success(['0x0000000000000000000000000000000000000002', 500_000n, 500_000n, 500_001n, 1_800_003_300n, 0n, 0n, 0n, 0n, false, false, true, poolPaused, settlementPaused]),
     success([usdc(70_000_000), usdc(50_000_000), usdc(70_000_000), usdc(20_000_000)]),
     success(usdc(100_000_000)),
     success(7_500n),
@@ -419,10 +452,9 @@ describe('Vaults page', () => {
       }
     }
     expect(readConfig.query.refetchInterval).toBe(60_000)
-    expect(readConfig.contracts).toHaveLength(34)
+    expect(readConfig.contracts).toHaveLength(33)
     expect(readConfig.contracts.every(({ chainId }) => chainId === 421614)).toBe(true)
     expect(readConfig.contracts.map(({ functionName }) => functionName)).toEqual([
-      'getPoolLiquidityView',
       'getPoolLiquidityView',
       'totalAssets',
       'totalSupply',
@@ -457,8 +489,8 @@ describe('Vaults page', () => {
       'areSeniorDepositReservationsWithinLimits',
       'minTrancheDepositUsdc',
     ])
+    expect((readConfig.contracts[16] as { args?: bigint[] }).args).toEqual([10n ** 27n])
     expect((readConfig.contracts[17] as { args?: bigint[] }).args).toEqual([10n ** 27n])
-    expect((readConfig.contracts[18] as { args?: bigint[] }).args).toEqual([10n ** 27n])
   })
 
   it('omits every performance surface until complete deployment-matched history exists', () => {
@@ -587,6 +619,62 @@ describe('Vaults page', () => {
     expect(screen.queryByText('Onchain action')).not.toBeInTheDocument()
     expect(screen.queryByText(/2 epoch IDs/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Withdrawal cooldown/i)).not.toBeInTheDocument()
+  })
+
+  it('shows Junior dilution-aware maintenance fee details', () => {
+    mocks.readContractsData = liveReadFixture({
+      juniorMaintenanceFeeAprBps: 275,
+      juniorPendingMaintenanceFeeShares: 500,
+    })
+
+    renderVaults('/vaults/junior')
+
+    expect(screen.getByText('Maintenance fee APR')).toBeInTheDocument()
+    expect(screen.getByText('2.75%')).toBeInTheDocument()
+    expect(screen.getByText('Pending maintenance-fee shares')).toBeInTheDocument()
+    expect(screen.getByText('500 pjLP')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /0x0000.*0004/i })).toHaveAttribute(
+      'href',
+      'https://sepolia.arbiscan.io/address/0x0000000000000000000000000000000000000004',
+    )
+    expect(screen.getByText(/paid by minting shares/i)).toBeInTheDocument()
+    expect(screen.getByText(/already included in the effective supply/i)).toBeInTheDocument()
+  })
+
+  it('surfaces a settlement hold without disabling new requests or existing request actions', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({ settlementPaused: true })
+    mocks.quoteContractsData = [success(shares(2)), success(shares(2))]
+
+    const overview = renderVaults()
+    expect(screen.getByText('Epoch settlement paused')).toBeInTheDocument()
+    expect(screen.getByText(/New requests, already-funded claims/i)).toBeInTheDocument()
+    overview.unmount()
+
+    renderVaults('/vaults/junior')
+    expect(screen.getAllByText('Epoch settlement paused').length).toBeGreaterThan(0)
+    fireEvent.change(screen.getByLabelText('Amount to deposit'), { target: { value: '2' } })
+    expect(screen.getByRole('button', { name: 'Review deposit' })).toBeEnabled()
+    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
+    fireEvent.change(screen.getByLabelText('Amount to withdraw'), { target: { value: '1' } })
+    expect(screen.getByRole('button', { name: 'Review withdraw' })).toBeEnabled()
+  })
+
+  it('keeps emergency pool pause asymmetric by disabling deposits but allowing redemptions', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({ poolPaused: true })
+    mocks.quoteContractsData = [success(shares(2)), success(shares(2))]
+
+    renderVaults('/vaults/senior')
+    fireEvent.change(screen.getByLabelText('Amount to deposit'), { target: { value: '2' } })
+    expect(screen.getByRole('button', { name: 'Review deposit' })).toBeDisabled()
+    expect(screen.getAllByText('Pool paused').length).toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
+    fireEvent.change(screen.getByLabelText('Amount to withdraw'), { target: { value: '1' } })
+    expect(screen.getByRole('button', { name: 'Review withdraw' })).toBeEnabled()
   })
 
   it('submits a funded pending request when the vault selects the epoch route', async () => {

@@ -54,6 +54,7 @@ library
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter
         Plether.Ethereum.Contracts.Perps
+        Plether.Ethereum.Contracts.SettlementMonitor
         Plether.Ethereum.Contracts.CfdEngineAccountLens
         Plether.Utils.Address
         Plether.Utils.Hex
@@ -260,6 +261,7 @@ test-suite plether-api-test
         Plether.Ethereum.AbiSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
+        Plether.Ethereum.Contracts.SettlementMonitorSpec
         Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
         Plether.Ethereum.Contracts.TrancheVaultSpec
         Plether.Ethereum.TransactionSpec

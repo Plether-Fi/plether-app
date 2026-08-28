@@ -22,6 +22,7 @@ module Plether.Database.Schema
   , insertPythUpdatePayload
   , getPythUpdatePayloadForWindow
   , getLatestPythUpdatePayload
+  , getLatestPythUpdatePayloadAtOrAfter
   , PythUpdatePayloadRow (..)
   , promotePythPayloadSource
   , isAdmittedPythPayloadSource
@@ -42,6 +43,11 @@ module Plether.Database.Schema
   , PerpsKeeperOrderRow (..)
   , PerpsKeeperTerminalOrderRow (..)
   , getPerpsKeeperOrderById
+  , LpSettlementAttemptRow (..)
+  , recordLpSettlementObservation
+  , markLpSettlementAttemptStatus
+  , markLpSettlementAttemptSubmitted
+  , getSubmittedLpSettlementAttempts
   , ensurePerpsLiquidationSchema
   , tryPerpsLiquidationLock
   , unlockPerpsLiquidationLock
@@ -56,12 +62,13 @@ module Plether.Database.Schema
   , upsertPerpsLiquidationCandidate
   , seedPerpsLiquidationCandidatesFromHistory
   , getPerpsLiquidationCandidates
-  , getPendingPerpsLiquidationCandidate
+  , getPendingPerpsLiquidationCandidates
   , markPerpsLiquidationCandidateChecked
   , recordPerpsLiquidationCandidatePending
   , recordPerpsLiquidationCandidateBroadcastAttempt
   , clearPerpsLiquidationCandidatePending
   , recordPerpsLiquidationCandidateError
+  , recordPerpsLiquidationCandidateRetryableError
   , deletePerpsLiquidationCandidate
   , PerpsLiquidationCandidateRow (..)
   , PerpsLiquidationRejectedPayloadRow (..)
@@ -849,6 +856,21 @@ getLatestPythUpdatePayload conn = do
     [row] -> pure $ Just row
     _ -> pure Nothing
 
+getLatestPythUpdatePayloadAtOrAfter
+  :: Connection
+  -> Integer
+  -> IO (Maybe PythUpdatePayloadRow)
+getLatestPythUpdatePayloadAtOrAfter conn minimumPublishTime = do
+  rows <- query conn
+    "SELECT min_publish_time, max_publish_time, publish_times, update_data, fetched_at, source \
+    \FROM perps_pyth_update_payloads \
+    \WHERE source = 'backend_hermes_latest_v2' AND min_publish_time >= ? \
+    \ORDER BY max_publish_time DESC LIMIT 1"
+    (Only minimumPublishTime)
+  case rows of
+    [row] -> pure $ Just row
+    _ -> pure Nothing
+
 data PerpsKeeperOrderRow = PerpsKeeperOrderRow
   { pkorOrderId :: Integer
   , pkorOrderRouter :: Text
@@ -1024,7 +1046,130 @@ ensurePerpsKeeperSchema conn = do
   _ <- execute_ conn
     "CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block \
     \ON perps_keeper_orders(commit_block DESC)"
+  _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_lp_settlement_attempts (\
+    \chain_id BIGINT NOT NULL,\
+    \monitor_address TEXT NOT NULL,\
+    \observation_digest VARCHAR(66) NOT NULL,\
+    \epoch BIGINT NOT NULL,\
+    \observed_block BIGINT NOT NULL,\
+    \execution_path INTEGER NOT NULL,\
+    \operational_blocker_mask TEXT NOT NULL,\
+    \warning_mask TEXT NOT NULL,\
+    \dependency_failure_mask TEXT NOT NULL,\
+    \critical_fault_mask TEXT NOT NULL,\
+    \transaction_hash VARCHAR(66),\
+    \status VARCHAR(24) NOT NULL,\
+    \last_error TEXT,\
+    \created_at TIMESTAMP DEFAULT NOW(),\
+    \updated_at TIMESTAMP DEFAULT NOW(),\
+    \PRIMARY KEY (chain_id, monitor_address, observation_digest)\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_lp_settlement_submitted \
+    \ON perps_lp_settlement_attempts(chain_id, monitor_address, updated_at) \
+    \WHERE status = 'submitted'"
   pure ()
+
+data LpSettlementAttemptRow = LpSettlementAttemptRow
+  { lsarObservationDigest :: Text
+  , lsarEpoch :: Integer
+  , lsarObservedBlock :: Integer
+  , lsarTransactionHash :: Maybe Text
+  , lsarStatus :: Text
+  }
+  deriving stock (Show, Generic)
+
+instance FromRow LpSettlementAttemptRow where
+  fromRow =
+    LpSettlementAttemptRow
+      <$> field
+      <*> field
+      <*> field
+      <*> field
+      <*> field
+
+recordLpSettlementObservation
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+recordLpSettlementObservation conn chainId monitor digest epoch observedBlock executionPath operationalMask warningMask dependencyMask criticalMask = do
+  _ <- execute conn
+    "INSERT INTO perps_lp_settlement_attempts \
+    \(chain_id, monitor_address, observation_digest, epoch, observed_block, execution_path, \
+    \operational_blocker_mask, warning_mask, dependency_failure_mask, critical_fault_mask, status) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'observed') \
+    \ON CONFLICT (chain_id, monitor_address, observation_digest) DO UPDATE SET \
+    \epoch = EXCLUDED.epoch, observed_block = EXCLUDED.observed_block, \
+    \execution_path = EXCLUDED.execution_path, \
+    \operational_blocker_mask = EXCLUDED.operational_blocker_mask, \
+    \warning_mask = EXCLUDED.warning_mask, \
+    \dependency_failure_mask = EXCLUDED.dependency_failure_mask, \
+    \critical_fault_mask = EXCLUDED.critical_fault_mask, updated_at = NOW()"
+    ( chainId
+    , T.toLower monitor
+    , T.toLower digest
+    , epoch
+    , observedBlock
+    , executionPath
+    , show operationalMask
+    , show warningMask
+    , show dependencyMask
+    , show criticalMask
+    )
+  pure ()
+
+markLpSettlementAttemptStatus
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Maybe Text
+  -> IO ()
+markLpSettlementAttemptStatus conn chainId monitor digest status lastError = do
+  _ <- execute conn
+    "UPDATE perps_lp_settlement_attempts SET status = ?, last_error = ?, updated_at = NOW() \
+    \WHERE chain_id = ? AND monitor_address = ? AND observation_digest = ?"
+    (status, lastError, chainId, T.toLower monitor, T.toLower digest)
+  pure ()
+
+markLpSettlementAttemptSubmitted
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> IO ()
+markLpSettlementAttemptSubmitted conn chainId monitor digest txHash = do
+  _ <- execute conn
+    "UPDATE perps_lp_settlement_attempts SET transaction_hash = ?, status = 'submitted', \
+    \last_error = NULL, updated_at = NOW() \
+    \WHERE chain_id = ? AND monitor_address = ? AND observation_digest = ?"
+    (T.toLower txHash, chainId, T.toLower monitor, T.toLower digest)
+  pure ()
+
+getSubmittedLpSettlementAttempts
+  :: Connection
+  -> Integer
+  -> Text
+  -> IO [LpSettlementAttemptRow]
+getSubmittedLpSettlementAttempts conn chainId monitor =
+  query conn
+    "SELECT observation_digest, epoch, observed_block, transaction_hash, status \
+    \FROM perps_lp_settlement_attempts \
+    \WHERE chain_id = ? AND monitor_address = ? AND status = 'submitted' \
+    \ORDER BY updated_at ASC"
+    (chainId, T.toLower monitor)
 
 keeperLockId :: Int
 keeperLockId = 421614485
@@ -1562,23 +1707,31 @@ getPerpsLiquidationCandidates conn chainId cfdEngine limitRows =
     \LIMIT ?"
     (chainId, normalizeRouter cfdEngine, limitRows)
 
-getPendingPerpsLiquidationCandidate :: Connection -> Integer -> Text -> Int -> Int -> IO (Maybe PerpsLiquidationCandidateRow)
-getPendingPerpsLiquidationCandidate conn chainId cfdEngine replacementSeconds broadcastRetrySeconds = do
-  rows <-
-    query
-      conn
-      "SELECT account, attempt_count, last_error, pending_tx_hash, pending_nonce, pending_sender, pending_raw_tx, \
-      \pending_call_data, pending_value, pending_gas_limit, pending_max_priority_fee_per_gas, \
-      \pending_max_fee_per_gas, \
-      \COALESCE(pending_since <= NOW() - (? * INTERVAL '1 second'), FALSE), \
-      \COALESCE(pending_last_broadcast_at <= NOW() - (? * INTERVAL '1 second'), TRUE) \
-      \FROM perps_liquidation_candidates \
-      \WHERE chain_id = ? AND cfd_engine = ? AND pending_tx_hash IS NOT NULL \
-      \ORDER BY pending_since ASC, account ASC LIMIT 1"
-      (max 1 replacementSeconds, max 1 broadcastRetrySeconds, chainId, normalizeRouter cfdEngine)
-  pure $ case rows of
-    candidate : _ -> Just candidate
-    [] -> Nothing
+getPendingPerpsLiquidationCandidates :: Connection -> Integer -> Text -> Int -> Int -> IO [PerpsLiquidationCandidateRow]
+getPendingPerpsLiquidationCandidates conn chainId cfdEngine replacementSeconds broadcastRetrySeconds =
+  query
+    conn
+    "WITH oldest AS (\
+    \  SELECT pending_tx_hash FROM perps_liquidation_candidates \
+    \  WHERE chain_id = ? AND cfd_engine = ? AND pending_tx_hash IS NOT NULL \
+    \  ORDER BY pending_since ASC, account ASC LIMIT 1\
+    \) \
+    \SELECT account, attempt_count, last_error, pending_tx_hash, pending_nonce, pending_sender, pending_raw_tx, \
+    \pending_call_data, pending_value, pending_gas_limit, pending_max_priority_fee_per_gas, \
+    \pending_max_fee_per_gas, \
+    \COALESCE(pending_since <= NOW() - (? * INTERVAL '1 second'), FALSE), \
+    \COALESCE(pending_last_broadcast_at <= NOW() - (? * INTERVAL '1 second'), TRUE) \
+    \FROM perps_liquidation_candidates \
+    \WHERE chain_id = ? AND cfd_engine = ? \
+    \AND pending_tx_hash = (SELECT pending_tx_hash FROM oldest) \
+    \ORDER BY account ASC"
+    ( chainId
+    , normalizeRouter cfdEngine
+    , max 1 replacementSeconds
+    , max 1 broadcastRetrySeconds
+    , chainId
+    , normalizeRouter cfdEngine
+    )
 
 markPerpsLiquidationCandidateChecked :: Connection -> Integer -> Text -> Text -> IO ()
 markPerpsLiquidationCandidateChecked conn chainId cfdEngine account = do
@@ -1652,6 +1805,18 @@ recordPerpsLiquidationCandidateError conn chainId cfdEngine account err = do
   _ <- execute conn
     "UPDATE perps_liquidation_candidates SET \
     \last_checked_at = NOW(), last_error = ?, updated_at = NOW() \
+    \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
+    (err, chainId, normalizeRouter cfdEngine, T.toLower account)
+  pure ()
+
+-- | Records a retryable batch-item outcome and places it at the front of the
+-- next candidate sweep. This is used for an unattempted suffix or an isolated
+-- item failure after the shared batch transaction itself succeeded.
+recordPerpsLiquidationCandidateRetryableError :: Connection -> Integer -> Text -> Text -> Text -> IO ()
+recordPerpsLiquidationCandidateRetryableError conn chainId cfdEngine account err = do
+  _ <- execute conn
+    "UPDATE perps_liquidation_candidates SET \
+    \last_checked_at = NULL, last_error = ?, updated_at = NOW() \
     \WHERE chain_id = ? AND cfd_engine = ? AND account = ?"
     (err, chainId, normalizeRouter cfdEngine, T.toLower account)
   pure ()

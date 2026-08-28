@@ -25,6 +25,13 @@ import {
   PERPS_ARBITRUM_SEPOLIA,
   PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
 } from '../contracts/perpsAddresses'
+import {
+  decodePendingTrancheState,
+  decodePoolLiquidityView,
+  decodeProtocolStatusView,
+  decodeTrancheQueueView,
+  decodeTrancheView,
+} from '../contracts/vaultViewAdapters'
 import { PERPS_POSITION_SIZE_TO_USDC_SCALE } from '../contracts/perpsConstants'
 import {
   useSwitchToArbitrumSepolia,
@@ -103,6 +110,10 @@ interface PoolSnapshot {
 interface TrancheLiveData {
   totalAssets?: bigint
   totalSupply?: bigint
+  effectiveTotalSupply?: bigint
+  pendingMaintenanceFeeShares?: bigint
+  maintenanceFeeAprBps?: bigint
+  maintenanceFeeRecipient?: Address
   userShares?: bigint
   maxRequestDeposit?: bigint
   maxRequestRedeem?: bigint
@@ -114,6 +125,7 @@ interface TrancheLiveData {
   redeemBacklog?: boolean
   settlementLive?: boolean
   poolPaused?: boolean
+  lpEpochSettlementPaused?: boolean
   frozenLpFeeBps?: bigint
   depositEnabled?: boolean
   withdrawEnabled?: boolean
@@ -135,6 +147,7 @@ interface VaultsSnapshot {
 
 const USDC_DECIMALS = 6
 const SHARE_DECIMALS = 9
+const LENS_SHARE_PRICE_DECIMALS = 18 + USDC_DECIMALS - SHARE_DECIMALS
 const SHARE_PRICE_PROBE = 10n ** 27n
 const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60
 const VAULT_EPOCH_DURATION_SECONDS = 60 * 60
@@ -142,32 +155,6 @@ const VAULT_PERFORMANCE_CHART_COLOR = '#FFAB96'
 const EXPLORER_BASE_URL = 'https://sepolia.arbiscan.io/address'
 const DEPOSIT_PROBE_ACCOUNT = '0x000000000000000000000000000000000000dEaD' as Address
 const WAD = 10n ** 18n
-
-// Kept only for the pre-PR #62 Sepolia deployment so the page remains inspectable
-// while the replacement contracts are being prepared.
-const LEGACY_POOL_LIQUIDITY_ABI = [{
-  type: 'function',
-  name: 'getPoolLiquidityView',
-  stateMutability: 'view',
-  inputs: [],
-  outputs: [{
-    name: 'viewData',
-    type: 'tuple',
-    components: [
-      { name: 'totalAssetsUsdc', type: 'uint256' },
-      { name: 'freeUsdc', type: 'uint256' },
-      { name: 'withdrawalReservedUsdc', type: 'uint256' },
-      { name: 'pendingRecapitalizationUsdc', type: 'uint256' },
-      { name: 'pendingTradingRevenueUsdc', type: 'uint256' },
-      { name: 'seniorPrincipalUsdc', type: 'uint256' },
-      { name: 'juniorPrincipalUsdc', type: 'uint256' },
-      { name: 'seniorHighWaterMarkUsdc', type: 'uint256' },
-      { name: 'markFresh', type: 'bool' },
-      { name: 'oracleFrozen', type: 'bool' },
-      { name: 'degradedMode', type: 'bool' },
-    ],
-  }],
-}] as const
 
 const TRANCHES: Record<TrancheId, TrancheDefinition> = {
   senior: {
@@ -333,6 +320,12 @@ function calculateConvertedSharePrice(convertedAssets: bigint | undefined): numb
   return Number.isFinite(assets) && shares > 0 ? assets / shares : undefined
 }
 
+function calculateLensSharePrice(sharePrice: bigint | undefined): number | undefined {
+  if (sharePrice === undefined) return undefined
+  const value = Number(formatUnits(sharePrice, LENS_SHARE_PRICE_DECIMALS))
+  return Number.isFinite(value) ? value : undefined
+}
+
 function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
   const readAccount = address ?? zeroAddress
   const depositReceiver = address ?? DEPOSIT_PROBE_ACCOUNT
@@ -342,12 +335,6 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
         address: PERPS_ARBITRUM_SEPOLIA.housePool,
         abi: PERPS_HOUSE_POOL_ABI,
-        functionName: 'getPoolLiquidityView',
-      },
-      {
-        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        address: PERPS_ARBITRUM_SEPOLIA.housePool,
-        abi: LEGACY_POOL_LIQUIDITY_ABI,
         functionName: 'getPoolLiquidityView',
       },
       {
@@ -565,81 +552,71 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
 
   return useMemo(() => {
     const results = data as readonly ContractResult[] | undefined
-    const currentPoolResult = readResult(results, 0)
-    const legacyPoolResult = readResult(results, 1)
-    const poolResult = currentPoolResult ?? legacyPoolResult
-    const totalAssetsUsdc = asBigInt(tupleValue(poolResult, 0, 'totalAssetsUsdc'))
-    const freeUsdc = asBigInt(tupleValue(poolResult, 1, 'freeUsdc'))
-    const withdrawalReservedUsdc = asBigInt(tupleValue(poolResult, 2, 'withdrawalReservedUsdc'))
-    const pendingRecapitalizationUsdc = asBigInt(
-      tupleValue(poolResult, 3, 'pendingRecapitalizationUsdc')
-    )
-    const pendingTradingRevenueUsdc = asBigInt(
-      tupleValue(poolResult, 4, 'pendingTradingRevenueUsdc')
-    )
-    const seniorPrincipalUsdc = asBigInt(tupleValue(poolResult, 5, 'seniorPrincipalUsdc'))
-    const juniorPrincipalUsdc = asBigInt(tupleValue(poolResult, 6, 'juniorPrincipalUsdc'))
-    const seniorHighWaterMarkUsdc = asBigInt(
-      tupleValue(poolResult, 7, 'seniorHighWaterMarkUsdc')
-    )
-    const currentTerminalDeficitUsdc = currentPoolResult === undefined
-      ? undefined
-      : asBigInt(tupleValue(currentPoolResult, 8, 'currentTerminalDeficitUsdc'))
-    const markFresh = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 8 : 9, 'markFresh'))
-    const oracleFrozen = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 9 : 10, 'oracleFrozen'))
-    const degradedMode = asBoolean(tupleValue(poolResult, currentPoolResult === undefined ? 10 : 11, 'degradedMode'))
-    const seniorAssets = asBigInt(readResult(results, 2))
-    const seniorSupply = asBigInt(readResult(results, 3))
-    const seniorUserShares = asBigInt(readResult(results, 4))
-    const seniorMaxRequestDeposit = asBigInt(readResult(results, 5))
-    const seniorMaxRequestRedeem = asBigInt(readResult(results, 6))
-    const juniorAssets = asBigInt(readResult(results, 7))
-    const juniorSupply = asBigInt(readResult(results, 8))
-    const juniorUserShares = asBigInt(readResult(results, 9))
-    const juniorMaxRequestDeposit = asBigInt(readResult(results, 10))
-    const juniorMaxRequestRedeem = asBigInt(readResult(results, 11))
-    const walletUsdc = asBigInt(readResult(results, 12))
-    const seniorAllowance = asBigInt(readResult(results, 13))
-    const juniorAllowance = asBigInt(readResult(results, 14))
-    const seniorRequestWindow = readResult(results, 15)
-    const juniorRequestWindow = readResult(results, 16)
-    const seniorConvertedAssets = asBigInt(readResult(results, 17))
-    const juniorConvertedAssets = asBigInt(readResult(results, 18))
-    const protocolStatus = readResult(results, 19)
-    const bullSide = readResult(results, 20)
-    const bearSide = readResult(results, 21)
-    const riskParams = readResult(results, 22)
-    const seniorTranche = readResult(results, 23)
-    const juniorTranche = readResult(results, 24)
-    const seniorQueue = readResult(results, 25)
-    const juniorQueue = readResult(results, 26)
-    const pendingTrancheState = readResult(results, 27)
-    const maxSeniorExposureUsdc = asBigInt(readResult(results, 28))
-    const maxSeniorShareBps = asBigInt(readResult(results, 29))
-    const seniorDepositCapacityUsdc = asBigInt(readResult(results, 30))
-    const reservedSeniorDepositAssetsUsdc = asBigInt(readResult(results, 31))
-    const seniorReservationsWithinLimits = asBoolean(readResult(results, 32))
-    const minTrancheDepositUsdc = asBigInt(readResult(results, 33))
-    const markPrice = asBigInt(tupleValue(protocolStatus, 1, 'lastMarkPrice'))
+    const poolView = decodePoolLiquidityView(readResult(results, 0))
+    const directSeniorAssets = asBigInt(readResult(results, 1))
+    const directSeniorSupply = asBigInt(readResult(results, 2))
+    const seniorUserShares = asBigInt(readResult(results, 3))
+    const seniorMaxRequestDeposit = asBigInt(readResult(results, 4))
+    const seniorMaxRequestRedeem = asBigInt(readResult(results, 5))
+    const directJuniorAssets = asBigInt(readResult(results, 6))
+    const directJuniorSupply = asBigInt(readResult(results, 7))
+    const juniorUserShares = asBigInt(readResult(results, 8))
+    const juniorMaxRequestDeposit = asBigInt(readResult(results, 9))
+    const juniorMaxRequestRedeem = asBigInt(readResult(results, 10))
+    const walletUsdc = asBigInt(readResult(results, 11))
+    const seniorAllowance = asBigInt(readResult(results, 12))
+    const juniorAllowance = asBigInt(readResult(results, 13))
+    const seniorRequestWindow = readResult(results, 14)
+    const juniorRequestWindow = readResult(results, 15)
+    const seniorConvertedAssets = asBigInt(readResult(results, 16))
+    const juniorConvertedAssets = asBigInt(readResult(results, 17))
+    const protocolStatus = decodeProtocolStatusView(readResult(results, 18))
+    const bullSide = readResult(results, 19)
+    const bearSide = readResult(results, 20)
+    const riskParams = readResult(results, 21)
+    const seniorTranche = decodeTrancheView(readResult(results, 22))
+    const juniorTranche = decodeTrancheView(readResult(results, 23))
+    const seniorQueue = decodeTrancheQueueView(readResult(results, 24))
+    const juniorQueue = decodeTrancheQueueView(readResult(results, 25))
+    const pendingTrancheState = decodePendingTrancheState(readResult(results, 26))
+    const maxSeniorExposureUsdc = asBigInt(readResult(results, 27))
+    const maxSeniorShareBps = asBigInt(readResult(results, 28))
+    const seniorDepositCapacityUsdc = asBigInt(readResult(results, 29))
+    const reservedSeniorDepositAssetsUsdc = asBigInt(readResult(results, 30))
+    const seniorReservationsWithinLimits = asBoolean(readResult(results, 31))
+    const minTrancheDepositUsdc = asBigInt(readResult(results, 32))
+    const totalAssetsUsdc = poolView?.totalAssetsUsdc
+    const freeUsdc = poolView?.freeUsdc
+    const withdrawalReservedUsdc = poolView?.withdrawalReservedUsdc
+    const pendingRecapitalizationUsdc = poolView?.pendingRecapitalizationUsdc
+    const pendingTradingRevenueUsdc = poolView?.pendingTradingRevenueUsdc
+    const seniorPrincipalUsdc = poolView?.seniorPrincipalUsdc
+    const juniorPrincipalUsdc = poolView?.juniorPrincipalUsdc
+    const seniorHighWaterMarkUsdc = poolView?.seniorHighWaterMarkUsdc
+    const currentTerminalDeficitUsdc = poolView?.currentTerminalDeficitUsdc
+    const markFresh = poolView?.markFresh
+    const oracleFrozen = poolView?.oracleFrozen
+    const degradedMode = poolView?.degradedMode
+    const seniorAssets = seniorTranche?.totalAssetsUsdc ?? directSeniorAssets
+    const seniorSupply = seniorTranche?.totalShares ?? directSeniorSupply
+    const juniorAssets = juniorTranche?.totalAssetsUsdc ?? directJuniorAssets
+    const juniorSupply = juniorTranche?.totalShares ?? directJuniorSupply
+    const markPrice = protocolStatus?.lastMarkPrice
     const inferredCurrentEpoch = BigInt(Math.floor(Date.now() / 3_600_000))
-    const seniorCurrentEpoch = asBigInt(tupleValue(seniorQueue, 1, 'currentEpoch'))
-      ?? inferredCurrentEpoch
-    const juniorCurrentEpoch = asBigInt(tupleValue(juniorQueue, 1, 'currentEpoch'))
-      ?? inferredCurrentEpoch
-    const seniorNextRequestEpoch = asBigInt(tupleValue(seniorQueue, 3, 'nextRequestEpoch'))
+    const seniorCurrentEpoch = seniorQueue?.currentEpoch ?? inferredCurrentEpoch
+    const juniorCurrentEpoch = juniorQueue?.currentEpoch ?? inferredCurrentEpoch
+    const seniorNextRequestEpoch = seniorQueue?.nextRequestEpoch
       ?? asBigInt(tupleValue(seniorRequestWindow, 0, 'nextRequestEpoch'))
-    const juniorNextRequestEpoch = asBigInt(tupleValue(juniorQueue, 3, 'nextRequestEpoch'))
+    const juniorNextRequestEpoch = juniorQueue?.nextRequestEpoch
       ?? asBigInt(tupleValue(juniorRequestWindow, 0, 'nextRequestEpoch'))
-    const seniorNextRequestCutoffTime = asBigInt(tupleValue(seniorQueue, 4, 'nextRequestCutoffTime'))
+    const seniorNextRequestCutoffTime = seniorQueue?.nextRequestCutoffTime
       ?? asBigInt(tupleValue(seniorRequestWindow, 1, 'nextRequestCutoffTime'))
-    const juniorNextRequestCutoffTime = asBigInt(tupleValue(juniorQueue, 4, 'nextRequestCutoffTime'))
+    const juniorNextRequestCutoffTime = juniorQueue?.nextRequestCutoffTime
       ?? asBigInt(tupleValue(juniorRequestWindow, 1, 'nextRequestCutoffTime'))
-    const seniorPoolWithdrawCapUsdc = asBigInt(
-      tupleValue(pendingTrancheState, 2, 'maxSeniorWithdrawUsdc')
-    ) ?? asBigInt(tupleValue(seniorTranche, 3, 'maxWithdrawUsdc'))
-    const juniorPoolWithdrawCapUsdc = asBigInt(
-      tupleValue(pendingTrancheState, 3, 'maxJuniorWithdrawUsdc')
-    ) ?? asBigInt(tupleValue(juniorTranche, 3, 'maxWithdrawUsdc'))
+    const seniorPoolWithdrawCapUsdc = pendingTrancheState?.maxSeniorWithdrawUsdc
+      ?? seniorTranche?.maxWithdrawUsdc
+    const juniorPoolWithdrawCapUsdc = pendingTrancheState?.maxJuniorWithdrawUsdc
+      ?? juniorTranche?.maxWithdrawUsdc
     const bullOpenInterest = asBigInt(tupleValue(bullSide, 1, 'openInterest'))
     const bearOpenInterest = asBigInt(tupleValue(bearSide, 1, 'openInterest'))
     const maxSkewRatio = asBigInt(tupleValue(riskParams, 1, 'maxSkewRatio'))
@@ -733,6 +710,10 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         senior: {
           totalAssets: seniorAssets,
           totalSupply: seniorSupply,
+          effectiveTotalSupply: seniorTranche?.effectiveTotalShares,
+          pendingMaintenanceFeeShares: seniorTranche?.pendingMaintenanceFeeShares,
+          maintenanceFeeAprBps: seniorTranche?.maintenanceFeeAprBps,
+          maintenanceFeeRecipient: seniorTranche?.maintenanceFeeRecipient,
           userShares: seniorUserShares,
           maxRequestDeposit: seniorMaxRequestDeposit,
           maxRequestRedeem: seniorMaxRequestRedeem,
@@ -740,15 +721,18 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           currentEpoch: seniorCurrentEpoch,
           nextRequestEpoch: seniorNextRequestEpoch,
           nextRequestCutoffTime: seniorNextRequestCutoffTime,
-          depositBacklog: asBoolean(tupleValue(seniorQueue, 9, 'depositBacklog')),
-          redeemBacklog: asBoolean(tupleValue(seniorQueue, 10, 'redeemBacklog')),
-          settlementLive: asBoolean(tupleValue(seniorQueue, 11, 'settlementLive')),
-          poolPaused: asBoolean(tupleValue(seniorQueue, 12, 'poolPaused')),
-          frozenLpFeeBps: asBigInt(tupleValue(seniorTranche, 4, 'frozenLpFeeBps')),
-          depositEnabled: asBoolean(tupleValue(seniorTranche, 5, 'depositEnabled')),
-          withdrawEnabled: asBoolean(tupleValue(seniorTranche, 6, 'withdrawEnabled')),
+          depositBacklog: seniorQueue?.depositBacklog,
+          redeemBacklog: seniorQueue?.redeemBacklog,
+          settlementLive: seniorQueue?.settlementLive,
+          poolPaused: seniorQueue?.poolPaused,
+          lpEpochSettlementPaused: seniorQueue?.lpEpochSettlementPaused
+            ?? protocolStatus?.lpEpochSettlementPaused,
+          frozenLpFeeBps: seniorTranche?.frozenLpFeeBps,
+          depositEnabled: seniorTranche?.depositEnabled,
+          withdrawEnabled: seniorTranche?.withdrawEnabled,
           poolWithdrawCapUsdc: seniorPoolWithdrawCapUsdc,
-          sharePrice: calculateConvertedSharePrice(seniorConvertedAssets)
+          sharePrice: calculateLensSharePrice(seniorTranche?.sharePrice)
+            ?? calculateConvertedSharePrice(seniorConvertedAssets)
             ?? calculateSharePrice(seniorAssets, seniorSupply),
           hasCoreData: hasSeniorCoreData,
           hasDepositData: seniorAllowance !== undefined,
@@ -757,6 +741,10 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         junior: {
           totalAssets: juniorAssets,
           totalSupply: juniorSupply,
+          effectiveTotalSupply: juniorTranche?.effectiveTotalShares,
+          pendingMaintenanceFeeShares: juniorTranche?.pendingMaintenanceFeeShares,
+          maintenanceFeeAprBps: juniorTranche?.maintenanceFeeAprBps,
+          maintenanceFeeRecipient: juniorTranche?.maintenanceFeeRecipient,
           userShares: juniorUserShares,
           maxRequestDeposit: juniorMaxRequestDeposit,
           maxRequestRedeem: juniorMaxRequestRedeem,
@@ -764,15 +752,18 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           currentEpoch: juniorCurrentEpoch,
           nextRequestEpoch: juniorNextRequestEpoch,
           nextRequestCutoffTime: juniorNextRequestCutoffTime,
-          depositBacklog: asBoolean(tupleValue(juniorQueue, 9, 'depositBacklog')),
-          redeemBacklog: asBoolean(tupleValue(juniorQueue, 10, 'redeemBacklog')),
-          settlementLive: asBoolean(tupleValue(juniorQueue, 11, 'settlementLive')),
-          poolPaused: asBoolean(tupleValue(juniorQueue, 12, 'poolPaused')),
-          frozenLpFeeBps: asBigInt(tupleValue(juniorTranche, 4, 'frozenLpFeeBps')),
-          depositEnabled: asBoolean(tupleValue(juniorTranche, 5, 'depositEnabled')),
-          withdrawEnabled: asBoolean(tupleValue(juniorTranche, 6, 'withdrawEnabled')),
+          depositBacklog: juniorQueue?.depositBacklog,
+          redeemBacklog: juniorQueue?.redeemBacklog,
+          settlementLive: juniorQueue?.settlementLive,
+          poolPaused: juniorQueue?.poolPaused,
+          lpEpochSettlementPaused: juniorQueue?.lpEpochSettlementPaused
+            ?? protocolStatus?.lpEpochSettlementPaused,
+          frozenLpFeeBps: juniorTranche?.frozenLpFeeBps,
+          depositEnabled: juniorTranche?.depositEnabled,
+          withdrawEnabled: juniorTranche?.withdrawEnabled,
           poolWithdrawCapUsdc: juniorPoolWithdrawCapUsdc,
-          sharePrice: calculateConvertedSharePrice(juniorConvertedAssets)
+          sharePrice: calculateLensSharePrice(juniorTranche?.sharePrice)
+            ?? calculateConvertedSharePrice(juniorConvertedAssets)
             ?? calculateSharePrice(juniorAssets, juniorSupply),
           hasCoreData: hasJuniorCoreData,
           hasDepositData: juniorAllowance !== undefined,
@@ -1506,6 +1497,15 @@ function VaultsOverview({
         </dl>
       </section>
 
+      {snapshot.tranches.senior.lpEpochSettlementPaused === true
+        || snapshot.tranches.junior.lpEpochSettlementPaused === true ? (
+          <Alert variant="warning" title="Epoch settlement paused">
+            New requests, already-funded claims, eligible cancellations, and refunds remain
+            available. Deposit requests will not activate and redemption requests will not receive
+            new funding until governance resumes hourly settlement.
+          </Alert>
+        ) : null}
+
       <section>
         <div className="mb-4">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
@@ -1696,6 +1696,40 @@ function OverviewTab({
                 ? 'Unavailable'
                 : `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}%`}
             />
+            {tranche.id === 'junior' ? (
+              <>
+                <DetailRow
+                  label="Maintenance fee APR"
+                  value={liveData.maintenanceFeeAprBps === undefined
+                    ? 'Unavailable'
+                    : `${(Number(liveData.maintenanceFeeAprBps) / 100).toFixed(2)}%`}
+                />
+                <DetailRow
+                  label="Pending maintenance-fee shares"
+                  value={liveData.pendingMaintenanceFeeShares === undefined
+                    ? 'Unavailable'
+                    : `${formatShares(liveData.pendingMaintenanceFeeShares)} ${tranche.token}`}
+                />
+                <DetailRow
+                  label="Maintenance-fee recipient"
+                  value={liveData.maintenanceFeeRecipient === undefined
+                    ? 'Unavailable'
+                    : (
+                      <a
+                        href={`${EXPLORER_BASE_URL}/${liveData.maintenanceFeeRecipient}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="group inline-flex items-center gap-1 text-brand-peach"
+                      >
+                        <span className="group-hover:underline">
+                          {formatAddress(liveData.maintenanceFeeRecipient)}
+                        </span>
+                        <span className="material-symbols-outlined text-sm">open_in_new</span>
+                      </a>
+                    )}
+                />
+              </>
+            ) : null}
             {tranche.id === 'senior' ? (
               <>
                 <DetailRow
@@ -1800,6 +1834,15 @@ function OverviewTab({
                 : liveData.poolPaused ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
+              label="Epoch settlement paused"
+              value={liveData.lpEpochSettlementPaused === undefined
+                ? 'Unavailable'
+                : liveData.lpEpochSettlementPaused ? 'Yes' : 'No'}
+              valueClassName={liveData.lpEpochSettlementPaused === undefined
+                ? 'text-content-secondary'
+                : liveData.lpEpochSettlementPaused ? 'text-warning' : 'text-positive'}
+            />
+            <DetailRow
               label="Withdrawal funding"
               value={liveData.settlementLive === undefined
                 ? 'Unavailable'
@@ -1811,6 +1854,14 @@ function OverviewTab({
           </dl>
         </section>
       </div>
+
+      {tranche.id === 'junior' ? (
+        <Alert variant="info" title="How the Junior maintenance fee works">
+          The fee is paid by minting shares to the configured recipient, which dilutes existing
+          Junior shares. Pending dilution is already included in the effective supply used for the
+          displayed share price and in realized APY.
+        </Alert>
+      ) : null}
 
       {tranche.id === 'senior' ? (
         <section className="border border-brand-border/30 bg-surface-panel p-5">
@@ -3572,6 +3623,15 @@ function VaultDetail({
           />
         </dl>
       </section>
+
+      {liveData.lpEpochSettlementPaused === true ? (
+        <Alert variant="warning" title="Epoch settlement paused">
+          You can still submit requests, claim already-funded assets or shares, and use any
+          cancellation or refund action offered for your request. Deposit requests will not
+          activate and redemption requests will not receive new funding until governance resumes
+          hourly settlement.
+        </Alert>
+      ) : null}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">

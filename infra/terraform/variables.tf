@@ -383,6 +383,31 @@ variable "perps_order_router" {
   default = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
 }
 
+variable "perps_house_pool" {
+  type        = string
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+  description = "HousePool bound to the configured v1.2.0 settlement monitor."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+    error_message = "perps_house_pool must be a canonical Ethereum address."
+  }
+}
+
+variable "perps_settlement_monitor_lens" {
+  type        = string
+  default     = "0xd251AC0BD90780c48F31F575152808315200664E"
+  description = "Settlement Monitor facade used by the keeper. Never configure the sidecar address here."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+      && lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
+    )
+    error_message = "perps_settlement_monitor_lens must be the facade, never the v1.2.0 monitor sidecar."
+  }
+}
+
 variable "perps_plether_oracle" {
   type    = string
   default = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
@@ -490,6 +515,27 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "lp_settlement_enabled" {
+  type        = bool
+  default     = false
+  description = "Enables signer-backed hourly LP settlement after a successful dry-run and keeper funding check."
+}
+
+variable "lp_settlement_poll_seconds" {
+  type        = string
+  default     = "15"
+  description = "Minimum interval between LP settlement monitor cycles in the shared keeper process."
+
+  validation {
+    condition = try(
+      can(regex("^[1-9][0-9]*$", var.lp_settlement_poll_seconds))
+      && tonumber(var.lp_settlement_poll_seconds) <= 3600,
+      false
+    )
+    error_message = "lp_settlement_poll_seconds must be a whole number from 1 through 3600."
+  }
+}
+
 variable "liquidation_worker_poll_seconds" {
   type    = string
   default = "600"
@@ -508,6 +554,17 @@ variable "liquidation_worker_multicall_size" {
   validation {
     condition     = can(regex("^([1-9]|[1-9][0-9]|100)$", var.liquidation_worker_multicall_size))
     error_message = "liquidation_worker_multicall_size must be an integer between 1 and 100."
+  }
+}
+
+variable "liquidation_worker_execution_batch_size" {
+  type        = string
+  default     = "20"
+  description = "Number of candidate accounts submitted per executeLiquidationBatch transaction. Must be between 1 and 256."
+
+  validation {
+    condition     = can(regex("^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$", var.liquidation_worker_execution_batch_size))
+    error_message = "liquidation_worker_execution_batch_size must be an integer between 1 and 256."
   }
 }
 

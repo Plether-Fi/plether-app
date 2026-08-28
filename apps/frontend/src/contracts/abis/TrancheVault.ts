@@ -60,6 +60,13 @@ export const TRANCHE_VAULT_READ_ABI = [
   },
   {
     type: 'function',
+    name: 'estimateMintAssets',
+    stateMutability: 'view',
+    inputs: [{ name: 'shares', type: 'uint256' }],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'estimateWithdrawShares',
     stateMutability: 'view',
     inputs: [{ name: 'assets', type: 'uint256' }],

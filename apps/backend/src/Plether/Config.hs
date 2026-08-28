@@ -61,6 +61,8 @@ data Config = Config
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
+  , cfgPerpsHousePool :: Text
+  , cfgPerpsSettlementMonitorLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
   , cfgVaultHistoryHousePoolAddress :: Text
   , cfgVaultHistorySeniorVaultAddress :: Text
@@ -76,6 +78,8 @@ data Config = Config
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
   , cfgKeeperFeeBufferBps :: Integer
+  , cfgLpSettlementEnabled :: Bool
+  , cfgLpSettlementPollSeconds :: Int
   }
   deriving stock (Show)
 
@@ -241,6 +245,8 @@ loadConfig = do
       perpsCfdEngine <- fromMaybe "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D" <$> lookupEnv "PERPS_CFD_ENGINE"
       perpsMarginClearinghouse <- fromMaybe "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       perpsPletherOracle <- fromMaybe "0xC69ec16EfB71F62984E9b2688396F34062277FdC" <$> lookupEnv "PERPS_PLETHER_ORACLE"
+      perpsHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "PERPS_HOUSE_POOL"
+      perpsSettlementMonitorLens <- fromMaybe "0xd251AC0BD90780c48F31F575152808315200664E" <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
       perpsIndexerStartBlockStr <- fromMaybe "302257125" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
       vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
       vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
@@ -263,6 +269,8 @@ loadConfig = do
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
+      lpSettlementEnabledStr <- fromMaybe "false" <$> lookupEnv "LP_SETTLEMENT_ENABLED"
+      lpSettlementPollSecondsStr <- fromMaybe "15" <$> lookupEnv "LP_SETTLEMENT_POLL_SECONDS"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -396,11 +404,40 @@ loadConfig = do
                   , fromMaybe (T.pack perpsRpcUrl) $ nonBlankText mVaultHistoryRpcUrl
                   )
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig, vaultHistoryConfig) of
-        (Left err, _, _, _) -> pure $ Left err
-        (_, Left err, _, _) -> pure $ Left err
-        (_, _, Left err, _) -> pure $ Left err
-        (_, _, _, Left err) -> pure $ Left err
+          lpSettlementConfig = do
+            enabled <-
+              maybe
+                (Left "LP_SETTLEMENT_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict lpSettlementEnabledStr)
+            pollSeconds <-
+              parseBoundedWholeNumber
+                "LP_SETTLEMENT_POLL_SECONDS"
+                1
+                3_600
+                lpSettlementPollSecondsStr
+            case
+                [ name
+                | (name, address) <-
+                    [ ("PERPS_HOUSE_POOL", perpsHousePool)
+                    , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                    ]
+                , not $ isCanonicalVaultAddress address
+                ]
+              of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              []
+                | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
+                    == "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151" ->
+                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.0 monitor sidecar"
+                | otherwise -> Right (enabled, pollSeconds)
+
+      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig, vaultHistoryConfig, lpSettlementConfig) of
+        (Left err, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -417,6 +454,7 @@ loadConfig = do
                 , vaultHistoryConfirmations
                 , vaultHistoryRpcUrl
                 )
+          , Right (lpSettlementEnabled, lpSettlementPollSeconds)
           ) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
@@ -454,6 +492,8 @@ loadConfig = do
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
+                , cfgPerpsHousePool = T.pack perpsHousePool
+                , cfgPerpsSettlementMonitorLens = T.pack perpsSettlementMonitorLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgVaultHistoryHousePoolAddress = T.pack vaultHistoryHousePool
                 , cfgVaultHistorySeniorVaultAddress = T.pack vaultHistorySeniorVault
@@ -469,6 +509,8 @@ loadConfig = do
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
+                , cfgLpSettlementEnabled = lpSettlementEnabled
+                , cfgLpSettlementPollSeconds = lpSettlementPollSeconds
                 }
 
 firstEnv :: [String] -> IO (Maybe String)
