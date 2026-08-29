@@ -1,6 +1,17 @@
 variable "aws_region" {
   type    = string
-  default = "us-east-1"
+  default = "ap-southeast-1"
+}
+
+variable "expected_aws_account_id" {
+  type        = string
+  default     = "932542905614"
+  description = "AWS account that Terraform is allowed to manage. The provider refuses credentials for any other account."
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_aws_account_id))
+    error_message = "expected_aws_account_id must be a 12-digit AWS account ID without separators."
+  }
 }
 
 variable "environment" {
@@ -868,6 +879,17 @@ variable "liquidation_worker_desired_count" {
   description = "Desired task count for the dedicated liquidation worker service."
 }
 
+variable "api_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired API task count. Set to zero while restoring or validating a migrated database."
+
+  validation {
+    condition     = floor(var.api_desired_count) == var.api_desired_count && var.api_desired_count >= 0
+    error_message = "api_desired_count must be a non-negative whole number."
+  }
+}
+
 variable "consolidate_workers" {
   type        = bool
   default     = false
@@ -944,8 +966,8 @@ variable "db_storage_type" {
 
 variable "db_storage_encrypted" {
   type        = bool
-  default     = false
-  description = "Optionally encrypt RDS storage at rest. Existing unencrypted instances must be migrated through encrypted snapshot copy/restore rather than modified in place."
+  default     = true
+  description = "Encrypt RDS storage at rest. The company-account migration restores from an encrypted snapshot; existing unencrypted instances must be migrated through snapshot copy/restore rather than modified in place."
 }
 
 variable "db_kms_key_id" {
@@ -1046,6 +1068,23 @@ variable "db_final_snapshot_identifier" {
       false
     )
     error_message = "db_final_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
+  }
+}
+
+variable "db_snapshot_identifier" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Optional target-region manual snapshot used only to create this RDS lifecycle. Keep the value stable after restoration because changing it replaces the DB instance."
+
+  validation {
+    condition = var.db_snapshot_identifier == null || try(
+      length(var.db_snapshot_identifier) <= 255
+      && can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.db_snapshot_identifier))
+      && !strcontains(var.db_snapshot_identifier, "--"),
+      false
+    )
+    error_message = "db_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
   }
 }
 

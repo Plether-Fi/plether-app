@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-1' }}
   TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
@@ -32,14 +32,16 @@ jobs:
     timeout-minutes: 8
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Validate deployed Pyth configuration
         env:
@@ -348,6 +350,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
+      id-token: write
     outputs:
       image: ${{ steps.images.outputs.image }}
       log_router_image: ${{ steps.images.outputs.log_router_image }}
@@ -358,9 +361,10 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Login to ECR
         id: ecr
@@ -420,6 +424,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
     strategy:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
@@ -430,9 +435,10 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          allowed-account-ids: ${{ vars.AWS_ACCOUNT_ID }}
+          role-session-name: plether-${{ github.run_id }}
 
       - name: Get current task definition
         id: task-definition-status

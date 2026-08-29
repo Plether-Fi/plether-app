@@ -419,7 +419,7 @@ resource "aws_ecs_service" "api" {
   name                              = "plether-api"
   cluster                           = aws_ecs_cluster.main.id
   task_definition                   = aws_ecs_task_definition.api.arn
-  desired_count                     = 1
+  desired_count                     = var.api_desired_count
   launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 300
 

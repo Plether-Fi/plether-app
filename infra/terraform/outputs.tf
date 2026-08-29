@@ -45,3 +45,7 @@ output "ecs_insights_worker_service_name" {
 output "ecs_workers_service_name" {
   value = var.consolidate_workers ? aws_ecs_service.workers[0].name : null
 }
+
+output "github_deploy_role_arn" {
+  value = aws_iam_role.github_deploy.arn
+}

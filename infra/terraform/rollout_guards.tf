@@ -1,6 +1,7 @@
 resource "terraform_data" "perps_candle_rollout_guard" {
   input = {
     environment                    = var.environment
+    api_desired_count              = var.api_desired_count
     write_mode                     = var.perps_candle_write_mode
     read_mode                      = var.perps_candle_read_mode
     read_intervals                 = var.perps_candle_read_intervals
@@ -16,6 +17,7 @@ resource "terraform_data" "perps_candle_rollout_guard" {
     db_deletion_protection         = var.db_deletion_protection
     db_skip_final_snapshot         = var.db_skip_final_snapshot
     db_final_snapshot_identifier   = var.db_final_snapshot_identifier
+    db_snapshot_identifier         = var.db_snapshot_identifier
   }
 
   lifecycle {

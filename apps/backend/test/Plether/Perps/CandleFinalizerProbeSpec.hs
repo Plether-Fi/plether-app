@@ -27,10 +27,10 @@ spec = do
       validateFinalizerDatabaseUrl sepoliaDatabaseHost sepoliaDatabaseUrl
         `shouldBe` Right ()
       forM_
-        [ "postgresql://plether:secret@plether-mainnet.abc.us-east-1.rds.amazonaws.com:5432/plether"
-        , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/other"
-        , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/plether?hostaddr=10.0.0.1"
-        , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com/plether"
+        [ "postgresql://plether:secret@plether-mainnet.abc.ap-southeast-1.rds.amazonaws.com:5432/plether"
+        , "postgresql://plether:secret@plether-sepolia.abc.ap-southeast-1.rds.amazonaws.com:5432/other"
+        , "postgresql://plether:secret@plether-sepolia.abc.ap-southeast-1.rds.amazonaws.com:5432/plether?hostaddr=10.0.0.1"
+        , "postgresql://plether:secret@plether-sepolia.abc.ap-southeast-1.rds.amazonaws.com/plether"
         , canonicalDatabasePrefix <> "?sslmode=require&sslrootcert=%2Fetc%2Fssl%2Fcerts%2Faws-rds-global-bundle.pem"
         , canonicalDatabasePrefix <> "?sslmode=verify-full"
         , canonicalDatabasePrefix <> "?sslmode=verify-full&sslrootcert=%2Fwrong.pem"
@@ -43,7 +43,7 @@ spec = do
 
     it "rejects an expected host that is not the named Sepolia RDS endpoint" $
       validateFinalizerDatabaseUrl
-        "plether-mainnet.abc.us-east-1.rds.amazonaws.com"
+        "plether-mainnet.abc.ap-southeast-1.rds.amazonaws.com"
         sepoliaDatabaseUrl
         `shouldSatisfy` isLeft
 
@@ -177,7 +177,7 @@ testRouter :: Text
 testRouter = "0xabc"
 
 sepoliaDatabaseHost :: Text
-sepoliaDatabaseHost = "plether-sepolia.abc.us-east-1.rds.amazonaws.com"
+sepoliaDatabaseHost = "plether-sepolia.abc.ap-southeast-1.rds.amazonaws.com"
 
 sepoliaDatabaseUrl :: Text
 sepoliaDatabaseUrl =
@@ -186,7 +186,7 @@ sepoliaDatabaseUrl =
 
 canonicalDatabasePrefix :: Text
 canonicalDatabasePrefix =
-  "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/plether"
+  "postgresql://plether:secret@plether-sepolia.abc.ap-southeast-1.rds.amazonaws.com:5432/plether"
 
 pricePrestate :: RollupCoverage
 pricePrestate =
