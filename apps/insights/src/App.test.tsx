@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { InsightsApiError } from './api'
 import { AppRoutes } from './App'
 
 const apiMocks = vi.hoisted(() => ({
@@ -44,6 +45,10 @@ beforeEach(() => {
     isLoading: false,
     isError: true,
   })
+})
+
+afterEach(() => {
+  vi.unstubAllEnvs()
 })
 
 describe('Protocol Explorer rollout routing', () => {
@@ -119,6 +124,31 @@ describe('Protocol Explorer rollout routing', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(refetch).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to the competition for an explicitly configured legacy local backend', async () => {
+    vi.stubEnv('VITE_PROTOCOL_EXPLORER_LEGACY_FALLBACK', 'true')
+    apiMocks.useCurrentProtocolRelease.mockReturnValue({
+      data: undefined,
+      error: new InsightsApiError('Request failed (404)', 404, 'not_found'),
+      isLoading: false,
+      isError: true,
+      refetch: vi.fn(),
+    })
+
+    renderRoutes('/transactions')
+
+    await waitFor(() => {
+      expect(screen.getByText('competition-leaderboard')).toBeInTheDocument()
+      expect(screen.getByTestId('location')).toHaveTextContent(
+        '/competitions/testnet-trading-2026',
+      )
+    })
+    expect(screen.queryByRole('heading', {
+      name: 'Protocol Explorer configuration unavailable',
+    })).not.toBeInTheDocument()
+    expect(screen.queryByText('protocol-transactions')).not.toBeInTheDocument()
+    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
   })
 
   it('leaves explicit competition routes unchanged while disabled', () => {

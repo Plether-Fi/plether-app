@@ -76,10 +76,12 @@ module Plether.Database.Protocol
   , getProtocolStateSnapshotsAtBlocks
   , getParameterChanges
   , parameterChangesQuerySql
+  , protocolScientificToInteger
   ) where
 
 import Control.Monad (forM_, when)
 import Data.Aeson (Value, encode, object, (.=))
+import Data.Scientific (Scientific, base10Exponent, coefficient)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Database.PostgreSQL.Simple
@@ -91,7 +93,7 @@ import Database.PostgreSQL.Simple
   , execute_
   , query
   )
-import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Database.PostgreSQL.Simple.FromRow (FromRow (..), RowParser, field)
 import Database.PostgreSQL.Simple.ToField (toField)
 import Database.PostgreSQL.Simple.Types (In (..))
 import Plether.Database.ProtocolParameterChanges
@@ -149,7 +151,13 @@ instance FromRow ProtocolTransactionRow where
   fromRow =
     ProtocolTransactionRow
       <$> field <*> field <*> field <*> field <*> field <*> field <*> field
-      <*> field <*> field <*> field <*> field <*> field <*> field <*> field
+      <*> field
+      <*> field
+      <*> numericIntegerField
+      <*> numericIntegerField
+      <*> numericIntegerField
+      <*> field
+      <*> field
 
 data ProtocolEventRow = ProtocolEventRow
   { perLogIndex :: Integer
@@ -227,7 +235,11 @@ data KeeperNativeCostRow = KeeperNativeCostRow
 instance FromRow KeeperNativeCostRow where
   fromRow =
     KeeperNativeCostRow
-      <$> field <*> field <*> field <*> field <*> field
+      <$> field
+      <*> numericIntegerFieldRequired
+      <*> numericIntegerFieldRequired
+      <*> field
+      <*> field
 
 data KeeperNativeCostSummaryRow = KeeperNativeCostSummaryRow
   { kncsrGasCostWei :: Integer
@@ -240,7 +252,10 @@ data KeeperNativeCostSummaryRow = KeeperNativeCostSummaryRow
 instance FromRow KeeperNativeCostSummaryRow where
   fromRow =
     KeeperNativeCostSummaryRow
-      <$> field <*> field <*> field <*> field
+      <$> numericIntegerFieldRequired
+      <*> numericIntegerFieldRequired
+      <*> field
+      <*> field
 
 -- | Successful actor-attributed protocol activity in a confirmed time window.
 -- Counts remain action- and transaction-distinct so batched logs are visible
@@ -282,7 +297,33 @@ data OperationalWalletCostRow = OperationalWalletCostRow
 instance FromRow OperationalWalletCostRow where
   fromRow =
     OperationalWalletCostRow
-      <$> field <*> field <*> field <*> field <*> field <*> field <*> field
+      <$> field
+      <*> numericIntegerFieldRequired
+      <*> numericIntegerFieldRequired
+      <*> field
+      <*> numericIntegerField
+      <*> field
+      <*> field
+
+numericIntegerField :: RowParser (Maybe Integer)
+numericIntegerField =
+  fmap protocolScientificToInteger <$> (field :: RowParser (Maybe Scientific))
+
+numericIntegerFieldRequired :: RowParser Integer
+numericIntegerFieldRequired =
+  protocolScientificToInteger <$> (field :: RowParser Scientific)
+
+-- | PostgreSQL @NUMERIC@ is used for native-token amounts because these
+-- values are not bounded by @BIGINT@. postgresql-simple intentionally does
+-- not decode @NUMERIC@ directly into 'Integer', so preserve the exact decimal
+-- coefficient here instead of narrowing the SQL result.
+protocolScientificToInteger :: Scientific -> Integer
+protocolScientificToInteger value
+  | scale >= 0 = coeff * (10 ^ scale)
+  | otherwise = coeff `div` (10 ^ negate scale)
+  where
+    coeff = coefficient value
+    scale = base10Exponent value
 
 ensureProtocolSchema :: Connection -> ProtocolRelease -> IO ()
 ensureProtocolSchema conn ProtocolRelease {..} = do

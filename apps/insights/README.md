@@ -16,6 +16,12 @@ npm run dev
 
 Vite proxies `/api/insights/v1` to `VITE_API_PROXY_TARGET` (default `http://127.0.0.1:3001`) without rewriting the path.
 
+When testing against a deployed backend that predates the Protocol Explorer,
+set `VITE_PROTOCOL_EXPLORER_LEGACY_FALLBACK=true`. In local development only,
+a missing current-release bootstrap endpoint then falls back to the competition
+instead of presenting the backend's 404 as an Explorer configuration failure.
+Other bootstrap failures remain visible and retryable.
+
 ## Validation
 
 ```sh

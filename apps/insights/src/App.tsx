@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-dom'
-import { DEFAULT_COMPETITION_SLUG, useCurrentProtocolRelease } from './api'
+import {
+  DEFAULT_COMPETITION_SLUG,
+  InsightsApiError,
+  useCurrentProtocolRelease,
+} from './api'
 import { Layout } from './components/Layout'
 import { ErrorState } from './components/ui'
 import { LeaderboardPage } from './pages/LeaderboardPage'
@@ -62,10 +66,16 @@ function ExplorerRoute({
 
 export function AppRoutes() {
   const release = useCurrentProtocolRelease()
+  const legacyBackendWithoutExplorer = import.meta.env.DEV
+    && import.meta.env.VITE_PROTOCOL_EXPLORER_LEGACY_FALLBACK === 'true'
+    && release.error instanceof InsightsApiError
+    && release.error.status === 404
   const explorerState: ExplorerState = release.isLoading
     ? 'loading'
     : release.isError
-      ? 'error'
+      ? legacyBackendWithoutExplorer
+        ? 'disabled'
+        : 'error'
       : release.data?.explorerEnabled === true
       ? 'enabled'
       : 'disabled'

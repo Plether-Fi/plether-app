@@ -1,6 +1,7 @@
 module Plether.Database.ProtocolSpec (spec) where
 
 import Data.List (isInfixOf)
+import Data.Scientific (scientific)
 import Database.PostgreSQL.Simple (Query)
 import Plether.Database.Protocol
   ( keeperActionsQuerySql
@@ -32,6 +33,7 @@ import Plether.Database.Protocol
   , protocolStateSnapshotsPageQuerySql
   , protocolStateSnapshotsQuerySql
   , protocolTransactionQuerySql
+  , protocolScientificToInteger
   , trancheActionsQuerySql
   )
 import Plether.Database.ProtocolParameterChanges
@@ -42,6 +44,15 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "protocol NUMERIC decoding" $ do
+    it "preserves native-token integer amounts beyond BIGINT" $
+      protocolScientificToInteger (scientific 123456789012345678901234567890 0)
+        `shouldBe` 123456789012345678901234567890
+
+    it "honors the NUMERIC decimal scale for integral results" $
+      protocolScientificToInteger (scientific 12300 (-2))
+        `shouldBe` 123
+
   describe "protocol activity feed SQL" $ do
     it "matches the global address filter against either account or actor" $
       queryContains
