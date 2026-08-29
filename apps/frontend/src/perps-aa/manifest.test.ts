@@ -39,7 +39,7 @@ describe('parsePerpsAaManifest', () => {
   it('validates the manifest served by the app', () => {
     const manifest = parsePerpsAaManifest(publicManifest)
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260717-v1')
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260826-v1')
     expect(manifest.chainId).toBe(421614)
   })
 

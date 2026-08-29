@@ -8,7 +8,7 @@ Plether uses solvency checks, a Senior–Junior waterfall, conservative accounti
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. Pending history and APY history are not enabled. The `Senior Vault` and `Junior Vault` controls referenced in this section must not be treated as live until the published application explicitly enables them.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. Full activity history and APY history are not enabled. The `Senior Vault` and `Junior Vault` controls referenced in this section must not be treated as published until the deployed application exposes them.
 >
 > LP actions are outside the current trader gas-sponsorship promise. An LP should expect to use the connected owner wallet and pay native network gas for each approval and vault transaction.
 

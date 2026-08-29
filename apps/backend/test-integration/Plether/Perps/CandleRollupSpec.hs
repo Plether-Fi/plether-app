@@ -2841,6 +2841,8 @@ candleApiConfig databaseUrl =
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
@@ -2853,6 +2855,8 @@ candleApiConfig databaseUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2_000
     , cfgKeeperFeeBufferBps = 2_500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
     }
 
 candleReleaseManifest :: CompetitionReleaseManifest

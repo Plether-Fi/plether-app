@@ -240,15 +240,23 @@ testConfig chainId perpsChainId =
     , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = perpsChainId
-    , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngineLens = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngineSettlementSidecar = "0x0000000000000000000000000000000000000000"
     , cfgPerpsMarginClearinghouse = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
-    , cfgPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+    , cfgPerpsAccountLens = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
+    , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
+    , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = "https://archive.example"
+    , cfgVaultHistoryConfirmations = 12
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = faucetReleaseManifest perpsChainId
     , cfgRegistrationConfig = Nothing
@@ -260,6 +268,8 @@ testConfig chainId perpsChainId =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
     }
 
 faucetReleaseManifest :: Integer -> CompetitionReleaseManifest

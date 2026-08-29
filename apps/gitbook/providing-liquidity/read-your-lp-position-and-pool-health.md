@@ -11,9 +11,9 @@ Those values can differ substantially without either one being an interface erro
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. The in-progress navigation has **Overview**, **Performance**, **Risk** and **Your position** tabs. **Your position** currently reads the active onchain share balance and token, **Current value**, **Share price** and **Withdrawable now**.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. The in-progress navigation has **Overview**, **Performance**, **Risk** and **Your position** tabs. **Your position** reads the active onchain share balance and token, **Current value**, **Share price**, **Withdrawable now**, and funded deposit epochs.
 >
-> It does not yet show a holder cooldown countdown or pending requests. **Vault activity** says **Activity indexer not connected**, while historical performance and 7-day or 30-day APY[^apy] are not indexed. Pending-deposit lifecycle actions also remain disabled and are marked **Lifecycle coming soon** or **Pending lifecycle not enabled**.
+> It does not yet show a holder cooldown countdown, while historical performance and 7-day or 30-day APY[^apy] are not indexed. Pending requests show their epoch, amount, activation time, batch accounting, status, and the currently available cancel, finalize, recovery, or claim action.
 >
 > Treat the page below as guidance for the completed LP interface, and verify all live values onchain before acting.
 >

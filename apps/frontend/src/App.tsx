@@ -6,6 +6,7 @@ import { Spinner } from './components/ui/Spinner'
 import { isPrimaryAppDeployment, isSepoliaDeployment } from './utils/deployment'
 
 const Perps = lazy(() => import('./pages/Perps'))
+const Vaults = lazy(() => import('./pages/Vaults'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Mint = lazy(() => import('./pages/Mint'))
 const Stake = lazy(() => import('./pages/Stake'))
@@ -25,6 +26,8 @@ function App() {
         <Suspense fallback={<div className="flex items-center justify-center min-h-[50vh]"><Spinner size="lg" /></div>}>
           <Routes>
             <Route path="/" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Perps />} />
+            <Route path="/vaults" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Vaults />} />
+            <Route path="/vaults/:trancheId" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Vaults />} />
             <Route path="/spot" element={<Dashboard />} />
             <Route path="/leverage" element={<Dashboard />} />
             <Route path="/lending" element={<Dashboard />} />

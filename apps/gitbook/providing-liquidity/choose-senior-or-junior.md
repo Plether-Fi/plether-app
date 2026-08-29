@@ -11,7 +11,7 @@ The vaults are different claims on the same HousePool. They are not separate str
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. Names such as `Senior Vault` and `Junior Vault` refer to that in-progress interface.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. Names such as `Senior Vault` and `Junior Vault` refer to that in-progress interface.
 >
 > The existing `Deposit` control on the Perps page funds a trader's **Margin Account**. It does not deposit into either LP vault.
 

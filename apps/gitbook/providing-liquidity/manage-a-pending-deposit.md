@@ -12,7 +12,7 @@ No shares exist for the request before finalization. Finalization mints the batc
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. That preview can identify **Pending deposit epoch** as the available path and show an **Epoch preview** with indicative shares and a generic note that activation depends on epoch-request eligibility. It does not yet escrow USDC or discover requests, cancel them, finalize epochs or claim shares. The submission control is disabled and marked **Lifecycle coming soon**, with a **Pending lifecycle not enabled** warning.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. The current development branch supports funded requests, persistent request discovery, pre-activation cancellation, permissionless epoch finalization, and share claiming. Historical APY and full vault-activity indexing remain unavailable.
 >
 > Control names in square brackets on this page describe the intended flow. Do not try to reproduce them with the Margin Account’s existing `Deposit` control; that funds a trader account, not a tranche vault.
 >
@@ -20,7 +20,7 @@ No shares exist for the request before finalization. Finalization mints the batc
 
 > **Screenshot placeholder — pending deposit lifecycle**
 >
-> Add a screenshot of **Vaults → Your position** showing the epoch ID, requested amount, activation time, lifecycle status and the next available action. Do not capture the interface until the pending lifecycle is enabled.
+> Add a screenshot of **Vaults → Your position** showing the epoch ID, requested amount, activation time, lifecycle status and the next available action after the interface is published.
 
 ### When Plether uses a pending epoch
 

@@ -53,6 +53,58 @@ CREATE TABLE IF NOT EXISTS staking_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_staking_snapshots_timestamp ON staking_snapshots(timestamp DESC);
 
+-- Coherent hourly Senior/Junior vault observations used for realized 7d APY.
+-- epoch_timestamp is the UTC sampling boundary; block_timestamp is the actual
+-- time of the last canonical block at or before that boundary.
+CREATE TABLE IF NOT EXISTS vault_performance_snapshots (
+    chain_id NUMERIC(78,0) NOT NULL,
+    house_pool_address VARCHAR(42) NOT NULL,
+    senior_vault_address VARCHAR(42) NOT NULL,
+    junior_vault_address VARCHAR(42) NOT NULL,
+    epoch_timestamp BIGINT NOT NULL,
+    block_number NUMERIC(78,0) NOT NULL,
+    block_hash VARCHAR(66) NOT NULL,
+    block_timestamp BIGINT NOT NULL,
+    senior_total_assets NUMERIC(78,0) NOT NULL,
+    senior_total_supply NUMERIC(78,0) NOT NULL,
+    senior_share_price_wad NUMERIC(78,0) NOT NULL,
+    junior_total_assets NUMERIC(78,0) NOT NULL,
+    junior_total_supply NUMERIC(78,0) NOT NULL,
+    junior_share_price_wad NUMERIC(78,0) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (
+        chain_id,
+        house_pool_address,
+        senior_vault_address,
+        junior_vault_address,
+        epoch_timestamp
+    ),
+    CHECK (chain_id > 0),
+    CHECK (house_pool_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (senior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (junior_vault_address ~ '^0x[0-9a-f]{40}$'),
+    CHECK (epoch_timestamp >= 0 AND epoch_timestamp % 3600 = 0),
+    CHECK (block_timestamp >= 0),
+    CHECK (block_timestamp <= epoch_timestamp),
+    CHECK (block_number >= 0),
+    CHECK (block_hash ~ '^0x[0-9a-f]{64}$'),
+    CHECK (senior_total_assets >= 0),
+    CHECK (senior_total_supply >= 0),
+    CHECK (senior_share_price_wad >= 0),
+    CHECK (junior_total_assets >= 0),
+    CHECK (junior_total_supply >= 0),
+    CHECK (junior_share_price_wad >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_vault_performance_deployment_epoch
+    ON vault_performance_snapshots(
+        chain_id,
+        house_pool_address,
+        senior_vault_address,
+        junior_vault_address,
+        epoch_timestamp DESC
+    );
+
 -- Perps DXY basket snapshots built from historical Pyth benchmark values
 CREATE TABLE IF NOT EXISTS perps_basket_snapshots (
     id SERIAL PRIMARY KEY,

@@ -547,6 +547,9 @@ jobs:
               and ([address_names[] as $name | $env[$name] | valid_address] | all)
               and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
               and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
+            def valid_registration_only_manifest($env):
+              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
+              and (($env.INSIGHTS_COMPETITION_RELEASE_ID // "") == "");
             def same_manifest($actual; $expected):
               [manifest_names[] as $name | $actual[$name] == $expected[$name]] | all;
             def release_consumer:
@@ -563,6 +566,21 @@ jobs:
                 ($canonicalApi | env_map) as $expected
                 | if ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
                     true
+                  elif valid_registration_only_manifest($expected) then
+                    [.containerDefinitions[] | select(release_consumer)] as $consumers
+                    | if ($consumers | length) == 0 then
+                        true
+                      elif ([
+                        $consumers[]
+                        |
+                        (. | env_map) as $actual
+                        | valid_registration_only_manifest($actual)
+                          and same_manifest($actual; $expected)
+                      ] | all) then
+                        true
+                      else
+                        error("task definition release consumers do not match the canonical September registration-only manifest")
+                      end
                   elif valid_september_manifest($expected) | not then
                     error("canonical Sepolia API task definition has an invalid September release manifest")
                   else

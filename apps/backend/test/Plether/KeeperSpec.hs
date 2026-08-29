@@ -1,5 +1,6 @@
 module Plether.KeeperSpec (spec) where
 
+import qualified Data.ByteString as BS
 import Plether.Database.Schema
   ( PerpsKeeperOrderRow (..)
   , isAdmittedPythPayloadSource
@@ -7,16 +8,60 @@ import Plether.Database.Schema
   , promotePythPayloadSource
   )
 import Plether.Keeper
-  ( isFrozenClosePayloadReady
+  ( LpSettlementDecision (..)
+  , assessLpSettlementStatus
+  , isFrozenClosePayloadReady
+  , isLpSettlementObservationSafe
   , isOrderExpired
   , isOrderRevealReady
   , isSameBlockMevGuardError
   , selectBatchCandidates
+  , validateAtomicSettlementPayload
+  )
+import Plether.Ethereum.Contracts.SettlementMonitor
+  ( ExecutionPath (..)
+  , SettlementObservation (..)
+  , SettlementStatus (..)
   )
 import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "LP epoch settlement gating" $ do
+    it "distinguishes no-work, held, dependency-unknown, and executable paths" $ do
+      assessLpSettlementStatus (settlementStatus CachedMark) `shouldBe` LpSettlementReady CachedMark
+      assessLpSettlementStatus (settlementStatus AtomicOracleRefresh)
+        `shouldBe` LpSettlementReady AtomicOracleRefresh
+      assessLpSettlementStatus ((settlementStatus CachedMark) {ssHasMaturedWork = False})
+        `shouldBe` LpSettlementNoMaturedWork
+      assessLpSettlementStatus ((settlementStatus CachedMark) {ssLpEpochSettlementPaused = True})
+        `shouldBe` LpSettlementHeld
+      assessLpSettlementStatus ((settlementStatus CachedMark) {ssDependencyFailureMask = 1})
+        `shouldBe` LpSettlementDependenciesUnknown
+      assessLpSettlementStatus ((settlementStatus CachedMark) {ssOperationalBlockerMask = 1})
+        `shouldBe` LpSettlementOperationallyBlocked
+
+    it "requires a complete, healthy, dependency-free pinned observation" $ do
+      isLpSettlementObservationSafe (settlementObservation CachedMark) `shouldBe` True
+      isLpSettlementObservationSafe
+        ((settlementObservation CachedMark) {soObservationComplete = False})
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        ((settlementObservation CachedMark) {soCriticalFaultMask = 1})
+        `shouldBe` False
+      isLpSettlementObservationSafe
+        ((settlementObservation CachedMark) {soHealthDependencyFailureMask = 1})
+        `shouldBe` False
+
+    it "accepts only a fresh exact six-feed atomic payload" $ do
+      let sixUpdates = replicate 6 $ BS.singleton 1
+      validateAtomicSettlementPayload 100 (replicate 6 100) sixUpdates
+        `shouldBe` Right ()
+      validateAtomicSettlementPayload 100 (replicate 6 99) sixUpdates
+        `shouldBe` Left "the latest Pyth payload predates the minimum atomic publish time"
+      validateAtomicSettlementPayload 100 (replicate 5 100) (replicate 5 $ BS.singleton 1)
+        `shouldBe` Left "the latest Pyth payload does not contain exactly six feeds"
+
   describe "isOrderExpired" $ do
     it "does not expire at the exact max age boundary" $ do
       isOrderExpired 110 10 (order 1 100) `shouldBe` False
@@ -156,4 +201,33 @@ order orderId commitTime =
     , pkorStatus = "pending"
     , pkorAttemptCount = 0
     , pkorLastError = Nothing
+    }
+
+settlementStatus :: ExecutionPath -> SettlementStatus
+settlementStatus path =
+  SettlementStatus
+    { ssObservedBlock = 302_300_000
+    , ssCurrentEpoch = 500_000
+    , ssMinimumAtomicPublishTime = 1_800_000_000
+    , ssRequiredExecutionPath = path
+    , ssCachedMarkPrice = 100_000_000
+    , ssCachedMarkTime = 1_799_999_999
+    , ssOperationalBlockerMask = 0
+    , ssWarningMask = 0
+    , ssExecutionPathDependencyMask = 0
+    , ssDependencyFailureMask = 0
+    , ssHasMaturedWork = True
+    , ssLpEpochSettlementPaused = False
+    }
+
+settlementObservation :: ExecutionPath -> SettlementObservation
+settlementObservation path =
+  SettlementObservation
+    { soSchemaVersion = 1
+    , soStatus = settlementStatus path
+    , soHealthState = 1
+    , soCriticalFaultMask = 0
+    , soHealthDependencyFailureMask = 0
+    , soObservationDigest = "0x1234"
+    , soObservationComplete = True
     }

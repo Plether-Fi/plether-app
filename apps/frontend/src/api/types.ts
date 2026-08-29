@@ -268,6 +268,51 @@ export interface PerpsMarketStats {
   volume24hUsdc: string;
 }
 
+// =============================================================================
+// Perps Vault Performance Types
+// =============================================================================
+
+export type VaultHistoryRange = '7d';
+
+export interface VaultHistoryDeployment {
+  chainId: number;
+  housePool: string;
+  seniorVault: string;
+  juniorVault: string;
+}
+
+export interface VaultHistoryCoverage {
+  start: number | null;
+  end: number | null;
+  complete: boolean;
+}
+
+export interface VaultHistoryPoint {
+  timestamp: number;
+  blockNumber: string;
+  /** Fee-free accounting assets per share as a raw 1e18-scaled integer. */
+  sharePrice: string;
+  totalAssets: string;
+  totalSupply: string;
+}
+
+export interface VaultHistoryTranche {
+  /** Realized trailing return annualized from the covered share-price window. */
+  apy7d: number | null;
+  /** Raw return over the covered seven-day share-price window. */
+  return7d: number | null;
+  points: VaultHistoryPoint[];
+}
+
+export interface VaultHistory {
+  range: VaultHistoryRange;
+  intervalSeconds: 3600;
+  deployment: VaultHistoryDeployment;
+  coverage: VaultHistoryCoverage;
+  senior: VaultHistoryTranche;
+  junior: VaultHistoryTranche;
+}
+
 export interface TestnetFaucetClaim {
   address: string;
   amount: string;

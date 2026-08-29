@@ -271,7 +271,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=288439939 \
+PERPS_INDEXER_START_BLOCK=302257125 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -334,9 +334,9 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_USDC=0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3 \
-PERPS_ORDER_ROUTER=0x04E3103752f623fBcDcD01f588590Af4c53E4c1E \
-PERPS_MARGIN_CLEARINGHOUSE=0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e \
+PERPS_USDC=0x1647e41f49ED6D688936092B5a291c4B28106343 \
+PERPS_ORDER_ROUTER=0x97A901dE2B267c307E264FD5F71403F8072F73e7 \
+PERPS_MARGIN_CLEARINGHOUSE=0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker
@@ -515,14 +515,22 @@ Local URLs:
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `VAULT_HISTORY_HOUSE_POOL_ADDRESS` | No | Arbitrum Sepolia HousePool deployment | HousePool identity used to isolate vault-performance snapshots across deployments |
+| `VAULT_HISTORY_SENIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Senior Vault deployment | Senior TrancheVault read at each hourly performance checkpoint |
+| `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
+| `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `302257125` | Earliest block eligible for the configured vault deployment's history |
+| `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
+| `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
 | `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
 | `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
-| `PERPS_INDEXER_START_BLOCK` | No | `288439939` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `302257125` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
@@ -536,9 +544,12 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
+| `LP_SETTLEMENT_ENABLED` | No | `false` | Enables one health-checked, bounded LP settlement pass per eligible keeper poll |
+| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Minimum interval between LP settlement monitor cycles |
 | `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
 | `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
 | `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
+| `LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE` | No | `20` | Candidate accounts per `executeLiquidationBatch` transaction (`1`–`256`); one Pyth update is shared by the batch |
 | `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
 | `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
 | `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |
@@ -569,6 +580,12 @@ Local URLs:
 | `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
 | `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
 | `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
+
+For Terraform deployments, `vault_history_rpc_url` is stored as a SecureString
+and injected only into the API task. Leave it empty to use `PERPS_RPC_URL` for
+both current and historical reads; Sepolia's example uses Blockscout's public
+archive-capable endpoint so the initial seven-day backfill does not require a
+credential in source control.
 
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set

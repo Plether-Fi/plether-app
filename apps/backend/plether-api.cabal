@@ -29,9 +29,11 @@ library
         Plether.Types.User
         Plether.Types.Quote
         Plether.Types.Perps
+        Plether.Types.VaultPerformance
         Plether.Types.Error
         Plether.Handlers.Protocol
         Plether.Handlers.Perps
+        Plether.Handlers.VaultPerformance
         Plether.Handlers.User
         Plether.Handlers.Quote
         Plether.Ethereum.Client
@@ -44,6 +46,7 @@ library
         Plether.Ethereum.Contracts.SyntheticSplitter
         Plether.Ethereum.Contracts.BasketOracle
         Plether.Ethereum.Contracts.StakedToken
+        Plether.Ethereum.Contracts.TrancheVault
         Plether.Ethereum.Contracts.Morpho
         Plether.Ethereum.Contracts.MorphoOracle
         Plether.Ethereum.Contracts.MorphoIrm
@@ -51,11 +54,13 @@ library
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter
         Plether.Ethereum.Contracts.Perps
+        Plether.Ethereum.Contracts.SettlementMonitor
         Plether.Ethereum.Contracts.CfdEngineAccountLens
         Plether.Utils.Address
         Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
+        Plether.Database.VaultPerformance
         Plether.Database.CandleHistory
         Plether.Database.Candles
         Plether.Database.Schema
@@ -70,6 +75,7 @@ library
         Plether.Insights.Registration.Types
         Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
+        Plether.Vaults.PerformanceIndexer
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
@@ -270,12 +276,15 @@ test-suite plether-api-test
         Plether.Ethereum.AbiSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
+        Plether.Ethereum.Contracts.SettlementMonitorSpec
         Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
+        Plether.Ethereum.Contracts.TrancheVaultSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
         Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.PerpsSpec
+        Plether.Handlers.VaultPerformanceSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
@@ -291,6 +300,7 @@ test-suite plether-api-test
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Database.CandleHistorySpec
+        Plether.Database.VaultPerformanceSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
         Plether.Insights.Registration.ConfigSpec
@@ -301,6 +311,7 @@ test-suite plether-api-test
         Plether.Insights.Registration.TypesSpec
         Plether.Insights.Registration.WalletSpec
         Plether.Insights.SnapshotWorkerSpec
+        Plether.Vaults.PerformanceIndexerSpec
         Plether.Types.ProtocolSpec
         Plether.Types.PerpsSpec
     build-depends:

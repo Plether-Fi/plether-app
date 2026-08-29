@@ -57,7 +57,7 @@ import {
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { DOCS_LINKS } from '../config/docs'
 import { PerpsFinalizationConfetti } from './PerpsFinalizationConfetti'
-import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
+import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, InfoTooltip, Input, Modal, SuccessIcon, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
 type Direction = PerpsDirection
 export type TradeLifecycleState =
@@ -1404,9 +1404,7 @@ function SuccessStateCard({
   const content = (
     <>
       {celebrate ? <PerpsFinalizationConfetti key={celebrationKey} origin={celebrationOrigin} /> : null}
-      <div className="relative z-10 flex h-14 w-14 items-center justify-center border border-positive/40 bg-app-bg text-positive">
-        <span className="material-symbols-outlined text-4xl">check</span>
-      </div>
+      <SuccessIcon className="relative z-10" />
       <div className="relative z-10 mt-5 text-xl font-semibold text-content-primary">{title}</div>
       <div className="relative z-10 mt-2 max-w-md text-sm leading-6 text-content-secondary">{description}</div>
     </>

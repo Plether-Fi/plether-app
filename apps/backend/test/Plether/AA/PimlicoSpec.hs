@@ -399,7 +399,15 @@ testConfig =
     , cfgPerpsMarginClearinghouse = clearinghouse
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = zeroAddress
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
+    , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
+    , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = "https://archive.example"
+    , cfgVaultHistoryConfirmations = 12
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
     , cfgRegistrationConfig = Nothing
@@ -411,6 +419,8 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
     }
 
 testReleaseManifest :: CompetitionReleaseManifest
@@ -434,10 +444,10 @@ entryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 sender = "0x1111111111111111111111111111111111111111"
 owner = "0x2222222222222222222222222222222222222222"
 attacker = "0x9999999999999999999999999999999999999999"
-usdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
-clearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
-router = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
-engine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+usdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
+clearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+router = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+engine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 simpleAccountFactory = "0x13E9ed32155810FDbd067D4522C492D6f68E5944"
 zeroAddress = "0x0000000000000000000000000000000000000000"
 

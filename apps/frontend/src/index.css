@@ -371,3 +371,8 @@ select:not(:disabled) {
   flex-shrink: 0;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }
+
+/* An underline on an interactive parent paints through icon-font glyphs. */
+:is(a, button, [role='button']):has(.material-symbols-outlined) {
+  text-decoration: none !important;
+}

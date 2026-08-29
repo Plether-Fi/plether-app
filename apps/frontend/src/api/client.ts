@@ -40,6 +40,7 @@ import type {
   PerpsCandleIntervalSeconds,
   PerpsRevealPayload,
   PerpsMarketStats,
+  VaultHistory,
   TestnetFaucetClaim,
 } from './types';
 
@@ -513,6 +514,23 @@ export class PlethApiClient {
       credentials: 'omit',
       signal,
     });
+  }
+
+  async getPerpsVaultHistory(
+    signal?: AbortSignal
+  ): Promise<Result<ApiResponse<VaultHistory>, PlethApiError>> {
+    const params = new URLSearchParams({
+      range: '7d',
+      interval: '3600',
+    });
+    return fetchApi<VaultHistory>(
+      this.config,
+      `/perps/vaults/history?${params.toString()}`,
+      {
+        credentials: 'omit',
+        signal,
+      }
+    );
   }
 
   async getPerpsRevealPayload(
