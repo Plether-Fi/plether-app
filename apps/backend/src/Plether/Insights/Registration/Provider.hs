@@ -363,11 +363,13 @@ verifyXFollow manager config sourceUserId token
           <> "?user.fields=connection_status"
       let prepared = bearerRequest token request
       outcome <- performBounded manager prepared
-      pure $ do
-        (httpStatus, body) <- outcome
-        if httpStatus < 200 || httpStatus >= 300
-          then Left providerUnavailable
-          else parseXFollowLookupResponse targetUserId body
+      let result = do
+            (httpStatus, body) <- outcome
+            if httpStatus < 200 || httpStatus >= 300
+              then Left providerUnavailable
+              else parseXFollowLookupResponse targetUserId body
+      logXProviderFailure "follow_lookup" outcome result
+      pure result
   where
     targetUserId = rcXTargetUserId config
 
