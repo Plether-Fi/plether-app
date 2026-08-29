@@ -12,7 +12,9 @@ import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
 import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
+import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
+import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
@@ -30,6 +32,7 @@ main = do
         [field "error" err]
     Right cfg -> do
       manager <- newManager tlsManagerSettings
+      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do
           pool <- newDbPool dbUrl
@@ -39,11 +42,20 @@ main = do
           withDb pool $ \conn ->
             ensureInsightsSchema
               conn
+              (cfgInsightsCompetitionRules cfg)
               (cfgPerpsChainId cfg)
               (cfgPerpsOrderRouter cfg)
               (cfgPerpsUsdc cfg)
               (cfgPerpsMarginClearinghouse cfg)
               (cfgPerpsAccountLens cfg)
+              (cfgInsightsCompetitionReleaseManifest cfg)
+          registrationInitialization <- initializeInsightsRegistration pool perpsClient cfg
+          either (ioError . userError) pure registrationInitialization
+          case cfgRegistrationConfig cfg of
+            Just _ -> do
+              _ <- forkIO $ startRegistrationCleanup pool
+              pure ()
+            Nothing -> pure ()
           logInfo
             "api_database_ready"
             "Database schemas are ready"
@@ -86,7 +98,6 @@ main = do
           pure Nothing
 
       client <- newClient (cfgRpcUrl cfg)
-      perpsClient <- newClient (cfgPerpsRpcUrl cfg)
       cache <- newAppCache
       pimlicoProxyState <- newPimlicoProxyState
       requestLogging <- newRequestLoggingMiddleware

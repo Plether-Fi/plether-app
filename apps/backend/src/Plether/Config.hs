@@ -17,16 +17,28 @@ module Plether.Config
   , parsePerpsCandleWriteMode
   , perpsCandleRollupReadEnabled
   , validatePerpsCandleModeCombination
+  , validateInsightsCompetitionActivation
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
-import Data.List (sortBy)
+import Data.List (intercalate, nub, sortBy)
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Plether.Utils.Address (isValidAddress)
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , CompetitionRules (..)
+  , competitionRulesForSlug
+  , defaultCompetitionSlug
+  , september2026CompetitionSlug
+  )
+import Plether.Insights.Registration.Config
+  ( RegistrationConfig (..)
+  , loadRegistrationConfig
+  )
 import Plether.Types.Perps (canonicalBasketCandleIntervals)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
@@ -58,10 +70,15 @@ data Config = Config
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsCfdEngine :: Text
+  , cfgPerpsCfdEngineLens :: Text
+  , cfgPerpsCfdEngineSettlementSidecar :: Text
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgInsightsCompetitionRules :: CompetitionRules
+  , cfgInsightsCompetitionReleaseManifest :: CompetitionReleaseManifest
+  , cfgRegistrationConfig :: Maybe RegistrationConfig
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
@@ -181,6 +198,129 @@ loadDeployments = eitherDecodeFileStrict
 defaultPythHermesUrl :: Text
 defaultPythHermesUrl = "https://pyth.dourolabs.app/hermes"
 
+julyPerpsAccountLens, julyPerpsUsdc, julyPerpsOrderRouter, julyPerpsCfdEngine, julyPerpsCfdEngineLens, julyPerpsCfdEngineSettlementSidecar, julyPerpsMarginClearinghouse, julyPerpsPletherOracle :: String
+julyPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+julyPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+julyPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+julyPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+julyPerpsCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+julyPerpsCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
+julyPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+julyPerpsPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+
+julyPerpsIndexerStartBlock :: String
+julyPerpsIndexerStartBlock = "288439939"
+
+-- | Resolve the immutable rule set. September may start in a registration-only
+-- state without a release ID; supplying the release ID is the explicit bind
+-- signal and then every address must identify one complete new release.
+validateInsightsCompetitionActivation
+  :: Text
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Either String CompetitionRules
+validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter maybeCfdEngine maybeCfdEngineLens maybeSettlementSidecar maybeClearinghouse maybeOracle maybeLens maybeIndexerStartBlock = do
+  rules <-
+    maybe
+      (Left $ "INSIGHTS_ACTIVE_COMPETITION_SLUG is unknown: " <> T.unpack slug)
+      Right
+      (competitionRulesForSlug slug)
+  if crSlug rules /= september2026CompetitionSlug
+    then Right rules
+    else if isMissing maybeReleaseId
+      then Right rules
+    else
+      let supplied =
+            [ ("PERPS_USDC", maybeUsdc, julyPerpsUsdc)
+            , ("PERPS_ORDER_ROUTER", maybeRouter, julyPerpsOrderRouter)
+            , ("PERPS_CFD_ENGINE", maybeCfdEngine, julyPerpsCfdEngine)
+            , ("PERPS_CFD_ENGINE_LENS", maybeCfdEngineLens, julyPerpsCfdEngineLens)
+            , ("PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", maybeSettlementSidecar, julyPerpsCfdEngineSettlementSidecar)
+            , ("PERPS_MARGIN_CLEARINGHOUSE", maybeClearinghouse, julyPerpsMarginClearinghouse)
+            , ("PERPS_PLETHER_ORACLE", maybeOracle, julyPerpsPletherOracle)
+            , ("PERPS_ACCOUNT_LENS", maybeLens, julyPerpsAccountLens)
+            ]
+          julyReleaseAddresses =
+            [ T.toLower $ T.pack julyAddress
+            | (_, _, julyAddress) <- supplied
+            ]
+          configuredAddresses =
+            [ T.toLower $ T.strip $ T.pack configured
+            | (_, Just configured, _) <- supplied
+            , not $ T.null $ T.strip $ T.pack configured
+            ]
+          missingOrInherited =
+            [ name
+            | (name, value, _) <- supplied
+            , maybe True
+                (\configured ->
+                  let normalized = T.toLower $ T.strip $ T.pack configured
+                   in T.null normalized || normalized `elem` julyReleaseAddresses)
+                value
+            ]
+          invalid =
+            [ name
+            | (name, Just configured, _) <- supplied
+            , not (T.null $ T.strip $ T.pack configured)
+            , let normalized = T.toLower $ T.strip $ T.pack configured
+            , not (isValidAddress normalized) || normalized == zeroAddress
+            ]
+          invalidIndexerStart =
+            case fmap (T.unpack . T.strip . T.pack) maybeIndexerStartBlock of
+              Just configured
+                | configured /= julyPerpsIndexerStartBlock
+                , Just parsed <- readMaybe configured
+                , parsed > (0 :: Integer) -> []
+              _ -> ["PERPS_INDEXER_START_BLOCK"]
+          invalidReleaseId =
+            [ "INSIGHTS_COMPETITION_RELEASE_ID"
+            | fmap (T.strip . T.pack) maybeReleaseId /= Just september2026CompetitionSlug
+            ]
+          duplicateRoles =
+            [ "PERPS release address roles (addresses must be pairwise distinct)"
+            | length configuredAddresses /= length (nub configuredAddresses)
+            ]
+          invalidValues = invalidReleaseId <> missingOrInherited <> invalidIndexerStart <> duplicateRoles
+       in if not $ null invalidValues
+            then Left $
+              "INSIGHTS_ACTIVE_COMPETITION_SLUG=testnet-trading-2026-09 requires explicit new-release values (not inherited July defaults) for: "
+                <> intercalate ", " invalidValues
+            else if not $ null invalid
+              then Left $ "Invalid September competition deployment address in: " <> intercalate ", " invalid
+              else Right rules
+  where
+    zeroAddress = "0x0000000000000000000000000000000000000000"
+    isMissing = maybe True (T.null . T.strip . T.pack)
+
+validateRegistrationConfig
+  :: CompetitionRules
+  -> Either String (Maybe RegistrationConfig)
+  -> Either String (CompetitionRules, Maybe RegistrationConfig)
+validateRegistrationConfig rules configured = do
+  maybeRegistration <- configured
+  case maybeRegistration of
+    Nothing -> Right (rules, Nothing)
+    Just registration
+      | crRegistrationClosesAt rules == Nothing ->
+          Left "INSIGHTS_REGISTRATION_ENABLED=true requires an active competition with registration rules"
+      | rcXCallbackCompetitionSlug registration /= crSlug rules ->
+          Left "X_OAUTH_CALLBACK_URL competition slug must match INSIGHTS_ACTIVE_COMPETITION_SLUG"
+      | fmap T.toLower (crTargetXHandle rules) /= Just (T.toLower $ rcXTargetHandle registration) ->
+          Left "X_TARGET_HANDLE must match the active competition rules"
+      | fmap toInteger (crMinimumXAccountAgeDays rules) /= Just (rcMinimumXAccountAgeDays registration) ->
+          Left "The configured X account age must match the active competition rules"
+      | rcRulesVersion registration /= crRulesVersion rules ->
+          Left "INSIGHTS_REGISTRATION_RULES_VERSION must match the active competition rules version"
+      | otherwise -> Right (rules, Just registration)
+
 defaultPythLatestMaxAgeSeconds :: Integer
 defaultPythLatestMaxAgeSeconds = 10
 
@@ -203,6 +343,7 @@ validatePythLatestMaxAgeSeconds rawValue =
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
+  registrationConfig <- loadRegistrationConfig
   mRpcUrl <- firstEnv ["RPC_URL", "PERPS_RPC_URL"]
   case mRpcUrl of
     Nothing -> pure $ Left "RPC_URL or PERPS_RPC_URL environment variable not set"
@@ -229,13 +370,17 @@ loadConfig = do
         fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
-      perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
-      perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
-      perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
-      perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
-      perpsMarginClearinghouse <- fromMaybe "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
-      perpsPletherOracle <- fromMaybe "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c" <$> lookupEnv "PERPS_PLETHER_ORACLE"
-      perpsIndexerStartBlockStr <- fromMaybe "288439939" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
+      mPerpsUsdc <- lookupEnv "PERPS_USDC"
+      mPerpsOrderRouter <- lookupEnv "PERPS_ORDER_ROUTER"
+      mPerpsCfdEngine <- lookupEnv "PERPS_CFD_ENGINE"
+      mPerpsCfdEngineLens <- lookupEnv "PERPS_CFD_ENGINE_LENS"
+      mPerpsCfdEngineSettlementSidecar <- lookupEnv "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
+      mPerpsMarginClearinghouse <- lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
+      mPerpsPletherOracle <- lookupEnv "PERPS_PLETHER_ORACLE"
+      mPerpsIndexerStartBlockStr <- lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mInsightsCompetitionSlug <- lookupEnv "INSIGHTS_ACTIVE_COMPETITION_SLUG"
+      mInsightsCompetitionReleaseId <- lookupEnv "INSIGHTS_COMPETITION_RELEASE_ID"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
@@ -260,6 +405,20 @@ loadConfig = do
           pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
           perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
+          perpsAccountLens = fromMaybe julyPerpsAccountLens mPerpsAccountLens
+          perpsUsdc = fromMaybe julyPerpsUsdc mPerpsUsdc
+          perpsOrderRouter = fromMaybe julyPerpsOrderRouter mPerpsOrderRouter
+          perpsCfdEngine = fromMaybe julyPerpsCfdEngine mPerpsCfdEngine
+          perpsCfdEngineLens = fromMaybe julyPerpsCfdEngineLens mPerpsCfdEngineLens
+          perpsCfdEngineSettlementSidecar =
+            fromMaybe julyPerpsCfdEngineSettlementSidecar mPerpsCfdEngineSettlementSidecar
+          perpsMarginClearinghouse = fromMaybe julyPerpsMarginClearinghouse mPerpsMarginClearinghouse
+          perpsPletherOracle = fromMaybe julyPerpsPletherOracle mPerpsPletherOracle
+          perpsIndexerStartBlockStr = fromMaybe julyPerpsIndexerStartBlock mPerpsIndexerStartBlockStr
+          insightsCompetitionSlug =
+            case T.strip . T.pack <$> mInsightsCompetitionSlug of
+              Just configured | not (T.null configured) -> configured
+              _ -> defaultCompetitionSlug
           perpsIndexerStartBlock = fromMaybe 0 (readMaybe perpsIndexerStartBlockStr)
           aaIpRateLimit = fromMaybe 120 (readMaybe aaIpRateLimitStr)
           aaAccountRateLimit = fromMaybe 30 (readMaybe aaAccountRateLimitStr)
@@ -294,7 +453,8 @@ loadConfig = do
                       perpsUsdc
                       perpsOrderRouter
                       perpsCfdEngine
-                      perpsMarginClearinghouse ->
+                      perpsMarginClearinghouse
+                      || septemberAaReleaseAccepted ->
                     Left
                       "Managed AA sponsorship requires the reviewed Arbitrum Sepolia \
                       \PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
@@ -361,10 +521,43 @@ loadConfig = do
               , fromIntegral finalizationGraceSeconds
               )
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig) of
-        (Left err, _, _) -> pure $ Left err
-        (_, Left err, _) -> pure $ Left err
-        (_, _, Left err) -> pure $ Left err
+          competitionConfig = do
+            rules <-
+              validateInsightsCompetitionActivation
+                insightsCompetitionSlug
+                mInsightsCompetitionReleaseId
+                mPerpsUsdc
+                mPerpsOrderRouter
+                mPerpsCfdEngine
+                mPerpsCfdEngineLens
+                mPerpsCfdEngineSettlementSidecar
+                mPerpsMarginClearinghouse
+                mPerpsPletherOracle
+                mPerpsAccountLens
+                mPerpsIndexerStartBlockStr
+            if crSlug rules == september2026CompetitionSlug && perpsChainId /= 421614
+              then Left "The September 2026 Insights competition is supported only on PERPS_CHAIN_ID=421614"
+              else do
+                validated@(_, maybeRegistration) <- validateRegistrationConfig rules registrationConfig
+                case (maybeRegistration, nonBlankText mDatabaseUrl) of
+                  (Just _, Nothing) ->
+                    Left "INSIGHTS_REGISTRATION_PROVISIONED=true requires DATABASE_URL"
+                  _ -> Right validated
+
+          septemberAaReleaseAccepted =
+            case competitionConfig of
+              Right (rules, _) ->
+                crSlug rules == september2026CompetitionSlug
+                  && maybe False (not . T.null . T.strip . T.pack) mInsightsCompetitionReleaseId
+                  && all (isValidAddress . T.pack)
+                    [perpsUsdc, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
+              Left _ -> False
+
+      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig, competitionConfig) of
+        (Left err, _, _, _) -> pure $ Left err
+        (_, Left err, _, _) -> pure $ Left err
+        (_, _, Left err, _) -> pure $ Left err
+        (_, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -376,6 +569,7 @@ loadConfig = do
                 , candleLatenessSeconds
                 , candleFinalizationGraceSeconds
                 )
+          , Right (insightsCompetitionRules, resolvedRegistrationConfig)
           ) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
@@ -410,10 +604,32 @@ loadConfig = do
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsCfdEngine = T.pack perpsCfdEngine
+                , cfgPerpsCfdEngineLens = T.pack perpsCfdEngineLens
+                , cfgPerpsCfdEngineSettlementSidecar = T.pack perpsCfdEngineSettlementSidecar
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgInsightsCompetitionRules = insightsCompetitionRules
+                , cfgInsightsCompetitionReleaseManifest =
+                    let defaultReleaseId
+                          | crSlug insightsCompetitionRules == september2026CompetitionSlug = "release-pending"
+                          | otherwise = T.unpack $ crSlug insightsCompetitionRules
+                     in CompetitionReleaseManifest
+                      { crmReleaseId =
+                          T.strip $ T.pack $ fromMaybe defaultReleaseId mInsightsCompetitionReleaseId
+                      , crmChainId = perpsChainId
+                      , crmUsdc = T.pack perpsUsdc
+                      , crmOrderRouter = T.pack perpsOrderRouter
+                      , crmMarginClearinghouse = T.pack perpsMarginClearinghouse
+                      , crmAccountLens = T.pack perpsAccountLens
+                      , crmCfdEngine = T.pack perpsCfdEngine
+                      , crmCfdEngineLens = T.pack perpsCfdEngineLens
+                      , crmSettlementSidecar = T.pack perpsCfdEngineSettlementSidecar
+                      , crmPletherOracle = T.pack perpsPletherOracle
+                      , crmIndexerStartBlock = perpsIndexerStartBlock
+                      }
+                , cfgRegistrationConfig = resolvedRegistrationConfig
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey

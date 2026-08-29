@@ -1,12 +1,13 @@
 # Plether Testnet Trading Competition
 
-This document is the canonical product and scoring specification for the first
-Plether Insights competition. Public copy may be shorter, but the implementation
-must preserve the rules and block semantics below.
+This document is the canonical product and scoring specification for the active
+September 2026 Plether Insights competition. The immutable July competition
+remains stored under `testnet-trading-2026`; it must never be re-seeded with the
+September release addresses.
 
 ## Identity
 
-- Competition slug: `testnet-trading-2026`
+- Competition slug: `testnet-trading-2026-09`
 - Network: Arbitrum Sepolia (`421614`)
 - Starting bankroll: `100,000.000000` official mock USDC
 - One registered Plether Trading Account per beneficial trader
@@ -20,14 +21,14 @@ so one trader cannot enter through several accounts.
 
 All boundaries are fixed UTC and use half-open intervals.
 
-- Start, inclusive: `2026-07-20T16:00:00Z` (`18:00` Europe/Warsaw, CEST)
-- New-risk trading ends: `2026-08-03T13:00:00Z`
-- Risk-reduction grace window: `2026-08-03T13:00:00Z` through `2026-08-03T16:00:00Z`
-- Scoring cutoff, exclusive: `2026-08-03T16:00:00Z` (`18:00` Europe/Warsaw, exactly 14 days after start)
-- Results date: `2026-08-05`
-- Payout deadline: `2026-08-10T16:00:00Z` (within one week of close)
+- Start, inclusive: `2026-09-13T21:00:00Z`
+- Registration cutoff, exclusive: `2026-09-20T21:00:00Z`
+- New-risk and scoring cutoff, exclusive: `2026-09-25T21:00:00Z`
+- There is no close-only period; opening and increasing positions remain allowed until cutoff.
+- Results publication: `2026-09-28T12:00:00Z`
+- Payout deadline: `2026-10-03T00:00:00Z`
 
-Public wording: **Trading July 20–August 3; results August 5.**
+Public wording: **Trading September 13–25; results September 28.**
 
 The start block is the first canonical block whose timestamp is greater than or
 equal to the start time. The final block is the last canonical block whose
@@ -103,8 +104,8 @@ at least one successfully executed, non-zero, voluntary position change:
 - reduce or close.
 
 Use the execution block timestamp, not commitment time. Define the session date
-as the UTC date of `execution_timestamp + 2 hours`, matching the protocol's
-22:00 UTC session boundary.
+as the UTC date of `execution_timestamp + 3 hours`, matching this competition's
+21:00 UTC session boundary. The archived July rules retain their +2-hour mapping.
 
 The following do not create an active day:
 
@@ -113,13 +114,17 @@ The following do not create an active day:
 - liquidation alone;
 - executions during the frozen weekend interval.
 
-There are ten possible qualifying session dates: July 20–24 and July 27–31.
+There are ten possible qualifying session dates: September 14–18 and 21–25.
 
 ## Prizes and ties
 
+The total prize pool is `2,000` real USDC, awarded across five places:
+
 - First place: `600` real USDC
-- Second place: `300` real USDC
-- Third place: `100` real USDC
+- Second place: `500` real USDC
+- Third place: `400` real USDC
+- Fourth place: `300` real USDC
+- Fifth place: `200` real USDC
 
 An ineligible participant is removed from prize ranking and the next eligible
 participant moves up. Exact P&L ties split the combined prizes for the occupied
@@ -137,8 +142,18 @@ review signal rather than an automatic public accusation. Private evidence and
 review notes must be auditable; public responses expose only the resulting
 eligibility state and an appropriate generic reason.
 
-Before the starting block, every registered account must be verified as flat,
-pending-order-free, and limited to the official bankroll, or explicitly reset.
+At baseline, every registered account must be flat and pending-order-free. It
+must either contain exactly 100,000 official mock USDC or be zero and receive
+exactly one official 100,000 allocation before its first trade. Extra or
+unverifiable deposits are private integrity flags and preclude an eligible
+review outcome. A post-baseline allocation is official only when a successful
+faucet claim for the exact account, configured token, and amount has a persisted
+mint receipt block strictly before the clearinghouse deposit block.
+
+Registration proves ownership of the owner EOA and derives its deterministic
+index-0 Plether Trading Account. Deployment or earlier use of that Trading
+Account is not itself disqualifying. Only its canonical baseline state and the
+competition-period funding provenance determine clean-start integrity.
 
 ## Data and API requirements
 

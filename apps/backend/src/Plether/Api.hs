@@ -24,7 +24,7 @@ import GHC.Clock (getMonotonicTimeNSec)
 import Network.HTTP.Types.Header (hCacheControl, hPragma)
 import Network.HTTP.Types.Status (status200, status400, status404, status429, status500, status503)
 import Network.HTTP.Client (Manager)
-import Network.Wai (Middleware, queryString, requestHeaders)
+import Network.Wai (Middleware, pathInfo, queryString, requestHeaders)
 import Network.Wai.Middleware.Cors
   ( CorsResourcePolicy (..)
   , cors
@@ -33,6 +33,7 @@ import Network.Wai.Middleware.Cors
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
 import Plether.Config (Config (..), perpsCandleRollupReadEnabled)
+import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
 import Plether.Handlers.Perps
@@ -87,6 +88,7 @@ import Plether.Handlers.Insights
   , getCurrentCompetitionResponse
   , getInsightsDataStatusResponse
   )
+import Plether.Handlers.InsightsRegistration (registerInsightsRegistrationRoutes)
 import Plether.Database (DbPool)
 import Plether.Handlers.TestnetFaucet
   ( claimTestnetFaucet
@@ -132,6 +134,10 @@ instance FromJSON TestnetFaucetRequest where
 app :: AppCache -> EthClient -> EthClient -> Config -> Maybe DbPool -> Manager -> PimlicoProxyState -> ScottyM ()
 app cache client perpsClient cfg mPool manager pimlicoProxyState = do
   middleware $ corsMiddleware cfg
+
+  case mPool of
+    Just pool -> registerInsightsRegistrationRoutes pool perpsClient cfg manager
+    Nothing -> pure ()
 
   get "/api/health" $ do
     status status200
@@ -836,7 +842,10 @@ validateRouterParam (Just router)
   | otherwise = Nothing
 
 corsMiddleware :: Config -> Middleware
-corsMiddleware cfg = cors $ const $ Just policy
+corsMiddleware cfg = cors $ \waiRequest -> Just $
+  if isRegistrationPath $ pathInfo waiRequest
+    then registrationPolicy
+    else policy
   where
     origins = cfgCorsOrigins cfg
 
@@ -844,9 +853,22 @@ corsMiddleware cfg = cors $ const $ Just policy
       simpleCorsResourcePolicy
         { corsOrigins = Just (map encodeUtf8 origins, True)
         , corsMethods = ["GET", "POST", "OPTIONS"]
-        , corsRequestHeaders = ["Content-Type", "Authorization"]
-        , corsExposedHeaders = Just ["Server-Timing"]
+        , corsRequestHeaders = ["Content-Type", "Authorization", "X-Registration-CSRF"]
+        , corsExposedHeaders = Just ["Server-Timing", "Retry-After"]
         }
+
+    registrationPolicy =
+      policy
+        { corsOrigins =
+            Just
+              ( maybe [] (pure . encodeUtf8 . rcPublicOrigin) (cfgRegistrationConfig cfg)
+              , True
+              )
+        }
+
+    isRegistrationPath = \case
+      "api" : "insights" : "v1" : "competitions" : _ : "registrations" : _ -> True
+      _ -> False
 
     encodeUtf8 :: Text -> Data.ByteString.ByteString
     encodeUtf8 = Data.Text.Encoding.encodeUtf8

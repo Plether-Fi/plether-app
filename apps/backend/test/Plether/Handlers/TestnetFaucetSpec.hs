@@ -11,6 +11,10 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.Schema
   ( TestnetFaucetClaimRow (..)
   , beginTestnetFaucetClaimSql
@@ -180,6 +184,7 @@ spec = do
 
     it "finalizes only the exact durable submitted transaction" $ do
       queryContains markTestnetFaucetClaimSuccessSql "tx_hash = ?"
+      queryContains markTestnetFaucetClaimSuccessSql "mint_block_number = ?"
       queryContains markTestnetFaucetClaimSuccessSql "status IN ('submitted', 'success')"
       queryContains markTestnetFaucetClaimRevertedSql "tx_hash = ?"
       queryContains markTestnetFaucetClaimRevertedSql "status = 'submitted'"
@@ -187,6 +192,7 @@ spec = do
     it "keeps the static schema aligned with durable transaction recovery" $ do
       schema <- readFile "schema.sql"
       schema `shouldSatisfy` isInfixOf "raw_tx TEXT"
+      schema `shouldSatisfy` isInfixOf "mint_block_number BIGINT"
 
 claimRow :: T.Text -> Maybe T.Text -> Maybe T.Text -> TestnetFaucetClaimRow
 claimRow status hash rawTx =
@@ -196,6 +202,7 @@ claimRow status hash rawTx =
     , tfcTokenAddress = "0x2222222222222222222222222222222222222222"
     , tfcTxHash = hash
     , tfcRawTx = rawTx
+    , tfcMintBlockNumber = Nothing
     , tfcStatus = status
     , tfcError = Nothing
     }
@@ -236,10 +243,15 @@ testConfig chainId perpsChainId =
     , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsCfdEngineLens = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x0000000000000000000000000000000000000000"
     , cfgPerpsMarginClearinghouse = "0x0000000000000000000000000000000000000000"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = faucetReleaseManifest perpsChainId
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -249,3 +261,21 @@ testConfig chainId perpsChainId =
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
     }
+
+faucetReleaseManifest :: Integer -> CompetitionReleaseManifest
+faucetReleaseManifest chainId =
+  CompetitionReleaseManifest
+    { crmReleaseId = "testnet-faucet-test"
+    , crmChainId = chainId
+    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmOrderRouter = zeroAddress
+    , crmMarginClearinghouse = zeroAddress
+    , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+    , crmCfdEngine = zeroAddress
+    , crmCfdEngineLens = zeroAddress
+    , crmSettlementSidecar = zeroAddress
+    , crmPletherOracle = zeroAddress
+    , crmIndexerStartBlock = 0
+    }
+  where
+    zeroAddress = "0x0000000000000000000000000000000000000000"

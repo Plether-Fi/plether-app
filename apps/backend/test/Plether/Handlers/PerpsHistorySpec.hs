@@ -8,6 +8,10 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.Schema
   ( PerpsIndexerStatusRow (..)
   , PerpsKeeperTerminalOrderRow (..)
@@ -258,10 +262,15 @@ testConfig =
     , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
     , cfgPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , cfgPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , cfgPerpsCfdEngineLens = "0xa9aA3F66A88826C6856E1Fc915805784845A6b64"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x0b65286A091266504502179558411935c339f8a6"
     , cfgPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -270,4 +279,20 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    }
+
+testReleaseManifest :: CompetitionReleaseManifest
+testReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "perps-history-test"
+    , crmChainId = 421614
+    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+    , crmMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+    , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+    , crmCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , crmCfdEngineLens = "0xa9aA3F66A88826C6856E1Fc915805784845A6b64"
+    , crmSettlementSidecar = "0x0b65286A091266504502179558411935c339f8a6"
+    , crmPletherOracle = "0x0000000000000000000000000000000000000000"
+    , crmIndexerStartBlock = 0
     }

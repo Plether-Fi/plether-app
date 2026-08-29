@@ -14,6 +14,10 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.Candles
   ( BasketCandleRow (..)
   , CandleCurrent (..)
@@ -1138,10 +1142,15 @@ rollupConfig =
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
     , cfgPerpsCfdEngine = ""
+    , cfgPerpsCfdEngineLens = ""
+    , cfgPerpsCfdEngineSettlementSidecar = ""
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
     , cfgPerpsIndexerStartBlock = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = rollupReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -1150,6 +1159,22 @@ rollupConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    }
+
+rollupReleaseManifest :: CompetitionReleaseManifest
+rollupReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "perps-rollup-test"
+    , crmChainId = 421614
+    , crmUsdc = ""
+    , crmOrderRouter = "0xrouter"
+    , crmMarginClearinghouse = ""
+    , crmAccountLens = ""
+    , crmCfdEngine = ""
+    , crmCfdEngineLens = ""
+    , crmSettlementSidecar = ""
+    , crmPletherOracle = ""
+    , crmIndexerStartBlock = 0
     }
 
 testApiError :: ApiError

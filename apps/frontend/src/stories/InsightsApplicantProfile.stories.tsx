@@ -59,6 +59,7 @@ const walletResponse: WalletResponse = {
       liquidatable: false,
     },
   },
+  activityStatus: 'live',
   activity: [
     {
       id: 'activity-close',

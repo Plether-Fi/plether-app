@@ -96,10 +96,12 @@ beforeEach(() => {
           txHash: null,
         },
       ],
+      activityStatus: 'live',
     },
     isError: false,
     isLoading: false,
   })
+
 })
 
 describe('WalletPage activity costs', () => {
@@ -123,5 +125,28 @@ describe('WalletPage activity costs', () => {
     expect(within(closeRow).getByText('11.28 USDC')).toBeInTheDocument()
     expect(within(closeRow).getByText('-30.99 USDC')).toHaveClass('text-positive')
     expect(within(depositRow).queryByText('11.28 USDC')).not.toBeInTheDocument()
+  })
+
+  it('explains that live activity is intentionally omitted after finalization', () => {
+    const current = apiMocks.useWallet.getMockImplementation()?.()
+    apiMocks.useWallet.mockReturnValue({
+      ...current,
+      data: {
+        ...current.data,
+        activity: [],
+        activityStatus: 'omitted_after_finalization',
+      },
+    })
+
+    render(
+      <MemoryRouter initialEntries={[`/competitions/testnet-trading-2026/wallets/${address}`]}>
+        <Routes>
+          <Route path="/competitions/:slug/wallets/:address" element={<WalletPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Activity history archived')).toBeInTheDocument()
+    expect(screen.getByText(/immutable final standing/i)).toBeInTheDocument()
   })
 })

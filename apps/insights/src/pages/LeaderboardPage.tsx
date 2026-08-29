@@ -74,11 +74,11 @@ export function LeaderboardPage() {
         <CompetitionStats competition={competitionData} />
       </div>
 
-      <RulesSummary />
+      <RulesSummary competition={competitionData} />
 
       <section aria-labelledby="leaderboard-title" className="space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div id="leaderboard-title"><LeaderboardTitle count={competitionData.participantCount ?? 0} /></div>
+          <div id="leaderboard-title"><LeaderboardTitle count={competitionData.participantCount ?? 0} competitionSlug={competitionData.slug} /></div>
           <form onSubmit={submitSearch} role="search" className="flex w-full max-w-md">
             <label htmlFor="trader-search" className="sr-only">Search traders</label>
             <input id="trader-search" type="search" value={search} onChange={(event) => { setSearch(event.target.value) }} placeholder="Search alias or wallet" autoComplete="off" className="min-w-0 flex-1 border border-brand-border/35 bg-app-bg px-4 py-2.5 text-sm text-content-primary placeholder:text-content-tertiary focus:border-brand-peach focus:outline-none" />

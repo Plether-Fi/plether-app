@@ -197,6 +197,10 @@ normalizeRouteSegments segments =
         ["api", "insights", "v1", "competitions", ":slug", "leaderboard"]
       ["api", "insights", "v1", "competitions", _, "wallets", address] ->
         ["api", "insights", "v1", "competitions", ":slug", "wallets", address]
+      ["api", "insights", "v1", "competitions", _, "registrations", action] ->
+        ["api", "insights", "v1", "competitions", ":slug", "registrations", action]
+      ["api", "insights", "v1", "competitions", _, "registrations", provider, action] ->
+        ["api", "insights", "v1", "competitions", ":slug", "registrations", provider, action]
       normalized -> normalized
 
     isAddress segment =
@@ -228,6 +232,13 @@ knownNormalizedRoutes =
   , ["api", "insights", "v1", "competitions", "current"]
   , ["api", "insights", "v1", "competitions", ":slug", "leaderboard"]
   , ["api", "insights", "v1", "competitions", ":slug", "wallets", ":address"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "session"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "authorize"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "callback"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "follow"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "wallet", "challenge"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "wallet", "verify"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "complete"]
   , ["api", "insights", "v1", "status"]
   , ["api", "perps", "accounts", ":address", "orders"]
   , ["api", "perps", "accounts", ":address", "activity"]

@@ -20,7 +20,7 @@ export function MethodologyPage() {
 
       <Panel className="mt-8">
         <Rule number="01" title="Starting point">
-          <p>Every registered trader starts with exactly <strong className="text-content-primary">100,000.00 mock USDC</strong>. The competition is limited to one registered wallet per trader.</p>
+          <p>Every registered trader receives exactly <strong className="text-content-primary">100,000.00 mock USDC</strong>, either in the opening baseline or as one official allocation before their first trade. The competition is limited to one verified wallet per trader.</p>
         </Rule>
         <Rule number="02" title="Ranking metric">
           <p>Traders are ranked by final net P&amp;L at the closing snapshot. Open positions are marked using the protocol’s official final mark.</p>
@@ -34,11 +34,11 @@ export function MethodologyPage() {
         </Rule>
         <Rule number="04" title="What counts as an active day">
           <p>An active day contains at least one successfully executed voluntary open, increase, reduction, or close during an FX session.</p>
-          <p>Order submissions, failures, expiries, deposits, withdrawals, margin additions, and liquidation by itself do not qualify. Sessions run from 22:00 UTC on the preceding day to 22:00 UTC; markets close for the weekend in line with tracked FX markets.</p>
+          <p>Order submissions, failures, expiries, deposits, withdrawals, margin additions, and liquidation by itself do not qualify. Sessions run from 21:00 UTC on the preceding day to 21:00 UTC; markets close for the weekend in line with tracked FX markets.</p>
         </Rule>
         <Rule number="05" title="Timing and prizes">
-          <p>Trading closes exactly 14 days after the start, on <strong className="text-content-primary">Monday, 3 August 2026 at 16:00 UTC (18:00 Warsaw)</strong>. Results are reviewed on 5 August.</p>
-          <p>The top three eligible traders receive <strong className="text-content-primary">600.00 / 300.00 / 100.00 USDC</strong>, paid within one week of close. If a trader is disqualified, the next eligible trader moves up.</p>
+          <p>Trading opens on <strong className="text-content-primary">Sunday, 13 September 2026 at 21:00 UTC</strong> and closes on <strong className="text-content-primary">Friday, 25 September 2026 at 21:00 UTC</strong>. There is no close-only period; opening and increasing positions remain available until the cutoff.</p>
+          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top five eligible traders receive <strong className="text-content-primary">600.00 / 500.00 / 400.00 / 300.00 / 200.00 USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
           <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
         </Rule>
         <Rule number="06" title="Integrity review">

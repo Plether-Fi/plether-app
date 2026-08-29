@@ -54,6 +54,10 @@ import Plether.Config
   , PerpsCandleWriteMode (PerpsCandleWritesDual)
   )
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.CandleHistory
   ( CandleHistoryIngestionProgress (..)
   , CandleHistorySelection (..)
@@ -2832,10 +2836,15 @@ candleApiConfig databaseUrl =
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsCfdEngine = ""
+    , cfgPerpsCfdEngineLens = ""
+    , cfgPerpsCfdEngineSettlementSidecar = ""
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
     , cfgPerpsIndexerStartBlock = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -2844,6 +2853,22 @@ candleApiConfig databaseUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2_000
     , cfgKeeperFeeBufferBps = 2_500
+    }
+
+candleReleaseManifest :: CompetitionReleaseManifest
+candleReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "candle-rollup-integration"
+    , crmChainId = testChainId
+    , crmUsdc = ""
+    , crmOrderRouter = testRouter
+    , crmMarginClearinghouse = ""
+    , crmAccountLens = ""
+    , crmCfdEngine = ""
+    , crmCfdEngineLens = ""
+    , crmSettlementSidecar = ""
+    , crmPletherOracle = ""
+    , crmIndexerStartBlock = 0
     }
 
 withCandleAdminDatabase :: Text -> (DbPool -> IO a) -> IO a
