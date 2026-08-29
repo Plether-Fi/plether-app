@@ -8,10 +8,13 @@ import {
   VaultPreviewModal,
   VaultsOverview,
   VAULT_TRANCHES,
-  type VaultActivityViewState,
-  type VaultRequestsViewState,
-  type VaultsSnapshot,
 } from '../pages/Vaults'
+
+type VaultsOverviewProps = Parameters<typeof VaultsOverview>[0]
+type VaultDetailViewProps = Parameters<typeof VaultDetailView>[0]
+type VaultsSnapshot = VaultsOverviewProps['snapshot']
+type VaultActivityViewState = VaultDetailViewProps['vaultActivity']
+type VaultRequestsViewState = VaultDetailViewProps['vaultRequests']
 
 const USDC = 1_000_000n
 const SHARES = 1_000_000_000n

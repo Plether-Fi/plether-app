@@ -47,10 +47,10 @@ import {
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
-export type TrancheId = 'senior' | 'junior'
+type TrancheId = 'senior' | 'junior'
 type DetailSectionId = 'overview' | 'performance' | 'position' | 'activity'
-export type ActionMode = 'deposit' | 'withdraw'
-export type DataStatus = 'live' | 'partial' | 'syncing' | 'unavailable'
+type ActionMode = 'deposit' | 'withdraw'
+type DataStatus = 'live' | 'partial' | 'syncing' | 'unavailable'
 
 type VaultRequestAction =
   | { kind: 'cancel-deposit'; requestId: bigint; assets: bigint }
@@ -97,7 +97,7 @@ function useStickyHeaderHeight() {
   return height
 }
 
-export interface TrancheDefinition {
+interface TrancheDefinition {
   id: TrancheId
   name: string
   token: string
@@ -146,7 +146,7 @@ const VAULT_GOVERNANCE_TIMELOCKS = [
   },
 ] as const
 
-export interface PoolSnapshot {
+interface PoolSnapshot {
   totalAssetsUsdc?: bigint
   freeUsdc?: bigint
   withdrawalReservedUsdc?: bigint
@@ -174,7 +174,7 @@ export interface PoolSnapshot {
   shortOpenCapacityUsdc?: bigint
 }
 
-export interface TrancheLiveData {
+interface TrancheLiveData {
   totalAssets?: bigint
   totalSupply?: bigint
   effectiveTotalSupply?: bigint
@@ -204,7 +204,7 @@ export interface TrancheLiveData {
   hasUserData: boolean
 }
 
-export interface VaultsSnapshot {
+interface VaultsSnapshot {
   status: DataStatus
   pool: PoolSnapshot
   walletUsdc?: bigint
@@ -213,14 +213,14 @@ export interface VaultsSnapshot {
   refresh: () => void
 }
 
-export interface VaultActivityViewState {
+interface VaultActivityViewState {
   holders: VaultHolderDistribution[]
   activity: VaultOverviewActivityItem[]
   isLoading: boolean
   isError: boolean
 }
 
-export interface VaultRequestsViewState {
+interface VaultRequestsViewState {
   depositRequests: VaultDepositRequest[]
   redeemRequests: VaultRedeemRequest[]
   isLoading: boolean
@@ -248,7 +248,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     eyebrow: 'More protected option',
     shortDescription: 'A targeted return with first priority when withdrawal funds are allocated.',
     description:
-      'Senior gives up some upside for greater protection. It receives a targeted return funded by Junior, recovers prior losses before Junior receives residual LP-owned value, and takes losses only after Junior is exhausted.',
+      'Senior gives up some upside for greater protection. It receives a targeted return funded by Junior, recovers prior losses before Junior receives new earnings, and takes losses only after Junior is exhausted.',
     returnModel: 'Targeted return funded by Junior',
     lossPriority: 'Second loss, after Junior',
     withdrawalPriority: 'Senior withdrawals are funded before Junior',
@@ -263,11 +263,11 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     featureItems: [
       {
         label: 'Loss order',
-        text: 'Junior absorbs losses before Senior',
+        text: 'Junior absorbs realized losses before Senior',
       },
       {
         label: 'Return',
-        text: 'Receives its targeted return when funds are available; prior losses are recovered before Junior receives residual LP-owned value',
+        text: 'Receives its targeted return when funds are available; prior losses are recovered before Junior receives new earnings',
       },
       {
         label: 'Withdrawals',
@@ -289,7 +289,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     eyebrow: 'Higher-risk option',
     shortDescription: 'Takes losses first in exchange for more variable return potential.',
     description:
-      'Junior funds the Senior targeted return and absorbs losses from the shared trading pool first. In exchange, it receives residual LP-owned value after Senior priority, including the LP share of collected liquidation charges.',
+      'Junior funds the Senior targeted return and absorbs losses from the shared trading pool first. In exchange, it receives the trading earnings left after Senior is paid, including a share of fees from forced position closures.',
     returnModel: 'Variable return from trading activity',
     lossPriority: 'First loss',
     withdrawalPriority: 'Available after Senior withdrawals and the required safety buffer',
@@ -304,7 +304,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     featureItems: [
       {
         label: 'Loss order',
-        text: 'Absorbs losses first, protecting Senior',
+        text: 'Absorbs realized losses first, protecting Senior',
       },
       {
         label: 'Return',
@@ -317,7 +317,7 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     ],
     riskItems: [
       'Junior funds the Senior targeted return from its own capital.',
-      'Junior absorbs losses from the shared trading pool before Senior is affected.',
+      'Junior absorbs realized losses from the shared trading pool before Senior is affected.',
       'Junior withdrawals can be unavailable even while its shares still have value.',
       'A sufficiently large loss can wipe out the vault completely.',
     ],
@@ -1861,7 +1861,7 @@ function ActivityTypeLabel({ activity }: { activity: VaultOverviewActivityItem }
   )
 }
 
-export function VaultActivitySection({
+function VaultActivitySection({
   holders,
   activity,
   tranche,
@@ -2460,8 +2460,8 @@ export function OverviewTab({
                   <span className="block">Temporary pricing fee</span>
                   <span className="mt-1 block max-w-md text-xs leading-5 text-content-secondary">
                     {pool.oracleFrozen === true
-                      ? 'Applied only to withdrawal funding while live market pricing is unavailable. Wait for pricing to resume before withdrawing when possible.'
-                      : 'Applied only to withdrawal funding when live market pricing is temporarily unavailable.'}
+                      ? 'Active while live market pricing is unavailable. Wait for pricing to resume before withdrawing when possible.'
+                      : 'Charged only when live market pricing is temporarily unavailable.'}
                   </span>
                 </span>
               )}
@@ -2663,7 +2663,7 @@ export function OverviewTab({
             <h3 className="mt-1 text-lg font-semibold text-content-primary">Junior loss buffer</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
               Junior capital protects Senior. It funds the Senior targeted return and absorbs
-              losses before the Senior Vault loses value.
+              realized losses before the Senior Vault loses value.
             </p>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -3015,14 +3015,14 @@ function PerformanceTab({
               tranche.id === 'senior'
                 ? [
                     'Targeted returns funded by Junior capital',
-                    'Recovery of earlier losses from future reconciled LP-owned value',
-                    'Temporary withdrawal pricing fees retained by the vault, when active',
+                    'Recovery of earlier losses from future pool revenue',
+                    'Temporary pricing fees retained by the vault, when active',
                   ]
                 : [
-                    'Collectible marked and collected trader losses',
-                    'Collected carry and positive VPI paid to the HousePool',
-                    'The LP remainder of collected liquidation charges',
-                    'Residual reconciled LP-owned value after Senior priority',
+                    'Collected trader losses',
+                    'Trading fees paid for positions backed by vault funds',
+                    'Favorable price adjustments paid by traders to the pool',
+                    'Revenue remaining after Senior losses and targeted returns are covered',
                   ]
             ).map((item) => (
               <li key={item} className="flex gap-2 text-sm leading-6 text-content-secondary">
@@ -3288,7 +3288,7 @@ export function ActivityTab({
                   <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
                     <p className="max-w-3xl text-sm leading-6 text-content-secondary">
                       {request.refundableAssets > 0n
-                        ? 'The processed batch quoted zero aggregate deposit shares, so its epoch was rejected. Return the held USDC to your wallet.'
+                        ? 'This deposit could not be completed. Return the held USDC to your wallet.'
                         : request.claimableShares > 0n
                           ? `Your deposit is active and already participates in vault performance. Moving the shares to your wallet starts or restarts a one-hour withdrawal cooldown for your entire ${tranche.name} position.`
                           : request.matured
@@ -3791,7 +3791,7 @@ function VaultRequestActionModal({
       case 'recover-deposit':
         return {
           title: 'Return this deposit?',
-          description: 'The processed batch quoted zero aggregate deposit shares, so its epoch was rejected. Return the refundable USDC held by the vault to your wallet.',
+          description: 'The deposit could not be completed. Return the refundable USDC held by the vault to your wallet.',
           amountLabel: 'USDC returned',
           amount: formatFullUsd(action.assets),
           confirmLabel: 'Return USDC',
@@ -4079,7 +4079,7 @@ export function VaultPreviewModal({
                 value={mode === 'deposit' ? depositMode : 'Processed hourly when USDC is available'}
               />
               <PreviewRow label="Expected processing" value={targetSettlement} />
-              {mode === 'withdraw' && oracleFrozen === true ? (
+              {oracleFrozen === true ? (
                 <PreviewRow label="Temporary pricing fee" value="May apply when processed" />
               ) : null}
             </div>
@@ -4553,17 +4553,15 @@ function VaultActionPanel({
                 valueClassName={performanceValueClassName(performance.apy7d)}
               />
             ) : null}
-            {mode === 'withdraw' ? (
-              <PreviewRow
-                label="Temporary pricing fee"
-                value={liveData.frozenLpFeeBps === undefined || snapshot.pool.oracleFrozen === undefined
-                  ? 'State unavailable'
-                  : snapshot.pool.oracleFrozen
-                    ? `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% active`
-                    : 'Inactive'}
-                valueClassName={snapshot.pool.oracleFrozen === true ? 'text-brand-orange' : 'text-content-primary'}
-              />
-            ) : null}
+            <PreviewRow
+              label="Temporary pricing fee"
+              value={liveData.frozenLpFeeBps === undefined || snapshot.pool.oracleFrozen === undefined
+                ? 'State unavailable'
+                : snapshot.pool.oracleFrozen
+                  ? `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% active`
+                  : 'Inactive'}
+              valueClassName={snapshot.pool.oracleFrozen === true ? 'text-brand-orange' : 'text-content-primary'}
+            />
           </div>
 
           {mode === 'deposit' && depositMode === 'Open for deposits' ? (
@@ -4594,9 +4592,8 @@ function VaultActionPanel({
                 <>
                   You can request a withdrawal in{' '}
                   <WithdrawalCooldownCountdown remainingSeconds={withdrawalCooldownRemaining} />.{' '}
-                  Moving processed shares to your wallet, cancelling a withdrawal, or returning a
-                  zero-value remainder restarts this one-hour cooldown for your entire {tranche.name}
-                  position.
+                  Receiving more {tranche.token} shares in your wallet restarts this one-hour cooldown
+                  for your entire {tranche.name} position.
                 </>
               ) : (
                 'None of your shares are currently available to withdraw.'
@@ -4609,9 +4606,9 @@ function VaultActionPanel({
             && liveData.frozenLpFeeBps !== undefined ? (
               <Alert variant="warning" title="Temporary withdrawal surcharge active">
                 A temporary {(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% fee is active
-                because live market pricing is unavailable. Your request locks the quoted shares;
-                if the fee is still active when funding occurs, those shares produce less USDC.
-                Unless the withdrawal is urgent, wait for live pricing to return.
+                because live market pricing is unavailable. If it is still active when your
+                withdrawal is processed, more shares will be needed. Unless the withdrawal is
+                urgent, wait for live pricing to return.
               </Alert>
             ) : null}
 
@@ -4737,7 +4734,7 @@ interface VaultDetailProps {
   switchError?: string
 }
 
-export type VaultDetailViewProps = Omit<VaultDetailProps, 'ownerAddress'> & {
+type VaultDetailViewProps = Omit<VaultDetailProps, 'ownerAddress'> & {
   vaultActivity: VaultActivityViewState
   vaultRequests: VaultRequestsViewState
   epochCountdownSeconds?: number

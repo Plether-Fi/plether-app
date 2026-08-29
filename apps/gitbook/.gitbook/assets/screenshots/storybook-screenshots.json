@@ -343,7 +343,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--overview.png",
       "storyId": "documentation-vaults--overview",
       "dimensions": {
-        "height": 777,
+        "height": 769,
         "width": 688
       },
       "storyPath": "/?path=/story/documentation-vaults--overview"
@@ -370,7 +370,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--risk-and-house-pool.png",
       "storyId": "documentation-vaults--risk-and-house-pool",
       "dimensions": {
-        "height": 909,
+        "height": 883,
         "width": 624
       },
       "storyPath": "/?path=/story/documentation-vaults--risk-and-house-pool"
@@ -379,7 +379,7 @@
       "asset": ".gitbook/assets/screenshots/storybook-documentation-vaults--senior-vault-detail.png",
       "storyId": "documentation-vaults--senior-vault-detail",
       "dimensions": {
-        "height": 930,
+        "height": 1213,
         "width": 688
       },
       "storyPath": "/?path=/story/documentation-vaults--senior-vault-detail"
