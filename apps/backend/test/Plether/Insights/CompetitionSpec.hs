@@ -7,7 +7,9 @@ import Plether.Database.Insights
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
+  , isLegacySeptemberPrizeAndXAccountAgeMismatch
   , isLegacySeptemberPrizeOnlyMismatch
+  , isLegacySeptemberXAccountAgeOnlyMismatch
   )
 import Plether.Insights.Competition
 import Test.Hspec
@@ -118,7 +120,7 @@ spec = do
       crScoringVersion september2026Competition `shouldBe` "cash-flow-adjusted-v1"
       crScoringVersion july2026Competition `shouldBe` "account-value-v1"
       fxSessionBoundaryUtcText september2026Competition `shouldBe` "21:00"
-      crMinimumXAccountAgeDays september2026Competition `shouldBe` Just 90
+      crMinimumXAccountAgeDays september2026Competition `shouldBe` Just 30
       crTargetXHandle september2026Competition `shouldBe` Just "plether_fi"
 
     it "is selected only through its exact versioned slug" $ do
@@ -252,6 +254,48 @@ spec = do
         legacyPrizes {csmMinimumProfitBps = 200}
         `shouldBe` False
       isLegacySeptemberPrizeOnlyMismatch expected legacyPrizes
+        `shouldBe` False
+
+    it "recognizes only the exact pre-launch September X-account age correction" $ do
+      let septemberExpected = competitionSeedMetadataFor
+            september2026Competition
+            421_614
+            "0xAa00000000000000000000000000000000000001"
+            "0xBb00000000000000000000000000000000000002"
+            "0xCc00000000000000000000000000000000000003"
+            "0xDd00000000000000000000000000000000000004"
+            fixtureManifest
+          legacyAge = septemberExpected {csmMinimumXAccountAgeDays = Just 90}
+      isLegacySeptemberXAccountAgeOnlyMismatch septemberExpected legacyAge
+        `shouldBe` True
+      isLegacySeptemberXAccountAgeOnlyMismatch
+        septemberExpected
+        legacyAge {csmMinimumProfitBps = 200}
+        `shouldBe` False
+      isLegacySeptemberXAccountAgeOnlyMismatch expected legacyAge
+        `shouldBe` False
+
+    it "recognizes the exact combined pre-launch September corrections" $ do
+      let septemberExpected = competitionSeedMetadataFor
+            september2026Competition
+            421_614
+            "0xAa00000000000000000000000000000000000001"
+            "0xBb00000000000000000000000000000000000002"
+            "0xCc00000000000000000000000000000000000003"
+            "0xDd00000000000000000000000000000000000004"
+            fixtureManifest
+          legacy = septemberExpected
+            { csmMinimumXAccountAgeDays = Just 90
+            , csmSecondPrizeUsdc = 300_000_000
+            , csmThirdPrizeUsdc = 100_000_000
+            , csmFourthPrizeUsdc = 0
+            , csmFifthPrizeUsdc = 0
+            }
+      isLegacySeptemberPrizeAndXAccountAgeMismatch septemberExpected legacy
+        `shouldBe` True
+      isLegacySeptemberPrizeAndXAccountAgeMismatch
+        septemberExpected
+        legacy {csmMinimumProfitBps = 200}
         `shouldBe` False
 
     it "reports no mismatches for an idempotent restart" $ do

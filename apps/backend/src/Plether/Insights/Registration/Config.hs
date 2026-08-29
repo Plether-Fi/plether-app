@@ -188,7 +188,7 @@ loadProvisioned activationEnabled = do
         , rcSessionRateLimitPerMinute = sessionRate
         , rcRulesVersion = resolvedRulesVersion
         , rcPrivacyVersion = resolvedPrivacyVersion
-        , rcMinimumXAccountAgeDays = 90
+        , rcMinimumXAccountAgeDays = 30
         }
   where
     validateNextOriginToken raw = do

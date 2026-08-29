@@ -57,7 +57,10 @@ describe('LeaderboardPage', () => {
     render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
 
     expect(screen.getByText('Registered traders').parentElement).toHaveTextContent('358')
-    expect(screen.getByText('Prize pool').parentElement).toHaveTextContent('2,000.00 USDC')
+    expect(screen.getByText('Prize pool').parentElement).toHaveTextContent('2,000.00 real USDC')
+    expect(screen.getByText('Starting balance').parentElement).toHaveTextContent('100,000.00 mock USDC')
+    expect(screen.getByText('Prize threshold').parentElement).toHaveTextContent('+1,000.00 mock USDC')
+    expect(screen.getByText(/600.00 \/ 500.00 \/ 400.00 \/ 300.00 \/ 200.00 real USDC/i)).toBeInTheDocument()
     expect(screen.getByText(/for the top 5 eligible traders/i)).toBeInTheDocument()
   })
 })

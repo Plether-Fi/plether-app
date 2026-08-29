@@ -15,7 +15,9 @@ module Plether.Database.Insights
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
+  , isLegacySeptemberPrizeAndXAccountAgeMismatch
   , isLegacySeptemberPrizeOnlyMismatch
+  , isLegacySeptemberXAccountAgeOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
   , stageCompetitionParticipantWalletRemap
@@ -1224,6 +1226,42 @@ isLegacySeptemberPrizeOnlyMismatch expected stored =
       , csmFifthPrizeUsdc metadata
       ]
 
+-- This is the X-account age requirement used by the pre-launch September
+-- seed before eligibility was relaxed from 90 to 30 days. It may be migrated
+-- only before trading starts and before any registration has been completed.
+isLegacySeptemberXAccountAgeOnlyMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isLegacySeptemberXAccountAgeOnlyMismatch expected stored =
+  csmSlug expected == september2026CompetitionSlug
+    && csmSlug stored == september2026CompetitionSlug
+    && csmMinimumXAccountAgeDays expected == Just 30
+    && csmMinimumXAccountAgeDays stored == Just 90
+    && map csmmField (competitionSeedMismatches expected stored)
+      == ["minimum_x_account_age_days"]
+
+-- Some local and staged databases can still contain both pre-launch values.
+-- Recognize that exact combination so one guarded restart can apply both
+-- reviewed corrections atomically.
+isLegacySeptemberPrizeAndXAccountAgeMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isLegacySeptemberPrizeAndXAccountAgeMismatch expected stored =
+  isLegacySeptemberPrizeOnlyMismatch
+    expected
+    (stored {csmMinimumXAccountAgeDays = csmMinimumXAccountAgeDays expected})
+    && csmMinimumXAccountAgeDays expected == Just 30
+    && csmMinimumXAccountAgeDays stored == Just 90
+    && map csmmField (competitionSeedMismatches expected stored)
+      == [ "minimum_x_account_age_days"
+         , "second_prize_usdc"
+         , "third_prize_usdc"
+         , "fourth_prize_usdc"
+         , "fifth_prize_usdc"
+         ]
+
 validateOrMigrateCompetitionSeed
   :: Connection
   -> CompetitionSeedMetadata
@@ -1255,6 +1293,42 @@ validateOrMigrateCompetitionSeed conn expected stored =
                   <> "."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch payout-deadline correction was detected, but automatic migration is allowed only before boundary blocks, snapshots, or finalization exist."
+      | isLegacySeptemberPrizeAndXAccountAgeMismatch expected stored -> do
+          safeRows <- query conn
+            "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
+            \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_registration_applications\
+            \   WHERE competition_slug = ? AND status = 'completed')\
+            \ FROM insights_competitions WHERE slug = ?"
+            (csmSlug expected, csmSlug expected, csmSlug expected, csmSlug expected)
+          case safeRows of
+            [Only True] -> do
+              affected <- execute conn
+                "UPDATE insights_competitions SET minimum_x_account_age_days = ?,\
+                \ first_prize_usdc = ?, second_prize_usdc = ?, third_prize_usdc = ?,\
+                \ fourth_prize_usdc = ?, fifth_prize_usdc = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND minimum_x_account_age_days = 90\
+                \ AND first_prize_usdc = 600000000 AND second_prize_usdc = 300000000\
+                \ AND third_prize_usdc = 100000000 AND fourth_prize_usdc = 0 AND fifth_prize_usdc = 0"
+                ( csmMinimumXAccountAgeDays expected
+                , csmFirstPrizeUsdc expected
+                , csmSecondPrizeUsdc expected
+                , csmThirdPrizeUsdc expected
+                , csmFourthPrizeUsdc expected
+                , csmFifthPrizeUsdc expected
+                , csmSlug expected
+                )
+              unless (affected == 1) $
+                seedMismatchError expected mismatches $
+                  Just "The known pre-launch September corrections changed concurrently; startup refused to overwrite them."
+              putStrLn $
+                "Migrated the pre-launch Plether Insights September prize pool and minimum X-account age for "
+                  <> T.unpack (csmSlug expected)
+                  <> "."
+            _ -> seedMismatchError expected mismatches $
+              Just "The known pre-launch September corrections were detected, but automatic migration is allowed only before competition start, completed registrations, boundary blocks, snapshots, or finalization exist."
       | isLegacySeptemberPrizeOnlyMismatch expected stored -> do
           safeRows <- query conn
             "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
@@ -1289,6 +1363,31 @@ validateOrMigrateCompetitionSeed conn expected stored =
                   <> " from 1,000 USDC across three places to 2,000 USDC across five places."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch September prize correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
+      | isLegacySeptemberXAccountAgeOnlyMismatch expected stored -> do
+          safeRows <- query conn
+            "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
+            \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_registration_applications\
+            \   WHERE competition_slug = ? AND status = 'completed')\
+            \ FROM insights_competitions WHERE slug = ?"
+            (csmSlug expected, csmSlug expected, csmSlug expected, csmSlug expected)
+          case safeRows of
+            [Only True] -> do
+              affected <- execute conn
+                "UPDATE insights_competitions SET minimum_x_account_age_days = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND minimum_x_account_age_days = 90"
+                (csmMinimumXAccountAgeDays expected, csmSlug expected)
+              unless (affected == 1) $
+                seedMismatchError expected mismatches $
+                  Just "The known pre-launch September X-account age correction changed concurrently; startup refused to overwrite it."
+              putStrLn $
+                "Migrated the pre-launch Plether Insights minimum X-account age for "
+                  <> T.unpack (csmSlug expected)
+                  <> " from 90 days to 30 days."
+            _ -> seedMismatchError expected mismatches $
+              Just "The known pre-launch September X-account age correction was detected, but automatic migration is allowed only before competition start, completed registrations, boundary blocks, snapshots, or finalization exist."
       | otherwise -> seedMismatchError expected mismatches Nothing
 
 seedMismatchError

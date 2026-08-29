@@ -85,7 +85,7 @@ insightsDatabaseSpec databaseUrl =
         insertParticipant conn walletA "trader-a"
         void $ execute conn
           "UPDATE insights_competitions SET registration_close_timestamp = ?,\
-          \ minimum_x_account_age_days = 90, target_x_handle = 'plether_fi' WHERE slug = ?"
+          \ minimum_x_account_age_days = 30, target_x_handle = 'plether_fi' WHERE slug = ?"
           (startTimestamp - 1, competitionSlug)
         result <- stageCompetitionParticipantWalletRemap
           conn competitionSlug "trader-a" walletA walletB

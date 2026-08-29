@@ -206,7 +206,7 @@ testConfig =
     , rcSessionRateLimitPerMinute = 30
     , rcRulesVersion = "2026-09-v1"
     , rcPrivacyVersion = "2026-09-v1"
-    , rcMinimumXAccountAgeDays = 90
+    , rcMinimumXAccountAgeDays = 30
     }
 
 leftCode :: Either RegistrationError a -> Maybe RegistrationErrorCode

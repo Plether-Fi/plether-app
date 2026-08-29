@@ -29,8 +29,8 @@ export function MethodologyPage() {
           <p>Trade-history “realized P&amp;L” and open-position “unrealized P&amp;L” are directional price results before execution fees, VPI, carry, and execution rewards. They can be positive while final net P&amp;L is negative.</p>
         </Rule>
         <Rule number="03" title="Prize eligibility">
-          <p>A trader must finish with at least <strong className="text-positive">+1,000.00 USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
-          <p>The threshold is evaluated at full six-decimal USDC precision, not from the rounded percentage shown in the interface.</p>
+          <p>A trader must finish with at least <strong className="text-positive">+1,000.00 mock USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
+          <p>The threshold is evaluated at full six-decimal mock-USDC precision, not from the rounded percentage shown in the interface.</p>
         </Rule>
         <Rule number="04" title="What counts as an active day">
           <p>An active day contains at least one successfully executed voluntary open, increase, reduction, or close during an FX session.</p>
@@ -38,7 +38,7 @@ export function MethodologyPage() {
         </Rule>
         <Rule number="05" title="Timing and prizes">
           <p>Trading opens on <strong className="text-content-primary">Sunday, 13 September 2026 at 21:00 UTC</strong> and closes on <strong className="text-content-primary">Friday, 25 September 2026 at 21:00 UTC</strong>. There is no close-only period; opening and increasing positions remain available until the cutoff.</p>
-          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top five eligible traders receive <strong className="text-content-primary">600.00 / 500.00 / 400.00 / 300.00 / 200.00 USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
+          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top five eligible traders receive <strong className="text-content-primary">600.00 / 500.00 / 400.00 / 300.00 / 200.00 real USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
           <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
         </Rule>
         <Rule number="06" title="Integrity review">

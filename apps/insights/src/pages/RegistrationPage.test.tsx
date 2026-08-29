@@ -72,7 +72,7 @@ const competition = {
     status: 'open',
     opensAt: '2026-08-28T10:00:00Z',
     closesAt: '2026-09-20T21:00:00Z',
-    minimumXAccountAgeDays: 90,
+    minimumXAccountAgeDays: 30,
     targetXHandle: 'plether_fi',
     rulesVersion: 'rules-v1',
     privacyVersion: 'privacy-v1',
