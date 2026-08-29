@@ -15,11 +15,15 @@ import Data.Word (Word64)
 import Plether.Cache
   ( SingleFlightCache
   , SingleFlightSource (..)
+  , newConcurrentSingleFlightCache
   , newRefreshingSingleFlightCache
   , newSingleFlightCache
   , runSingleFlightCache
   , runSingleFlightCacheFresh
+  , runSingleFlightCacheFreshTimed
+  , runSingleFlightCacheTimed
   )
+import System.Timeout (timeout)
 import Test.Hspec
 
 newIntCache :: Int -> Word64 -> IO (SingleFlightCache String Int)
@@ -28,6 +32,9 @@ newIntCache = newSingleFlightCache
 newRefreshingIntCache
   :: Int -> Word64 -> Word64 -> IO (SingleFlightCache String Int)
 newRefreshingIntCache = newRefreshingSingleFlightCache
+
+newConcurrentIntCache :: Int -> Word64 -> IO (SingleFlightCache String Int)
+newConcurrentIntCache = newConcurrentSingleFlightCache
 
 tryErrorCall :: IO a -> IO (Either ErrorCall a)
 tryErrorCall = try
@@ -57,6 +64,36 @@ spec = describe "runSingleFlightCache" $ do
     runSingleFlightCache cache "page" (const True) load
       `shouldReturn` (SingleFlightLoaded, 2)
 
+  it "ages current-style TTLs from load start" $ do
+    cache <- newConcurrentIntCache 4 20_000_000
+    calls <- newIORef (0 :: Int)
+    let load = do
+          threadDelay 30_000
+          atomicModifyIORef' calls $ \count -> (count + 1, count + 1)
+
+    runSingleFlightCache cache "current" (const True) load
+      `shouldReturn` (SingleFlightLoaded, 1)
+    runSingleFlightCache cache "current" (const True) load
+      `shouldReturn` (SingleFlightLoaded, 2)
+
+  it "preserves completion-anchored TTLs for historical-style caches" $ do
+    cache <- newIntCache 4 500_000_000
+    let load = threadDelay 550_000 >> pure (1 :: Int)
+
+    runSingleFlightCache cache "page" (const True) load
+      `shouldReturn` (SingleFlightLoaded, 1)
+    runSingleFlightCache cache "page" (const True) (pure 2)
+      `shouldReturn` (SingleFlightMemory, 1)
+
+  it "reports no single-flight wait for loader-owned and memory results" $ do
+    cache <- newIntCache 4 5_000_000_000
+    runSingleFlightCacheTimed cache "page" (const True) (pure 1)
+      `shouldReturn` (SingleFlightLoaded, 1, 0)
+    runSingleFlightCacheTimed cache "page" (const True) (pure 2)
+      `shouldReturn` (SingleFlightMemory, 1, 0)
+    runSingleFlightCacheFreshTimed cache "page" (const True) (pure 2)
+      `shouldReturn` (SingleFlightLoaded, 2, 0)
+
   it "does not retain rejected loader results" $ do
     cache <- newIntCache 4 5_000_000_000
     calls <- newIORef (0 :: Int)
@@ -84,16 +121,50 @@ spec = describe "runSingleFlightCache" $ do
 
     _ <- forkIO $ runSingleFlightCache cache "page" (const True) load >>= putMVar firstResult
     takeMVar started
-    _ <- forkIO $ runSingleFlightCache cache "page" (const True) load >>= putMVar secondResult
+    _ <-
+      forkIO $
+        runSingleFlightCacheTimed cache "page" (const True) load
+          >>= putMVar secondResult
     threadDelay 10_000
     readIORef calls `shouldReturn` 1
     putMVar release ()
     first <- takeMVar firstResult
     second <- takeMVar secondResult
-    [first, second] `shouldMatchList`
-      [ (SingleFlightLoaded, 7)
-      , (SingleFlightCoalesced, 7)
-      ]
+    first `shouldBe` (SingleFlightLoaded, 7)
+    let (secondSource, secondValue, secondWaitNs) = second
+    shouldBe (secondSource, secondValue) (SingleFlightCoalesced, 7)
+    secondWaitNs `shouldSatisfy` (> 0)
+
+  it "does not convoy independent current-style keys behind one slow load" $ do
+    cache <- newConcurrentIntCache 4 5_000_000_000
+    firstStarted <- newEmptyMVar
+    secondStarted <- newEmptyMVar
+    releaseFirst <- newEmptyMVar
+    releaseSecond <- newEmptyMVar
+    firstResult <- newEmptyMVar
+    secondResult <- newEmptyMVar
+    let load started release value = do
+          putMVar started ()
+          _ <- takeMVar release
+          pure value
+
+    _ <-
+      forkIO $
+        runSingleFlightCache cache "first" (const True) (load firstStarted releaseFirst 1)
+          >>= putMVar firstResult
+    takeMVar firstStarted
+    _ <-
+      forkIO $
+        runSingleFlightCache cache "second" (const True) (load secondStarted releaseSecond 2)
+          >>= putMVar secondResult
+    secondDidStart <- timeout 1_000_000 $ takeMVar secondStarted
+    shouldBe secondDidStart (Just ())
+    putMVar releaseFirst ()
+    putMVar releaseSecond ()
+    first <- takeMVar firstResult
+    second <- takeMVar secondResult
+    shouldBe first (SingleFlightLoaded, 1)
+    shouldBe second (SingleFlightLoaded, 2)
 
   it "releases the key when a loader throws" $ do
     cache <- newIntCache 4 5_000_000_000

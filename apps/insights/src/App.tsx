@@ -3,6 +3,7 @@ import { DEFAULT_COMPETITION_SLUG } from './api'
 import { Layout } from './components/Layout'
 import { LeaderboardPage } from './pages/LeaderboardPage'
 import { MethodologyPage } from './pages/MethodologyPage'
+import { CurrentRegistrationRedirect, RegistrationPage } from './pages/RegistrationPage'
 import { WalletPage } from './pages/WalletPage'
 
 function LegacyWalletRedirect() {
@@ -16,6 +17,8 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<LeaderboardPage />} />
+          <Route path="/register" element={<CurrentRegistrationRedirect />} />
+          <Route path="/competitions/:slug/register" element={<RegistrationPage />} />
           <Route path="/competitions/:slug/wallets/:address" element={<WalletPage />} />
           <Route path="/wallets/:address" element={<LegacyWalletRedirect />} />
           <Route path="/methodology" element={<MethodologyPage />} />

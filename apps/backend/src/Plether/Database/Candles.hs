@@ -2660,17 +2660,20 @@ basketCurrentCandleSnapshotSql =
   \), history_target AS MATERIALIZED (\
   \ SELECT ((target.requested_start_timestamp + i.interval_seconds - 1) \
   \   / i.interval_seconds) * i.interval_seconds AS selected_start, \
-  \  COALESCE(progress.complete \
-  \   AND progress.sample_interval_seconds = 60 \
-  \   AND progress.start_timestamp = ((target.requested_start_timestamp + 59) / 60) * 60 \
-  \   AND progress.next_timestamp = progress.end_timestamp_exclusive \
-  \   AND progress.last_error IS NULL \
-  \   AND progress.published_generation IS NOT NULL, FALSE) AS ingestion_complete \
+  \  COALESCE(target.complete \
+  \   AND target.sample_interval_seconds = 60 \
+  \   AND target.start_timestamp = ((target.requested_start_timestamp + 59) / 60) * 60 \
+  \   AND target.next_timestamp = target.end_timestamp_exclusive \
+  \   AND target.last_error IS NULL \
+  \   AND target.published_generation IS NOT NULL, FALSE) AS ingestion_complete \
   \ FROM input i JOIN definition d ON TRUE \
   \ JOIN canonical_market market \
   \  ON market.chain_id = i.chain_id AND market.price_series_id = d.series_id \
   \ JOIN LATERAL (\
-  \  SELECT target.revision, target.requested_start_timestamp \
+  \  SELECT target.requested_start_timestamp, published.complete, \
+  \   published.sample_interval_seconds, published.start_timestamp, \
+  \   published.next_timestamp, published.end_timestamp_exclusive, \
+  \   published.last_error, published.published_generation \
   \  FROM perps_candle_history_targets target \
   \  JOIN perps_candle_history_ingestions published \
   \   ON published.market_id = target.market_id \
@@ -2678,10 +2681,7 @@ basketCurrentCandleSnapshotSql =
   \   AND published.published_generation IS NOT NULL \
   \  WHERE target.market_id = market.market_id \
   \  ORDER BY target.revision DESC LIMIT 1\
-  \ ) target ON TRUE \
-  \ LEFT JOIN perps_candle_history_ingestions progress \
-  \  ON progress.market_id = market.market_id \
-  \  AND progress.target_revision = target.revision\
+  \ ) target ON TRUE\
   \), volume_state AS MATERIALIZED (\
   \ SELECT volume.coverage_start, volume.coverage_end, volume.finalized_through, \
   \  volume.generation, volume.complete \
@@ -2709,9 +2709,8 @@ basketCurrentCandleSnapshotSql =
   \     AS dataset_generation, \
   \  price.complete AND price.generation > 0 AND price.generation < 67108864 \
   \   AND price.derivation_version = i.derivation_version \
-  \   AND (NOT EXISTS (SELECT 1 FROM canonical_market) \
-  \     OR EXISTS (SELECT 1 FROM canonical_market market \
-  \       WHERE market.chain_id = i.chain_id \
+  \   AND (market.market_id IS NULL \
+  \     OR (market.chain_id = i.chain_id \
   \       AND market.price_series_id = d.series_id)) \
   \   AND (history_target.selected_start IS NULL \
   \     OR (history_target.ingestion_complete \
@@ -2730,6 +2729,7 @@ basketCurrentCandleSnapshotSql =
   \  AND price.interval_seconds = i.interval_seconds \
   \ LEFT JOIN volume_state volume ON TRUE \
   \ LEFT JOIN history_target ON TRUE \
+  \ LEFT JOIN canonical_market market ON TRUE \
   \ WHERE price.coverage_start IS NOT NULL AND price.coverage_end IS NOT NULL \
   \ AND price.finalized_through IS NOT NULL\
   \) SELECT \

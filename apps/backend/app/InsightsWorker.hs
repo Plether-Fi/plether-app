@@ -6,7 +6,7 @@ import Control.Monad (forever)
 import Plether.Config (Config (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (ensureInsightsSchema)
-import Plether.Database.Schema (ensurePerpsHistorySchema)
+import Plether.Database.Schema (ensurePerpsHistorySchema, ensureTestnetFaucetSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Insights.SnapshotWorker
   ( parseSnapshotMulticallSize
@@ -30,14 +30,17 @@ main = do
             Just databaseUrl -> do
               pool <- newDbPool databaseUrl
               withDb pool ensurePerpsHistorySchema
+              withDb pool ensureTestnetFaucetSchema
               withDb pool $ \conn ->
                 ensureInsightsSchema
                   conn
+                  (cfgInsightsCompetitionRules cfg)
                   (cfgPerpsChainId cfg)
                   (cfgPerpsOrderRouter cfg)
                   (cfgPerpsUsdc cfg)
                   (cfgPerpsMarginClearinghouse cfg)
                   (cfgPerpsAccountLens cfg)
+                  (cfgInsightsCompetitionReleaseManifest cfg)
               client <- newClient $ cfgPerpsRpcUrl cfg
               pollSeconds <- loadPollSeconds
               putStrLn $

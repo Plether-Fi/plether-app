@@ -72,9 +72,12 @@ validateFinalizerDatabaseUrl expectedHost databaseUrl = do
       (Left "Finalizer probe DATABASE_URL must use the canonical postgresql URI")
       Right
       (T.stripPrefix "postgresql://" $ T.strip databaseUrl)
-  unless (not $ T.any (`elem` ['?', '#']) uriBody) $
-    Left "Finalizer probe DATABASE_URL must not contain URI overrides"
-  let (authority, databasePath) = T.breakOn "/" uriBody
+  unless (not $ T.any (== '#') uriBody) $
+    Left "Finalizer probe DATABASE_URL must not contain a fragment"
+  let (canonicalBody, querySuffix) = T.breakOn "?" uriBody
+  unless (querySuffix == canonicalTlsQuery) $
+    Left "Finalizer probe DATABASE_URL must use the exact verify-full RDS TLS configuration"
+  let (authority, databasePath) = T.breakOn "/" canonicalBody
   unless (databasePath == "/plether") $
     Left "Finalizer probe DATABASE_URL must select the plether database exactly"
   hostPort <-
@@ -95,6 +98,8 @@ validateFinalizerDatabaseUrl expectedHost databaseUrl = do
       && T.all (\character -> character == '.' || character == '-' || isAsciiLower character || isDigit character) host
   isAsciiLower character = character >= 'a' && character <= 'z'
   isDigit character = character >= '0' && character <= '9'
+  canonicalTlsQuery =
+    "?sslmode=verify-full&sslrootcert=%2Fetc%2Fssl%2Fcerts%2Faws-rds-global-bundle.pem"
 
 validateFinalizerLibpqEnvironment :: [Text] -> Either Text ()
 validateFinalizerLibpqEnvironment variableNames =

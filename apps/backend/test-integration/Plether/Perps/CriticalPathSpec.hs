@@ -53,6 +53,11 @@ import Plether.Database.Schema
   , upsertPerpsKeeperOrderCommitted
   )
 import Plether.Ethereum.Client (EthClient (..))
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , CompetitionRules (crSlug)
+  , july2026Competition
+  )
 import Plether.Perps.CriticalPathFixture
 import Plether.Perps.HistoryIndexer (runPerpsIndexer)
 import Test.Hspec
@@ -555,12 +560,17 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsUsdc = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsCfdEngine = testEngine
+    , cfgPerpsCfdEngineLens = testLens
+    , cfgPerpsCfdEngineSettlementSidecar = testSidecar
     , cfgPerpsMarginClearinghouse = testClearinghouse
     , cfgPerpsPletherOracle = testOracle
     , cfgPerpsAccountLens = testLens
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -571,4 +581,20 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementEnabled = False
     , cfgLpSettlementPollSeconds = 15
+    }
+
+testCompetitionReleaseManifest :: CompetitionReleaseManifest
+testCompetitionReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = crSlug july2026Competition
+    , crmChainId = testChainId
+    , crmUsdc = testClearinghouse
+    , crmOrderRouter = testRouter
+    , crmMarginClearinghouse = testClearinghouse
+    , crmAccountLens = testLens
+    , crmCfdEngine = testEngine
+    , crmCfdEngineLens = testLens
+    , crmSettlementSidecar = testSidecar
+    , crmPletherOracle = testOracle
+    , crmIndexerStartBlock = commitBlockNumber
     }

@@ -42,6 +42,18 @@ spec = describe "Plether.RequestLogging" $ do
         ]
         `shouldBe` "/api/insights/v1/competitions/:slug/wallets/:address"
 
+    it "normalizes private registration routes without logging the competition slug" $ do
+      normalizeRouteSegments
+        [ "api", "insights", "v1", "competitions", "attacker-controlled-slug"
+        , "registrations", "x", "callback"
+        ]
+        `shouldBe` "/api/insights/v1/competitions/:slug/registrations/x/callback"
+      normalizeRouteSegments
+        [ "api", "insights", "v1", "competitions", "testnet-trading-2026-09"
+        , "registrations", "session"
+        ]
+        `shouldBe` "/api/insights/v1/competitions/:slug/registrations/session"
+
     it "collapses unknown paths instead of logging attacker-controlled routes" $ do
       normalizeRouteSegments ["api", "invented", "high-cardinality-value"]
         `shouldBe` "/:unmatched"

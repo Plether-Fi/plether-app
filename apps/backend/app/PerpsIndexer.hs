@@ -7,8 +7,14 @@ import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.Config (Config (..), PerpsCandleWriteMode (..), loadConfig)
 import Plether.Database (newDbPool, withDb)
+import Plether.Database.Insights (validateCompetitionReleaseManifest)
 import Plether.Database.Schema (ensurePerpsHistorySchema)
 import Plether.Logging (field, logError, logInfo)
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , CompetitionRules (..)
+  , competitionReleaseIsBound
+  )
 import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
@@ -84,8 +90,11 @@ runConfiguredIndexer
 runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
       let configuredAddresses =
             defaultPerpsAddresses
-              { paOrderRouter = cfgPerpsOrderRouter cfg
+              { paUsdc = cfgPerpsUsdc cfg
+              , paOrderRouter = cfgPerpsOrderRouter cfg
               , paCfdEngine = cfgPerpsCfdEngine cfg
+              , paCfdEngineLens = cfgPerpsCfdEngineLens cfg
+              , paCfdEngineSettlementSidecar = cfgPerpsCfdEngineSettlementSidecar cfg
               , paMarginClearinghouse = cfgPerpsMarginClearinghouse cfg
               , paPletherOracle = cfgPerpsPletherOracle cfg
               }
@@ -112,6 +121,20 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
             IndexerOptions.PerpsIndexerReplay _ -> pure ()
           let rpcUrls = fromMaybe [cfgPerpsRpcUrl cfg] (waRpcUrls args)
               startBlock = fromMaybe (cfgPerpsIndexerStartBlock cfg) (waStartBlock args)
+              addresses = waAddresses args
+              releaseManifest =
+                (cfgInsightsCompetitionReleaseManifest cfg)
+                  { crmChainId = cfgPerpsChainId cfg
+                  , crmUsdc = paUsdc addresses
+                  , crmOrderRouter = paOrderRouter addresses
+                  , crmMarginClearinghouse = paMarginClearinghouse addresses
+                  , crmAccountLens = cfgPerpsAccountLens cfg
+                  , crmCfdEngine = paCfdEngine addresses
+                  , crmCfdEngineLens = paCfdEngineLens addresses
+                  , crmSettlementSidecar = paCfdEngineSettlementSidecar addresses
+                  , crmPletherOracle = paPletherOracle addresses
+                  , crmIndexerStartBlock = startBlock
+                  }
               traceApiUrl = case waTraceApiUrl args of
                 Just value
                   | T.null (T.strip value) -> Nothing
@@ -136,6 +159,12 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
                   , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   , picDeploymentEnvironment = deploymentEnvironment
                   }
+          whenReleaseBound cfg releaseManifest $ \boundManifest ->
+            withDb pool $ \conn ->
+              validateCompetitionReleaseManifest
+                conn
+                (crSlug $ cfgInsightsCompetitionRules cfg)
+                boundManifest
           logInfo
             "perps_indexer_started"
             "Perps history indexer started"
@@ -148,6 +177,15 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
             , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
             ]
           runPerpsIndexer manager pool indexerCfg
+
+whenReleaseBound
+  :: Config
+  -> CompetitionReleaseManifest
+  -> (CompetitionReleaseManifest -> IO ())
+  -> IO ()
+whenReleaseBound cfg manifest action
+  | competitionReleaseIsBound (cfgInsightsCompetitionRules cfg) manifest = action manifest
+  | otherwise = pure ()
 
 validateReplayDeployment
   :: IndexerOptions.PerpsIndexerInvocation
@@ -203,6 +241,7 @@ loadEnvArgs = do
     , "PERPS_INDEXER_CONFIRMATIONS"
     , "PERPS_INDEXER_BATCH_SIZE"
     , "PERPS_INDEXER_POLL_SECONDS"
+    , "PERPS_USDC"
     , "PERPS_ORDER_ROUTER"
     , "PERPS_CFD_ENGINE"
     , "PERPS_CFD_ENGINE_LENS"
@@ -236,7 +275,8 @@ parseWorkerArgs addressDefaults env args =
             (lookup "PERPS_INDEXER_TRACE_API_URL" env)
     , waAddresses =
         addressDefaults
-          { paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
+          { paUsdc = T.pack $ fromMaybe (T.unpack $ paUsdc addressDefaults) (lookup "PERPS_USDC" env)
+          , paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
           , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
           , paCfdEngineLens = T.pack $ fromMaybe (T.unpack $ paCfdEngineLens addressDefaults) (lookup "PERPS_CFD_ENGINE_LENS" env)
           , paCfdEngineSettlementSidecar =

@@ -1,8 +1,7 @@
 import { useCallback, useState } from 'react'
-import { modal, useAppKit } from '@reown/appkit/react'
 import { useSwitchChain } from 'wagmi'
 import { arbitrumSepolia } from 'wagmi/chains'
-import { appKitArbitrumSepolia, syncAppKitModalStyleOverrides } from '../config/wagmi'
+import { openAppKit, switchAppKitToArbitrumSepolia } from '../config/wagmi'
 
 function getErrorText(error: unknown): string {
   if (!error) return ''
@@ -39,7 +38,6 @@ function getSwitchHelpMessage(error: unknown): string {
 }
 
 export function useSwitchToArbitrumSepolia() {
-  const { open } = useAppKit()
   const { switchChainAsync, isPending } = useSwitchChain()
   const [isOpeningFallback, setIsOpeningFallback] = useState(false)
   const [switchError, setSwitchError] = useState<string | null>(null)
@@ -58,22 +56,16 @@ export function useSwitchToArbitrumSepolia() {
       console.warn('Failed to switch wallet network through Wagmi. Trying AppKit.', switchChainError)
     }
 
-    if (modal?.switchNetwork) {
-      try {
-        await modal.switchNetwork(appKitArbitrumSepolia, { throwOnFailure: true })
-        return true
-      } catch (appKitError) {
-        lastError = appKitError
-        console.warn('Failed to switch wallet network through AppKit. Opening network selector.', appKitError)
-      }
-    } else {
-      lastError = new Error('AppKit network switch is unavailable.')
+    try {
+      await switchAppKitToArbitrumSepolia()
+      return true
+    } catch (appKitError) {
+      lastError = appKitError
+      console.warn('Failed to switch wallet network through AppKit. Opening network selector.', appKitError)
     }
 
     try {
-      syncAppKitModalStyleOverrides()
-      await open({ view: 'Networks' })
-      syncAppKitModalStyleOverrides()
+      await openAppKit({ view: 'Networks' })
     } catch (networkSelectorError) {
       lastError = networkSelectorError
       console.warn('Failed to open AppKit network selector.', networkSelectorError)
@@ -82,7 +74,7 @@ export function useSwitchToArbitrumSepolia() {
       setIsOpeningFallback(false)
     }
     return false
-  }, [open, switchChainAsync])
+  }, [switchChainAsync])
 
   const clearSwitchError = useCallback(() => {
     setSwitchError(null)

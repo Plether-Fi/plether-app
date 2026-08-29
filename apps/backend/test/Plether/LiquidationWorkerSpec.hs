@@ -33,6 +33,10 @@ import Plether.Ethereum.Contracts.Perps
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
 import Plether.Ethereum.Transaction (Tx1559 (..))
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.LiquidationWorker
   ( FreshLiquidationRiskInputs (..)
   , LiquidationBatchProgress (..)
@@ -693,6 +697,8 @@ testConfig =
     , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"
     , cfgPerpsOrderRouter = "0x2222222222222222222222222222222222222222"
     , cfgPerpsCfdEngine = configuredCfdEngine
+    , cfgPerpsCfdEngineLens = "0x7777777777777777777777777777777777777777"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x8888888888888888888888888888888888888888"
     , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
     , cfgPerpsAccountLens = configuredAccountLens
@@ -705,6 +711,9 @@ testConfig =
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = liquidationReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -715,6 +724,22 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementEnabled = False
     , cfgLpSettlementPollSeconds = 15
+    }
+
+liquidationReleaseManifest :: CompetitionReleaseManifest
+liquidationReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "liquidation-worker-test"
+    , crmChainId = 421614
+    , crmUsdc = "0x1111111111111111111111111111111111111111"
+    , crmOrderRouter = "0x2222222222222222222222222222222222222222"
+    , crmMarginClearinghouse = "0x3333333333333333333333333333333333333333"
+    , crmAccountLens = configuredAccountLens
+    , crmCfdEngine = configuredCfdEngine
+    , crmCfdEngineLens = "0x7777777777777777777777777777777777777777"
+    , crmSettlementSidecar = "0x8888888888888888888888888888888888888888"
+    , crmPletherOracle = "0x4444444444444444444444444444444444444444"
+    , crmIndexerStartBlock = 288439939
     }
 
 withUnsetEnv :: String -> IO a -> IO a

@@ -8,10 +8,15 @@ import Data.Either (isRight)
 import Data.IORef (modifyIORef', newIORef, readIORef)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Plether.Cache (SingleFlightSource (..))
 import Plether.Config
   ( Config (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
+  )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
   )
 import Plether.Database.Candles
   ( BasketCandleRow (..)
@@ -36,6 +41,8 @@ import Plether.Handlers.Perps
   , basketCandleTimingMetrics
   , boundedBasketHistoryInterval
   , coverageLagSeconds
+  , currentCandleCacheKey
+  , currentCandleSnapshotNeedsAuthoritativeReload
   , decodePythUpdateForAdmission
   , getBasketHistoryWithSourcesTimed
   , getLegacyBasketHistoryVolumeRowsTimed
@@ -345,17 +352,59 @@ spec = do
       validateAt 30_134 `shouldSatisfy` isRight
       validateAt 30_135 `shouldFailWith` "finalized watermark is stale"
 
+  describe "current candle raw snapshot cache key" $ do
+    it "isolates interval boundaries and runtime market identity" $ do
+      let beforeBoundary = currentCandleCacheKey rollupConfig 179 60
+          atBoundary = currentCandleCacheKey rollupConfig 180 60
+          otherInterval = currentCandleCacheKey rollupConfig 180 180
+          normalizedRouter =
+            currentCandleCacheKey
+              rollupConfig {cfgPerpsOrderRouter = " 0xRoUtEr "}
+              179
+              60
+          otherChain =
+            currentCandleCacheKey
+              rollupConfig {cfgPerpsChainId = cfgPerpsChainId rollupConfig + 1}
+              179
+              60
+      shouldBe
+        (currentCandleCacheKey rollupConfig 120 60)
+        (421614, "0xrouter", 60, 120)
+      shouldBe beforeBoundary (421614, "0xrouter", 60, 120)
+      shouldBe normalizedRouter beforeBoundary
+      shouldBe (atBoundary == beforeBoundary) False
+      shouldBe (otherInterval == atBoundary) False
+      shouldBe (otherChain == beforeBoundary) False
+
+    it "reloads only cached or cross-second coalesced snapshots" $ do
+      currentCandleSnapshotNeedsAuthoritativeReload
+        101 SingleFlightMemory 100
+        `shouldBe` True
+      currentCandleSnapshotNeedsAuthoritativeReload
+        101 SingleFlightStale 100
+        `shouldBe` True
+      currentCandleSnapshotNeedsAuthoritativeReload
+        101 SingleFlightCoalesced 100
+        `shouldBe` True
+      currentCandleSnapshotNeedsAuthoritativeReload
+        101 SingleFlightCoalesced 101
+        `shouldBe` False
+      currentCandleSnapshotNeedsAuthoritativeReload
+        101 SingleFlightLoaded 100
+        `shouldBe` False
+
   describe "basket candle request timings" $ do
     it "attributes fixed-page reads to the rollup query" $ do
       basketCandleServerTiming sampleCandleTimings
-        `shouldBe` "plether_app;dur=15.000, plether_db_pool_wait;dur=1.000, plether_db_candles;dur=9.250, plether_response_encode;dur=1.500, plether_other;dur=3.250"
+        `shouldBe` "plether_app;dur=15.000, plether_db_pool_wait;dur=1.000, plether_db_candles;dur=9.250, plether_singleflight_wait;dur=0.750, plether_response_encode;dur=1.500, plether_other;dur=2.500"
       basketCandleTimingMetrics sampleCandleTimings
         `shouldBe`
           [ ("plether_app", 15_000_000)
           , ("plether_db_pool_wait", 1_000_000)
           , ("plether_db_candles", 9_250_000)
+          , ("plether_singleflight_wait", 750_000)
           , ("plether_response_encode", 1_500_000)
-          , ("plether_other", 3_250_000)
+          , ("plether_other", 2_500_000)
           ]
 
   describe "strict basket candle validation" $ do
@@ -1007,6 +1056,7 @@ sampleCandleTimings =
     { bctBackendTotalNs = 15_000_000
     , bctDbPoolWaitNs = 1_000_000
     , bctQueryNs = 9_250_000
+    , bctSingleFlightWaitNs = 750_000
     , bctResponseEncodeNs = 1_500_000
     }
 
@@ -1092,6 +1142,8 @@ rollupConfig =
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
     , cfgPerpsCfdEngine = ""
+    , cfgPerpsCfdEngineLens = ""
+    , cfgPerpsCfdEngineSettlementSidecar = ""
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
@@ -1104,6 +1156,9 @@ rollupConfig =
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = rollupReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -1114,6 +1169,22 @@ rollupConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementEnabled = False
     , cfgLpSettlementPollSeconds = 15
+    }
+
+rollupReleaseManifest :: CompetitionReleaseManifest
+rollupReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "perps-rollup-test"
+    , crmChainId = 421614
+    , crmUsdc = ""
+    , crmOrderRouter = "0xrouter"
+    , crmMarginClearinghouse = ""
+    , crmAccountLens = ""
+    , crmCfdEngine = ""
+    , crmCfdEngineLens = ""
+    , crmSettlementSidecar = ""
+    , crmPletherOracle = ""
+    , crmIndexerStartBlock = 0
     }
 
 testApiError :: ApiError

@@ -8,6 +8,10 @@ import Plether.Config
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.Schema
   ( PerpsIndexerStatusRow (..)
   , PerpsKeeperTerminalOrderRow (..)
@@ -258,6 +262,8 @@ testConfig =
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
     , cfgPerpsCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+    , cfgPerpsCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
     , cfgPerpsMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
     , cfgPerpsPletherOracle = "0x0000000000000000000000000000000000000000"
     , cfgPerpsAccountLens = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
@@ -270,6 +276,9 @@ testConfig =
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -280,4 +289,20 @@ testConfig =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementEnabled = False
     , cfgLpSettlementPollSeconds = 15
+    }
+
+testReleaseManifest :: CompetitionReleaseManifest
+testReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "perps-history-test"
+    , crmChainId = 421614
+    , crmUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , crmOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+    , crmMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+    , crmAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+    , crmCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+    , crmCfdEngineLens = "0xa9aA3F66A88826C6856E1Fc915805784845A6b64"
+    , crmSettlementSidecar = "0x0b65286A091266504502179558411935c339f8a6"
+    , crmPletherOracle = "0x0000000000000000000000000000000000000000"
+    , crmIndexerStartBlock = 0
     }

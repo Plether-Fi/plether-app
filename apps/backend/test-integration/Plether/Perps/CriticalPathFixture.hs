@@ -97,6 +97,7 @@ import Plether.Perps.HistoryIndexer
   , PerpsIndexerMode (PerpsIndexerOnce)
   , perpsEventTopics
   , perpsIndexerName
+  , transferTopic
   )
 
 -- | Each constructor is a complete canonical view at the same chain height.
@@ -312,8 +313,15 @@ dispatchRpc unexpectedRef state methodName params =
       checkedParams unexpectedRef methodName emptyParams params $
         String "0x65"
     "eth_getLogs" ->
-      checkedParams unexpectedRef methodName expectedLogsParams params $
-        Aeson.toJSON (branchLogs state)
+      if params == expectedLogsParams
+        then pure $ RpcSuccess $ Aeson.toJSON $ branchLogs state
+        else
+          checkedParams
+            unexpectedRef
+            methodName
+            expectedUsdcTransferLogsParams
+            params
+            (Aeson.toJSON ([] :: [Value]))
     "eth_getBlockByNumber" ->
       case arrayItems params of
         [String blockNumber, Bool False]
@@ -689,6 +697,17 @@ expectedLogsParams =
         ]
     ]
 
+expectedUsdcTransferLogsParams :: Value
+expectedUsdcTransferLogsParams =
+  Aeson.toJSON
+    [ object
+        [ "address" .= [testUsdc]
+        , "topics" .= [[String $ hexText transferTopic]]
+        , "fromBlock" .= ("0x64" :: Text)
+        , "toBlock" .= ("0x65" :: Text)
+        ]
+    ]
+
 emptyParams :: Value
 emptyParams = Aeson.toJSON ([] :: [Value])
 
@@ -796,7 +815,8 @@ branchB =
 testAddresses :: PerpsAddresses
 testAddresses =
   PerpsAddresses
-    { paOrderRouter = testRouter
+    { paUsdc = testUsdc
+    , paOrderRouter = testRouter
     , paCfdEngine = testEngine
     , paCfdEngineLens = testLens
     , paCfdEngineSettlementSidecar = testSidecar
@@ -808,8 +828,9 @@ testChainId, testOrderId :: Integer
 testChainId = 987_654_321
 testOrderId = 42
 
-testAccount, testRouter, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
+testAccount, testUsdc, testRouter, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
 testAccount = fixedAddress 0xa1
+testUsdc = fixedAddress 0xa2
 testRouter = fixedAddress 0xb1
 testEngine = fixedAddress 0xb2
 testSidecar = fixedAddress 0xb3

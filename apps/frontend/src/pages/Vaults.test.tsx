@@ -541,7 +541,7 @@ describe('Vaults page', () => {
     expect(screen.queryByText('Risk position')).not.toBeInTheDocument()
   })
 
-  it('uses the same activation threshold when scrolling down and up', () => {
+  it('uses the same activation threshold when scrolling down and up', async () => {
     let activityTop = 217
     const bounds = (top: number) => ({
       x: 0,
@@ -566,7 +566,9 @@ describe('Vaults page', () => {
 
     const positionButton = screen.getByRole('button', { name: 'Your position' })
     const activityButton = screen.getByRole('button', { name: 'Activity' })
-    expect(positionButton).toHaveAttribute('aria-current', 'location')
+    await waitFor(() => {
+      expect(positionButton).toHaveAttribute('aria-current', 'location')
+    })
     expect(activityButton).not.toHaveAttribute('aria-current')
 
     activityTop = 216

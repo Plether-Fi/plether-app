@@ -1076,25 +1076,25 @@ const NEW_YORK_MARKET_TIME = new Intl.DateTimeFormat('en-US', {
 })
 
 function newYorkMarketParts(timestamp: number): {
-  weekday?: string
-  hour?: number
-  minute?: number
+  weekday: string
+  hour: number
+  minute: number
 } {
   const parts = Object.fromEntries(
     NEW_YORK_MARKET_TIME.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value])
   )
   return {
     weekday: parts.weekday,
-    hour: parts.hour === undefined ? undefined : Number(parts.hour),
-    minute: parts.minute === undefined ? undefined : Number(parts.minute),
+    hour: Number(parts.hour),
+    minute: Number(parts.minute),
   }
 }
 
 function scheduledOracleReopenTime(now = Date.now()): number | undefined {
   const current = newYorkMarketParts(now)
   const inRecurringWeekendClosure = current.weekday === 'Sat'
-    || (current.weekday === 'Fri' && (current.hour ?? 0) >= 17)
-    || (current.weekday === 'Sun' && (current.hour ?? 24) < 17)
+    || (current.weekday === 'Fri' && current.hour >= 17)
+    || (current.weekday === 'Sun' && current.hour < 17)
 
   if (!inRecurringWeekendClosure) return undefined
 
@@ -4613,7 +4613,7 @@ function VaultDetail({
     if (!section) return
 
     setActiveSection(section.id)
-    document.getElementById(section.anchor)?.scrollIntoView?.({
+    document.getElementById(section.anchor)?.scrollIntoView({
       behavior: 'smooth',
       block: 'start',
     })
@@ -4621,15 +4621,6 @@ function VaultDetail({
   }
 
   useEffect(() => {
-    const sectionIds = new Set(sections.map((section) => section.anchor))
-    const requestedAnchor = window.location.hash.slice(1)
-    if (sectionIds.has(requestedAnchor)) {
-      const requestedSection = sections.find((section) => section.anchor === requestedAnchor)
-      if (requestedSection) setActiveSection(requestedSection.id)
-    } else {
-      setActiveSection('overview')
-    }
-
     const updateActiveSection = () => {
       let nextSection = sections[0]
       const currentScrollTop = window.scrollY
@@ -4656,14 +4647,15 @@ function VaultDetail({
         }
         nextSection = section
       }
-      if (nextSection) setActiveSection(nextSection.id)
+      setActiveSection(nextSection.id)
     }
 
-    updateActiveSection()
+    const initialUpdateFrame = window.requestAnimationFrame(updateActiveSection)
     window.addEventListener('scroll', updateActiveSection, { passive: true })
     window.addEventListener('resize', updateActiveSection)
 
     return () => {
+      window.cancelAnimationFrame(initialUpdateFrame)
       window.removeEventListener('scroll', updateActiveSection)
       window.removeEventListener('resize', updateActiveSection)
     }

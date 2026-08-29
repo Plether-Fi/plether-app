@@ -1,6 +1,8 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Plether.Insights.DatabaseSpec (insightsDatabaseSpec)
+import Plether.Insights.RegistrationDatabaseSpec (registrationDatabaseSpec)
 import Plether.Perps.CandleRollupSpec (candleRollupSpec)
 import Plether.Perps.CriticalPathSpec (criticalPathSpec)
 import System.Environment (lookupEnv)
@@ -16,6 +18,8 @@ main = do
       hspec $ do
         criticalPathSpec $ T.pack value
         candleRollupSpec $ T.pack value
+        insightsDatabaseSpec $ T.pack value
+        registrationDatabaseSpec $ T.pack value
     Nothing
       | required ->
           die

@@ -25,7 +25,9 @@ import Plether.Perps.HistoryIndexer
   , isMarketVolumeActivity
   , orderFailReasonName
   , parsePerpsLog
+  , parseUsdcTransfer
   , terminalStatus
+  , transferTopic
   , validateIndexedBoundary
   , validateReplayBounds
   , validateReplayLogScope
@@ -265,6 +267,19 @@ spec = do
         `shouldBeParsedAs` \case
           ParsedMarginActivity "Withdraw" account 25_000_000 _ -> account == testAccount
           _ -> False
+
+    it "parses only the exact canonical ERC-20 Transfer ABI" $ do
+      let valid = mkLog transferTopic [word 0, addressTopic] (word 100_000_000)
+      parseUsdcTransfer valid
+        `shouldBeParsedAs` \case
+          ParsedUsdcTransfer fromAddress toAddress 100_000_000 _ ->
+            fromAddress == "0x0000000000000000000000000000000000000000"
+              && toAddress == testAccount
+          _ -> False
+      parseUsdcTransfer valid {rlTopics = rlTopics valid <> [word 1]} `shouldBe` Nothing
+      parseUsdcTransfer valid {rlTopics = [transferTopic, BS.tail (word 0), addressTopic]} `shouldBe` Nothing
+      parseUsdcTransfer valid {rlData = BS.take 31 $ rlData valid} `shouldBe` Nothing
+      parseUsdcTransfer valid {rlData = rlData valid <> BS.singleton 0} `shouldBe` Nothing
 
   describe "orderFailReasonName" $ do
     it "matches deployed OrderFailReason ordinals" $ do

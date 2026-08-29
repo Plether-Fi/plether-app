@@ -35,6 +35,10 @@ import Plether.Ethereum.Abi
   , encodeUint256
   , selector
   )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Test.Hspec
 
 spec :: Spec
@@ -390,9 +394,11 @@ testConfig =
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
     , cfgPerpsCfdEngine = engine
+    , cfgPerpsCfdEngineLens = zeroAddress
+    , cfgPerpsCfdEngineSettlementSidecar = zeroAddress
     , cfgPerpsMarginClearinghouse = clearinghouse
     , cfgPerpsPletherOracle = ""
-    , cfgPerpsAccountLens = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsAccountLens = zeroAddress
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
@@ -402,6 +408,9 @@ testConfig =
     , cfgVaultHistoryDeploymentBlock = 0
     , cfgVaultHistoryRpcUrl = "https://archive.example"
     , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Just testAaConfig
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -414,7 +423,23 @@ testConfig =
     , cfgLpSettlementPollSeconds = 15
     }
 
-entryPoint, sender, owner, attacker, usdc, clearinghouse, router, engine, simpleAccountFactory :: T.Text
+testReleaseManifest :: CompetitionReleaseManifest
+testReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "pimlico-test"
+    , crmChainId = 421614
+    , crmUsdc = usdc
+    , crmOrderRouter = router
+    , crmMarginClearinghouse = clearinghouse
+    , crmAccountLens = zeroAddress
+    , crmCfdEngine = engine
+    , crmCfdEngineLens = zeroAddress
+    , crmSettlementSidecar = zeroAddress
+    , crmPletherOracle = zeroAddress
+    , crmIndexerStartBlock = 0
+    }
+
+entryPoint, sender, owner, attacker, usdc, clearinghouse, router, engine, simpleAccountFactory, zeroAddress :: T.Text
 entryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 sender = "0x1111111111111111111111111111111111111111"
 owner = "0x2222222222222222222222222222222222222222"
@@ -424,6 +449,7 @@ clearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
 router = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
 engine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 simpleAccountFactory = "0x13E9ed32155810FDbd067D4522C492D6f68E5944"
+zeroAddress = "0x0000000000000000000000000000000000000000"
 
 permissionlessDummySignature :: T.Text
 permissionlessDummySignature =

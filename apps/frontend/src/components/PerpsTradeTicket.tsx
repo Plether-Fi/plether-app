@@ -1,9 +1,8 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useAppKit } from '@reown/appkit/react'
 import type { SponsoredExecutionStatus } from '@plether/perps-aa-client'
 import { useChainId, useReadContracts } from 'wagmi'
 import { zeroAddress } from 'viem'
-import { syncAppKitModalStyleOverrides } from '../config/wagmi'
+import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import type { BasketLatest } from '../api'
@@ -1637,7 +1636,6 @@ export function PerpsTradeTicket({
   const isConnected = identity.ownerAddress !== undefined
   const isSponsoredAccountConfigured = identity.isAaManifestConfigured
   const chainId = useChainId()
-  const { open } = useAppKit()
   const { switchToArbitrumSepolia, switchError: networkSwitchError } = useSwitchToArbitrumSepolia()
   const {
     abandonDepositAuthorization,
@@ -3141,9 +3139,7 @@ export function PerpsTradeTicket({
   async function handleMarginActionSubmit() {
     if (!marginAction) return
     if (enableLiveTrading && !isConnected) {
-      syncAppKitModalStyleOverrides()
-      void open()
-      syncAppKitModalStyleOverrides()
+      void openAppKit()
       return
     }
     if (enableLiveTrading && !isCorrectChain) {
@@ -3882,9 +3878,7 @@ export function PerpsTradeTicket({
           analyticsProperties={commonAnalyticsProperties}
           onClick={() => {
             if (enableLiveTrading && !isConnected) {
-              syncAppKitModalStyleOverrides()
-              void open()
-              syncAppKitModalStyleOverrides()
+              void openAppKit()
               return
             }
             if (enableLiveTrading && !isCorrectChain) {

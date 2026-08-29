@@ -65,7 +65,15 @@ library
         Plether.Database.Candles
         Plether.Database.Schema
         Plether.Database.Insights
+        Plether.Database.Insights.Registration
         Plether.Insights.Competition
+        Plether.Insights.Registration.Config
+        Plether.Insights.Registration.Cleanup
+        Plether.Insights.Registration.Crypto
+        Plether.Insights.Registration.Provider
+        Plether.Insights.Registration.Rotation
+        Plether.Insights.Registration.Types
+        Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
         Plether.Vaults.PerformanceIndexer
         Plether.Pyth.Basket
@@ -87,6 +95,7 @@ library
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
         Plether.Handlers.Insights
+        Plether.Handlers.InsightsRegistration
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -100,8 +109,10 @@ library
         bytestring >= 0.11,
         text >= 2.0,
         base16-bytestring >= 1.0,
+        base64-bytestring >= 1.2,
         crypton >= 0.34,
         memory >= 0.18,
+        network-uri >= 2.6,
         scientific >= 0.3,
         mtl >= 2.3,
         transformers >= 0.6,
@@ -132,7 +143,9 @@ executable plether-api
     import:           warnings
     main-is:          Main.hs
     build-depends:
+        aeson >= 2.1,
         base >= 4.17 && < 5,
+        bytestring >= 0.11,
         plether-api,
         scotty >= 0.22,
         text >= 2.0,
@@ -220,7 +233,9 @@ executable plether-insights-admin
     import:           warnings
     main-is:          InsightsAdmin.hs
     build-depends:
+        aeson >= 2.1,
         base >= 4.17 && < 5,
+        bytestring >= 0.11,
         plether-api,
         text >= 2.0
     hs-source-dirs:   app
@@ -267,6 +282,7 @@ test-suite plether-api-test
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.PerpsSpec
         Plether.Handlers.VaultPerformanceSpec
         Plether.Handlers.PerpsHistorySpec
@@ -287,6 +303,13 @@ test-suite plether-api-test
         Plether.Database.VaultPerformanceSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
+        Plether.Insights.Registration.ConfigSpec
+        Plether.Insights.Registration.CryptoSpec
+        Plether.Insights.Registration.DatabaseSpec
+        Plether.Insights.Registration.ProviderSpec
+        Plether.Insights.Registration.RotationSpec
+        Plether.Insights.Registration.TypesSpec
+        Plether.Insights.Registration.WalletSpec
         Plether.Insights.SnapshotWorkerSpec
         Plether.Vaults.PerformanceIndexerSpec
         Plether.Types.ProtocolSpec
@@ -301,10 +324,12 @@ test-suite plether-api-test
         bytestring >= 0.11,
         containers >= 0.6,
         directory >= 1.3,
+        http-types >= 0.12,
         postgresql-simple >= 0.7,
         text >= 2.0,
         base16-bytestring >= 1.0,
-        time >= 1.12
+        time >= 1.12,
+        wai >= 3.2
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
@@ -320,6 +345,8 @@ test-suite plether-api-integration-test
         Plether.Perps.CandleRollupSpec
         Plether.Perps.CriticalPathFixture
         Plether.Perps.CriticalPathSpec
+        Plether.Insights.DatabaseSpec
+        Plether.Insights.RegistrationDatabaseSpec
     build-depends:
         base >= 4.17 && < 5,
         plether-api,
@@ -327,6 +354,7 @@ test-suite plether-api-integration-test
         aeson >= 2.1,
         bytestring >= 0.11,
         text >= 2.0,
+        time >= 1.12,
         base16-bytestring >= 1.0,
         http-client >= 0.7,
         http-types >= 0.12,

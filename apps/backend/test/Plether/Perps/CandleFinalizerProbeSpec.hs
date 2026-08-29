@@ -31,6 +31,12 @@ spec = do
         , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/other"
         , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/plether?hostaddr=10.0.0.1"
         , "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com/plether"
+        , canonicalDatabasePrefix <> "?sslmode=require&sslrootcert=%2Fetc%2Fssl%2Fcerts%2Faws-rds-global-bundle.pem"
+        , canonicalDatabasePrefix <> "?sslmode=verify-full"
+        , canonicalDatabasePrefix <> "?sslmode=verify-full&sslrootcert=%2Fwrong.pem"
+        , canonicalDatabasePrefix <> "?sslrootcert=%2Fetc%2Fssl%2Fcerts%2Faws-rds-global-bundle.pem&sslmode=verify-full"
+        , sepoliaDatabaseUrl <> "&sslmode=verify-full"
+        , sepoliaDatabaseUrl <> "#fragment"
         ] $ \databaseUrl ->
           validateFinalizerDatabaseUrl sepoliaDatabaseHost databaseUrl
             `shouldSatisfy` isLeft
@@ -175,6 +181,11 @@ sepoliaDatabaseHost = "plether-sepolia.abc.us-east-1.rds.amazonaws.com"
 
 sepoliaDatabaseUrl :: Text
 sepoliaDatabaseUrl =
+  canonicalDatabasePrefix
+    <> "?sslmode=verify-full&sslrootcert=%2Fetc%2Fssl%2Fcerts%2Faws-rds-global-bundle.pem"
+
+canonicalDatabasePrefix :: Text
+canonicalDatabasePrefix =
   "postgresql://plether:secret@plether-sepolia.abc.us-east-1.rds.amazonaws.com:5432/plether"
 
 pricePrestate :: RollupCoverage

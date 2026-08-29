@@ -17,6 +17,44 @@ enable_aa_sponsorship          = true
 pimlico_api_key                = "pim_YOUR_PIMLICO_API_KEY"
 pimlico_sponsorship_policy_id = "sp_YOUR_POLICY_ID"
 aa_proxy_origin_token          = "GENERATE_A_LONG_RANDOM_SHARED_SECRET"
+provision_insights_registration = true
+# Keep false until the September competition slug is activated and the
+# identical origin token is configured as the
+# INSIGHTS_REGISTRATION_ORIGIN_TOKEN GitHub Actions secret for Pages. The
+# competition contract release may be bound later.
+enable_insights_registration                    = false
+insights_registration_public_origin             = "https://insights.plether.com"
+insights_registration_origin_token              = "REPLACE_WITH_A_RANDOM_32_BYTE_OR_LONGER_TOKEN"
+# Optional rotation overlap token. Keep empty outside an active rotation and
+# make it distinct from insights_registration_origin_token when set.
+insights_registration_origin_token_next         = ""
+turnstile_secret_key                            = "REPLACE_WITH_TURNSTILE_SECRET_KEY"
+turnstile_expected_hostname                     = "insights.plether.com"
+turnstile_expected_action                       = "competition_registration"
+x_oauth_client_id                               = "REPLACE_WITH_X_OAUTH_CLIENT_ID"
+x_oauth_client_secret                           = "REPLACE_WITH_X_OAUTH_CLIENT_SECRET"
+x_oauth_callback_url                            = "https://insights.plether.com/api/insights/v1/competitions/testnet-trading-2026-09/registrations/x/callback"
+x_target_user_id                                 = "123456789" # Replace with @plether_fi's stable numeric ID.
+x_target_handle                                  = "plether_fi"
+# Generate each key independently with: openssl rand -base64 32
+# Never remove an old email key version until all rows have been re-encrypted.
+insights_registration_email_keys = {
+  v1 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+}
+insights_registration_email_key_version          = "v1"
+insights_registration_email_hmac_key_base64      = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+insights_registration_session_ttl_seconds         = 1800
+insights_registration_ip_rate_limit_per_minute    = 10
+insights_registration_session_rate_limit_per_minute = 30
+insights_registration_rules_version               = "2026-09-13"
+insights_registration_privacy_version             = "2026-09-13"
+# Registration-only activation: set the competition slug and leave the release
+# ID empty until the new contracts are deployed.
+# insights_active_competition_slug = "testnet-trading-2026-09"
+# One-time release binding: after replacing every pinned July value below with
+# the reviewed manifest (including perps_indexer_start_block), set this ID to
+# the exact competition slug.
+# insights_competition_release_id  = "testnet-trading-2026-09"
 alb_certificate_arn            = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
 api_hostname                   = "api.sepolia.plether.com"
 operations_alarm_sns_topic_arn = ""
@@ -29,7 +67,7 @@ pyth_latest_max_age_seconds     = "10"
 db_password                    = "CHANGE_ME_STRONG_PASSWORD"
 db_username                    = "plether"
 chain_id                       = "11155111"
-cors_origins                   = "https://plether-testnet.pages.dev https://sepolia.plether.com https://app.sepolia.plether.com"
+cors_origins                   = "https://plether-testnet.pages.dev https://sepolia.plether.com https://app.sepolia.plether.com https://insights.plether.com"
 indexer_start_block            = "10188700"
 perps_chain_id                 = "421614"
 vault_history_house_pool_address   = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
@@ -79,6 +117,13 @@ db_allocated_storage           = 40
 # Desired final type. For an existing gp2 instance, keep gp2 through the
 # retention/PITR activation stage and change only this value in the next plan.
 db_storage_type                = "gp3"
+# Optional hardening for a new or already encrypted database. Keep false for an
+# existing unencrypted instance; enabling it requires a separately planned
+# encrypted snapshot copy/restore and endpoint cutover.
+db_storage_encrypted           = false
+db_kms_key_id                  = "" # Uses the AWS-managed RDS key; optionally set a reviewed customer-key ARN.
+db_ssl_root_cert_path          = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+db_ca_cert_identifier          = "rds-ca-rsa2048-g1"
 db_apply_immediately           = false
 db_backup_retention_days       = 7
 db_max_allocated_storage       = 100

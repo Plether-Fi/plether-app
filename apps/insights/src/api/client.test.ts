@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { getCurrentCompetition, getLeaderboard, getStatus, getWallet, InsightsApiError } from './client'
+import {
+  completeRegistration,
+  createRegistrationSession,
+  createXAuthorization,
+  getCurrentCompetition,
+  getLeaderboard,
+  getRegistrationSession,
+  getStatus,
+  getWallet,
+  InsightsApiError,
+} from './client'
 import type { Competition } from './types'
 
 const competition: Competition = {
@@ -24,6 +34,80 @@ describe('Insights API client', () => {
   it('normalizes the current competition envelope', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition }), { status: 200 })))
     await expect(getCurrentCompetition()).resolves.toEqual(competition)
+  })
+
+  it('normalizes registration metadata for the current competition', async () => {
+    const wireCompetition = {
+      ...competition,
+      fxSessionBoundaryUtc: '21:00',
+      registration: {
+        status: 'open' as const,
+        opensAt: '2026-08-28T10:00:00Z',
+        closesAt: '2026-09-20T21:00:00Z',
+        minimumXAccountAgeDays: 90,
+        targetXHandle: 'plether_fi',
+        rulesVersion: '2026-09-01',
+        privacyVersion: '2026-09-01',
+      },
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition: wireCompetition }), { status: 200 })))
+
+    await expect(getCurrentCompetition()).resolves.toMatchObject({
+      fxSessionBoundaryUtc: '21:00',
+      registration: wireCompetition.registration,
+    })
+  })
+
+  it('uses credentialed registration requests and the CSRF header', async () => {
+    const registration = {
+      status: 'in_progress' as const,
+      csrfToken: 'csrf-token',
+      expiresAt: '2026-08-28T12:00:00Z',
+      steps: { xIdentity: 'pending' as const, xFollow: 'pending' as const, wallet: 'pending' as const, completed: false },
+      requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ registration }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ authorizationUrl: 'https://x.com/i/oauth2/authorize?state=test' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ registration }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(getRegistrationSession(competition.slug)).resolves.toEqual(registration)
+    await expect(createXAuthorization(competition.slug, registration.csrfToken)).resolves.toContain('https://x.com')
+    await expect(completeRegistration(competition.slug, registration.csrfToken, 'rules-v1', 'privacy-v1')).resolves.toEqual(registration)
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1,
+      `/api/insights/v1/competitions/${competition.slug}/registrations/session`,
+      expect.objectContaining({ credentials: 'include', method: 'GET' }),
+    )
+    const authorizeInit = fetchMock.mock.calls[1]?.[1] as RequestInit
+    expect(new Headers(authorizeInit.headers).get('X-Registration-CSRF')).toBe('csrf-token')
+    expect(authorizeInit).toMatchObject({ credentials: 'include', method: 'POST' })
+    const completeInit = fetchMock.mock.calls[2]?.[1] as RequestInit
+    expect(JSON.parse(String(completeInit.body))).toEqual({
+      acceptRules: true,
+      acceptPrivacy: true,
+      rulesVersion: 'rules-v1',
+      privacyVersion: 'privacy-v1',
+    })
+  })
+
+  it('creates registration sessions with a Turnstile token but no unavailable CSRF value', async () => {
+    const registration = {
+      status: 'in_progress' as const,
+      csrfToken: 'issued-csrf',
+      expiresAt: '2026-08-28T12:00:00Z',
+      steps: { xIdentity: 'pending' as const, xFollow: 'pending' as const, wallet: 'pending' as const, completed: false },
+      requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ registration }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createRegistrationSession(competition.slug, 'turnstile-token')
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(new Headers(requestInit.headers).has('X-Registration-CSRF')).toBe(false)
+    expect(JSON.parse(String(requestInit.body))).toEqual({ turnstileToken: 'turnstile-token' })
   })
 
   it('does not fetch status when competition metrics are absent', async () => {

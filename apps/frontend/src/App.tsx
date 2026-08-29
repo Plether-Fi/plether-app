@@ -2,8 +2,6 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
-import { RiskDisclaimer } from './components/RiskDisclaimer'
-import { TestnetWelcomeModal } from './components/TestnetWelcomeModal'
 import { Spinner } from './components/ui/Spinner'
 import { isPrimaryAppDeployment, isSepoliaDeployment } from './utils/deployment'
 
@@ -16,6 +14,8 @@ const History = lazy(() => import('./pages/History'))
 const Terms = lazy(() => import('./pages/Terms'))
 const Privacy = lazy(() => import('./pages/Privacy'))
 const RiskDisclosurePage = lazy(() => import('./pages/RiskDisclosure'))
+const RiskDisclaimer = lazy(() => import('./components/RiskDisclaimer').then((module) => ({ default: module.RiskDisclaimer })))
+const TestnetWelcomeModal = lazy(() => import('./components/TestnetWelcomeModal').then((module) => ({ default: module.TestnetWelcomeModal })))
 
 function App() {
   const shouldDefaultToSpot = isPrimaryAppDeployment()
@@ -41,7 +41,9 @@ function App() {
         </Suspense>
       </Layout>
       <TransactionModal />
-      {isSepoliaDeployment() ? <TestnetWelcomeModal /> : <RiskDisclaimer />}
+      <Suspense fallback={null}>
+        {isSepoliaDeployment() ? <TestnetWelcomeModal /> : <RiskDisclaimer />}
+      </Suspense>
     </BrowserRouter>
   )
 }

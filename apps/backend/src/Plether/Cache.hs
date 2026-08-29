@@ -1,14 +1,18 @@
 module Plether.Cache
   ( CacheEntry (..)
   , CandlePageCacheValue (..)
+  , CurrentCandleCacheValue (..)
   , SingleFlightCache
   , SingleFlightSource (..)
   , AppCache (..)
   , newAppCache
+  , newConcurrentSingleFlightCache
   , newSingleFlightCache
   , newRefreshingSingleFlightCache
   , runSingleFlightCache
   , runSingleFlightCacheFresh
+  , runSingleFlightCacheTimed
+  , runSingleFlightCacheFreshTimed
   , isValid
   , getCached
   , setCached
@@ -39,6 +43,10 @@ import Data.Text (Text)
 import Data.Time.Clock.POSIX (POSIXTime)
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import Plether.Database.Candles
+  ( BasketDefinitionIdentity
+  , CandleCurrent
+  )
 import Plether.Types.Api (ApiResponse)
 import Plether.Types.Error (ApiError)
 import Plether.Types.Protocol (ProtocolStatus)
@@ -64,6 +72,19 @@ data CandlePageCacheValue = CandlePageCacheValue
   , cpcvCachedAt :: !POSIXTime
   }
 
+-- The mutable current response is composed and revalidated per request. Cache
+-- only the coherent raw database snapshot so a reused value cannot bypass the
+-- caller's own validation clock.
+data CurrentCandleCacheValue = CurrentCandleCacheValue
+  { cccvDefinition :: !(Maybe BasketDefinitionIdentity)
+  , cccvCurrent :: !CandleCurrent
+  , cccvDefinitionAt :: !Integer
+  , cccvPoolWaitNs :: !Word64
+  , cccvQueryNs :: !Word64
+  , cccvCachedAt :: !POSIXTime
+  }
+  deriving stock (Show)
+
 data SingleFlightEntry value = SingleFlightEntry
   { sfeValue :: !value
   , sfeFreshUntilNs :: !Word64
@@ -73,11 +94,16 @@ data SingleFlightEntry value = SingleFlightEntry
 data SingleFlightCache key value = SingleFlightCache
   { sfcEntries :: !(TVar (Map key (SingleFlightEntry value)))
   , sfcInFlight :: !(TVar (Map key (TMVar (Either SomeException value))))
-  , sfcLoadLock :: !(MVar ())
+  , sfcLoadLock :: !(Maybe (MVar ()))
+  , sfcTtlAnchor :: !SingleFlightTtlAnchor
   , sfcMaxEntries :: !Int
   , sfcFreshTtlNs :: !Word64
   , sfcStaleTtlNs :: !Word64
   }
+
+data SingleFlightTtlAnchor
+  = TtlFromLoadStart
+  | TtlFromCompletion
 
 data SingleFlightSource
   = SingleFlightLoaded
@@ -101,6 +127,8 @@ data AppCache = AppCache
   , cachePythRateLimitUntil :: !(TVar (Maybe POSIXTime))
   , cacheBasketCandlePages
       :: !(SingleFlightCache (Integer, Integer) (Either ApiError CandlePageCacheValue))
+  , cacheBasketCurrentCandles
+      :: !(SingleFlightCache (Integer, Text, Integer, Integer) CurrentCandleCacheValue)
   }
 
 candlePageCacheMaxEntries :: Int
@@ -112,6 +140,15 @@ candlePageCacheFreshTtlNs = 20_000_000_000
 candlePageCacheStaleTtlNs :: Word64
 candlePageCacheStaleTtlNs = 60_000_000_000
 
+currentCandleCacheMaxEntries :: Int
+currentCandleCacheMaxEntries = 32
+
+-- Age this from the beginning of the database load. Together with the edge
+-- worker's four-second reuse and five-second browser poll, 850ms leaves a
+-- bounded margin inside the current-candle ten-second freshness budget.
+currentCandleCacheTtlNs :: Word64
+currentCandleCacheTtlNs = 850_000_000
+
 newAppCache :: IO AppCache
 newAppCache = do
   candlePages <-
@@ -119,6 +156,10 @@ newAppCache = do
       candlePageCacheMaxEntries
       candlePageCacheFreshTtlNs
       candlePageCacheStaleTtlNs
+  currentCandles <-
+    newConcurrentSingleFlightCache
+      currentCandleCacheMaxEntries
+      currentCandleCacheTtlNs
   AppCache
     <$> newTVarIO Nothing
     <*> newTVarIO Map.empty
@@ -126,6 +167,24 @@ newAppCache = do
     <*> newTVarIO Map.empty
     <*> newTVarIO Nothing
     <*> pure candlePages
+    <*> pure currentCandles
+
+-- Current buckets for different intervals may turn over together. They still
+-- single-flight independently by key, but should not form a cross-key convoy
+-- behind one slow database refresh.
+newConcurrentSingleFlightCache
+  :: Int
+  -> Word64
+  -> IO (SingleFlightCache key value)
+newConcurrentSingleFlightCache maxEntries ttlNs =
+  SingleFlightCache
+    <$> newTVarIO Map.empty
+    <*> newTVarIO Map.empty
+    <*> pure Nothing
+    <*> pure TtlFromLoadStart
+    <*> pure (max 0 maxEntries)
+    <*> pure ttlNs
+    <*> pure ttlNs
 
 newSingleFlightCache :: Int -> Word64 -> IO (SingleFlightCache key value)
 newSingleFlightCache maxEntries ttlNs =
@@ -140,7 +199,8 @@ newRefreshingSingleFlightCache maxEntries freshTtlNs staleTtlNs =
   SingleFlightCache
     <$> newTVarIO Map.empty
     <*> newTVarIO Map.empty
-    <*> newMVar ()
+    <*> (Just <$> newMVar ())
+    <*> pure TtlFromCompletion
     <*> pure (max 0 maxEntries)
     <*> pure freshTtlNs
     <*> pure (max freshTtlNs staleTtlNs)
@@ -158,6 +218,18 @@ runSingleFlightCache
   -> IO value
   -> IO (SingleFlightSource, value)
 runSingleFlightCache cache key shouldCache load = mask $ \restore -> do
+  (source, value, _) <-
+    runSingleFlightCacheWithPolicy False cache key shouldCache load restore
+  pure (source, value)
+
+runSingleFlightCacheTimed
+  :: Ord key
+  => SingleFlightCache key value
+  -> key
+  -> (value -> Bool)
+  -> IO value
+  -> IO (SingleFlightSource, value, Word64)
+runSingleFlightCacheTimed cache key shouldCache load = mask $ \restore ->
   runSingleFlightCacheWithPolicy False cache key shouldCache load restore
 
 -- Ignore a cached value and wait for the authoritative loader result. This is
@@ -171,6 +243,18 @@ runSingleFlightCacheFresh
   -> IO value
   -> IO (SingleFlightSource, value)
 runSingleFlightCacheFresh cache key shouldCache load = mask $ \restore -> do
+  (source, value, _) <-
+    runSingleFlightCacheWithPolicy True cache key shouldCache load restore
+  pure (source, value)
+
+runSingleFlightCacheFreshTimed
+  :: Ord key
+  => SingleFlightCache key value
+  -> key
+  -> (value -> Bool)
+  -> IO value
+  -> IO (SingleFlightSource, value, Word64)
+runSingleFlightCacheFreshTimed cache key shouldCache load = mask $ \restore ->
   runSingleFlightCacheWithPolicy True cache key shouldCache load restore
 
 runSingleFlightCacheWithPolicy
@@ -181,29 +265,42 @@ runSingleFlightCacheWithPolicy
   -> (value -> Bool)
   -> IO value
   -> (forall result. IO result -> IO result)
-  -> IO (SingleFlightSource, value)
+  -> IO (SingleFlightSource, value, Word64)
 runSingleFlightCacheWithPolicy requireFresh cache key shouldCache load restore = do
   nowNs <- getMonotonicTimeNSec
   decision <- atomically $ claimSingleFlight requireFresh cache key nowNs
   case decision of
-    UseMemory value -> pure (SingleFlightMemory, value)
-    UseStale value -> pure (SingleFlightStale, value)
+    UseMemory value -> pure (SingleFlightMemory, value, 0)
+    UseStale value -> pure (SingleFlightStale, value, 0)
     WaitForLoad gate -> do
+      waitStartedAtNs <- getMonotonicTimeNSec
       outcome <- restore $ atomically $ readTMVar gate
+      waitFinishedAtNs <- getMonotonicTimeNSec
       value <- either throwIO pure outcome
-      pure (SingleFlightCoalesced, value)
+      pure (SingleFlightCoalesced, value, waitFinishedAtNs - waitStartedAtNs)
     StartLoad gate -> do
-      outcome <- try $ restore $ withMVar (sfcLoadLock cache) $ const load
+      startedAtNs <- getMonotonicTimeNSec
+      outcome <- try $ restore $ runSingleFlightLoad cache load
       completedAtNs <- getMonotonicTimeNSec
-      atomically $ completeSingleFlight cache key gate completedAtNs shouldCache outcome
+      atomically $
+        completeSingleFlight
+          cache key gate startedAtNs completedAtNs shouldCache outcome
       value <- either throwIO pure outcome
-      pure (SingleFlightLoaded, value)
+      pure (SingleFlightLoaded, value, 0)
     StartRefresh staleValue gate -> do
       void $ forkIO $ do
-        outcome <- try $ restore $ withMVar (sfcLoadLock cache) $ const load
+        startedAtNs <- getMonotonicTimeNSec
+        outcome <- try $ restore $ runSingleFlightLoad cache load
         completedAtNs <- getMonotonicTimeNSec
-        atomically $ completeSingleFlight cache key gate completedAtNs shouldCache outcome
-      pure (SingleFlightStale, staleValue)
+        atomically $
+          completeSingleFlight
+            cache key gate startedAtNs completedAtNs shouldCache outcome
+      pure (SingleFlightStale, staleValue, 0)
+
+runSingleFlightLoad :: SingleFlightCache key value -> IO value -> IO value
+runSingleFlightLoad SingleFlightCache {sfcLoadLock = Nothing} load = load
+runSingleFlightLoad SingleFlightCache {sfcLoadLock = Just loadLock} load =
+  withMVar loadLock $ const load
 
 claimSingleFlight
   :: Ord key
@@ -247,21 +344,33 @@ completeSingleFlight
   -> key
   -> TMVar (Either SomeException value)
   -> Word64
+  -> Word64
   -> (value -> Bool)
   -> Either SomeException value
   -> STM ()
-completeSingleFlight SingleFlightCache {..} key gate completedAtNs shouldCache outcome = do
+completeSingleFlight
+  SingleFlightCache {..}
+  key
+  gate
+  startedAtNs
+  completedAtNs
+  shouldCache
+  outcome = do
   modifyTVar' sfcInFlight $ Map.delete key
   case outcome of
-    Right value | shouldCache value ->
+    Right value | shouldCache value -> do
+      let ttlStartedAtNs =
+            case sfcTtlAnchor of
+              TtlFromLoadStart -> startedAtNs
+              TtlFromCompletion -> completedAtNs
       modifyTVar' sfcEntries $
         trimSingleFlightEntries sfcMaxEntries
           . Map.insert
             key
             SingleFlightEntry
               { sfeValue = value
-              , sfeFreshUntilNs = completedAtNs + sfcFreshTtlNs
-              , sfeStaleUntilNs = completedAtNs + sfcStaleTtlNs
+              , sfeFreshUntilNs = ttlStartedAtNs + sfcFreshTtlNs
+              , sfeStaleUntilNs = ttlStartedAtNs + sfcStaleTtlNs
               }
     _ -> pure ()
   putTMVar gate outcome

@@ -360,10 +360,10 @@ never returned by the public API or the `list` command.
 
 ```bash
 # In a second terminal with the same RPC, chain, and database variables set:
-cabal run plether-insights-admin -- register TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
-cabal run plether-insights-admin -- list
-cabal run plether-insights-admin -- review 0xTRADING_ACCOUNT eligible reviewer-name
-cabal run plether-insights-admin -- finalize reviewer-name
+cabal run plether-insights-admin -- register testnet-trading-2026-09 TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
+cabal run plether-insights-admin -- list testnet-trading-2026-09
+cabal run plether-insights-admin -- review testnet-trading-2026-09 0xTRADING_ACCOUNT eligible reviewer-name
+cabal run plether-insights-admin -- finalize testnet-trading-2026-09 reviewer-name
 ```
 
 The optional review reason is public leaderboard copy, so keep it generic (for
@@ -564,6 +564,8 @@ Local URLs:
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
+| `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
+| `INSIGHTS_COMPETITION_RELEASE_ID` | September release binding | - | Omit during registration-only activation. After contract deployment, set it to `testnet-trading-2026-09` together with explicit nonzero, pairwise-distinct addresses absent from the July manifest and a positive new indexer start; the release then binds once before the baseline and becomes immutable. |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
 | `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
@@ -762,7 +764,14 @@ Responses are cached in-memory using STM:
 - `/user/:address/allowances` - Per-address cache invalidated when the block advances
 - `/api/perps/basket/candles` - Successful finalized pages only, for five seconds
   with a 64-page process-local bound; concurrent requests for the same page
-  share one database load. `/api/perps/basket/candles/current` remains uncached.
+  share one database load.
+- `/api/perps/basket/candles/current` - Coherent raw snapshots only, for 850ms
+  from the start of their load and keyed by chain, router, interval, and mutable
+  bucket. Concurrent misses for the same bucket share one database load, while
+  every request still composes and strictly validates its response against its
+  own sampled clock. Explicit `no-cache`/`no-store` requests force a database
+  revalidation. Coalesced request time is exposed separately as
+  `plether_singleflight_wait` in `Server-Timing`.
 
 Cached responses include `meta.cached: true` and `meta.cachedAt` timestamp.
 

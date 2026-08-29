@@ -1,6 +1,11 @@
 module Plether.Insights.Competition
   ( CompetitionRules (..)
+  , CompetitionReleaseManifest (..)
+  , competitionReleaseManifestText
+  , competitionReleaseIsBound
+  , pendingCompetitionReleaseManifestText
   , CompetitionPhase (..)
+  , CompetitionRegistrationState (..)
   , ParticipantEligibility (..)
   , EquitySnapshot (..)
   , ScoreInput (..)
@@ -8,8 +13,14 @@ module Plether.Insights.Competition
   , Qualification (..)
   , PrizeAllocation (..)
   , FinalizationReadiness (..)
+  , FundingIntegrityInput (..)
   , july2026Competition
   , july2026CompetitionSlug
+  , september2026Competition
+  , september2026CompetitionSlug
+  , defaultCompetitionSlug
+  , competitionRules
+  , competitionRulesForSlug
   , usdcScale
   , economicAccountValue
   , calculateScore
@@ -17,10 +28,15 @@ module Plether.Insights.Competition
   , qualification
   , prizeAllocation
   , finalizationBlockers
+  , fundingIntegrityFlags
   , participantEligibilityText
   , participantEligibilityFromText
   , competitionPhaseAt
   , competitionPhaseText
+  , canInitiallySeedCompetitionAt
+  , canSeedCompetitionRowAt
+  , competitionRegistrationState
+  , fxSessionBoundaryUtcText
   , fxSessionDay
   , activeSessionDay
   , activeSessionDays
@@ -52,6 +68,15 @@ usdcScale = 1_000_000
 july2026CompetitionSlug :: Text
 july2026CompetitionSlug = "testnet-trading-2026"
 
+september2026CompetitionSlug :: Text
+september2026CompetitionSlug = "testnet-trading-2026-09"
+
+-- | Keep the historical competition as the local-development default. A new
+-- competition is activated only when its versioned slug is configured
+-- explicitly, so upgrading the binary cannot silently seed a new event.
+defaultCompetitionSlug :: Text
+defaultCompetitionSlug = july2026CompetitionSlug
+
 data CompetitionRules = CompetitionRules
   { crSlug :: Text
   , crName :: Text
@@ -63,11 +88,73 @@ data CompetitionRules = CompetitionRules
   , crStartingBalanceUsdc :: Integer
   , crMinimumProfitBps :: Integer
   , crMinimumActiveDays :: Int
+  , crFxSessionBoundaryUtcMinutes :: Int
+  , crRegistrationClosesAt :: Maybe UTCTime
+  , crMinimumXAccountAgeDays :: Maybe Int
+  , crTargetXHandle :: Maybe Text
   , crPrizeUsdc :: [Integer]
   , crScoringVersion :: Text
   , crRulesVersion :: Text
   }
   deriving stock (Show, Eq)
+
+-- | The deployment inputs that affect canonical account snapshots and indexed
+-- activity but are not already stored as first-class competition columns.
+-- Their canonical rendering is persisted with the immutable rule row and is
+-- also checked by the history indexer before it writes.
+data CompetitionReleaseManifest = CompetitionReleaseManifest
+  { crmReleaseId :: Text
+  , crmChainId :: Integer
+  , crmUsdc :: Text
+  , crmOrderRouter :: Text
+  , crmMarginClearinghouse :: Text
+  , crmAccountLens :: Text
+  , crmCfdEngine :: Text
+  , crmCfdEngineLens :: Text
+  , crmSettlementSidecar :: Text
+  , crmPletherOracle :: Text
+  , crmIndexerStartBlock :: Integer
+  }
+  deriving stock (Show, Eq)
+
+competitionReleaseManifestText :: CompetitionReleaseManifest -> Text
+competitionReleaseManifestText CompetitionReleaseManifest {..} =
+  T.intercalate
+    "|"
+    [ "release-manifest-v2"
+    , T.strip crmReleaseId
+    , T.pack $ show crmChainId
+    , normalize crmUsdc
+    , normalize crmOrderRouter
+    , normalize crmMarginClearinghouse
+    , normalize crmAccountLens
+    , normalize crmCfdEngine
+    , normalize crmCfdEngineLens
+    , normalize crmSettlementSidecar
+    , normalize crmPletherOracle
+    , T.pack $ show crmIndexerStartBlock
+    ]
+  where
+    normalize = T.toLower . T.strip
+
+-- | A competition may accept registrations before its on-chain release has
+-- been deployed.  The release becomes immutable only when its reviewed
+-- manifest uses the competition slug as its release identifier.
+competitionReleaseIsBound :: CompetitionRules -> CompetitionReleaseManifest -> Bool
+competitionReleaseIsBound rules manifest =
+  T.strip (crmReleaseId manifest) == crSlug rules
+
+-- | Stable sentinel persisted while registration is open but the competition
+-- contracts have not yet been bound.  It is deliberately not a valid release
+-- manifest and must never be consumed by indexers or snapshot workers.
+pendingCompetitionReleaseManifestText :: CompetitionRules -> Integer -> Text
+pendingCompetitionReleaseManifestText rules chainId =
+  T.intercalate
+    "|"
+    [ "release-pending-v1"
+    , crSlug rules
+    , T.pack $ show chainId
+    ]
 
 -- | The July 2026 competition follows FX sessions. Scoring begins Monday July
 -- 20 at 16:00 UTC (18:00 in Warsaw) and runs for exactly 14 days. The final
@@ -85,10 +172,48 @@ july2026Competition =
     , crStartingBalanceUsdc = 100_000 * usdcScale
     , crMinimumProfitBps = 100
     , crMinimumActiveDays = 5
+    , crFxSessionBoundaryUtcMinutes = 22 * 60
+    , crRegistrationClosesAt = Nothing
+    , crMinimumXAccountAgeDays = Nothing
+    , crTargetXHandle = Nothing
     , crPrizeUsdc = map (* usdcScale) [600, 300, 100]
     , crScoringVersion = "account-value-v1"
     , crRulesVersion = "2026-07-20"
     }
+
+-- | The September event opens at the Sunday 21:00 UTC FX-session boundary and
+-- ends at the Friday 21:00 boundary. There is deliberately no close-only
+-- interval: the new-risk and scoring cutoffs are identical.
+september2026Competition :: CompetitionRules
+september2026Competition =
+  CompetitionRules
+    { crSlug = september2026CompetitionSlug
+    , crName = "Plether September 2026 Testnet Trading Competition"
+    , crStartAt = utc 2026 9 13 21 0 0
+    , crNewRiskCutoffAt = utc 2026 9 25 21 0 0
+    , crScoreCutoffAt = utc 2026 9 25 21 0 0
+    , crResultsAt = utc 2026 9 28 12 0 0
+    , crPaymentDeadlineAt = utc 2026 10 3 0 0 0
+    , crStartingBalanceUsdc = 100_000 * usdcScale
+    , crMinimumProfitBps = 100
+    , crMinimumActiveDays = 5
+    , crFxSessionBoundaryUtcMinutes = 21 * 60
+    , crRegistrationClosesAt = Just $ utc 2026 9 20 21 0 0
+    , crMinimumXAccountAgeDays = Just 90
+    , crTargetXHandle = Just "plether_fi"
+    , crPrizeUsdc = map (* usdcScale) [600, 500, 400, 300, 200]
+    , crScoringVersion = "cash-flow-adjusted-v1"
+    , crRulesVersion = "2026-09-13"
+    }
+
+competitionRules :: [CompetitionRules]
+competitionRules = [july2026Competition, september2026Competition]
+
+competitionRulesForSlug :: Text -> Maybe CompetitionRules
+competitionRulesForSlug requestedSlug =
+  case filter ((== T.strip requestedSlug) . crSlug) competitionRules of
+    [rules] -> Just rules
+    _ -> Nothing
 
 data CompetitionPhase
   = CompetitionUpcoming
@@ -96,6 +221,36 @@ data CompetitionPhase
   | CompetitionReview
   | CompetitionFinal
   deriving stock (Show, Eq, Ord)
+
+data CompetitionRegistrationState
+  = RegistrationUnconfigured
+  | RegistrationConfiguredUnopened
+  | RegistrationOpened Integer Integer
+  | RegistrationMetadataInvalid
+  deriving stock (Show, Eq, Ord)
+
+-- | Mirror the database constraint in a pure form for API fail-closed
+-- handling and regression tests. The configured-unopened state permits schema
+-- and worker startup before the enabled registration API atomically records
+-- the real opening time.
+competitionRegistrationState
+  :: Maybe Integer
+  -> Maybe Integer
+  -> Maybe Int
+  -> Maybe Text
+  -> CompetitionRegistrationState
+competitionRegistrationState openTimestamp closeTimestamp minimumAge targetHandle =
+  case (openTimestamp, closeTimestamp, minimumAge, normalizedHandle) of
+    (Nothing, Nothing, Nothing, Nothing) -> RegistrationUnconfigured
+    (Nothing, Just _, Just age, Just _)
+      | age >= 0 -> RegistrationConfiguredUnopened
+    (Just opened, Just closed, Just age, Just _)
+      | age >= 0 && opened < closed -> RegistrationOpened opened closed
+    _ -> RegistrationMetadataInvalid
+  where
+    normalizedHandle = case T.strip <$> targetHandle of
+      Just value | not (T.null value) -> Just value
+      _ -> Nothing
 
 competitionPhaseAt :: CompetitionRules -> UTCTime -> CompetitionPhase
 competitionPhaseAt rules now
@@ -110,6 +265,17 @@ competitionPhaseText = \case
   CompetitionLive -> "live"
   CompetitionReview -> "review"
   CompetitionFinal -> "final"
+
+-- | A registration-enabled competition may be restarted after close once its
+-- immutable row exists, but it must never be created with an empty registration
+-- window. Database seeding applies this predicate only to the first insert.
+canInitiallySeedCompetitionAt :: CompetitionRules -> UTCTime -> Bool
+canInitiallySeedCompetitionAt rules now =
+  maybe True (now <) $ crRegistrationClosesAt rules
+
+canSeedCompetitionRowAt :: Bool -> CompetitionRules -> UTCTime -> Bool
+canSeedCompetitionRowAt rowAlreadyExists rules now =
+  rowAlreadyExists || canInitiallySeedCompetitionAt rules now
 
 -- | Review state is deliberately separate from mechanical qualification. A
 -- participant can meet the P&L/day thresholds while still awaiting the
@@ -165,6 +331,7 @@ data FinalizationReadiness = FinalizationReadiness
   , frScoreCutoffTimestamp :: Integer
   , frResultsTimestamp :: Integer
   , frStartBlock :: Maybe Integer
+  , frStartBlockHash :: Maybe Text
   , frScoreCutoffBlock :: Maybe Integer
   , frParticipantCount :: Integer
   , frMissingTraderReferences :: Integer
@@ -181,6 +348,7 @@ finalizationBlockers FinalizationReadiness {..} =
     [ ["the scoring cutoff has not passed" | frNowTimestamp < frScoreCutoffTimestamp]
     , ["the scheduled results publication time has not arrived" | frNowTimestamp < frResultsTimestamp]
     , ["the canonical start block has not been resolved" | frStartBlock == Nothing]
+    , ["the canonical start block hash has not been resolved" | frStartBlockHash == Nothing]
     , ["the canonical final block has not been resolved" | frScoreCutoffBlock == Nothing]
     , ["no participants are registered" | frParticipantCount < 1]
     , countBlocker frMissingTraderReferences "participant registration(s) are missing a private trader reference"
@@ -267,6 +435,64 @@ data ScoreBreakdown = ScoreBreakdown
   }
   deriving stock (Show, Eq)
 
+data FundingIntegrityInput = FundingIntegrityInput
+  { fiiBaselineValueUsdc :: Maybe Integer
+  , fiiBaselineHasOpenPosition :: Bool
+  , fiiBaselinePendingOrderCount :: Int
+  , fiiRequiredBankrollUsdc :: Integer
+  , fiiBaselineOfficialAllocations :: [Integer]
+  , fiiBaselineFundingNetUsdc :: Integer
+  , fiiOfficialAllocations :: [(Integer, Bool)]
+  , fiiUnverifiedDepositCount :: Int
+  , fiiMaximumFundingNetUsdc :: Integer
+  }
+  deriving stock (Show, Eq)
+
+-- | Funding is eligible either when the baseline already contains the exact
+-- bankroll and no later allocation occurs, or when a zero baseline receives
+-- exactly one official allocation before the participant's first trade.
+-- These flags are private review signals; public scoring still neutralizes all
+-- verified cash flows independently.
+fundingIntegrityFlags :: FundingIntegrityInput -> [Text]
+fundingIntegrityFlags FundingIntegrityInput {..} =
+  concat
+    [ ["baseline_unavailable" | fiiBaselineValueUsdc == Nothing]
+    , ["baseline_open_position" | fiiBaselineHasOpenPosition]
+    , ["baseline_pending_orders" | fiiBaselinePendingOrderCount > 0]
+    , [ "invalid_starting_bankroll"
+      | maybe False (`notElem` [0, fiiRequiredBankrollUsdc]) fiiBaselineValueUsdc
+      ]
+    , case fiiBaselineValueUsdc of
+        Just baseline
+          | baseline == fiiRequiredBankrollUsdc ->
+              concat
+                [ ["baseline_official_allocation_count_invalid" | length fiiBaselineOfficialAllocations /= 1]
+                , [ "baseline_official_allocation_amount_invalid"
+                  | [amount] <- [fiiBaselineOfficialAllocations]
+                  , amount /= fiiRequiredBankrollUsdc
+                  ]
+                , ["baseline_funding_flow_mismatch" | fiiBaselineFundingNetUsdc /= fiiRequiredBankrollUsdc]
+                , ["unexpected_official_deposit" | not $ null fiiOfficialAllocations]
+                ]
+          | baseline == 0 ->
+              concat
+                [ ["unexpected_prebaseline_official_allocation" | not $ null fiiBaselineOfficialAllocations]
+                , ["zero_baseline_funding_flow_mismatch" | fiiBaselineFundingNetUsdc /= 0]
+                , ["official_allocation_count_invalid" | length fiiOfficialAllocations /= 1]
+                , [ "official_allocation_amount_invalid"
+                  | [(amount, _)] <- [fiiOfficialAllocations]
+                  , amount /= fiiRequiredBankrollUsdc
+                  ]
+                , [ "official_allocation_not_before_trading"
+                  | [(_, beforeFirstTrade)] <- [fiiOfficialAllocations]
+                  , not beforeFirstTrade
+                  ]
+                ]
+        _ -> []
+    , ["unverified_deposit_provenance" | fiiUnverifiedDepositCount > 0]
+    , ["funding_capacity_exceeded" | fiiMaximumFundingNetUsdc > fiiRequiredBankrollUsdc]
+    ]
+
 calculateScore :: ScoreInput -> ScoreBreakdown
 calculateScore ScoreInput {..} =
   ScoreBreakdown
@@ -318,12 +544,21 @@ qualification rules reviewStatus pnlUsdc activeDayCount =
     profitOk = pnlUsdc >= minimumProfitUsdc rules
     daysOk = activeDayCount >= crMinimumActiveDays rules
 
--- | Convert an execution timestamp to its named FX session. Adding two hours
--- maps the Sunday 22:00 UTC reopen to Monday and the Friday 22:00 UTC close to
--- Saturday. Weekend dates are rejected.
-fxSessionDay :: Integer -> Maybe Day
-fxSessionDay epochSeconds =
-  let sessionDay = utctDay $ addUTCTime (2 * 60 * 60) $ posixSecondsToUTCTime $ fromInteger epochSeconds
+fxSessionBoundaryUtcText :: CompetitionRules -> Text
+fxSessionBoundaryUtcText rules =
+  twoDigits hours <> ":" <> twoDigits minutes
+  where
+    (hours, minutes) = crFxSessionBoundaryUtcMinutes rules `divMod` 60
+    twoDigits value = T.justifyRight 2 '0' $ T.pack $ show value
+
+-- | Convert an execution timestamp to its named FX session. Shifting forward
+-- from the configured UTC boundary to midnight maps the Sunday reopen to
+-- Monday and the Friday close to Saturday. Weekend dates are rejected.
+fxSessionDay :: CompetitionRules -> Integer -> Maybe Day
+fxSessionDay rules epochSeconds =
+  let boundaryMinutes = crFxSessionBoundaryUtcMinutes rules `mod` (24 * 60)
+      shiftSeconds = ((24 * 60 - boundaryMinutes) `mod` (24 * 60)) * 60
+      sessionDay = utctDay $ addUTCTime (fromIntegral shiftSeconds) $ posixSecondsToUTCTime $ fromInteger epochSeconds
    in case dayOfWeek sessionDay of
         Monday -> Just sessionDay
         Tuesday -> Just sessionDay
@@ -342,7 +577,7 @@ activeSessionDay rules activityType timestamp
   | not (isVoluntaryPositionChange activityType) = Nothing
   | activityTime < crStartAt rules = Nothing
   | activityTime >= crScoreCutoffAt rules = Nothing
-  | otherwise = fxSessionDay timestamp
+  | otherwise = fxSessionDay rules timestamp
   where
     activityTime = posixSecondsToUTCTime $ fromInteger timestamp
 

@@ -1,4 +1,6 @@
 import {
+  lazy,
+  Suspense,
   useCallback,
   useMemo,
   useRef,
@@ -21,8 +23,8 @@ import {
   PerpsAaRuntimeProvider,
 } from './runtime'
 import type { PerpsAaSmartAccountRuntime } from './runtimeContext'
-import { SponsoredOperationRecovery } from './SponsoredOperationRecovery'
-import { createManagedPimlicoRuntime } from './managedPimlicoRuntime'
+
+const SponsoredOperationRecovery = lazy(() => import('./SponsoredOperationRecovery').then((module) => ({ default: module.SponsoredOperationRecovery })))
 
 function configuredManifestUrl(): string | null {
   const value: unknown = import.meta.env.VITE_PERPS_AA_MANIFEST_URL
@@ -85,12 +87,14 @@ export function PerpsAaProvider({
       ].join(':')
       let cacheEntry = runtimeCache.current
       if (cacheEntry?.key !== key) {
-        const promise = createManagedPimlicoRuntime({
-          manifest,
-          ownerAddress,
-          walletClient,
-          publicClient,
-        })
+        const promise = import('./managedPimlicoRuntime').then(({ createManagedPimlicoRuntime }) => (
+          createManagedPimlicoRuntime({
+            manifest,
+            ownerAddress,
+            walletClient,
+            publicClient,
+          })
+        ))
         cacheEntry = {
           key,
           promise,
@@ -181,7 +185,9 @@ export function PerpsAaProvider({
         manifestUrl={manifestUrl}
         accountAddressResolver={accountAddressResolver}
       >
-        <SponsoredOperationRecovery />
+        <Suspense fallback={null}>
+          <SponsoredOperationRecovery />
+        </Suspense>
         {children}
       </WagmiPerpsIdentityProvider>
     </PerpsAaRuntimeProvider>

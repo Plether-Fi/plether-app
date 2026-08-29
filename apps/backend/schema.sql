@@ -125,6 +125,7 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     token_address VARCHAR(42) NOT NULL,
     tx_hash VARCHAR(66),
     raw_tx TEXT,
+    mint_block_number BIGINT,
     status VARCHAR(16) NOT NULL,
     error TEXT,
     created_at TIMESTAMP DEFAULT NOW(),
@@ -132,6 +133,50 @@ CREATE TABLE IF NOT EXISTS testnet_faucet_claims (
     PRIMARY KEY (address, token_address)
 );
 CREATE INDEX IF NOT EXISTS idx_testnet_faucet_claims_status ON testnet_faucet_claims(status);
+
+-- Release-scoped, reorg-replayed history used to prove competition funding.
+CREATE TABLE IF NOT EXISTS perps_usdc_transfers (
+    chain_id BIGINT NOT NULL,
+    release_router TEXT NOT NULL,
+    token_address TEXT NOT NULL,
+    from_address TEXT NOT NULL,
+    to_address TEXT NOT NULL,
+    amount NUMERIC(78,0) NOT NULL,
+    tx_hash TEXT NOT NULL,
+    block_number BIGINT NOT NULL,
+    block_hash TEXT NOT NULL,
+    tx_index BIGINT NOT NULL,
+    log_index BIGINT NOT NULL,
+    timestamp BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (chain_id, release_router, tx_hash, log_index),
+    CONSTRAINT perps_usdc_transfers_canonical_values
+        CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0),
+    CONSTRAINT perps_usdc_transfers_canonical_addresses
+        CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$'
+            AND from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'),
+    CONSTRAINT perps_usdc_transfers_canonical_hashes
+        CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')
+);
+CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_inbound
+    ON perps_usdc_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index);
+CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_outbound
+    ON perps_usdc_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index);
+
+CREATE TABLE IF NOT EXISTS perps_indexer_state (
+    indexer_name TEXT NOT NULL,
+    chain_id BIGINT NOT NULL,
+    release_router TEXT,
+    configured_start_block BIGINT,
+    last_indexed_block BIGINT NOT NULL,
+    last_indexed_block_hash TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (indexer_name, chain_id),
+    CONSTRAINT perps_indexer_state_release_scope CHECK (
+        indexer_name NOT LIKE 'perps-history-costs-v1:%'
+        OR (release_router IS NOT NULL AND configured_start_block > 0)
+    )
+);
 
 -- Cached six-feed Pyth update payloads used by reveal payload APIs and keeper execution
 CREATE TABLE IF NOT EXISTS perps_pyth_update_payloads (
@@ -194,7 +239,9 @@ CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block ON perps_keeper_
 
 -- Plether Insights competitions, participants, canonical account snapshots,
 -- and review audit data. Competition metadata is inserted once from runtime
--- config; later starts validate it rather than rewriting historical rules.
+-- Rules are immutable from insertion. A registration-only competition may
+-- bind its reviewed release exactly once before its baseline is resolved;
+-- later starts validate that release rather than rewriting history.
 CREATE TABLE IF NOT EXISTS insights_competitions (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -203,31 +250,62 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     usdc_address TEXT NOT NULL,
     margin_clearinghouse_address TEXT NOT NULL,
     account_lens_address TEXT NOT NULL,
+    release_manifest TEXT NOT NULL,
+    -- Registration may open before the reviewed contract release exists.
+    -- This becomes non-null exactly once, before baseline resolution.
+    release_bound_at TIMESTAMPTZ,
     start_timestamp BIGINT NOT NULL,
     new_risk_cutoff_timestamp BIGINT NOT NULL,
     score_cutoff_timestamp BIGINT NOT NULL,
     results_timestamp BIGINT NOT NULL,
     payment_deadline_timestamp BIGINT NOT NULL,
+    registration_open_timestamp BIGINT,
+    registration_close_timestamp BIGINT,
+    minimum_x_account_age_days INTEGER,
+    target_x_handle TEXT,
+    privacy_notice_version TEXT,
     start_block BIGINT,
     start_block_hash TEXT,
+    start_snapshot_block_hash TEXT,
     score_cutoff_block BIGINT,
     score_cutoff_block_hash TEXT,
     starting_balance_usdc NUMERIC(78,0) NOT NULL,
     minimum_profit_bps BIGINT NOT NULL,
     minimum_active_days INTEGER NOT NULL,
+    fx_session_boundary_utc_minutes INTEGER NOT NULL DEFAULT 1320,
     scoring_version TEXT NOT NULL,
     rules_version TEXT NOT NULL,
     first_prize_usdc NUMERIC(78,0) NOT NULL,
     second_prize_usdc NUMERIC(78,0) NOT NULL,
     third_prize_usdc NUMERIC(78,0) NOT NULL,
+    fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
+    fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
     finalized BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (new_risk_cutoff_timestamp >= start_timestamp),
     CHECK (score_cutoff_timestamp >= new_risk_cutoff_timestamp),
     CHECK (minimum_profit_bps >= 0),
-    CHECK (minimum_active_days >= 0)
+    CHECK (minimum_active_days >= 0),
+    CONSTRAINT insights_competitions_fx_session_boundary_valid
+        CHECK (fx_session_boundary_utc_minutes >= 0 AND fx_session_boundary_utc_minutes < 1440),
+    CONSTRAINT insights_competitions_registration_metadata_consistent CHECK (
+        (registration_open_timestamp IS NULL AND registration_close_timestamp IS NULL
+            AND minimum_x_account_age_days IS NULL AND target_x_handle IS NULL)
+        OR (registration_close_timestamp IS NOT NULL
+            AND (registration_open_timestamp IS NULL OR registration_open_timestamp < registration_close_timestamp)
+            AND minimum_x_account_age_days IS NOT NULL AND minimum_x_account_age_days >= 0
+            AND NULLIF(BTRIM(target_x_handle), '') IS NOT NULL)
+    ),
+    CONSTRAINT insights_competitions_registration_privacy_version_consistent CHECK (
+        registration_open_timestamp IS NULL OR NULLIF(BTRIM(privacy_notice_version), '') IS NOT NULL
+    )
 );
+
+ALTER TABLE insights_competitions
+    ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+ALTER TABLE insights_competitions
+    ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS insights_competition_participants (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
@@ -349,6 +427,42 @@ CREATE TABLE IF NOT EXISTS insights_competition_finalization_audit (
     final_snapshot_block BIGINT NOT NULL,
     final_snapshot_hash TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS insights_finalized_standings (
+    competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
+    competition_rank BIGINT,
+    prize_place BIGINT,
+    prize_tie_count BIGINT,
+    wallet VARCHAR(42) NOT NULL,
+    alias TEXT,
+    eligibility_status TEXT NOT NULL,
+    eligibility_reason TEXT,
+    funding_integrity_clear BOOLEAN NOT NULL,
+    final_pnl_usdc NUMERIC(78,0),
+    roi_bps BIGINT,
+    starting_value_usdc NUMERIC(78,0),
+    current_value_usdc NUMERIC(78,0),
+    deposits_usdc NUMERIC(78,0) NOT NULL,
+    withdrawals_usdc NUMERIC(78,0) NOT NULL,
+    adjustment_usdc NUMERIC(78,0) NOT NULL,
+    active_days INTEGER NOT NULL,
+    volume_usdc NUMERIC(78,0) NOT NULL,
+    executed_trades BIGINT NOT NULL,
+    liquidations BIGINT NOT NULL,
+    realized_pnl_usdc NUMERIC(78,0) NOT NULL,
+    block_number BIGINT,
+    timestamp BIGINT,
+    has_open_position BOOLEAN,
+    snapshot_kind TEXT,
+    position_side TEXT,
+    position_size_delta TEXT,
+    position_margin_usdc TEXT,
+    position_entry_price TEXT,
+    position_unrealized_pnl_usdc TEXT,
+    position_liquidatable BOOLEAN,
+    materialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (competition_slug, wallet)
 );
 
 -- Dedicated liquidation worker discovery cursor
@@ -957,3 +1071,196 @@ BEGIN
 END
 $market_release_triggers$;
 -- END PERPS CANDLE HISTORY FOUNDATION
+
+-- Private first-party competition registration state. These tables are never
+-- queried by public leaderboard/wallet endpoints; only the registration
+-- service and explicit key-rotation tooling may access encrypted identity
+-- material.
+CREATE TABLE IF NOT EXISTS insights_registration_competition_config (
+    competition_slug TEXT PRIMARY KEY REFERENCES insights_competitions(slug) ON DELETE CASCADE,
+    target_x_user_id_digest BYTEA NOT NULL,
+    privacy_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (octet_length(target_x_user_id_digest) = 32),
+    CHECK (privacy_version ~ '^[A-Za-z0-9_.-]{1,64}$')
+);
+
+CREATE TABLE IF NOT EXISTS insights_registration_applications (
+    registration_id UUID PRIMARY KEY,
+    competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'in_progress',
+    turnstile_token_digest BYTEA NOT NULL CONSTRAINT insights_registration_turnstile_digest_unique UNIQUE,
+    email_key_version TEXT,
+    email_nonce BYTEA,
+    email_ciphertext BYTEA,
+    email_tag BYTEA,
+    email_digest BYTEA,
+    email_masked TEXT,
+    x_user_id_key_version TEXT,
+    x_user_id_nonce BYTEA,
+    x_user_id_ciphertext BYTEA,
+    x_user_id_tag BYTEA,
+    x_user_id_digest BYTEA,
+    x_username TEXT,
+    x_created_timestamp BIGINT,
+    x_identity_verified_at TIMESTAMPTZ,
+    x_access_key_version TEXT,
+    x_access_nonce BYTEA,
+    x_access_ciphertext BYTEA,
+    x_access_tag BYTEA,
+    x_follow_attempt_id UUID,
+    x_follow_attempt_started_at TIMESTAMPTZ,
+    x_follow_verified_at TIMESTAMPTZ,
+    owner_wallet VARCHAR(42),
+    trading_account VARCHAR(42),
+    wallet_verification_block BIGINT,
+    wallet_verification_block_hash TEXT,
+    wallet_verified_at TIMESTAMPTZ,
+    rules_version TEXT,
+    privacy_version TEXT,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (status IN ('in_progress', 'completed')),
+    CHECK (
+        num_nonnulls(email_key_version, email_nonce, email_ciphertext, email_tag) IN (0, 4)
+        AND (email_nonce IS NULL OR octet_length(email_nonce) = 12)
+        AND (email_tag IS NULL OR octet_length(email_tag) = 16)
+    ),
+    CHECK (
+        num_nonnulls(x_user_id_key_version, x_user_id_nonce, x_user_id_ciphertext, x_user_id_tag) IN (0, 4)
+        AND (x_user_id_nonce IS NULL OR octet_length(x_user_id_nonce) = 12)
+        AND (x_user_id_tag IS NULL OR octet_length(x_user_id_tag) = 16)
+    ),
+    CHECK (
+        num_nonnulls(x_access_key_version, x_access_nonce, x_access_ciphertext, x_access_tag) IN (0, 4)
+        AND (x_access_nonce IS NULL OR octet_length(x_access_nonce) = 12)
+        AND (x_access_tag IS NULL OR octet_length(x_access_tag) = 16)
+    ),
+    CHECK (num_nonnulls(x_follow_attempt_id, x_follow_attempt_started_at) IN (0, 2)),
+    CHECK (
+        (owner_wallet IS NULL OR owner_wallet ~ '^0x[0-9a-f]{40}$')
+        AND (trading_account IS NULL OR trading_account ~ '^0x[0-9a-f]{40}$')
+    ),
+    CHECK (
+        num_nonnulls(wallet_verification_block, wallet_verification_block_hash) IN (0, 2)
+        AND (wallet_verification_block IS NULL OR wallet_verification_block >= 0)
+        AND (wallet_verification_block_hash IS NULL OR wallet_verification_block_hash ~ '^0x[0-9a-f]{64}$')
+    ),
+    CHECK (
+        octet_length(turnstile_token_digest) = 32
+        AND (email_digest IS NULL OR octet_length(email_digest) = 32)
+        AND (x_user_id_digest IS NULL OR octet_length(x_user_id_digest) = 32)
+    ),
+    CHECK (
+        status <> 'completed'
+        OR (
+            completed_at IS NOT NULL
+            AND rules_version IS NOT NULL
+            AND privacy_version IS NOT NULL
+            AND email_digest IS NOT NULL
+            AND email_masked IS NOT NULL
+            AND num_nonnulls(email_key_version, email_nonce, email_ciphertext, email_tag) = 4
+            AND x_user_id_digest IS NOT NULL
+            AND x_username IS NOT NULL
+            AND x_created_timestamp IS NOT NULL
+            AND x_identity_verified_at IS NOT NULL
+            AND x_follow_verified_at IS NOT NULL
+            AND x_follow_attempt_id IS NULL
+            AND x_follow_attempt_started_at IS NULL
+            AND owner_wallet IS NOT NULL
+            AND trading_account IS NOT NULL
+            AND wallet_verification_block IS NOT NULL
+            AND wallet_verification_block_hash IS NOT NULL
+            AND wallet_verified_at IS NOT NULL
+            AND num_nonnulls(x_user_id_key_version, x_user_id_nonce, x_user_id_ciphertext, x_user_id_tag) = 0
+            AND num_nonnulls(x_access_key_version, x_access_nonce, x_access_ciphertext, x_access_tag) = 0
+        )
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_registration_email_unique
+    ON insights_registration_applications(competition_slug, email_digest)
+    WHERE status = 'completed';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_registration_x_unique
+    ON insights_registration_applications(competition_slug, x_user_id_digest)
+    WHERE status = 'completed';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_registration_owner_unique
+    ON insights_registration_applications(competition_slug, owner_wallet)
+    WHERE status = 'completed';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_registration_account_unique
+    ON insights_registration_applications(competition_slug, trading_account)
+    WHERE status = 'completed';
+CREATE INDEX IF NOT EXISTS idx_insights_registration_applications_status_created
+    ON insights_registration_applications(status, created_at);
+CREATE INDEX IF NOT EXISTS idx_insights_registration_follow_attempt_lease
+    ON insights_registration_applications(x_follow_attempt_started_at)
+    WHERE x_follow_attempt_started_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS insights_registration_sessions (
+    session_digest BYTEA PRIMARY KEY,
+    application_id UUID NOT NULL UNIQUE REFERENCES insights_registration_applications(registration_id) ON DELETE CASCADE,
+    csrf_digest BYTEA NOT NULL,
+    csrf_key_version TEXT NOT NULL,
+    csrf_nonce BYTEA NOT NULL,
+    csrf_ciphertext BYTEA NOT NULL,
+    csrf_tag BYTEA NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    oauth_error_code TEXT,
+    oauth_state_digest BYTEA,
+    oauth_expires_at TIMESTAMPTZ,
+    pkce_key_version TEXT,
+    pkce_nonce BYTEA,
+    pkce_ciphertext BYTEA,
+    pkce_tag BYTEA,
+    wallet_nonce_digest BYTEA,
+    wallet_owner VARCHAR(42),
+    wallet_expires_at TIMESTAMPTZ,
+    wallet_message_key_version TEXT,
+    wallet_message_nonce BYTEA,
+    wallet_message_ciphertext BYTEA,
+    wallet_message_tag BYTEA,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CHECK (
+        octet_length(session_digest) = 32
+        AND octet_length(csrf_digest) = 32
+        AND octet_length(csrf_nonce) = 12
+        AND octet_length(csrf_tag) = 16
+    ),
+    CHECK (oauth_error_code IS NULL OR oauth_error_code ~ '^[A-Z_]{1,32}$'),
+    CHECK (
+        num_nonnulls(oauth_state_digest, oauth_expires_at, pkce_key_version, pkce_nonce, pkce_ciphertext, pkce_tag) IN (0, 6)
+        AND (oauth_state_digest IS NULL OR octet_length(oauth_state_digest) = 32)
+        AND (pkce_nonce IS NULL OR octet_length(pkce_nonce) = 12)
+        AND (pkce_tag IS NULL OR octet_length(pkce_tag) = 16)
+    ),
+    CHECK (
+        num_nonnulls(wallet_nonce_digest, wallet_owner, wallet_expires_at, wallet_message_key_version, wallet_message_nonce, wallet_message_ciphertext, wallet_message_tag) IN (0, 7)
+        AND (wallet_owner IS NULL OR wallet_owner ~ '^0x[0-9a-f]{40}$')
+        AND (wallet_nonce_digest IS NULL OR octet_length(wallet_nonce_digest) = 32)
+        AND (wallet_message_nonce IS NULL OR octet_length(wallet_message_nonce) = 12)
+        AND (wallet_message_tag IS NULL OR octet_length(wallet_message_tag) = 16)
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_registration_sessions_expires
+    ON insights_registration_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_insights_registration_sessions_oauth_expires
+    ON insights_registration_sessions(oauth_expires_at)
+    WHERE oauth_expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_insights_registration_sessions_wallet_expires
+    ON insights_registration_sessions(wallet_expires_at)
+    WHERE wallet_expires_at IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS insights_registration_rate_limits (
+    scope_digest BYTEA NOT NULL,
+    window_epoch_minute BIGINT NOT NULL,
+    request_count INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(scope_digest, window_epoch_minute),
+    CHECK (octet_length(scope_digest) = 32 AND window_epoch_minute >= 0 AND request_count > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_insights_registration_rate_limits_window
+    ON insights_registration_rate_limits(window_epoch_minute);

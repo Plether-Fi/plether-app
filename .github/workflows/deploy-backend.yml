@@ -508,36 +508,81 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
-      - name: Patch Sepolia Insights configuration
+      - name: Validate Terraform-managed Sepolia release manifest
         if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
-        env:
-          PERPS_ACCOUNT_LENS: "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
-          PERPS_CFD_ENGINE_LENS: "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
-          PERPS_INDEXER_CONFIRMATIONS: "1"
         run: |
-          jq \
-            --arg accountLens "$PERPS_ACCOUNT_LENS" \
-            --arg cfdEngineLens "$PERPS_CFD_ENGINE_LENS" \
-            --arg indexerConfirmations "$PERPS_INDEXER_CONFIRMATIONS" \
-            '
-            def upsert_env($name; $value):
-              .environment = (
-                ((.environment // []) | map(select(.name != $name)))
-                + [{"name": $name, "value": $value}]
-              );
+          aws ecs describe-task-definition \
+            --task-definition plether-sepolia \
+            --query taskDefinition > canonical-api-task-def.json
 
-            .containerDefinitions |= map(
-              if .name == "plether-api" or .name == "plether-insights-worker" or .name == "plether-liquidation-worker" then
-                upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
-              elif .name == "plether-perps-indexer" then
-                upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)
-                | upsert_env("PERPS_CFD_ENGINE_LENS"; $cfdEngineLens)
+          jq --exit-status \
+            --arg releaseId "testnet-trading-2026-09" \
+            --slurpfile canonical canonical-api-task-def.json \
+            '
+            def env_map:
+              reduce (.environment // [])[] as $entry ({}; .[$entry.name] = $entry.value);
+            def address_names: [
+              "PERPS_USDC",
+              "PERPS_ORDER_ROUTER",
+              "PERPS_PLETHER_ORACLE",
+              "PERPS_CFD_ENGINE",
+              "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR",
+              "PERPS_CFD_ENGINE_LENS",
+              "PERPS_MARGIN_CLEARINGHOUSE",
+              "PERPS_ACCOUNT_LENS"
+            ];
+            def manifest_names:
+              address_names + [
+                "PERPS_INDEXER_START_BLOCK",
+                "INSIGHTS_ACTIVE_COMPETITION_SLUG",
+                "INSIGHTS_COMPETITION_RELEASE_ID"
+              ];
+            def valid_address:
+              type == "string"
+              and test("^0x[0-9A-Fa-f]{40}$")
+              and ascii_downcase != "0x0000000000000000000000000000000000000000";
+            def valid_september_manifest($env):
+              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
+              and $env.INSIGHTS_COMPETITION_RELEASE_ID == $releaseId
+              and ([address_names[] as $name | $env[$name] | valid_address] | all)
+              and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
+              and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
+            def same_manifest($actual; $expected):
+              [manifest_names[] as $name | $actual[$name] == $expected[$name]] | all;
+            def release_consumer:
+              .name == "plether-api"
+              or .name == "plether-perps-indexer"
+              or .name == "plether-insights-worker";
+
+            ($canonical[0].containerDefinitions
+              | map(select(.name == "plether-api"))
+              | .[0] // null) as $canonicalApi
+            | if $canonicalApi == null then
+                error("canonical Sepolia API task definition has no plether-api container")
               else
-                .
+                ($canonicalApi | env_map) as $expected
+                | if ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
+                    true
+                  elif valid_september_manifest($expected) | not then
+                    error("canonical Sepolia API task definition has an invalid September release manifest")
+                  else
+                    [.containerDefinitions[] | select(release_consumer)] as $consumers
+                    | if ($consumers | length) == 0 then
+                        true
+                      elif ([
+                        $consumers[]
+                        |
+                        (. | env_map) as $actual
+                        | valid_september_manifest($actual)
+                          and same_manifest($actual; $expected)
+                      ] | all) then
+                        true
+                      else
+                        error("task definition release consumers do not match the canonical September manifest")
+                      end
+                  end
               end
-            )
-            ' task-def.json > task-def.patched.json
-          mv task-def.patched.json task-def.json
+            ' task-def.json > /dev/null
 
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
