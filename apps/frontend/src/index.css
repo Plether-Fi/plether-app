@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @theme {
   /* Plether base palette */
@@ -367,5 +366,8 @@ select:not(:disabled) {
 
 /* Material Symbols styling */
 .material-symbols-outlined {
+  inline-size: 1em;
+  overflow: hidden;
+  flex-shrink: 0;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
 }

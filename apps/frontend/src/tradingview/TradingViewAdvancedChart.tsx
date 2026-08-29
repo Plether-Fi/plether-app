@@ -102,8 +102,8 @@ const VOLUME_STUDY_OVERRIDES = {
 const TRADINGVIEW_TIME_FRAMES = [
   { text: '1y', resolution: '1D', description: '1 Year' },
   { text: '30d', title: '1m', resolution: '60', description: '1 Month' },
-  { text: '5d', resolution: '5', description: '5 Days' },
-  { text: '1d', resolution: '1', description: '1 Day' },
+  { text: '5d', resolution: '15', description: '5 Days' },
+  { text: '1d', resolution: '5', description: '1 Day' },
 ] as const
 
 const libraryPromises = new Map<string, Promise<TradingViewNamespace>>()

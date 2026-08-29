@@ -1,12 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
-import { useAppKit } from '@reown/appkit/react'
 import { Result } from 'better-result'
 import { isAddress } from 'viem'
 import { useAccount } from 'wagmi'
 import { useNavigate } from 'react-router-dom'
 import { perpsApi } from '../api'
 import type { TestnetFaucetClaim } from '../api/types'
-import { syncAppKitModalStyleOverrides } from '../config/wagmi'
+import { openAppKit } from '../config/wagmi'
 import { usePerpsUiStore } from '../stores/perpsUiStore'
 import { useSettingsStore } from '../stores/settingsStore'
 import { usePerpsIdentity } from '../perps-aa'
@@ -214,7 +213,6 @@ export function TestnetWelcomeModalView({
 
 export function TestnetWelcomeModal() {
   const { address: connectedAddress, isConnected } = useAccount()
-  const { open } = useAppKit()
   const perpsIdentity = usePerpsIdentity()
   const faucetRecipient = perpsIdentity.isAaManifestConfigured
     ? perpsIdentity.accountAddress
@@ -289,9 +287,7 @@ export function TestnetWelcomeModal() {
         setFieldError(null)
         setSubmitError(null)
         setClaim(null)
-        syncAppKitModalStyleOverrides()
-        void open()
-        syncAppKitModalStyleOverrides()
+        void openAppKit()
       }}
       walletAddress={displayedWalletAddress}
       fieldError={fieldError ?? undefined}

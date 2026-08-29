@@ -1,8 +1,7 @@
 import { useState } from 'react'
-import { useAppKitNetwork } from '@reown/appkit/react'
-import { useChainId } from 'wagmi'
+import { useChainId, useSwitchChain } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
-import { anvil, appKitNetworksByChainId } from '../../config/wagmi'
+import { anvil } from '../../config/wagmi'
 import { Modal } from '../ui'
 
 interface NetworkSwitcherProps {
@@ -12,7 +11,7 @@ interface NetworkSwitcherProps {
 
 export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   const chainId = useChainId()
-  const { switchNetwork } = useAppKitNetwork()
+  const { switchChainAsync } = useSwitchChain()
   const [isPending, setIsPending] = useState(false)
 
   type SupportedChainId = typeof mainnet.id | typeof sepolia.id | typeof arbitrumSepolia.id | typeof anvil.id
@@ -25,11 +24,9 @@ export function NetworkSwitcher({ isOpen, onClose }: NetworkSwitcherProps) {
   ] as const
 
   const handleSwitch = async (targetChainId: SupportedChainId) => {
-    const targetNetwork = appKitNetworksByChainId[targetChainId]
-
     setIsPending(true)
     try {
-      await switchNetwork(targetNetwork)
+      await switchChainAsync({ chainId: targetChainId })
       onClose()
     } finally {
       setIsPending(false)

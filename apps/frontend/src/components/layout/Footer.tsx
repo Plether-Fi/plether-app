@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BUILD_COMMIT } from '../../config/buildInfo'
-import { BuildDetailsModal } from './BuildDetailsModal'
 import { isPrimaryAppDeployment } from '../../utils/deployment'
+
+const BuildDetailsModal = lazy(() => import('./BuildDetailsModal').then((module) => ({ default: module.BuildDetailsModal })))
 
 export function Footer() {
   const [showBuildDetails, setShowBuildDetails] = useState(false)
@@ -52,12 +53,14 @@ export function Footer() {
         </div>
       </footer>
       {showBuildDetails ? (
-        <BuildDetailsModal
-          isOpen={showBuildDetails}
-          onClose={() => {
-            setShowBuildDetails(false)
-          }}
-        />
+        <Suspense fallback={null}>
+          <BuildDetailsModal
+            isOpen={showBuildDetails}
+            onClose={() => {
+              setShowBuildDetails(false)
+            }}
+          />
+        </Suspense>
       ) : null}
     </>
   )

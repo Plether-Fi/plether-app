@@ -5,6 +5,8 @@ module Plether.Handlers.Perps
   , getLegacyBasketHistoryVolumeRowsTimed
   , getBasketCandlePageTimed
   , getBasketCurrentCandleTimedAt
+  , currentCandleCacheKey
+  , currentCandleSnapshotNeedsAuthoritativeReload
   , BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
   , BasketCandleFetch (..)
@@ -71,9 +73,10 @@ import Network.HTTP.Types.Status (statusCode)
 import Plether.Cache
   ( AppCache (..)
   , CandlePageCacheValue (..)
+  , CurrentCandleCacheValue (..)
   , SingleFlightSource (..)
-  , runSingleFlightCache
-  , runSingleFlightCacheFresh
+  , runSingleFlightCacheFreshTimed
+  , runSingleFlightCacheTimed
   )
 import Plether.Config
   ( Config (..)
@@ -137,6 +140,7 @@ data BasketCandleFetch a = BasketCandleFetch
   , bcfReadSource :: Text
   , bcfPoolWaitNs :: Word64
   , bcfQueryNs :: Word64
+  , bcfSingleFlightWaitNs :: Word64
   , bcfRowCount :: Int
   , bcfFinalizedThrough :: Maybe Integer
   , bcfDatasetGeneration :: Integer
@@ -150,6 +154,7 @@ data BasketCandleTimings = BasketCandleTimings
   { bctBackendTotalNs :: Word64
   , bctDbPoolWaitNs :: Word64
   , bctQueryNs :: Word64
+  , bctSingleFlightWaitNs :: Word64
   , bctResponseEncodeNs :: Word64
   }
   deriving stock (Eq, Show)
@@ -159,6 +164,7 @@ basketCandleTimingMetrics timings =
   [ ("plether_app", bctBackendTotalNs timings)
   , ("plether_db_pool_wait", bctDbPoolWaitNs timings)
   , ("plether_db_candles", bctQueryNs timings)
+  , ("plether_singleflight_wait", bctSingleFlightWaitNs timings)
   , ("plether_response_encode", bctResponseEncodeNs timings)
   , ("plether_other", unattributedCandleDuration timings)
   ]
@@ -174,7 +180,11 @@ unattributedCandleDuration BasketCandleTimings {..} =
   bctBackendTotalNs
     - min
       bctBackendTotalNs
-      (bctDbPoolWaitNs + bctQueryNs + bctResponseEncodeNs)
+      ( bctDbPoolWaitNs
+          + bctQueryNs
+          + bctSingleFlightWaitNs
+          + bctResponseEncodeNs
+      )
 
 getBasketCandlePageTimed
   :: AppCache
@@ -185,13 +195,13 @@ getBasketCandlePageTimed
   -> Bool
   -> IO (Either ApiError (BasketCandleFetch BasketCandlePage))
 getBasketCandlePageTimed cache pool cfg interval cursor requireFresh = do
-  (cacheSource, result) <-
-    (if requireFresh then runSingleFlightCacheFresh else runSingleFlightCache)
+  (cacheSource, result, singleFlightWaitNs) <-
+    (if requireFresh then runSingleFlightCacheFreshTimed else runSingleFlightCacheTimed)
       (cacheBasketCandlePages cache)
       (interval, cursor)
       (either (const False) (const True))
       loadPage
-  pure $ fmap (candlePageFetch cacheSource) result
+  pure $ fmap (candlePageFetch cacheSource singleFlightWaitNs) result
   where
     loadPage = do
       result <- loadBasketCandlePage pool cfg interval cursor
@@ -269,15 +279,16 @@ loadBasketCandlePage pool cfg interval cursor = do
 
 candlePageFetch
   :: SingleFlightSource
+  -> Word64
   -> CandlePageCacheValue
   -> BasketCandleFetch BasketCandlePage
-candlePageFetch source CandlePageCacheValue {..} =
+candlePageFetch source singleFlightWaitNs CandlePageCacheValue {..} =
   BasketCandleFetch
     { bcfResponse =
         case source of
           SingleFlightLoaded -> cpcvResponse
           _ ->
-            markCandlePageResponseCached
+            markBasketCandleResponseCached
               (source == SingleFlightStale)
               cpcvCachedAt
               cpcvResponse
@@ -289,13 +300,14 @@ candlePageFetch source CandlePageCacheValue {..} =
           SingleFlightStale -> "rollup_stale_memory_cache"
     , bcfPoolWaitNs = if source == SingleFlightLoaded then cpcvPoolWaitNs else 0
     , bcfQueryNs = if source == SingleFlightLoaded then cpcvQueryNs else 0
+    , bcfSingleFlightWaitNs = singleFlightWaitNs
     , bcfRowCount = cpcvRowCount
     , bcfFinalizedThrough = cpcvFinalizedThrough
     , bcfDatasetGeneration = cpcvDatasetGeneration
     }
 
-markCandlePageResponseCached :: Bool -> POSIXTime -> ApiResponse a -> ApiResponse a
-markCandlePageResponseCached stale cachedAt response =
+markBasketCandleResponseCached :: Bool -> POSIXTime -> ApiResponse a -> ApiResponse a
+markBasketCandleResponseCached stale cachedAt response =
   response
     { respMeta =
         (respMeta response)
@@ -310,12 +322,85 @@ markCandlePageResponseCached stale cachedAt response =
 -- lets the route expose that same value as response evidence on both success
 -- and strict-coverage failure paths.
 getBasketCurrentCandleTimedAt
+  :: AppCache
+  -> DbPool
+  -> Config
+  -> Integer
+  -> Integer
+  -> Bool
+  -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
+getBasketCurrentCandleTimedAt cache pool cfg now interval requireFresh = do
+  let cacheKey = currentCandleCacheKey cfg now interval
+      shouldCache = currentCandleSnapshotCacheable cfg now interval
+      loadSnapshot = loadBasketCurrentCandleSnapshot pool cfg now interval
+  (firstSource, firstSnapshot, firstSingleFlightWaitNs) <-
+    (if requireFresh then runSingleFlightCacheFreshTimed else runSingleFlightCacheTimed)
+      (cacheBasketCurrentCandles cache)
+      cacheKey
+      shouldCache
+      loadSnapshot
+  (cacheSource, snapshot, retrySingleFlightWaitNs) <-
+    if snapshotMayNeedAuthoritativeReload now firstSource firstSnapshot
+        && not (shouldCache firstSnapshot)
+      then
+        runSingleFlightCacheFreshTimed
+          (cacheBasketCurrentCandles cache)
+          cacheKey
+          shouldCache
+          loadSnapshot
+      else pure (firstSource, firstSnapshot, 0)
+  currentCandleFetch
+    cacheSource
+    (firstSingleFlightWaitNs + retrySingleFlightWaitNs)
+    cfg
+    now
+    interval
+    snapshot
+
+-- A coalesced follower can have a later validation clock than the leader that
+-- parameterized the shared query. Refresh only that cross-second case: callers
+-- coalesced behind the same-clock authoritative load must not multiply database
+-- work during an unhealthy-coverage burst.
+snapshotMayNeedAuthoritativeReload
+  :: Integer
+  -> SingleFlightSource
+  -> CurrentCandleCacheValue
+  -> Bool
+snapshotMayNeedAuthoritativeReload now source snapshot =
+  currentCandleSnapshotNeedsAuthoritativeReload
+    now source (cccvDefinitionAt snapshot)
+
+currentCandleSnapshotNeedsAuthoritativeReload
+  :: Integer
+  -> SingleFlightSource
+  -> Integer
+  -> Bool
+currentCandleSnapshotNeedsAuthoritativeReload _ SingleFlightMemory _ = True
+currentCandleSnapshotNeedsAuthoritativeReload _ SingleFlightStale _ = True
+currentCandleSnapshotNeedsAuthoritativeReload now SingleFlightCoalesced definitionAt =
+  definitionAt /= now
+currentCandleSnapshotNeedsAuthoritativeReload _ SingleFlightLoaded _ = False
+
+currentCandleCacheKey
+  :: Config
+  -> Integer
+  -> Integer
+  -> (Integer, Text, Integer, Integer)
+currentCandleCacheKey cfg now interval =
+  ( cfgPerpsChainId cfg
+  , normalizedVolumeRouter cfg
+  , interval
+  , div now interval * interval
+  )
+
+loadBasketCurrentCandleSnapshot
   :: DbPool
   -> Config
   -> Integer
   -> Integer
-  -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
-getBasketCurrentCandleTimedAt pool cfg now interval = do
+  -> IO CurrentCandleCacheValue
+loadBasketCurrentCandleSnapshot pool cfg now interval = do
+  snapshotStartedAt <- getPOSIXTime
   poolStartedAt <- getMonotonicTimeNSec
   (mDefinition, current, poolWaitNs, queryNs) <- withDb pool $ \conn -> do
     connectionReadyAt <- getMonotonicTimeNSec
@@ -330,20 +415,51 @@ getBasketCurrentCandleTimedAt pool cfg now interval = do
         interval
     queryFinishedAt <- getMonotonicTimeNSec
     pure (mDefinition, current, poolWaitNs, queryFinishedAt - queryStartedAt)
-  case mDefinition of
+  pure
+    CurrentCandleCacheValue
+      { cccvDefinition = mDefinition
+      , cccvCurrent = current
+      , cccvDefinitionAt = now
+      , cccvPoolWaitNs = poolWaitNs
+      , cccvQueryNs = queryNs
+      , cccvCachedAt = snapshotStartedAt
+      }
+
+currentCandleSnapshotCacheable
+  :: Config
+  -> Integer
+  -> Integer
+  -> CurrentCandleCacheValue
+  -> Bool
+currentCandleSnapshotCacheable cfg now interval CurrentCandleCacheValue {..} =
+  case cccvDefinition of
+    Nothing -> False
+    Just definition ->
+      case validateCurrentCandleSnapshot cfg now interval definition cccvCurrent of
+        Left _ -> False
+        Right () -> True
+
+currentCandleFetch
+  :: SingleFlightSource
+  -> Word64
+  -> Config
+  -> Integer
+  -> Integer
+  -> CurrentCandleCacheValue
+  -> IO (Either ApiError (BasketCandleFetch BasketCurrentCandle))
+currentCandleFetch
+  cacheSource
+  singleFlightWaitNs
+  cfg
+  now
+  interval
+  CurrentCandleCacheValue {..} =
+  case cccvDefinition of
     Nothing -> pure $ Left $ E.networkError "Active basket definition identity is unavailable"
     Just definition ->
-      case
-          validateBasketCurrentCandleWithPolicy
-            (bdiDisplayPriceCap definition)
-            (cfgPerpsCandleLatenessSeconds cfg)
-            (cfgPerpsCandleFinalizationGraceSeconds cfg)
-            now
-            interval
-            current
-        of
+      case validateCurrentCandleSnapshot cfg now interval definition cccvCurrent of
         Left reason -> do
-          logUnhealthyCurrentCoverage now interval current reason
+          logUnhealthyCurrentCoverage now interval cccvCurrent reason
           pure $
             Left $
               E.networkError $ "Current candle rollup failed strict validation: " <> reason
@@ -356,28 +472,66 @@ getBasketCurrentCandleTimedAt pool cfg now interval = do
                   , bccDisplayPriceCap = bdiDisplayPriceCap definition
                   , bccVolumeChainId = cfgPerpsChainId cfg
                   , bccVolumeRouter = normalizedVolumeRouter cfg
-                  , bccVolumeCoverageStart = ccVolumeCoverageStart current
-                  , bccVolumeCoverageEnd = ccVolumeCoverageEnd current
-                  , bccVolumeFinalizedThrough = ccVolumeFinalizedThrough current
-                  , bccVolumeCoverageComplete = ccVolumeCoverageComplete current
-                  , bccDatasetGeneration = ccDatasetGeneration current
-                  , bccCoverageStart = ccCoverageStart current
-                  , bccCoverageEnd = ccCoverageEnd current
-                  , bccFinalizedThrough = ccFinalizedThrough current
-                  , bccCoverageComplete = ccCoverageComplete current
-                  , bccCandle = candleRowToApi <$> ccCandle current
+                  , bccVolumeCoverageStart = ccVolumeCoverageStart cccvCurrent
+                  , bccVolumeCoverageEnd = ccVolumeCoverageEnd cccvCurrent
+                  , bccVolumeFinalizedThrough = ccVolumeFinalizedThrough cccvCurrent
+                  , bccVolumeCoverageComplete = ccVolumeCoverageComplete cccvCurrent
+                  , bccDatasetGeneration = ccDatasetGeneration cccvCurrent
+                  , bccCoverageStart = ccCoverageStart cccvCurrent
+                  , bccCoverageEnd = ccCoverageEnd cccvCurrent
+                  , bccFinalizedThrough = ccFinalizedThrough cccvCurrent
+                  , bccCoverageComplete = ccCoverageComplete cccvCurrent
+                  , bccCandle = candleRowToApi <$> ccCandle cccvCurrent
                   }
           pure $
             Right
               BasketCandleFetch
-                { bcfResponse = mkResponse 0 (cfgPerpsChainId cfg) response
-                , bcfReadSource = "rollup_current"
-                , bcfPoolWaitNs = poolWaitNs
-                , bcfQueryNs = queryNs
-                , bcfRowCount = maybe 0 (const 1) $ ccCandle current
-                , bcfFinalizedThrough = ccFinalizedThrough current
-                , bcfDatasetGeneration = ccDatasetGeneration current
+                { bcfResponse =
+                    if cacheSource == SingleFlightLoaded
+                      then mkResponse 0 (cfgPerpsChainId cfg) response
+                      else
+                        markBasketCandleResponseCached
+                          (cacheSource == SingleFlightStale)
+                          cccvCachedAt
+                          (mkResponse 0 (cfgPerpsChainId cfg) response)
+                , bcfReadSource = currentCandleReadSource cacheSource
+                , bcfPoolWaitNs =
+                    if cacheSource == SingleFlightLoaded then cccvPoolWaitNs else 0
+                , bcfQueryNs =
+                    if cacheSource == SingleFlightLoaded then cccvQueryNs else 0
+                , bcfSingleFlightWaitNs = singleFlightWaitNs
+                , bcfRowCount = maybe 0 (const 1) $ ccCandle cccvCurrent
+                , bcfFinalizedThrough = ccFinalizedThrough cccvCurrent
+                , bcfDatasetGeneration = ccDatasetGeneration cccvCurrent
                 }
+
+validateCurrentCandleSnapshot
+  :: Config
+  -> Integer
+  -> Integer
+  -> BasketDefinitionIdentity
+  -> CandleCurrent
+  -> Either Text ()
+validateCurrentCandleSnapshot cfg now interval definition current
+  | bdiEffectiveFrom definition > now =
+      Left "active basket definition starts after the request validation clock"
+  | maybe False (<= now) (bdiEffectiveTo definition) =
+      Left "active basket definition ended at or before the request validation clock"
+  | otherwise =
+      validateBasketCurrentCandleWithPolicy
+        (bdiDisplayPriceCap definition)
+        (cfgPerpsCandleLatenessSeconds cfg)
+        (cfgPerpsCandleFinalizationGraceSeconds cfg)
+        now
+        interval
+        current
+
+currentCandleReadSource :: SingleFlightSource -> Text
+currentCandleReadSource = \case
+  SingleFlightLoaded -> "rollup_current"
+  SingleFlightMemory -> "rollup_current_memory_cache"
+  SingleFlightCoalesced -> "rollup_current_coalesced"
+  SingleFlightStale -> "rollup_current_stale_memory_cache"
 
 candlePageToResponse
   :: BasketDefinitionIdentity

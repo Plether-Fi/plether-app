@@ -470,7 +470,7 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
 
   get "/api/perps/basket/candles/current" $ do
     validatedAt <- floor <$> liftIO getPOSIXTime
-    handleBasketCurrentCandleAt cfg mPool validatedAt
+    handleBasketCurrentCandleAt cache cfg mPool validatedAt
 
   get "/api/perps/basket/latest" $ do
     case mPool of
@@ -608,8 +608,8 @@ handleBasketHistoryResult handlerStartedAt params fetch = do
 -- second. Production samples it once at route entry; the integration suite
 -- fixes it at the publication-grace boundary so the response header and
 -- validation outcome remain one testable invariant.
-handleBasketCurrentCandleAt :: Config -> Maybe DbPool -> Integer -> ActionM ()
-handleBasketCurrentCandleAt cfg mPool validatedAt = do
+handleBasketCurrentCandleAt :: AppCache -> Config -> Maybe DbPool -> Integer -> ActionM ()
+handleBasketCurrentCandleAt cache cfg mPool validatedAt = do
   handlerStartedAt <- liftIO getMonotonicTimeNSec
   queryKeys <- currentQueryKeys
   if not $ hasExactBasketCandleQueryKeys ["interval"] queryKeys
@@ -639,7 +639,11 @@ handleBasketCurrentCandleAt cfg mPool validatedAt = do
               -- deterministic origin-clock evidence. The public Date header
               -- may be generated or replaced by an intermediary.
               setHeader "X-Plether-Candle-Validated-At" $ LT.pack $ show validatedAt
-              result <- liftIO $ getBasketCurrentCandleTimedAt pool cfg validatedAt interval
+              requireFresh <- requestForcesCandleRefresh
+              result <-
+                liftIO $
+                  getBasketCurrentCandleTimedAt
+                    cache pool cfg validatedAt interval requireFresh
               case result of
                 Left err -> handleError err
                 Right fetch ->
@@ -667,6 +671,7 @@ handleBasketCandleResult handlerStartedAt requestKind interval fetch = do
           { bctBackendTotalNs = encodeFinishedAt - handlerStartedAt
           , bctDbPoolWaitNs = bcfPoolWaitNs fetch
           , bctQueryNs = bcfQueryNs fetch
+          , bctSingleFlightWaitNs = bcfSingleFlightWaitNs fetch
           , bctResponseEncodeNs = encodeFinishedAt - encodeStartedAt
           }
   liftIO $ logBasketCandleTimings requestKind interval fetch bodyBytes timings

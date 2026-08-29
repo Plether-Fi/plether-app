@@ -13,7 +13,9 @@ import Control.Concurrent
   )
 import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
 import Control.Monad (forM_, void, when)
-import Data.Aeson (Value, object, (.=))
+import Data.Aeson (Value, object, withObject, (.:), (.=))
+import qualified Data.Aeson as Aeson
+import Data.Aeson.Types (parseMaybe)
 import qualified Data.ByteString.Char8 as BS8
 import Data.Either (isLeft, isRight)
 import Data.Pool (destroyAllResources)
@@ -30,7 +32,9 @@ import Database.PostgreSQL.Simple
   , withTransaction
   )
 import Database.PostgreSQL.Simple.FromRow (FromRow (..), field)
+import Network.HTTP.Types.Header (RequestHeaders)
 import Network.HTTP.Types.Status (status200, status503)
+import Network.Wai (requestHeaders)
 import Network.Wai.Test
   ( SResponse (..)
   , defaultRequest
@@ -39,6 +43,11 @@ import Network.Wai.Test
   , setPath
   )
 import Plether.Api (handleBasketCurrentCandleAt)
+import Plether.Cache
+  ( AppCache (..)
+  , newAppCache
+  , newConcurrentSingleFlightCache
+  )
 import Plether.Config
   ( Config (..)
   , PerpsCandleReadMode (PerpsCandleReadsRollup)
@@ -585,19 +594,82 @@ candleRollupSpec databaseUrl =
           putVolumeCoverage
             connection interval coverageStart coverageEnd finalizedThrough 11 True
 
-        beforeResponse <- currentCandleResponse pool config beforeGrace
+        baseCache <- newAppCache
+        testCurrentCache <- newConcurrentSingleFlightCache 32 5_000_000_000
+        let cache =
+              baseCache {cacheBasketCurrentCandles = testCurrentCache}
+        beforeResponse <- currentCandleResponse cache pool config beforeGrace
         simpleStatus beforeResponse `shouldBe` status200
         filter
           ((== "X-Plether-Candle-Validated-At") . fst)
           (simpleHeaders beforeResponse)
           `shouldBe` [("X-Plether-Candle-Validated-At", BS8.pack $ show beforeGrace)]
 
-        faultResponse <- currentCandleResponse pool config atGraceExpiry
+        cachedResponse <- currentCandleResponse cache pool config beforeGrace
+        shouldBe (simpleStatus cachedResponse) status200
+        let serverTimingValues =
+              map snd $
+                filter
+                  ((== "Server-Timing") . fst)
+                  (simpleHeaders cachedResponse)
+        shouldSatisfy
+          serverTimingValues
+          (any $ BS8.isInfixOf "plether_db_candles;dur=0.000")
+        shouldSatisfy
+          serverTimingValues
+          (any $ BS8.isInfixOf "plether_singleflight_wait;dur=0.000")
+
+        let initialGeneration = currentResponseDatasetGeneration cachedResponse
+        initialGeneration `shouldBe` Just (7 * 134_217_728 + 11 * 2 + 1)
+        withDb pool $ \connection -> do
+          putPriceCoverage
+            connection interval coverageStart coverageEnd finalizedThrough 8 True
+          putVolumeCoverage
+            connection interval coverageStart coverageEnd finalizedThrough 12 True
+
+        -- A normal request still observes the live raw snapshot, while
+        -- the worker/client no-cache contract must linearize through the DB.
+        stillCachedResponse <- currentCandleResponse cache pool config beforeGrace
+        currentResponseDatasetGeneration stillCachedResponse
+          `shouldBe` initialGeneration
+        revalidatedResponse <-
+          currentCandleResponseFresh cache pool config beforeGrace
+        simpleStatus revalidatedResponse `shouldBe` status200
+        currentResponseDatasetGeneration revalidatedResponse
+          `shouldBe` Just (8 * 134_217_728 + 12 * 2 + 1)
+
+        -- The raw snapshot may be reused, but the later caller must still fail
+        -- against its own validation second at the exact grace boundary.
+        faultResponse <- currentCandleResponse cache pool config atGraceExpiry
         simpleStatus faultResponse `shouldBe` status503
         filter
           ((== "X-Plether-Candle-Validated-At") . fst)
           (simpleHeaders faultResponse)
           `shouldBe` [("X-Plether-Candle-Validated-At", BS8.pack $ show atGraceExpiry)]
+
+        -- A validation failure from a still-fresh raw snapshot must trigger one
+        -- authoritative reload, so a newly published generation is not hidden
+        -- behind the bounded cache.
+        withDb pool $ \connection -> do
+          putPriceCoverage
+            connection interval coverageStart coverageEnd boundary 8 True
+          putVolumeCoverage
+            connection interval coverageStart coverageEnd boundary 12 True
+        recoveredResponse <-
+          currentCandleResponse cache pool config atGraceExpiry
+        shouldBe (simpleStatus recoveredResponse) status200
+
+        recoveredCachedResponse <-
+          currentCandleResponse cache pool config atGraceExpiry
+        shouldBe (simpleStatus recoveredCachedResponse) status200
+        let recoveredTimingValues =
+              map snd $
+                filter
+                  ((== "Server-Timing") . fst)
+                  (simpleHeaders recoveredCachedResponse)
+        shouldSatisfy
+          recoveredTimingValues
+          (any $ BS8.isInfixOf "plether_db_candles;dur=0.000")
 
     it "rejects a conflicting replay event identity and rolls back its transaction" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -2373,63 +2445,117 @@ candleRollupSpec databaseUrl =
           rcComplete unchanged `shouldBe` True
           rcGeneration unchanged `shouldBe` 67_108_863
 
-    it "keeps both covering indexes valid for bounded compatibility range reads" $
+    it "uses bounded rollup indexes for compatibility range reads" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
-          forM_ [5, 65, 125] $ \offset -> do
-            insertObservation
+          let pageRows = 12_001 :: Integer
+              pageEnd = baseTime + pageRows * 60
+          void $
+            execute
               connection
-              ("plan-" <> Text.pack (show offset))
-              (baseTime + offset)
-              (100 + offset)
-              "signed_pyth"
-              100
-            recomputeBasketCandleHierarchy connection testSeries (baseTime + offset) 0
-          insertActivity connection "plan-volume" (baseTime + 5) 700 2 10 "Open"
-          _ <- backfillMarketVolume connection testChainId testRouter baseTime (baseTime + 180)
-          indexDefinitions <-
+              "INSERT INTO perps_basket_candles (\
+              \ series_id, interval_seconds, bucket_start, raw_open_price, \
+              \ raw_high_price, raw_low_price, raw_close_price, \
+              \ first_observation_time, last_observation_time, sample_count, \
+              \ quality, revision, finalized) \
+              \SELECT ?, 60, bucket_start, 100, 100, 100, 100, \
+              \ bucket_start + 5, bucket_start + 5, 1, 'observed', 1, TRUE \
+              \FROM (SELECT ?::bigint + offset_number * 60 AS bucket_start \
+              \ FROM generate_series(0, ?::bigint - 1) AS offsets(offset_number)) page"
+              (testSeries, baseTime, pageRows)
+          void $
+            execute
+              connection
+              "INSERT INTO perps_market_volume_rollups (\
+              \ chain_id, release_router, interval_seconds, bucket_start, \
+              \ volume_numerator, trade_count, first_source_block, \
+              \ last_source_block, revision, finalized) \
+              \SELECT ?, ?, 60, bucket_start, 700, 1, offset_number + 1, \
+              \ offset_number + 1, 1, TRUE \
+              \FROM (SELECT offset_number, ?::bigint + offset_number * 60 AS bucket_start \
+              \ FROM generate_series(0, ?::bigint - 1) AS offsets(offset_number)) page"
+              (testChainId, normalizedTestRouter, baseTime, pageRows)
+          vacuumCandlePageTables connection
+          pageIndexes <-
             query_
               connection
-              "SELECT indexname,indexdef FROM pg_indexes \
-              \WHERE schemaname=current_schema() AND indexname IN (\
-              \'idx_perps_basket_candles_page_cover',\
-              \'idx_perps_market_volume_rollups_page_cover') ORDER BY indexname"
-              :: IO [(Text, Text)]
-          map fst indexDefinitions
+              "SELECT index_relation.relname, index_state.indisvalid, \
+              \ index_state.indisready, index_state.indislive, \
+              \ index_state.indnkeyatts::int, \
+              \ string_agg(attribute.attname, ',' ORDER BY ordinal.position) \
+              \FROM pg_class index_relation \
+              \JOIN pg_index index_state ON index_state.indexrelid = index_relation.oid \
+              \JOIN pg_class target_relation ON target_relation.oid = index_state.indrelid \
+              \CROSS JOIN LATERAL unnest(index_state.indkey) WITH ORDINALITY \
+              \ ordinal(attribute_number, position) \
+              \JOIN pg_attribute attribute \
+              \ ON attribute.attrelid = target_relation.oid \
+              \ AND attribute.attnum = ordinal.attribute_number \
+              \WHERE index_relation.relname IN (\
+              \ 'idx_perps_basket_candles_page_cover', \
+              \ 'idx_perps_market_volume_rollups_page_cover') \
+              \GROUP BY index_relation.relname, index_state.indisvalid, \
+              \ index_state.indisready, index_state.indislive, index_state.indnkeyatts \
+              \ORDER BY index_relation.relname"
+              :: IO [(Text, Bool, Bool, Bool, Int, Text)]
+          pageIndexes
             `shouldBe`
-              [ "idx_perps_basket_candles_page_cover"
-              , "idx_perps_market_volume_rollups_page_cover"
+              [ ( "idx_perps_basket_candles_page_cover"
+                , True
+                , True
+                , True
+                , 3
+                , "series_id,interval_seconds,bucket_start,raw_open_price,raw_high_price,raw_low_price,raw_close_price,sample_count,quality,revision,finalized"
+                )
+              , ( "idx_perps_market_volume_rollups_page_cover"
+                , True
+                , True
+                , True
+                , 4
+                , "chain_id,release_router,interval_seconds,bucket_start,volume_numerator,trade_count,finalized"
+                )
               ]
-          let renderedDefinitions = Text.toLower $ Text.unlines $ map snd indexDefinitions
-          forM_
-            [ "include (raw_open_price"
-            , "include (volume_numerator"
-            ]
-            $ \fragment -> renderedDefinitions `shouldSatisfy` Text.isInfixOf fragment
           plan <- withTransaction connection $ do
             _ <- execute_ connection "SET LOCAL enable_seqscan = off"
             query
               connection
               "EXPLAIN (COSTS OFF) \
-              \SELECT c.bucket_start, c.raw_open_price, v.volume_numerator FROM perps_basket_candles c \
+              \SELECT c.bucket_start, c.raw_open_price, c.raw_high_price, \
+              \ c.raw_low_price, c.raw_close_price, c.sample_count, c.quality, \
+              \ c.revision, c.finalized, v.volume_numerator, v.trade_count, v.finalized \
+              \FROM perps_basket_candles c \
               \LEFT JOIN perps_market_volume_rollups v \
               \ ON v.chain_id = ? AND v.release_router = ? \
               \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
               \WHERE c.series_id = ? AND c.interval_seconds = ? \
               \AND c.bucket_start >= ? AND c.bucket_start < ? \
               \ORDER BY c.bucket_start LIMIT ?"
-              ( testChainId, testRouter, testSeries, 60 :: Integer
-              , baseTime, baseTime + 180, 12_001 :: Int
+              ( testChainId, normalizedTestRouter, testSeries, 60 :: Integer
+              , baseTime, pageEnd, 12_001 :: Int
               )
               :: IO [Only Text]
           let renderedPlan = Text.unlines [line | Only line <- plan]
-          renderedPlan `shouldSatisfy` (not . Text.isInfixOf "Seq Scan")
-          forM_
-            [ "perps_basket_candles"
-            , "perps_market_volume_rollups"
+              usesIndex names =
+                any
+                  (\name -> Text.isInfixOf ("using " <> name) renderedPlan)
+                  names
+          usesIndex
+            [ "idx_perps_basket_candles_page_cover"
+            , "perps_basket_candles_pkey"
             ]
-            $ \relation -> renderedPlan `shouldSatisfy` Text.isInfixOf relation
+            `shouldBe` True
+          usesIndex
+            [ "idx_perps_market_volume_rollups_page_cover"
+            , "perps_market_volume_rollups_pkey"
+            ]
+            `shouldBe` True
+          shouldBe
+            ("Seq Scan on perps_basket_candles" `Text.isInfixOf` renderedPlan)
+            False
+          shouldBe
+            ("Seq Scan on perps_market_volume_rollups" `Text.isInfixOf` renderedPlan)
+            False
 
     it "refreshes the visibility map used by candle page covering indexes" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -2638,15 +2764,48 @@ insertHistoryRelease
         , isGenesis
         )
 
-currentCandleResponse :: DbPool -> Config -> Integer -> IO SResponse
-currentCandleResponse pool config validatedAt = do
+currentCandleResponse :: AppCache -> DbPool -> Config -> Integer -> IO SResponse
+currentCandleResponse cache pool config validatedAt =
+  currentCandleResponseWithHeaders cache pool config validatedAt []
+
+currentCandleResponseFresh :: AppCache -> DbPool -> Config -> Integer -> IO SResponse
+currentCandleResponseFresh cache pool config validatedAt =
+  currentCandleResponseWithHeaders
+    cache
+    pool
+    config
+    validatedAt
+    [("Cache-Control", "no-store"), ("Pragma", "no-cache")]
+
+currentCandleResponseWithHeaders
+  :: AppCache
+  -> DbPool
+  -> Config
+  -> Integer
+  -> RequestHeaders
+  -> IO SResponse
+currentCandleResponseWithHeaders cache pool config validatedAt headers = do
   application <-
     scottyApp $
       get "/api/perps/basket/candles/current" $
-        handleBasketCurrentCandleAt config (Just pool) validatedAt
+        handleBasketCurrentCandleAt cache config (Just pool) validatedAt
+  let currentRequest =
+        (setPath defaultRequest "/api/perps/basket/candles/current?interval=3600")
+          { requestHeaders = headers
+          }
   runSession
-    (request $ setPath defaultRequest "/api/perps/basket/candles/current?interval=3600")
+    (request currentRequest)
     application
+
+currentResponseDatasetGeneration :: SResponse -> Maybe Integer
+currentResponseDatasetGeneration response = do
+  value <- Aeson.decode $ simpleBody response
+  parseMaybe
+    ( withObject "ApiResponse" $ \root -> do
+        payload <- root .: "data"
+        withObject "BasketCurrentCandle" (.: "datasetGeneration") payload
+    )
+    value
 
 candleApiConfig :: Text -> Config
 candleApiConfig databaseUrl =

@@ -1,11 +1,12 @@
+import { lazy, Suspense } from 'react'
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { useLocation } from 'react-router-dom'
-import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
+import { anvil, openAppKit } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
-import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
-import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+
+const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperationActivity').then((module) => ({ default: module.SponsoredOperationHistoryButton })))
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
@@ -22,7 +23,6 @@ export function ConnectButton() {
     switchError,
     clearSwitchError,
   } = useSwitchToArbitrumSepolia()
-  const { open } = useAppKit()
   const chainId = useChainId()
   const location = useLocation()
 
@@ -53,9 +53,7 @@ export function ConnectButton() {
         aria-label="Connect Wallet"
         onClick={() => {
           clearSwitchError()
-          syncAppKitModalStyleOverrides()
-          void open()
-          syncAppKitModalStyleOverrides()
+          void openAppKit()
         }}
         className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
@@ -108,14 +106,16 @@ export function ConnectButton() {
           </button>
         ) : null}
 
-        {isPerpsRoute ? <SponsoredOperationHistoryButton /> : null}
+        {isPerpsRoute ? (
+          <Suspense fallback={null}>
+            <SponsoredOperationHistoryButton />
+          </Suspense>
+        ) : null}
 
         {/* Account button */}
         <button
           onClick={() => {
-            syncAppKitModalStyleOverrides()
-            void open({ view: 'Account' })
-            syncAppKitModalStyleOverrides()
+            void openAppKit({ view: 'Account' })
           }}
           title="Open wallet account"
           aria-label={`Open wallet account ${formatAddress(address ?? '')}`}
