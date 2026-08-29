@@ -1,352 +1,300 @@
 # LP troubleshooting
 
-Liquidity-provider (LP)[^lp] actions can stop before submission, during an owner-wallet transaction, in a pending deposit epoch or at a live withdrawal limit. Start by identifying which balance and contract the action belongs to before trying again.
+Liquidity-provider (LP)[^lp] actions can stop before submission, during an owner-wallet transaction or while an hourly deposit or withdrawal request is waiting. Start by identifying the balance, request and contract involved before trying again.
 
-> **Current interface status**
+> The Perps-page `Deposit` and `Withdraw` controls operate the Trading Account's **Margin Account**. They do not provide liquidity to or withdraw liquidity from a tranche vault.
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. The labels on this page are placeholders until the relevant interface is deployed.
->
-> The current Perps-page `Deposit` and `Withdraw` actions operate the Trading Account's **Margin Account**. They do not provide liquidity to or withdraw liquidity from a tranche vault.
->
-> LP approvals, deposits, pending-epoch actions, claims and withdrawals are not currently gas-sponsored. Keep enough Arbitrum Sepolia ETH in the owner wallet for every required transaction.
+> Vault approvals, requests, cancellations and claims use the connected owner wallet. The current Vaults flow does not sponsor them, so keep enough Arbitrum Sepolia ETH for every required transaction.
 
 ### Check these first
 
 1. Confirm the connected **owner wallet** and Arbitrum Sepolia network.
-2. Identify whether the balance is owner-wallet USDC[^usdc], Margin Account USDC, a pending deposit request or active tranche shares.
-3. Verify whether the target is the official Senior Vault or Junior Vault from the active deployment's contract metadata.
-4. Check the transaction hash and block-explorer result before submitting another transaction.
-5. Check the deposit epoch, holder cooldown, oracle[^oracle] state and protocol lifecycle state relevant to the action.
-6. Refresh the application and compare the interface with onchain balances and events.
+2. Identify whether the value is owner-wallet USDC[^usdc], Margin Account USDC, queued deposit USDC, wallet-held vault shares, shares locked in a withdrawal or claimable USDC.
+3. Verify the official Senior or Junior Vault address from the active deployment.
+4. Check the transaction hash and Arbiscan result before submitting another transaction.
+5. Check **Expected processing**, the final-five-minute cutoff, holder cooldown, oracle[^oracle] state, **Hourly processing paused**, **Safety restrictions** and **New withdrawal funding**.
+6. Refresh the application and compare its values with onchain balances, events and request state.
 
-Never send USDC directly to the HousePool. Never approve the HousePool, Margin Clearinghouse or an unknown contract when the intended spender is a tranche vault.
+Never send USDC directly to the HousePool. Never approve the HousePool, Margin Clearinghouse or an unknown contract when the intended spender is a Tranche Vault.
 
-### Identify the balance you are looking at
+### Identify the balance or request
 
 | What you see | What it represents | Which flow applies |
 | --- | --- | --- |
-| MockUSDC in the owner wallet | Tokens available to approve and deposit into a tranche vault | LP deposit flow |
-| MockUSDC at the Trading Account address | Tokens controlled through the separate Trading Account | Margin Account deposit flow, not an LP vault approval |
+| MockUSDC in the owner wallet | Tokens available to approve and queue into a vault | LP deposit flow |
+| MockUSDC at the Trading Account address | Tokens controlled through the separate Trading Account | Margin Account flow, not an LP vault approval |
 | Margin Account balance | Trader collateral held through the Margin Clearinghouse | Trader deposit or withdrawal flow |
-| Pending Senior or Junior request | USDC held in tranche-vault escrow before shares are active | Cancel, finalize or claim according to epoch state |
-| Active Senior or Junior shares | A proportional claim on that tranche | LP position and withdrawal flow |
-| `Pool liquidity` on the Perps page | Free HousePool USDC after protected reserves | Neither total tranche value nor your personal withdrawal limit |
+| **Pending deposits** | USDC held by the selected vault for hourly processing | Cancel before processing, then move ready shares or return refundable USDC |
+| Wallet-held `psLP` or `pjLP` | An active proportional claim on the selected tranche | LP position and withdrawal-request flow |
+| **Pending withdrawals** | Shares locked by the vault while funding is pending | Cancel before the boundary, move ready USDC, or return a zero-value share remainder when offered |
+| **USDC ready for wallet** | Funded withdrawal assets still held by the vault | **Move USDC to wallet** |
 
-An LP deposit does not create Margin Account collateral. A Margin Account deposit does not create tranche shares. The protocol does not automatically move value between those systems.
+An LP deposit does not create Margin Account collateral. A Margin Account deposit does not create vault shares. The protocol does not automatically move value between those systems.
 
 ### Quick symptom guide
 
 | Symptom | Check first | Safe next action |
 | --- | --- | --- |
-| `Vaults` is missing | Whether the LP interface has been deployed | Do not use an unknown contract or the Perps-page `Deposit`; wait for the enabled verified interface or a separately documented direct-contract procedure |
-| MockUSDC moved but no shares appeared | Target contract and immediate-versus-pending route | Identify whether the funds entered the Margin Account, vault escrow or an immediate tranche deposit |
-| Approval fails | Owner-wallet balance, gas, network and spender | Fund gas, select the right network and approve only the verified selected tranche vault |
-| Immediate deposit is unavailable | Open trader positions and deposit safety gates | Use the pending route if offered; otherwise wait until the displayed gate clears |
-| Pending request cannot be cancelled | Whether its activation epoch has begun | Do not submit repeated cancellation attempts; follow the post-activation finalization path |
-| Activation time passed, but no shares appeared | Finalization and claim status | Finalize the epoch if eligible, then submit the separate share claim |
-| Final share amount differs from estimate | Batch price and frozen-oracle surcharge at finalization | Verify the finalized epoch details; the request-time amount was an estimate |
-| `Withdrawable now` is zero | Cooldown, reserves, tranche priority, oracle and degraded mode | Address the identified gate or wait for protocol conditions to change |
-| Junior value is positive but withdrawable is zero | Free liquidity relative to Senior, then holder and protocol-state gates | Check the Junior pool cap, cooldown, oracle freshness and degraded mode; positive value alone does not create withdrawal capacity |
-| Withdrawal preview changed | Fresh reconciliation and live maximum | Request a fresh preview and do not submit the stale amount |
-| More shares burn than an ordinary withdrawal quote | Frozen-oracle surcharge on the asset-denominated withdrawal | Compare the refreshed vault quote and configured tranche rate |
-| Share value declined | Pool revenue, trader payouts and waterfall losses | Review the economics and transaction history; do not assume it is a display error |
+| `Vaults` is missing | Application hostname, cached build and route | Open the official Arbitrum Sepolia application, reload, and do not substitute the Perps-page Margin Account controls |
+| USDC moved but no shares appeared | **Pending deposits** and transaction target | Confirm that **Queue deposit** succeeded; wait for processing, then use **Move shares to wallet** |
+| Approval confirmed but no deposit exists | Whether the second wallet step confirmed | Return to the deposit preview and queue once; approval changes allowance only |
+| **Review deposit** is disabled | Wallet balance, minimum, capacity and displayed deposit-closure reason | Correct the displayed issue or wait for the stated reopening condition |
+| Deposit is past **Expected processing** | **Hourly processing paused**, pricing and safety state | Leave it queued; the holder does not submit a processing transaction |
+| **Cancel deposit** is missing | Whether the request has reached its processing epoch | Wait for **Shares ready** or **Refund available** |
+| **Shares ready** but wallet balance did not increase | The separate share claim | Select **Move shares to wallet** and confirm the transaction |
+| **Shares available to withdraw** is zero | Wallet share balance and cooldown countdown | Wait for **Available in** to reach zero or return/move the required shares first |
+| **Review withdrawal** is disabled | Share estimate, request limit and live data | Correct the displayed issue; separately remember that a sub-minimum partial request can pass review but still revert onchain |
+| Withdrawal is past **Expected processing** | **New withdrawal funding**, Senior priority and processing status | Leave it queued; **Waiting for USDC** can persist beyond the displayed time |
+| **Cancel withdrawal** is missing | Whether processing time has arrived | Monitor for **USDC ready** or **Shares ready to return** |
+| **USDC ready** but wallet balance did not increase | The separate asset claim | Select **Move USDC to wallet** |
+| **Shares ready to return** | A remaining share amount quoted to zero assets and entered refund state | Select **Return shares to wallet**; the one-hour cooldown restarts |
+| Junior value is positive but its request waits | Senior-first funding and available liquidity | Monitor available liquidity; positive Junior value does not create funding ahead of Senior |
+| Temporary fee is active | `oracleFrozen` and the tranche rate | Refresh the quote and wait for live pricing when the withdrawal is not urgent |
+| **Older activity is unavailable** | Block-explorer request discovery | Select **Retry history**; the app still checks recent request IDs through the public lens |
+| Share value declined | Pool revenue, trader payouts and the waterfall | Review performance and confirmed pool events; do not assume a display error |
 
-### I used `Deposit`, but no LP shares appeared
+### I used `Deposit`, but no vault shares appeared
 
-First identify which `Deposit` action you used.
+First identify which `Deposit` action you used. The Perps-page action funds the Trading Account's Margin Account. A successful trader collateral deposit does not create Senior or Junior shares.
 
-The visible Perps-page action funds the Trading Account's Margin Account. If that balance increased, the transaction succeeded as a **trader collateral deposit**. It did not provide HousePool liquidity and will not mint Senior or Junior shares.
+Every vault deposit is queued:
 
-If a tranche-vault transaction confirmed, identify its path:
-
-* **Immediate deposit:** active shares are issued in the deposit transaction.
-* **Pending deposit:** USDC moves into vault escrow. Finalization creates the claimable share allocation in escrow; a separate claim transfers those shares to the owner wallet.
-
-Check:
-
-1. Transaction target
-2. Selected tranche
-3. Owner and share recipient
-4. Vault share balance
-5. Pending request and epoch ID
-6. Transaction events
-
-Do not send another deposit until you know which state the first transaction created.
-
-See [**Deposit liquidity**](deposit-liquidity.md) and [**Manage a pending deposit**](manage-a-pending-deposit.md).
-
-### `Vaults` or an LP action is unavailable
-
-The LP interface is not yet available in the published testnet application. Its absence is not an instruction to substitute the Perps-page Margin Account control.
-
-When the interface is deployed, an action can still be unavailable because of protocol state. Immediate deposits require, among other gates:
-
-* Trading to be activated
-* Deposits not to be paused
-* The applicable mark-freshness rule to pass
-* Senior not to be impaired
-* No unassigned assets awaiting ownership assignment
-* No open trader positions
-
-When trader positions are open, the pending-epoch route is the ordinary deposit path. If deposits are unavailable rather than pending, read the displayed gate and wait for it to clear; do not attempt to bypass it with a direct HousePool transfer.
-
-### My approval or LP deposit failed
+`Approve USDC when needed → Queue deposit → Pending → eligible processing → Shares ready → Move shares to wallet`
 
 Check:
 
-* MockUSDC balance in the connected owner wallet
-* Arbitrum Sepolia ETH in that owner wallet
-* Supported network
-* Selected Senior or Junior tranche
-* Verified tranche-vault spender address
-* Allowance amount
-* Whether the approval transaction actually confirmed
-* Whether the next action is immediate deposit or funded pending request
+1. The transaction target is the selected Senior or Junior Vault.
+2. **Approve USDC** and **Queue deposit** are separate wallet steps; both required steps confirmed.
+3. **Pending deposits** shows the deposit reference and expected processing time.
+4. Whether the request transaction was included onchain strictly before the five-minute cutoff or at/after it. Inclusion at or after the cutoff targets the following hour, even if the transaction was signed or sent earlier; use the confirmed request record.
+5. **Hourly processing paused**, price freshness or a safety gate is not delaying processing.
+6. **Shares ready** is followed by a successful **Move shares to wallet** transaction.
 
-The testnet welcome flow normally funds the separate Trading Account address. Tokens held there cannot be used directly for an owner-wallet tranche-vault approval.
+Do not queue another deposit until you know which transition the first transaction reached. See [**Deposit liquidity**](deposit-liquidity.md) and [**Manage a pending deposit**](manage-a-pending-deposit.md).
 
-Approval and deposit or request are separate owner-wallet transactions. A confirmed approval does not itself move USDC into the HousePool or mint shares.
+### `Review deposit` is disabled
 
-### My pending request cannot be cancelled
+The action panel shows a specific reason whenever possible. Common causes are:
 
-A pending request can normally be cancelled only **before** its activation epoch begins.
+* **Safety pause active** — new deposits are paused; withdrawal requests remain available when otherwise eligible.
+* The live FX market is closed and fresh pricing is unavailable.
+* The shared pool has an unresolved shortfall.
+* **Safety restrictions** are active.
+* The latest market price is too old.
+* Senior has unrecovered losses.
+* The selected vault has no current deposit capacity.
+* The amount exceeds the owner-wallet balance or current vault limit.
+* The amount is below the displayed vault deposit minimum.
+* Required live data or the latest share estimate is unavailable.
 
-Before activation, a successful cancellation:
+Read both the reason and **Available again** message. Do not bypass a disabled action by transferring USDC directly to the vault or HousePool.
 
-* Removes the request
-* Returns escrowed USDC to the owner wallet
-* Issues no shares
+### My approval or deposit request failed
 
-After activation begins, the request normally becomes binding. Repeated cancellation attempts do not move the epoch forward. Wait for the epoch to be finalized, then claim the shares.
+Check the owner wallet's MockUSDC and ETH balances, Arbitrum Sepolia network, selected tranche, verified vault spender, exact allowance, and each transaction receipt.
 
-There is one protective exception: if Senior impairment prevents an active epoch from finalizing, cancellation becomes available again so the depositor can recover escrowed USDC.
+A deposit can require two wallet confirmations:
 
-### The activation time passed, but no shares appeared
+1. **Approve USDC** grants the selected vault the exact allowance.
+2. **Queue deposit** transfers the requested USDC into vault custody and creates the request.
 
-Activation, finalization and claiming are separate states.
+If approval succeeds and queueing fails, the USDC normally remains in the owner wallet while allowance remains. Inspect the failed receipt and latest deposit status before retrying. Do not approve an unfamiliar spender.
 
-1. Confirm that the assigned activation epoch has begun.
-2. Check whether the epoch has been finalized.
-3. If it is eligible but unfinalized, submit finalization or wait for the application, a keeper[^keeper] or another user to do so.
-4. After finalization, submit the separate `[Claim shares]` transaction.
-5. Verify the vault-share balance and that the pending request cleared.
+### I cannot cancel a pending deposit
 
-Finalization is permissionless and currently has no separate protocol bounty. It still requires an onchain transaction and gas from whoever submits it.
+**Cancel deposit** appears only while the request is still before its processing epoch. A successful cancellation returns the held USDC to the owner wallet and issues no shares.
 
-If finalization fails, check:
+After the expected processing epoch begins, the status becomes **Waiting for processing** and ordinary cancellation is unavailable. When LP settlement is enabled, a healthy keeper submits eligible work through the permissionless path; the current interface exposes no user processing action.
 
-* Activation time
-* Oracle state and accepted mark freshness
-* Senior impairment
-* Other deposit gates shown by the application
+If the processed batch's aggregate deposit quote rounds to zero shares, the epoch is rejected and the status becomes **Refund available**. Select **Return USDC to wallet** and verify the receipt. Pause, stale pricing, impairment, caps and shortfalls ordinarily keep the deposit waiting or enable an exceptional mature cancellation instead of creating a refund.
 
-If Senior impairment is the blocker, check whether the special cancellation path has reopened.
+### The processing time passed, but no shares appeared
 
-> **Screenshot placeholder — Pending epoch status**
->
-> Add the deployed pending-epoch status panel here. It should distinguish **Before activation**, **Ready to finalize**, **Finalized—claim shares** and **Cancellation reopened** without implying that a pending request already owns active shares.
+The expected time is not a completion guarantee. Check:
 
-### The claimed share amount differs from the request estimate
+* whether the request says **Waiting for processing**;
+* whether **Hourly processing paused** is displayed;
+* market-price freshness and live-pricing availability;
+* safety restrictions, an unresolved pool shortfall or Senior impairment; and
+* keeper and network availability.
 
-Pending requests use one final batch share price for the complete epoch. The final share count can differ from the request-time estimate because tranche economics and the frozen-oracle surcharge state can change before finalization.
+There is no user processing button. Monitor the request and its eligibility gates. When the automated LP worker is enabled and healthy, it submits eligible processing; otherwise progress requires another permissionless caller. Once processing succeeds, **Shares ready** appears. Those shares already participate in vault performance while held by the vault, but they are not wallet-held until **Move shares to wallet** confirms.
 
-Finalization:
+### The share amount differs from the request estimate
 
-* Reconciles the HousePool
-* Fixes the batch share price
-* Applies any active frozen-oracle surcharge
-* Moves batch USDC into the HousePool
-* Mints batch shares into vault escrow
+**Estimated shares** is calculated before processing. The final batch result can differ because share price and pool economics can change while the request waits.
 
-Compare the finalized batch details with the claimed share amount. Do not treat the request-time estimate as a guaranteed conversion rate.
+Compare the processed request and final share amount. Do not treat the preview or pending-card estimate as a guaranteed conversion rate.
 
-### My shares do not appear after claiming
+### My shares do not appear after `Move shares to wallet`
 
-Check the claim transaction before trying again:
-
-1. Confirm that it succeeded onchain.
+1. Confirm that the transaction succeeded onchain.
 2. Confirm the owner and recipient addresses.
-3. Confirm the selected tranche and epoch ID.
-4. Read the Senior or Junior Vault share balance directly.
+3. Confirm the selected tranche and deposit reference.
+4. Read the `psLP` or `pjLP` balance directly.
 5. Refresh the application.
-6. Confirm whether the pending request cleared.
+6. Confirm that the pending deposit cleared.
 
-A finalized epoch holds shares in vault escrow until each depositor claims. Finalization alone does not transfer shares to the owner wallet.
+Moving shares to the wallet starts or restarts the one-hour withdrawal cooldown for the wallet's complete position in that vault. A zero **Shares available to withdraw** value immediately afterward is expected; use the displayed **Available in** countdown.
 
-### `Withdrawable now` is zero
+### My withdrawal request is pending
 
-Check each independent restriction:
+A confirmed **Queue withdrawal** transaction locks the estimated shares. It does not send USDC to the wallet.
 
-* **Share state:** you must hold active shares, not only a pending request or unclaimed epoch allocation.
-* **Holder cooldown:** an immediate deposit or successful prior withdrawal can make `maxWithdraw` and `maxRedeem` return zero for one hour.
-* **Withdrawal reserves:** trader liabilities, outstanding claims, USDC already set aside to fund claims and other protected amounts reduce free liquidity.
-* **Tranche priority:** Junior withdraws only from free liquidity above the complete Senior principal.
-* **Oracle state:** stale or over-stale data can restrict the action.
-* **Degraded mode:** LP withdrawals are blocked until effective solvency is restored and the latched mode is explicitly cleared.
+![Pending deposit and withdrawal records with their current actions.](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
 
-A HousePool pause blocks new deposits but does not, by itself, block protective withdrawals. If the withdrawal is unavailable, identify the separate restriction rather than assuming that a deposit pause explains it.
+Before the expected processing time, the request shows **Pending** and can show **Cancel withdrawal**. After that time:
 
-Withdrawal capacity may improve after positions close, liabilities are released, additional cash enters the HousePool or valid oracle data returns. There is no guaranteed recovery time.
+* **Waiting for USDC** means the expected processing epoch has arrived or passed but no USDC has been allocated; another settlement gate may still be blocking funding.
+* **USDC ready** means funded assets can be moved with **Move USDC to wallet**; a zero-value share remainder may also be returnable.
+* **Shares ready to return** means a remaining share amount quoted to zero assets and can be reclaimed with **Return shares to wallet**.
 
-See [**Withdraw liquidity**](withdraw-liquidity.md) and [**Settlement liquidity and trader claims**](../how-plether-works/settlement-liquidity-and-trader-claims.md#what-is-a-trader-claim).
+Ordinary insufficient-liquidity remainders stay queued for later funding. A partially funded request can expose both wallet-move actions, with **USDC ready** shown as the status while any assets are claimable.
 
-### Junior has value but cannot withdraw
+Do not submit a duplicate request for shares already locked in the vault.
 
-Junior is subordinate to the complete Senior claim for withdrawals.
+### `Shares available to withdraw` is zero
 
-Conceptually:
+Check these independent conditions:
 
-```
-Junior maximum withdrawal
-= min(
-    Junior principal,
-    max(free USDC − Senior principal, 0)
-  )
-```
+* **Wallet share state:** queued or returnable shares are not wallet-held shares.
+* **Cooldown:** receiving deposit shares, cancelled-withdrawal shares or a returned zero-value remainder starts or restarts the one-hour countdown for the complete tranche position.
+* **Vault request limit:** current vault rules may make fewer shares eligible than the wallet balance.
+* **Live data:** unavailable wallet or vault reads disable the preview.
 
-If free USDC does not exceed Senior principal, Junior's pool-level cap is zero. This does not, by itself, mean the Junior shares have zero accounting value.
+The page shows **Available in** while the cooldown is active and **Withdrawal cooldown active** in the action panel. Wait for the countdown rather than estimating from transaction time.
 
-If the Junior pool-level cap is positive but the holder's `Withdrawable now` remains zero, check the cooldown, oracle freshness, degraded mode and other holder or protocol-state gates.
+Pool liquidity is a separate question. A positive share limit lets the holder queue a request; it does not guarantee that USDC will be allocated at the first eligible hour.
 
-There is no queue position to claim and no action that bypasses Senior priority. Recheck `Free liquidity`, `Withdrawal reserve`, `Pool withdrawal cap` and the holder gates after protocol conditions change.
+### Junior is waiting for USDC
 
-### My withdrawal was rejected
+Trader obligations and the liability-scaled settlement buffer are protected first. Among LP requests, matured Senior demand is funded before Junior. Once that queue is clear, Junior remains capped by free cash, Junior principal and the governed Senior-share ratio.
 
-The in-progress `Vaults` flow accepts a USDC amount:
+This can leave a Junior request at **Waiting for USDC** while Junior shares still have positive value. Monitor **Available liquidity**, **Reserved for trader withdrawals**, **Available withdrawal liquidity** and **New withdrawal funding**. There is no control that bypasses Senior priority and no guaranteed funding time.
 
-1. Select `withdraw`.
-2. Enter `Amount to withdraw`.
-3. Select `Review withdraw`.
-4. Review `Withdrawal preview`.
-5. Confirm `Withdraw USDC`.
+### The network-switch control appears, `Review withdrawal` is disabled or the quote changed
 
-It does not currently expose a share-count or **Redeem** control.
+On the wrong network, the primary control is **Switch to Arbitrum Sepolia**, not a disabled **Review withdrawal** button. Switch first; the review control returns only after the connected wallet is on the required network.
 
-Check:
+The withdrawal form accepts a target USDC amount and converts it to **Estimated shares used**. Check:
 
-* The amount is no greater than the latest `Withdrawable now` or `maxWithdraw` value.
-* The holder cooldown has expired.
-* The current development frontend's ordinary withdrawal amount is at least `1 USDC`; deployed vault rules remain authoritative.
-* A sub-`1 USDC` request is a complete residual exit, not a partial withdrawal.
-* The current `Market state` permits LP exit.
-* If the withdrawal requires a reconciliation mark, the accepted oracle data is not beyond the extended frozen-market window; no mark may be needed when there is no open liability to reconcile.
-* The protocol is not in degraded mode.
-* The owner wallet has enough Arbitrum Sepolia ETH.
-* The transaction targets the verified selected tranche vault.
+* the amount is positive and valid;
+* the estimate is available;
+* estimated shares do not exceed **Shares available to withdraw**;
+* the cooldown has expired;
+* the required action data is available.
 
-The vault reconciles accounting at withdrawal time. If the previewed amount is no longer permitted, request a fresh preview and reduce the amount or wait for conditions to change.
+A partial withdrawal request must estimate to at least the vault's live minimum, currently `1 USDC`. The contract allows a smaller dust amount only when the request exits all remaining requestable shares. The interface may not catch this minimum before submission, so a reviewable amount can still revert onchain.
 
-### I cannot make a second partial withdrawal
+The quote is refreshed before the preview opens. If it changes or cannot be refreshed, use the latest estimate and do not rely on an older preview.
 
-Every successful withdrawal or redemption resets the holder's one-hour cooldown. This includes a partial withdrawal.
+### I cannot cancel a withdrawal
 
-The remaining shares stay invested, but `maxWithdraw` and `maxRedeem` normally return zero until the new cooldown expires. The current interface does not show a countdown; wait for the one-hour holder period to pass, then request a fresh live maximum.
+**Cancel withdrawal** is available only while locked shares remain pending before their processing epoch. Once the expected processing epoch has begun, ordinary cancellation is unavailable even when the status is **Waiting for USDC**.
 
-Plan partial exits with this reset in mind. The protocol does not queue the remaining amount for automatic execution.
+If cancellation succeeds, **Return shares to wallet** is not needed: the cancellation transaction returns the shares and restarts the one-hour cooldown. Verify the wallet share balance and **Available in** countdown before attempting another request.
 
-### My remaining balance is below the minimum
+### `USDC ready` did not change my wallet balance
 
-The current development frontend enforces `1 USDC` as its ordinary withdrawal minimum. It rejects a smaller partial withdrawal; the deployed interface and onchain vault rules remain authoritative.
+Eligible funding and wallet delivery are separate. Select **Move USDC to wallet**, confirm the owner-wallet transaction, then verify:
 
-A complete dust exit can still be permitted when your **entire remaining tranche claim** is below the minimum. Submit the complete residual amount after the holder cooldown, subject to the same withdrawal firewall, oracle and protocol-state checks.
+* the Arbiscan receipt targets the selected vault;
+* the wallet USDC balance increased;
+* **USDC ready for wallet** decreased; and
+* the corresponding pending request cleared or shows only a remaining portion.
 
-The dust exception does not bypass a zero tranche cap or degraded mode.
+Do not infer wallet receipt from **USDC ready** alone.
 
-### A frozen withdrawal burns more shares than expected
+### `Shares ready to return` is shown
 
-The current `Vaults` interface uses `withdraw(assets)`: the amount entered is the target USDC wallet receipt. Check whether the onchain `oracleFrozen` state was active when the withdrawal was submitted.
+The remaining shares quoted to zero assets during settlement and entered the terminal refund state. Select **Return shares to wallet** and confirm the owner-wallet transaction. A remainder that merely lacks current liquidity stays queued instead.
 
-During `oracleFrozen`:
+Returning shares restarts the one-hour cooldown for every share in the wallet's position in that tranche. The returned shares remain exposed to subsequent vault gains and losses.
 
-* A tranche-specific surcharge increases the shares required to deliver the entered USDC amount.
-* The retained amount remains inside the same tranche for incumbent LPs.
-* The retained amount does not go to the protocol treasury or the other tranche.
+### A frozen-pricing withdrawal uses more shares than expected
 
-Senior and Junior can use different live rates. A scheduled close-only runway alone does not activate this surcharge.
+When `oracleFrozen` is active, the action panel shows **Temporary withdrawal surcharge active** with the tranche's current rate. The preview includes that current fee in the share quote.
 
-Compare the confirmed share burn with the refreshed vault quote and onchain tranche rate. The current development preview shows whether the surcharge is active but does not itemize a numeric rate or share-cost decomposition. Do not assume a fixed rate from an earlier session.
+For the same target USDC, the frozen-pricing quote can require more shares than an ordinary quote. The request locks that quoted share amount. Those shares remain exposed to share-price and fee-state changes while queued, so final USDC is set at processing and can differ from the target; the vault does not pull extra shares later. Senior and Junior can use different rates.
 
-A separate share-denominated `redeem(shares)` path would return less USDC while the surcharge is active, but the current interface does not expose that control.
+A scheduled close-only period does not activate the surcharge by itself. If pricing becomes too old for the bounded frozen policy, the request can wait for valid pricing. When the withdrawal is not urgent, wait for live pricing and request a fresh quote.
+
+### A pause or safety restriction is active
+
+Do not assume every pause disables every vault action:
+
+* **Hourly processing paused:** new deposit and withdrawal requests can still be submitted when other limits permit; pre-boundary cancellations and already-ready move or return actions remain available. New deposits do not start earning and withdrawals receive no new funding until processing resumes.
+* **Safety pause active:** new deposits are disabled, but otherwise eligible withdrawal requests remain available.
+* **Safety restrictions active** (degraded mode): deposits are disabled; otherwise eligible withdrawal requests remain available, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears degraded mode. Already-funded actions remain usable.
+* **Live pricing unavailable:** deposits are disabled; withdrawal requests can remain available with a temporary surcharge under the bounded frozen-pricing rules.
+
+Read **New withdrawal funding** and the individual request status to distinguish request submission from eligible funding.
+
+### `Older activity is unavailable`
+
+Request discovery uses block-explorer history plus recent onchain request IDs. If explorer discovery fails, the page warns that older unfinished activity is unavailable but continues checking recent requests through the public lens.
+
+Select **Retry history**. Also verify the wallet address, selected tranche, request reference and transaction directly onchain before assuming an older request is gone.
 
 ### My share value declined
 
-Vault shares are not fixed at `1 USDC`. Their value can rise or fall as the tranche earns revenue, pays trader obligations and moves losses through the waterfall.
+Vault shares are not fixed at one USDC. Value can fall through trader profits and rebates, liquidation shortfalls, bad debt, operational failures and losses assigned through the waterfall. Junior also funds the Senior target return and pays its configured annual vault fee through share issuance.
 
-Value can decline through:
+Plether uses one signed Terminal NAV snapshot: marked trader gains reduce LP value, while marked trader losses can increase it only up to a collateral- and claim-capped collectible amount. That receivable is not physical cash until collected, so share value and available withdrawal liquidity can differ.
 
-* Profits paid or owed to traders
-* VPI[^vpi] rebates paid by the pool
-* Liquidation shortfalls and bad debt
-* Oracle, smart-contract, stablecoin and operational failures
-* The Senior target coupon, from Junior's perspective
-
-Plether also treats unrealized trader gains as liabilities while refusing to treat unrealized trader losses as spendable LP assets before they are realized. This conservative accounting can make share value and withdrawable USDC differ.
-
-Review [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md), [**LP risks and safeguards**](lp-risks-and-safeguards.md) and the confirmed HousePool events. A declining value is not automatically an interface error.
+Review [**Understand LP returns and share value**](understand-lp-returns-and-share-value.md), [**LP risks and safeguards**](lp-risks-and-safeguards.md) and confirmed pool events before treating a decline as an interface error.
 
 ### Senior return is below the target
 
-The Senior coupon is a target funded from available Junior principal. It is not a guaranteed APY[^apy], external yield or separate debt claim.
+The Senior return is targeted, not guaranteed. It is funded from available Junior capital. If Junior cannot fund the complete amount, Senior receives only what is available, and an unpaid portion does not become accumulating debt.
 
-If Junior cannot fund the complete coupon:
+Senior can also lose value after Junior is exhausted. Check **Current Senior capital**, **Protected balance**, **Amount still to recover** and **Junior capital**.
 
-* Senior receives only the available amount.
-* Junior cannot fall below zero.
-* The shortfall does not become a debt that automatically accrues later.
+### Pool values do not match my position
 
-Senior can also lose principal after Junior is exhausted. Check the current Senior principal, high-water mark and Junior capital before treating a lower-than-target result as a calculation failure.
+Read each metric as a separate question:
 
-### `Pool liquidity` does not match my LP position
+* **Total pool funds** is canonical physically backed pool depth: the smaller of raw HousePool assets and accounted assets, excluding quarantined excess; it is not necessarily the literal token balance.
+* **Available liquidity** is cash remaining after protected amounts.
+* **Reserved for trader withdrawals** is set aside ahead of LP funding.
+* **Current value** is the accounting value of the wallet-held vault shares.
+* **Shares available to withdraw** is the share request limit after holder-level rules.
+* **Available withdrawal liquidity** is the selected tranche's estimated pool-level funding capacity.
+* **USDC ready for wallet** has already been allocated to processed withdrawals.
 
-The Perps page's `Pool liquidity` figure represents free HousePool USDC after protected reserves.
+None of these values is interchangeable with another.
 
-It is not:
+### My vault transaction is pending or failed
 
-* Total HousePool assets
-* Total Senior or Junior NAV[^nav]
-* Your tranche's share value
-* Your personal `Withdrawable now`
+1. Check the transaction hash in Arbiscan.
+2. Confirm the connected owner wallet, Arbitrum Sepolia network and selected vault.
+3. Identify the exact step: **Approve USDC**, **Queue deposit**, **Queue withdrawal**, cancellation, **Move shares**, **Move USDC**, or a return action.
+4. Compare the onchain allowance, request state, wallet balances and vault balances with the intended transition.
+5. Submit a fresh transaction only after the first transaction's result is known.
 
-In `Vaults`, read `Current value`, `Share price`, `Withdrawable now`, `Pool withdrawal cap`, `Free liquidity` and `Withdrawal reserve` as separate measurements.
-
-### My LP transaction is pending or failed
-
-LP actions are submitted from the owner wallet and are not currently gas-sponsored.
-
-1. Check the transaction hash in the block explorer.
-2. Confirm the connected owner wallet and network.
-3. Confirm the selected tranche-vault target.
-4. Check whether the transaction is still pending, confirmed or reverted.
-5. Compare the onchain vault balance, request state or share balance with the intended action.
-6. Submit a fresh transaction only after the first transaction's result is known.
-
-A successful approval changes allowance only. A successful pending request creates escrowed USDC only. Successful finalization creates batch shares in vault escrow. Successful claiming transfers active shares. Successful withdrawal burns the quoted shares and sends the requested USDC amount. Identify which transition actually confirmed before repeating the next step.
+A successful approval changes allowance only. A successful request creates a queued balance only. Eligible processing creates ready shares or USDC and can terminally refund a zero-value remainder; the separate holder action moves that value to the wallet.
 
 ### When reporting a problem
 
 Collect:
 
-* Transaction hash
-* Connected owner-wallet address
-* Network
-* Senior or Junior Vault address
-* Action attempted
-* Amount and share balance
-* Pending epoch ID, if relevant
-* `Current value`, `Share price` and `Withdrawable now`
-* `Pool withdrawal cap`, `Free liquidity` and `Withdrawal reserve`
-* Holder cooldown expiry
-* Oracle timestamp and `Market state`
-* Exact interface or contract error
+* transaction hash;
+* connected owner-wallet address;
+* network;
+* Senior or Junior Vault address;
+* action and amount;
+* deposit or withdrawal reference;
+* **Expected processing** and current status;
+* **Current value**, **Shares available to withdraw** and **USDC ready for wallet**;
+* **Available liquidity**, **Reserved for trader withdrawals**, **Available withdrawal liquidity** and **New withdrawal funding**;
+* cooldown expiry;
+* oracle state and temporary fee;
+* exact interface or contract error.
 
-Never share a private key, seed phrase or an unrelated wallet signature.
+Never share a private key, seed phrase or unrelated wallet signature.
 
 For the complete operational path, return to [**Liquidity provider quickstart**](../liquidity-provider-quickstart.md). For the canonical mechanics, see [**The HousePool and tranche waterfall**](../how-plether-works/the-housepool-and-tranche-waterfall.md).
 
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^vpi]: Virtual Price Impact, a separate USDC charge or rebate based on how a trade changes HousePool directional imbalance.
-[^apy]: Annual percentage yield, an annualized return measure that includes compounding.
-[^nav]: Net asset value, the accounting value of a pool or tranche after assets and liabilities.

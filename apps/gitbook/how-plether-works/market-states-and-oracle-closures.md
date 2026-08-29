@@ -106,7 +106,7 @@ During these intervals:
 * Live-market oracle protections remain active
 * Normal signed VPI[^vpi] and its lifetime rebate clamp remain active
 * The frozen-close spread is not active
-* Frozen LP[^lp] entry and exit surcharges are not active
+* Frozen LP[^lp] withdrawal surcharges are not active
 
 A close submitted during this period still requires a valid post-commit observation. Plether does not accept an older price merely because the market is close-only.
 
@@ -390,51 +390,47 @@ The normal LP rules remain in force:
 * Ordinary freshness requirements
 * Tranche[^tranche] liquidity limits
 * Senior impairment rules
-* Deposit cooldowns
-* Pending deposit epochs
+* One-hour holder cooldowns
+* Hourly deposit and withdrawal requests
 * No frozen-market surcharge
 
 The fact that trader openings are blocked does not itself change LP share pricing.
 
 #### Oracle frozen
 
-LP entry and exit may remain available while the stored mark remains within the frozen-market limit.
+New vault deposits are unavailable while the interface cannot obtain live pricing. Withdrawal requests may remain available while the stored mark is within the frozen-market limit, although their eventual funding still depends on the hourly processing gates.
 
-The trader frozen-close spread and the tranche-specific LP action surcharge are different charges:
+The trader frozen-close spread and the tranche-specific LP withdrawal surcharge are different charges:
 
 * A collected trader spread becomes LP-owned HousePool revenue and never protocol treasury revenue.
-* An LP action surcharge remains inside the tranche in which it was charged.
+* An LP withdrawal surcharge remains inside the tranche in which it was charged.
 * A trader spread waived on a terminal full close is not LP revenue or bad debt.
 
-A tranche-specific frozen surcharge applies to LP entry and exit:
+A tranche-specific frozen surcharge applies when an eligible queued withdrawal is funded under frozen pricing:
 
-* Depositors receive fewer shares
-* Minting a target number of shares requires more USDC
-* Redeemers receive less USDC
-* Withdrawing a target amount requires more shares
+* Redeeming a fixed number of shares returns less USDC
+* Withdrawing a target USDC amount requires more shares in the request-time quote
 
 The retained value stays in the same tranche for the benefit of its incumbent LPs.
 
 The current settings are:
 
-| Tranche | Frozen entry and exit surcharge |
-| ------- | ------------------------------- |
-| Senior  | 0.25%                           |
-| Junior  | 0.75%                           |
+| Tranche | Frozen withdrawal surcharge |
+| ------- | --------------------------- |
+| Senior  | 0.25%                       |
+| Junior  | 0.75%                       |
 
 These are timelocked pool parameters and should be read from the live contract or interface before acting.
 
-Immediate deposits remain available only when no trader positions are open. When positions exist, pending deposit epochs remain the ordinary entry path.
-
-If an epoch is finalized while oracle-frozen policy is active, its share calculation uses the frozen pricing rules active at finalization.
+The interface blocks new deposit requests while the oracle is frozen, and deposit activation is deferred until the entry gates—including live pricing—clear. Deposits do not pay the frozen withdrawal surcharge. For withdrawals, the preview includes the current temporary fee in the share quote. The queued share amount is fixed; if pricing or fee state changes before processing, the final USDC receipt changes rather than the vault pulling additional shares.
 
 #### Oracle data over-stale
 
 When trader liabilities require a mark and the available mark exceeds the frozen limit:
 
-* Deposit finalization can be blocked
-* Withdrawals and redemptions can be blocked
-* Public withdrawal capacity can fall to zero
+* Hourly deposit and withdrawal processing can be blocked
+* Pending withdrawals can remain in **Waiting for USDC**
+* Available withdrawal liquidity can fall to zero
 
 If there are no open trader liabilities requiring mark-to-market accounting, freshness may not be required solely for LP reconciliation. All other tranche, liquidity and lifecycle restrictions still apply.
 
@@ -483,7 +479,7 @@ Calendar mode and oracle freshness are not the only controls. Other protocol ove
 | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | Router paused                   | Blocks new opening and increase commitments; reductions, queued execution, liquidations and mark updates remain available where otherwise valid |
 | HousePool paused                | Blocks new LP deposits; eligible LP withdrawals and trader operations are evaluated separately                                                  |
-| Degraded mode                   | Blocks new trader risk and LP withdrawals while preserving reductions, liquidations, margin additions and recovery actions                      |
+| Degraded mode                   | Blocks new trader risk and new LP deposits; otherwise-eligible LP withdrawal requests can still queue, but no new withdrawal USDC is allocated until effective solvency recovers and the protocol owner explicitly clears the mode |
 | Trading inactive or configuring | The market is not yet active for new trader risk                                                                                                |
 | Oracle stale                    | Blocks actions requiring a valid current or bounded-frozen price                                                                                |
 
@@ -535,8 +531,8 @@ Unlike the fixed `2.00` index boundary, the following values are timelocked risk
 | Maximum frozen oracle age       | 3 days                    |
 | Additional closure-day runway   | 1 hour                    |
 | Frozen-close spread             | 0.50% of reduced notional |
-| Senior frozen LP surcharge      | 0.25%                     |
-| Junior frozen LP surcharge      | 0.75%                     |
+| Senior frozen withdrawal surcharge | 0.25%                  |
+| Junior frozen withdrawal surcharge | 0.75%                  |
 
 The frozen-close spread is separate from VPI. It is part of the 48-hour timelocked risk configuration, must remain nonzero.
 
@@ -568,10 +564,10 @@ During oracle-frozen operation:
 For LPs:
 
 * Check whether the protocol is actually oracle-frozen or only close-only
-* Review the active tranche surcharge
-* Check withdrawal capacity and cooldown
-* Confirm whether a deposit will enter immediately or through a pending epoch
-* Do not assume a frozen-window withdrawal is unlimited or guaranteed
+* Review the active tranche withdrawal surcharge
+* Check available withdrawal liquidity, shares available to withdraw and the holder cooldown
+* Confirm the expected hourly processing time and whether new deposits are currently available
+* Do not assume a frozen-window withdrawal request will be funded at its estimate or expected time
 * Count only collected frozen-close spread as LP revenue; waived spread is not an LP receivable
 
 ### The central distinction

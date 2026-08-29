@@ -1,211 +1,189 @@
 # Manage a pending deposit
 
-When trader positions are open, Plether routes ordinary LP[^lp] deposits through a **pending deposit epoch**. The request moves USDC[^usdc] into the selected tranche[^tranche] vault, but it does not immediately create wallet-held shares or an immediately withdrawable LP position.
+Every accepted Plether liquidity-provider (LP)[^lp] deposit is queued for hourly processing. The request moves USDC[^usdc] into the selected Senior or Junior tranche[^tranche] vault, but it does not immediately put vault shares in the owner wallet.
 
-A pending deposit has five distinct stages:
+The normal lifecycle is:
 
 ```text
-Request → Escrow → Activation → Finalization (claimable shares in escrow) → Claim (shares in owner wallet)
+Queue deposit → Pending → Eligible hourly settlement → Shares ready → Move shares to wallet
 ```
 
-No shares exist for the request before finalization. Finalization mints the batch shares into vault escrow, where the claimable allocation is already exposed to later tranche share-price movements. Until you claim, however, those shares are not in your owner wallet and are not available for withdrawal.
+Two recovery outcomes are also possible:
 
-> **Current interface status**
->
-> The `Vaults` interface is under development and is not yet part of the published testnet application. The current development branch supports funded requests, persistent request discovery, pre-activation cancellation, permissionless epoch finalization, and share claiming. Historical APY and full vault-activity indexing remain unavailable.
->
-> Control names in square brackets on this page describe the intended flow. Do not try to reproduce them with the Margin Account’s existing `Deposit` control; that funds a trader account, not a tranche vault.
->
-> LP approvals, requests, finalization, cancellation and claims are not currently gas-sponsored. When the controls become available, keep enough network ETH for every transaction you may need.
+```text
+Pending → Cancel deposit → USDC returned
+Aggregate deposit quote rounds to zero → Epoch rejected → Refund available → Return USDC to wallet
+```
 
-> **Screenshot placeholder — pending deposit lifecycle**
->
-> Add a screenshot of **Vaults → Your position** showing the epoch ID, requested amount, activation time, lifecycle status and the next available action after the interface is published.
+There is no user-facing `Finalize epoch` step. The settlement path is permissionless, and an enabled, healthy keeper[^keeper] can submit eligible hourly processing.
 
-### When Plether uses a pending epoch
+![Pending deposit records with their expected processing time, status and available actions.](../.gitbook/assets/screenshots/storybook-documentation-vaults--pending-activity.png)
 
-The protocol allows an immediate deposit only when no trader positions are open and every deposit safety gate passes. Once one or more positions are open and the pending-request gates pass, the normal route is `[Request deposit]`.
+### Understand hourly processing
 
-This separation prevents new shares from being priced against an incomplete view of unrealized trader losses. Plether can reserve unrealized trader profits as liabilities, but it does not treat unrealized trader losses as spendable LP assets before collecting them.
+Deposits are grouped by expected hourly processing time. The Vaults overview shows the next processing countdown, and each queued record shows its own **Expected processing** value.
 
-| Market and pool condition | Deposit path | When you receive shares |
-| --- | --- | --- |
-| No trader positions are open and every safety gate passes | Immediate | In the deposit transaction |
-| One or more trader positions are open and the pending-request gates pass | Pending epoch | After activation, finalization and claim |
-| Deposits are paused, Senior is impaired or another deposit gate fails | Unavailable | No shares are issued |
+The contract uses the deposit transaction's block-inclusion timestamp. Inclusion strictly before the five-minute cutoff—more than five minutes before the hour—targets that processing time; inclusion at or after the cutoff targets the following hour. Signing or sending earlier is not enough if confirmation lands after the cutoff, so treat the confirmed deposit record as authoritative.
 
-For the broader pricing rationale, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md#why-deposit-and-withdrawal-pricing-differ).
+The displayed time is an expectation, not a guaranteed completion time. Processing can wait when hourly settlement is paused or when the protocol cannot safely reconcile the pool. Do not submit a duplicate merely because the expected time has passed.
 
 ### Read the lifecycle correctly
 
-| Stage | Where the value is | Can you normally cancel? | What happens next |
+| Status | Where the value is | What it means | Available action |
 | --- | --- | --- | --- |
-| **Requested, before activation** | USDC in vault escrow | Yes | Wait for activation or cancel |
-| **Active, awaiting finalization** | USDC in vault escrow | No | Anyone may finalize the epoch |
-| **Finalized, unclaimed** | Claimable batch shares in vault escrow; their USDC value moves with the tranche share price | No | You claim your proportional shares |
-| **Claimed** | Shares in your owner wallet | Not applicable | The wallet-held shares can enter the normal withdrawal flow |
+| **Pending** | USDC in vault escrow | The expected processing time has not passed | Wait or **Cancel deposit** |
+| **Waiting for processing** | USDC in vault escrow | The expected time passed, but neither ready shares nor a refund exists yet | Wait and check live protocol status |
+| **Shares ready** | Processed shares held by the vault for you | The deposit is active and participates in vault performance | **Move shares to wallet** |
+| **Refund available** | Recoverable USDC held by the vault | The processed batch's aggregate deposit quote rounded to zero shares, so the epoch was rejected | **Return USDC to wallet** |
 
-Senior impairment creates one important exception: if it prevents an active epoch from finalizing, the special cancellation path becomes available again.
+Pending USDC is not part of the active share balance. Once **Shares ready** appears, the allocation is active even though the shares have not yet been moved into the wallet.
 
-### 1. Request the deposit
+### 1. Verify the submitted request
 
-Before requesting, confirm:
+After the transaction flow reports **Deposit submitted**, select **View activity** or open **Vaults → Your position**.
 
-* The selected vault is **Senior** or **Junior**, as intended.
-* The spender in any USDC approval is the verified tranche vault.
-* The preview says **Pending deposit epoch** rather than **Immediate deposit**.
-* Your owner wallet has the deposit USDC and enough network ETH for the approval and request.
-* You understand the estimated activation time and the point after which ordinary cancellation stops.
+Match the record to the transaction using:
 
-If the vault allowance is insufficient, approving USDC and submitting `[Request deposit]` are separate transactions.
+* the selected Senior or Junior Vault;
+* **Deposit reference**;
+* deposited USDC amount;
+* **Expected processing**; and
+* estimated shares.
 
-After a successful request:
+The request transaction—not an allowance approval—is proof that the deposit entered the queue. If an approval confirmed but no record appears, check whether the separate **Queue deposit** transaction was submitted and confirmed.
 
-* The USDC leaves your wallet immediately.
-* The selected vault holds it in escrow.
-* The request receives an epoch ID.
-* You do not yet hold active vault shares.
-* The escrowed USDC does not yet earn the Senior coupon or Junior residual return.
-* The request-time share estimate remains provisional.
-
-The current contracts use one-hour epoch identifiers and assign requests two epoch IDs ahead. Depending on when you submit during the current hour, activation is roughly one to two hours later. Treat the displayed activation time as the operational reference.
-
-Record the request transaction and epoch ID. They are the fastest way to distinguish a valid pending request from an approval that succeeded without a request.
+Record the transaction hash and deposit reference before closing the application.
 
 ### 2. Use the cancellation window
 
-Before the activation epoch begins, the request owner can normally select `[Cancel request]`.
+While the record is **Pending**, the interface can offer **Cancel deposit**.
 
 A successful cancellation:
 
-* removes the request;
-* returns the complete escrowed USDC amount to the owner wallet; and
-* issues no tranche shares.
+* removes the pending request;
+* returns the escrowed USDC to the owner wallet; and
+* creates no vault shares.
 
-Check the transaction result and wallet balance before submitting a replacement request.
+Open the cancellation modal, verify the deposit reference and **USDC returned**, then confirm **Cancel deposit** in the owner wallet.
 
-The cancellation boundary is the activation epoch, not finalization. Waiting until the batch is ready to finalize is too late for ordinary cancellation.
+Once the expected processing time has passed and the record changes to **Waiting for processing**, ordinary cancellation is no longer offered. A processing delay does not reopen the earlier cancellation action.
 
-### 3. Understand activation
+Do not submit repeated cancellation or deposit transactions while the first transaction's result is unknown.
 
-When the activation epoch begins, the request normally becomes binding:
+### 3. Wait for eligible settlement
 
-* ordinary cancellation becomes unavailable;
-* the USDC remains in vault escrow;
-* the batch price is still not fixed; and
-* no active shares have been delivered.
+When LP settlement is enabled, a healthy keeper monitors eligible hourly work and submits the protocol-maintenance transaction. The current interface does not let users finalize the batch themselves. If the keeper path is disabled or unavailable, the request can remain waiting beyond its expected time.
 
-Activation only makes the epoch eligible for finalization. Time passing does not complete the remaining lifecycle for the depositor: the epoch must still be finalized, then the depositor must claim.
+When processing succeeds, the protocol:
 
-### 4. Finalize the epoch
+1. reconciles HousePool and tranche accounting;
+2. determines the batch share conversion;
+3. moves the accepted USDC into the HousePool; and
+4. creates the depositor's share allocation in vault custody.
 
-Epoch finalization is permissionless. The application, a keeper[^keeper], the depositor or any other user may submit it once the epoch is eligible and the safety checks pass.
+Depositors processed together use the same batch accounting. The final share amount can differ from the request estimate because the tranche share price and pool economics can change before processing.
 
-Finalization performs the batch transition:
+Before processing completes:
 
-1. Reconcile the HousePool and tranche accounting.
-2. Fix one share price for the complete epoch.
-3. Apply the tranche’s active oracle-frozen[^oracle] surcharge, if any.
-4. Move the batch USDC from vault escrow into the HousePool.
-5. Mint the batch shares into vault escrow.
+* you do not hold wallet shares;
+* the estimate is not a locked conversion rate; and
+* the queued USDC is not available for trading or wallet withdrawal.
 
-Every depositor in the epoch receives shares from the same batch calculation, proportional to their funded request.
+### If processing is late
 
-Finalization does not send those shares directly to each wallet. It only makes the depositor’s share allocation claimable.
+**Waiting for processing** means the expected time passed without a completed allocation or refund.
 
-#### Finalization is permissionless, not guaranteed to be immediate
+Check:
 
-The current design does not assign a separate protocol bounty to epoch finalization. Permissionless means that anyone *can* finalize; it does not promise that a particular actor will do so at the first eligible block.
+* whether **Hourly processing paused** is shown;
+* whether deposits are past their expected processing time;
+* market-price freshness and live-pricing availability;
+* active safety restrictions or an unresolved pool shortfall; and
+* the request transaction and latest onchain state.
 
-If an activated epoch has not finalized:
+A delayed record does not imply that the deposit was lost, cancelled or ready to claim. It also does not create a user **Finalize** action. Wait for eligible settlement or for the interface to expose a terminal shares/refund state.
 
-* do not submit a second deposit merely because the first one is still waiting;
-* check whether the activation time has actually passed;
-* check the oracle and protocol state;
-* check for Senior impairment; and
-* use `[Finalize epoch]` only when the interface enables it and its preview passes.
+### 4. Move ready shares to the wallet
 
-#### The final price can differ from the request estimate
+When processing succeeds, the record changes to **Shares ready** and shows **Shares ready for wallet**.
 
-The request commits USDC before its exact share amount is known. The final number of shares can change because:
+The processed shares already participate in vault performance while held in vault custody. To complete delivery:
 
-* tranche accounting changes before finalization;
+1. Open the matching record under **Vaults → Your position**.
+2. Verify the deposit reference and share quantity.
+3. Select **Move shares to wallet**.
+4. Review the modal and confirm **Move shares**.
+5. Wait for the transaction to confirm.
+6. Verify the wallet-held `psLP` or `pjLP` balance and updated position value.
+
+Moving shares into the wallet starts or restarts the one-hour withdrawal cooldown for the owner's entire position in that vault. Until the countdown ends, those shares cannot be transferred or used for a withdrawal request.
+
+The delivery transaction does not create a separate interest payment. Senior targeted return, HousePool revenue and losses are reflected through the value of the vault shares.
+
+### 5. Recover a refundable deposit
+
+If the processed batch's aggregate deposit quote rounds to zero shares, the contract rejects that epoch. The status changes to **Refund available** and the record shows **USDC ready to return**. Pause, stale pricing, impairment, caps and shortfalls ordinarily defer activation or enable an exceptional mature cancellation rather than creating this refund state.
+
+To recover it:
+
+1. Open the matching record.
+2. Verify the deposit reference and refundable USDC amount.
+3. Select **Return USDC to wallet**.
+4. Review the modal and confirm **Return USDC**.
+5. Verify the transaction receipt and owner-wallet balance.
+
+A refund creates no vault shares. Do not submit a replacement deposit until the return transaction is confirmed and the old record no longer exposes a refundable balance.
+
+### Price and ordering risk
+
+Queueing commits USDC before the exact share amount is known. The final result can change because:
+
+* tranche accounting changes before processing;
 * trader outcomes alter the value reconciled into the waterfall;
-* the Senior coupon or restoration state changes; or
-* an oracle-frozen surcharge is active at finalization.
+* Senior targeted-return or recovery state changes.
 
-Transaction ordering is therefore a residual risk. Events included before the finalization transaction can affect the batch price; events ordered after it are not part of that finalization checkpoint. For example, an epoch could be finalized immediately before a transaction realizes a large trader loss.
+Transaction ordering remains relevant. Events included before the keeper's processing transaction can affect the batch price; later events are not part of that checkpoint.
 
-There is no request-time price lock and no request-time lock on the frozen-oracle surcharge.
+There is no request-time lock on share price or share quantity.
 
-### 5. Claim the finalized shares
+### Oracle and protocol state
 
-After the onchain epoch has finalized—and once the future interface exposes the claimable allocation:
+A scheduled close-only period does not itself stop deposit processing. Oracle-frozen operation does: new deposit requests are unavailable and previously queued deposits wait until live pricing and the other entry gates clear. Deposits do not pay the frozen-oracle withdrawal surcharge.
 
-1. Open the pending epoch under **Vaults → Your position**.
-2. Confirm the funded amount and claimable share quantity.
-3. Select `[Claim shares]`.
-4. Confirm the transaction.
-5. Verify that the shares appear under your active tranche position.
-6. Confirm that the pending request no longer shows an unclaimed balance.
+If the keeper path, pricing or another required dependency is unavailable, settlement can wait. Hourly processing may also be paused independently of new deposit submission. The Vaults page distinguishes:
 
-Claiming does not create a separate interest payment. Senior coupon, realized HousePool/LP-owned revenue and losses are reflected through the USDC value of the active vault shares.
+* **New deposits paused** — new requests are unavailable;
+* **Hourly processing paused** — queued work does not receive new processing; and
+* **Deposits past their expected processing time** — matured work remains outstanding.
 
-If the epoch is finalized but your active share balance is unchanged, first check for a separate claim action. Finalization and claim are intentionally different transactions.
+Use [Market states and oracle closures](../how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps) for the broader pricing rules.
 
-### Cancellation after Senior impairment
+### Troubleshoot by status
 
-Senior is impaired when its accounting principal is below its protected high-water mark. Ordinary deposits into both tranches are blocked during impairment.
-
-If Senior impairment prevents an already active epoch from finalizing, depositors regain a special cancellation route. This exception allows the escrowed USDC to be recovered even though the ordinary pre-activation window has closed.
-
-Use the impairment cancellation only when the interface identifies that condition. A delayed finalizer, an over-stale oracle or another failed safety gate does not by itself imply that post-activation cancellation is available.
-
-After a successful impairment cancellation:
-
-* verify that the request has cleared;
-* verify that the escrowed USDC returned to the owner wallet; and
-* do not expect tranche shares.
-
-### Oracle state and pending epochs
-
-A scheduled close-only period with a live oracle does not activate an LP surcharge. Normal epoch rules continue.
-
-When the onchain `oracleFrozen` state is active:
-
-* pending epochs remain the ordinary route while trader positions are open;
-* finalization may continue while the stored mark remains within the extended frozen-market freshness limit; and
-* the surcharge used for the batch is the live tranche rate at finalization.
-
-If the mark becomes too old even for frozen-oracle policy, finalization can be blocked until acceptable data or a protocol recovery path becomes available. See [Market states and oracle closures](../how-plether-works/market-states-and-oracle-closures.md#what-closures-mean-for-lps).
-
-### Troubleshoot by lifecycle stage
-
-| What you see | Likely meaning | What to check |
+| What you see | Likely meaning | What to do |
 | --- | --- | --- |
-| USDC approval confirmed, but no epoch appears | Only the allowance transaction completed | Look for a separate funded request transaction before retrying |
-| USDC left the wallet, but active shares are zero | The request is still in escrow or shares remain unclaimed | Check the epoch ID, activation, finalization and claim status |
-| `[Cancel request]` is unavailable | The activation epoch has probably begun | Confirm the epoch boundary; ordinary cancellation stops at activation |
-| Activation time passed, but the epoch is not finalized | Finalization has not been submitted or a gate is failing | Check oracle freshness, protocol state and Senior impairment |
-| Finalization simulation fails during Senior impairment | Deposits cannot be activated into an impaired stack | Use the special impairment cancellation path when offered |
-| Finalization is blocked by an over-stale mark | Trader liabilities cannot be reconciled with acceptable oracle data | Wait for eligible data or protocol recovery; do not assume cancellation is available |
-| Final shares differ from the preview | Request-time shares were only an estimate | Review the batch price and any frozen-oracle surcharge at finalization |
-| Epoch says finalized, but shares are missing | The allocation is still in vault escrow | Submit `[Claim shares]` and verify its receipt |
-| A pending amount does not appear in **Current value** | Pending USDC is not an active tranche claim | Track it in the pending-epoch section until claim completes |
+| Approval confirmed, but no deposit record appears | Only the allowance changed | Confirm whether **Queue deposit** was submitted before retrying |
+| USDC left the wallet, but shares are zero | The request is pending or waiting for processing | Match the deposit reference and expected processing time |
+| **Cancel deposit** is unavailable | The record is no longer in its cancellable pending stage | Read its current status; do not submit repeated cancellations |
+| **Waiting for processing** persists | Settlement is paused, delayed or blocked | Check processing, backlog, pricing and safety status; do not look for a user finalization control |
+| Final shares differ from the estimate | Processing used current batch accounting and share price | Review the processed allocation rather than the request-time estimate |
+| **Shares ready** but wallet balance is unchanged | Shares remain in vault custody | Select **Move shares to wallet** and verify its receipt |
+| **Refund available** | The processed batch's aggregate deposit quote rounded to zero shares and the epoch was rejected | Select **Return USDC to wallet** and verify the refund |
+| A pending amount is absent from position value | Queued USDC is not an active wallet-share position | Keep it separate until shares are ready or a refund is available |
 
-### Before you stop monitoring a request
+### Before you stop monitoring
 
-Confirm one—and only one—terminal outcome:
+Confirm one terminal owner outcome:
 
-* **Cancelled:** the escrowed USDC returned and no shares were issued.
-* **Claimed:** the pending entry cleared and active vault shares appeared.
+* **Cancelled:** escrowed USDC returned and no shares were created.
+* **Delivered:** ready shares were moved into the owner wallet.
+* **Refunded:** recoverable USDC was returned after processing could not complete the deposit.
 
-An approval receipt, an activation timestamp or an epoch-finalization transaction is not by itself the final depositor outcome.
+**Deposit submitted**, an expected processing timestamp or **Shares ready** alone does not mean every owner action is complete.
 
-For interpreting the resulting position, continue to [Read your LP position and pool health](read-your-lp-position-and-pool-health.md). For the complete accounting model, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md).
+For how the resulting position gains or loses value, continue to [Understand LP returns and share value](understand-lp-returns-and-share-value.md). For the complete accounting model, see [The HousePool and tranche waterfall](../how-plether-works/the-housepool-and-tranche-waterfall.md).
 
 [^lp]: Liquidity provider, a participant that supplies USDC capital to the HousePool.
 [^usdc]: A US dollar-denominated stablecoin Plether uses for margin and settlement.
 [^tranche]: A pool layer with its own loss priority, withdrawal priority and return profile.
-[^keeper]: A permissionless actor or bot that submits order-finalization or protocol-maintenance transactions.
-[^oracle]: A service that supplies external market data to smart contracts; Plether uses Pyth price feeds.
+[^keeper]: An enabled service that can submit eligible protocol-maintenance transactions, including hourly vault processing, through the permissionless settlement path.
