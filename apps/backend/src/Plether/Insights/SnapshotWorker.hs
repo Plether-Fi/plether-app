@@ -79,6 +79,8 @@ runInsightsSnapshotCycle client pool cfg multicallSize = do
     getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
   case mCompetition of
     Nothing -> putStrLn "Insights snapshot skipped: no competition is configured"
+    Just competition | not $ icrReleaseReady competition ->
+      putStrLn "Insights snapshot skipped: competition release is not bound"
     Just competition -> do
       mSafe <-
         withDb pool $ \conn ->

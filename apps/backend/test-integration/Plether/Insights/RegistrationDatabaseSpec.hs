@@ -135,7 +135,7 @@ registrationDatabaseSpec databaseUrl =
         putMVar releaseWriter ()
         takeMVar writerDone >>= either throwIO pure
         outcome <- takeMVar completionDone >>= either throwIO pure
-        outcome `shouldBe` CompletionTradingAccountUsed
+        outcome `shouldBe` CompletionWalletProofChanged
         withDb pool $ \conn -> do
           state <- query conn
             "SELECT status,owner_wallet,trading_account FROM insights_registration_applications WHERE registration_id=?::uuid"

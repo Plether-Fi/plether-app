@@ -6,7 +6,6 @@ module Plether.Database.Insights.Registration
   , OAuthChallengeConsumeResult (..)
   , XFollowMaterialRow (..)
   , WalletChallengeRow (..)
-  , ReleaseIndexerCursor (..)
   , RegistrationMutationResult (..)
   , XFollowClaimResult (..)
   , RegistrationKeyReferenceCounts (..)
@@ -36,9 +35,6 @@ module Plether.Database.Insights.Registration
   , clearVerifiedWallet
   , registrationRateLimitAllowed
   , cleanupExpiredRegistrationSecrets
-  , tradingAccountHasReleaseActivity
-  , getReleaseIndexerBlock
-  , getReleaseIndexerCursor
   , completeRegistration
   , listRegistrationEmailsForRotation
   , countRegistrationEmailsByKeyVersion
@@ -72,9 +68,6 @@ bytea = Binary
 data RegistrationCompetition = RegistrationCompetition
   { rgcSlug :: Text
   , rgcChainId :: Integer
-  , rgcReleaseRouter :: Text
-  , rgcUsdcAddress :: Text
-  , rgcReleaseManifest :: Text
   , rgcStartTimestamp :: Integer
   , rgcRegistrationOpenTimestamp :: Maybe Integer
   , rgcRegistrationCloseTimestamp :: Integer
@@ -89,9 +82,6 @@ data RegistrationCompetition = RegistrationCompetition
 instance FromRow RegistrationCompetition where
   fromRow = RegistrationCompetition
     <$> field
-    <*> field
-    <*> field
-    <*> field
     <*> field
     <*> field
     <*> field
@@ -330,23 +320,13 @@ instance FromRow WalletChallengeRow where
         (EncryptedValue keyVersion nonce ciphertext tag)
         registrationOpen
 
-data ReleaseIndexerCursor = ReleaseIndexerCursor
-  { ricConfiguredStartBlock :: Integer
-  , ricBlockNumber :: Integer
-  , ricBlockHash :: Text
-  }
-  deriving stock (Show, Eq)
-
-instance FromRow ReleaseIndexerCursor where
-  fromRow = ReleaseIndexerCursor <$> field <*> field <*> field
-
 data CompletionResult
   = CompletionSucceeded
   | CompletionAlreadySucceeded
   | CompletionClosed
   | CompletionIncomplete
   | CompletionDuplicate
-  | CompletionTradingAccountUsed
+  | CompletionWalletProofChanged
   deriving stock (Show, Eq)
 
 data RegistrationCompletionState
@@ -554,7 +534,7 @@ openRegistrationIfConfigured connection competitionSlug privacyVersion =
 getRegistrationCompetition :: Connection -> Text -> IO (Maybe RegistrationCompetition)
 getRegistrationCompetition connection competitionSlug = do
   rows <- query connection
-    "SELECT slug, chain_id, release_router, usdc_address, release_manifest, start_timestamp, registration_open_timestamp, registration_close_timestamp,\
+    "SELECT slug, chain_id, start_timestamp, registration_open_timestamp, registration_close_timestamp,\
     \ minimum_x_account_age_days, target_x_handle, rules_version, privacy_notice_version, finalized\
     \ FROM insights_competitions WHERE slug = ? AND registration_close_timestamp IS NOT NULL\
     \ AND minimum_x_account_age_days IS NOT NULL AND target_x_handle IS NOT NULL LIMIT 1"
@@ -1092,48 +1072,6 @@ cleanupExpiredRegistrationSecrets connection = do
       , rcrMayHaveMore = any (>= 500) counts
       }
 
-tradingAccountHasReleaseActivity
-  :: Connection
-  -> Integer
-  -> Text
-  -> Text
-  -> Text
-  -> IO Bool
-tradingAccountHasReleaseActivity connection chainId releaseRouter usdcAddress tradingAccount = do
-  rows <- query connection
-    "WITH target(chain_id, release_router, token_address, account) AS (VALUES (?, ?, ?, ?))\
-    \ SELECT\
-    \ EXISTS (SELECT 1 FROM perps_events e, target t WHERE e.chain_id=t.chain_id AND e.release_router=t.release_router AND e.account=t.account) OR\
-    \ EXISTS (SELECT 1 FROM perps_orders o, target t WHERE o.chain_id=t.chain_id AND o.order_router=t.release_router AND o.account=t.account) OR\
-    \ EXISTS (SELECT 1 FROM perps_account_activity a, target t WHERE a.chain_id=t.chain_id AND a.release_router=t.release_router AND a.account=t.account) OR\
-    \ EXISTS (SELECT 1 FROM perps_usdc_transfers u, target t WHERE u.chain_id=t.chain_id AND u.release_router=t.release_router\
-    \   AND u.token_address=t.token_address AND (u.from_address=t.account OR u.to_address=t.account))"
-    ( chainId
-    , normalizeAddress releaseRouter
-    , normalizeAddress usdcAddress
-    , normalizeAddress tradingAccount
-    )
-  pure $ rows == [Only True]
-
-getReleaseIndexerBlock :: Connection -> Integer -> Text -> IO (Maybe Integer)
-getReleaseIndexerBlock connection chainId releaseRouter = do
-  fmap ricBlockNumber <$> getReleaseIndexerCursor connection chainId releaseRouter
-
-getReleaseIndexerCursor :: Connection -> Integer -> Text -> IO (Maybe ReleaseIndexerCursor)
-getReleaseIndexerCursor connection chainId releaseRouter = do
-  rows <- query connection
-    "SELECT configured_start_block, last_indexed_block, last_indexed_block_hash FROM perps_indexer_state\
-    \ WHERE chain_id = ? AND release_router = ? AND indexer_name = ?\
-    \ AND configured_start_block IS NOT NULL AND last_indexed_block_hash IS NOT NULL\
-    \ ORDER BY updated_at DESC LIMIT 1"
-    ( chainId
-    , normalizeAddress releaseRouter
-    , "perps-history-costs-v1:" <> normalizeAddress releaseRouter :: Text
-    )
-  pure $ case rows of
-    [row] -> Just row
-    _ -> Nothing
-
 completeRegistration
   :: Connection
   -> ByteString
@@ -1150,7 +1088,7 @@ completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRul
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug, a.status, a.x_username, a.owner_wallet, a.trading_account,\
       \ a.x_identity_verified_at IS NOT NULL, a.x_follow_verified_at IS NOT NULL, a.wallet_verified_at IS NOT NULL,\
-      \ c.rules_version, rc.privacy_version, c.chain_id, c.release_router, c.usdc_address,\
+      \ c.rules_version, rc.privacy_version,\
       \ c.registration_open_timestamp IS NOT NULL\
       \   AND NOW() >= TO_TIMESTAMP(c.registration_open_timestamp)\
       \   AND NOW() < TO_TIMESTAMP(c.registration_close_timestamp)\
@@ -1161,9 +1099,9 @@ completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRul
       \ JOIN insights_registration_competition_config rc ON rc.competition_slug = a.competition_slug\
       \ WHERE s.session_digest = ? AND s.expires_at > NOW() FOR UPDATE OF s, a, c"
       (Only $ bytea sessionDigest)
-      :: IO [(Text, Text, Text, Maybe Text, Maybe Text, Maybe Text, Bool, Bool, Bool, Text, Text, Integer, Text, Text, Bool)]
+      :: IO [(Text, Text, Text, Maybe Text, Maybe Text, Maybe Text, Bool, Bool, Bool, Text, Text, Bool)]
     case rows of
-      [(applicationId, competitionSlug, status, maybeUsername, maybeOwner, maybeAccount, identityVerified, followVerified, walletVerified, requiredRules, storedPrivacyVersion, chainId, releaseRouter, usdcAddress, isOpen)]
+      [(applicationId, competitionSlug, status, maybeUsername, maybeOwner, maybeAccount, identityVerified, followVerified, walletVerified, requiredRules, storedPrivacyVersion, isOpen)]
         | status == "completed" -> pure CompletionAlreadySucceeded
         | not isOpen -> pure CompletionClosed
         | acceptedRulesVersion /= requiredRules
@@ -1172,34 +1110,30 @@ completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRul
         | not identityVerified || not followVerified || not walletVerified -> pure CompletionIncomplete
         | (normalizeAddress <$> maybeOwner) /= Just (normalizeAddress expectedOwner)
             || (normalizeAddress <$> maybeAccount) /= Just (normalizeAddress expectedAccount) ->
-            pure CompletionTradingAccountUsed
+            pure CompletionWalletProofChanged
         | Just username <- maybeUsername
         , Just _owner <- maybeOwner
         , Just account <- maybeAccount -> do
-            accountUsed <- tradingAccountHasReleaseActivity connection chainId releaseRouter usdcAddress account
-            if accountUsed
-              then pure CompletionTradingAccountUsed
+            updated <- execute connection
+              "UPDATE insights_registration_applications SET status = 'completed', rules_version = ?,\
+              \ privacy_version = ?, wallet_verification_block=?, wallet_verification_block_hash=?,\
+              \ completed_at = NOW(), updated_at = NOW()\
+              \ WHERE registration_id = ?::uuid AND status = 'in_progress'"
+              ( acceptedRulesVersion
+              , acceptedPrivacyVersion
+              , completionProofBlock
+              , T.toLower completionProofHash
+              , applicationId
+              )
+            if updated /= (1 :: Int64)
+              then fail "Registration application changed during completion"
               else do
-                updated <- execute connection
-                  "UPDATE insights_registration_applications SET status = 'completed', rules_version = ?,\
-                  \ privacy_version = ?, wallet_verification_block=?, wallet_verification_block_hash=?,\
-                  \ completed_at = NOW(), updated_at = NOW()\
-                  \ WHERE registration_id = ?::uuid AND status = 'in_progress'"
-                  ( acceptedRulesVersion
-                  , acceptedPrivacyVersion
-                  , completionProofBlock
-                  , T.toLower completionProofHash
-                  , applicationId
-                  )
-                if updated /= (1 :: Int64)
-                  then fail "Registration application changed during completion"
-                  else do
-                    _ <- execute connection
-                      "INSERT INTO insights_competition_participants\
-                      \ (competition_slug, wallet, trader_reference, alias, eligibility_status)\
-                      \ VALUES (?, ?, ?, ?, 'pending')"
-                      (competitionSlug, normalizeAddress account, applicationId, username)
-                    pure CompletionSucceeded
+                _ <- execute connection
+                  "INSERT INTO insights_competition_participants\
+                  \ (competition_slug, wallet, trader_reference, alias, eligibility_status)\
+                  \ VALUES (?, ?, ?, ?, 'pending')"
+                  (competitionSlug, normalizeAddress account, applicationId, username)
+                pure CompletionSucceeded
         | otherwise -> pure CompletionIncomplete
       _ -> pure CompletionIncomplete
   case result of

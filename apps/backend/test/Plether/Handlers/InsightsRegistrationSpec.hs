@@ -1,8 +1,7 @@
 module Plether.Handlers.InsightsRegistrationSpec (spec) where
 
-import Data.Aeson (Value (..), object, toJSON, (.=))
+import Data.Aeson (Value (..), toJSON)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import Data.IORef (atomicModifyIORef', newIORef)
 import qualified Data.Map.Strict as Map
@@ -10,35 +9,21 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Network.HTTP.Types.Header (RequestHeaders)
 import qualified Network.Wai as Wai
-import Plether.AA.Pimlico (UndeployedTradingAccountFailure (..))
-import Plether.Config
-  ( Config (..)
-  , PerpsCandleReadMode (..)
-  , PerpsCandleWriteMode (..)
-  )
+import Plether.AA.Pimlico (OwnedTradingAccountFailure (..))
 import qualified Plether.Database.Insights.Registration as Db
-import Plether.Ethereum.Abi (keccak256)
 import Plether.Handlers.InsightsRegistration
   ( canonicalBlockLookupParams
   , completionResultDecision
   , csrfTokenFromRequest
-  , fundingActivityFilters
   , maximumRegistrationBodyBytes
-  , maximumRegistrationProofScanBlocks
+  , ownedAccountDecision
   , parseCanonicalRpcQuantity
   , readBoundedRequestBody
-  , registrationIndexerCursorRangeValid
   , registrationUiRedirect
-  , releaseActivityFilters
   , sessionTokenFromRequest
-  , undeployedAccountDecision
   , validateJsonRequest
   , validateOrigin
   , xAccountAgeEligible
-  )
-import Plether.Insights.Competition
-  ( CompetitionReleaseManifest (..)
-  , september2026Competition
   )
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Insights.Registration.Types
@@ -172,9 +157,6 @@ spec = do
       redirect `shouldNotSatisfy` T.any (`elem` ['?', '#'])
 
   describe "account-proof RPC construction" $ do
-    it "keeps uncovered proof scans within the fixed bounded window" $ do
-      maximumRegistrationProofScanBlocks `shouldBe` 2048
-
     it "constructs canonical non-hydrated block lookups" $ do
       canonicalBlockLookupParams 0
         `shouldBe` toJSON [String "0x0", Bool False]
@@ -196,82 +178,12 @@ spec = do
         , Null
         ]
 
-    it "constructs exact release emitters, account topics, and cursor range" $ do
-      let (topicOneFilter, orderFilter) =
-            releaseActivityFilters filterConfig ownerAddress 1000 1999
-          (transferFromFilter, transferToFilter) =
-            fundingActivityFilters filterConfig ownerAddress 1000 1999
-          accountTopic = "0x" <> T.replicate 24 "0" <> T.drop 2 (T.toLower ownerAddress)
-          accountTopicOneEvents =
-            map
-              eventTopic
-              [ "PositionOpened(address,uint8,uint256,uint256,uint256)"
-              , "PositionClosed(address,uint8,uint256,uint256,int256)"
-              , "PositionLiquidated(address,uint8,uint256,uint256,uint256)"
-              , "MarginAdded(address,uint256)"
-              , "Deposit(address,address,uint256)"
-              , "Withdraw(address,address,uint256)"
-              ]
-      topicOneFilter
-        `shouldBe`
-          object
-            [ "address" .= ([orderRouter, cfdEngine, marginClearinghouse] :: [T.Text])
-            , "topics" .= [toJSON accountTopicOneEvents, String accountTopic]
-            , "fromBlock" .= ("0x3e8" :: T.Text)
-            , "toBlock" .= ("0x7cf" :: T.Text)
-            ]
-      orderFilter
-        `shouldBe`
-          object
-            [ "address" .= orderRouter
-            , "topics"
-                .= [ String $ eventTopic "OrderCommitted(uint64,address,uint8)"
-                   , Null
-                   , String accountTopic
-                   ]
-            , "fromBlock" .= ("0x3e8" :: T.Text)
-            , "toBlock" .= ("0x7cf" :: T.Text)
-            ]
-      transferFromFilter
-        `shouldBe`
-          object
-            [ "address" .= usdc
-            , "topics"
-                .= [ String $ eventTopic "Transfer(address,address,uint256)"
-                   , String accountTopic
-                   ]
-            , "fromBlock" .= ("0x3e8" :: T.Text)
-            , "toBlock" .= ("0x7cf" :: T.Text)
-            ]
-      transferToFilter
-        `shouldBe`
-          object
-            [ "address" .= usdc
-            , "topics"
-                .= [ String $ eventTopic "Transfer(address,address,uint256)"
-                   , Null
-                   , String accountTopic
-                   ]
-            , "fromBlock" .= ("0x3e8" :: T.Text)
-            , "toBlock" .= ("0x7cf" :: T.Text)
-            ]
-
-    it "requires the persisted indexer lower bound and a fully covered bounded gap" $ do
-      registrationIndexerCursorRangeValid 100 100 200 199 `shouldBe` True
-      registrationIndexerCursorRangeValid 100 99 200 199 `shouldBe` False
-      registrationIndexerCursorRangeValid 100 101 200 199 `shouldBe` False
-      registrationIndexerCursorRangeValid 100 100 99 99 `shouldBe` False
-      registrationIndexerCursorRangeValid 100 100 2200 100 `shouldBe` False
-      registrationIndexerCursorRangeValid 0 0 0 0 `shouldBe` False
-
-    it "distinguishes deployed owners/accounts from provider proof outages" $ do
-      leftCode (undeployedAccountDecision $ Left OwnerAddressAlreadyDeployed)
-        `shouldBe` Just TradingAccountExists
-      leftCode (undeployedAccountDecision $ Left TradingAccountAlreadyDeployed)
-        `shouldBe` Just TradingAccountExists
-      leftCode (undeployedAccountDecision $ Left UndeployedTradingAccountProofUnavailable)
+    it "requires an EOA owner but does not reject a deployed Trading Account" $ do
+      leftCode (ownedAccountDecision $ Left OwnerWalletIsContract)
+        `shouldBe` Just InvalidRequest
+      leftCode (ownedAccountDecision $ Left OwnedTradingAccountProofUnavailable)
         `shouldBe` Just ProviderUnavailable
-      undeployedAccountDecision (Right $ T.toLower ownerAddress)
+      ownedAccountDecision (Right $ T.toLower ownerAddress)
         `shouldBe` Right (T.toLower ownerAddress)
 
   describe "X account age boundary" $
@@ -280,9 +192,6 @@ spec = do
             Db.RegistrationCompetition
               { Db.rgcSlug = competitionSlug
               , Db.rgcChainId = 421_614
-              , Db.rgcReleaseRouter = orderRouter
-              , Db.rgcUsdcAddress = usdc
-              , Db.rgcReleaseManifest = "manifest"
               , Db.rgcStartTimestamp = 1_789_329_600
               , Db.rgcRegistrationOpenTimestamp = Just 1_788_000_000
               , Db.rgcRegistrationCloseTimestamp = 1_789_934_400
@@ -309,7 +218,7 @@ spec = do
         [ (Db.CompletionClosed, ClosedRegistration)
         , (Db.CompletionIncomplete, RegistrationIncomplete)
         , (Db.CompletionDuplicate, DuplicateRegistration)
-        , (Db.CompletionTradingAccountUsed, TradingAccountExists)
+        , (Db.CompletionWalletProofChanged, RegistrationIncomplete)
         ]
 
 jsonRequest :: BS.ByteString -> Maybe BS.ByteString -> Wai.RequestBodyLength -> Wai.Request
@@ -343,27 +252,11 @@ isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft (Right _) = False
 
-eventTopic :: T.Text -> T.Text
-eventTopic signature =
-  "0x" <> TE.decodeUtf8 (B16.encode $ keccak256 $ TE.encodeUtf8 signature)
-
 competitionSlug :: T.Text
 competitionSlug = "testnet-trading-2026-09"
 
 ownerAddress :: T.Text
 ownerAddress = "0x7E5F4552091A69125D5DFCB7B8C2659029395BDF"
-
-orderRouter :: T.Text
-orderRouter = "0xaa00000000000000000000000000000000000001"
-
-usdc :: T.Text
-usdc = "0x1100000000000000000000000000000000000007"
-
-cfdEngine :: T.Text
-cfdEngine = "0xbb00000000000000000000000000000000000002"
-
-marginClearinghouse :: T.Text
-marginClearinghouse = "0xcc00000000000000000000000000000000000003"
 
 publicOriginBytes :: BS.ByteString
 publicOriginBytes = "https://insights.plether.com"
@@ -405,65 +298,4 @@ registrationConfig =
     , rcRulesVersion = "2026-09-v1"
     , rcPrivacyVersion = "2026-09-v1"
     , rcMinimumXAccountAgeDays = 90
-    }
-
-filterConfig :: Config
-filterConfig =
-  Config
-    { cfgRpcUrl = ""
-    , cfgChainId = 1
-    , cfgPort = 3001
-    , cfgCorsOrigins = []
-    , cfgDeployments = []
-    , cfgDatabaseUrl = Nothing
-    , cfgIndexerStartBlock = 0
-    , cfgPythBenchmarksUrl = ""
-    , cfgPythHermesUrl = ""
-    , cfgPythApiKey = Nothing
-    , cfgPythBackfillDays = 7
-    , cfgPythSampleIntervalSeconds = 60
-    , cfgPythLatestMaxAgeSeconds = 10
-    , cfgPythIngestionEnabled = False
-    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
-    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
-    , cfgPerpsCandleReadIntervals = []
-    , cfgPerpsCandleShadowSampleBps = 0
-    , cfgPerpsCandleStrictCoverage = True
-    , cfgPerpsCandleLatenessSeconds = 120
-    , cfgPerpsCandleFinalizationGraceSeconds = 15
-    , cfgPerpsRpcUrl = ""
-    , cfgPerpsChainId = 421_614
-    , cfgPerpsUsdc = T.toUpper usdc
-    , cfgPerpsOrderRouter = T.toUpper orderRouter
-    , cfgPerpsCfdEngine = T.toUpper cfdEngine
-    , cfgPerpsCfdEngineLens = "0xdd00000000000000000000000000000000000004"
-    , cfgPerpsCfdEngineSettlementSidecar = "0xee00000000000000000000000000000000000005"
-    , cfgPerpsMarginClearinghouse = T.toUpper marginClearinghouse
-    , cfgPerpsPletherOracle = ""
-    , cfgPerpsAccountLens = ""
-    , cfgPerpsIndexerStartBlock = 100
-    , cfgInsightsCompetitionRules = september2026Competition
-    , cfgInsightsCompetitionReleaseManifest =
-        CompetitionReleaseManifest
-          { crmReleaseId = "registration-handler-spec"
-          , crmChainId = 421_614
-          , crmUsdc = usdc
-          , crmOrderRouter = orderRouter
-          , crmMarginClearinghouse = marginClearinghouse
-          , crmAccountLens = "0xcc00000000000000000000000000000000000003"
-          , crmCfdEngine = cfdEngine
-          , crmCfdEngineLens = "0xdd00000000000000000000000000000000000004"
-          , crmSettlementSidecar = "0xee00000000000000000000000000000000000005"
-          , crmPletherOracle = "0xff00000000000000000000000000000000000006"
-          , crmIndexerStartBlock = 100
-          }
-    , cfgRegistrationConfig = Nothing
-    , cfgAaConfig = Nothing
-    , cfgFaucetPrivateKey = Nothing
-    , cfgKeeperPrivateKey = Nothing
-    , cfgKeeperPollSeconds = 1
-    , cfgKeeperMaxBatchSize = 20
-    , cfgKeeperConfirmations = 1
-    , cfgKeeperGasBufferBps = 2000
-    , cfgKeeperFeeBufferBps = 2500
     }

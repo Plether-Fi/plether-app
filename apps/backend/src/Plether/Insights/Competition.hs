@@ -2,6 +2,8 @@ module Plether.Insights.Competition
   ( CompetitionRules (..)
   , CompetitionReleaseManifest (..)
   , competitionReleaseManifestText
+  , competitionReleaseIsBound
+  , pendingCompetitionReleaseManifestText
   , CompetitionPhase (..)
   , CompetitionRegistrationState (..)
   , ParticipantEligibility (..)
@@ -134,6 +136,25 @@ competitionReleaseManifestText CompetitionReleaseManifest {..} =
     ]
   where
     normalize = T.toLower . T.strip
+
+-- | A competition may accept registrations before its on-chain release has
+-- been deployed.  The release becomes immutable only when its reviewed
+-- manifest uses the competition slug as its release identifier.
+competitionReleaseIsBound :: CompetitionRules -> CompetitionReleaseManifest -> Bool
+competitionReleaseIsBound rules manifest =
+  T.strip (crmReleaseId manifest) == crSlug rules
+
+-- | Stable sentinel persisted while registration is open but the competition
+-- contracts have not yet been bound.  It is deliberately not a valid release
+-- manifest and must never be consumed by indexers or snapshot workers.
+pendingCompetitionReleaseManifestText :: CompetitionRules -> Integer -> Text
+pendingCompetitionReleaseManifestText rules chainId =
+  T.intercalate
+    "|"
+    [ "release-pending-v1"
+    , crSlug rules
+    , T.pack $ show chainId
+    ]
 
 -- | The July 2026 competition follows FX sessions. Scoring begins Monday July
 -- 20 at 16:00 UTC (18:00 in Warsaw) and runs for exactly 14 days. The final

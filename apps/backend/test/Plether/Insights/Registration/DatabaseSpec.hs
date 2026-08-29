@@ -26,21 +26,21 @@ spec = do
               "rsrSessionExpiresTimestamp = expiresTimestamp , rsrCsrfDigest = csrfDigest , rsrCsrfEncrypted = EncryptedValue csrfKeyVersion csrfNonce csrfCiphertext csrfTag , rsrOauthErrorCode = oauthErrorCode , rsrEmailMasked = emailMasked"
           )
 
-    it "binds account-history proof to the immutable indexer lower bound and official USDC" $ do
+    it "keeps wallet ownership proof independent from release history" $ do
       sourcePath <- locateRegistrationSource
       source <- normalizeWhitespace <$> readFile sourcePath
       source
-        `shouldSatisfy` isInfixOf
-          (normalizeWhitespace "SELECT configured_start_block, last_indexed_block, last_indexed_block_hash FROM perps_indexer_state")
+        `shouldNotSatisfy` isInfixOf
+          (normalizeWhitespace "perps_indexer_state")
+      source
+        `shouldNotSatisfy` isInfixOf
+          (normalizeWhitespace "perps_account_activity")
       source
         `shouldSatisfy` isInfixOf
-          (normalizeWhitespace "u.token_address=t.token_address AND (u.from_address=t.account OR u.to_address=t.account)")
+          (normalizeWhitespace "owner_wallet = ?, trading_account = ?, wallet_verification_block = ?, wallet_verification_block_hash = ?")
       source
         `shouldSatisfy` isInfixOf
-          (normalizeWhitespace "SELECT slug, chain_id, release_router, usdc_address, release_manifest")
-      source
-        `shouldSatisfy` isInfixOf
-          (normalizeWhitespace "storeXIdentityAndRefreshSession connection sessionDigest nextCsrfDigest")
+          (normalizeWhitespace "INSERT INTO insights_competition_participants (competition_slug, wallet, trader_reference, alias, eligibility_status)")
 
     it "publishes the exact privacy version in the same transaction that opens registration" $ do
       sourcePath <- locateRegistrationSource

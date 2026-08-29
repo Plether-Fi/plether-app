@@ -126,11 +126,12 @@ spec = do
       queryContains leaderboardQuerySql "jsonb_array_length(integrity_flags) = 0"
       queryContains leaderboardQuerySql "AS funding_integrity_clear"
 
-    it "binds registration and faucet provenance to canonical block evidence" $ do
+    it "binds verified registration and faucet provenance to canonical block evidence" $ do
       queryContains fundingIntegrityRefreshSql "fc.mint_block_number IS NOT NULL"
       queryContains fundingIntegrityRefreshSql "x.block_number = fc.mint_block_number"
       queryContains fundingIntegrityRefreshSql "missing_verified_registration"
-      queryContains fundingIntegrityRefreshSql "e.block_number <= r.wallet_verification_block"
+      queryDoesNotContain fundingIntegrityRefreshSql "pre_registration_activity"
+      queryDoesNotContain fundingIntegrityRefreshSql "r.wallet_verification_block"
       queryDoesNotContain fundingIntegrityRefreshSql
         "e.timestamp <= FLOOR(EXTRACT(EPOCH FROM r.completed_at))"
 
@@ -174,6 +175,7 @@ spec = do
         `shouldSatisfy` isInfixOf
           "release_router TEXT NOT NULL,\n    account_lens_address TEXT NOT NULL,\n    block_number BIGINT NOT NULL"
       schema `shouldSatisfy` isInfixOf "account_state_count INTEGER NOT NULL"
+      schema `shouldSatisfy` isInfixOf "release_bound_at TIMESTAMPTZ"
       schema `shouldSatisfy` isInfixOf "CREATE TABLE IF NOT EXISTS insights_finalized_standings"
       schema `shouldSatisfy` isInfixOf "CONSTRAINT perps_indexer_state_release_scope CHECK"
       schema `shouldSatisfy` isInfixOf "OR (release_router IS NOT NULL AND configured_start_block > 0)"

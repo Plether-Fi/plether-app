@@ -35,6 +35,7 @@ export interface Competition {
   latestIndexedAt: string | null
   participantCount?: number
   eligibleCount?: number
+  releaseReady?: boolean
   registration?: CompetitionRegistration
   fxSessionBoundaryUtc?: string
 }

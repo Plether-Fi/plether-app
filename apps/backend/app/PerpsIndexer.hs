@@ -10,7 +10,11 @@ import Plether.Database (newDbPool, withDb)
 import Plether.Database.Insights (validateCompetitionReleaseManifest)
 import Plether.Database.Schema (ensurePerpsHistorySchema)
 import Plether.Logging (field, logError, logInfo)
-import Plether.Insights.Competition (CompetitionReleaseManifest (..), CompetitionRules (..))
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , CompetitionRules (..)
+  , competitionReleaseIsBound
+  )
 import Plether.Perps.HistoryIndexer
   ( PerpsAddresses (..)
   , PerpsIndexerConfig (..)
@@ -155,11 +159,12 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
                   , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg
                   , picDeploymentEnvironment = deploymentEnvironment
                   }
-          withDb pool $ \conn ->
-            validateCompetitionReleaseManifest
-              conn
-              (crSlug $ cfgInsightsCompetitionRules cfg)
-              releaseManifest
+          whenReleaseBound cfg releaseManifest $ \boundManifest ->
+            withDb pool $ \conn ->
+              validateCompetitionReleaseManifest
+                conn
+                (crSlug $ cfgInsightsCompetitionRules cfg)
+                boundManifest
           logInfo
             "perps_indexer_started"
             "Perps history indexer started"
@@ -172,6 +177,15 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
             , field "trace_api_fallback_enabled" $ maybe False (const True) traceApiUrl
             ]
           runPerpsIndexer manager pool indexerCfg
+
+whenReleaseBound
+  :: Config
+  -> CompetitionReleaseManifest
+  -> (CompetitionReleaseManifest -> IO ())
+  -> IO ()
+whenReleaseBound cfg manifest action
+  | competitionReleaseIsBound (cfgInsightsCompetitionRules cfg) manifest = action manifest
+  | otherwise = pure ()
 
 validateReplayDeployment
   :: IndexerOptions.PerpsIndexerInvocation

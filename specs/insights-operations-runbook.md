@@ -33,14 +33,16 @@ workflow deploys those revisions.
 
 ### September release manifest
 
-Set both activation guards to the exact slug:
+To open registration before contract deployment, activate the competition slug
+and leave the release ID empty:
 
 ```hcl
 insights_active_competition_slug = "testnet-trading-2026-09"
-insights_competition_release_id  = "testnet-trading-2026-09"
+insights_competition_release_id  = ""
 ```
 
-Supply the reviewed September values for every manifest field:
+After deployment, set `insights_competition_release_id` to the same slug and
+supply the reviewed September values for every manifest field:
 
 - `perps_usdc`
 - `perps_order_router`
@@ -194,14 +196,14 @@ AWS_PROFILE=plether terraform validate
 AWS_PROFILE=plether terraform plan -var-file=<sepolia-private.tfvars>
 ```
 
-The plan must show `INSIGHTS_REGISTRATION_PROVISIONED=true` and
-`INSIGHTS_REGISTRATION_ENABLED=false` on the API, registration secrets attached
-despite activation being false, the September release manifest on the API and
-both snapshot-worker topologies, and no secret values in plain ECS environment
-variables. It must also show the pinned RDS CA and no database destroy or
-replacement. Storage encryption is optional; if the existing database is
-unencrypted, the plan must preserve that setting rather than propose a database
-replacement.
+The registration-only plan must show `INSIGHTS_REGISTRATION_PROVISIONED=true`
+and `INSIGHTS_REGISTRATION_ENABLED=false` on the API, registration secrets
+attached despite activation being false, the September competition slug without
+a release ID, and no secret values in plain ECS environment variables. Snapshot
+workers remain deployed but skip the unbound competition. It must also show the
+pinned RDS CA and no database destroy or replacement. Storage encryption is
+optional; if the existing database is unencrypted, the plan must preserve that
+setting rather than propose a database replacement.
 
 Run the backend suite and the Insights lint, tests, and production build. The
 Insights worker tests are a launch gate because they cover canonical-host
@@ -279,7 +281,8 @@ has already deployed that commit.
 
 1. Change only `enable_insights_registration` to `true`, review the Terraform
    plan, and apply it. The preconditions fail closed unless the canonical X
-   callback, complete release manifest, and provisioned credentials agree.
+   callback, active competition slug, and provisioned credentials agree. A
+   contract release is not required for registration.
 2. Intentionally dispatch **Deploy Backend** a second time for the same reviewed
    commit with `bootstrap=false`. This deploys the enabled task-definition
    revision. Record it as the planned configuration rollout so it is not
@@ -360,10 +363,23 @@ legacy break-glass remap, and finalize operations. The September first-party
 roster must never use `stage-wallet-remap`, `stage-trading-account-remap`, or
 `apply-wallet-remaps`: those legacy operations can corrupt the private verified
 owner-to-Trading-Account binding and are rejected by both the workflow and the
-backend for registration-configured competitions. Require the participant to
-repeat wallet verification with an undeployed owner instead. Keep private
-evidence in the restricted case record; `PUBLIC_REASON` is returned by the
-public API.
+backend for registration-configured competitions. Registration proves the
+owner EOA and deterministic index-0 Trading Account only; an already deployed
+or previously used Trading Account is not rejected. Clean-start eligibility is
+decided from the canonical baseline, not from state at registration. Keep
+private evidence in the restricted case record; `PUBLIC_REASON` is returned by
+the public API.
+
+### Registration before contract deployment
+
+Registration may open while the September release is unbound. In this state the
+competition row contains an explicit pending-release sentinel, the registration
+API is available, and the history/snapshot workers skip competition processing.
+After the reviewed contracts are deployed, set the release ID to the competition
+slug together with the complete address manifest and indexer start block. The
+next schema initialization binds that manifest exactly once, only before the
+competition start and before any boundary or snapshot exists. After binding,
+the normal immutable-manifest and indexer checks apply.
 
 ### Late registration and snapshot rebuilding
 
@@ -542,6 +558,8 @@ the half-open scoring cutoff.
 7. Pay real USDC no later than `2026-10-03T00:00:00Z` and retain transaction
    hashes in the restricted payout record.
 
-Competition identity, schedule, release manifest, FX-session boundary, scoring
-version, and prize values are immutable after seeding. A mismatch stops startup;
-create a new versioned competition slug instead of rewriting historical results.
+Competition identity, schedule, FX-session boundary, scoring version, and prize
+values are immutable after seeding. The release manifest has one explicit
+pending-to-bound transition before the start/baseline, then is immutable. A
+mismatch stops startup; create a new versioned competition slug instead of
+rewriting historical results.

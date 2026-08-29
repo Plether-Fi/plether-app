@@ -81,9 +81,11 @@ import Plether.Insights.Competition
   , FinalizationReadiness (..)
   , ParticipantEligibility (..)
   , canSeedCompetitionRowAt
+  , competitionReleaseIsBound
   , competitionReleaseManifestText
   , finalizationBlockers
   , july2026CompetitionSlug
+  , pendingCompetitionReleaseManifestText
   , participantEligibilityText
   )
 import qualified Plether.Database.Insights.Registration as RegistrationDb
@@ -185,6 +187,7 @@ data CompetitionSeedMismatch = CompetitionSeedMismatch
 data CompetitionSeedInsert = CompetitionSeedInsert
   { csiMetadata :: CompetitionSeedMetadata
   , csiAccountLensAddress :: Text
+  , csiReleaseBound :: Bool
   }
 
 instance ToRow CompetitionSeedInsert where
@@ -214,6 +217,7 @@ instance ToRow CompetitionSeedInsert where
     , toField csmFirstPrizeUsdc
     , toField csmSecondPrizeUsdc
     , toField csmThirdPrizeUsdc
+    , toField csiReleaseBound
     ]
 
 data CompetitionRow = CompetitionRow
@@ -224,6 +228,7 @@ data CompetitionRow = CompetitionRow
   , icrUsdcAddress :: Text
   , icrMarginClearinghouseAddress :: Text
   , icrAccountLensAddress :: Text
+  , icrReleaseReady :: Bool
   , icrStartTimestamp :: Integer
   , icrNewRiskCutoffTimestamp :: Integer
   , icrScoreCutoffTimestamp :: Integer
@@ -256,6 +261,7 @@ data CompetitionRow = CompetitionRow
 instance FromRow CompetitionRow where
   fromRow = CompetitionRow
     <$> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -532,10 +538,12 @@ snapshotBatchAccessIndexSql =
 
 ensureInsightsSchema :: Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
 ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest = do
-  validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
-  validateOfficialAddress "PERPS_USDC" usdcAddress
-  validateOfficialAddress "PERPS_MARGIN_CLEARINGHOUSE" marginClearinghouseAddress
-  validateOfficialAddress "PERPS_ACCOUNT_LENS" accountLensAddress
+  let releaseBound = competitionReleaseIsBound rules releaseManifest
+  when releaseBound $ do
+    validateOfficialAddress "PERPS_ORDER_ROUTER" releaseRouter
+    validateOfficialAddress "PERPS_USDC" usdcAddress
+    validateOfficialAddress "PERPS_MARGIN_CLEARINGHOUSE" marginClearinghouseAddress
+    validateOfficialAddress "PERPS_ACCOUNT_LENS" accountLensAddress
   _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS insights_competitions (\
     \ slug TEXT PRIMARY KEY,\
@@ -546,6 +554,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ margin_clearinghouse_address TEXT NOT NULL,\
     \ account_lens_address TEXT,\
     \ release_manifest TEXT,\
+    \ release_bound_at TIMESTAMPTZ,\
     \ start_timestamp BIGINT NOT NULL,\
     \ new_risk_cutoff_timestamp BIGINT NOT NULL,\
     \ score_cutoff_timestamp BIGINT NOT NULL,\
@@ -597,6 +606,12 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS account_lens_address TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS release_manifest TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS release_bound_at TIMESTAMPTZ"
+  _ <- execute_ conn
+    "UPDATE insights_competitions SET release_bound_at = COALESCE(release_bound_at, created_at)\
+    \ WHERE release_bound_at IS NULL AND release_manifest IS NOT NULL\
+    \ AND release_manifest NOT LIKE 'release-pending-v1|%'"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS start_block_hash TEXT"
   _ <- execute_ conn
@@ -887,6 +902,34 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
 seedCompetition :: Connection -> CompetitionRules -> Integer -> Text -> Text -> Text -> Text -> CompetitionReleaseManifest -> IO ()
 seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouseAddress accountLensAddress releaseManifest =
   withTransaction conn $ do
+    let releaseBound = competitionReleaseIsBound rules releaseManifest
+        pendingAddress = "0x0000000000000000000000000000000000000000"
+        (seedRouter, seedUsdc, seedClearinghouse, seedLens, seedManifest)
+          | releaseBound =
+              ( releaseRouter
+              , usdcAddress
+              , marginClearinghouseAddress
+              , accountLensAddress
+              , releaseManifest
+              )
+          | otherwise =
+              ( pendingAddress
+              , pendingAddress
+              , pendingAddress
+              , pendingAddress
+              , releaseManifest
+                  { crmReleaseId = "release-pending"
+                  , crmUsdc = pendingAddress
+                  , crmOrderRouter = pendingAddress
+                  , crmMarginClearinghouse = pendingAddress
+                  , crmAccountLens = pendingAddress
+                  , crmCfdEngine = pendingAddress
+                  , crmCfdEngineLens = pendingAddress
+                  , crmSettlementSidecar = pendingAddress
+                  , crmPletherOracle = pendingAddress
+                  , crmIndexerStartBlock = 0
+                  }
+              )
     seedStateRows <-
       query conn
         "SELECT EXISTS (SELECT 1 FROM insights_competitions WHERE slug = ?),\
@@ -905,11 +948,16 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
           competitionSeedMetadataFor
             rules
             chainId
-            releaseRouter
-            usdcAddress
-            marginClearinghouseAddress
-            accountLensAddress
-            releaseManifest
+            seedRouter
+            seedUsdc
+            seedClearinghouse
+            seedLens
+            seedManifest
+        pendingExpected =
+          expected
+            { csmReleaseManifest = pendingCompetitionReleaseManifestText rules chainId
+            }
+        insertedExpected = if releaseBound then expected else pendingExpected
     _ <- execute conn
       "INSERT INTO insights_competitions (\
       \ slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, release_manifest,\
@@ -917,24 +965,82 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
       \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp,\
       \ minimum_x_account_age_days, target_x_handle, starting_balance_usdc,\
       \ minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
-      \ first_prize_usdc, second_prize_usdc, third_prize_usdc)\
+      \ first_prize_usdc, second_prize_usdc, third_prize_usdc, release_bound_at)\
       \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,\
       \ NULL,\
-      \ ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\
+      \ ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN NOW() ELSE NULL END)\
       \ ON CONFLICT (slug) DO NOTHING"
       CompetitionSeedInsert
-        { csiMetadata = expected
-        , csiAccountLensAddress = normalizeAddress accountLensAddress
+        { csiMetadata = insertedExpected
+        , csiAccountLensAddress = csmAccountLensAddress insertedExpected
+        , csiReleaseBound = releaseBound
         }
     storedRows <- query conn
       (competitionSeedMetadataSelect <> " WHERE slug = ? FOR UPDATE")
-      (Only $ csmSlug expected)
-    case storedRows of
-      [stored] -> validateOrMigrateCompetitionSeed conn expected stored
+      (Only $ csmSlug insertedExpected)
+    bindingRows <- query conn
+      "SELECT release_bound_at IS NOT NULL FROM insights_competitions WHERE slug = ?"
+      (Only $ csmSlug insertedExpected) :: IO [Only Bool]
+    case (storedRows, bindingRows) of
+      ([stored], [Only storedReleaseBound])
+        | releaseBound && not storedReleaseBound -> do
+            bindPendingCompetitionRelease conn expected
+            validateOrMigrateCompetitionSeed conn expected expected
+        | releaseBound -> validateOrMigrateCompetitionSeed conn expected stored
+        | storedReleaseBound -> validateCompetitionRulesSeed expected stored
+        | otherwise -> validateOrMigrateCompetitionSeed conn pendingExpected stored
       _ -> ioError $ userError $
         "Plether Insights could not read the competition row immediately after seeding slug "
-          <> T.unpack (csmSlug expected)
+          <> T.unpack (csmSlug insertedExpected)
           <> ". Check database constraints and transaction logs."
+
+-- | Bind a reviewed release exactly once. Registrations and participants may
+-- already exist, but no boundary, snapshot, or finalized state may have been
+-- created. This keeps registration independent while preserving immutable
+-- scoring history from the first on-chain read onward.
+bindPendingCompetitionRelease :: Connection -> CompetitionSeedMetadata -> IO ()
+bindPendingCompetitionRelease conn expected = do
+  affected <- execute conn
+    "UPDATE insights_competitions SET release_router = ?, usdc_address = ?,\
+    \ margin_clearinghouse_address = ?, account_lens_address = ?, release_manifest = ?,\
+    \ release_bound_at = NOW(), updated_at = NOW()\
+    \ WHERE slug = ? AND release_bound_at IS NULL AND NOT finalized\
+    \ AND start_block IS NULL AND score_cutoff_block IS NULL\
+    \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+    \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+    \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)"
+    ( csmReleaseRouter expected
+    , csmUsdcAddress expected
+    , csmMarginClearinghouseAddress expected
+    , csmAccountLensAddress expected
+    , csmReleaseManifest expected
+    , csmSlug expected
+    , csmSlug expected
+    , csmSlug expected
+    )
+  unless (affected == 1) $
+    ioError $ userError $
+      "Refusing to bind the Insights release for "
+        <> T.unpack (csmSlug expected)
+        <> " after baseline resolution, snapshot publication, competition start, or finalization"
+
+validateCompetitionRulesSeed
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> IO ()
+validateCompetitionRulesSeed expected stored =
+  case filter (not . isReleaseMismatch) $ competitionSeedMismatches expected stored of
+    [] -> pure ()
+    mismatches -> seedMismatchError expected mismatches Nothing
+  where
+    isReleaseMismatch mismatch =
+      csmmField mismatch
+        `elem` [ "release_router"
+               , "usdc_address"
+               , "margin_clearinghouse_address"
+               , "account_lens_address"
+               , "release_manifest"
+               ]
 
 validateCompetitionReleaseManifest
   :: Connection
@@ -943,17 +1049,20 @@ validateCompetitionReleaseManifest
   -> IO ()
 validateCompetitionReleaseManifest conn slug releaseManifest = do
   rows <- query conn
-    "SELECT release_manifest FROM insights_competitions WHERE slug = ?"
+    "SELECT release_manifest, release_bound_at IS NOT NULL FROM insights_competitions WHERE slug = ?"
     (Only slug)
-    :: IO [Only Text]
+    :: IO [(Text, Bool)]
   case rows of
-    [Only stored]
+    [(stored, True)]
       | stored == competitionReleaseManifestText releaseManifest -> pure ()
       | otherwise ->
           ioError $ userError $
             "Immutable Insights release manifest mismatch for slug "
               <> T.unpack slug
               <> "; refusing to read or write mixed-release history"
+    [(_, False)] ->
+      ioError $ userError $
+        "Insights competition release is not yet bound for slug " <> T.unpack slug
     [] ->
       ioError $ userError $
         "Insights competition release manifest is not seeded for slug " <> T.unpack slug
@@ -2086,17 +2195,7 @@ fundingIntegrityRefreshSql =
   \ WHERE a.timestamp >= p.start_timestamp AND a.timestamp < p.score_cutoff_timestamp\
   \ ORDER BY p.wallet, a.block_number, a.tx_index, a.log_index\
   \ ), registration_audit AS (\
-  \ SELECT p.wallet, (p.registration_close_timestamp IS NULL OR r.registration_id IS NOT NULL) AS verified_registration,\
-  \ CASE WHEN p.registration_close_timestamp IS NULL OR r.registration_id IS NULL THEN FALSE ELSE (\
-  \  EXISTS (SELECT 1 FROM perps_events e WHERE e.chain_id = p.chain_id AND e.release_router = p.release_router\
-  \   AND e.account = p.wallet AND e.block_number <= r.wallet_verification_block) OR\
-  \  EXISTS (SELECT 1 FROM perps_orders o WHERE o.chain_id = p.chain_id AND o.order_router = p.release_router\
-  \   AND o.account = p.wallet AND o.commit_block_number <= r.wallet_verification_block) OR\
-  \  EXISTS (SELECT 1 FROM perps_account_activity a WHERE a.chain_id = p.chain_id AND a.release_router = p.release_router\
-  \   AND a.account = p.wallet AND a.block_number <= r.wallet_verification_block) OR\
-  \  EXISTS (SELECT 1 FROM perps_usdc_transfers x WHERE x.chain_id = p.chain_id AND x.release_router = p.release_router\
-  \   AND (x.from_address = p.wallet OR x.to_address = p.wallet)\
-  \   AND x.block_number <= r.wallet_verification_block)) END AS prior_activity\
+  \ SELECT p.wallet, (p.registration_close_timestamp IS NULL OR r.registration_id IS NOT NULL) AS verified_registration\
   \ FROM participants p LEFT JOIN insights_registration_applications r ON r.competition_slug = p.slug\
   \  AND r.registration_id::text = p.trader_reference AND r.status = 'completed' AND r.trading_account = p.wallet\
   \ ), invalid_inbound AS (\
@@ -2133,8 +2232,8 @@ fundingIntegrityRefreshSql =
   \ COALESCE(cap.max_net_amount, 0) AS max_net_amount, COALESCE(ii.invalid_count, 0) AS invalid_inbound_count,\
   \ COALESCE(po.invalid_count, 0) AS premature_outbound_count, al.block_number AS allocation_block,\
   \ al.tx_index AS allocation_tx, al.log_index AS allocation_log, tr.block_number AS trade_block,\
-  \ tr.tx_index AS trade_tx, tr.log_index AS trade_log, COALESCE(ra.verified_registration, FALSE) AS verified_registration,\
-  \ COALESCE(ra.prior_activity, FALSE) AS prior_registration_activity FROM participants p\
+  \ tr.tx_index AS trade_tx, tr.log_index AS trade_log, COALESCE(ra.verified_registration, FALSE) AS verified_registration\
+  \ FROM participants p\
   \ LEFT JOIN mint_counts mc ON mc.wallet = p.wallet LEFT JOIN flow_summary fs ON fs.wallet = p.wallet\
   \ LEFT JOIN funding_cap cap ON cap.wallet = p.wallet LEFT JOIN invalid_inbound ii ON ii.wallet = p.wallet\
   \ LEFT JOIN premature_outbound po ON po.wallet = p.wallet LEFT JOIN allocation al ON al.wallet = p.wallet\
@@ -2142,7 +2241,6 @@ fundingIntegrityRefreshSql =
   \ ), computed AS (SELECT wallet, TO_JSONB(ARRAY_REMOVE(ARRAY[\
   \ CASE WHEN value_usdc IS NULL THEN 'baseline_unavailable' END,\
   \ CASE WHEN NOT verified_registration THEN 'missing_verified_registration' END,\
-  \ CASE WHEN prior_registration_activity THEN 'pre_registration_activity' END,\
   \ CASE WHEN has_open_position THEN 'baseline_open_position' END,\
   \ CASE WHEN pending_order_count > 0 THEN 'baseline_pending_orders' END,\
   \ CASE WHEN value_usdc IS NOT NULL AND value_usdc NOT IN (0, starting_balance_usdc) THEN 'invalid_starting_bankroll' END,\
@@ -2329,7 +2427,7 @@ competitionSeedMetadataSelect =
 
 competitionSelect :: Query
 competitionSelect =
-  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
+  "SELECT slug, name, chain_id, release_router, usdc_address, margin_clearinghouse_address, account_lens_address, release_bound_at IS NOT NULL, start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp,\
   \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp, minimum_x_account_age_days, target_x_handle, privacy_notice_version,\
   \ start_block, start_block_hash, score_cutoff_block, score_cutoff_block_hash,\
   \ starting_balance_usdc, minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\

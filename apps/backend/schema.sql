@@ -187,7 +187,9 @@ CREATE INDEX IF NOT EXISTS idx_perps_keeper_orders_commit_block ON perps_keeper_
 
 -- Plether Insights competitions, participants, canonical account snapshots,
 -- and review audit data. Competition metadata is inserted once from runtime
--- config; later starts validate it rather than rewriting historical rules.
+-- Rules are immutable from insertion. A registration-only competition may
+-- bind its reviewed release exactly once before its baseline is resolved;
+-- later starts validate that release rather than rewriting history.
 CREATE TABLE IF NOT EXISTS insights_competitions (
     slug TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -197,6 +199,9 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     margin_clearinghouse_address TEXT NOT NULL,
     account_lens_address TEXT NOT NULL,
     release_manifest TEXT NOT NULL,
+    -- Registration may open before the reviewed contract release exists.
+    -- This becomes non-null exactly once, before baseline resolution.
+    release_bound_at TIMESTAMPTZ,
     start_timestamp BIGINT NOT NULL,
     new_risk_cutoff_timestamp BIGINT NOT NULL,
     score_cutoff_timestamp BIGINT NOT NULL,

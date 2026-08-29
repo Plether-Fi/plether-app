@@ -8,7 +8,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   X_ACCOUNT_TOO_NEW: 'This X account is too new to enter this competition.',
   X_FOLLOW_REQUIRED: 'We could not confirm that you follow @plether_fi. Follow the account on X, then try verification again.',
   DUPLICATE_REGISTRATION: 'One of these verified identities is already registered for this competition.',
-  TRADING_ACCOUNT_EXISTS: 'This wallet’s Plether Trading Account already exists or has prior activity. Connect another owner wallet.',
+  TRADING_ACCOUNT_EXISTS: 'Wallet verification changed. Verify the wallet again.',
   INVALID_SIGNATURE: 'The wallet signature could not be verified. Try signing a fresh challenge.',
   RATE_LIMITED: 'Too many attempts. Wait a moment before trying again.',
   PROVIDER_UNAVAILABLE: 'A verification provider is temporarily unavailable. Please try again shortly.',

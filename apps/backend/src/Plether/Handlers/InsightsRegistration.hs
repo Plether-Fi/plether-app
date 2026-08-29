@@ -11,12 +11,8 @@ module Plether.Handlers.InsightsRegistration
   , sessionTokenFromRequest
   , parseCanonicalRpcQuantity
   , canonicalBlockLookupParams
-  , releaseActivityFilters
-  , fundingActivityFilters
   , completionResultDecision
-  , undeployedAccountDecision
-  , maximumRegistrationProofScanBlocks
-  , registrationIndexerCursorRangeValid
+  , ownedAccountDecision
   , xAccountAgeEligible
   ) where
 
@@ -34,14 +30,11 @@ import Data.Aeson
   ( FromJSON (..)
   , Value (..)
   , eitherDecode
-  , object
   , toJSON
   , withObject
-  , (.=)
   )
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Base16 as B16
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -55,13 +48,12 @@ import Data.Time.Clock.POSIX
   )
 import Data.Time.Format (defaultTimeLocale, formatTime)
 import Data.Word (Word8)
-import Database.PostgreSQL.Simple (Connection)
 import Network.HTTP.Client (Manager)
 import Network.HTTP.Types.Status (status303)
 import qualified Network.Wai as Wai
 import Plether.AA.Pimlico
-  ( UndeployedTradingAccountFailure (..)
-  , resolveUndeployedTradingAccountAtBlock
+  ( OwnedTradingAccountFailure (..)
+  , resolveOwnedTradingAccountAtBlock
   )
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
@@ -70,7 +62,6 @@ import Plether.Ethereum.Client
   ( EthClient
   , rpcCall
   )
-import Plether.Ethereum.Abi (keccak256)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Insights.Registration.Crypto
   ( EncryptedValue (..)
@@ -125,10 +116,6 @@ import Plether.Insights.Registration.Wallet
   , renderWalletChallenge
   , walletChallengeLifetimeSeconds
   )
-import Plether.Insights.Competition
-  ( CompetitionReleaseManifest (crmIndexerStartBlock)
-  , competitionReleaseManifestText
-  )
 import Plether.Utils.Address (isValidAddress)
 import Plether.Utils.Hex (hexToInteger, intToHex)
 import Web.Scotty
@@ -149,11 +136,6 @@ registrationCookieName = "__Host-plether_registration"
 
 maximumRegistrationBodyBytes :: Int
 maximumRegistrationBodyBytes = 16 * 1024
-
--- This is an availability bound, never an accepted-staleness tolerance: a
--- larger uncovered range fails closed instead of skipping any blocks.
-maximumRegistrationProofScanBlocks :: Integer
-maximumRegistrationProofScanBlocks = 2048
 
 data EmptyMutation = EmptyMutation
 
@@ -345,7 +327,7 @@ initializeInsightsRegistration pool perpsClient config =
   case cfgRegistrationConfig config of
     Nothing -> pure $ Right ()
     Just registrationConfig -> do
-      rpcValid <- validateRegistrationRpcDeployment perpsClient config
+      rpcValid <- validateRegistrationRpcChain perpsClient config
       valid <-
         if rpcValid
           then initializeRegistration pool perpsClient config registrationConfig
@@ -353,10 +335,10 @@ initializeInsightsRegistration pool perpsClient config =
       pure $
         if valid
           then Right ()
-          else Left "Provisioned Insights registration metadata, RPC, or indexer state does not match its configured competition"
+          else Left "Provisioned Insights registration metadata or RPC chain does not match its configured competition"
 
 initializeRegistration :: DbPool -> EthClient -> Config -> RegistrationConfig -> IO Bool
-initializeRegistration pool perpsClient config registrationConfig =
+initializeRegistration pool _perpsClient config registrationConfig =
   withDb pool $ \connection -> do
     Db.ensureRegistrationSchema connection
     _ <- Db.cleanupExpiredRegistrationSecrets connection
@@ -383,119 +365,27 @@ initializeRegistration pool perpsClient config registrationConfig =
                 now <- getPOSIXSeconds
                 if now >= Db.rgcRegistrationCloseTimestamp row
                   then pure True
-                  else do
-                    indexerReady <- registrationIndexerReady connection perpsClient config row
-                    if not indexerReady
-                      then pure False
-                      else do
-                        Db.openRegistrationIfConfigured
-                          connection
-                          (rcXCallbackCompetitionSlug registrationConfig)
-                          (rcPrivacyVersion registrationConfig)
+                  else
+                    Db.openRegistrationIfConfigured
+                      connection
+                      (rcXCallbackCompetitionSlug registrationConfig)
+                      (rcPrivacyVersion registrationConfig)
       _ -> pure False
 
-registrationIndexerReady
-  :: Connection
-  -> EthClient
-  -> Config
-  -> Db.RegistrationCompetition
-  -> IO Bool
-registrationIndexerReady connection client config competition = do
-  headResponse <- rpcCall client "eth_blockNumber" $ toJSON ([] :: [Value])
-  case headResponse of
-    Right headValue
-      | Right headBlock <- parseCanonicalRpcQuantity headValue -> do
-          initialHeadHash <- canonicalBlockHash client headBlock
-          cursor <-
-            Db.getReleaseIndexerCursor
-              connection
-              (Db.rgcChainId competition)
-              (Db.rgcReleaseRouter competition)
-          case (initialHeadHash, cursor) of
-            (Right capturedHeadHash, Just indexerCursor)
-              | registrationIndexerCursorRangeValid
-                  (crmIndexerStartBlock $ cfgInsightsCompetitionReleaseManifest config)
-                  (Db.ricConfiguredStartBlock indexerCursor)
-                  headBlock
-                  (Db.ricBlockNumber indexerCursor) -> do
-                  cursorHash <- canonicalBlockHash client $ Db.ricBlockNumber indexerCursor
-                  stableHeadHash <- canonicalBlockHash client headBlock
-                  pure $
-                    cursorHash == Right (Db.ricBlockHash indexerCursor)
-                      && stableHeadHash == Right capturedHeadHash
-            _ -> pure False
-    _ -> pure False
-
-registrationIndexerCursorRangeValid :: Integer -> Integer -> Integer -> Integer -> Bool
-registrationIndexerCursorRangeValid expectedStartBlock configuredStartBlock headBlock cursorBlock =
-  expectedStartBlock > 0
-    && configuredStartBlock == expectedStartBlock
-    && cursorBlock >= expectedStartBlock
-    && cursorBlock <= headBlock
-    && headBlock - cursorBlock <= maximumRegistrationProofScanBlocks
-
--- | Fail closed before registration routes can be served.  This pins the RPC
--- chain and proves that the history indexer's configured lower bound predates
--- every activity-emitting contract in the selected release.  A second read of
--- the captured head hash rejects a reorg during the proof.
-validateRegistrationRpcDeployment :: EthClient -> Config -> IO Bool
-validateRegistrationRpcDeployment client config = do
+-- | Registration depends on the AA factory and the target chain, but not on
+-- competition contracts that may still be awaiting deployment.
+validateRegistrationRpcChain :: EthClient -> Config -> IO Bool
+validateRegistrationRpcChain client config = do
   chainResponse <- rpcCall client "eth_chainId" $ toJSON ([] :: [Value])
-  headResponse <- rpcCall client "eth_blockNumber" $ toJSON ([] :: [Value])
-  let expectedStartBlock = crmIndexerStartBlock $ cfgInsightsCompetitionReleaseManifest config
-  case (chainResponse, headResponse) of
-    (Right chainValue, Right headValue)
-      | Right chainId <- parseCanonicalRpcQuantity chainValue
-      , Right headBlock <- parseCanonicalRpcQuantity headValue
-      , chainId == cfgPerpsChainId config
-      , expectedStartBlock > 0
-      , expectedStartBlock <= headBlock -> do
-          initialHash <- canonicalBlockHash client headBlock
-          emitterProofs <-
-            mapM
-              (emitterCoveredByIndexer client expectedStartBlock headBlock)
-              [ cfgPerpsOrderRouter config
-              , cfgPerpsCfdEngine config
-              , cfgPerpsMarginClearinghouse config
-              , cfgPerpsUsdc config
-              ]
-          finalHash <- canonicalBlockHash client headBlock
-          pure $ case (initialHash, finalHash) of
-            (Right before, Right after) -> before == after && and emitterProofs
-            _ -> False
-    _ -> pure False
-
-emitterCoveredByIndexer :: EthClient -> Integer -> Integer -> Text -> IO Bool
-emitterCoveredByIndexer client startBlock headBlock emitter = do
-  before <- contractCodeIsEmptyAt client emitter $ startBlock - 1
-  current <- contractCodeIsEmptyAt client emitter headBlock
-  pure $ before == Right True && current == Right False
-
-contractCodeIsEmptyAt :: EthClient -> Text -> Integer -> IO (Either RegistrationError Bool)
-contractCodeIsEmptyAt client address blockNumber = do
-  result <-
-    rpcCall client "eth_getCode" $
-      toJSON [String $ T.toLower address, String $ "0x" <> intToHex blockNumber]
-  pure $ case result of
-    Right (String "0x") -> Right True
-    Right (String code)
-      | T.take 2 code == "0x"
-      , let payload = T.drop 2 code
-      , not $ T.null payload
-      , even $ T.length payload
-      , T.all isLowerHex payload -> Right False
-    _ -> Left providerUnavailableError
-  where
-    isLowerHex character =
-      character `elem` ['0' .. '9'] || character `elem` ['a' .. 'f']
+  pure $ case chainResponse of
+    Right chainValue
+      | Right chainId <- parseCanonicalRpcQuantity chainValue ->
+          chainId == cfgPerpsChainId config
+    _ -> False
 
 competitionMatchesConfig :: Config -> RegistrationConfig -> Db.RegistrationCompetition -> Bool
 competitionMatchesConfig config registrationConfig competition =
   Db.rgcChainId competition == cfgPerpsChainId config
-    && T.toLower (Db.rgcReleaseRouter competition) == T.toLower (cfgPerpsOrderRouter config)
-    && T.toLower (Db.rgcUsdcAddress competition) == T.toLower (cfgPerpsUsdc config)
-    && Db.rgcReleaseManifest competition
-      == competitionReleaseManifestText (cfgInsightsCompetitionReleaseManifest config)
     && T.toCaseFold (Db.rgcTargetXHandle competition) == T.toCaseFold (rcXTargetHandle registrationConfig)
     && toInteger (Db.rgcMinimumXAccountAgeDays competition) == rcMinimumXAccountAgeDays registrationConfig
     && Db.rgcRulesVersion competition == rcRulesVersion registrationConfig
@@ -992,7 +882,7 @@ verifyWallet
   -> Wai.Request
   -> WalletVerifyRequest
   -> IO (Either RegistrationError RegistrationSessionView)
-verifyWallet pool perpsClient registrationConfig config slug waiRequest walletRequest =
+verifyWallet pool perpsClient registrationConfig _config slug waiRequest walletRequest =
   case normalizeOwnerInput $ wvrOwnerAddress walletRequest of
     Nothing -> pure $ Left invalidWalletError
     Just normalizedOwner ->
@@ -1021,7 +911,7 @@ verifyWallet pool perpsClient registrationConfig config slug waiRequest walletRe
                           | signer /= Db.wchrOwnerWallet challenge ->
                               pure $ Left $ registrationError InvalidSignature "Wallet signature is invalid"
                           | otherwise -> do
-                              verified <- verifyUnusedTradingAccount pool perpsClient config slug signer
+                              verified <- verifyOwnedTradingAccount perpsClient signer
                               case verified of
                                 Left err -> pure $ Left err
                                 Right proof -> do
@@ -1048,7 +938,7 @@ finishRegistration
   -> AuthenticatedSession
   -> CompleteRegistrationRequest
   -> IO (Either RegistrationError RegistrationSessionView)
-finishRegistration pool perpsClient registrationConfig config slug authenticated requestValue
+finishRegistration pool perpsClient registrationConfig _config slug authenticated requestValue
   | Db.rsrStatus row == "completed" = pure $ Right $ sessionView registrationConfig authenticated
   | otherwise = do
       completionState <- withDb pool $ \connection ->
@@ -1069,14 +959,14 @@ finishRegistration pool perpsClient registrationConfig config slug authenticated
       | otherwise =
           case (Db.rsrOwnerWallet row, Db.rsrTradingAccount row) of
             (Just owner, Just storedTradingAccount) -> do
-              verified <- verifyUnusedTradingAccount pool perpsClient config slug owner
+              verified <- verifyOwnedTradingAccount perpsClient owner
               case verified of
-                Left err
-                  | reCode err == TradingAccountExists -> clearWalletProof >> pure (Left err)
-                  | otherwise -> pure $ Left err
+                Left err -> pure $ Left err
                 Right proof
                   | tapTradingAccount proof /= storedTradingAccount ->
-                      clearWalletProof >> pure (Left tradingAccountError)
+                      clearWalletProof
+                        >> pure
+                          (Left $ registrationError RegistrationIncomplete "Wallet verification state changed; verify the wallet again")
                   | otherwise -> do
                       completed <- withDb pool $ \connection ->
                         Db.completeRegistration
@@ -1091,9 +981,7 @@ finishRegistration pool perpsClient registrationConfig config slug authenticated
                           (tapBlockHash proof)
                       case completionResultDecision completed of
                         Right () -> loadSessionView pool registrationConfig slug $ asDigest authenticated
-                        Left err
-                          | reCode err == TradingAccountExists -> clearWalletProof >> pure (Left err)
-                          | otherwise -> pure $ Left err
+                        Left err -> pure $ Left err
             _ -> pure $ Left $ registrationError RegistrationIncomplete "Wallet verification is incomplete"
     clearWalletProof = do
       _ <- withDb pool $ \connection ->
@@ -1108,93 +996,47 @@ completionResultDecision = \case
   Db.CompletionIncomplete ->
     Left $ registrationError RegistrationIncomplete "Registration steps are incomplete"
   Db.CompletionDuplicate -> Left duplicateError
-  Db.CompletionTradingAccountUsed -> Left tradingAccountError
+  Db.CompletionWalletProofChanged ->
+    Left $ registrationError RegistrationIncomplete "Wallet verification state changed; verify the wallet again"
 
-undeployedAccountDecision
-  :: Either UndeployedTradingAccountFailure Text
+ownedAccountDecision
+  :: Either OwnedTradingAccountFailure Text
   -> Either RegistrationError Text
-undeployedAccountDecision = \case
-  Left OwnerAddressAlreadyDeployed -> Left tradingAccountError
-  Left TradingAccountAlreadyDeployed -> Left tradingAccountError
-  Left UndeployedTradingAccountProofUnavailable -> Left providerUnavailableError
+ownedAccountDecision = \case
+  Left OwnerWalletIsContract -> Left invalidWalletError
+  Left OwnedTradingAccountProofUnavailable -> Left providerUnavailableError
   Right account -> Right account
 
-verifyUnusedTradingAccount
-  :: DbPool
-  -> EthClient
-  -> Config
-  -> Text
+verifyOwnedTradingAccount
+  :: EthClient
   -> Text
   -> IO (Either RegistrationError TradingAccountProof)
-verifyUnusedTradingAccount pool client config slug owner
+verifyOwnedTradingAccount client owner
   | not $ isCanonicalOwner owner = pure $ Left invalidWalletError
   | otherwise = do
-      competition <- withDb pool $ \connection -> Db.getRegistrationCompetition connection slug
-      case competition of
-        Nothing -> pure $ Left registrationNotFoundError
-        Just competitionRow -> do
-          headResponse <- rpcCall client "eth_blockNumber" $ toJSON ([] :: [Value])
-          let chainHead = case headResponse of
-                Right value -> firstProviderError $ parseCanonicalRpcQuantity value
-                Left _ -> Left providerUnavailableError
-          case chainHead of
-            Left _ -> pure $ Left providerUnavailableError
-            Right verificationBlock -> do
-              initialHeadHash <- canonicalBlockHash client verificationBlock
-              derivedResult <-
-                resolveUndeployedTradingAccountAtBlock client owner verificationBlock
-              cursor <- withDb pool $ \connection ->
-                Db.getReleaseIndexerCursor
-                  connection
-                  (Db.rgcChainId competitionRow)
-                  (Db.rgcReleaseRouter competitionRow)
-              case undeployedAccountDecision derivedResult of
-                Left err -> pure $ Left err
-                Right rawDerived -> case (initialHeadHash, cursor) of
-                  (Right verificationHash, Just indexerCursor) -> do
-                    let derived = T.toLower $ T.strip rawDerived
-                    if not (isCanonicalOwner derived)
-                        || not
-                          ( registrationIndexerCursorRangeValid
-                              (crmIndexerStartBlock $ cfgInsightsCompetitionReleaseManifest config)
-                              (Db.ricConfiguredStartBlock indexerCursor)
-                              verificationBlock
-                              (Db.ricBlockNumber indexerCursor)
-                          )
-                      then pure $ Left providerUnavailableError
-                      else do
-                        canonicalCursorHash <- canonicalBlockHash client $ Db.ricBlockNumber indexerCursor
-                        gapActivity <-
-                          releaseGapHasAccountActivity
-                            client
-                            config
-                            derived
-                            (Db.ricBlockNumber indexerCursor + 1)
-                            verificationBlock
-                        indexedActivity <- withDb pool $ \connection ->
-                          Db.tradingAccountHasReleaseActivity
-                            connection
-                            (Db.rgcChainId competitionRow)
-                            (Db.rgcReleaseRouter competitionRow)
-                            (Db.rgcUsdcAddress competitionRow)
-                            derived
-                        finalHeadHash <- canonicalBlockHash client verificationBlock
-                        pure $ do
-                          cursorHash <- canonicalCursorHash
-                          unless
-                            (T.toLower cursorHash == T.toLower (Db.ricBlockHash indexerCursor))
-                            (Left providerUnavailableError)
-                          uncoveredActivity <- gapActivity
-                          unless (not indexedActivity && not uncoveredActivity) $ Left tradingAccountError
-                          stableHeadHash <- finalHeadHash
-                          unless (stableHeadHash == verificationHash) $ Left providerUnavailableError
-                          Right $
-                            TradingAccountProof
-                              { tapTradingAccount = derived
-                              , tapBlockNumber = verificationBlock
-                              , tapBlockHash = verificationHash
-                              }
-                  _ -> pure $ Left providerUnavailableError
+      headResponse <- rpcCall client "eth_blockNumber" $ toJSON ([] :: [Value])
+      let chainHead = case headResponse of
+            Right value -> firstProviderError $ parseCanonicalRpcQuantity value
+            Left _ -> Left providerUnavailableError
+      case chainHead of
+        Left _ -> pure $ Left providerUnavailableError
+        Right verificationBlock -> do
+          initialHeadHash <- canonicalBlockHash client verificationBlock
+          derivedResult <- resolveOwnedTradingAccountAtBlock client owner verificationBlock
+          finalHeadHash <- canonicalBlockHash client verificationBlock
+          pure $ do
+            verificationHash <- initialHeadHash
+            rawDerived <- ownedAccountDecision derivedResult
+            stableHeadHash <- finalHeadHash
+            unless (stableHeadHash == verificationHash) $ Left providerUnavailableError
+            let derived = T.toLower $ T.strip rawDerived
+            unless (isCanonicalOwner derived) $ Left providerUnavailableError
+            Right $
+              TradingAccountProof
+                { tapTradingAccount = derived
+                , tapBlockNumber = verificationBlock
+                , tapBlockHash = verificationHash
+                }
 
 canonicalBlockHash :: EthClient -> Integer -> IO (Either RegistrationError Text)
 canonicalBlockHash client blockNumber = do
@@ -1235,112 +1077,6 @@ parseCanonicalRpcQuantity _ = Left "JSON-RPC quantity is not canonical"
 
 firstProviderError :: Either Text a -> Either RegistrationError a
 firstProviderError = either (const $ Left providerUnavailableError) Right
-
-releaseGapHasAccountActivity
-  :: EthClient
-  -> Config
-  -> Text
-  -> Integer
-  -> Integer
-  -> IO (Either RegistrationError Bool)
-releaseGapHasAccountActivity client config account rawFromBlock toBlock
-  | fromBlock > toBlock = pure $ Right False
-  | otherwise = scan fromBlock
-  where
-    fromBlock = max 0 rawFromBlock
-    maximumRange = 1000
-    scan startBlock
-      | startBlock > toBlock = pure $ Right False
-      | otherwise = do
-          let endBlock = min toBlock $ startBlock + maximumRange - 1
-              (topicOneFilter, orderFilter) =
-                releaseActivityFilters config account startBlock endBlock
-              (transferFromFilter, transferToFilter) =
-                fundingActivityFilters config account startBlock endBlock
-          rangeResult <- anyLogs [topicOneFilter, orderFilter, transferFromFilter, transferToFilter]
-          case rangeResult of
-            Left err -> pure $ Left err
-            Right True -> pure $ Right True
-            Right False -> scan $ endBlock + 1
-
-    anyLogs [] = pure $ Right False
-    anyLogs (filterValue : remaining) = do
-      result <- hasLogs filterValue
-      case result of
-        Left err -> pure $ Left err
-        Right True -> pure $ Right True
-        Right False -> anyLogs remaining
-
-    hasLogs filterValue = do
-      response <- rpcCall client "eth_getLogs" $ toJSON [filterValue]
-      pure $ case response of
-        Right (Array logs) -> Right $ not $ null logs
-        _ -> Left providerUnavailableError
-
-releaseActivityFilters :: Config -> Text -> Integer -> Integer -> (Value, Value)
-releaseActivityFilters config account fromBlock toBlock =
-  ( object $
-      [ "address" .= emitters
-      , "topics" .= [toJSON accountTopicOneEvents, String accountTopic]
-      ]
-        <> commonFields
-  , object $
-      [ "address" .= T.toLower (cfgPerpsOrderRouter config)
-      , "topics" .= [String orderCommittedEvent, Null, String accountTopic]
-      ]
-        <> commonFields
-  )
-  where
-    emitters =
-      [ T.toLower $ cfgPerpsOrderRouter config
-      , T.toLower $ cfgPerpsCfdEngine config
-      , T.toLower $ cfgPerpsMarginClearinghouse config
-      ]
-    accountTopic = "0x" <> T.replicate 24 "0" <> T.drop 2 (T.toLower account)
-    accountTopicOneEvents =
-      map
-        eventTopic
-        [ "PositionOpened(address,uint8,uint256,uint256,uint256)"
-        , "PositionClosed(address,uint8,uint256,uint256,int256)"
-        , "PositionLiquidated(address,uint8,uint256,uint256,uint256)"
-        , "MarginAdded(address,uint256)"
-        , "Deposit(address,address,uint256)"
-        , "Withdraw(address,address,uint256)"
-        ]
-    orderCommittedEvent = eventTopic "OrderCommitted(uint64,address,uint8)"
-    commonFields =
-      [ "fromBlock" .= ("0x" <> intToHex fromBlock)
-      , "toBlock" .= ("0x" <> intToHex toBlock)
-      ]
-
--- | Directly cover official mock-USDC funding in the indexer cursor-to-head
--- gap. Transfer indexes the sender and recipient separately, so both filters
--- are required to prove that the derived account has never been funded or
--- drained before registration.
-fundingActivityFilters :: Config -> Text -> Integer -> Integer -> (Value, Value)
-fundingActivityFilters config account fromBlock toBlock =
-  ( object $
-      [ "address" .= T.toLower (cfgPerpsUsdc config)
-      , "topics" .= [String transferEvent, String accountTopic]
-      ]
-        <> commonFields
-  , object $
-      [ "address" .= T.toLower (cfgPerpsUsdc config)
-      , "topics" .= [String transferEvent, Null, String accountTopic]
-      ]
-        <> commonFields
-  )
-  where
-    transferEvent = eventTopic "Transfer(address,address,uint256)"
-    accountTopic = "0x" <> T.replicate 24 "0" <> T.drop 2 (T.toLower account)
-    commonFields =
-      [ "fromBlock" .= ("0x" <> intToHex fromBlock)
-      , "toBlock" .= ("0x" <> intToHex toBlock)
-      ]
-
-eventTopic :: Text -> Text
-eventTopic signature =
-  "0x" <> TE.decodeUtf8 (B16.encode $ keccak256 $ TE.encodeUtf8 signature)
 
 loadSessionView
   :: DbPool
@@ -1660,9 +1396,6 @@ registrationNotFoundError = registrationError RegistrationNotFound "Registration
 
 invalidWalletError :: RegistrationError
 invalidWalletError = registrationError InvalidRequest "Wallet address is invalid"
-
-tradingAccountError :: RegistrationError
-tradingAccountError = registrationError TradingAccountExists "Use another owner wallet to register"
 
 duplicateError :: RegistrationError
 duplicateError = registrationError DuplicateRegistration "This registration cannot be completed"

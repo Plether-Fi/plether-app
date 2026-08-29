@@ -123,6 +123,15 @@ spec = do
       competitionRulesForSlug september2026CompetitionSlug `shouldBe` Just september2026Competition
       competitionRulesForSlug "testnet-trading-2026-09-typo" `shouldBe` Nothing
 
+    it "distinguishes registration-only state from the reviewed release binding" $ do
+      competitionReleaseIsBound september2026Competition fixtureManifest `shouldBe` False
+      competitionReleaseIsBound
+        september2026Competition
+        (fixtureManifest {crmReleaseId = september2026CompetitionSlug})
+        `shouldBe` True
+      pendingCompetitionReleaseManifestText september2026Competition 421_614
+        `shouldBe` "release-pending-v1|testnet-trading-2026-09|421614"
+
     it "requires the registration opener to run strictly before close" $ do
       canInitiallySeedCompetitionAt
         september2026Competition

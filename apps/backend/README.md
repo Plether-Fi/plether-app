@@ -554,7 +554,7 @@ Local URLs:
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
 | `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
-| `INSIGHTS_COMPETITION_RELEASE_ID` | September activation | - | Must exactly match `testnet-trading-2026-09`; combines with explicit nonzero, pairwise-distinct addresses absent from the full July manifest and a positive new indexer start to prevent accidental historical seeding |
+| `INSIGHTS_COMPETITION_RELEASE_ID` | September release binding | - | Omit during registration-only activation. After contract deployment, set it to `testnet-trading-2026-09` together with explicit nonzero, pairwise-distinct addresses absent from the July manifest and a positive new indexer start; the release then binds once before the baseline and becomes immutable. |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
 | `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |

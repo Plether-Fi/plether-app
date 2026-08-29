@@ -658,7 +658,7 @@ variable "insights_active_competition_slug" {
 variable "insights_competition_release_id" {
   type        = string
   default     = ""
-  description = "Explicit release-manifest identifier for competition activation. September seeding requires it to equal testnet-trading-2026-09."
+  description = "Explicit release-manifest identifier for one-time competition release binding. Leave empty while September is registration-only; binding requires testnet-trading-2026-09."
 
   validation {
     condition     = var.insights_competition_release_id == "" || can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.insights_competition_release_id))

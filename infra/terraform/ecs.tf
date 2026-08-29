@@ -326,10 +326,9 @@ resource "aws_ecs_task_definition" "api" {
       condition = !var.enable_insights_registration || (
         var.provision_insights_registration
         && var.insights_active_competition_slug != ""
-        && var.insights_competition_release_id == var.insights_active_competition_slug
         && var.x_oauth_callback_url == "${var.insights_registration_public_origin}/api/insights/v1/competitions/${var.insights_active_competition_slug}/registrations/x/callback"
       )
-      error_message = "Insights registration requires provisioned credentials plus matching active-competition, release-manifest, and canonical X callback slugs."
+      error_message = "Insights registration requires provisioned credentials plus matching active-competition and canonical X callback slugs."
     }
 
     precondition {
@@ -370,7 +369,7 @@ resource "aws_ecs_task_definition" "api" {
     }
 
     precondition {
-      condition = var.insights_active_competition_slug != "testnet-trading-2026-09" || (
+      condition = var.insights_active_competition_slug != "testnet-trading-2026-09" || var.insights_competition_release_id == "" || (
         var.insights_competition_release_id == "testnet-trading-2026-09"
         && alltrue([
           for address in local.insights_release_addresses :
@@ -382,7 +381,7 @@ resource "aws_ecs_task_definition" "api" {
         && can(regex("^[1-9][0-9]*$", var.perps_indexer_start_block))
         && var.perps_indexer_start_block != "288439939"
       )
-      error_message = "September 2026 activation requires INSIGHTS_COMPETITION_RELEASE_ID=testnet-trading-2026-09 and distinct, nonzero new-release addresses that do not reuse any July manifest address, plus a new positive indexer start block."
+      error_message = "When the September 2026 release is bound, INSIGHTS_COMPETITION_RELEASE_ID must equal testnet-trading-2026-09 and all release addresses must be distinct, nonzero, new, and paired with a new positive indexer start block. Leave the release ID empty for registration-only activation."
     }
   }
 }

@@ -15,6 +15,8 @@ module Plether.AA.Pimlico
   , resolveTradingAccountAddress
   , UndeployedTradingAccountFailure (..)
   , resolveUndeployedTradingAccountAtBlock
+  , OwnedTradingAccountFailure (..)
+  , resolveOwnedTradingAccountAtBlock
   ) where
 
 import Control.Concurrent.STM
@@ -913,6 +915,44 @@ resolveUndeployedTradingAccountAtBlock client rawAddress blockNumber =
         (Left _, _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
         (_, Left _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
         (_, _, Left _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+
+-- | Prove that an EOA controls the deterministic index-0 Trading Account at
+-- one canonical block. Unlike the legacy unused-account check, this proof does
+-- not inspect the derived account's deployment or activity history: clean
+-- competition eligibility is determined from the canonical start snapshot.
+data OwnedTradingAccountFailure
+  = OwnerWalletIsContract
+  | OwnedTradingAccountProofUnavailable
+  deriving stock (Show, Eq)
+
+resolveOwnedTradingAccountAtBlock
+  :: EthClient
+  -> Text
+  -> Integer
+  -> IO (Either OwnedTradingAccountFailure Text)
+resolveOwnedTradingAccountAtBlock client rawAddress blockNumber =
+  case normalizeAddress rawAddress of
+    Nothing -> pure $ Left OwnedTradingAccountProofUnavailable
+    Just owner -> do
+      ownerCode <- readCodeAtBlock client owner blockNumber
+      factoryImplementation <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          selectorAccountImplementation
+          blockNumber
+      derived <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          (encodeCall "getAddress(address,uint256)" [encodeAddress owner, encodeUint256 0])
+          blockNumber
+      pure $ case (ownerCode, factoryImplementation, derived) of
+        (Right code, Right implementation, Right account)
+          | not (BS.null code) -> Left OwnerWalletIsContract
+          | implementation /= simpleAccountImplementation -> Left OwnedTradingAccountProofUnavailable
+          | otherwise -> Right account
+        _ -> Left OwnedTradingAccountProofUnavailable
 
 readContractAddressAtBlock
   :: EthClient

@@ -266,13 +266,6 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
       ])
     } catch (caught) {
       setActionError(registrationErrorMessage(caught))
-      if (caught instanceof InsightsApiError && caught.code === 'TRADING_ACCOUNT_EXISTS') {
-        // The account can become deployed or active between wallet proof and
-        // the transactional completion recheck. Keep the flow resumable with
-        // a different owner instead of trapping the participant on review.
-        setEditingWallet(true)
-        await sessionQuery.refetch()
-      }
     } finally {
       setPendingAction(null)
     }
@@ -411,7 +404,7 @@ export function RegistrationPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-brand-peach">September 2026 testnet competition</p>
         <h1 className="mt-3 text-3xl font-semibold sm:text-4xl">Register to compete</h1>
         <p className="mt-4 max-w-3xl text-sm leading-6 text-content-secondary sm:text-base">
-          Verify one established X account and one unused owner wallet. Your deterministic Plether Trading Account becomes the address scored on the public leaderboard.
+          Verify one established X account and prove ownership of one wallet. Your deterministic Plether Trading Account becomes the address scored on the public leaderboard. Its clean starting state is checked at the competition baseline.
         </p>
       </div>
       <RegistrationFlow slug={slug} competition={competitionData} />

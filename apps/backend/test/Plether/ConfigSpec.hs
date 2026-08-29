@@ -25,6 +25,11 @@ spec = do
         (validateInsightsCompetitionActivation july2026CompetitionSlug Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
         `shouldBe` Right july2026CompetitionSlug
 
+    it "allows September registration before a release is bound" $ do
+      fmap crSlug
+        (validateInsightsCompetitionActivation september2026CompetitionSlug Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing Nothing)
+        `shouldBe` Right september2026CompetitionSlug
+
     it "rejects the September slug when any address inherits the July release" $ do
       validateInsightsCompetitionActivation
         september2026CompetitionSlug

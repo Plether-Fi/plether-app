@@ -211,9 +211,9 @@ julyPerpsPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
 julyPerpsIndexerStartBlock :: String
 julyPerpsIndexerStartBlock = "288439939"
 
--- | Resolve the immutable rule set and fail closed before the September slug
--- can inherit the July release defaults. Every address persisted in the
--- competition row must be explicit and must identify a new release.
+-- | Resolve the immutable rule set. September may start in a registration-only
+-- state without a release ID; supplying the release ID is the explicit bind
+-- signal and then every address must identify one complete new release.
 validateInsightsCompetitionActivation
   :: Text
   -> Maybe String
@@ -235,6 +235,8 @@ validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter 
       (competitionRulesForSlug slug)
   if crSlug rules /= september2026CompetitionSlug
     then Right rules
+    else if isMissing maybeReleaseId
+      then Right rules
     else
       let supplied =
             [ ("PERPS_USDC", maybeUsdc, julyPerpsUsdc)
@@ -296,6 +298,7 @@ validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter 
               else Right rules
   where
     zeroAddress = "0x0000000000000000000000000000000000000000"
+    isMissing = maybe True (T.null . T.strip . T.pack)
 
 validateRegistrationConfig
   :: CompetitionRules
@@ -545,6 +548,7 @@ loadConfig = do
             case competitionConfig of
               Right (rules, _) ->
                 crSlug rules == september2026CompetitionSlug
+                  && maybe False (not . T.null . T.strip . T.pack) mInsightsCompetitionReleaseId
                   && all (isValidAddress . T.pack)
                     [perpsUsdc, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
               Left _ -> False
@@ -608,9 +612,12 @@ loadConfig = do
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
                 , cfgInsightsCompetitionRules = insightsCompetitionRules
                 , cfgInsightsCompetitionReleaseManifest =
-                    CompetitionReleaseManifest
+                    let defaultReleaseId
+                          | crSlug insightsCompetitionRules == september2026CompetitionSlug = "release-pending"
+                          | otherwise = T.unpack $ crSlug insightsCompetitionRules
+                     in CompetitionReleaseManifest
                       { crmReleaseId =
-                          T.strip $ T.pack $ fromMaybe (T.unpack $ crSlug insightsCompetitionRules) mInsightsCompetitionReleaseId
+                          T.strip $ T.pack $ fromMaybe defaultReleaseId mInsightsCompetitionReleaseId
                       , crmChainId = perpsChainId
                       , crmUsdc = T.pack perpsUsdc
                       , crmOrderRouter = T.pack perpsOrderRouter

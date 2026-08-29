@@ -14,9 +14,10 @@ pimlico_api_key                = "pim_YOUR_PIMLICO_API_KEY"
 pimlico_sponsorship_policy_id = "sp_YOUR_POLICY_ID"
 aa_proxy_origin_token          = "GENERATE_A_LONG_RANDOM_SHARED_SECRET"
 provision_insights_registration = true
-# Keep false until the new contract manifest is filled below, the September
-# competition is activated, and the identical origin token is configured as
-# the INSIGHTS_REGISTRATION_ORIGIN_TOKEN GitHub Actions secret for Pages.
+# Keep false until the September competition slug is activated and the
+# identical origin token is configured as the
+# INSIGHTS_REGISTRATION_ORIGIN_TOKEN GitHub Actions secret for Pages. The
+# competition contract release may be bound later.
 enable_insights_registration                    = false
 insights_registration_public_origin             = "https://insights.plether.com"
 insights_registration_origin_token              = "REPLACE_WITH_A_RANDOM_32_BYTE_OR_LONGER_TOKEN"
@@ -43,10 +44,12 @@ insights_registration_ip_rate_limit_per_minute    = 10
 insights_registration_session_rate_limit_per_minute = 30
 insights_registration_rules_version               = "2026-09-13"
 insights_registration_privacy_version             = "2026-09-13"
-# Activate only after replacing every pinned July value below with the reviewed
-# new-release manifest, including perps_indexer_start_block. Both identifiers
-# are an intentional two-key guard and must match exactly.
+# Registration-only activation: set the competition slug and leave the release
+# ID empty until the new contracts are deployed.
 # insights_active_competition_slug = "testnet-trading-2026-09"
+# One-time release binding: after replacing every pinned July value below with
+# the reviewed manifest (including perps_indexer_start_block), set this ID to
+# the exact competition slug.
 # insights_competition_release_id  = "testnet-trading-2026-09"
 alb_certificate_arn            = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
 api_hostname                   = "api.sepolia.plether.com"

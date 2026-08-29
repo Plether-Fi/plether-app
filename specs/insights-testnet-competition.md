@@ -146,6 +146,11 @@ review outcome. A post-baseline allocation is official only when a successful
 faucet claim for the exact account, configured token, and amount has a persisted
 mint receipt block strictly before the clearinghouse deposit block.
 
+Registration proves ownership of the owner EOA and derives its deterministic
+index-0 Plether Trading Account. Deployment or earlier use of that Trading
+Account is not itself disqualifying. Only its canonical baseline state and the
+competition-period funding provenance determine clean-start integrity.
+
 ## Data and API requirements
 
 - Persist complete account-ledger snapshots at the baseline, periodically while

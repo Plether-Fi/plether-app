@@ -281,7 +281,7 @@ describe('RegistrationPage', () => {
     expect(screen.getAllByRole('checkbox')).toHaveLength(2)
   })
 
-  it('returns to wallet selection when the completion recheck finds activity', async () => {
+  it('does not discard wallet ownership when a legacy backend returns the retired account-state error', async () => {
     const refetch = vi.fn().mockResolvedValue(undefined)
     apiMocks.useRegistrationSession.mockReturnValue({
       data: {
@@ -306,6 +306,7 @@ describe('RegistrationPage', () => {
     )
 
     renderPage()
+    expect(screen.getByText(/clean starting state is checked at the competition baseline/i)).toBeInTheDocument()
     expect(screen.getByText(/confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages/i)).toBeInTheDocument()
     expect(screen.queryByText(/confirmed email is encrypted and retained indefinitely/i)).not.toBeInTheDocument()
     const consents = screen.getAllByRole('checkbox')
@@ -314,10 +315,10 @@ describe('RegistrationPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Complete registration' }))
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Choose another wallet' })).toBeInTheDocument()
+      expect(screen.getByRole('alert')).toHaveTextContent('Wallet verification changed. Verify the wallet again.')
     })
-    expect(refetch).toHaveBeenCalledOnce()
-    expect(screen.getByText('Wallet verification controls')).toBeInTheDocument()
+    expect(refetch).not.toHaveBeenCalled()
+    expect(screen.getByRole('heading', { name: 'Review your entry' })).toBeInTheDocument()
   })
 
   it('fails closed when registration metadata is closed', () => {
