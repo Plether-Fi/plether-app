@@ -223,6 +223,20 @@ jobs:
             echo "Protocol Explorer is disabled; the feature flag remains the rollout gate."
           fi
 
+      - name: Validate registration frontend configuration
+        env:
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.INSIGHTS_TURNSTILE_SITE_KEY }}
+          VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.WALLETCONNECT_PROJECT_ID }}
+        run: |
+          test -n "$VITE_TURNSTILE_SITE_KEY" || {
+            echo "::error title=Missing Turnstile site key::Configure the INSIGHTS_TURNSTILE_SITE_KEY GitHub Actions variable."
+            exit 1
+          }
+          test -n "$VITE_WALLETCONNECT_PROJECT_ID" || {
+            echo "::error title=Missing WalletConnect project ID::Configure the WALLETCONNECT_PROJECT_ID GitHub Actions variable."
+            exit 1
+          }
+
       - name: Install dependencies
         working-directory: apps/insights
         run: npm ci
@@ -237,6 +251,12 @@ jobs:
 
       - name: Build
         working-directory: apps/insights
+        env:
+          VITE_TURNSTILE_SITE_KEY: ${{ vars.INSIGHTS_TURNSTILE_SITE_KEY }}
+          VITE_WALLETCONNECT_PROJECT_ID: ${{ vars.WALLETCONNECT_PROJECT_ID }}
+          # Keep this origin aligned with the exact connect-src entry in the
+          # Pages Worker CSP. Do not substitute a credential-bearing RPC URL.
+          VITE_ARBITRUM_SEPOLIA_RPC_URL: https://sepolia-rollup.arbitrum.io/rpc
         run: npm run build
 
       - name: Configure Pages bindings
@@ -252,6 +272,7 @@ jobs:
           [vars]
           SEPOLIA_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
           INSIGHTS_BACKEND_URL = "$SEPOLIA_BACKEND_URL"
+          INSIGHTS_REGISTRATION_PUBLIC_ORIGIN = "https://insights.plether.com"
           EOF
 
       - name: Ensure Pages project
@@ -263,6 +284,59 @@ jobs:
           wranglerVersion: 4.103.0
           command: pages project create plether-insights --production-branch=master --compatibility-date=2026-07-17
 
+      - name: Configure registration proxy secret
+        working-directory: apps/insights
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          REGISTRATION_ORIGIN_TOKEN_SLOT: ${{ vars.INSIGHTS_REGISTRATION_ORIGIN_TOKEN_SLOT || 'current' }}
+          REGISTRATION_ORIGIN_TOKEN_CURRENT: ${{ secrets.INSIGHTS_REGISTRATION_ORIGIN_TOKEN }}
+          REGISTRATION_ORIGIN_TOKEN_NEXT: ${{ secrets.INSIGHTS_REGISTRATION_ORIGIN_TOKEN_NEXT }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          valid_origin_token() {
+            [[ "$1" =~ ^[[:graph:]]{32,}$ ]]
+          }
+
+          valid_origin_token "$REGISTRATION_ORIGIN_TOKEN_CURRENT" || {
+            echo "::error title=Invalid current registration origin token::Configure INSIGHTS_REGISTRATION_ORIGIN_TOKEN as at least 32 printable non-whitespace ASCII characters matching the backend current token."
+            exit 1
+          }
+
+          if [ -n "$REGISTRATION_ORIGIN_TOKEN_NEXT" ]; then
+            valid_origin_token "$REGISTRATION_ORIGIN_TOKEN_NEXT" || {
+              echo "::error title=Invalid next registration origin token::INSIGHTS_REGISTRATION_ORIGIN_TOKEN_NEXT must be at least 32 printable non-whitespace ASCII characters."
+              exit 1
+            }
+            [ "$REGISTRATION_ORIGIN_TOKEN_NEXT" != "$REGISTRATION_ORIGIN_TOKEN_CURRENT" ] || {
+              echo "::error title=Duplicate registration origin tokens::Current and next registration origin tokens must be distinct."
+              exit 1
+            }
+          fi
+
+          case "$REGISTRATION_ORIGIN_TOKEN_SLOT" in
+            current)
+              SENDER_TOKEN=$REGISTRATION_ORIGIN_TOKEN_CURRENT
+              ;;
+            next)
+              [ -n "$REGISTRATION_ORIGIN_TOKEN_NEXT" ] || {
+                echo "::error title=Missing next registration origin token::The sender slot is next, but INSIGHTS_REGISTRATION_ORIGIN_TOKEN_NEXT is not configured."
+                exit 1
+              }
+              SENDER_TOKEN=$REGISTRATION_ORIGIN_TOKEN_NEXT
+              ;;
+            *)
+              echo "::error title=Invalid registration origin token slot::INSIGHTS_REGISTRATION_ORIGIN_TOKEN_SLOT must be current or next."
+              exit 1
+              ;;
+          esac
+
+          printf '%s\n' "$SENDER_TOKEN" |
+            npx --yes wrangler@4.103.0 pages secret put INSIGHTS_REGISTRATION_ORIGIN_TOKEN \
+              --project-name=plether-insights
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -273,6 +347,7 @@ jobs:
           command: pages deploy dist --project-name=plether-insights --branch=master
 
       - name: Attach custom domain
+        id: custom-domain
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -285,6 +360,7 @@ jobs:
             --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
             "$API_BASE/$DOMAIN" >/dev/null; then
             echo "$DOMAIN is already attached to $PROJECT"
+            echo "dns_configuration_needed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -294,8 +370,10 @@ jobs:
             --header "Content-Type: application/json" \
             --data "{\"name\":\"$DOMAIN\"}" \
             "$API_BASE"
+          echo "dns_configuration_needed=true" >> "$GITHUB_OUTPUT"
 
       - name: Configure DNS record
+        if: steps.custom-domain.outputs.dns_configuration_needed == 'true'
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: |
@@ -331,3 +409,12 @@ jobs:
               --data "$BODY" \
               "$API_BASE/zones/$ZONE_ID/dns_records"
           fi
+
+      - name: Verify custom domain
+        run: |
+          curl --fail --silent --show-error \
+            --retry 5 \
+            --retry-all-errors \
+            --retry-delay 5 \
+            --max-time 20 \
+            https://insights.plether.com/ >/dev/null

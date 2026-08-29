@@ -10,11 +10,11 @@ The connected owner wallet signs for the Trading Account, but the Trading Accoun
 
 | Balance                  | Where it exists                                                                        | What it can do                                                        |
 | ------------------------ | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Remains ordinary wallet funds; it is not the current in-app deposit source |
+| **Owner-wallet USDC**    | At the connected owner-wallet address, outside the Trading Account and Plether         | Can fund the in-app deposit flow through an owner-paid token transfer when required |
 | **Trading Account USDC** | At the Trading Account address, outside Plether’s Margin Account                       | Can fund a sponsored deposit; it is not yet trading collateral        |
 | **Margin Account USDC**  | In Plether’s internal clearinghouse accounting under the Trading Account address       | Can become available, assigned or reserved collateral                 |
 
-The current application uses a separate smart Trading Account, so the owner-wallet and Trading Account token balances are at two different addresses. Current deposits source USDC already held by the Trading Account.
+The current application uses a separate smart Trading Account, so the owner-wallet and Trading Account token balances are at two different addresses. The deposit flow can use both balances. When the Trading Account does not hold the complete deposit amount, the application first transfers the exact shortfall from the owner wallet to the Trading Account and then submits the sponsored Margin Account deposit.
 
 The Margin Account has no separate wallet address. Sending USDC to a Plether contract does not credit it; use the deposit flow.
 
@@ -90,9 +90,14 @@ To deposit:
 1. Open the **Margin Account** section.
 2. Select `Deposit`.
 3. In `Deposit Margin`, enter an `Amount` no greater than `Available to deposit`.
-4. Select `Deposit` and authorize the sponsored Trading Account operation in the owner wallet.
+4. Select `Deposit` or `Transfer & Deposit`, depending on where the USDC is held.
+5. Confirm the requested wallet actions.
 
-The current deployment sources this amount from USDC already held by the separate Trading Account. The sponsored operation approves the clearinghouse and deposits it into the Margin Account. Owner-wallet USDC is not moved into the Trading Account by this deposit action; fund the Trading Account first when necessary. If the sponsored batch reverts, the Margin Account is not credited.
+If the Trading Account already holds the complete amount, the owner wallet authorizes only the sponsored deposit operation. The Trading Account approves the clearinghouse and deposits the amount into the Margin Account.
+
+If the amount exceeds the Trading Account balance, the application first requests a regular MockUSDC transfer for only the shortfall from the owner wallet to the Trading Account. This transfer requires Arbitrum Sepolia ETH for network gas. After it confirms, the application requests the sponsored deposit authorization.
+
+The two-step path is deliberately recoverable. If the owner-wallet transfer confirms but the sponsored deposit fails, the USDC remains at the Trading Account address. Retry the deposit; do not transfer the same amount again. If the sponsored deposit reverts, the Margin Account is not credited.
 
 After confirmation, the deposited amount enters **Available to Trade**, subject to any carry collected during the same sponsored operation.
 

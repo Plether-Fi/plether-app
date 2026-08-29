@@ -43,6 +43,18 @@ export function formatPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): st
   return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)), maxDecimals)
 }
 
+const PERPS_SUMMARY_WHOLE_USDC_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.USDC)
+
+/**
+ * Keep cents for normal-sized summary values, but drop fractional USDC once
+ * they stop being useful and make the value materially harder to scan.
+ */
+export function formatPerpsSummaryUsdc(amount: bigint | undefined): string {
+  if (amount === undefined) return '--'
+  const absoluteAmount = amount < 0n ? -amount : amount
+  return formatPerpsUsdc(amount, absoluteAmount >= PERPS_SUMMARY_WHOLE_USDC_THRESHOLD ? 0 : 2)
+}
+
 export function formatPerpsUsdcFloor(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
 
@@ -57,6 +69,13 @@ export function formatSignedPerpsUsdc(amount: bigint | undefined, maxDecimals = 
   const sign = amount < 0n ? '-' : amount > 0n ? '+' : ''
   const absolute = amount < 0n ? -amount : amount
   return `${sign}${formatPerpsUsdc(absolute, maxDecimals)}`
+}
+
+export function formatSignedPerpsSummaryUsdc(amount: bigint | undefined): string {
+  if (amount === undefined) return '--'
+  const sign = amount < 0n ? '-' : amount > 0n ? '+' : ''
+  const absolute = amount < 0n ? -amount : amount
+  return `${sign}${formatPerpsSummaryUsdc(absolute)}`
 }
 
 export function formatPerpsPrice(price: bigint | undefined, decimals = 4): string {

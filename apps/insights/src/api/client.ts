@@ -20,11 +20,13 @@ import type {
   ProtocolWalletsResponse,
   TrancheHistoryResponse,
   TrancheResponse,
+  RegistrationSession,
   WalletActivity,
+  WalletChallenge,
   WalletResponse,
 } from './types'
 
-export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026'
+export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026-09'
 const API_ROOT = '/api/insights/v1'
 const PERPS_PRICE_DECIMALS = 8
 const PLDXY_PRICE_CAP = 2n * 10n ** BigInt(PERPS_PRICE_DECIMALS)
@@ -63,6 +65,17 @@ interface WireCompetition {
   latestIndexedAt?: string | null
   participantCount?: number
   eligibleCount?: number
+  releaseReady?: boolean
+  registration?: {
+    status: 'upcoming' | 'open' | 'closed'
+    opensAt: string
+    closesAt: string
+    minimumXAccountAgeDays: number
+    targetXHandle: string
+    rulesVersion: string
+    privacyVersion: string
+  }
+  fxSessionBoundaryUtc?: string
 }
 
 interface WireStanding {
@@ -149,6 +162,7 @@ interface WireWalletResponse {
   competition: WireCompetition
   wallet: WireStanding
   activity?: WireActivity[] | null
+  activityStatus?: 'live' | 'omitted_after_finalization'
 }
 
 interface WireDataStatus {
@@ -173,21 +187,18 @@ interface WireStatusResponse {
 export class InsightsApiError extends Error {
   readonly status: number
   readonly code: string | undefined
+  readonly retryAfterSeconds: number | null
 
-  constructor(message: string, status: number, code?: string) {
+  constructor(message: string, status: number, code?: string, retryAfterSeconds: number | null = null) {
     super(message)
     this.name = 'InsightsApiError'
     this.status = status
     this.code = code
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
-async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const response = await fetch(`${API_ROOT}${path}`, {
-    headers: { Accept: 'application/json' },
-    signal,
-  })
-
+async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let body: ApiErrorBody | undefined
     try {
@@ -196,7 +207,14 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
       body = undefined
     }
     const message = body?.error?.message ?? body?.message ?? `Request failed (${String(response.status)})`
-    throw new InsightsApiError(message, response.status, body?.error?.code)
+    const retryAfter = response.headers.get('Retry-After')
+    const parsedRetryAfter = retryAfter === null ? null : Number.parseInt(retryAfter, 10)
+    throw new InsightsApiError(
+      message,
+      response.status,
+      body?.error?.code,
+      parsedRetryAfter !== null && Number.isFinite(parsedRetryAfter) ? parsedRetryAfter : null,
+    )
   }
 
   const body = (await response.json()) as T | ApiEnvelope<T>
@@ -204,6 +222,127 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
     return body.data
   }
   return body
+}
+
+async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(`${API_ROOT}${path}`, {
+    headers: { Accept: 'application/json' },
+    signal,
+  })
+  return parseResponse<T>(response)
+}
+
+async function registrationRequest<T>(
+  path: string,
+  options: {
+    method?: 'GET' | 'POST'
+    body?: Record<string, unknown>
+    csrfToken?: string
+    signal?: AbortSignal
+  } = {},
+): Promise<T> {
+  const headers = new Headers({ Accept: 'application/json' })
+  if (options.body) headers.set('Content-Type', 'application/json')
+  if (options.csrfToken) headers.set('X-Registration-CSRF', options.csrfToken)
+
+  const response = await fetch(`${API_ROOT}${path}`, {
+    method: options.method ?? 'GET',
+    credentials: 'include',
+    headers,
+    body: options.body ? JSON.stringify(options.body) : undefined,
+    signal: options.signal,
+  })
+  return parseResponse<T>(response)
+}
+
+function registrationBase(slug: string): string {
+  return `/competitions/${encodeURIComponent(slug)}/registrations`
+}
+
+function unwrapRegistration(
+  response: RegistrationSession | { registration: RegistrationSession },
+): RegistrationSession {
+  return 'registration' in response ? response.registration : response
+}
+
+export async function getRegistrationSession(
+  slug: string,
+  signal?: AbortSignal,
+): Promise<RegistrationSession> {
+  const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
+    `${registrationBase(slug)}/session`,
+    { signal },
+  )
+  return unwrapRegistration(response)
+}
+
+export async function createRegistrationSession(
+  slug: string,
+  turnstileToken: string,
+  signal?: AbortSignal,
+): Promise<RegistrationSession> {
+  const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
+    `${registrationBase(slug)}/session`,
+    { method: 'POST', body: { turnstileToken }, signal },
+  )
+  return unwrapRegistration(response)
+}
+
+export async function createXAuthorization(slug: string, csrfToken: string): Promise<string> {
+  const response = await registrationRequest<{ authorizationUrl: string }>(
+    `${registrationBase(slug)}/x/authorize`,
+    { method: 'POST', csrfToken, body: {} },
+  )
+  return response.authorizationUrl
+}
+
+export async function confirmXFollow(slug: string, csrfToken: string): Promise<RegistrationSession> {
+  const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
+    `${registrationBase(slug)}/x/follow`,
+    { method: 'POST', csrfToken, body: {} },
+  )
+  return unwrapRegistration(response)
+}
+
+export function createWalletChallenge(
+  slug: string,
+  csrfToken: string,
+  ownerAddress: string,
+): Promise<WalletChallenge> {
+  return registrationRequest<WalletChallenge>(
+    `${registrationBase(slug)}/wallet/challenge`,
+    { method: 'POST', csrfToken, body: { ownerAddress } },
+  )
+}
+
+export async function verifyRegistrationWallet(
+  slug: string,
+  csrfToken: string,
+  ownerAddress: string,
+  signature: string,
+): Promise<RegistrationSession> {
+  const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
+    `${registrationBase(slug)}/wallet/verify`,
+    { method: 'POST', csrfToken, body: { ownerAddress, signature } },
+  )
+  return unwrapRegistration(response)
+}
+
+export async function completeRegistration(
+  slug: string,
+  csrfToken: string,
+  rulesVersion: string,
+  privacyVersion: string,
+): Promise<RegistrationSession> {
+  const response = await registrationRequest<RegistrationSession | { registration: RegistrationSession }>(
+    `${registrationBase(slug)}/complete`,
+    {
+      method: 'POST',
+      csrfToken,
+      body: { acceptRules: true, acceptPrivacy: true, rulesVersion, privacyVersion },
+    },
+  )
+  return unwrapRegistration(response)
 }
 
 export async function getCurrentCompetition(signal?: AbortSignal): Promise<Competition> {
@@ -256,6 +395,7 @@ export async function getWallet(slug: string, address: string, signal?: AbortSig
       position: normalizePosition(response.wallet.position),
     },
     activity,
+    activityStatus: response.activityStatus ?? 'live',
   }
 }
 
@@ -816,6 +956,9 @@ function normalizeCompetition(raw: WireCompetition): Competition {
     latestIndexedAt: raw.latestIndexedAt ?? null,
     participantCount: raw.participantCount,
     eligibleCount: raw.eligibleCount,
+    releaseReady: raw.releaseReady,
+    registration: raw.registration,
+    fxSessionBoundaryUtc: raw.fxSessionBoundaryUtc,
   }
 }
 

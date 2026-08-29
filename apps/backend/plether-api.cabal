@@ -30,9 +30,11 @@ library
         Plether.Types.User
         Plether.Types.Quote
         Plether.Types.Perps
+        Plether.Types.VaultPerformance
         Plether.Types.Error
         Plether.Handlers.Protocol
         Plether.Handlers.Perps
+        Plether.Handlers.VaultPerformance
         Plether.Handlers.User
         Plether.Handlers.Quote
         Plether.Ethereum.Client
@@ -45,6 +47,7 @@ library
         Plether.Ethereum.Contracts.SyntheticSplitter
         Plether.Ethereum.Contracts.BasketOracle
         Plether.Ethereum.Contracts.StakedToken
+        Plether.Ethereum.Contracts.TrancheVault
         Plether.Ethereum.Contracts.Morpho
         Plether.Ethereum.Contracts.MorphoOracle
         Plether.Ethereum.Contracts.MorphoIrm
@@ -52,22 +55,39 @@ library
         Plether.Ethereum.Contracts.LeverageRouter
         Plether.Ethereum.Contracts.ZapRouter
         Plether.Ethereum.Contracts.Perps
+        Plether.Ethereum.Contracts.SettlementMonitor
         Plether.Ethereum.Contracts.CfdEngineAccountLens
         Plether.Utils.Address
         Plether.Utils.Hex
         Plether.Utils.Numeric
         Plether.Database
+        Plether.Database.VaultPerformance
+        Plether.Database.CandleHistory
+        Plether.Database.Candles
         Plether.Database.Schema
         Plether.Database.Insights
         Plether.Database.Protocol
         Plether.Database.ProtocolParameterChanges
+        Plether.Database.Insights.Registration
         Plether.Insights.Competition
+        Plether.Insights.Registration.Config
+        Plether.Insights.Registration.Cleanup
+        Plether.Insights.Registration.Crypto
+        Plether.Insights.Registration.Provider
+        Plether.Insights.Registration.Rotation
+        Plether.Insights.Registration.Types
+        Plether.Insights.Registration.Wallet
         Plether.Insights.SnapshotWorker
+        Plether.Vaults.PerformanceIndexer
         Plether.Pyth.Basket
         Plether.Pyth.Hermes
         Plether.Pyth.History
         Plether.Pyth.RevealPayload
+        Plether.Perps.ExecutionOracle
+        Plether.Perps.ExecutionTrace
+        Plether.Perps.CandleFinalizerProbe
         Plether.Perps.HistoryIndexer
+        Plether.Perps.IndexerOptions
         Plether.Protocol.Governance
         Plether.Protocol.ParameterChanges
         Plether.Protocol.Release
@@ -84,6 +104,7 @@ library
         Plether.Handlers.TestnetFaucet
         Plether.Handlers.Insights
         Plether.Handlers.ProtocolInsights
+        Plether.Handlers.InsightsRegistration
     build-depends:
         base >= 4.17 && < 5,
         scotty >= 0.22,
@@ -97,8 +118,10 @@ library
         bytestring >= 0.11,
         text >= 2.0,
         base16-bytestring >= 1.0,
+        base64-bytestring >= 1.2,
         crypton >= 0.34,
         memory >= 0.18,
+        network-uri >= 2.6,
         scientific >= 0.3,
         mtl >= 2.3,
         transformers >= 0.6,
@@ -129,7 +152,9 @@ executable plether-api
     import:           warnings
     main-is:          Main.hs
     build-depends:
+        aeson >= 2.1,
         base >= 4.17 && < 5,
+        bytestring >= 0.11,
         plether-api,
         scotty >= 0.22,
         text >= 2.0,
@@ -149,6 +174,7 @@ executable plether-basket-worker
         plether-api,
         aeson >= 2.1,
         bytestring >= 0.11,
+        postgresql-simple >= 0.7,
         text >= 2.0,
         http-client >= 0.7,
         http-client-tls >= 0.3
@@ -216,7 +242,9 @@ executable plether-insights-admin
     import:           warnings
     main-is:          InsightsAdmin.hs
     build-depends:
+        aeson >= 2.1,
         base >= 4.17 && < 5,
+        bytestring >= 0.11,
         plether-api,
         text >= 2.0
     hs-source-dirs:   app
@@ -227,6 +255,23 @@ executable plether-insights-admin
         RecordWildCards
     ghc-options: -threaded -rtsopts -with-rtsopts=-N
 
+executable plether-candle-admin
+    import:           warnings
+    main-is:          CandleAdmin.hs
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        postgresql-simple >= 0.7,
+        text >= 2.0
+    hs-source-dirs:   app
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+        TypeApplications
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1
+
 test-suite plether-api-test
     import:           warnings
     type:             exitcode-stdio-1.0
@@ -236,6 +281,7 @@ test-suite plether-api-test
         Paths_plether_api
         Plether.ApiSpec
         Plether.AA.PimlicoSpec
+        Plether.CacheSpec
         Plether.ConfigSpec
         Plether.Utils.NumericSpec
         Plether.Utils.AddressSpec
@@ -243,29 +289,49 @@ test-suite plether-api-test
         Plether.Ethereum.ClientSpec
         Plether.Ethereum.MulticallSpec
         Plether.Ethereum.Contracts.PerpsSpec
+        Plether.Ethereum.Contracts.SettlementMonitorSpec
         Plether.Ethereum.Contracts.CfdEngineAccountLensSpec
+        Plether.Ethereum.Contracts.TrancheVaultSpec
         Plether.Ethereum.TransactionSpec
         Plether.Indexer.ContractsSpec
         Plether.Indexer.EventsSpec
+        Plether.Handlers.InsightsRegistrationSpec
         Plether.Handlers.PerpsSpec
+        Plether.Handlers.VaultPerformanceSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.ProtocolInsightsSpec
         Plether.Handlers.TestnetFaucetSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
+        Plether.RequestLoggingSpec
         Plether.LiquidationWorkerSpec
         Plether.Pyth.HermesSpec
+        Plether.Pyth.HistorySpec
         Plether.Pyth.RevealPayloadSpec
+        Plether.Perps.ExecutionOracleSpec
+        Plether.Perps.ExecutionTraceSpec
+        Plether.Perps.CandleFinalizerProbeSpec
         Plether.Perps.HistoryIndexerSpec
+        Plether.Perps.IndexerOptionsSpec
         Plether.Protocol.GovernanceSpec
         Plether.Protocol.ParameterChangesSpec
         Plether.Protocol.ParametersSpec
         Plether.Protocol.ReleaseSpec
         Plether.Protocol.SnapshotsSpec
         Plether.Database.ProtocolSpec
+        Plether.Database.CandleHistorySpec
+        Plether.Database.VaultPerformanceSpec
         Plether.Database.InsightsSpec
         Plether.Insights.CompetitionSpec
+        Plether.Insights.Registration.ConfigSpec
+        Plether.Insights.Registration.CryptoSpec
+        Plether.Insights.Registration.DatabaseSpec
+        Plether.Insights.Registration.ProviderSpec
+        Plether.Insights.Registration.RotationSpec
+        Plether.Insights.Registration.TypesSpec
+        Plether.Insights.Registration.WalletSpec
         Plether.Insights.SnapshotWorkerSpec
+        Plether.Vaults.PerformanceIndexerSpec
         Plether.Types.ProtocolSpec
         Plether.Types.PerpsSpec
     build-depends:
@@ -276,16 +342,17 @@ test-suite plether-api-test
         QuickCheck >= 2.14,
         aeson >= 2.1,
         bytestring >= 0.11,
+        containers >= 0.6,
         directory >= 1.3,
         filepath >= 1.4,
+        http-types >= 0.12,
         postgresql-simple >= 0.7,
         scientific >= 0.3,
         text >= 2.0,
         base16-bytestring >= 1.0,
         time >= 1.12,
         wai >= 3.2,
-        wai-extra >= 3.1,
-        http-types >= 0.12
+        wai-extra >= 3.1
     build-tool-depends:
         hspec-discover:hspec-discover >= 2.11
     hs-source-dirs:   test
@@ -293,3 +360,41 @@ test-suite plether-api-test
     default-extensions:
         OverloadedStrings
         LambdaCase
+
+test-suite plether-api-integration-test
+    import:           warnings
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    other-modules:
+        Plether.Perps.CandleRollupSpec
+        Plether.Perps.CriticalPathFixture
+        Plether.Perps.CriticalPathSpec
+        Plether.Insights.DatabaseSpec
+        Plether.Insights.RegistrationDatabaseSpec
+    build-depends:
+        base >= 4.17 && < 5,
+        plether-api,
+        hspec >= 2.11,
+        aeson >= 2.1,
+        bytestring >= 0.11,
+        text >= 2.0,
+        time >= 1.12,
+        base16-bytestring >= 1.0,
+        http-client >= 0.7,
+        http-types >= 0.12,
+        postgresql-simple >= 0.7,
+        process >= 1.6,
+        resource-pool >= 0.4,
+        scotty >= 0.22,
+        wai >= 3.2,
+        wai-extra >= 3.1,
+        warp >= 3.3
+    build-tool-depends:
+        plether-api:plether-candle-admin
+    hs-source-dirs:   test-integration
+    default-language: GHC2021
+    default-extensions:
+        OverloadedStrings
+        LambdaCase
+        RecordWildCards
+    ghc-options: -threaded -rtsopts -with-rtsopts=-N1

@@ -130,6 +130,7 @@ invalidSignerConfig =
     , lwcPollSeconds = 1
     , lwcScanBatchSize = 1
     , lwcMulticallSize = 1
+    , lwcExecutionBatchSize = 1
     , lwcIndexerStartBlock = 0
     , lwcIndexerConfirmations = 1
     , lwcIndexerBatchSize = 1

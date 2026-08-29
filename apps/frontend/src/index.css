@@ -1,5 +1,4 @@
 @import "tailwindcss";
-@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap');
 
 @theme {
   /* Plether base palette */
@@ -99,6 +98,16 @@ select:not(:disabled) {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #FFC0B0;
+}
+
+.basket-components-rail {
+  scrollbar-width: none;
+}
+
+.basket-components-rail::-webkit-scrollbar {
+  display: none;
+  height: 0;
+  width: 0;
 }
 
 .leverage-slider,
@@ -357,5 +366,13 @@ select:not(:disabled) {
 
 /* Material Symbols styling */
 .material-symbols-outlined {
+  inline-size: 1em;
+  overflow: hidden;
+  flex-shrink: 0;
   font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+/* An underline on an interactive parent paints through icon-font glyphs. */
+:is(a, button, [role='button']):has(.material-symbols-outlined) {
+  text-decoration: none !important;
 }

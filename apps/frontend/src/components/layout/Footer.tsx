@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BUILD_COMMIT } from '../../config/buildInfo'
-import { BuildDetailsModal } from './BuildDetailsModal'
 import { isPrimaryAppDeployment } from '../../utils/deployment'
+
+const BuildDetailsModal = lazy(() => import('./BuildDetailsModal').then((module) => ({ default: module.BuildDetailsModal })))
 
 export function Footer() {
   const [showBuildDetails, setShowBuildDetails] = useState(false)
@@ -20,6 +21,14 @@ export function Footer() {
             </a>
             <a href="https://discord.gg/MDcUxNm6t" target="_blank" rel="noopener noreferrer" className={footerLinkClass}>
               Discord
+            </a>
+            <a
+              href="https://www.tradingview.com/"
+              target="_blank"
+              rel="noopener"
+              className={footerLinkClass}
+            >
+              Charts by TradingView
             </a>
             <Link to="/terms" className={footerLinkClass}>
               Terms of Service
@@ -44,12 +53,14 @@ export function Footer() {
         </div>
       </footer>
       {showBuildDetails ? (
-        <BuildDetailsModal
-          isOpen={showBuildDetails}
-          onClose={() => {
-            setShowBuildDetails(false)
-          }}
-        />
+        <Suspense fallback={null}>
+          <BuildDetailsModal
+            isOpen={showBuildDetails}
+            onClose={() => {
+              setShowBuildDetails(false)
+            }}
+          />
+        </Suspense>
       ) : null}
     </>
   )

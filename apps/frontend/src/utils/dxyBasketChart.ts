@@ -1,4 +1,4 @@
-import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../api'
+import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest, PerpsBasketCandle } from '../api'
 
 export interface ChartPoint {
   timestamp: number
@@ -18,9 +18,82 @@ export interface OracleMarkPoint {
   basketPrice: string
 }
 
+const RAW_ORACLE_PRICE_SCALE = 100_000_000n
+const LEGACY_RAW_ORACLE_PRICE_CAP = 2n * RAW_ORACLE_PRICE_SCALE
+const MAX_SAFE_ORACLE_INTEGER = BigInt(Number.MAX_SAFE_INTEGER)
+
+export function parsePerpsDisplayPriceCap(value: string): bigint | undefined {
+  if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) return undefined
+
+  try {
+    const displayPriceCap = BigInt(value)
+    return displayPriceCap <= MAX_SAFE_ORACLE_INTEGER ? displayPriceCap : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function parseRawOraclePrice(value: string, displayPriceCap: bigint): bigint | undefined {
+  if (!/^\d+$/.test(value)) return undefined
+
+  try {
+    const rawPrice = BigInt(value)
+    return rawPrice > 0n && rawPrice < displayPriceCap ? rawPrice : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function rawOraclePriceToDisplay(rawPrice: bigint, displayPriceCap: bigint): number {
+  return Number(displayPriceCap - rawPrice) / Number(RAW_ORACLE_PRICE_SCALE)
+}
+
+/**
+ * Converts a raw-domain backend OHLC candle to displayed plDXY OHLC.
+ * The raw-to-display transform is decreasing, so raw low becomes display high
+ * and raw high becomes display low.
+ */
+export function perpsBasketCandleToChartCandle(
+  candle: PerpsBasketCandle,
+  displayPriceCapValue: string
+): ChartCandle | undefined {
+  if (!Number.isSafeInteger(candle.timestamp) || candle.timestamp <= 0) return undefined
+
+  const displayPriceCap = parsePerpsDisplayPriceCap(displayPriceCapValue)
+  if (displayPriceCap === undefined) return undefined
+
+  const rawOpen = parseRawOraclePrice(candle.rawOpenPrice, displayPriceCap)
+  const rawHigh = parseRawOraclePrice(candle.rawHighPrice, displayPriceCap)
+  const rawLow = parseRawOraclePrice(candle.rawLowPrice, displayPriceCap)
+  const rawClose = parseRawOraclePrice(candle.rawClosePrice, displayPriceCap)
+  if (
+    rawOpen === undefined ||
+    rawHigh === undefined ||
+    rawLow === undefined ||
+    rawClose === undefined ||
+    rawLow > rawOpen ||
+    rawLow > rawClose ||
+    rawOpen > rawHigh ||
+    rawClose > rawHigh
+  ) {
+    return undefined
+  }
+
+  return {
+    timestamp: candle.timestamp,
+    open: rawOraclePriceToDisplay(rawOpen, displayPriceCap),
+    high: rawOraclePriceToDisplay(rawLow, displayPriceCap),
+    low: rawOraclePriceToDisplay(rawHigh, displayPriceCap),
+    close: rawOraclePriceToDisplay(rawClose, displayPriceCap),
+  }
+}
+
 export function oracleNumberToDisplayDxyPrice(rawOraclePrice: number): number {
   if (!Number.isFinite(rawOraclePrice) || rawOraclePrice <= 0) return 0
-  return Math.max(0, 2 - rawOraclePrice)
+  return Math.max(
+    0,
+    Number(LEGACY_RAW_ORACLE_PRICE_CAP) / Number(RAW_ORACLE_PRICE_SCALE) - rawOraclePrice
+  )
 }
 
 function basketDisplayPrice(point: BasketHistoryPoint): number {
@@ -41,22 +114,23 @@ function findHistoricalComponent(
   targetTimestamp: number,
   latestTimestamp: number
 ): BasketComponentPrice | undefined {
-  for (let index = points.length - 1; index >= 0; index -= 1) {
-    const point = points[index]
-    if (point.timestamp >= latestTimestamp || point.timestamp > targetTimestamp) continue
-
-    const component = point.components?.find((item) => componentKey(item) === key)
-    if (component) return component
-  }
+  let nearestComponent: BasketComponentPrice | undefined
+  let nearestDistance = Number.POSITIVE_INFINITY
 
   for (const point of points) {
     if (point.timestamp >= latestTimestamp) continue
 
     const component = point.components?.find((item) => componentKey(item) === key)
-    if (component) return component
+    if (!component) continue
+
+    const distance = Math.abs(point.timestamp - targetTimestamp)
+    if (distance < nearestDistance) {
+      nearestComponent = component
+      nearestDistance = distance
+    }
   }
 
-  return undefined
+  return nearestComponent
 }
 
 export function computeBasketDisplayPriceChange(
@@ -114,12 +188,13 @@ export function mergeLatestBasketPoint(
 ): BasketHistoryPoint[] {
   if (!latest) return historyPoints
 
+  const lastPoint = historyPoints.at(-1)
   const livePoint: BasketHistoryPoint = {
     timestamp: latest.timestamp,
     basketPrice: latest.basketPrice,
+    volumeUsdc: latest.timestamp === lastPoint?.timestamp ? lastPoint.volumeUsdc : '0',
     components: latest.components,
   }
-  const lastPoint = historyPoints.at(-1)
   if (!lastPoint) return [livePoint]
   if (latest.timestamp < lastPoint.timestamp) return historyPoints
   if (latest.timestamp === lastPoint.timestamp) {
@@ -138,9 +213,11 @@ export function alignBasketPointsToOracleMark(
   if (!oracleMark || oracleMark.timestamp <= 0 || !oracleMark.basketPrice) return points
 
   const components = latest?.components ?? points.at(-1)?.components
+  const replacedPoint = points.find((point) => point.timestamp === oracleMark.timestamp)
   const markPoint: BasketHistoryPoint = {
     timestamp: oracleMark.timestamp,
     basketPrice: oracleMark.basketPrice,
+    volumeUsdc: replacedPoint?.volumeUsdc ?? '0',
     ...(components ? { components } : {}),
   }
 

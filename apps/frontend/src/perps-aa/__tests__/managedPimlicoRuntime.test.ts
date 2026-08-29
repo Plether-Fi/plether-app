@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Address, Hex } from 'viem'
 import type { ManagedUserOperation } from '../runtimeContext'
 
@@ -9,6 +9,11 @@ const ENTRY_POINT =
 const FACTORY =
   '0x13E9ed32155810FDbd067D4522C492D6f68E5944' as Address
 const HASH = `0x${'44'.repeat(32)}` as Hex
+const TRANSACTION_HASH = `0x${'55'.repeat(32)}` as Hex
+const SAFE_BLOCK_HASH = `0x${'66'.repeat(32)}` as Hex
+const INCLUDED_BLOCK_HASH = `0x${'77'.repeat(32)}` as Hex
+const USER_OPERATION_EVENT_SELECTOR =
+  '0x49628fd1471006c1482da88028e9ce4dbb080b815c9b0344d39e5a8e6ec1419f'
 
 const mocks = vi.hoisted(() => ({
   toSimpleSmartAccount: vi.fn(),
@@ -48,16 +53,16 @@ const manifest = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3' as Address,
+  usdc: '0x1647e41f49ED6D688936092B5a291c4B28106343' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e' as Address,
+    '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211' as Address,
   cfdEngine:
-    '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a' as Address,
+    '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D' as Address,
   orderRouter:
-    '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E' as Address,
+    '0x97A901dE2B267c307E264FD5F71403F8072F73e7' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:
@@ -81,6 +86,13 @@ const operation = {
 describe('createManagedPimlicoRuntime', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      return new Response(JSON.stringify({
+        status: '0',
+        message: 'No logs found',
+        result: [],
+      }))
+    }))
     mocks.getUserOperationHash.mockReturnValue(HASH)
     mocks.toSimpleSmartAccount.mockResolvedValue({
       address: ACCOUNT,
@@ -100,6 +112,10 @@ describe('createManagedPimlicoRuntime', () => {
       })),
       getUserOperationReceipt: vi.fn(),
     })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('pins deterministic SimpleAccount v0.8 derivation to index and nonce key zero', async () => {
@@ -144,11 +160,45 @@ describe('createManagedPimlicoRuntime', () => {
       factoryAddress: FACTORY,
       accountVersion: 'permissionless-simple-v0.8',
       accountIndex: '0',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
       smartAccount: {
         accountAddress: ACCOUNT,
         entryPoint: ENTRY_POINT,
       },
     })
+  })
+
+  it('proves a reorg only when the canonical block hash changed', async () => {
+    const getBlock = vi.fn()
+      .mockResolvedValueOnce({ number: 123n, hash: INCLUDED_BLOCK_HASH })
+      .mockResolvedValueOnce({ number: 123n, hash: SAFE_BLOCK_HASH })
+      .mockRejectedValueOnce(new Error('RPC unavailable'))
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock,
+      } as never,
+    })
+    const inclusion = {
+      transactionHash: TRANSACTION_HASH,
+      blockNumber: 123n,
+      blockHash: INCLUDED_BLOCK_HASH,
+    }
+
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('canonical')
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('reorged')
+    await expect(runtime.verifyObservedInclusion?.(inclusion))
+      .resolves.toBe('unknown')
+    expect(getBlock).toHaveBeenCalledTimes(3)
+    expect(getBlock).toHaveBeenCalledWith({ blockNumber: 123n })
   })
 
   it('rejects status values outside Pimlico’s reviewed state machine', async () => {
@@ -178,5 +228,342 @@ describe('createManagedPimlicoRuntime', () => {
     await expect(
       runtime.smartAccount.getUserOperationStatus(HASH)
     ).rejects.toThrow('unknown UserOperation status')
+  })
+
+  it('returns a receipt only after its EntryPoint event is canonical and safe', async () => {
+    const pimlicoReceipt = {
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint: ENTRY_POINT,
+      logs: [],
+      nonce: 7n,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: HASH,
+      receipt: {
+        blockHash: INCLUDED_BLOCK_HASH,
+        blockNumber: 554n,
+        status: 'success',
+        transactionHash: TRANSACTION_HASH,
+      },
+    }
+    mocks.createPimlicoClient.mockReturnValue({
+      getUserOperationGasPrice: vi.fn(async () => ({
+        fast: { maxFeePerGas: 2n, maxPriorityFeePerGas: 1n },
+      })),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationStatus: vi.fn(),
+      getUserOperationReceipt: vi.fn(async () => pimlicoReceipt),
+    })
+    const getLogs = vi.fn(async () => [{
+      blockHash: INCLUDED_BLOCK_HASH,
+      blockNumber: 554n,
+      transactionHash: TRANSACTION_HASH,
+      args: {
+        userOpHash: HASH,
+        sender: ACCOUNT,
+        nonce: 7n,
+        success: true,
+      },
+    }])
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock: vi.fn(async () => ({
+          number: 555n,
+          timestamp: 1_000n,
+          hash: SAFE_BLOCK_HASH,
+        })),
+        getTransactionReceipt: vi.fn(async () => ({
+          blockHash: INCLUDED_BLOCK_HASH,
+          blockNumber: 554n,
+          status: 'success',
+          transactionHash: TRANSACTION_HASH,
+        })),
+        getLogs,
+      } as never,
+    })
+
+    await expect(
+      runtime.smartAccount.getUserOperationReceipt(HASH)
+    ).resolves.toBe(pimlicoReceipt)
+    expect(getLogs).toHaveBeenCalledWith(expect.objectContaining({
+      address: ENTRY_POINT,
+      fromBlock: 554n,
+      toBlock: 554n,
+      args: {
+        userOpHash: HASH,
+        sender: ACCOUNT,
+      },
+    }))
+  })
+
+  it('keeps an otherwise valid receipt pending above the safe head', async () => {
+    const pimlicoReceipt = {
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint: ENTRY_POINT,
+      logs: [],
+      // Match Pimlico's actual JSON-RPC runtime shape. Its public TypeScript
+      // type currently claims this field has already been converted to bigint.
+      nonce: '0x7' as never,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: HASH,
+      receipt: {
+        blockHash: INCLUDED_BLOCK_HASH,
+        blockNumber: 556n,
+        status: 'success',
+        transactionHash: TRANSACTION_HASH,
+      },
+    }
+    mocks.createPimlicoClient.mockReturnValue({
+      getUserOperationGasPrice: vi.fn(async () => ({
+        fast: { maxFeePerGas: 2n, maxPriorityFeePerGas: 1n },
+      })),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationStatus: vi.fn(),
+      getUserOperationReceipt: vi.fn(async () => pimlicoReceipt),
+    })
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock: vi.fn(async () => ({
+          number: 555n,
+          timestamp: 1_000n,
+          hash: SAFE_BLOCK_HASH,
+        })),
+        getTransactionReceipt: vi.fn(async () => ({
+          blockHash: INCLUDED_BLOCK_HASH,
+          blockNumber: 556n,
+          status: 'success',
+          transactionHash: TRANSACTION_HASH,
+        })),
+        getLogs: vi.fn(async () => [{
+          blockHash: INCLUDED_BLOCK_HASH,
+          blockNumber: 556n,
+          transactionHash: TRANSACTION_HASH,
+          args: {
+            userOpHash: HASH,
+            sender: ACCOUNT,
+            nonce: 7n,
+            success: true,
+          },
+        }]),
+      } as never,
+    })
+
+    await expect(
+      runtime.smartAccount.getUserOperationReceipt(HASH)
+    ).rejects.toMatchObject({
+      name: 'UserOperationReceiptNotSafeError',
+      receipt: {
+        ...pimlicoReceipt,
+        nonce: 7n,
+      },
+    })
+    expect(pimlicoReceipt.nonce).toBe('0x7')
+  })
+
+  it('rejects an out-of-range Pimlico receipt nonce', async () => {
+    const getUserOperationReceipt = vi.fn(async () => ({
+      actualGasCost: 1n,
+      actualGasUsed: 1n,
+      entryPoint: ENTRY_POINT,
+      logs: [],
+      nonce: `0x1${'0'.repeat(64)}` as never,
+      sender: ACCOUNT,
+      success: true,
+      userOpHash: HASH,
+      receipt: {
+        blockHash: INCLUDED_BLOCK_HASH,
+        blockNumber: 554n,
+        status: 'success',
+        transactionHash: TRANSACTION_HASH,
+      },
+    }))
+    mocks.createPimlicoClient.mockReturnValue({
+      getUserOperationGasPrice: vi.fn(async () => ({
+        fast: { maxFeePerGas: 2n, maxPriorityFeePerGas: 1n },
+      })),
+      sendUserOperation: vi.fn(async () => HASH),
+      getUserOperationStatus: vi.fn(),
+      getUserOperationReceipt,
+    })
+    const getBlock = vi.fn()
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock,
+      } as never,
+    })
+
+    await expect(
+      runtime.smartAccount.getUserOperationReceipt(HASH)
+    ).rejects.toThrow('invalid UserOperation receipt nonce')
+    expect(getBlock).not.toHaveBeenCalled()
+  })
+
+  it('reads recovery time and nonce from the same safe block', async () => {
+    const getBlock = vi.fn(async () => ({
+      number: 555n,
+      timestamp: 1_000n,
+      hash: SAFE_BLOCK_HASH,
+    }))
+    const readContract = vi.fn(async () => 7n)
+    const publicClient = {
+      chain: { id: 421614 },
+      getBlock,
+      readContract,
+    }
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: publicClient as never,
+    })
+
+    await expect(runtime.getRecoverySnapshot?.(HASH)).resolves.toEqual({
+      blockNumber: 555n,
+      blockTimestamp: 1_000n,
+      accountNonce: 7n,
+      userOperationEvidence: { kind: 'not-located' },
+    })
+    expect(getBlock).toHaveBeenCalledWith({ blockTag: 'safe' })
+    expect(readContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: ENTRY_POINT,
+      functionName: 'getNonce',
+      args: [ACCOUNT, 0n],
+      blockNumber: 555n,
+    }))
+    expect(fetch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        href: expect.stringContaining(
+          `topic1=${HASH}`
+        ),
+      }),
+      expect.objectContaining({
+        headers: { accept: 'application/json' },
+        signal: expect.any(AbortSignal),
+      })
+    )
+  })
+
+  it('verifies indexed inclusion against a bounded canonical-chain query', async () => {
+    vi.mocked(fetch).mockImplementation(async () => {
+      return new Response(JSON.stringify({
+        status: '1',
+        message: 'OK',
+        result: [{
+          address: ENTRY_POINT,
+          blockNumber: '0x22a',
+          transactionHash: TRANSACTION_HASH,
+          topics: [
+            USER_OPERATION_EVENT_SELECTOR,
+            HASH,
+            `0x${'0'.repeat(24)}${ACCOUNT.slice(2)}`,
+            `0x${'0'.repeat(64)}`,
+          ],
+        }],
+      }))
+    })
+    const getLogs = vi.fn(async () => [{
+      blockNumber: 554n,
+      transactionHash: TRANSACTION_HASH,
+      args: {
+        userOpHash: HASH,
+        sender: ACCOUNT,
+        success: true,
+      },
+    }])
+    const publicClient = {
+      chain: { id: 421614 },
+      getBlock: vi.fn(async () => ({
+        number: 555n,
+        timestamp: 1_000n,
+        hash: SAFE_BLOCK_HASH,
+      })),
+      readContract: vi.fn(async () => 7n),
+      getLogs,
+    }
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: publicClient as never,
+    })
+
+    await expect(runtime.getRecoverySnapshot?.(HASH)).resolves.toEqual({
+      blockNumber: 555n,
+      blockTimestamp: 1_000n,
+      accountNonce: 7n,
+      userOperationEvidence: {
+        kind: 'included',
+        success: true,
+        transactionHash: TRANSACTION_HASH,
+        blockNumber: 554n,
+      },
+    })
+    expect(getLogs).toHaveBeenCalledWith(expect.objectContaining({
+      address: ENTRY_POINT,
+      args: {
+        userOpHash: HASH,
+        sender: ACCOUNT,
+      },
+      fromBlock: 554n,
+      toBlock: 554n,
+    }))
+  })
+
+  it('treats explorer failure as no positive locator, not chain absence', async () => {
+    vi.mocked(fetch).mockRejectedValue(new Error('explorer unavailable'))
+    const runtime = await createManagedPimlicoRuntime({
+      manifest,
+      ownerAddress: OWNER,
+      walletClient: {
+        chain: { id: 421614 },
+        account: { address: OWNER },
+      } as never,
+      publicClient: {
+        chain: { id: 421614 },
+        getBlock: vi.fn(async () => ({
+          number: 555n,
+          timestamp: 1_000n,
+          hash: SAFE_BLOCK_HASH,
+        })),
+        readContract: vi.fn(async () => 7n),
+      } as never,
+    })
+
+    await expect(runtime.getRecoverySnapshot?.(HASH)).resolves.toEqual({
+      blockNumber: 555n,
+      blockTimestamp: 1_000n,
+      accountNonce: 7n,
+      userOperationEvidence: { kind: 'not-located' },
+    })
   })
 })

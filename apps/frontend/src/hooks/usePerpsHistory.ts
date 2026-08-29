@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
 import { usePerpsIdentity } from '../perps-aa'
@@ -15,9 +16,18 @@ export interface PerpsOrderHistoryRow {
   status: string
   commitTxHash: Hex
   revealTxHash?: Hex
+  terminalBlockNumberRaw?: bigint
+  terminalBlockHash?: Hex
   failureReason?: string
   executionPriceRaw?: bigint
+  executionOraclePriceRaw?: bigint
+  executionOracleFrozen?: boolean
+  oracleMinPublishTimeRaw?: bigint
+  oracleMaxPublishTimeRaw?: bigint
+  oracleDerivationVersion?: number
   vpiUsdcRaw?: bigint
+  frozenCloseSpreadUsdcRaw?: bigint
+  executionEconomicsVersion?: number
   activitySizeDeltaRaw?: bigint
   activityPriceRaw?: bigint
   activityVpiUsdcRaw?: bigint
@@ -33,14 +43,45 @@ export interface PerpsTradeHistoryRow {
   txHash: Hex
 }
 
-interface PerpsHistoryData {
+interface PerpsOrdersHistoryData {
   orderHistory: PerpsOrderHistoryRow[]
+  ordersIndexedThroughBlockRaw?: bigint
+}
+
+interface PerpsActivityHistoryData {
   tradeHistory: PerpsTradeHistoryRow[]
+}
+
+const EMPTY_PERPS_HISTORY = {
+  orderHistory: [],
+  tradeHistory: [],
+} satisfies PerpsOrdersHistoryData & PerpsActivityHistoryData
+
+const PERPS_HISTORY_REFETCH_INTERVAL_MS = 30_000
+
+const perpsHistoryQueryKeys = {
+  orders: (accountAddress: string) => [
+    'perps',
+    'history',
+    accountAddress.toLowerCase(),
+    'orders',
+  ] as const,
+  activity: (accountAddress: string) => [
+    'perps',
+    'history',
+    accountAddress.toLowerCase(),
+    'activity',
+  ] as const,
+}
+
+export interface UsePerpsHistoryOptions {
+  activityEnabled?: boolean
 }
 
 interface BackendOrdersResponse {
   data?: {
     orders?: BackendOrderRow[]
+    indexedThroughBlock?: string
   }
 }
 
@@ -72,11 +113,19 @@ interface BackendOrderRow {
   commitTimestamp?: number
   terminalTxHash?: string
   terminalBlockNumber?: string
+  terminalBlockHash?: string
   terminalTimestamp?: number
   terminalStatus?: string
   failureReason?: string
   executionPrice?: string
+  executionOraclePrice?: string
+  executionOracleFrozen?: boolean
+  oracleMinPublishTime?: string
+  oracleMaxPublishTime?: string
+  oracleDerivationVersion?: number
   vpiUsdc?: string
+  frozenCloseSpreadUsdc?: string
+  executionEconomicsVersion?: number
   cleanupActor?: string
   activityType?: string
   activitySizeDelta?: string
@@ -117,8 +166,8 @@ function perpsApiUrl(path: string): URL {
   return new URL(`${normalizedBase}${path}`, window.location.origin)
 }
 
-function parseBigInt(value: string | undefined): bigint | undefined {
-  if (!value) return undefined
+function parseBigInt(value: string | number | undefined): bigint | undefined {
+  if (value === undefined || value === '') return undefined
   try {
     return BigInt(value)
   } catch {
@@ -182,7 +231,11 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const commitTxHash = asHex(row.commitTxHash)
   if (orderId === undefined || commitTxHash === undefined) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
+  const executionOraclePriceRaw = parseBigInt(row.executionOraclePrice)
+  const oracleMinPublishTimeRaw = parseBigInt(row.oracleMinPublishTime)
+  const oracleMaxPublishTimeRaw = parseBigInt(row.oracleMaxPublishTime)
   const vpiUsdcRaw = parseBigInt(row.vpiUsdc)
+  const frozenCloseSpreadUsdcRaw = parseBigInt(row.frozenCloseSpreadUsdc)
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
   const activityVpiUsdcRaw = parseBigInt(row.activityVpiUsdc)
@@ -198,9 +251,20 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     status: orderStatus(row),
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
+    terminalBlockNumberRaw: parseBigInt(row.terminalBlockNumber),
+    terminalBlockHash: asHex(row.terminalBlockHash),
     failureReason: row.failureReason,
     executionPriceRaw,
+    executionOraclePriceRaw,
+    executionOracleFrozen: typeof row.executionOracleFrozen === 'boolean'
+      ? row.executionOracleFrozen
+      : undefined,
+    oracleMinPublishTimeRaw,
+    oracleMaxPublishTimeRaw,
+    oracleDerivationVersion: row.oracleDerivationVersion,
     vpiUsdcRaw,
+    frozenCloseSpreadUsdcRaw,
+    executionEconomicsVersion: row.executionEconomicsVersion,
     activitySizeDeltaRaw,
     activityPriceRaw,
     activityVpiUsdcRaw,
@@ -282,7 +346,7 @@ async function fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
   try {
     response = await fetch(url, { signal })
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       throw error
     }
     throw new Error(
@@ -325,22 +389,34 @@ export async function waitForPerpsOrderTerminal({
   }
 }
 
-async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryData> {
+async function fetchPerpsOrdersHistory(
+  accountAddress: string,
+  signal?: AbortSignal
+): Promise<PerpsOrdersHistoryData> {
   const ordersUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/orders`)
   ordersUrl.searchParams.set('limit', '30')
-  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
-  activityUrl.searchParams.set('limit', '30')
-
-  const [ordersResponse, activityResponse] = await Promise.all([
-    fetchJson<BackendOrdersResponse>(ordersUrl),
-    fetchJson<BackendActivityResponse>(activityUrl),
-  ])
+  const ordersResponse = await fetchJson<BackendOrdersResponse>(ordersUrl, signal)
 
   return {
     orderHistory: (ordersResponse.data?.orders ?? []).flatMap((row) => {
       const mapped = mapOrderRow(row)
       return mapped ? [mapped] : []
     }),
+    ordersIndexedThroughBlockRaw: parseBigInt(
+      ordersResponse.data?.indexedThroughBlock
+    ),
+  }
+}
+
+async function fetchPerpsActivityHistory(
+  accountAddress: string,
+  signal?: AbortSignal
+): Promise<PerpsActivityHistoryData> {
+  const activityUrl = perpsApiUrl(`/perps/accounts/${accountAddress}/activity`)
+  activityUrl.searchParams.set('limit', '30')
+  const activityResponse = await fetchJson<BackendActivityResponse>(activityUrl, signal)
+
+  return {
     tradeHistory: (activityResponse.data?.activity ?? []).flatMap((row) => {
       const mapped = mapActivityRow(row)
       return mapped ? [mapped] : []
@@ -348,91 +424,107 @@ async function fetchPerpsHistory(accountAddress: string): Promise<PerpsHistoryDa
   }
 }
 
-export function usePerpsHistory() {
+export function usePerpsHistory({
+  activityEnabled = false,
+}: UsePerpsHistoryOptions = {}) {
   const { ownerAddress, accountAddress } = usePerpsIdentity()
-  const isConnected = ownerAddress !== undefined
-  const [orderHistory, setOrderHistory] = useState<PerpsOrderHistoryRow[]>([])
-  const [tradeHistory, setTradeHistory] = useState<PerpsTradeHistoryRow[]>([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState<Error | undefined>()
-
-  const refetch = useCallback(async () => {
-    if (!isConnected || !accountAddress) {
-      setOrderHistory([])
-      setTradeHistory([])
-      setError(undefined)
-      setIsLoading(false)
-      return
-    }
-
-    setIsLoading(true)
-    setError(undefined)
-
-    try {
-      const nextHistory = await fetchPerpsHistory(accountAddress)
-      setOrderHistory(nextHistory.orderHistory)
-      setTradeHistory(nextHistory.tradeHistory)
-      setIsLoading(false)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause : new Error(String(cause)))
-      setOrderHistory([])
-      setTradeHistory([])
-      setIsLoading(false)
-    }
-  }, [accountAddress, isConnected])
+  const queryClient = useQueryClient()
+  const historyAccountAddress = ownerAddress === undefined
+    ? undefined
+    : accountAddress
+  const ordersQuery = useQuery({
+    queryKey: perpsHistoryQueryKeys.orders(historyAccountAddress ?? 'disconnected'),
+    queryFn: ({ signal }) => {
+      if (!historyAccountAddress) {
+        throw new Error('A Perps account address is required to load order history')
+      }
+      return fetchPerpsOrdersHistory(historyAccountAddress, signal)
+    },
+    enabled: historyAccountAddress !== undefined,
+    staleTime: 10_000,
+    refetchInterval: PERPS_HISTORY_REFETCH_INTERVAL_MS,
+    // The interval is the retry policy; avoid multiplying traffic during an
+    // indexer/backend outage via the app-wide retry default.
+    retry: false,
+  })
+  const activityQuery = useQuery({
+    queryKey: perpsHistoryQueryKeys.activity(historyAccountAddress ?? 'disconnected'),
+    queryFn: ({ signal }) => {
+      if (!historyAccountAddress) {
+        throw new Error('A Perps account address is required to load activity history')
+      }
+      return fetchPerpsActivityHistory(historyAccountAddress, signal)
+    },
+    enabled: historyAccountAddress !== undefined && activityEnabled,
+    // Always refresh when the tab is reopened, while retaining cached rows during
+    // that background refresh.
+    staleTime: 0,
+    refetchInterval: activityEnabled
+      ? PERPS_HISTORY_REFETCH_INTERVAL_MS
+      : false,
+    retry: false,
+  })
+  const refetchOrdersHistory = ordersQuery.refetch
+  const refetchActivityHistory = activityQuery.refetch
 
   useEffect(() => {
-    if (!isConnected || !accountAddress) {
-      window.setTimeout(() => {
-        setOrderHistory([])
-        setTradeHistory([])
-        setError(undefined)
-        setIsLoading(false)
-      }, 0)
-      return undefined
-    }
+    if (activityEnabled || !historyAccountAddress) return
 
-    let cancelled = false
-    const canonicalAccountAddress = accountAddress
+    void queryClient.cancelQueries({
+      queryKey: perpsHistoryQueryKeys.activity(historyAccountAddress),
+      exact: true,
+    })
+  }, [activityEnabled, historyAccountAddress, queryClient])
 
-    async function loadHistory() {
-      setIsLoading(true)
-      setError(undefined)
+  const refetch = useCallback(async () => {
+    if (!historyAccountAddress) return
 
-      try {
-        const nextHistory = await fetchPerpsHistory(canonicalAccountAddress)
+    const requests: Promise<unknown>[] = [refetchOrdersHistory()]
+    if (activityEnabled) requests.push(refetchActivityHistory())
+    await Promise.all(requests)
+  }, [
+    activityEnabled,
+    historyAccountAddress,
+    refetchActivityHistory,
+    refetchOrdersHistory,
+  ])
 
-        if (!cancelled) {
-          setOrderHistory(nextHistory.orderHistory)
-          setTradeHistory(nextHistory.tradeHistory)
-          setIsLoading(false)
-        }
-      } catch (cause) {
-        if (!cancelled) {
-          setError(cause instanceof Error ? cause : new Error(String(cause)))
-          setOrderHistory([])
-          setTradeHistory([])
-          setIsLoading(false)
-        }
-      }
-    }
-
-    void loadHistory()
-    const interval = window.setInterval(() => {
-      void loadHistory()
-    }, 30_000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [accountAddress, isConnected])
+  const orderHistory = ordersQuery.data?.orderHistory
+    ?? EMPTY_PERPS_HISTORY.orderHistory
+  const tradeHistory = activityQuery.data?.tradeHistory
+    ?? EMPTY_PERPS_HISTORY.tradeHistory
+  const ordersIndexedThroughBlockRaw =
+    ordersQuery.data?.ordersIndexedThroughBlockRaw
+  const orderHistoryError = ordersQuery.error ?? undefined
+  const tradeHistoryError = activityEnabled
+    ? activityQuery.error ?? undefined
+    : undefined
+  const isOrderHistoryLoading = ordersQuery.isLoading
+  const isTradeHistoryLoading = activityEnabled && activityQuery.isLoading
+  const error = orderHistoryError ?? tradeHistoryError
+  const isLoading = isOrderHistoryLoading || isTradeHistoryLoading
 
   return useMemo(() => ({
     orderHistory,
     tradeHistory,
+    ordersIndexedThroughBlockRaw,
+    isOrderHistoryLoading,
+    isTradeHistoryLoading,
+    orderHistoryError,
+    tradeHistoryError,
     isLoading,
     error,
     refetch,
-  }), [error, isLoading, orderHistory, refetch, tradeHistory])
+  }), [
+    error,
+    isLoading,
+    isOrderHistoryLoading,
+    isTradeHistoryLoading,
+    orderHistory,
+    orderHistoryError,
+    ordersIndexedThroughBlockRaw,
+    refetch,
+    tradeHistory,
+    tradeHistoryError,
+  ])
 }

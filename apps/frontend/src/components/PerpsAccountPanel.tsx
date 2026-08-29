@@ -1,14 +1,14 @@
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition, PerpsTradeHistoryRow } from '../hooks'
 import { usePerpsTrading } from '../hooks'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsUsdc, formatSignedPerpsUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
-type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
+export type PerpsAccountTab = 'position' | 'openOrders' | 'orderHistory' | 'tradeHistory'
 
 interface AccountTab {
   id: PerpsAccountTab
@@ -65,9 +65,14 @@ interface PerpsAccountPanelProps {
   isConnected?: boolean
   isLoading?: boolean
   isHistoryLoading?: boolean
+  isOrderHistoryLoading?: boolean
+  isTradeHistoryLoading?: boolean
   historyError?: Error
+  orderHistoryError?: Error
+  tradeHistoryError?: Error
   onAccountRefresh?: () => void
   onClosePosition?: () => void
+  onActiveTabChange?: (activeTab: PerpsAccountTab) => void
 }
 
 const ACCOUNT_TABS: AccountTab[] = [
@@ -460,8 +465,8 @@ function PositionView({
   const currentPosition: PositionRow = {
     market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
-    size: <TokenAmount amount={formatPerpsUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} />,
-    entryNotional: <TokenAmount amount={formatPerpsUsdc(position.entryNotionalUsdc)} />,
+    size: <TokenAmount amount={formatPerpsSummaryUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} wrap />,
+    entryNotional: <TokenAmount amount={formatPerpsSummaryUsdc(position.entryNotionalUsdc)} wrap />,
     entry: formatDisplayDxyPrice(position.entryPrice),
     leverage: formatPositionLeverage(position),
     liquidationPrice: (
@@ -470,8 +475,8 @@ function PositionView({
         liquidationPrice={position.liquidationPrice}
       />
     ),
-    pnl: <TokenAmount amount={formatSignedPerpsUsdc(currentPnl)} />,
-    costOfCarryUsdc: <TokenAmount amount={formatPerpsUsdc(position.pendingCarryUsdc)} />,
+    pnl: <TokenAmount amount={formatSignedPerpsSummaryUsdc(currentPnl)} wrap />,
+    costOfCarryUsdc: <TokenAmount amount={formatPerpsSummaryUsdc(position.pendingCarryUsdc)} wrap />,
     tone: currentPnl < 0n ? 'negative' : currentPnl > 0n ? 'positive' : undefined,
   }
   const editPositionMarginAction = (
@@ -515,7 +520,7 @@ function PositionView({
           ) : null}
         </div>
       </div>
-      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:gap-4 md:grid-cols-3 xl:grid-cols-7">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric
           label="Entry notional"
@@ -866,7 +871,11 @@ function AccountTabContent({
   isConnected,
   isLoading,
   isHistoryLoading,
+  isOrderHistoryLoading,
+  isTradeHistoryLoading,
   historyError,
+  orderHistoryError,
+  tradeHistoryError,
   initialPositionMarginModalOpen,
   onAccountRefresh,
   onClosePosition,
@@ -959,22 +968,32 @@ function AccountTabContent({
     )
   }
   if (activeTab === 'orderHistory') {
-    if (historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
-    if (isHistoryLoading) return <LoadingState label="order history" />
+    if (orderHistoryError ?? historyError) return <ErrorState message="Could not load order history. Check the backend history API and perps indexer." />
+    if (isOrderHistoryLoading ?? isHistoryLoading) return <LoadingState label="order history" />
     return <OrdersView rows={liveOrderHistory ?? ORDER_HISTORY} includeStatus />
   }
-  if (historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
-  if (isHistoryLoading) return <LoadingState label="transaction history" />
+  if (tradeHistoryError ?? historyError) return <ErrorState message="Could not load transaction history. Check the backend history API and perps indexer." />
+  if (isTradeHistoryLoading ?? isHistoryLoading) return <LoadingState label="transaction history" />
   return <TradeHistoryView rows={liveTradeHistory ?? TRADE_HISTORY} />
 }
 
 export function PerpsAccountPanel(props: PerpsAccountPanelProps) {
   const { isAaManifestConfigured } = usePerpsIdentity()
+  const { onActiveTabChange } = props
   const [activeTab, setActiveTab] = useState<PerpsAccountTab>(props.initialTab ?? 'position')
+  const onActiveTabChangeRef = useRef(onActiveTabChange)
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [cleanupOrderId, setCleanupOrderId] = useState<bigint | undefined>()
   const [cleanupError, setCleanupError] = useState<string | undefined>()
   const { cleanupExpiredOrder } = usePerpsTrading()
+
+  useEffect(() => {
+    onActiveTabChangeRef.current = onActiveTabChange
+  }, [onActiveTabChange])
+
+  useEffect(() => {
+    onActiveTabChangeRef.current?.(activeTab)
+  }, [activeTab])
 
   useEffect(() => {
     if (!props.pendingOrders?.length) return undefined

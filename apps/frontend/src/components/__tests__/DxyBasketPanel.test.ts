@@ -9,9 +9,8 @@ import {
 } from '../../utils/dxyBasketChart'
 import type { BasketComponentPrice, BasketHistoryPoint, BasketLatest } from '../../api'
 import {
-  DXY_BASKET_CHART_INTERVALS,
-  basketRangeForChartInterval,
-  basketRequestIntervalSecondsForChartInterval,
+  DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS,
+  DEFAULT_DXY_BASKET_CHART_INTERVAL,
 } from '../dxyBasketChartConfig'
 
 const component: BasketComponentPrice = {
@@ -28,10 +27,15 @@ const component: BasketComponentPrice = {
   basePrice: '100000000',
 }
 
-function historyPoint(timestamp: number, basketPrice: string): BasketHistoryPoint {
+function historyPoint(
+  timestamp: number,
+  basketPrice: string,
+  volumeUsdc = '0'
+): BasketHistoryPoint {
   return {
     timestamp,
     basketPrice,
+    volumeUsdc,
     components: [component],
   }
 }
@@ -47,24 +51,12 @@ function latestPoint(timestamp: number, basketPrice: string): BasketLatest {
 }
 
 describe('DXY basket chart display transform', () => {
-  it('uses the intended default history window for each chart interval', () => {
-    expect(Object.fromEntries(DXY_BASKET_CHART_INTERVALS.map((item) => [item.label, item.range]))).toEqual({
-      '1m': '24h',
-      '5m': '7d',
-      '1H': '30d',
-      D: '1y',
-    })
-    expect(basketRangeForChartInterval('1m')).toBe('24h')
-    expect(basketRangeForChartInterval('5m')).toBe('7d')
-    expect(basketRangeForChartInterval('1h')).toBe('30d')
-    expect(basketRangeForChartInterval('1d')).toBe('1y')
+  it('opens on the five-day chart view by default', () => {
+    expect(DEFAULT_DXY_BASKET_CHART_INTERVAL).toBe('15m')
   })
 
-  it('requests only the resolution needed for each chart interval', () => {
-    expect(basketRequestIntervalSecondsForChartInterval('1m')).toBe(60)
-    expect(basketRequestIntervalSecondsForChartInterval('5m')).toBe(5 * 60)
-    expect(basketRequestIntervalSecondsForChartInterval('1h')).toBe(60 * 60)
-    expect(basketRequestIntervalSecondsForChartInterval('1d')).toBe(24 * 60 * 60)
+  it('uses hourly component snapshots for the 24h comparison payload', () => {
+    expect(DXY_COMPONENT_CHANGE_HISTORY_INTERVAL_SECONDS).toBe(60 * 60)
   })
 
   it('plots raw basket prices as reversed DXY display prices', () => {
@@ -148,6 +140,29 @@ describe('DXY basket chart display transform', () => {
     expect(changes[component.feedId]).toBeCloseTo(0.01, 8)
   })
 
+  it('uses the hourly component sample nearest the 24h comparison point', () => {
+    const latest = latestPoint(200_000, '97000000')
+    latest.components = [{ ...component, price: '102000000' }]
+    const targetTimestamp = latest.timestamp - 24 * 60 * 60
+    const changes = computeBasketComponentPriceChanges(
+      [
+        {
+          timestamp: targetTimestamp - 50 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '99000000' }],
+        },
+        {
+          timestamp: targetTimestamp + 10 * 60,
+          basketPrice: '98000000',
+          components: [{ ...component, price: '100000000' }],
+        },
+      ],
+      latest
+    )
+
+    expect(changes[component.feedId]).toBeCloseTo(0.02, 8)
+  })
+
   it('does not compute component price changes without historical component data', () => {
     const latest = latestPoint(200_000, '97000000')
     latest.components = [{ ...component, price: '101000000' }]
@@ -158,12 +173,13 @@ describe('DXY basket chart display transform', () => {
 
   it('replaces the current history bucket with the live latest point', () => {
     const merged = mergeLatestBasketPoint(
-      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000', '123000000')],
       latestPoint(120, '96000000')
     )
 
     expect(merged).toHaveLength(2)
     expect(merged.at(-1)?.basketPrice).toBe('96000000')
+    expect(merged.at(-1)?.volumeUsdc).toBe('123000000')
     expect(merged.at(-1)?.components?.[0]?.publishTime).toBe(121)
   })
 
@@ -189,7 +205,7 @@ describe('DXY basket chart display transform', () => {
 
   it('replaces a backend sample from the same timestamp with the on-chain mark', () => {
     const aligned = alignBasketPointsToOracleMark(
-      [historyPoint(60, '98000000'), historyPoint(120, '97000000')],
+      [historyPoint(60, '98000000'), historyPoint(120, '97000000', '456000000')],
       latestPoint(180, '96000000'),
       { timestamp: 120, basketPrice: '96500000' }
     )
@@ -197,5 +213,6 @@ describe('DXY basket chart display transform', () => {
     expect(aligned).toHaveLength(2)
     expect(aligned.at(-1)?.timestamp).toBe(120)
     expect(aligned.at(-1)?.basketPrice).toBe('96500000')
+    expect(aligned.at(-1)?.volumeUsdc).toBe('456000000')
   })
 })

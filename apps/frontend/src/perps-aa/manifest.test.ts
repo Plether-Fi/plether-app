@@ -1,9 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import publicManifest from '../../public/perps-aa-manifest.json'
 import {
   PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
   PERPS_ENTRY_POINT_V08,
   PerpsAaManifestValidationError,
+  fetchPerpsAaManifest,
   parsePerpsAaManifest,
 } from './manifest'
 
@@ -38,7 +39,7 @@ describe('parsePerpsAaManifest', () => {
   it('validates the manifest served by the app', () => {
     const manifest = parsePerpsAaManifest(publicManifest)
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260717-v1')
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260826-v1')
     expect(manifest.chainId).toBe(421614)
   })
 
@@ -124,6 +125,36 @@ describe('parsePerpsAaManifest', () => {
       '0x4444444444444444444444444444444444444444'
     expect(() => parsePerpsAaManifest(factoryManifest)).toThrow(
       /smartAccountFactory.*reviewed deployment/
+    )
+  })
+})
+
+describe('fetchPerpsAaManifest', () => {
+  it('conditionally revalidates the manifest and forwards cancellation', async () => {
+    const signal = new AbortController().signal
+    const fetchManifest = vi.fn(async () => new Response(
+      JSON.stringify(validManifest()),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    ))
+
+    await expect(fetchPerpsAaManifest('/perps-aa-manifest.json', {
+      fetch: fetchManifest,
+      signal,
+    })).resolves.toMatchObject({
+      version: 'perps-aa-arbitrum-sepolia-v1',
+      chainId: 421614,
+    })
+
+    expect(fetchManifest).toHaveBeenCalledWith(
+      '/perps-aa-manifest.json',
+      {
+        cache: 'no-cache',
+        credentials: 'omit',
+        signal,
+      }
     )
   })
 })

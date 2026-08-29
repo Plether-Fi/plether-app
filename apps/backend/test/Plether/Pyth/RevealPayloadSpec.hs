@@ -1,7 +1,9 @@
 module Plether.Pyth.RevealPayloadSpec (spec) where
 
 import Plether.Pyth.RevealPayload
-  ( validateLatestPublishTimes
+  ( PythPayloadAdmission (..)
+  , classifyPythPayloadAdmission
+  , validateLatestPublishTimes
   , validatePublishTimes
   , validateRevealWindow
   )
@@ -9,6 +11,31 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "classifyPythPayloadAdmission" $ do
+    it "admits the latest source only on the latest polling route" $
+      classifyPythPayloadAdmission Nothing "backend_hermes_latest"
+        `shouldBe` Right AdmitLatestPayload
+
+    it "binds historical sources to the on-chain reveal bounds" $ do
+      classifyPythPayloadAdmission
+        (Just (101, 115))
+        "backend_hermes_historical"
+        `shouldBe` Right (AdmitHistoricalPayload 101 115)
+      classifyPythPayloadAdmission
+        (Just (201, 215))
+        "backend_hermes_reveal_backfill"
+        `shouldBe` Right (AdmitHistoricalPayload 201 215)
+
+    it "rejects a latest-labelled payload on a historical reveal route" $
+      classifyPythPayloadAdmission
+        (Just (101, 115))
+        "backend_hermes_latest"
+        `shouldSatisfy` isLeft
+
+    it "rejects a historical-labelled payload on the latest polling route" $
+      classifyPythPayloadAdmission Nothing "backend_hermes_historical"
+        `shouldSatisfy` isLeft
+
   describe "validatePublishTimes" $ do
     it "accepts six feed publish times inside divergence policy" $ do
       validatePublishTimes [101, 102, 103, 104, 105, 106] `shouldBe` Right (101, 106)

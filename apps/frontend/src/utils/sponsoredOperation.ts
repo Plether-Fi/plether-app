@@ -42,6 +42,8 @@ export function sponsoredOperationStatusLabel(
       return 'Replaced'
     case 'expired':
       return 'Expired'
+    case 'outcome-unknown':
+      return 'Outcome unknown'
     case 'receipt-timeout':
       return 'Inclusion timeout'
     case 'cancelled':

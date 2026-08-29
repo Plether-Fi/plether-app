@@ -57,8 +57,16 @@ function MarketHeader({ freshness = 'fresh' }: { freshness?: 'fresh' | 'market-c
         { label: '24h change', value: '+0.24%', tone: 'positive' },
         { label: 'FAD status', value: freshness === 'fresh' ? 'Live' : 'Close-only' },
         { label: 'Oracle state', value: freshness === 'market-closed' ? 'Frozen' : freshness === 'stale' ? 'Stale' : 'Fresh' },
-        { label: 'Long open interest', value: <TokenAmount amount="10.8M" />, tone: 'positive' },
-        { label: 'Short open interest', value: <TokenAmount amount="7.9M" />, tone: 'negative' },
+        {
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: 87,
+            side: 'long',
+            totalExposure: <TokenAmount amount="8.36M" />,
+            netExposure: <TokenAmount amount="3.07M" />,
+            limit: <TokenAmount amount="3.53M" />,
+          },
+        },
         { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
       ]}
     />

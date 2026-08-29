@@ -1,7 +1,7 @@
 import { useCallback } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { isAddressEqual, parseEventLogs, type Address, type Hex } from 'viem'
-import { usePublicClient, useSignTypedData } from 'wagmi'
+import { usePublicClient, useSignTypedData, useWriteContract } from 'wagmi'
 import {
   buildAddMarginAction,
   buildAuthorizedDepositAction,
@@ -13,7 +13,12 @@ import {
   type PerpsActionPlan,
   type SponsoredExecutionStatus,
 } from '@plether/perps-aa-client'
-import { PERPS_CFD_ENGINE_LENS_ABI, PERPS_ORDER_ROUTER_ABI, PERPS_PUBLIC_LENS_ABI } from '../contracts/abis'
+import {
+  ERC20_ABI,
+  PERPS_CFD_ENGINE_LENS_ABI,
+  PERPS_ORDER_ROUTER_ABI,
+  PERPS_PUBLIC_LENS_ABI,
+} from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import {
   executeSponsoredPerpsAction,
@@ -21,6 +26,9 @@ import {
   getOrCreateDepositAuthorization,
   sponsorReasonMessage,
   findSponsorRequestError,
+  SponsoredPreflightError,
+  trackSponsoredOperationPreflightFailure,
+  type ExecuteSponsoredPerpsActionResult,
   usePerpsAaRuntime,
   usePerpsIdentity,
 } from '../perps-aa'
@@ -41,13 +49,14 @@ interface CommitOrderInput {
   oraclePrice: bigint
   slippagePercent: number
   isClose: boolean
-  onWalletRequestStart?: () => void
+  onStatus?: (status: SponsoredExecutionStatus) => void
+  onIncluded?: (result: CommitOrderResult) => void
 }
 
 interface CommitOrderResult {
   hash: Hex
   userOperationHash?: Hex
-  orderId?: bigint
+  orderId: bigint
 }
 
 interface ExecuteOrderResult {
@@ -59,12 +68,29 @@ interface ExecuteOrderResult {
 const PERPS_CONTRACT_ADDRESSES = new Set(
   Object.values(PERPS_ARBITRUM_SEPOLIA).map((address) => address.toLowerCase())
 )
+const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
+  'allowance',
+  'balanceOf',
+  'getAccountLedgerSnapshot',
+  'getFreeBuyingPowerUsdc',
+  'getPendingOrderView',
+  'getPendingOrders',
+  'getPoolLiquidityView',
+  'getPosition',
+  'getProtocolStatus',
+  'getTraderAccount',
+  'isFadWindow',
+  'positions',
+  'previewClose',
+  'previewOpen',
+  'sides',
+])
 
 function isPerpsContractAddress(value: unknown): boolean {
   return typeof value === 'string' && PERPS_CONTRACT_ADDRESSES.has(value.toLowerCase())
 }
 
-function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
+function isPerpsDynamicContractQuery(queryKey: readonly unknown[]): boolean {
   const [queryType, parameters] = queryKey
   if (queryType !== 'readContract' && queryType !== 'readContracts') return false
   if (typeof parameters !== 'object' || parameters === null) return false
@@ -72,7 +98,8 @@ function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
   const queryParameters = parameters as {
     chainId?: unknown
     address?: unknown
-    contracts?: { address?: unknown }[]
+    functionName?: unknown
+    contracts?: { address?: unknown; functionName?: unknown }[]
   }
   if (
     queryParameters.chainId !== undefined &&
@@ -80,11 +107,18 @@ function isPerpsContractQuery(queryKey: readonly unknown[]): boolean {
   ) {
     return false
   }
-  if (isPerpsContractAddress(queryParameters.address)) return true
+  if (
+    isPerpsContractAddress(queryParameters.address) &&
+    typeof queryParameters.functionName === 'string' &&
+    PERPS_DYNAMIC_READ_FUNCTIONS.has(queryParameters.functionName)
+  ) return true
   if (!Array.isArray(queryParameters.contracts)) return false
 
   return queryParameters.contracts.some(
-    (contract) => isPerpsContractAddress(contract.address)
+    (contract) =>
+      isPerpsContractAddress(contract.address) &&
+      typeof contract.functionName === 'string' &&
+      PERPS_DYNAMIC_READ_FUNCTIONS.has(contract.functionName)
   )
 }
 
@@ -134,6 +168,45 @@ function requireIncludedTransactionHash(input: {
     )
   }
   return input.transactionHash
+}
+
+function commitOrderResult(
+  result: ExecuteSponsoredPerpsActionResult,
+  expected: {
+    accountAddress: Address
+    orderRouter: Address
+  }
+): CommitOrderResult {
+  const hash = requireIncludedTransactionHash(result)
+  if (
+    !result.receipt.success ||
+    result.receipt.receipt.status !== 'success'
+  ) {
+    throw new Error(
+      'The sponsored commit UserOperation reverted before creating an order.'
+    )
+  }
+
+  const committed = parseEventLogs({
+    abi: PERPS_ORDER_ROUTER_ABI,
+    eventName: 'OrderCommitted',
+    logs: result.receipt.logs.filter((log) =>
+      isAddressEqual(log.address, expected.orderRouter)
+    ),
+  }).filter((event) =>
+    isAddressEqual(event.args.account, expected.accountAddress)
+  )
+  if (committed.length !== 1) {
+    throw new Error(
+      'Sponsored commit was included, but no unique matching OrderCommitted event was found. Refresh account state before retrying.'
+    )
+  }
+
+  return {
+    hash,
+    userOperationHash: result.userOperationHash,
+    orderId: committed[0].args.orderId,
+  }
 }
 
 function readRecordValue(value: unknown, key: string, index: number): unknown {
@@ -320,28 +393,37 @@ export function usePerpsTrading() {
   const aaRuntime = usePerpsAaRuntime()
   const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
   const { signTypedDataAsync } = useSignTypedData()
+  const { writeContractAsync } = useWriteContract()
   const queryClient = useQueryClient()
 
   const invalidatePerpsReads = useCallback(() => {
     void queryClient.invalidateQueries({
-      predicate: (query) => isPerpsContractQuery(query.queryKey),
+      predicate: (query) => isPerpsDynamicContractQuery(query.queryKey),
     })
   }, [queryClient])
 
   const requireSponsoredExecution = useCallback(() => {
     if (!identity.isAaManifestConfigured) {
-      throw new Error(
-        'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_NOT_CONFIGURED',
+        message:
+          'Perps is sponsorship-only on testnet. Direct owner-wallet transactions are disabled.',
+      })
     }
     if (identity.status !== 'ready' || !identity.accountAddress || !identity.ownerAddress) {
-      throw new Error(
-        identity.error?.message ??
-        'Confirm the Plether Trading Account before submitting this action.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'IDENTITY_NOT_READY',
+        message:
+          identity.error?.message ??
+          'Confirm the Plether Trading Account before submitting this action.',
+        cause: identity.error,
+      })
     }
     if (!identity.manifest) {
-      throw new Error('The reviewed gas-sponsorship manifest is unavailable.')
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_UNAVAILABLE',
+        message: 'The reviewed gas-sponsorship manifest is unavailable.',
+      })
     }
     if (
       identity.manifest.chainId !== PERPS_ARBITRUM_SEPOLIA_CHAIN_ID ||
@@ -353,19 +435,25 @@ export function usePerpsTrading() {
       !isAddressEqual(identity.manifest.cfdEngine, PERPS_ARBITRUM_SEPOLIA.cfdEngine) ||
       !isAddressEqual(identity.manifest.orderRouter, PERPS_ARBITRUM_SEPOLIA.orderRouter)
     ) {
-      throw new Error(
-        'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'MANIFEST_MISMATCH',
+        message:
+          'The gas-sponsorship manifest does not match this frontend deployment. Your action was not sent.',
+      })
     }
     if (!identity.sponsorshipEnabled) {
-      throw new Error(
-        'Plether gas sponsorship is temporarily unavailable. Your action was kept under the Trading Account and was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'SPONSORSHIP_DISABLED',
+        message:
+          'Plether gas sponsorship is temporarily unavailable. Your action was kept under the Trading Account and was not sent.',
+      })
     }
     if (!aaRuntime) {
-      throw new Error(
-        'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.'
-      )
+      throw new SponsoredPreflightError({
+        reason: 'RUNTIME_UNAVAILABLE',
+        message:
+          'The reviewed smart-account wallet adapter is unavailable. Your action was not sent.',
+      })
     }
 
     return {
@@ -383,17 +471,57 @@ export function usePerpsTrading() {
     )
   }, [])
 
+  const fundTradingAccount = useCallback(async (amount: bigint) => {
+    try {
+      if (amount <= 0n) {
+        throw new Error('Funding amount must be greater than zero')
+      }
+
+      const sponsored = requireSponsoredExecution()
+      const client = requireClient(publicClient)
+      const hash = await writeContractAsync({
+        account: sponsored.ownerAddress,
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: sponsored.manifest.usdc,
+        abi: ERC20_ABI,
+        functionName: 'transfer',
+        args: [sponsored.accountAddress, amount],
+      })
+      const receipt = await client.waitForTransactionReceipt({ hash })
+      if (receipt.status === 'reverted') {
+        throw new Error('Trading Account funding transaction reverted')
+      }
+
+      invalidatePerpsReads()
+      return hash
+    } catch (error) {
+      throw new Error(getPerpsErrorMessage(error, 'fund'))
+    }
+  }, [
+    invalidatePerpsReads,
+    publicClient,
+    requireSponsoredExecution,
+    writeContractAsync,
+  ])
+
   const depositMargin = useCallback(async (
     amount: bigint,
     _allowance?: bigint,
     source?: 'owner' | 'account'
   ) => {
+    let executionStarted = false
     try {
       if (!address) {
-        throw new Error('Confirm the Plether Trading Account before depositing margin')
+        throw new SponsoredPreflightError({
+          reason: 'TRADING_ACCOUNT_UNAVAILABLE',
+          message: 'Confirm the Plether Trading Account before depositing margin',
+        })
       }
       if (amount <= 0n) {
-        throw new Error('Deposit amount must be greater than zero')
+        throw new SponsoredPreflightError({
+          reason: 'INVALID_AMOUNT',
+          message: 'Deposit amount must be greater than zero',
+        })
       }
 
       const sponsored = requireSponsoredExecution()
@@ -402,48 +530,71 @@ export function usePerpsTrading() {
         sponsored.manifest.usdcSupportsEip3009
       )
       let action: PerpsActionPlan
+      let authorizationNonce: Hex | undefined
       if (useOwnerAuthorization) {
         if (
           !sponsored.manifest.usdcSupportsEip3009 ||
           !sponsored.manifest.usdcEip712Name ||
           !sponsored.manifest.usdcEip712Version
         ) {
-          throw new Error(
-            'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.'
-          )
+          throw new SponsoredPreflightError({
+            reason: 'OWNER_AUTHORIZATION_UNAVAILABLE',
+            message:
+              'Owner-funded onboarding is disabled until this USDC deployment and its exact EIP-712 domain are verified.',
+          })
         }
-        const authorization = getOrCreateDepositAuthorization({
-          chainId: sponsored.manifest.chainId,
-          ownerAddress: sponsored.ownerAddress,
-          accountAddress: sponsored.accountAddress,
-          token: sponsored.manifest.usdc,
-          amount,
-        })
-        const typedData = buildReceiveWithAuthorizationTypedData({
-          name: sponsored.manifest.usdcEip712Name,
-          version: sponsored.manifest.usdcEip712Version,
-          chainId: sponsored.manifest.chainId,
-          verifyingContract: sponsored.manifest.usdc,
-        }, authorization)
-        const authorizationSignature = await signTypedDataAsync({
-          ...typedData,
-          account: sponsored.ownerAddress,
-        })
-        action = buildAuthorizedDepositAction({
-          account: sponsored.accountAddress,
-          usdc: sponsored.manifest.usdc,
-          clearinghouse: sponsored.manifest.marginClearinghouse,
-          authorization,
-          authorizationSignature,
-        })
+        try {
+          const authorization = getOrCreateDepositAuthorization({
+            chainId: sponsored.manifest.chainId,
+            ownerAddress: sponsored.ownerAddress,
+            accountAddress: sponsored.accountAddress,
+            token: sponsored.manifest.usdc,
+            amount,
+          })
+          authorizationNonce = authorization.nonce
+          const typedData = buildReceiveWithAuthorizationTypedData({
+            name: sponsored.manifest.usdcEip712Name,
+            version: sponsored.manifest.usdcEip712Version,
+            chainId: sponsored.manifest.chainId,
+            verifyingContract: sponsored.manifest.usdc,
+          }, authorization)
+          const authorizationSignature = await signTypedDataAsync({
+            ...typedData,
+            account: sponsored.ownerAddress,
+          })
+          action = buildAuthorizedDepositAction({
+            account: sponsored.accountAddress,
+            usdc: sponsored.manifest.usdc,
+            clearinghouse: sponsored.manifest.marginClearinghouse,
+            authorization,
+            authorizationSignature,
+          })
+        } catch (error) {
+          throw new SponsoredPreflightError({
+            reason: 'OWNER_AUTHORIZATION_FAILED',
+            message: error instanceof Error
+              ? error.message
+              : 'Unable to authorize the owner-funded margin deposit.',
+            cause: error,
+          })
+        }
       } else {
-        action = buildSmartAccountBalanceDepositAction({
-          account: sponsored.accountAddress,
-          usdc: sponsored.manifest.usdc,
-          clearinghouse: sponsored.manifest.marginClearinghouse,
-          amount,
-        })
+        try {
+          action = buildSmartAccountBalanceDepositAction({
+            account: sponsored.accountAddress,
+            usdc: sponsored.manifest.usdc,
+            clearinghouse: sponsored.manifest.marginClearinghouse,
+            amount,
+          })
+        } catch (error) {
+          throw new SponsoredPreflightError({
+            reason: 'ACTION_BUILD_FAILED',
+            message: 'Unable to build the sponsored margin deposit.',
+            cause: error,
+          })
+        }
       }
+      executionStarted = true
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
@@ -452,16 +603,33 @@ export function usePerpsTrading() {
         authorizationTokenToClearOnConfirmation: useOwnerAuthorization
           ? sponsored.manifest.usdc
           : undefined,
+        authorizationNonceToClearOnConfirmation: authorizationNonce,
       })
       const hash = requireIncludedTransactionHash(result)
       invalidatePerpsReads()
       return hash
     } catch (error) {
+      if (!executionStarted) {
+        trackSponsoredOperationPreflightFailure({
+          action: 'deposit',
+          manifestVersion: identity.manifest?.version,
+          accountMode: identity.manifest?.smartAccountMode,
+          walletFamily: aaRuntime?.walletFamily,
+          walletVersion: aaRuntime?.walletVersion,
+        }, error)
+      }
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) throw new Error(sponsorReasonMessage(sponsorError))
       throw new Error(getPerpsErrorMessage(error, 'deposit'))
     }
-  }, [address, invalidatePerpsReads, requireSponsoredExecution, signTypedDataAsync])
+  }, [
+    aaRuntime,
+    address,
+    identity.manifest,
+    invalidatePerpsReads,
+    requireSponsoredExecution,
+    signTypedDataAsync,
+  ])
 
   const withdrawMargin = useCallback(async (amount: bigint) => {
     try {
@@ -535,7 +703,8 @@ export function usePerpsTrading() {
     oraclePrice,
     slippagePercent,
     isClose,
-    onWalletRequestStart,
+    onStatus,
+    onIncluded,
   }: CommitOrderInput): Promise<CommitOrderResult> => {
     let diagnosticClient: PerpsPublicClient | undefined
     let diagnosticArgs: CommitOrderArgs | undefined
@@ -653,36 +822,29 @@ export function usePerpsTrading() {
         targetPrice,
         isClose,
       })
+      const expectedCommit = {
+        accountAddress: sponsored.accountAddress,
+        orderRouter: sponsored.manifest.orderRouter,
+      }
       const result = await executeSponsoredPerpsAction({
         manifest: sponsored.manifest,
         ownerAddress: sponsored.ownerAddress,
         action,
         runtime: sponsored.runtime,
-        onStatus: (status: SponsoredExecutionStatus) => {
-          if (status === 'awaiting-signature') {
-            onWalletRequestStart?.()
-          }
+        onStatus,
+        onIncluded: (includedResult) => {
+          const includedCommit = commitOrderResult(
+            includedResult,
+            expectedCommit
+          )
+          diagnosticHash = includedCommit.hash
+          onIncluded?.(includedCommit)
         },
       })
-      const hash = requireIncludedTransactionHash(result)
-      diagnosticHash = hash
-      const committed = parseEventLogs({
-        abi: PERPS_ORDER_ROUTER_ABI,
-        eventName: 'OrderCommitted',
-        logs: [...result.receipt.receipt.logs],
-      }).at(0)
-      if (committed?.args.orderId === undefined) {
-        throw new Error(
-          'Sponsored commit was included, but no OrderCommitted event was found. Refresh account state before retrying.'
-        )
-      }
-
+      const committedResult = commitOrderResult(result, expectedCommit)
+      diagnosticHash = committedResult.hash
       invalidatePerpsReads()
-      return {
-        hash,
-        userOperationHash: result.userOperationHash,
-        orderId: committed.args.orderId,
-      }
+      return committedResult
     } catch (error) {
       const sponsorError = findSponsorRequestError(error)
       if (sponsorError) {
@@ -703,23 +865,26 @@ export function usePerpsTrading() {
         diagnosticMarginDelta !== undefined
       ) {
         const failureHash = diagnosticHash ?? findTransactionHash(error)
-        throw new Error(await describeCommitFailure({
-          client: diagnosticClient,
-          address,
-          hash: failureHash,
-          intro: failureHash === undefined
-            ? 'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.'
-            : 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
-          args: diagnosticArgs,
-          isClose,
-          side: diagnosticSide,
-          sizeDelta: diagnosticSizeDelta,
-          marginDelta: diagnosticMarginDelta,
-          oraclePrice,
-        }))
+        throw new Error(
+          await describeCommitFailure({
+            client: diagnosticClient,
+            address,
+            hash: failureHash,
+            intro: failureHash === undefined
+              ? 'Commit was not submitted, or the wallet/RPC did not return a transaction hash. No order was created.'
+              : 'Commit failed before an order was created, and the RPC did not return a decodable contract error.',
+            args: diagnosticArgs,
+            isClose,
+            side: diagnosticSide,
+            sizeDelta: diagnosticSizeDelta,
+            marginDelta: diagnosticMarginDelta,
+            oraclePrice,
+          }),
+          { cause: error }
+        )
       }
 
-      throw new Error(message)
+      throw new Error(message, { cause: error })
     }
   }, [address, invalidatePerpsReads, publicClient, requireSponsoredExecution])
 
@@ -784,6 +949,7 @@ export function usePerpsTrading() {
 
   return {
     approveUsdcForMargin,
+    fundTradingAccount,
     depositMargin,
     abandonDepositAuthorization,
     withdrawMargin,

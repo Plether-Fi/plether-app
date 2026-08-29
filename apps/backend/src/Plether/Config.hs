@@ -1,6 +1,8 @@
 module Plether.Config
   ( Config (..)
   , AaConfig (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
   , Addresses (..)
   , Deployment (..)
   , loadConfig
@@ -12,16 +14,34 @@ module Plether.Config
   , validatePythLatestMaxAgeSeconds
   , defaultProtocolExplorerEnabled
   , validateProtocolExplorerEnabled
+  , parsePerpsCandleReadIntervals
+  , parsePerpsCandleReadMode
+  , parsePerpsCandleWriteMode
+  , perpsCandleRollupReadEnabled
+  , validatePerpsCandleModeCombination
+  , validateInsightsCompetitionActivation
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
-import Data.List (sortBy)
+import Data.List (intercalate, nub, sortBy)
 import Data.Maybe (fromMaybe)
 import Data.Ord (Down (..), comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Plether.Utils.Address (isValidAddress)
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , CompetitionRules (..)
+  , competitionRulesForSlug
+  , defaultCompetitionSlug
+  , september2026CompetitionSlug
+  )
+import Plether.Insights.Registration.Config
+  ( RegistrationConfig (..)
+  , loadRegistrationConfig
+  )
+import Plether.Types.Perps (canonicalBasketCandleIntervals)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -41,11 +61,20 @@ data Config = Config
   , cfgPythLatestMaxAgeSeconds :: Integer
   , cfgPythIngestionEnabled :: Bool
   , cfgProtocolExplorerEnabled :: Bool
+  , cfgPerpsCandleWriteMode :: PerpsCandleWriteMode
+  , cfgPerpsCandleReadMode :: PerpsCandleReadMode
+  , cfgPerpsCandleReadIntervals :: [Integer]
+  , cfgPerpsCandleShadowSampleBps :: Int
+  , cfgPerpsCandleStrictCoverage :: Bool
+  , cfgPerpsCandleLatenessSeconds :: Integer
+  , cfgPerpsCandleFinalizationGraceSeconds :: Integer
   , cfgPerpsRpcUrl :: Text
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
   , cfgPerpsCfdEngine :: Text
+  , cfgPerpsCfdEngineLens :: Text
+  , cfgPerpsCfdEngineSettlementSidecar :: Text
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
@@ -55,7 +84,17 @@ data Config = Config
   , cfgPerpsJuniorVault :: Text
   , cfgPerpsOrderRouterAdmin :: Text
   , cfgPerpsCfdEngineAdmin :: Text
+  , cfgPerpsSettlementMonitorLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgVaultHistoryHousePoolAddress :: Text
+  , cfgVaultHistorySeniorVaultAddress :: Text
+  , cfgVaultHistoryJuniorVaultAddress :: Text
+  , cfgVaultHistoryDeploymentBlock :: Integer
+  , cfgVaultHistoryRpcUrl :: Text
+  , cfgVaultHistoryConfirmations :: Integer
+  , cfgInsightsCompetitionRules :: CompetitionRules
+  , cfgInsightsCompetitionReleaseManifest :: CompetitionReleaseManifest
+  , cfgRegistrationConfig :: Maybe RegistrationConfig
   , cfgAaConfig :: Maybe AaConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
@@ -64,8 +103,21 @@ data Config = Config
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
   , cfgKeeperFeeBufferBps :: Integer
+  , cfgLpSettlementEnabled :: Bool
+  , cfgLpSettlementPollSeconds :: Int
   }
   deriving stock (Show)
+
+data PerpsCandleWriteMode
+  = PerpsCandleWritesOff
+  | PerpsCandleWritesDual
+  deriving stock (Eq, Show)
+
+data PerpsCandleReadMode
+  = PerpsCandleReadsLegacy
+  | PerpsCandleReadsShadow
+  | PerpsCandleReadsRollup
+  deriving stock (Eq, Show)
 
 data AaConfig = AaConfig
   { aaProxyOriginToken :: Text
@@ -164,6 +216,129 @@ loadDeployments = eitherDecodeFileStrict
 defaultPythHermesUrl :: Text
 defaultPythHermesUrl = "https://pyth.dourolabs.app/hermes"
 
+julyPerpsAccountLens, julyPerpsUsdc, julyPerpsOrderRouter, julyPerpsCfdEngine, julyPerpsCfdEngineLens, julyPerpsCfdEngineSettlementSidecar, julyPerpsMarginClearinghouse, julyPerpsPletherOracle :: String
+julyPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+julyPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+julyPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+julyPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+julyPerpsCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+julyPerpsCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
+julyPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+julyPerpsPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+
+julyPerpsIndexerStartBlock :: String
+julyPerpsIndexerStartBlock = "288439939"
+
+-- | Resolve the immutable rule set. September may start in a registration-only
+-- state without a release ID; supplying the release ID is the explicit bind
+-- signal and then every address must identify one complete new release.
+validateInsightsCompetitionActivation
+  :: Text
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Maybe String
+  -> Either String CompetitionRules
+validateInsightsCompetitionActivation slug maybeReleaseId maybeUsdc maybeRouter maybeCfdEngine maybeCfdEngineLens maybeSettlementSidecar maybeClearinghouse maybeOracle maybeLens maybeIndexerStartBlock = do
+  rules <-
+    maybe
+      (Left $ "INSIGHTS_ACTIVE_COMPETITION_SLUG is unknown: " <> T.unpack slug)
+      Right
+      (competitionRulesForSlug slug)
+  if crSlug rules /= september2026CompetitionSlug
+    then Right rules
+    else if isMissing maybeReleaseId
+      then Right rules
+    else
+      let supplied =
+            [ ("PERPS_USDC", maybeUsdc, julyPerpsUsdc)
+            , ("PERPS_ORDER_ROUTER", maybeRouter, julyPerpsOrderRouter)
+            , ("PERPS_CFD_ENGINE", maybeCfdEngine, julyPerpsCfdEngine)
+            , ("PERPS_CFD_ENGINE_LENS", maybeCfdEngineLens, julyPerpsCfdEngineLens)
+            , ("PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR", maybeSettlementSidecar, julyPerpsCfdEngineSettlementSidecar)
+            , ("PERPS_MARGIN_CLEARINGHOUSE", maybeClearinghouse, julyPerpsMarginClearinghouse)
+            , ("PERPS_PLETHER_ORACLE", maybeOracle, julyPerpsPletherOracle)
+            , ("PERPS_ACCOUNT_LENS", maybeLens, julyPerpsAccountLens)
+            ]
+          julyReleaseAddresses =
+            [ T.toLower $ T.pack julyAddress
+            | (_, _, julyAddress) <- supplied
+            ]
+          configuredAddresses =
+            [ T.toLower $ T.strip $ T.pack configured
+            | (_, Just configured, _) <- supplied
+            , not $ T.null $ T.strip $ T.pack configured
+            ]
+          missingOrInherited =
+            [ name
+            | (name, value, _) <- supplied
+            , maybe True
+                (\configured ->
+                  let normalized = T.toLower $ T.strip $ T.pack configured
+                   in T.null normalized || normalized `elem` julyReleaseAddresses)
+                value
+            ]
+          invalid =
+            [ name
+            | (name, Just configured, _) <- supplied
+            , not (T.null $ T.strip $ T.pack configured)
+            , let normalized = T.toLower $ T.strip $ T.pack configured
+            , not (isValidAddress normalized) || normalized == zeroAddress
+            ]
+          invalidIndexerStart =
+            case fmap (T.unpack . T.strip . T.pack) maybeIndexerStartBlock of
+              Just configured
+                | configured /= julyPerpsIndexerStartBlock
+                , Just parsed <- readMaybe configured
+                , parsed > (0 :: Integer) -> []
+              _ -> ["PERPS_INDEXER_START_BLOCK"]
+          invalidReleaseId =
+            [ "INSIGHTS_COMPETITION_RELEASE_ID"
+            | fmap (T.strip . T.pack) maybeReleaseId /= Just september2026CompetitionSlug
+            ]
+          duplicateRoles =
+            [ "PERPS release address roles (addresses must be pairwise distinct)"
+            | length configuredAddresses /= length (nub configuredAddresses)
+            ]
+          invalidValues = invalidReleaseId <> missingOrInherited <> invalidIndexerStart <> duplicateRoles
+       in if not $ null invalidValues
+            then Left $
+              "INSIGHTS_ACTIVE_COMPETITION_SLUG=testnet-trading-2026-09 requires explicit new-release values (not inherited July defaults) for: "
+                <> intercalate ", " invalidValues
+            else if not $ null invalid
+              then Left $ "Invalid September competition deployment address in: " <> intercalate ", " invalid
+              else Right rules
+  where
+    zeroAddress = "0x0000000000000000000000000000000000000000"
+    isMissing = maybe True (T.null . T.strip . T.pack)
+
+validateRegistrationConfig
+  :: CompetitionRules
+  -> Either String (Maybe RegistrationConfig)
+  -> Either String (CompetitionRules, Maybe RegistrationConfig)
+validateRegistrationConfig rules configured = do
+  maybeRegistration <- configured
+  case maybeRegistration of
+    Nothing -> Right (rules, Nothing)
+    Just registration
+      | crRegistrationClosesAt rules == Nothing ->
+          Left "INSIGHTS_REGISTRATION_ENABLED=true requires an active competition with registration rules"
+      | rcXCallbackCompetitionSlug registration /= crSlug rules ->
+          Left "X_OAUTH_CALLBACK_URL competition slug must match INSIGHTS_ACTIVE_COMPETITION_SLUG"
+      | fmap T.toLower (crTargetXHandle rules) /= Just (T.toLower $ rcXTargetHandle registration) ->
+          Left "X_TARGET_HANDLE must match the active competition rules"
+      | fmap toInteger (crMinimumXAccountAgeDays rules) /= Just (rcMinimumXAccountAgeDays registration) ->
+          Left "The configured X account age must match the active competition rules"
+      | rcRulesVersion registration /= crRulesVersion rules ->
+          Left "INSIGHTS_REGISTRATION_RULES_VERSION must match the active competition rules version"
+      | otherwise -> Right (rules, Just registration)
+
 defaultPythLatestMaxAgeSeconds :: Integer
 defaultPythLatestMaxAgeSeconds = 10
 
@@ -197,6 +372,7 @@ validateProtocolExplorerEnabled rawValue =
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
+  registrationConfig <- loadRegistrationConfig
   mRpcUrl <- firstEnv ["RPC_URL", "PERPS_RPC_URL"]
   case mRpcUrl of
     Nothing -> pure $ Left "RPC_URL or PERPS_RPC_URL environment variable not set"
@@ -216,21 +392,40 @@ loadConfig = do
       protocolExplorerEnabledStr <-
         fromMaybe (if defaultProtocolExplorerEnabled then "true" else "false")
           <$> lookupEnv "PROTOCOL_EXPLORER_ENABLED"
+      candleWriteModeStr <- fromMaybe "off" <$> lookupEnv "PERPS_CANDLE_WRITE_MODE"
+      candleReadModeStr <- fromMaybe "legacy" <$> lookupEnv "PERPS_CANDLE_READ_MODE"
+      candleReadIntervalsStr <- fromMaybe "" <$> lookupEnv "PERPS_CANDLE_READ_INTERVALS"
+      candleShadowSampleBpsStr <- fromMaybe "0" <$> lookupEnv "PERPS_CANDLE_SHADOW_SAMPLE_BPS"
+      candleStrictCoverageStr <- fromMaybe "true" <$> lookupEnv "PERPS_CANDLE_STRICT_COVERAGE"
+      candleLatenessSecondsStr <- fromMaybe "120" <$> lookupEnv "PERPS_CANDLE_LATENESS_SECONDS"
+      candleFinalizationGraceSecondsStr <-
+        fromMaybe "15" <$> lookupEnv "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
       perpsRpcUrl <- fromMaybe rpcUrl <$> lookupEnv "PERPS_RPC_URL"
       perpsChainIdStr <- fromMaybe "421614" <$> lookupEnv "PERPS_CHAIN_ID"
-      perpsAccountLens <- fromMaybe "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1" <$> lookupEnv "PERPS_ACCOUNT_LENS"
-      perpsPublicLens <- fromMaybe "0x4E202C06e2C378d1a85577ac631e592AB66f23FB" <$> lookupEnv "PERPS_PUBLIC_LENS"
-      perpsHousePool <- fromMaybe "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18" <$> lookupEnv "PERPS_HOUSE_POOL"
-      perpsSeniorVault <- fromMaybe "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8" <$> lookupEnv "PERPS_SENIOR_VAULT"
-      perpsJuniorVault <- fromMaybe "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458" <$> lookupEnv "PERPS_JUNIOR_VAULT"
-      perpsOrderRouterAdmin <- fromMaybe "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C" <$> lookupEnv "PERPS_ORDER_ROUTER_ADMIN"
-      perpsCfdEngineAdmin <- fromMaybe "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39" <$> lookupEnv "PERPS_CFD_ENGINE_ADMIN"
-      perpsUsdc <- fromMaybe "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3" <$> lookupEnv "PERPS_USDC"
-      perpsOrderRouter <- fromMaybe "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E" <$> lookupEnv "PERPS_ORDER_ROUTER"
-      perpsCfdEngine <- fromMaybe "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a" <$> lookupEnv "PERPS_CFD_ENGINE"
-      perpsMarginClearinghouse <- fromMaybe "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e" <$> lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
-      perpsPletherOracle <- fromMaybe "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c" <$> lookupEnv "PERPS_PLETHER_ORACLE"
-      perpsIndexerStartBlockStr <- fromMaybe "288439939" <$> lookupEnv "PERPS_INDEXER_START_BLOCK"
+      mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
+      mPerpsUsdc <- lookupEnv "PERPS_USDC"
+      mPerpsOrderRouter <- lookupEnv "PERPS_ORDER_ROUTER"
+      mPerpsCfdEngine <- lookupEnv "PERPS_CFD_ENGINE"
+      mPerpsCfdEngineLens <- lookupEnv "PERPS_CFD_ENGINE_LENS"
+      mPerpsCfdEngineSettlementSidecar <- lookupEnv "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
+      mPerpsMarginClearinghouse <- lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
+      mPerpsPletherOracle <- lookupEnv "PERPS_PLETHER_ORACLE"
+      mPerpsIndexerStartBlockStr <- lookupEnv "PERPS_INDEXER_START_BLOCK"
+      perpsHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "PERPS_HOUSE_POOL"
+      perpsSettlementMonitorLens <- fromMaybe "0xd251AC0BD90780c48F31F575152808315200664E" <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
+      perpsPublicLens <- fromMaybe "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A" <$> lookupEnv "PERPS_PUBLIC_LENS"
+      perpsSeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "PERPS_SENIOR_VAULT"
+      perpsJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "PERPS_JUNIOR_VAULT"
+      perpsOrderRouterAdmin <- fromMaybe "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37" <$> lookupEnv "PERPS_ORDER_ROUTER_ADMIN"
+      perpsCfdEngineAdmin <- fromMaybe "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A" <$> lookupEnv "PERPS_CFD_ENGINE_ADMIN"
+      vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
+      vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
+      vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
+      vaultHistoryDeploymentBlockStr <- fromMaybe "302257125" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+      mVaultHistoryRpcUrl <- lookupEnv "VAULT_HISTORY_RPC_URL"
+      vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
+      mInsightsCompetitionSlug <- lookupEnv "INSIGHTS_ACTIVE_COMPETITION_SLUG"
+      mInsightsCompetitionReleaseId <- lookupEnv "INSIGHTS_COMPETITION_RELEASE_ID"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
@@ -246,6 +441,8 @@ loadConfig = do
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
+      lpSettlementEnabledStr <- fromMaybe "false" <$> lookupEnv "LP_SETTLEMENT_ENABLED"
+      lpSettlementPollSecondsStr <- fromMaybe "15" <$> lookupEnv "LP_SETTLEMENT_POLL_SECONDS"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -255,6 +452,20 @@ loadConfig = do
           pythSampleIntervalSeconds = fromMaybe 60 (readMaybe pythSampleIntervalStr)
           pythIngestionEnabled = parseBool pythIngestionStr
           perpsChainId = fromMaybe 421614 (readMaybe perpsChainIdStr)
+          perpsAccountLens = fromMaybe julyPerpsAccountLens mPerpsAccountLens
+          perpsUsdc = fromMaybe julyPerpsUsdc mPerpsUsdc
+          perpsOrderRouter = fromMaybe julyPerpsOrderRouter mPerpsOrderRouter
+          perpsCfdEngine = fromMaybe julyPerpsCfdEngine mPerpsCfdEngine
+          perpsCfdEngineLens = fromMaybe julyPerpsCfdEngineLens mPerpsCfdEngineLens
+          perpsCfdEngineSettlementSidecar =
+            fromMaybe julyPerpsCfdEngineSettlementSidecar mPerpsCfdEngineSettlementSidecar
+          perpsMarginClearinghouse = fromMaybe julyPerpsMarginClearinghouse mPerpsMarginClearinghouse
+          perpsPletherOracle = fromMaybe julyPerpsPletherOracle mPerpsPletherOracle
+          perpsIndexerStartBlockStr = fromMaybe julyPerpsIndexerStartBlock mPerpsIndexerStartBlockStr
+          insightsCompetitionSlug =
+            case T.strip . T.pack <$> mInsightsCompetitionSlug of
+              Just configured | not (T.null configured) -> configured
+              _ -> defaultCompetitionSlug
           perpsIndexerStartBlock = fromMaybe 0 (readMaybe perpsIndexerStartBlockStr)
           aaIpRateLimit = fromMaybe 120 (readMaybe aaIpRateLimitStr)
           aaAccountRateLimit = fromMaybe 30 (readMaybe aaAccountRateLimitStr)
@@ -289,7 +500,8 @@ loadConfig = do
                       perpsUsdc
                       perpsOrderRouter
                       perpsCfdEngine
-                      perpsMarginClearinghouse ->
+                      perpsMarginClearinghouse
+                      || septemberAaReleaseAccepted ->
                     Left
                       "Managed AA sponsorship requires the reviewed Arbitrum Sepolia \
                       \PERPS_USDC, PERPS_ORDER_ROUTER, PERPS_CFD_ENGINE, and \
@@ -314,16 +526,168 @@ loadConfig = do
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
 
+          candleConfig = do
+            writeMode <- parsePerpsCandleWriteMode candleWriteModeStr
+            readMode <- parsePerpsCandleReadMode candleReadModeStr
+            readIntervals <- parsePerpsCandleReadIntervals candleReadIntervalsStr
+            shadowSampleBps <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_SHADOW_SAMPLE_BPS"
+                0
+                10_000
+                candleShadowSampleBpsStr
+            strictCoverage <-
+              maybe
+                (Left "PERPS_CANDLE_STRICT_COVERAGE must be a boolean")
+                Right
+                (parseBoolStrict candleStrictCoverageStr)
+            latenessSeconds <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_LATENESS_SECONDS"
+                0
+                86_400
+                candleLatenessSecondsStr
+            finalizationGraceSeconds <-
+              parseBoundedWholeNumber
+                "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS"
+                0
+                60
+                candleFinalizationGraceSecondsStr
+            validatePerpsCandleModeCombination
+              writeMode
+              readMode
+              readIntervals
+              strictCoverage
+            pure
+              ( writeMode
+              , readMode
+              , readIntervals
+              , shadowSampleBps
+              , strictCoverage
+              , fromIntegral latenessSeconds
+              , fromIntegral finalizationGraceSeconds
+              )
+
+          vaultHistoryConfig = do
+            deploymentBlock <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+                vaultHistoryDeploymentBlockStr
+            confirmations <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_CONFIRMATIONS"
+                vaultHistoryConfirmationsStr
+            let addresses =
+                  [ ("VAULT_HISTORY_HOUSE_POOL_ADDRESS", vaultHistoryHousePool)
+                  , ("VAULT_HISTORY_SENIOR_VAULT_ADDRESS", vaultHistorySeniorVault)
+                  , ("VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", vaultHistoryJuniorVault)
+                  ]
+            case [name | (name, address) <- addresses, not $ isCanonicalVaultAddress address] of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              [] ->
+                Right
+                  ( deploymentBlock
+                  , confirmations
+                  , fromMaybe (T.pack perpsRpcUrl) $ nonBlankText mVaultHistoryRpcUrl
+                  )
+
+          lpSettlementConfig = do
+            enabled <-
+              maybe
+                (Left "LP_SETTLEMENT_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict lpSettlementEnabledStr)
+            pollSeconds <-
+              parseBoundedWholeNumber
+                "LP_SETTLEMENT_POLL_SECONDS"
+                1
+                3_600
+                lpSettlementPollSecondsStr
+            case
+                [ name
+                | (name, address) <-
+                    [ ("PERPS_HOUSE_POOL", perpsHousePool)
+                    , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                    ]
+                , not $ isCanonicalVaultAddress address
+                ]
+              of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              []
+                | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
+                    == "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151" ->
+                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.0 monitor sidecar"
+                | otherwise -> Right (enabled, pollSeconds)
+
+          competitionConfig = do
+            rules <-
+              validateInsightsCompetitionActivation
+                insightsCompetitionSlug
+                mInsightsCompetitionReleaseId
+                mPerpsUsdc
+                mPerpsOrderRouter
+                mPerpsCfdEngine
+                mPerpsCfdEngineLens
+                mPerpsCfdEngineSettlementSidecar
+                mPerpsMarginClearinghouse
+                mPerpsPletherOracle
+                mPerpsAccountLens
+                mPerpsIndexerStartBlockStr
+            if crSlug rules == september2026CompetitionSlug && perpsChainId /= 421614
+              then Left "The September 2026 Insights competition is supported only on PERPS_CHAIN_ID=421614"
+              else do
+                validated@(_, maybeRegistration) <- validateRegistrationConfig rules registrationConfig
+                case (maybeRegistration, nonBlankText mDatabaseUrl) of
+                  (Just _, Nothing) ->
+                    Left "INSIGHTS_REGISTRATION_PROVISIONED=true requires DATABASE_URL"
+                  _ -> Right validated
+
+          septemberAaReleaseAccepted =
+            case competitionConfig of
+              Right (rules, _) ->
+                crSlug rules == september2026CompetitionSlug
+                  && maybe False (not . T.null . T.strip . T.pack) mInsightsCompetitionReleaseId
+                  && all (isValidAddress . T.pack)
+                    [perpsUsdc, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
+              Left _ -> False
+
       case
           ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
           , validateProtocolExplorerEnabled protocolExplorerEnabledStr
           , aaConfig
+          , candleConfig
+          , vaultHistoryConfig
+          , lpSettlementConfig
+          , competitionConfig
           )
         of
-        (Left err, _, _) -> pure $ Left err
-        (_, Left err, _) -> pure $ Left err
-        (_, _, Left err) -> pure $ Left err
-        (Right pythLatestMaxAgeSeconds, Right protocolExplorerEnabled, Right resolvedAaConfig) -> do
+        (Left err, _, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, _, Left err) -> pure $ Left err
+        ( Right pythLatestMaxAgeSeconds
+          , Right protocolExplorerEnabled
+          , Right resolvedAaConfig
+          , Right
+              ( candleWriteMode
+                , candleReadMode
+                , candleReadIntervals
+                , candleShadowSampleBps
+                , candleStrictCoverage
+                , candleLatenessSeconds
+                , candleFinalizationGraceSeconds
+                )
+          , Right
+              ( vaultHistoryDeploymentBlock
+                , vaultHistoryConfirmations
+                , vaultHistoryRpcUrl
+                )
+          , Right (lpSettlementEnabled, lpSettlementPollSeconds)
+          , Right (insightsCompetitionRules, resolvedRegistrationConfig)
+          ) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
             Left err -> pure $ Left $ "Failed to load addresses: " <> err
@@ -346,11 +710,20 @@ loadConfig = do
                 , cfgPythLatestMaxAgeSeconds = pythLatestMaxAgeSeconds
                 , cfgPythIngestionEnabled = pythIngestionEnabled
                 , cfgProtocolExplorerEnabled = protocolExplorerEnabled
+                , cfgPerpsCandleWriteMode = candleWriteMode
+                , cfgPerpsCandleReadMode = candleReadMode
+                , cfgPerpsCandleReadIntervals = candleReadIntervals
+                , cfgPerpsCandleShadowSampleBps = candleShadowSampleBps
+                , cfgPerpsCandleStrictCoverage = candleStrictCoverage
+                , cfgPerpsCandleLatenessSeconds = candleLatenessSeconds
+                , cfgPerpsCandleFinalizationGraceSeconds = candleFinalizationGraceSeconds
                 , cfgPerpsRpcUrl = T.pack perpsRpcUrl
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
                 , cfgPerpsCfdEngine = T.pack perpsCfdEngine
+                , cfgPerpsCfdEngineLens = T.pack perpsCfdEngineLens
+                , cfgPerpsCfdEngineSettlementSidecar = T.pack perpsCfdEngineSettlementSidecar
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
@@ -360,7 +733,34 @@ loadConfig = do
                 , cfgPerpsJuniorVault = T.pack perpsJuniorVault
                 , cfgPerpsOrderRouterAdmin = T.pack perpsOrderRouterAdmin
                 , cfgPerpsCfdEngineAdmin = T.pack perpsCfdEngineAdmin
+                , cfgPerpsSettlementMonitorLens = T.pack perpsSettlementMonitorLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgVaultHistoryHousePoolAddress = T.pack vaultHistoryHousePool
+                , cfgVaultHistorySeniorVaultAddress = T.pack vaultHistorySeniorVault
+                , cfgVaultHistoryJuniorVaultAddress = T.pack vaultHistoryJuniorVault
+                , cfgVaultHistoryDeploymentBlock = vaultHistoryDeploymentBlock
+                , cfgVaultHistoryRpcUrl = vaultHistoryRpcUrl
+                , cfgVaultHistoryConfirmations = vaultHistoryConfirmations
+                , cfgInsightsCompetitionRules = insightsCompetitionRules
+                , cfgInsightsCompetitionReleaseManifest =
+                    let defaultReleaseId
+                          | crSlug insightsCompetitionRules == september2026CompetitionSlug = "release-pending"
+                          | otherwise = T.unpack $ crSlug insightsCompetitionRules
+                     in CompetitionReleaseManifest
+                      { crmReleaseId =
+                          T.strip $ T.pack $ fromMaybe defaultReleaseId mInsightsCompetitionReleaseId
+                      , crmChainId = perpsChainId
+                      , crmUsdc = T.pack perpsUsdc
+                      , crmOrderRouter = T.pack perpsOrderRouter
+                      , crmMarginClearinghouse = T.pack perpsMarginClearinghouse
+                      , crmAccountLens = T.pack perpsAccountLens
+                      , crmCfdEngine = T.pack perpsCfdEngine
+                      , crmCfdEngineLens = T.pack perpsCfdEngineLens
+                      , crmSettlementSidecar = T.pack perpsCfdEngineSettlementSidecar
+                      , crmPletherOracle = T.pack perpsPletherOracle
+                      , crmIndexerStartBlock = perpsIndexerStartBlock
+                      }
+                , cfgRegistrationConfig = resolvedRegistrationConfig
                 , cfgAaConfig = resolvedAaConfig
                 , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
@@ -369,6 +769,8 @@ loadConfig = do
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
+                , cfgLpSettlementEnabled = lpSettlementEnabled
+                , cfgLpSettlementPollSeconds = lpSettlementPollSeconds
                 }
 
 firstEnv :: [String] -> IO (Maybe String)
@@ -408,13 +810,108 @@ parseBoolStrict value =
     "off" -> Just False
     _ -> Nothing
 
+parsePerpsCandleWriteMode :: String -> Either String PerpsCandleWriteMode
+parsePerpsCandleWriteMode raw =
+  case T.toLower $ T.strip $ T.pack raw of
+    "off" -> Right PerpsCandleWritesOff
+    "dual" -> Right PerpsCandleWritesDual
+    _ -> Left "PERPS_CANDLE_WRITE_MODE must be one of off or dual"
+
+parsePerpsCandleReadMode :: String -> Either String PerpsCandleReadMode
+parsePerpsCandleReadMode raw =
+  case T.toLower $ T.strip $ T.pack raw of
+    "legacy" -> Right PerpsCandleReadsLegacy
+    "shadow" -> Right PerpsCandleReadsShadow
+    "rollup" -> Right PerpsCandleReadsRollup
+    _ -> Left "PERPS_CANDLE_READ_MODE must be one of legacy, shadow, or rollup"
+
+parsePerpsCandleReadIntervals :: String -> Either String [Integer]
+parsePerpsCandleReadIntervals raw =
+  traverse parseInterval tokens
+  where
+    tokens =
+      filter (not . null)
+        $ map T.unpack
+        $ concatMap T.words
+        $ T.splitOn ","
+        $ T.strip
+        $ T.pack raw
+    parseInterval token =
+      case readMaybe token of
+        Just interval | interval `elem` canonicalBasketCandleIntervals -> Right interval
+        _ ->
+          Left
+            "PERPS_CANDLE_READ_INTERVALS may contain only 60, 180, 300, 900, 1800, 3600, or 86400"
+
+-- | Rollup HTTP reads are fail-closed. Shadow mode is reserved (and therefore
+-- never enables a public rollup route); an empty allowlist exposes nothing.
+perpsCandleRollupReadEnabled :: PerpsCandleReadMode -> Bool -> [Integer] -> Integer -> Bool
+perpsCandleRollupReadEnabled mode strictCoverage allowlistedIntervals interval =
+  mode == PerpsCandleReadsRollup
+    && strictCoverage
+    && interval `elem` canonicalBasketCandleIntervals
+    && interval `elem` allowlistedIntervals
+
+-- | A public rollup read requires the corresponding live writers. Without
+-- this invariant, a reorg processed while writes are disabled could leave
+-- previously complete rollups and coverage metadata available to the API.
+validatePerpsCandleModeCombination
+  :: PerpsCandleWriteMode
+  -> PerpsCandleReadMode
+  -> [Integer]
+  -> Bool
+  -> Either String ()
+validatePerpsCandleModeCombination writeMode readMode readIntervals strictCoverage
+  | not (null readIntervals)
+      && writeMode /= PerpsCandleWritesDual =
+      Left
+        "PERPS_CANDLE_WRITE_MODE must be dual before any rollup interval is allowlisted"
+  | readMode == PerpsCandleReadsRollup && not strictCoverage =
+      Left
+        "PERPS_CANDLE_STRICT_COVERAGE must be true when PERPS_CANDLE_READ_MODE is rollup"
+  | otherwise = Right ()
+
+parseBoundedWholeNumber :: String -> Int -> Int -> String -> Either String Int
+parseBoundedWholeNumber name lower upper raw =
+  case readMaybe normalized of
+    Just value
+      | show value == normalized
+      , value >= lower
+      , value <= upper -> Right value
+    _ ->
+      Left $
+        name
+          <> " must be a whole number between "
+          <> show lower
+          <> " and "
+          <> show upper
+  where
+    normalized = T.unpack $ T.strip $ T.pack raw
+
+parseNonNegativeInteger :: String -> String -> Either String Integer
+parseNonNegativeInteger name raw =
+  case readMaybe normalized of
+    Just value
+      | show value == normalized
+      , value >= 0 -> Right value
+    _ -> Left $ name <> " must be a non-negative whole number"
+  where
+    normalized = T.unpack $ T.strip $ T.pack raw
+
+isCanonicalVaultAddress :: String -> Bool
+isCanonicalVaultAddress raw =
+  let address = T.strip $ T.pack raw
+   in T.length address == 42
+        && T.toLower (T.take 2 address) == "0x"
+        && isValidAddress address
+
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
-    , reviewed router "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
-    , reviewed engine "0x6a25ea1015b5f032d8a2d95d57aefcb99219bf0a"
-    , reviewed clearinghouse "0x19c2f60f6312eaf9acde4c2b04551a05ca9be76e"
+    [ reviewed usdc "0x1647e41f49ed6d688936092b5a291c4b28106343"
+    , reviewed router "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+    , reviewed engine "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
+    , reviewed clearinghouse "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
     ]
   where
     reviewed raw expected =

@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DxyBasketPanel } from '../components/DxyBasketPanel'
-import { PerpsAccountPanel } from '../components/PerpsAccountPanel'
+import { DxyBasketComponentsRail } from '../components/DxyBasketComponentsRail'
+import { PerpsAccountPanel, type PerpsAccountTab } from '../components/PerpsAccountPanel'
 import { PerpsInstrumentPanel, type PerpsInstrumentStat } from '../components/PerpsInstrumentPanel'
+import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
 import { PerpsMarketStatePanel } from '../components/PerpsMarketStatePanel'
 import { getPerpsMarketSchedule } from '../utils/perpsMarketSchedule'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
@@ -50,10 +52,24 @@ export function Perps() {
   const perpsMarket = usePerpsMarket()
   const protocolConfig = useProtocolConfig()
   const perpsAccount = usePerpsAccount(perpsMarket.raw.markPrice)
-  const perpsHistory = usePerpsHistory()
+  const [isTransactionHistoryActive, setIsTransactionHistoryActive] = useState(false)
+  const perpsHistory = usePerpsHistory({
+    activityEnabled: isTransactionHistoryActive,
+  })
   const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
   const [closePositionRequestId, setClosePositionRequestId] = useState(0)
   const trackedPageViewRef = useRef(false)
+
+  const handleAccountTabChange = useCallback((activeTab: PerpsAccountTab) => {
+    setIsTransactionHistoryActive(activeTab === 'tradeHistory')
+  }, [])
+
+  const handleAccountRefresh = useCallback(async () => {
+    const accountRefresh = perpsAccount.refetchDynamic()
+    void perpsMarket.refetchDynamic()
+    void perpsHistory.refetch()
+    await accountRefresh
+  }, [perpsAccount, perpsHistory, perpsMarket])
 
   useEffect(() => {
     if (trackedPageViewRef.current) return
@@ -91,34 +107,6 @@ export function Perps() {
 
   const instrumentStats = useMemo<PerpsInstrumentStat[]>(
     () => {
-      const poolLiquidityTooltip = (
-        <div className="w-full space-y-2 text-left">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Long capacity</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.longOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Short capacity</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.shortOpenCapacityUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Minimum order size</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.minOpenNotionalUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-          <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-4">
-            <span className="min-w-0 text-content-secondary">Minimum new position</span>
-            <span className="whitespace-nowrap font-semibold text-content-primary">
-              {capacityTooltipValue(perpsMarket.raw.minNewPositionNotionalUsdc, perpsMarket.raw.markPrice)} USDC
-            </span>
-          </div>
-        </div>
-      )
       const costOfCarryTooltip = (
         <div className="w-full space-y-3 text-left leading-5">
           <p>
@@ -142,6 +130,16 @@ export function Perps() {
           tooltipDocsLink: DOCS_LINKS.perpsPrice,
           tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
           tooltipPosition: 'bottom',
+          hoverDetails: (
+            <DxyBasketComponentsRail
+              components={perpsMarket.latestBasket?.components}
+              priceChanges={perpsMarket.basketComponentPriceChanges}
+              isLoading={perpsMarket.isBasketComponentsLoading}
+              isError={perpsMarket.isBasketComponentsError}
+              nowSeconds={nowSeconds}
+              docsLink={DOCS_LINKS.direction}
+            />
+          ),
         },
         {
           label: '24h change',
@@ -153,22 +151,47 @@ export function Perps() {
           value: usdcValue(perpsMarket.volume24h, perpsMarket.isStatsLoading),
         },
         {
-          label: 'Long open interest',
-          value: usdcValue(perpsMarket.longOpenInterest, perpsMarket.isLoading),
-          tone: 'positive',
-        },
-        {
-          label: 'Short open interest',
-          value: usdcValue(perpsMarket.shortOpenInterest, perpsMarket.isLoading),
-          tone: 'negative',
+          label: 'Directional limit used',
+          directionalLimit: {
+            usagePercent: perpsMarket.directionalLimit?.usagePercent,
+            side: perpsMarket.directionalLimit?.side,
+            totalExposure: usdcValue(perpsMarket.directionalLimit?.totalExposure, perpsMarket.isLoading),
+            netExposure: usdcValue(perpsMarket.directionalLimit?.netExposure, perpsMarket.isLoading),
+            limit: usdcValue(perpsMarket.directionalLimit?.limit, perpsMarket.isLoading),
+            isLoading: perpsMarket.isLoading,
+          },
         },
         {
           label: 'Pool liquidity',
           value: usdcValue(perpsMarket.availableLiquidity, perpsMarket.isLoading),
-          tooltip: poolLiquidityTooltip,
-          tooltipDocsLink: DOCS_LINKS.poolLiquidity,
-          tooltipClassName: INFO_TOOLTIP_PANEL_CLASS_NAME,
-          tooltipPosition: 'left',
+          hoverDetailsType: 'pool-liquidity',
+          hoverDetailsLabel: 'Pool liquidity details',
+          hoverDetails: (
+            <PerpsPoolLiquidityDetails
+              longCapacity={(
+                <TokenAmount amount={capacityTooltipValue(
+                  perpsMarket.raw.longOpenCapacityUsdc,
+                  perpsMarket.raw.markPrice
+                )} />
+              )}
+              shortCapacity={(
+                <TokenAmount amount={capacityTooltipValue(
+                  perpsMarket.raw.shortOpenCapacityUsdc,
+                  perpsMarket.raw.markPrice
+                )} />
+              )}
+              juniorPrincipal={usdcValue(perpsMarket.poolCapital?.juniorPrincipal, perpsMarket.isLoading)}
+              seniorPrincipal={usdcValue(perpsMarket.poolCapital?.seniorPrincipal, perpsMarket.isLoading)}
+              juniorSharePercent={perpsMarket.poolCapital?.juniorSharePercent}
+              seniorSharePercent={perpsMarket.poolCapital?.seniorSharePercent}
+              seniorStatus={perpsMarket.poolCapital?.seniorStatus}
+              seniorImpairment={usdcValue(perpsMarket.poolCapital?.seniorImpairment, perpsMarket.isLoading)}
+              isJuniorExhausted={perpsMarket.poolCapital?.isJuniorExhausted}
+              isEmpty={perpsMarket.poolCapital?.isEmpty}
+              isLoading={perpsMarket.isLoading}
+              docsLink={DOCS_LINKS.poolLiquidity}
+            />
+          ),
         },
         {
           label: 'Cost of carry',
@@ -182,22 +205,25 @@ export function Perps() {
     },
     [
       perpsMarket.availableLiquidity,
+      perpsMarket.basketComponentPriceChanges,
       perpsMarket.costOfCarry,
+      perpsMarket.directionalLimit,
       dxyFreshnessTooltip,
       perpsMarket.isLoading,
+      perpsMarket.isBasketComponentsError,
+      perpsMarket.isBasketComponentsLoading,
       perpsMarket.isStatsLoading,
-      perpsMarket.longOpenInterest,
+      perpsMarket.latestBasket,
       perpsMarket.oracleFreshness,
       perpsMarket.oraclePrice,
+      perpsMarket.poolCapital,
       perpsMarket.priceChange24h,
       perpsMarket.priceChange24hTone,
       perpsMarket.raw.longOpenCapacityUsdc,
       perpsMarket.raw.markPrice,
-      perpsMarket.raw.minOpenNotionalUsdc,
-      perpsMarket.raw.minNewPositionNotionalUsdc,
       perpsMarket.raw.shortOpenCapacityUsdc,
-      perpsMarket.shortOpenInterest,
       perpsMarket.volume24h,
+      nowSeconds,
     ]
   )
 
@@ -240,7 +266,12 @@ export function Perps() {
 
         <div className="min-w-0 xl:float-right xl:w-[clamp(340px,28vw,380px)]">
           <div className="-mb-px">
-            <PerpsMarketStatePanel currentPhase={perpsMarket.marketPhase} />
+            <PerpsMarketStatePanel
+              currentPhase={perpsMarket.marketPhase}
+              currentDuration={marketSchedule.currentDuration}
+              nextPhase={marketSchedule.nextPhase}
+              nextDuration={marketSchedule.nextDuration}
+            />
           </div>
           <PerpsTradeTicket
             enableLiveTrading
@@ -267,6 +298,7 @@ export function Perps() {
             closePositionRequestId={closePositionRequestId}
             pendingOrders={perpsAccount.pendingOrders}
             orderHistory={perpsHistory.orderHistory}
+            ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
@@ -279,11 +311,7 @@ export function Perps() {
             executionFeeBps={perpsMarket.raw.executionFeeBps}
             marketPhase={perpsMarket.marketPhase}
             marketCurrentDuration={marketSchedule.currentDuration}
-            onAccountRefresh={() => {
-              void perpsAccount.refetch()
-              perpsMarket.refetch()
-              void perpsHistory.refetch()
-            }}
+            onAccountRefresh={handleAccountRefresh}
           />
         </div>
 
@@ -291,6 +319,9 @@ export function Perps() {
           <DxyBasketPanel
             oraclePriceRaw={perpsMarket.raw.markPrice}
             oraclePublishTime={perpsMarket.oracleFreshnessTime}
+            liquidationPriceRaw={perpsAccount.position?.liquidationPrice}
+            marketPhase={perpsMarket.marketPhase}
+            marketCurrentDuration={marketSchedule.currentDuration}
           />
         </div>
 
@@ -305,12 +336,13 @@ export function Perps() {
             tradeHistory={perpsHistory.tradeHistory}
             isConnected={perpsAccount.isConnected}
             isLoading={perpsAccount.isLoading}
-            isHistoryLoading={perpsHistory.isLoading}
-            historyError={perpsHistory.error}
+            isOrderHistoryLoading={perpsHistory.isOrderHistoryLoading}
+            isTradeHistoryLoading={perpsHistory.isTradeHistoryLoading}
+            orderHistoryError={perpsHistory.orderHistoryError}
+            tradeHistoryError={perpsHistory.tradeHistoryError}
+            onActiveTabChange={handleAccountTabChange}
             onAccountRefresh={() => {
-              void perpsAccount.refetch()
-              perpsMarket.refetch()
-              void perpsHistory.refetch()
+              void handleAccountRefresh()
             }}
             onClosePosition={() => {
               setClosePositionRequestId((requestId) => requestId + 1)

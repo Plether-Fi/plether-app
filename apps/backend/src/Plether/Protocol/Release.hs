@@ -59,7 +59,7 @@ data ProtocolRelease = ProtocolRelease
 
 protocolReleaseId :: Integer -> Text
 protocolReleaseId chainId
-  | chainId == 421614 = "arbitrum-sepolia-2026-07"
+  | chainId == 421614 = "arbitrum-sepolia-2026-08-v1.2.0"
   | otherwise = "chain-" <> T.pack (show chainId) <> "-current"
 
 -- Keep this startup-safe compiled table in parity with
@@ -68,6 +68,28 @@ protocolReleaseId chainId
 knownProtocolReleases :: [ProtocolRelease]
 knownProtocolReleases =
   [ ProtocolRelease
+      { -- Keep the existing network/date prefix and append the protocol label
+        -- so another deployment in the same month cannot alias this release.
+        prId = "arbitrum-sepolia-2026-08-v1.2.0"
+      , prName = "Plether Perps — August 2026 (v1.2.0)"
+      , prChainId = 421614
+      , prDeploymentBlock = 302257125
+      , prCalculationVersion = "protocol-transparency-v1"
+      , prUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
+      , prOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+      , prOrderRouterAdmin = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
+      , prCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+      , prCfdEngineAdmin = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
+      , prMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+      , prPublicLens = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+      , prAccountLens = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+      , prHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+      , prSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+      , prJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+      , prPletherOracle = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
+      , prOperationalWallets = []
+      }
+  , ProtocolRelease
       { prId = "arbitrum-sepolia-2026-07"
       , prName = "Plether Perps — July 2026"
       , prChainId = 421614

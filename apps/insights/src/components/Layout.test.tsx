@@ -53,7 +53,7 @@ describe('Layout protocol search', () => {
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Overview' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: 'Transactions' })).not.toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Competition' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Leaderboard' })).toBeInTheDocument()
   })
 
   it('links operational wallets without replacing the competition wallet namespace', () => {

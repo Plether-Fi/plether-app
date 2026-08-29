@@ -1,9 +1,6 @@
 name: Deploy Backend
 
 on:
-  push:
-    branches: [master]
-    paths: [apps/backend/**]
   workflow_dispatch:
     inputs:
       environment:
@@ -19,9 +16,15 @@ on:
         default: false
         type: boolean
 
+concurrency:
+  # Shared with candle-admin.yml; never replace the deployed writer mode while
+  # an approved candle mutation is still running.
+  group: plether-backend-mutation-${{ inputs.environment }}
+  cancel-in-progress: false
+
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TARGET_ENV: ${{ github.event_name == 'push' && 'mainnet' || inputs.environment }}
+  TARGET_ENV: ${{ inputs.environment }}
 
 jobs:
   pyth-config-preflight:
@@ -40,7 +43,7 @@ jobs:
 
       - name: Validate deployed Pyth configuration
         env:
-          ALLOW_MISSING_TASK_DEFINITIONS: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap && 'true' || 'false' }}
+          ALLOW_MISSING_TASK_DEFINITIONS: ${{ inputs.bootstrap && 'true' || 'false' }}
           AWS_MAX_ATTEMPTS: '3'
           AWS_PAGER: ''
           AWS_RETRY_MODE: standard
@@ -346,8 +349,8 @@ jobs:
     permissions:
       contents: read
     outputs:
-      image: ${{ steps.build.outputs.image }}
-      log_router_image: ${{ steps.build.outputs.log_router_image }}
+      image: ${{ steps.images.outputs.image }}
+      log_router_image: ${{ steps.images.outputs.log_router_image }}
 
     steps:
       - uses: actions/checkout@v4
@@ -366,8 +369,8 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push application and log router images
-        id: build
+      - name: Resolve backend image tags
+        id: images
         env:
           ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
@@ -380,30 +383,40 @@ jobs:
             LOG_ROUTER_REPOSITORY=plether-otel-log-router-$TARGET_ENV
           fi
 
-          IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          LOG_ROUTER_IMAGE=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG
-          docker buildx build \
-            --platform linux/arm64 \
-            -f apps/backend/Dockerfile \
-            -t $IMAGE \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            --push \
-            .
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_latest=$ECR_REGISTRY/$ECR_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
+          echo "log_router_image=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "log_router_image_latest=$ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest" >> "$GITHUB_OUTPUT"
 
-          docker buildx build \
-            --platform linux/arm64 \
-            -f apps/backend/otel-log-router/Dockerfile \
-            -t $LOG_ROUTER_IMAGE \
-            -t $ECR_REGISTRY/$LOG_ROUTER_REPOSITORY:latest \
-            --push \
-            .
+      - name: Build and push application image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.images.outputs.image }}
+            ${{ steps.images.outputs.image_latest }}
+          cache-from: type=gha,scope=plether-backend-linux-arm64
+          cache-to: type=gha,mode=max,scope=plether-backend-linux-arm64,ignore-error=true
 
-          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
-          echo "log_router_image=$LOG_ROUTER_IMAGE" >> "$GITHUB_OUTPUT"
+      - name: Build and push log router image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/backend/otel-log-router/Dockerfile
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ steps.images.outputs.log_router_image }}
+            ${{ steps.images.outputs.log_router_image_latest }}
+          cache-from: type=gha,scope=plether-otel-log-router-linux-arm64
+          cache-to: type=gha,mode=max,scope=plether-otel-log-router-linux-arm64,ignore-error=true
 
   deploy:
     needs: build
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.bootstrap != true }}
+    if: ${{ inputs.bootstrap != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -411,7 +424,7 @@ jobs:
       matrix:
         # Sepolia sets consolidate_workers=true, so Insights runs inside plether-workers.
         # Keep the standalone Insights service out of this matrix while that setting is enabled.
-        include: ${{ fromJson((github.event_name == 'push' || inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
+        include: ${{ fromJson((inputs.environment == 'mainnet') && '[{"environment":"mainnet","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"mainnet","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"mainnet","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"mainnet","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"mainnet","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"},{"environment":"mainnet","task_suffix":"-insights-worker","service_name":"plether-insights-worker","container_name":"plether-insights-worker"}]' || '[{"environment":"sepolia","task_suffix":"","service_name":"plether-api","container_name":"plether-api"},{"environment":"sepolia","task_suffix":"-workers","service_name":"plether-workers","container_name":"plether-keeper"},{"environment":"sepolia","task_suffix":"-basket-worker","service_name":"plether-basket-worker","container_name":"plether-basket-worker"},{"environment":"sepolia","task_suffix":"-perps-indexer","service_name":"plether-perps-indexer","container_name":"plether-perps-indexer"},{"environment":"sepolia","task_suffix":"-liquidation-worker","service_name":"plether-liquidation-worker","container_name":"plether-liquidation-worker"}]') }}
 
     steps:
       - name: Configure AWS credentials
@@ -495,33 +508,99 @@ jobs:
             ' task-def.json > task-def.patched.json
           mv task-def.patched.json task-def.json
 
-      - name: Patch Sepolia Insights configuration
+      - name: Validate Terraform-managed Sepolia release manifest
         if: matrix.environment == 'sepolia' && steps.task-definition-status.outputs.exists == 'true'
-        env:
-          PERPS_ACCOUNT_LENS: "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
-          PERPS_INDEXER_CONFIRMATIONS: "1"
         run: |
-          jq \
-            --arg accountLens "$PERPS_ACCOUNT_LENS" \
-            --arg indexerConfirmations "$PERPS_INDEXER_CONFIRMATIONS" \
-            '
-            def upsert_env($name; $value):
-              .environment = (
-                ((.environment // []) | map(select(.name != $name)))
-                + [{"name": $name, "value": $value}]
-              );
+          aws ecs describe-task-definition \
+            --task-definition plether-sepolia \
+            --query taskDefinition > canonical-api-task-def.json
 
-            .containerDefinitions |= map(
-              if .name == "plether-api" or .name == "plether-insights-worker" or .name == "plether-liquidation-worker" then
-                upsert_env("PERPS_ACCOUNT_LENS"; $accountLens)
-              elif .name == "plether-perps-indexer" then
-                upsert_env("PERPS_INDEXER_CONFIRMATIONS"; $indexerConfirmations)
+          jq --exit-status \
+            --arg releaseId "testnet-trading-2026-09" \
+            --slurpfile canonical canonical-api-task-def.json \
+            '
+            def env_map:
+              reduce (.environment // [])[] as $entry ({}; .[$entry.name] = $entry.value);
+            def address_names: [
+              "PERPS_USDC",
+              "PERPS_ORDER_ROUTER",
+              "PERPS_PLETHER_ORACLE",
+              "PERPS_CFD_ENGINE",
+              "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR",
+              "PERPS_CFD_ENGINE_LENS",
+              "PERPS_MARGIN_CLEARINGHOUSE",
+              "PERPS_ACCOUNT_LENS"
+            ];
+            def manifest_names:
+              address_names + [
+                "PERPS_INDEXER_START_BLOCK",
+                "INSIGHTS_ACTIVE_COMPETITION_SLUG",
+                "INSIGHTS_COMPETITION_RELEASE_ID"
+              ];
+            def valid_address:
+              type == "string"
+              and test("^0x[0-9A-Fa-f]{40}$")
+              and ascii_downcase != "0x0000000000000000000000000000000000000000";
+            def valid_september_manifest($env):
+              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
+              and $env.INSIGHTS_COMPETITION_RELEASE_ID == $releaseId
+              and ([address_names[] as $name | $env[$name] | valid_address] | all)
+              and ([address_names[] as $name | $env[$name] | ascii_downcase] | unique | length) == (address_names | length)
+              and (($env.PERPS_INDEXER_START_BLOCK // "") | test("^[1-9][0-9]*$"));
+            def valid_registration_only_manifest($env):
+              $env.INSIGHTS_ACTIVE_COMPETITION_SLUG == $releaseId
+              and (($env.INSIGHTS_COMPETITION_RELEASE_ID // "") == "");
+            def same_manifest($actual; $expected):
+              [manifest_names[] as $name | $actual[$name] == $expected[$name]] | all;
+            def release_consumer:
+              .name == "plether-api"
+              or .name == "plether-perps-indexer"
+              or .name == "plether-insights-worker";
+
+            ($canonical[0].containerDefinitions
+              | map(select(.name == "plether-api"))
+              | .[0] // null) as $canonicalApi
+            | if $canonicalApi == null then
+                error("canonical Sepolia API task definition has no plether-api container")
               else
-                .
+                ($canonicalApi | env_map) as $expected
+                | if ($expected.INSIGHTS_ACTIVE_COMPETITION_SLUG // "") != $releaseId then
+                    true
+                  elif valid_registration_only_manifest($expected) then
+                    [.containerDefinitions[] | select(release_consumer)] as $consumers
+                    | if ($consumers | length) == 0 then
+                        true
+                      elif ([
+                        $consumers[]
+                        |
+                        (. | env_map) as $actual
+                        | valid_registration_only_manifest($actual)
+                          and same_manifest($actual; $expected)
+                      ] | all) then
+                        true
+                      else
+                        error("task definition release consumers do not match the canonical September registration-only manifest")
+                      end
+                  elif valid_september_manifest($expected) | not then
+                    error("canonical Sepolia API task definition has an invalid September release manifest")
+                  else
+                    [.containerDefinitions[] | select(release_consumer)] as $consumers
+                    | if ($consumers | length) == 0 then
+                        true
+                      elif ([
+                        $consumers[]
+                        |
+                        (. | env_map) as $actual
+                        | valid_september_manifest($actual)
+                          and same_manifest($actual; $expected)
+                      ] | all) then
+                        true
+                      else
+                        error("task definition release consumers do not match the canonical September manifest")
+                      end
+                  end
               end
-            )
-            ' task-def.json > task-def.patched.json
-          mv task-def.patched.json task-def.json
+            ' task-def.json > /dev/null
 
       - name: Update application images and service version
         if: steps.task-definition-status.outputs.exists == 'true'
@@ -557,6 +636,30 @@ jobs:
           task-definition: task-def.json
           container-name: otel-log-router
           image: ${{ needs.build.outputs.log_router_image }}
+
+      - name: Ensure API health check grace period
+        if: matrix.service_name == 'plether-api' && steps.task-definition-status.outputs.exists == 'true'
+        env:
+          ECS_CLUSTER: plether-${{ matrix.environment }}
+          ECS_SERVICE: ${{ matrix.service_name }}
+          ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS: "300"
+        run: |
+          set -euo pipefail
+
+          applied_grace_period="$(
+            aws ecs update-service \
+              --cluster "$ECS_CLUSTER" \
+              --service "$ECS_SERVICE" \
+              --health-check-grace-period-seconds "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" \
+              --query 'service.healthCheckGracePeriodSeconds' \
+              --output text \
+              --no-cli-pager
+          )"
+
+          if [ "$applied_grace_period" != "$ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS" ]; then
+            echo "::error title=ECS health-check grace update failed::Expected ${ECS_HEALTH_CHECK_GRACE_PERIOD_SECONDS}s, got ${applied_grace_period}s."
+            exit 1
+          fi
 
       - name: Deploy to ECS
         if: steps.task-definition-status.outputs.exists == 'true'

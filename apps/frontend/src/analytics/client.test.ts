@@ -3,6 +3,7 @@ import {
   captureAnalyticsEvent,
   captureFrontendLog,
   createAnalyticsConfig,
+  initAnalytics,
   resetAnalyticsForTests,
   sanitizeAnalyticsProperties,
   sanitizeFrontendLogAttributes,
@@ -78,6 +79,23 @@ describe('analytics client', () => {
     expect(posthogMock.capture).not.toHaveBeenCalled()
   })
 
+  it('flushes captures queued while the analytics bundle loads', async () => {
+    vi.stubEnv('VITE_POSTHOG_KEY', 'phc_test')
+
+    const initialization = initAnalytics()
+    captureAnalyticsEvent('perps button clicked', {
+      button_id: 'review_trade',
+      surface: 'perps',
+    })
+    await initialization
+
+    expect(posthogMock.init).toHaveBeenCalledOnce()
+    expect(posthogMock.capture).toHaveBeenCalledWith('perps button clicked', {
+      button_id: 'review_trade',
+      surface: 'perps',
+    })
+  })
+
   it('configures privacy-safe structured logs with deployment metadata', () => {
     expect(createAnalyticsConfig(0.05, 'sepolia')).toEqual(expect.objectContaining({
       logs: expect.objectContaining({
@@ -98,6 +116,7 @@ describe('analytics client', () => {
       outcome: 'failure',
       error_category: 'failed for user@example.com',
       http_status: 503,
+      timeout_ms: 180_000,
       wallet_address: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
       details: { rpc: 'payload' },
     })).toEqual({
@@ -106,6 +125,7 @@ describe('analytics client', () => {
       outcome: 'failure',
       error_category: 'failed for [redacted]',
       http_status: 503,
+      timeout_ms: 180_000,
     })
   })
 

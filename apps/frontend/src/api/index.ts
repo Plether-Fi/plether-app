@@ -43,8 +43,19 @@ export type {
   BasketLatest,
   BasketComponentPrice,
   BasketHistoryRange,
+  PerpsBasketCandle,
+  PerpsBasketCandleQuality,
+  PerpsBasketCandlePage,
+  PerpsBasketCurrentCandle,
+  PerpsCandleIntervalSeconds,
   PerpsRevealPayload,
   PerpsMarketStats,
+  VaultHistory,
+  VaultHistoryCoverage,
+  VaultHistoryDeployment,
+  VaultHistoryPoint,
+  VaultHistoryRange,
+  VaultHistoryTranche,
   // User types
   UserDashboard,
   UserBalances,
@@ -87,7 +98,9 @@ export {
   useProtocolConfig,
   usePerpsBasketHistory,
   usePerpsBasketLatest,
+  usePerpsBasketCurrentCandle,
   usePerpsMarketStats,
+  usePerpsVaultHistory,
   // User hooks
   useUserDashboard,
   useUserBalances,
@@ -108,4 +121,5 @@ export {
   useWebSocketConnection,
   // Query keys
   apiQueryKeys,
+  VAULT_HISTORY_QUERY_POLICY,
 } from './hooks';

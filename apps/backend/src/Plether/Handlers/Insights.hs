@@ -5,6 +5,7 @@ module Plether.Handlers.Insights
   , getInsightsDataStatusResponse
   , competitionRowToJson
   , leaderboardRowToJson
+  , prizeEligibleAfterIntegrityReview
   , walletRowToJson
   , activityRowToJson
   ) where
@@ -16,6 +17,13 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (defaultTimeLocale, formatTime)
 import Data.Time.Clock.POSIX (getPOSIXTime, posixSecondsToUTCTime)
+import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple.Transaction
+  ( IsolationLevel (RepeatableRead)
+  , ReadWriteMode (ReadOnly)
+  , TransactionMode (..)
+  , withTransactionMode
+  )
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Insights
@@ -31,11 +39,15 @@ import Plether.Database.Insights
   , getInsightsDataStatus
   )
 import Plether.Insights.Competition
-  ( ParticipantEligibility (..)
+  ( CompetitionRegistrationState (..)
+  , CompetitionRules (..)
+  , ParticipantEligibility (..)
   , PrizeAllocation (..)
+  , competitionRegistrationState
   , participantEligibilityFromText
   , prizeAllocation
   )
+import Plether.Insights.Registration.Config (RegistrationConfig)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 import Plether.Utils.Address (isValidAddress)
@@ -45,15 +57,16 @@ getCurrentCompetitionResponse
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
 getCurrentCompetitionResponse pool cfg = do
-  now <- round <$> getPOSIXTime
-  competition <- withDb pool getCurrentCompetition
+  now <- floor <$> getPOSIXTime
+  competition <- withDb pool $ \conn ->
+    getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
   pure $ case competition of
     Nothing -> Left $ E.internalError "Insights competition metadata has not been initialized"
     Just row ->
       Right $
         mkResponse (maybe 0 id $ icrScoreCutoffBlock row) (cfgPerpsChainId cfg) $
           object
-            [ "competition" .= competitionRowToJson now row
+            [ "competition" .= competitionRowToJson now (cfgRegistrationConfig cfg) row
             , "generatedAt" .= isoTimestamp now
             , "scoringVersion" .= icrScoringVersion row
             , "provisional" .= not (icrFinalized row)
@@ -68,10 +81,10 @@ getCompetitionLeaderboardResponse
   -> Int
   -> IO (Either ApiError (ApiResponse Value))
 getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedOffset = do
-  now <- round <$> getPOSIXTime
+  now <- floor <$> getPOSIXTime
   let pageLimit = clampLimit requestedLimit
       pageOffset = max 0 requestedOffset
-  result <- withDb pool $ \conn -> do
+  result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
     competition <- getCompetitionBySlug conn slug
     rows <- case competition of
       Nothing -> pure []
@@ -88,7 +101,7 @@ getCompetitionLeaderboardResponse pool cfg slug search requestedLimit requestedO
        in Right $
             mkResponse latestBlock (cfgPerpsChainId cfg) $
               object
-                [ "competition" .= competitionRowToJson now competition
+                [ "competition" .= competitionRowToJson now (cfgRegistrationConfig cfg) competition
                 , "standings" .= map (leaderboardRowToJson competition) visibleRows
                 , "nextCursor" .= nextCursor
                 , "generatedAt" .= isoTimestamp now
@@ -106,11 +119,16 @@ getCompetitionWalletResponse
 getCompetitionWalletResponse pool cfg slug wallet requestedActivityLimit
   | not $ isValidAddress wallet = pure $ Left $ E.invalidAddress wallet
   | otherwise = do
-      now <- round <$> getPOSIXTime
-      result <- withDb pool $ \conn -> do
+      now <- floor <$> getPOSIXTime
+      result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
         competition <- getCompetitionBySlug conn slug
         walletRow <- getCompetitionWallet conn slug wallet
-        activity <- getCompetitionWalletActivity conn slug wallet (clampActivityLimit requestedActivityLimit)
+        -- Final standings are immutable.  Do not pair that frozen summary with
+        -- reorg-replayable activity rows; callers receive an explicit marker
+        -- instead of a temporarily inconsistent history.
+        activity <- case competition of
+          Just row | icrFinalized row -> pure []
+          _ -> getCompetitionWalletActivity conn slug wallet (clampActivityLimit requestedActivityLimit)
         pure (competition, walletRow, activity)
       pure $ case result of
         (Nothing, _, _) -> Left $ E.notFound $ "Unknown Insights competition: " <> slug
@@ -124,9 +142,12 @@ getCompetitionWalletResponse pool cfg slug wallet requestedActivityLimit
            in Right $
                 mkResponse latestBlock (cfgPerpsChainId cfg) $
                   object
-                    [ "competition" .= competitionRowToJson now competition
+                    [ "competition" .= competitionRowToJson now (cfgRegistrationConfig cfg) competition
                     , "wallet" .= walletRowToJson competition walletRow
                     , "activity" .= map activityRowToJson activity
+                    , "activityStatus" .= if icrFinalized competition
+                        then ("omitted_after_finalization" :: Text)
+                        else "live"
                     , "generatedAt" .= isoTimestamp now
                     , "scoringVersion" .= icrScoringVersion competition
                     , "provisional" .= not (icrFinalized competition)
@@ -137,9 +158,9 @@ getInsightsDataStatusResponse
   -> Config
   -> IO (Either ApiError (ApiResponse Value))
 getInsightsDataStatusResponse pool cfg = do
-  now <- round <$> getPOSIXTime
-  result <- withDb pool $ \conn -> do
-    competition <- getCurrentCompetition conn
+  now <- floor <$> getPOSIXTime
+  result <- withDb pool $ \conn -> withInsightsReadSnapshot conn $ do
+    competition <- getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
     status <- case competition of
       Nothing -> pure Nothing
       Just row -> getInsightsDataStatus conn (icrSlug row)
@@ -152,21 +173,30 @@ getInsightsDataStatusResponse pool cfg = do
        in Right $
             mkResponse indexedBlock (cfgPerpsChainId cfg) $
               object
-                [ "competition" .= competitionRowToJson now competition
+                [ "competition" .= competitionRowToJson now (cfgRegistrationConfig cfg) competition
                 , "status" .= dataStatusRowToJson competition status
                 , "generatedAt" .= isoTimestamp now
                 , "scoringVersion" .= icrScoringVersion competition
                 , "provisional" .= not (icrFinalized competition)
                 ]
 
-competitionRowToJson :: Integer -> CompetitionRow -> Value
-competitionRowToJson now CompetitionRow {..} =
+withInsightsReadSnapshot :: Connection -> IO value -> IO value
+withInsightsReadSnapshot =
+  withTransactionMode $
+    TransactionMode
+      { isolationLevel = RepeatableRead
+      , readWriteMode = ReadOnly
+      }
+
+competitionRowToJson :: Integer -> Maybe RegistrationConfig -> CompetitionRow -> Value
+competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
   object $
     catMaybes
       [ Just $ "slug" .= icrSlug
       , Just $ "name" .= icrName
       , Just $ "chainId" .= show icrChainId
-      , Just $ "releaseRouter" .= icrReleaseRouter
+      , if icrReleaseReady then Just $ "releaseRouter" .= icrReleaseRouter else Nothing
+      , Just $ "releaseReady" .= icrReleaseReady
       , Just $ "phase" .= competitionPhase
       , Just $ "startAt" .= isoTimestamp icrStartTimestamp
       , Just $ "newRiskCutoffAt" .= isoTimestamp icrNewRiskCutoffTimestamp
@@ -179,16 +209,18 @@ competitionRowToJson now CompetitionRow {..} =
       , Just $ "minimumProfitUsdc" .= show minimumProfit
       , Just $ "minimumProfitBps" .= icrMinimumProfitBps
       , Just $ "minimumActiveDays" .= icrMinimumActiveDays
+      , Just $ "fxSessionBoundaryUtc" .= formatBoundary icrFxSessionBoundaryUtcMinutes
       , Just $
           "prizes"
-            .= [ object ["place" .= (1 :: Int), "amountUsdc" .= show icrFirstPrizeUsdc]
-               , object ["place" .= (2 :: Int), "amountUsdc" .= show icrSecondPrizeUsdc]
-               , object ["place" .= (3 :: Int), "amountUsdc" .= show icrThirdPrizeUsdc]
+            .= [ object ["place" .= place, "amountUsdc" .= show amount]
+               | (place, amount) <- zip [(1 :: Int) ..] $ competitionPrizeAmounts competition
                ]
       , Just $ "scoringVersion" .= icrScoringVersion
       , Just $ "rulesVersion" .= icrRulesVersion
+      , Just $ "participantCount" .= icrParticipantCount
       , Just $ "finalized" .= icrFinalized
       , Just $ "updatedAt" .= isoTimestamp icrUpdatedTimestamp
+      , ("registration" .=) <$> registrationMetadata
       ]
   where
     minimumProfit = icrStartingBalanceUsdc * icrMinimumProfitBps `div` 10_000
@@ -198,6 +230,35 @@ competitionRowToJson now CompetitionRow {..} =
       | now < icrScoreCutoffTimestamp = "live"
       | now < icrResultsTimestamp = "review"
       | otherwise = "provisional_results"
+    registrationMetadata = do
+      RegistrationOpened opensAt closesAt <-
+        pure $
+          competitionRegistrationState
+            icrRegistrationOpenTimestamp
+            icrRegistrationCloseTimestamp
+            icrMinimumXAccountAgeDays
+            icrTargetXHandle
+      minimumAge <- icrMinimumXAccountAgeDays
+      targetHandle <- icrTargetXHandle
+      privacyVersion <- icrPrivacyNoticeVersion
+      pure $
+        object
+          [ "status" .= registrationStatus opensAt closesAt
+          , "opensAt" .= isoTimestamp opensAt
+          , "closesAt" .= isoTimestamp closesAt
+          , "minimumXAccountAgeDays" .= minimumAge
+          , "targetXHandle" .= targetHandle
+          , "rulesVersion" .= icrRulesVersion
+          , "privacyVersion" .= privacyVersion
+          ]
+    registrationStatus opensAt closesAt
+      | now < opensAt = "upcoming" :: Text
+      | now < closesAt = "open"
+      | otherwise = "closed"
+    formatBoundary minutes =
+      let (hours, remainingMinutes) = minutes `divMod` 60
+          twoDigits value = T.justifyRight 2 '0' $ T.pack $ show value
+       in twoDigits hours <> ":" <> twoDigits remainingMinutes
 
 leaderboardRowToJson :: CompetitionRow -> LeaderboardRow -> Value
 leaderboardRowToJson competition LeaderboardRow {..} =
@@ -241,15 +302,31 @@ leaderboardRowToJson competition LeaderboardRow {..} =
     scoreAvailable = maybe False (const True) ilrFinalPnlUsdc
     reviewedEligible =
       participantEligibilityFromText ilrEligibilityStatus == Just EligibilityEligible
-    prizeEligible = mechanicallyQualified && reviewedEligible
+    prizeEligible =
+      prizeEligibleAfterIntegrityReview
+        mechanicallyQualified
+        reviewedEligible
+        ilrFundingIntegrityClear
     allocation =
       prizeAllocation
-        [ icrFirstPrizeUsdc competition
-        , icrSecondPrizeUsdc competition
-        , icrThirdPrizeUsdc competition
-        ]
+        (competitionPrizeAmounts competition)
         ilrPrizePlace
         ilrPrizeTieCount
+
+competitionPrizeAmounts :: CompetitionRow -> [Integer]
+competitionPrizeAmounts CompetitionRow {..} =
+  filter
+    (> 0)
+    [ icrFirstPrizeUsdc
+    , icrSecondPrizeUsdc
+    , icrThirdPrizeUsdc
+    , icrFourthPrizeUsdc
+    , icrFifthPrizeUsdc
+    ]
+
+prizeEligibleAfterIntegrityReview :: Bool -> Bool -> Bool -> Bool
+prizeEligibleAfterIntegrityReview mechanicallyQualified reviewedEligible integrityClear =
+  mechanicallyQualified && reviewedEligible && integrityClear
 
 walletRowToJson :: CompetitionRow -> LeaderboardRow -> Value
 walletRowToJson competition row =
@@ -288,6 +365,8 @@ activityRowToJson InsightsActivityRow {..} =
       , ("sizeDelta" .=) . show <$> iarSizeDelta
       , ("amountUsdc" .=) . show <$> iarAmountUsdc
       , ("pnlUsdc" .=) . show <$> iarPnlUsdc
+      , ("executionFeeUsdc" .=) . show <$> iarExecutionFeeUsdc
+      , ("vpiUsdc" .=) . show <$> iarVpiUsdc
       , Just $ "txHash" .= iarTxHash
       , Just $ "blockNumber" .= show iarBlockNumber
       , Just $ "timestamp" .= iarTimestamp

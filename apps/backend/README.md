@@ -74,7 +74,15 @@ The steady-state volume controls are:
   minute. Individual 5xx responses are limited to one every 10 seconds, and
   slow-request warnings to one per minute.
 - Indexer and basket-cache success progress emits at most once every five
-  minutes per event type.
+  minutes per event type. In candle dual-write mode, successful price and
+  volume source polls also provide five-minute writer heartbeats even when a
+  market is closed, a block range has no trades, or the indexer is caught up.
+  Terraform alarms only after three consecutive five-minute windows contain no
+  heartbeat. Each heartbeat also reports base-minute coverage state and excess
+  finalization lag after subtracting normal bucket alignment and configured
+  source lateness; this detects a live loop whose durable coverage has frozen
+  without making hourly or daily candle resolution part of the liveness
+  calculation.
 - Recurring worker warnings and errors emit at most once per minute per event
   type. The next emitted record includes `suppressed_count` so repeated failures
   remain visible without producing one log per poll.
@@ -129,13 +137,45 @@ PostgreSQL is required for transaction history. Without it, history endpoints re
 createdb plether
 
 # Initialize schema
-psql plether < schema.sql
+psql --set=ON_ERROR_STOP=1 plether < schema.sql
 
 # Add DATABASE_URL to .env
 echo 'DATABASE_URL=postgresql://localhost/plether' >> .env
 ```
 
 The indexer runs automatically on startup and polls for new blocks every 12 seconds.
+
+The static bootstrap creates the additive candle read-model and history-target
+tables, but
+intentionally does not build the Perps event/activity history indexes because a
+fresh database does not have their source tables yet. After the API or Perps
+indexer has initialized its history schema, run `plether-candle-admin migrate`;
+the command validates both prerequisite tables and builds and verifies four
+indexes concurrently: bounded-time backfill access plus block-number access for
+reorg discovery and deletion on both history tables.
+The protected workflow defaults `migrate` to a 60-second lock timeout; this
+schema/index operation is distinct from candle data backfill.
+
+Production backfill, repair, and controlled indexer replay run only through the
+protected `candle-admin.yml` workflow. They require
+`PERPS_CANDLE_WRITE_MODE=dual` and enforce lock, statement, and absolute runtime
+limits; backfill and repair also refuse an empty canonical source domain. The
+admin and backend deployment workflows share an environment-specific
+concurrency group so a deployment cannot change write mode during a mutation.
+Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
+runs from a stable deployed indexer digest without moving its canonical cursor
+or coverage certification.
+
+An arbitrary price-history start is selected with the protected
+`set-history-target` action. Selection is desired state only: the basket worker
+bulk-fetches and proves the exact frozen range while the previous published
+target remains live. After `status` reports `publication_ready=true`, run a
+price-only backfill with no narrowed bounds; CandleAdmin builds any missing
+rollups and atomically publishes coverage, generation, and the new active
+target. Selecting an earlier start adds a history prefix, while selecting a
+later start moves the public lower bound without deleting physical history.
+This does not ingest old contract releases. Candles before the current router's
+proven volume coverage expose unknown volume rather than zero.
 
 ## Local Perps Stack
 
@@ -241,7 +281,7 @@ cd apps/backend
 RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-PERPS_INDEXER_START_BLOCK=288439939 \
+PERPS_INDEXER_START_BLOCK=302257125 \
 cabal run plether-perps-indexer -- --loop
 ```
 
@@ -254,17 +294,29 @@ CHAIN_ID=421614 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-perps-indexer -- --once
 
-# Backfill a known range.
-RPC_URL="$ARB_SEPOLIA_RPC_URL" \
-CHAIN_ID=421614 \
-DATABASE_URL=postgresql://postgres@localhost:55432/plether \
-cabal run plether-perps-indexer -- --backfill --from 123 --to 456
+# Production replay is dispatched only through the protected workflow from
+# master, with exact inclusive block bounds and scope=none.
+gh workflow run candle-admin.yml \
+  --repo Plether-Fi/plether-app \
+  --ref master \
+  -f environment=sepolia \
+  -f action=replay \
+  -f scope=none \
+  -f from_block=123 \
+  -f to_block=456 \
+  -f confirmation='RUN REPLAY ON SEPOLIA'
 ```
 
 Notes:
 
 - The indexer only writes finalized/safe history. Default finality delay is `1` block.
+- Never use the legacy `--backfill --from ... --to ...` invocation for an
+  operational replay. It lacks the protected workflow's range, topology,
+  digest, deadline, cancellation, and cleanup guardrails.
 - Use `PERPS_INDEXER_RPC_URLS` with comma, space, or newline separated RPC URLs for fallback providers.
+- Exact execution economics use `debug_traceTransaction`; on Arbitrum Sepolia the
+  indexer falls back to the public Blockscout raw-trace API. Override or disable
+  that fallback with `PERPS_INDEXER_TRACE_API_URL`.
 - It writes `perps_events`, `perps_orders`, `perps_account_activity`, and `perps_indexer_state`.
 - Every activity row retains the normalized emitting contract address. Re-indexing
   safely fills this provenance for matching legacy rows; rows whose emitter cannot
@@ -292,9 +344,9 @@ RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 PERPS_RPC_URL="$ARB_SEPOLIA_RPC_URL" \
 CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
-PERPS_USDC=0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3 \
-PERPS_ORDER_ROUTER=0x04E3103752f623fBcDcD01f588590Af4c53E4c1E \
-PERPS_MARGIN_CLEARINGHOUSE=0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e \
+PERPS_USDC=0x1647e41f49ED6D688936092B5a291c4B28106343 \
+PERPS_ORDER_ROUTER=0x97A901dE2B267c307E264FD5F71403F8072F73e7 \
+PERPS_MARGIN_CLEARINGHOUSE=0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
 cabal run plether-insights-worker
@@ -318,10 +370,10 @@ never returned by the public API or the `list` command.
 
 ```bash
 # In a second terminal with the same RPC, chain, and database variables set:
-cabal run plether-insights-admin -- register TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
-cabal run plether-insights-admin -- list
-cabal run plether-insights-admin -- review 0xTRADING_ACCOUNT eligible reviewer-name
-cabal run plether-insights-admin -- finalize reviewer-name
+cabal run plether-insights-admin -- register testnet-trading-2026-09 TRADER_REFERENCE 0xTRADING_ACCOUNT "Public alias"
+cabal run plether-insights-admin -- list testnet-trading-2026-09
+cabal run plether-insights-admin -- review testnet-trading-2026-09 0xTRADING_ACCOUNT eligible reviewer-name
+cabal run plether-insights-admin -- finalize testnet-trading-2026-09 reviewer-name
 ```
 
 The optional review reason is public leaderboard copy, so keep it generic (for
@@ -474,13 +526,22 @@ Local URLs:
 | `KEEPER_PRIVATE_KEY` | Keeper | - | Private key used by `plether-keeper` to submit executions |
 | `LIQUIDATION_KEEPER_PRIVATE_KEY` | Liquidation worker | - | Separately funded private key used to submit liquidations and Pyth fees |
 | `PERPS_CHAIN_ID` | No | `421614` | Chain ID used for keeper transaction signing |
+| `VAULT_HISTORY_HOUSE_POOL_ADDRESS` | No | Arbitrum Sepolia HousePool deployment | HousePool identity used to isolate vault-performance snapshots across deployments |
+| `VAULT_HISTORY_SENIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Senior Vault deployment | Senior TrancheVault read at each hourly performance checkpoint |
+| `VAULT_HISTORY_JUNIOR_VAULT_ADDRESS` | No | Arbitrum Sepolia Junior Vault deployment | Junior TrancheVault read at each hourly performance checkpoint |
+| `VAULT_HISTORY_DEPLOYMENT_BLOCK` | No | `302257125` | Earliest block eligible for the configured vault deployment's history |
+| `VAULT_HISTORY_CONFIRMATIONS` | No | `12` | Blocks subtracted from the live head before sampling; avoids unsupported `safe`/`finalized` tags and short reorgs |
+| `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
+| `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |
+| `PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR` | No | Arbitrum Sepolia deployment | Settlement sidecar authenticated when decoding exact execution economics from call traces |
 | `PERPS_MARGIN_CLEARINGHOUSE` | No | Arbitrum Sepolia deployment | Margin clearinghouse allowed by managed sponsorship and authoritative for scored mock-USDC transfers |
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
-| `PERPS_INDEXER_START_BLOCK` | No | `288439939` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `PERPS_INDEXER_START_BLOCK` | No | `302257125` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |
@@ -494,9 +555,12 @@ Local URLs:
 | `KEEPER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing order-router logs |
 | `KEEPER_GAS_BUFFER_BPS` | No | `2000` | Gas-limit buffer for keeper submissions |
 | `KEEPER_FEE_BUFFER_BPS` | No | `2500` | Fee buffer for keeper EIP-1559 fields |
+| `LP_SETTLEMENT_ENABLED` | No | `false` | Enables one health-checked, bounded LP settlement pass per eligible keeper poll |
+| `LP_SETTLEMENT_POLL_SECONDS` | No | `15` | Minimum interval between LP settlement monitor cycles |
 | `LIQUIDATION_WORKER_POLL_SECONDS` | No | `600` | Delay between full liquidation discovery/health scans; submitted transactions are still reconciled every 60 seconds |
 | `LIQUIDATION_WORKER_SCAN_BATCH_SIZE` | No | `1000` | Maximum candidate accounts checked per iteration |
 | `LIQUIDATION_WORKER_MULTICALL_SIZE` | No | `10` | Account-lens reads per Multicall3 request (`1`–`100`) |
+| `LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE` | No | `20` | Candidate accounts per `executeLiquidationBatch` transaction (`1`–`256`); one Pyth update is shared by the batch |
 | `LIQUIDATION_WORKER_START_BLOCK` | No | `PERPS_INDEXER_START_BLOCK` | CFD engine block where independent candidate discovery starts |
 | `LIQUIDATION_WORKER_CONFIRMATIONS` | No | `1` | L2 confirmations before indexing position openings |
 | `LIQUIDATION_WORKER_INDEX_BATCH_SIZE` | No | `5000` | Maximum discovery block span per iteration |
@@ -505,11 +569,14 @@ Local URLs:
 | `LIQUIDATION_WORKER_GAS_BUFFER_BPS` | No | `KEEPER_GAS_BUFFER_BPS` | Gas-limit buffer for liquidation submissions |
 | `LIQUIDATION_WORKER_FEE_BUFFER_BPS` | No | `KEEPER_FEE_BUFFER_BPS` | EIP-1559 fee buffer for liquidation submissions |
 | `PERPS_INDEXER_RPC_URLS` | No | `RPC_URL` | Fallback RPC URL list for Perps history indexing |
+| `PERPS_INDEXER_TRACE_API_URL` | No | Arbitrum Sepolia Blockscout on chain `421614` | Raw call-trace fallback used to persist exact execution VPI and frozen-close spread; set blank to disable |
 | `PERPS_INDEXER_CONFIRMATIONS` | No | `1` | Blocks to wait before indexing Perps history |
 | `PERPS_INDEXER_BATCH_SIZE` | No | `5000` | Maximum block span per Perps history indexing pass |
 | `PERPS_INDEXER_POLL_SECONDS` | No | `12` | Perps history indexer loop delay when caught up |
 | `INSIGHTS_SNAPSHOT_POLL_SECONDS` | No | `60` | Insights finalized account snapshot interval (minimum `10`) |
 | `INSIGHTS_SNAPSHOT_MULTICALL_SIZE` | No | `10` | Exact-block account-lens reads per Multicall3 request (`1`–`100`); set to `0` to use direct calls |
+| `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
+| `INSIGHTS_COMPETITION_RELEASE_ID` | September release binding | - | Omit during registration-only activation. After contract deployment, set it to `testnet-trading-2026-09` together with explicit nonzero, pairwise-distinct addresses absent from the July manifest and a positive new indexer start; the release then binds once before the baseline and becomes immutable. |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
 | `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
 | `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
@@ -517,6 +584,19 @@ Local URLs:
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
 | `PYTH_INGESTION_ENABLED` | No | `false` | Legacy API-owned ingestion switch; prefer `plether-basket-worker` for local/prod parity |
+| `PERPS_CANDLE_WRITE_MODE` | No | `off` | OHLCV write mode: `off` keeps legacy-only ingestion; `dual` writes legacy data and rollups |
+| `PERPS_CANDLE_READ_MODE` | No | `legacy` | Candle API read mode: `legacy` keeps rollup routes closed; `rollup` enables allowlisted intervals only with strict coverage. `shadow` is reserved and currently performs no comparison or traffic switch. |
+| `PERPS_CANDLE_READ_INTERVALS` | No | empty | Comma/space-separated canonical intervals eligible for strict rollup reads; empty exposes no rollup interval |
+| `PERPS_CANDLE_SHADOW_SAMPLE_BPS` | No | `0` | Reserved for a future bounded shadow comparison; currently has no runtime effect (`0`–`10000`) |
+| `PERPS_CANDLE_STRICT_COVERAGE` | No | `true` | Mandatory public rollup validation switch. Rollup routes fail closed unless this is `true`; native history validates price coverage while legacy compatibility remains bounded by combined price/volume coverage. |
+| `PERPS_CANDLE_LATENESS_SECONDS` | No | `120` | Source-watermark lateness window before price candles may be finalized (`0`–`86400`) |
+| `PERPS_CANDLE_FINALIZATION_GRACE_SECONDS` | No | `15` | Bounded reader grace for the asynchronous writer to publish an eligible finalized watermark (`0`–`60`). This never exposes rows beyond the stored finalized watermark. |
+
+For Terraform deployments, `vault_history_rpc_url` is stored as a SecureString
+and injected only into the API task. Leave it empty to use `PERPS_RPC_URL` for
+both current and historical reads; Sepolia's example uses Blockscout's public
+archive-capable endpoint so the initial seven-day backfill does not require a
+credential in source control.
 
 For Terraform deployments, prefer `pyth_api_key_ssm_parameter_name` to reference
 an existing SecureString. To let Terraform manage the key instead, set
@@ -551,8 +631,9 @@ After changing the Terraform AA variables:
 4. Set Pages `SEPOLIA_BACKEND_URL` to the HTTPS API hostname and use the same
    `AA_PROXY_ORIGIN_TOKEN` in Pages and the backend.
 
-Set `operations_alarm_sns_topic_arn` to route the Terraform-managed sponsored
-gas and keeper-task CloudWatch alarms to an operations channel. Keep Pimlico's
+Set `operations_alarm_sns_topic_arn` to route all Terraform-managed service,
+database, candle, sponsored-gas, and keeper alarms to an operations channel;
+it is required for `mainnet`. Keep Pimlico's
 policy-level budget alerts enabled as the authoritative view of sponsored gas;
 the backend alert is a receipt-based secondary signal.
 
@@ -600,10 +681,57 @@ the backend alert is a receipt-based secondary signal.
 | `GET /api/perps/accounts/:address/orders` | Indexed Perps order history |
 | `GET /api/perps/accounts/:address/activity` | Indexed Perps transaction history |
 | `GET /api/perps/indexer/status` | Perps history indexer cursor/status |
+| `GET /api/perps/basket/history?range=&interval=` | Legacy sampled basket history retained during the rollup migration; both query parameters are required exactly once |
+| `GET /api/perps/basket/candles?interval=&cursor=` | Finalized OHLCV rollups in a fixed 500-bucket window ending at the exclusive cursor |
+| `GET /api/perps/basket/candles/current?interval=` | Mutable current OHLCV candle and dataset generation |
 
 Query params: `page`, `limit`, `type` (mint/burn/swap/etc.), `side` (bear/bull)
 
 Perps history query params: `limit`, `cursor`. Cursor format is `blockNumber:tieBreaker` and is returned as `nextCursor` when another page may exist.
+
+Candle intervals are restricted to `60`, `180`, `300`, `900`, `1800`, `3600`,
+and `86400` seconds. Intervals and historical candle cursors use their unique
+positive decimal representation: signs, whitespace, and leading zeroes are
+rejected. Historical candle cursors are positive Unix timestamps
+aligned to `interval * 500`; responses are ascending and expose
+`previousCursor`, coverage/finalization watermarks, and `datasetGeneration`.
+Historical pages contain finalized price rows only. `volumeUsdc` and
+`tradeCount` are nullable on both native historical and mutable current candles:
+before current-router volume coverage, null means unknown; inside complete
+coverage, zero means the indexer proved no trades in that bucket. Per-candle
+`complete` remains the legacy combined value `priceComplete && volumeComplete`;
+therefore a valid pre-router price candle intentionally has `complete: false`.
+Native chart consumers use page-level price coverage and `priceComplete`, with
+`volumeComplete` interpreted independently. Native candle responses identify
+the immutable basket definition with
+`seriesId`, `configurationHash`, and the lossless `displayPriceCap`, plus the
+current volume scope in `volumeChainId` and normalized `volumeRouter`. The
+same response exposes trusted `volumeCoverageStart`, `volumeCoverageEnd`,
+`volumeFinalizedThrough`, and `volumeCoverageComplete` for that exact scope;
+unusable or absent volume coverage is represented by three null bounds and
+`volumeCoverageComplete: false`. OHLC
+fields use explicit `raw*Price` names and lossless decimal strings.
+
+When strict rollup reads are enabled for an effective interval, the legacy
+`/basket/history` route is served from bounded candle pages and performs no raw
+snapshot/volume scan. Oversized requests snap upward to the smallest canonical
+resolution that keeps the response bounded (for example, 30-day minute requests
+use five-minute rollups and one-year minute requests use hourly rollups).
+The route accepts canonical `range` values (`24h`, `7d`, `30d`, or `1y`) and a
+canonical positive decimal `interval`, each exactly once. `includeComponents`
+may appear at most once and must be exactly `true` or `false`; missing,
+duplicate, unknown, or malformed query parameters return `400` before database
+access.
+Component-bearing history remains on the legacy source because candle rollups
+do not store per-component point metadata, and is therefore accepted only for
+the UI's bounded `range=24h`, `interval=3600`,
+`includeComponents=true` request. Other component shapes return `400` rather
+than starting an unbounded raw-source scan. This compatibility response does
+not query market activity: its point `volumeUsdc` values are deliberately zero
+and non-authoritative, and its volume query timing/row metrics remain zero.
+`GET /api/perps/market/stats` is the authoritative source for rolling 24-hour
+volume. Browsers refresh the component payload no more often than every five
+minutes.
 
 ### Insights (requires PostgreSQL)
 
@@ -667,11 +795,21 @@ All responses follow this structure:
 
 ## Caching
 
-Responses are cached in-memory using STM. Cache invalidates when block number advances:
+Responses are cached in-memory using STM:
 
-- `/protocol/status` - Global cache
-- `/user/:address/dashboard` - Per-address cache
-- `/user/:address/allowances` - Per-address cache
+- `/protocol/status` - Global cache invalidated when the block advances
+- `/user/:address/dashboard` - Per-address cache invalidated when the block advances
+- `/user/:address/allowances` - Per-address cache invalidated when the block advances
+- `/api/perps/basket/candles` - Successful finalized pages only, for five seconds
+  with a 64-page process-local bound; concurrent requests for the same page
+  share one database load.
+- `/api/perps/basket/candles/current` - Coherent raw snapshots only, for 850ms
+  from the start of their load and keyed by chain, router, interval, and mutable
+  bucket. Concurrent misses for the same bucket share one database load, while
+  every request still composes and strictly validates its response against its
+  own sampled clock. Explicit `no-cache`/`no-store` requests force a database
+  revalidation. Coalesced request time is exposed separately as
+  `plether_singleflight_wait` in `Server-Timing`.
 
 Cached responses include `meta.cached: true` and `meta.cachedAt` timestamp.
 
@@ -684,6 +822,12 @@ cabal build
 # Run tests
 cabal test
 
+# Run the deterministic Perps critical-path gate against an isolated PostgreSQL database.
+# The database name must contain "critical_path"; the suite refuses any other database.
+PERPS_CRITICAL_PATH_REQUIRED=1 \
+PERPS_CRITICAL_PATH_DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path \
+  cabal test plether-api-integration-test --test-show-details=direct -j1
+
 # Run the perps keeper once without submitting transactions
 cabal run plether-keeper -- --once --dry-run
 
@@ -693,6 +837,13 @@ cabal run plether-liquidation-worker -- --once --dry-run
 # Run with live reload (requires ghcid)
 ghcid --command="cabal repl plether-api" --test=":main"
 ```
+
+The critical-path gate runs the real Perps history indexer and HTTP API against
+PostgreSQL and an in-process scripted chain. It covers delayed trace evidence,
+Blockscout fallback, finalized-value stability, stale evidence guards, stale
+keeper suppression, and canonical reorg replacement. In CI, its PostgreSQL
+prerequisites are mandatory; missing configuration or an unexpected RPC request
+fails the job rather than silently skipping it.
 
 ## Project Structure
 

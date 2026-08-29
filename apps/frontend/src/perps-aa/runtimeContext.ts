@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, use } from 'react'
 import type {
   PerpsActionKind,
   SmartAccountCall,
@@ -11,6 +11,16 @@ import type {
 
 export type ManagedUserOperation = UserOperation<'0.8'>
 export type ManagedUserOperationReceipt = UserOperationReceipt<'0.8'>
+
+export class UserOperationReceiptNotSafeError extends Error {
+  readonly receipt: ManagedUserOperationReceipt
+
+  constructor(receipt: ManagedUserOperationReceipt) {
+    super('The UserOperation receipt has not reached the canonical safe block')
+    this.name = 'UserOperationReceiptNotSafeError'
+    this.receipt = receipt
+  }
+}
 
 export type PimlicoUserOperationStatus =
   | 'not_found'
@@ -47,6 +57,36 @@ export interface ManagedPimlicoSmartAccount {
   ): Promise<ManagedUserOperationReceipt>
 }
 
+export interface SponsoredOperationRecoverySnapshot {
+  blockNumber: bigint
+  blockTimestamp: bigint
+  accountNonce: bigint
+  userOperationEvidence:
+    | {
+        kind: 'included'
+        success: boolean
+        transactionHash: Hex
+        blockNumber: bigint
+      }
+    | {
+        kind: 'not-located'
+      }
+    | {
+        kind: 'not-safe-yet'
+    }
+}
+
+export interface ObservedUserOperationInclusion {
+  transactionHash: Hex
+  blockNumber: bigint
+  blockHash: Hex
+}
+
+export type ObservedInclusionCanonicality =
+  | 'canonical'
+  | 'reorged'
+  | 'unknown'
+
 export interface PerpsAaSmartAccountRuntime {
   chainId: number
   ownerAddress: Address
@@ -54,8 +94,16 @@ export interface PerpsAaSmartAccountRuntime {
   factoryAddress: Address
   accountVersion: string
   accountIndex: string
+  manifestVersion?: string
   walletFamily?: string
   walletVersion?: string
+  getRecoverySnapshot?(
+    userOperationHash: Hex,
+    nonceKey?: bigint
+  ): Promise<SponsoredOperationRecoverySnapshot>
+  verifyObservedInclusion?(
+    inclusion: ObservedUserOperationInclusion
+  ): Promise<ObservedInclusionCanonicality>
 }
 
 export const PerpsAaRuntimeContext = createContext<
@@ -63,5 +111,5 @@ export const PerpsAaRuntimeContext = createContext<
 >(undefined)
 
 export function usePerpsAaRuntime(): PerpsAaSmartAccountRuntime | undefined {
-  return useContext(PerpsAaRuntimeContext)
+  return use(PerpsAaRuntimeContext)
 }

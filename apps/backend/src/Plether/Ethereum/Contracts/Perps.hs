@@ -1,5 +1,7 @@
 module Plether.Ethereum.Contracts.Perps
   ( PerpsOrderEvent (..)
+  , LiquidationBatchResult (..)
+  , LiquidationBatchItem (..)
   , PendingOrderView (..)
   , OrderExecutionPolicy (..)
   , orderCommittedTopic
@@ -8,9 +10,13 @@ module Plether.Ethereum.Contracts.Perps
   , perpsOrderTopics
   , positionOpenedTopic
   , positionLiquidatedTopic
+  , liquidationBatchItemTopic
+  , liquidationBatchStoppedTopic
   , decodePerpsOrderEvent
   , decodePositionOpenedAccount
   , decodePositionLiquidatedAccount
+  , decodeLiquidationBatchItem
+  , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
   , getPositionSize
   , getPositionSizeAtBlock
@@ -31,6 +37,9 @@ module Plether.Ethereum.Contracts.Perps
   , executeOrderCall
   , executeOrderBatchCall
   , executeLiquidationCall
+  , executeLiquidationBatchCall
+  , settleLpEpochRouterCall
+  , settleLpEpochPoolCall
   , positionsCall
   , pythCall
   , getUpdateFeeCall
@@ -93,6 +102,22 @@ data PerpsOrderEvent
       }
   deriving stock (Show, Eq)
 
+data LiquidationBatchResult
+  = LiquidationBatchLiquidated
+  | LiquidationBatchSkippedNoPosition
+  | LiquidationBatchSkippedSolvent
+  | LiquidationBatchFailed
+  deriving stock (Show, Eq)
+
+data LiquidationBatchItem = LiquidationBatchItem
+  { lbiIndex :: Integer
+  , lbiAccount :: Text
+  , lbiResult :: LiquidationBatchResult
+  , lbiKeeperBountyUsdc :: Integer
+  , lbiErrorSelector :: ByteString
+  }
+  deriving stock (Show, Eq)
+
 data PendingOrderView = PendingOrderView
   { povOrderId :: Integer
   , povIsClose :: Bool
@@ -140,6 +165,13 @@ positionOpenedTopic = keccak256 $ TE.encodeUtf8 "PositionOpened(address,uint8,ui
 positionLiquidatedTopic :: ByteString
 positionLiquidatedTopic = keccak256 $ TE.encodeUtf8 "PositionLiquidated(address,uint8,uint256,uint256,uint256)"
 
+liquidationBatchItemTopic :: ByteString
+liquidationBatchItemTopic =
+  keccak256 $ TE.encodeUtf8 "LiquidationBatchItem(uint256,address,uint8,uint256,bytes4)"
+
+liquidationBatchStoppedTopic :: ByteString
+liquidationBatchStoppedTopic = keccak256 $ TE.encodeUtf8 "LiquidationBatchStopped(uint256)"
+
 decodePerpsOrderEvent :: RpcLog -> Maybe PerpsOrderEvent
 decodePerpsOrderEvent RpcLog {..} =
   case rpcLogTopics of
@@ -177,6 +209,37 @@ decodePositionOpenedAccount = decodeIndexedPositionAccount positionOpenedTopic
 
 decodePositionLiquidatedAccount :: RpcLog -> Maybe Text
 decodePositionLiquidatedAccount = decodeIndexedPositionAccount positionLiquidatedTopic
+
+decodeLiquidationBatchItem :: RpcLog -> Maybe LiquidationBatchItem
+decodeLiquidationBatchItem RpcLog {rpcLogTopics = topic : indexTopic : accountTopic : _, ..}
+  | topic == liquidationBatchItemTopic
+      && BS.length indexTopic == 32
+      && BS.length accountTopic == 32
+      && BS.length rpcLogData >= 96 = do
+      result <- decodeLiquidationBatchResult $ wordAt 0 rpcLogData
+      pure
+        LiquidationBatchItem
+          { lbiIndex = decodeUint256 indexTopic
+          , lbiAccount = decodeAddress accountTopic
+          , lbiResult = result
+          , lbiKeeperBountyUsdc = wordAt 1 rpcLogData
+          , lbiErrorSelector = BS.take 4 $ wordBytesAt 2 rpcLogData
+          }
+decodeLiquidationBatchItem _ = Nothing
+
+decodeLiquidationBatchStoppedIndex :: RpcLog -> Maybe Integer
+decodeLiquidationBatchStoppedIndex RpcLog {rpcLogTopics = topic : indexTopic : _}
+  | topic == liquidationBatchStoppedTopic && BS.length indexTopic == 32 =
+      Just $ decodeUint256 indexTopic
+decodeLiquidationBatchStoppedIndex _ = Nothing
+
+decodeLiquidationBatchResult :: Integer -> Maybe LiquidationBatchResult
+decodeLiquidationBatchResult = \case
+  0 -> Just LiquidationBatchLiquidated
+  1 -> Just LiquidationBatchSkippedNoPosition
+  2 -> Just LiquidationBatchSkippedSolvent
+  3 -> Just LiquidationBatchFailed
+  _ -> Nothing
 
 decodeIndexedPositionAccount :: ByteString -> RpcLog -> Maybe Text
 decodeIndexedPositionAccount eventTopic RpcLog {rpcLogTopics = topic : accountTopic : _}
@@ -391,6 +454,8 @@ parsePriceFeedUpdatesCallWith signature updateData feedIds minPublishTime maxPub
   if minPublishTime < 0 || maxPublishTime < minPublishTime || maxPublishTime > maxUint64
     then Left $ RpcJsonError "Pyth publish-time bounds must form a valid uint64 range"
     else Right ()
+  -- Pyth applies both EVM bounds inclusively. In particular, an exact-time
+  -- query with minPublishTime == maxPublishTime is valid and must remain so.
   let encodedUpdateData = encodeBytesArray updateData
       encodedFeedIds = encodeBytes32Array feedIds
       updateDataOffset = 4 * 32
@@ -543,6 +608,32 @@ executeLiquidationCall account updateData =
     , encodeBytesArray updateData
     ]
 
+executeLiquidationBatchCall :: [Text] -> [ByteString] -> ByteString
+executeLiquidationBatchCall accounts updateData =
+  let encodedAccounts = encodeAddressArray accounts
+      encodedUpdateData = encodeBytesArray updateData
+   in encodeCall
+        "executeLiquidationBatch(address[],bytes[])"
+        [ encodeUint256 64
+        , encodeUint256 $ 64 + fromIntegral (BS.length encodedAccounts)
+        , encodedAccounts
+        , encodedUpdateData
+        ]
+
+settleLpEpochRouterCall :: [ByteString] -> ByteString
+settleLpEpochRouterCall updateData =
+  encodeCall
+    "settleLpEpoch(bytes[])"
+    [ encodeUint256 32
+    , encodeBytesArray updateData
+    ]
+
+settleLpEpochPoolCall :: Integer -> Integer -> ByteString
+settleLpEpochPoolCall cachedMarkPrice cachedMarkTime =
+  encodeCall
+    "settleLpEpoch(uint256,uint256)"
+    [encodeUint256 cachedMarkPrice, encodeUint256 cachedMarkTime]
+
 positionsCall :: Text -> ByteString
 positionsCall account =
   encodeCall "positions(address)" [encodeAddress account]
@@ -589,6 +680,10 @@ encodeBytesArray values =
 encodeBytes32Array :: [ByteString] -> ByteString
 encodeBytes32Array values =
   encodeUint256 (fromIntegral $ length values) <> mconcat values
+
+encodeAddressArray :: [Text] -> ByteString
+encodeAddressArray values =
+  encodeUint256 (fromIntegral $ length values) <> mconcat (map encodeAddress values)
 
 encodeDynamicBytes :: ByteString -> ByteString
 encodeDynamicBytes value =

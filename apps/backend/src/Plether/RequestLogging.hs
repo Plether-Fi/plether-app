@@ -1,5 +1,11 @@
 module Plether.RequestLogging
   ( newRequestLoggingMiddleware
+  , RequestClass (..)
+  , classifyNormalizedRoute
+  , afterResponseHandoff
+  , normalizeRouteSegments
+  , shouldEmitForegroundSample
+  , shouldEmitSlowWarning
   ) where
 
 import Control.Concurrent.MVar (MVar, modifyMVar, newMVar)
@@ -20,6 +26,9 @@ import Network.Wai
   , responseStatus
   )
 import Plether.Logging (field, logErrorEvery, logInfo, logWarnEvery)
+
+data RequestClass = Foreground | LongPoll | HealthCheck
+  deriving stock (Eq, Show)
 
 data RequestStats = RequestStats
   { rqsWindowStartedNs :: Word64
@@ -53,36 +62,66 @@ logRequests statsVar application request respond = do
         status = statusCode $ responseStatus response
         method = TextEncoding.decodeUtf8With lenientDecode $ requestMethod request
         route = normalizedPath request
-    mSummary <- recordRequest statsVar finishedAt durationMs status
-    mapM_ emitSummary mSummary
-    when (status >= 500) $
-      logErrorEvery
-        10
-        "api_request_failed"
-        "API request returned a server error"
-        [ field "http_method" method
-        , field "http_route" route
-        , field "http_status_code" status
-        , field "duration_ms" (round durationMs :: LogFieldValue)
-        ]
-    when (status < 500 && durationMs >= slowRequestThresholdMs) $
-      logWarnEvery
-        60
-        "api_request_slow"
-        "API request exceeded the slow-request threshold"
-        [ field "http_method" method
-        , field "http_route" route
-        , field "http_status_code" status
-        , field "duration_ms" (round durationMs :: LogFieldValue)
-        , field "slow_threshold_ms" (round slowRequestThresholdMs :: LogFieldValue)
-        ]
-    respond response
+        requestClass = classifyNormalizedRoute route
+        requestClassName = requestClassText requestClass
+    afterResponseHandoff (respond response) $ do
+      mSummary <-
+        if shouldEmitForegroundSample requestClass
+          then recordRequest statsVar durationMs status
+          else pure Nothing
+      mapM_ emitSummary mSummary
+      when (shouldEmitForegroundSample requestClass) $
+        logInfo
+          "api_foreground_request_completed"
+          "Foreground API request completed"
+          [ field "http_method" method
+          , field "http_route" route
+          , field "http_status_code" status
+          , field "request_class" requestClassName
+          , field "duration_ms" durationMs
+          ]
+      when (status >= 500) $
+        logErrorEvery
+          10
+          "api_request_failed"
+          "API request returned a server error"
+          [ field "http_method" method
+          , field "http_route" route
+          , field "http_status_code" status
+          , field "request_class" requestClassName
+          , field "duration_ms" (round durationMs :: LogFieldValue)
+          ]
+      when (shouldEmitSlowWarning requestClass status durationMs) $
+        logWarnEvery
+          60
+          "api_request_slow"
+          "API request exceeded the slow-request threshold"
+          [ field "http_method" method
+          , field "http_route" route
+          , field "http_status_code" status
+          , field "request_class" requestClassName
+          , field "duration_ms" (round durationMs :: LogFieldValue)
+          , field "slow_threshold_ms" (round slowRequestThresholdMs :: LogFieldValue)
+          ]
+
+-- Capture request duration before response handoff, then run completion effects
+-- only after the server's response callback returns. This prevents synchronous
+-- logging from inflating either the sampled duration or response latency.
+afterResponseHandoff :: IO result -> IO () -> IO result
+afterResponseHandoff handoff completion = do
+  responseReceived <- handoff
+  completion
+  pure responseReceived
 
 type LogFieldValue = Integer
 
-recordRequest :: MVar RequestStats -> Word64 -> Double -> Int -> IO (Maybe RequestStats)
-recordRequest statsVar now durationMs status =
+recordRequest :: MVar RequestStats -> Double -> Int -> IO (Maybe RequestStats)
+recordRequest statsVar durationMs status =
   modifyMVar statsVar $ \stats -> do
+    -- Response callbacks may return out of order. Read the summary clock only
+    -- after taking the MVar so an older callback cannot underflow Word64 when
+    -- compared with a window already advanced by a newer callback.
+    now <- getMonotonicTimeNSec
     let updated = addRequest durationMs status stats
     if now - rqsWindowStartedNs stats >= requestSummaryIntervalNs
       then pure (emptyStats now, Just updated)
@@ -105,9 +144,10 @@ addRequest durationMs status stats =
 emitSummary :: RequestStats -> IO ()
 emitSummary stats =
   logInfo
-    "api_request_summary"
-    "API request activity since the previous summary"
+    "api_foreground_request_summary"
+    "Foreground API request activity since the previous summary"
     [ field "request_count" $ rqsRequestCount stats
+    , field "request_class" ("foreground" :: Text)
     , field "http_2xx_count" $ rqsSuccessCount stats
     , field "http_3xx_count" $ rqsRedirectCount stats
     , field "http_4xx_count" $ rqsClientErrorCount stats
@@ -135,14 +175,102 @@ emptyStats startedAt =
     }
 
 normalizedPath :: Request -> Text
-normalizedPath request =
-  "/" <> Text.intercalate "/" (map normalizeSegment $ pathInfo request)
+normalizedPath = normalizeRouteSegments . pathInfo
+
+normalizeRouteSegments :: [Text] -> Text
+normalizeRouteSegments segments =
+  let normalized = normalizeCompetitionSlug $ map normalizeSegment segments
+   in if normalized `elem` knownNormalizedRoutes
+        then "/" <> Text.intercalate "/" normalized
+        else "/:unmatched"
   where
     normalizeSegment segment
       | isAddress segment = ":address"
       | not (Text.null segment) && Text.all isDigit segment = ":id"
       | otherwise = Text.take 64 segment
 
+    -- Competition slugs are operator-defined but still dynamic route values.
+    -- Normalize the two public slug positions so request logs do not create a
+    -- new route label for each competition.
+    normalizeCompetitionSlug = \case
+      ["api", "insights", "v1", "competitions", _, "leaderboard"] ->
+        ["api", "insights", "v1", "competitions", ":slug", "leaderboard"]
+      ["api", "insights", "v1", "competitions", _, "wallets", address] ->
+        ["api", "insights", "v1", "competitions", ":slug", "wallets", address]
+      ["api", "insights", "v1", "competitions", _, "registrations", action] ->
+        ["api", "insights", "v1", "competitions", ":slug", "registrations", action]
+      ["api", "insights", "v1", "competitions", _, "registrations", provider, action] ->
+        ["api", "insights", "v1", "competitions", ":slug", "registrations", provider, action]
+      normalized -> normalized
+
     isAddress segment =
       Text.length segment == 42
         && "0x" `Text.isPrefixOf` Text.toLower segment
+
+-- This is intentionally an exact, low-cardinality mirror of the public Scotty
+-- routes. Unknown paths collapse to /:unmatched instead of placing attacker-
+-- controlled path fragments in a per-request latency log.
+knownNormalizedRoutes :: [[Text]]
+knownNormalizedRoutes =
+  [ ["api", "health"]
+  , ["api", "testnet", "faucet"]
+  , ["api", "aa", "pimlico"]
+  , ["api", "protocol", "status"]
+  , ["api", "protocol", "config"]
+  , ["api", "user", ":address", "dashboard"]
+  , ["api", "user", ":address", "balances"]
+  , ["api", "user", ":address", "positions"]
+  , ["api", "user", ":address", "allowances"]
+  , ["api", "user", ":address", "history"]
+  , ["api", "user", ":address", "history", "leverage"]
+  , ["api", "user", ":address", "history", "lending"]
+  , ["api", "quotes", "mint"]
+  , ["api", "quotes", "burn"]
+  , ["api", "quotes", "zap"]
+  , ["api", "quotes", "trade"]
+  , ["api", "quotes", "leverage"]
+  , ["api", "insights", "v1", "competitions", "current"]
+  , ["api", "insights", "v1", "competitions", ":slug", "leaderboard"]
+  , ["api", "insights", "v1", "competitions", ":slug", "wallets", ":address"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "session"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "authorize"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "callback"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "x", "follow"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "wallet", "challenge"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "wallet", "verify"]
+  , ["api", "insights", "v1", "competitions", ":slug", "registrations", "complete"]
+  , ["api", "insights", "v1", "status"]
+  , ["api", "perps", "accounts", ":address", "orders"]
+  , ["api", "perps", "accounts", ":address", "activity"]
+  , ["api", "perps", "indexer", "status"]
+  , ["api", "perps", "orders", ":id", "wait"]
+  , ["api", "perps", "orders", ":id", "reveal-payload"]
+  , ["api", "perps", "market", "stats"]
+  , ["api", "perps", "basket", "history"]
+  , ["api", "perps", "basket", "candles"]
+  , ["api", "perps", "basket", "candles", "current"]
+  , ["api", "perps", "basket", "latest"]
+  , ["api", "perps", "pyth", "update"]
+  , ["api", "perps", "pyth", "cached-latest"]
+  ]
+
+classifyNormalizedRoute :: Text -> RequestClass
+classifyNormalizedRoute route
+  | route == "/api/perps/orders/:id/wait" = LongPoll
+  | route == "/api/health" = HealthCheck
+  | otherwise = Foreground
+
+requestClassText :: RequestClass -> Text
+requestClassText = \case
+  Foreground -> "foreground"
+  LongPoll -> "long_poll"
+  HealthCheck -> "health_check"
+
+shouldEmitForegroundSample :: RequestClass -> Bool
+shouldEmitForegroundSample = (== Foreground)
+
+shouldEmitSlowWarning :: RequestClass -> Int -> Double -> Bool
+shouldEmitSlowWarning requestClass status durationMs =
+  requestClass == Foreground
+    && status < 500
+    && durationMs >= slowRequestThresholdMs

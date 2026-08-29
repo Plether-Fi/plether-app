@@ -27,6 +27,14 @@ resource "aws_ssm_parameter" "perps_rpc_url" {
   value = var.perps_rpc_url
 }
 
+resource "aws_ssm_parameter" "vault_history_rpc_url" {
+  count = trimspace(var.vault_history_rpc_url) != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/vault-history-rpc-url"
+  type  = "SecureString"
+  value = var.vault_history_rpc_url
+}
+
 resource "aws_ssm_parameter" "keeper_private_key" {
   name  = "/plether/${var.environment}/keeper-private-key"
   type  = "SecureString"
@@ -88,10 +96,68 @@ resource "aws_ssm_parameter" "aa_proxy_origin_token" {
   value = var.aa_proxy_origin_token
 }
 
+resource "aws_ssm_parameter" "insights_registration_origin_token" {
+  count = var.provision_insights_registration ? 1 : 0
+
+  name  = "/plether/${var.environment}/insights-registration-origin-token"
+  type  = "SecureString"
+  value = var.insights_registration_origin_token
+}
+
+resource "aws_ssm_parameter" "insights_registration_origin_token_next" {
+  # Only the presence bit is declassified so it can safely drive resource
+  # cardinality; the token value remains sensitive in state and plan output.
+  count = var.provision_insights_registration && nonsensitive(var.insights_registration_origin_token_next != "") ? 1 : 0
+
+  name  = "/plether/${var.environment}/insights-registration-origin-token-next"
+  type  = "SecureString"
+  value = var.insights_registration_origin_token_next
+}
+
+resource "aws_ssm_parameter" "turnstile_secret_key" {
+  count = var.provision_insights_registration ? 1 : 0
+
+  name  = "/plether/${var.environment}/turnstile-secret-key"
+  type  = "SecureString"
+  value = var.turnstile_secret_key
+}
+
+resource "aws_ssm_parameter" "x_oauth_client_secret" {
+  count = var.provision_insights_registration ? 1 : 0
+
+  name  = "/plether/${var.environment}/x-oauth-client-secret"
+  type  = "SecureString"
+  value = var.x_oauth_client_secret
+}
+
+resource "aws_ssm_parameter" "insights_registration_email_keys" {
+  count = var.provision_insights_registration ? 1 : 0
+
+  name  = "/plether/${var.environment}/insights-registration-email-keys"
+  type  = "SecureString"
+  value = jsonencode(var.insights_registration_email_keys)
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_ssm_parameter" "insights_registration_email_hmac_key" {
+  count = var.provision_insights_registration ? 1 : 0
+
+  name  = "/plether/${var.environment}/insights-registration-email-hmac-key"
+  type  = "SecureString"
+  value = var.insights_registration_email_hmac_key_base64
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 resource "aws_ssm_parameter" "database_url" {
   name  = "/plether/${var.environment}/database-url"
   type  = "SecureString"
-  value = "postgresql://${var.db_username}:${var.db_password}@${aws_db_instance.postgres.endpoint}/plether"
+  value = "postgresql://${urlencode(var.db_username)}:${urlencode(var.db_password)}@${aws_db_instance.postgres.endpoint}/plether?sslmode=verify-full&sslrootcert=${urlencode(var.db_ssl_root_cert_path)}"
 }
 
 resource "aws_ssm_parameter" "posthog_otlp_authorization_header" {

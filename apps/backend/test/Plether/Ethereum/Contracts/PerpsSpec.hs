@@ -61,6 +61,18 @@ spec = do
         `shouldSatisfy` isDecodeError
       parsePriceFeedUpdatesUniqueCall payload [feedId] 20 10 `shouldSatisfy` isDecodeError
 
+    it "accepts an exact inclusive Pyth publish-time bound" $ do
+      let feedId = BS.replicate 32 0x11
+      call <-
+        expectRight $
+          parsePriceFeedUpdatesUniqueCall
+            [BS.singleton 0x01]
+            [feedId]
+            20
+            20
+      word call 2 `shouldBe` 20
+      word call 3 `shouldBe` 20
+
     it "encodes executeOrder(uint64,bytes[]) with an empty array" $ do
       executeOrderCall 7 []
         `shouldEncodeTo` "0xc700abdc000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000"
@@ -84,6 +96,22 @@ spec = do
       word call 3 `shouldBe` 32
       word call 4 `shouldBe` 1
       BS.take 1 (bytesAtWord call 5) `shouldBe` BS.pack [0x99]
+
+    it "encodes executeLiquidationBatch(address[],bytes[]) with two accounts" $ do
+      expectedSelector <- parseHex "0x07f4f6cf"
+      let firstAccount = "0x1111111111111111111111111111111111111111"
+          secondAccount = "0x2222222222222222222222222222222222222222"
+          call = executeLiquidationBatchCall [firstAccount, secondAccount] [BS.pack [0x99]]
+      BS.take 4 call `shouldBe` expectedSelector
+      word call 0 `shouldBe` 64
+      word call 1 `shouldBe` 160
+      word call 2 `shouldBe` 2
+      wordBytes call 3 `shouldBe` encodeAddress firstAccount
+      wordBytes call 4 `shouldBe` encodeAddress secondAccount
+      word call 5 `shouldBe` 1
+      word call 6 `shouldBe` 32
+      word call 7 `shouldBe` 1
+      BS.take 1 (bytesAtWord call 8) `shouldBe` BS.pack [0x99]
 
     it "encodes positions(address)" $ do
       positionsCall "0x1111111111111111111111111111111111111111"
@@ -270,6 +298,60 @@ spec = do
       decodePositionOpenedAccount (positionLog positionOpenedTopic) `shouldBe` Just account
       decodePositionLiquidatedAccount (positionLog positionLiquidatedTopic) `shouldBe` Just account
       decodePositionOpenedAccount (positionLog positionLiquidatedTopic) `shouldBe` Nothing
+
+  describe "liquidation batch event decoding" $ do
+    it "decodes an indexed batch item including its bytes4 error selector" $ do
+      let account = "0x1111111111111111111111111111111111111111"
+          selector = BS.pack [0xde, 0xad, 0xbe, 0xef]
+          logEntry =
+            RpcLog
+              { rpcLogTxHash = "0xbatch"
+              , rpcLogBlockNumber = 126
+              , rpcLogAddress = "0xrouter"
+              , rpcLogTopics =
+                  [ liquidationBatchItemTopic
+                  , encodeUint256 3
+                  , encodeAddress account
+                  ]
+              , rpcLogData =
+                  encodeUint256 3
+                    <> encodeUint256 77
+                    <> selector
+                    <> BS.replicate 28 0
+              }
+      decodeLiquidationBatchItem logEntry
+        `shouldBe` Just
+          LiquidationBatchItem
+            { lbiIndex = 3
+            , lbiAccount = account
+            , lbiResult = LiquidationBatchFailed
+            , lbiKeeperBountyUsdc = 77
+            , lbiErrorSelector = selector
+            }
+
+    it "decodes the indexed stop cursor and rejects unknown item results" $ do
+      let stopLog =
+            RpcLog
+              { rpcLogTxHash = "0xbatch"
+              , rpcLogBlockNumber = 126
+              , rpcLogAddress = "0xrouter"
+              , rpcLogTopics = [liquidationBatchStoppedTopic, encodeUint256 4]
+              , rpcLogData = BS.empty
+              }
+          invalidItem =
+            RpcLog
+              { rpcLogTxHash = "0xbatch"
+              , rpcLogBlockNumber = 126
+              , rpcLogAddress = "0xrouter"
+              , rpcLogTopics =
+                  [ liquidationBatchItemTopic
+                  , encodeUint256 0
+                  , encodeAddress "0x1111111111111111111111111111111111111111"
+                  ]
+              , rpcLogData = encodeUint256 4 <> encodeUint256 0 <> BS.replicate 32 0
+              }
+      decodeLiquidationBatchStoppedIndex stopLog `shouldBe` Just 4
+      decodeLiquidationBatchItem invalidItem `shouldBe` Nothing
 
   describe "orderFailureReasonText" $ do
     it "decodes current router failure reason enum values" $ do

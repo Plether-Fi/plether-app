@@ -41,7 +41,7 @@ import Plether.Ethereum.Rpc
   ( RpcBlock (..)
   , ethGetBlockByNumber
   )
-import Plether.Insights.Competition (EquitySnapshot (..))
+import Plether.Insights.Competition (CompetitionRules (..), EquitySnapshot (..))
 import Text.Read (readMaybe)
 
 defaultSnapshotMulticallSize :: Int
@@ -75,9 +75,12 @@ validateSnapshotMulticallSize value
 -- upper bound for both account state and event-derived statistics.
 runInsightsSnapshotCycle :: EthClient -> DbPool -> Config -> Int -> IO ()
 runInsightsSnapshotCycle client pool cfg multicallSize = do
-  mCompetition <- withDb pool getCurrentCompetition
+  mCompetition <- withDb pool $ \conn ->
+    getCurrentCompetition conn (crSlug $ cfgInsightsCompetitionRules cfg)
   case mCompetition of
     Nothing -> putStrLn "Insights snapshot skipped: no competition is configured"
+    Just competition | not $ icrReleaseReady competition ->
+      putStrLn "Insights snapshot skipped: competition release is not bound"
     Just competition -> do
       mSafe <-
         withDb pool $ \conn ->
@@ -106,6 +109,7 @@ runInsightsSnapshotCycle client pool cfg multicallSize = do
                       conn
                       (icrSlug competition)
                       (rpcBlockNumber safeBlock)
+                      (rpcBlockHash safeBlock)
                   updateCompetition client pool cfg multicallSize competition safeBlock
 
 updateCompetition
@@ -134,7 +138,7 @@ updateCompetition client pool cfg multicallSize competition safeBlock = do
     setCompetitionBoundaryBlocks
       conn
       (icrSlug competition)
-      (boundaryIdentity . snd <$> mStartBlocks)
+      (startBoundaryIdentity <$> mStartBlocks)
       (boundaryIdentity <$> mCutoffBlock)
 
   participants <-
@@ -187,12 +191,18 @@ resolveStartBlocks client safeBlock targetTimestamp configuredBlock =
           baselineResult <- ethGetBlockByNumber client (blockNumber - 1)
           boundaryResult <- ethGetBlockByNumber client blockNumber
           case (baselineResult, boundaryResult) of
-            (Right baseline, Right boundary) -> pure $ Just (baseline, boundary)
+            (Right baseline, Right boundary)
+              | rpcBlockTimestamp baseline < targetTimestamp
+                  && rpcBlockTimestamp boundary >= targetTimestamp ->
+                      pure $ Just (baseline, boundary)
+              | otherwise -> resolveFresh
             (Left err, _) -> logRpcFailure "read configured competition baseline" err >> pure Nothing
             (_, Left err) -> logRpcFailure "read configured competition start boundary" err >> pure Nothing
-    Nothing
-      | rpcBlockTimestamp safeBlock < targetTimestamp -> pure Nothing
-      | otherwise -> do
+    Nothing -> resolveFresh
+  where
+    resolveFresh
+      | rpcBlockTimestamp safeBlock < targetTimestamp = pure Nothing
+      | otherwise = do
           result <-
             findLastBlockBeforeTimestamp
               (ethGetBlockByNumber client)
@@ -218,13 +228,21 @@ resolveFinalBlock client safeBlock targetTimestamp configuredBlock =
     Just blockNumber
       | blockNumber > rpcBlockNumber safeBlock -> pure Nothing
       | otherwise -> do
-          result <- ethGetBlockByNumber client blockNumber
-          case result of
-            Left err -> logRpcFailure "read configured competition cutoff" err >> pure Nothing
-            Right block -> pure $ Just block
-    Nothing
-      | rpcBlockTimestamp safeBlock < targetTimestamp -> pure Nothing
-      | otherwise -> do
+          blockResult <- ethGetBlockByNumber client blockNumber
+          nextResult <- ethGetBlockByNumber client (blockNumber + 1)
+          case (blockResult, nextResult) of
+            (Right block, Right nextBlock)
+              | rpcBlockTimestamp block < targetTimestamp
+                  && rpcBlockTimestamp nextBlock >= targetTimestamp ->
+                      pure $ Just block
+              | otherwise -> resolveFresh
+            (Left err, _) -> logRpcFailure "read configured competition cutoff" err >> pure Nothing
+            (_, Left err) -> logRpcFailure "read block after configured competition cutoff" err >> pure Nothing
+    Nothing -> resolveFresh
+  where
+    resolveFresh
+      | rpcBlockTimestamp safeBlock < targetTimestamp = pure Nothing
+      | otherwise = do
           result <-
             findLastBlockBeforeTimestamp
               (ethGetBlockByNumber client)
@@ -529,6 +547,10 @@ logRpcFailure context err =
 
 boundaryIdentity :: RpcBlock -> (Integer, T.Text)
 boundaryIdentity block = (rpcBlockNumber block, rpcBlockHash block)
+
+startBoundaryIdentity :: (RpcBlock, RpcBlock) -> (Integer, T.Text, T.Text)
+startBoundaryIdentity (baseline, boundary) =
+  (rpcBlockNumber boundary, rpcBlockHash boundary, rpcBlockHash baseline)
 
 sameHash :: T.Text -> T.Text -> Bool
 sameHash left right = T.toLower (T.strip left) == T.toLower (T.strip right)

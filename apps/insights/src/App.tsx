@@ -3,7 +3,9 @@ import { BrowserRouter, Navigate, Route, Routes, useParams } from 'react-router-
 import {
   DEFAULT_COMPETITION_SLUG,
   InsightsApiError,
+  useCurrentCompetition,
   useCurrentProtocolRelease,
+  type Competition,
 } from './api'
 import { Layout } from './components/Layout'
 import { ErrorState } from './components/ui'
@@ -20,6 +22,7 @@ import { ProtocolWalletsPage } from './pages/ProtocolWalletsPage'
 import { TranchePage } from './pages/TranchePage'
 import { TransactionDetailPage } from './pages/TransactionDetailPage'
 import { TransactionsPage } from './pages/TransactionsPage'
+import { CurrentRegistrationRedirect, RegistrationPage } from './pages/RegistrationPage'
 import { WalletPage } from './pages/WalletPage'
 
 function LegacyWalletRedirect() {
@@ -64,7 +67,7 @@ function ExplorerRoute({
   return children
 }
 
-export function AppRoutes() {
+export function AppRoutes({ competition }: { competition?: Competition } = {}) {
   const release = useCurrentProtocolRelease()
   const legacyBackendWithoutExplorer = import.meta.env.DEV
     && import.meta.env.VITE_PROTOCOL_EXPLORER_LEGACY_FALLBACK === 'true'
@@ -92,6 +95,7 @@ export function AppRoutes() {
 
   return (
     <Layout
+      competition={competition}
       explorerEnabled={explorerState === 'enabled'}
       protocolReleaseId={release.data?.releaseId}
     >
@@ -108,6 +112,8 @@ export function AppRoutes() {
         <Route path="/protocol-wallets/:address" element={explorerRoute(<ProtocolWalletDetailPage />)} />
         <Route path="/parameters" element={explorerRoute(<ParametersPage />)} />
         <Route path="/competitions/:slug" element={<LeaderboardPage />} />
+        <Route path="/register" element={<CurrentRegistrationRedirect />} />
+        <Route path="/competitions/:slug/register" element={<RegistrationPage />} />
         <Route path="/competitions/:slug/wallets/:address" element={<WalletPage />} />
         <Route path="/leaderboard" element={<Navigate to={`/competitions/${DEFAULT_COMPETITION_SLUG}`} replace />} />
         <Route path="/wallets/:address" element={<LegacyWalletRedirect />} />
@@ -130,10 +136,15 @@ export function AppRoutes() {
   )
 }
 
+function ConnectedAppRoutes() {
+  const competition = useCurrentCompetition()
+  return <AppRoutes competition={competition.data} />
+}
+
 export default function App() {
   return (
     <BrowserRouter>
-      <AppRoutes />
+      <ConnectedAppRoutes />
     </BrowserRouter>
   )
 }

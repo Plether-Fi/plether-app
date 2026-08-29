@@ -236,6 +236,8 @@ The fixed 2.00 ceiling creates additional basis risk[^basis-risk] if the externa
 
 ## Risks for liquidity providers
 
+This section summarizes the shared risk model. Before depositing, use [LP risks and safeguards](../providing-liquidity/lp-risks-and-safeguards.md) for the tranche-specific decision and action checklist.
+
 ### LPs are the economic counterparty
 
 The HousePool backs trader payouts.

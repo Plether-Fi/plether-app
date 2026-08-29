@@ -1,6 +1,10 @@
 import type { ReactNode, SyntheticEvent } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
-import { DEFAULT_COMPETITION_SLUG, useInsightsStatus } from '../api'
+import {
+  DEFAULT_COMPETITION_SLUG,
+  useInsightsStatus,
+  type Competition,
+} from '../api'
 import { formatUtc } from '../utils/format'
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -13,13 +17,21 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 function Header({
+  competition,
   explorerEnabled,
   protocolReleaseId,
 }: {
+  competition?: Competition
   explorerEnabled: boolean
   protocolReleaseId?: string
 }) {
   const navigate = useNavigate()
+  const registrationOpen = competition?.registration?.status === 'open'
+  const competitionSlug = competition?.slug ?? DEFAULT_COMPETITION_SLUG
+  const competitionPath = `/competitions/${encodeURIComponent(competitionSlug)}`
+  const registrationPath = competition
+    ? `${competitionPath}/register`
+    : '/register'
 
   function search(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -65,7 +77,13 @@ function Header({
               <NavLink to="/parameters" className={navClass}>Parameters</NavLink>
             </>
           ) : null}
-          <NavLink to={`/competitions/${DEFAULT_COMPETITION_SLUG}`} className={navClass}>Competition</NavLink>
+          <NavLink to={competitionPath} className={navClass}>
+            {explorerEnabled ? 'Competition' : 'Leaderboard'}
+          </NavLink>
+          <NavLink to="/methodology" className={navClass}>Methodology</NavLink>
+          <NavLink to={registrationPath} className={navClass}>
+            {registrationOpen ? 'Enter competition' : 'Application'}
+          </NavLink>
         </nav>
       </div>
     </header>
@@ -83,16 +101,16 @@ function Footer() {
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-6 text-xs text-content-tertiary sm:flex-row sm:items-center sm:justify-between sm:px-6 lg:px-8">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span>© 2026 Plether</span>
-          <Link to="/methodology" className="text-content-secondary hover:text-brand-peach">Methodology</Link>
-          <a href="https://plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether ↗</a>
+          <Link to="/methodology" className="text-content-secondary hover:text-brand-peach">Scoring methodology</Link>
+          <a href="https://app.sepolia.plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether testnet ↗</a>
         </div>
         <div className="flex items-center gap-2" title={indexedAt ? `Indexed ${formatUtc(indexedAt)}` : undefined}>
           <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-positive' : status.isLoading ? 'bg-brand-yellow' : 'bg-brand-orange'}`} />
           {status.isLoading
-            ? 'Checking competition indexer'
+            ? 'Checking indexer'
             : isLive
-              ? `Competition indexed through block ${statusData.latestIndexedBlock?.toLocaleString() ?? '—'}`
-              : 'Competition indexer status unavailable'}
+              ? `Indexed through block ${statusData.latestIndexedBlock?.toLocaleString() ?? '—'}`
+              : 'Indexer status unavailable'}
         </div>
       </div>
     </footer>
@@ -101,16 +119,22 @@ function Footer() {
 
 export function Layout({
   children,
+  competition,
   explorerEnabled = false,
   protocolReleaseId,
 }: {
   children: ReactNode
+  competition?: Competition
   explorerEnabled?: boolean
   protocolReleaseId?: string
 }) {
   return (
     <div className="flex min-h-screen flex-col">
-      <Header explorerEnabled={explorerEnabled} protocolReleaseId={protocolReleaseId} />
+      <Header
+        competition={competition}
+        explorerEnabled={explorerEnabled}
+        protocolReleaseId={protocolReleaseId}
+      />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
         {children}
       </main>

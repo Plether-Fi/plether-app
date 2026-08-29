@@ -1,4 +1,3 @@
-import posthog from 'posthog-js'
 import type {
   CaptureLogOptions,
   LogAttributes,
@@ -7,6 +6,8 @@ import type {
   Properties,
 } from 'posthog-js'
 import { BUILD_COMMIT } from '../config/buildInfo'
+
+type PostHogClient = typeof import('posthog-js')['default']
 
 export type AnalyticsPropertyValue = string | number | boolean | null | undefined
 export type AnalyticsProperties = Record<string, AnalyticsPropertyValue>
@@ -40,6 +41,7 @@ const ALLOWED_PROPERTY_KEYS = new Set([
   'sponsorship_status',
   'surface',
   'terminal_outcome',
+  'timeout_ms',
   'validation_reason',
   'wallet_family',
   'wallet_version',
@@ -77,7 +79,17 @@ const EMBEDDED_EMAIL_PATTERN = /[^\s@]+@[^\s@]+\.[^\s@]+/g
 const POSTHOG_CREDENTIAL_PATTERN = /\bph[ctx]_[A-Za-z0-9_-]+\b/g
 const BEARER_TOKEN_PATTERN = /\bBearer\s+\S+/gi
 
+type PendingCapture =
+  | { kind: 'event'; eventName: string; properties: Properties }
+  | { kind: 'log'; record: CaptureLogOptions }
+
+const MAX_PENDING_CAPTURES = 100
+
+let posthogClient: PostHogClient | undefined
+let initializationPromise: Promise<void> | undefined
+let initializationScheduled = false
 let initialized = false
+let pendingCaptures: PendingCapture[] = []
 
 function envString(name: string): string | undefined {
   const env = import.meta.env as Record<string, unknown>
@@ -206,21 +218,70 @@ export function createAnalyticsConfig(
   }
 }
 
-export function initAnalytics(): void {
-  if (initialized || import.meta.env.MODE === 'test') return
+function flushPendingCaptures(): void {
+  if (!posthogClient) return
+
+  for (const pendingCapture of pendingCaptures) {
+    if (pendingCapture.kind === 'event') {
+      posthogClient.capture(pendingCapture.eventName, pendingCapture.properties)
+    } else {
+      posthogClient.captureLog(pendingCapture.record)
+    }
+  }
+  pendingCaptures = []
+}
+
+function enqueueCapture(capture: PendingCapture): void {
+  if (!initializationScheduled || pendingCaptures.length >= MAX_PENDING_CAPTURES) return
+  pendingCaptures.push(capture)
+}
+
+export function initAnalytics(): Promise<void> {
+  if (initialized) return Promise.resolve()
+  if (initializationPromise) return initializationPromise
 
   const token = envString('VITE_POSTHOG_KEY')
-  if (!token) return
+  if (!token) return Promise.resolve()
+  initializationScheduled = true
 
   const replaySampleRate = parseReplaySampleRate(envString('VITE_POSTHOG_REPLAY_SAMPLE_RATE'))
   const logEnvironment = envString('VITE_DEPLOYMENT_ENV') ?? DEFAULT_LOG_ENVIRONMENT
 
-  posthog.init(token, createAnalyticsConfig(replaySampleRate, logEnvironment))
+  initializationPromise = import('posthog-js').then(({ default: posthog }) => {
+    posthog.init(token, createAnalyticsConfig(replaySampleRate, logEnvironment))
+    posthogClient = posthog
+    initialized = true
 
-  initialized = true
+    if (replaySampleRate > 0 && Math.random() < replaySampleRate) {
+      posthog.startSessionRecording({ sampling: true, linked_flag: true })
+    }
 
-  if (replaySampleRate > 0 && Math.random() < replaySampleRate) {
-    posthog.startSessionRecording({ sampling: true, linked_flag: true })
+    flushPendingCaptures()
+  }).catch(() => {
+    initializationPromise = undefined
+    pendingCaptures = []
+  })
+
+  return initializationPromise
+}
+
+export function scheduleAnalyticsInitialization(): void {
+  if (initializationScheduled || initialized || import.meta.env.MODE === 'test') return
+  if (!envString('VITE_POSTHOG_KEY')) return
+
+  initializationScheduled = true
+  const scheduleImport = () => {
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(() => { void initAnalytics() }, { timeout: 3_000 })
+    } else {
+      window.setTimeout(() => { void initAnalytics() }, 1_000)
+    }
+  }
+
+  if (document.readyState === 'complete') {
+    scheduleImport()
+  } else {
+    window.addEventListener('load', scheduleImport, { once: true })
   }
 }
 
@@ -229,8 +290,12 @@ export function isAnalyticsEnabled(): boolean {
 }
 
 export function captureAnalyticsEvent(eventName: string, properties?: AnalyticsProperties): void {
-  if (!initialized) return
-  posthog.capture(eventName, sanitizeAnalyticsProperties(properties))
+  const sanitizedProperties = sanitizeAnalyticsProperties(properties)
+  if (!posthogClient) {
+    enqueueCapture({ kind: 'event', eventName, properties: sanitizedProperties })
+    return
+  }
+  posthogClient.capture(eventName, sanitizedProperties)
 }
 
 export function captureFrontendLog(
@@ -238,17 +303,23 @@ export function captureFrontendLog(
   body: string,
   attributes?: Record<string, unknown>
 ): void {
-  if (!initialized) return
-
   const record = sanitizeFrontendLogRecord({
     body,
     level,
     attributes: sanitizeFrontendLogAttributes(attributes),
   })
   if (!record) return
-  posthog.captureLog(record)
+  if (!posthogClient) {
+    enqueueCapture({ kind: 'log', record })
+    return
+  }
+  posthogClient.captureLog(record)
 }
 
 export function resetAnalyticsForTests(): void {
+  posthogClient = undefined
+  initializationPromise = undefined
+  initializationScheduled = false
   initialized = false
+  pendingCaptures = []
 }

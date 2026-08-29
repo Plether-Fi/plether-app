@@ -154,14 +154,14 @@ export const PoolLiquidity: Story = {
             { label: '24h change', value: '-0.16%', tone: 'negative' },
             { label: '24h volume', value: <TokenAmount amount="2.4M" /> },
             {
-              label: 'Long open interest',
-              value: <TokenAmount amount="10.8M" />,
-              tone: 'positive',
-            },
-            {
-              label: 'Short open interest',
-              value: <TokenAmount amount="7.9M" />,
-              tone: 'negative',
+              label: 'Directional limit used',
+              directionalLimit: {
+                usagePercent: 87,
+                side: 'long',
+                totalExposure: <TokenAmount amount="8.36M" />,
+                netExposure: <TokenAmount amount="3.07M" />,
+                limit: <TokenAmount amount="3.53M" />,
+              },
             },
             { label: 'Pool liquidity', value: <TokenAmount amount="6.3M" /> },
             { label: 'Cost of carry', value: '5.24%' },

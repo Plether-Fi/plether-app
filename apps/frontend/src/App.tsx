@@ -2,12 +2,11 @@ import { lazy, Suspense } from 'react'
 import { BrowserRouter, Navigate, Routes, Route } from 'react-router-dom'
 import { Layout } from './components/layout'
 import { TransactionModal } from './components/TransactionModal'
-import { RiskDisclaimer } from './components/RiskDisclaimer'
-import { TestnetWelcomeModal } from './components/TestnetWelcomeModal'
 import { Spinner } from './components/ui/Spinner'
 import { isPrimaryAppDeployment, isSepoliaDeployment } from './utils/deployment'
 
 const Perps = lazy(() => import('./pages/Perps'))
+const Vaults = lazy(() => import('./pages/Vaults'))
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const Mint = lazy(() => import('./pages/Mint'))
 const Stake = lazy(() => import('./pages/Stake'))
@@ -15,6 +14,8 @@ const History = lazy(() => import('./pages/History'))
 const Terms = lazy(() => import('./pages/Terms'))
 const Privacy = lazy(() => import('./pages/Privacy'))
 const RiskDisclosurePage = lazy(() => import('./pages/RiskDisclosure'))
+const RiskDisclaimer = lazy(() => import('./components/RiskDisclaimer').then((module) => ({ default: module.RiskDisclaimer })))
+const TestnetWelcomeModal = lazy(() => import('./components/TestnetWelcomeModal').then((module) => ({ default: module.TestnetWelcomeModal })))
 
 function App() {
   const shouldDefaultToSpot = isPrimaryAppDeployment()
@@ -25,6 +26,8 @@ function App() {
         <Suspense fallback={<div className="flex items-center justify-center min-h-[50vh]"><Spinner size="lg" /></div>}>
           <Routes>
             <Route path="/" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Perps />} />
+            <Route path="/vaults" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Vaults />} />
+            <Route path="/vaults/:trancheId" element={shouldDefaultToSpot ? <Navigate to="/spot" replace /> : <Vaults />} />
             <Route path="/spot" element={<Dashboard />} />
             <Route path="/leverage" element={<Dashboard />} />
             <Route path="/lending" element={<Dashboard />} />
@@ -38,7 +41,9 @@ function App() {
         </Suspense>
       </Layout>
       <TransactionModal />
-      {isSepoliaDeployment() ? <TestnetWelcomeModal /> : <RiskDisclaimer />}
+      <Suspense fallback={null}>
+        {isSepoliaDeployment() ? <TestnetWelcomeModal /> : <RiskDisclaimer />}
+      </Suspense>
     </BrowserRouter>
   )
 }

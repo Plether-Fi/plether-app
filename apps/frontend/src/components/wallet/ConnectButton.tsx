@@ -1,17 +1,18 @@
+import { lazy, Suspense } from 'react'
 import { useAccount, useDisconnect, useChainId } from 'wagmi'
 import { arbitrumSepolia, mainnet, sepolia } from 'wagmi/chains'
 import { useLocation } from 'react-router-dom'
-import { anvil, syncAppKitModalStyleOverrides } from '../../config/wagmi'
+import { anvil, openAppKit } from '../../config/wagmi'
 import { formatAddress } from '../../utils/formatters'
-import { useAppKit } from '@reown/appkit/react'
 import { useSwitchToArbitrumSepolia } from '../../hooks'
-import { SponsoredOperationHistoryButton } from '../SponsoredOperationActivity'
+
+const SponsoredOperationHistoryButton = lazy(() => import('../SponsoredOperationActivity').then((module) => ({ default: module.SponsoredOperationHistoryButton })))
 
 const SUPPORTED_CHAIN_IDS: number[] = [mainnet.id, sepolia.id, arbitrumSepolia.id, anvil.id as number]
 const WALLET_BUTTON_CLASS =
-  'inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-3 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] enabled:hover:underline enabled:hover:underline-offset-4 sm:px-4'
+  'group inline-flex min-h-11 shrink-0 items-center justify-center gap-2 whitespace-nowrap border border-[#FF572D] bg-[#FF572D] px-3 py-2 text-[#FFF5F9] transition-colors enabled:hover:border-[#FFF5F9] enabled:hover:bg-[#FFF5F9] enabled:hover:text-[#250917] sm:px-4'
 const SWITCH_NETWORK_BUTTON_CLASS =
-  'inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-2 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] enabled:hover:underline enabled:hover:underline-offset-4 disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto xl:px-3'
+  'group inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center gap-2 whitespace-nowrap border border-[#FFAB96] bg-[#FFAB96] px-2 py-2 text-xs font-semibold text-[#250917] transition-colors enabled:hover:border-[#FFAB96] enabled:hover:bg-[#250917] enabled:hover:text-[#FFAB96] disabled:cursor-not-allowed disabled:opacity-50 xl:w-auto xl:px-3'
 
 export function ConnectButton() {
   const { address, isConnected } = useAccount()
@@ -22,7 +23,6 @@ export function ConnectButton() {
     switchError,
     clearSwitchError,
   } = useSwitchToArbitrumSepolia()
-  const { open } = useAppKit()
   const chainId = useChainId()
   const location = useLocation()
 
@@ -44,7 +44,10 @@ export function ConnectButton() {
   const isWrongNetwork = !SUPPORTED_CHAIN_IDS.includes(chainId)
   const isArbitrumSepolia = chainId === arbitrumSepolia.id
   const isPerpsRoute = location.pathname === '/'
-  const shouldShowPerpsNetworkSwitch = isPerpsRoute && !isArbitrumSepolia
+  const isArbitrumSepoliaRoute = isPerpsRoute
+    || location.pathname === '/vaults'
+    || location.pathname.startsWith('/vaults/')
+  const shouldShowPerpsNetworkSwitch = isArbitrumSepoliaRoute && !isArbitrumSepolia
 
   if (!isConnected) {
     return (
@@ -53,14 +56,14 @@ export function ConnectButton() {
         aria-label="Connect Wallet"
         onClick={() => {
           clearSwitchError()
-          syncAppKitModalStyleOverrides()
-          void open()
-          syncAppKitModalStyleOverrides()
+          void openAppKit()
         }}
         className={`${WALLET_BUTTON_CLASS} text-sm font-medium`}
       >
         <span className="material-symbols-outlined text-lg">account_balance_wallet</span>
-        <span className="hidden min-[430px]:inline">Connect Wallet</span>
+        <span className="hidden group-hover:underline group-hover:underline-offset-4 min-[430px]:inline">
+          Connect Wallet
+        </span>
       </button>
     )
   }
@@ -97,32 +100,38 @@ export function ConnectButton() {
                 <span className="relative h-4 w-4">
                   <span className="absolute inset-0 rounded-full border-2 border-[#250917]/30 border-t-[#250917] animate-spin" />
                 </span>
-                <span className="hidden xl:inline">Switching...</span>
+                <span className="hidden group-hover:underline group-hover:underline-offset-4 xl:inline">
+                  Switching...
+                </span>
               </>
             ) : (
               <>
                 <span className="material-symbols-outlined text-base">swap_horiz</span>
-                <span className="hidden xl:inline">Switch Network</span>
+                <span className="hidden group-hover:underline group-hover:underline-offset-4 xl:inline">
+                  Switch Network
+                </span>
               </>
             )}
           </button>
         ) : null}
 
-        {isPerpsRoute ? <SponsoredOperationHistoryButton /> : null}
+        {isPerpsRoute ? (
+          <Suspense fallback={null}>
+            <SponsoredOperationHistoryButton />
+          </Suspense>
+        ) : null}
 
         {/* Account button */}
         <button
           onClick={() => {
-            syncAppKitModalStyleOverrides()
-            void open({ view: 'Account' })
-            syncAppKitModalStyleOverrides()
+            void openAppKit({ view: 'Account' })
           }}
           title="Open wallet account"
           aria-label={`Open wallet account ${formatAddress(address ?? '')}`}
           className={`group h-11 w-11 !px-0 sm:w-auto sm:!px-3 ${WALLET_BUTTON_CLASS}`}
         >
           <div className="w-2 h-2 rounded-full bg-positive" />
-          <span className="hidden whitespace-nowrap text-xs font-medium sm:inline sm:text-sm">
+          <span className="hidden whitespace-nowrap text-xs font-medium group-hover:underline group-hover:underline-offset-4 sm:inline sm:text-sm">
             {formatAddress(address ?? '')}
           </span>
         </button>

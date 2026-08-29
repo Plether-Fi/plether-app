@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run --project unit",
+    "test": "vitest run --project unit && npm run test:worker",
+    "test:worker": "node --test test/cloudflare-worker.test.mjs",
     "test:watch": "vitest --project unit",
     "test:coverage": "vitest run --project unit --coverage",
     "test:integration": "vitest run --project integration",
@@ -21,7 +22,8 @@
     "storybook": "storybook dev -p 6006",
     "build-storybook": "storybook build",
     "test:e2e": "playwright test --config=e2e/playwright.config.ts",
-    "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui"
+    "test:e2e:ui": "playwright test --config=e2e/playwright.config.ts --ui",
+    "tradingview:install": "node scripts/install-tradingview-charting-library.mjs"
   },
   "dependencies": {
     "@fontsource/uncut-sans": "^5.2.5",
@@ -32,7 +34,6 @@
     "@tanstack/react-query": "^5.90.16",
     "better-result": "^2.1.0",
     "idb-keyval": "^6.2.2",
-    "lightweight-charts": "^5.2.0",
     "permissionless": "0.3.7",
     "posthog-js": "^1.393.0",
     "react": "^19.2.0",

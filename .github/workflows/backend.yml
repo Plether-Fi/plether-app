@@ -24,19 +24,111 @@ jobs:
         with:
           ghc-version: '9.4.8'
           cabal-version: 'latest'
+          cabal-update: false
 
       - name: Cache cabal store
         uses: actions/cache@v4
         with:
           path: ~/.cabal/store
-          key: ${{ runner.os }}-cabal-${{ hashFiles('apps/backend/plether-api.cabal') }}
-          restore-keys: ${{ runner.os }}-cabal-
+          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+
+      - name: Update Cabal package index
+        run: |
+          for attempt in 1 2 3; do
+            if cabal update; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cabal update failed after 3 attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
 
       - name: Install dependencies
-        run: cabal update && cabal build --only-dependencies
+        run: cabal build --only-dependencies
 
       - name: Build
         run: cabal build
 
       - name: Run tests
-        run: cabal test
+        run: cabal test plether-api-test
+
+  perps-critical-path-integration:
+    name: Perps critical path integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/backend
+    env:
+      PERPS_CRITICAL_PATH_REQUIRED: '1'
+      PERPS_CRITICAL_PATH_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/plether_critical_path
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: plether_critical_path
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d plether_critical_path"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libpq-dev libsecp256k1-dev pkg-config postgresql-client
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: '9.4.8'
+          cabal-version: 'latest'
+          cabal-update: false
+
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: ${{ runner.os }}-ghc-9.4.8-cabal-${{ hashFiles('apps/backend/plether-api.cabal', 'apps/backend/cabal.project', 'apps/backend/cabal.project.freeze') }}
+          restore-keys: ${{ runner.os }}-ghc-9.4.8-cabal-
+
+      - name: Update Cabal package index
+        run: |
+          for attempt in 1 2 3; do
+            if cabal update; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              echo "::error::cabal update failed after 3 attempts"
+              exit 1
+            fi
+
+            delay=$((attempt * 10))
+            echo "::warning::cabal update failed (attempt $attempt/3); retrying in ${delay}s"
+            sleep "$delay"
+          done
+
+      - name: Install integration test dependencies
+        run: cabal build --only-dependencies plether-api-integration-test
+
+      - name: Verify PostgreSQL prerequisite
+        run: |
+          pg_isready --dbname="$PERPS_CRITICAL_PATH_DATABASE_URL"
+          psql "$PERPS_CRITICAL_PATH_DATABASE_URL" --set ON_ERROR_STOP=1 --command "SELECT 1;"
+
+      - name: Run deterministic Perps critical path integration tests
+        run: cabal test plether-api-integration-test --test-show-details=direct -j1

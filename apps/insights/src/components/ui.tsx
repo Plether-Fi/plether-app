@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { formatSignedUsdc, shortAddress } from '../utils/format'
+import { formatSignedUsdc, shortAddress, xProfileUrl } from '../utils/format'
 
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={`min-w-0 border border-brand-border/25 bg-surface-panel ${className}`}>{children}</section>
@@ -35,9 +35,14 @@ export function Pnl({ value, className = '' }: { value: string | null | undefine
 }
 
 export function WalletIdentity({ address, displayName, competitionSlug }: { address: string; displayName: string | null; competitionSlug: string }) {
+  const publicXProfile = competitionSlug === 'testnet-trading-2026-09' ? xProfileUrl(displayName) : null
   return (
     <div className="min-w-0">
-      {displayName ? <div className="truncate font-semibold text-content-primary">{displayName}</div> : null}
+      {displayName ? publicXProfile ? (
+        <a href={publicXProfile} target="_blank" rel="noreferrer" className="block truncate font-semibold text-content-primary hover:text-brand-peach hover:underline">
+          @{displayName.replace(/^@/, '')} ↗
+        </a>
+      ) : <div className="truncate font-semibold text-content-primary">{displayName}</div> : null}
       <Link to={`/competitions/${encodeURIComponent(competitionSlug)}/wallets/${address}`} className={`whitespace-nowrap font-mono text-xs text-brand-peach hover:underline ${displayName ? '' : 'text-sm'}`}>
         {shortAddress(address)}
       </Link>

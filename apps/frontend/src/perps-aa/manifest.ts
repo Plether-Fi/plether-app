@@ -397,7 +397,11 @@ export async function fetchPerpsAaManifest(
   let response: Response
   try {
     response = await fetchManifest(manifestUrl, {
-      cache: 'no-store',
+      // Revalidate on every continuity check, while allowing the browser to
+      // turn ETag/Last-Modified matches into a bodyless conditional response.
+      // Unlike the default cache mode, this never accepts a cached manifest
+      // without first checking it with the origin.
+      cache: 'no-cache',
       credentials: 'omit',
       signal: options.signal,
     })

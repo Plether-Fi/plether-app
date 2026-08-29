@@ -4,13 +4,16 @@ import { PendingTxBadge } from '../PendingTxBadge'
 import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
-  { path: '/', label: 'Perps' },
+  { path: '/', label: 'Perps', perpsSurface: true },
+  { path: '/vaults', label: 'Vaults', perpsSurface: true },
 ]
 
 export function Header() {
   const location = useLocation()
   const shouldHidePerps = isPrimaryAppDeployment()
-  const visibleNavLinks = shouldHidePerps ? navLinks.filter(({ path }) => path !== '/') : navLinks
+  const visibleNavLinks = shouldHidePerps
+    ? navLinks.filter(({ perpsSurface }) => !perpsSurface)
+    : navLinks
   const homePath = shouldHidePerps ? '/spot' : '/'
 
   return (
@@ -24,7 +27,9 @@ export function Header() {
 
           <nav className="hidden min-w-0 items-center gap-1 lg:flex">
             {visibleNavLinks.map(({ path, label }) => {
-              const isActive = location.pathname === path
+              const isActive = path === '/vaults'
+                ? location.pathname === '/vaults' || location.pathname.startsWith('/vaults/')
+                : location.pathname === path
               return (
                 <Link
                   key={path}

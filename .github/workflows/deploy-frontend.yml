@@ -3,7 +3,9 @@ name: Deploy Frontend
 on:
   push:
     branches: [master]
-    paths: [apps/frontend/**]
+    paths:
+      - apps/frontend/**
+      - .github/workflows/deploy-frontend.yml
   workflow_dispatch:
     inputs:
       environment:
@@ -44,6 +46,25 @@ jobs:
         working-directory: apps/insights
         run: npm ci
 
+      - name: Require TradingView repository token
+        env:
+          TRADINGVIEW_GITHUB_TOKEN: ${{ secrets.TRADINGVIEW_GITHUB_TOKEN }}
+        run: test -n "$TRADINGVIEW_GITHUB_TOKEN"
+
+      - name: Checkout TradingView Advanced Charts
+        uses: actions/checkout@v4
+        with:
+          repository: tradingview/charting_library
+          # TradingView Advanced Charts v32.0.0. Pin executable third-party code by commit.
+          ref: f2a61ba473ec254b69f9c1377c67e4b81eff853b
+          token: ${{ secrets.TRADINGVIEW_GITHUB_TOKEN }}
+          persist-credentials: false
+          path: .private/tradingview-charting-library
+
+      - name: Install TradingView runtime assets
+        working-directory: apps/frontend
+        run: npm run tradingview:install -- "$GITHUB_WORKSPACE/.private/tradingview-charting-library"
+
       - name: Resolve deploy target
         id: target
         run: |
@@ -66,7 +87,25 @@ jobs:
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
           VITE_POSTHOG_REPLAY_SAMPLE_RATE: ${{ vars.VITE_POSTHOG_REPLAY_SAMPLE_RATE }}
           VITE_DEPLOYMENT_ENV: ${{ env.TARGET_ENV }}
+          VITE_TRADINGVIEW_CHARTS_ENABLED: 'true'
+          # Repository variables are selected explicitly because this job does
+          # not bind to GitHub environments. Each target defaults fail-closed.
+          VITE_PERPS_CANDLE_API_ENABLED: ${{ env.TARGET_ENV == 'sepolia' && (vars.VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA || 'false') || (vars.VITE_PERPS_CANDLE_API_ENABLED_MAINNET || 'false') }}
         run: npm run build
+
+      - name: Validate TradingView runtime payload
+        working-directory: apps/frontend
+        run: |
+          test -s dist/charting_library/charting_library.standalone.js
+          test -d dist/charting_library/bundles
+          test -n "$(find dist/charting_library/bundles -type f -print -quit)"
+          test ! -e dist/charting_library/sameorigin.html
+          test ! -e dist/charting_library/charting_library.d.ts
+          test ! -e dist/charting_library/datafeed-api.d.ts
+          test ! -e dist/charting_library/package.json
+          test ! -e dist/charting_library/charting_library.cjs.js
+          test ! -e dist/charting_library/charting_library.esm.js
+          test ! -e dist/charting_library/charting_library.js
 
       - name: Validate testnet AA manifest
         if: env.TARGET_ENV == 'sepolia'

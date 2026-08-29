@@ -11,13 +11,15 @@ const TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 
 const mocks = vi.hoisted(() => ({
   executeSponsoredPerpsAction: vi.fn(),
+  trackSponsoredOperationPreflightFailure: vi.fn(),
   writeContractAsync: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
   invalidateQueries: vi.fn(),
 }))
 
 vi.mock('wagmi', () => ({
   usePublicClient: () => ({
-    waitForTransactionReceipt: vi.fn(),
+    waitForTransactionReceipt: mocks.waitForTransactionReceipt,
   }),
   useWriteContract: () => ({
     writeContractAsync: mocks.writeContractAsync,
@@ -39,13 +41,13 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3',
+    usdc: '0x1647e41f49ED6D688936092B5a291c4B28106343',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
     usdcEip712Version: null,
-    marginClearinghouse: '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e',
-    cfdEngine: '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a',
-    orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+    marginClearinghouse: '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211',
+    cfdEngine: '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D',
+    orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -56,6 +58,8 @@ vi.mock('../../perps-aa', async (importOriginal) => {
   return {
     ...actual,
     executeSponsoredPerpsAction: mocks.executeSponsoredPerpsAction,
+    trackSponsoredOperationPreflightFailure:
+      mocks.trackSponsoredOperationPreflightFailure,
     usePerpsIdentity: () => ({
       status: 'ready',
       ownerAddress: '0x1111111111111111111111111111111111111111',
@@ -106,6 +110,32 @@ describe('usePerpsTrading sponsorship route', () => {
       userOperationHash: USER_OPERATION_HASH,
       transactionHash: TRANSACTION_HASH,
     })
+    mocks.writeContractAsync.mockResolvedValue(TRANSACTION_HASH)
+    mocks.waitForTransactionReceipt.mockResolvedValue({
+      status: 'success',
+      transactionHash: TRANSACTION_HASH,
+    })
+  })
+
+  it('funds the Trading Account with an exact owner-wallet USDC transfer', async () => {
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.fundTradingAccount(25_000_000n))
+      .resolves.toBe(TRANSACTION_HASH)
+
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account: OWNER,
+        chainId: 421614,
+        address: '0x1647e41f49ED6D688936092B5a291c4B28106343',
+        functionName: 'transfer',
+        args: [ACCOUNT, 25_000_000n],
+      })
+    )
+    expect(mocks.waitForTransactionReceipt).toHaveBeenCalledWith({
+      hash: TRANSACTION_HASH,
+    })
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
   it('builds an atomic Trading Account balance deposit without a direct EOA write', async () => {
@@ -128,6 +158,22 @@ describe('usePerpsTrading sponsorship route', () => {
       })
     )
     expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+
+  it('tracks invalid deposits as explicit preflight failures', async () => {
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.depositMargin(0n)).rejects.toThrow(
+      'Deposit amount must be greater than zero'
+    )
+
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+    expect(
+      mocks.trackSponsoredOperationPreflightFailure
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ action: 'deposit' }),
+      expect.objectContaining({ reason: 'INVALID_AMOUNT' })
+    )
   })
 
   it('withdraws from the Simple Trading Account to its verified Owner Wallet', async () => {

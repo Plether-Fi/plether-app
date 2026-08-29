@@ -69,7 +69,7 @@ describe('Protocol Explorer rollout routing', () => {
     await waitFor(() => {
       expect(screen.getByText('competition-leaderboard')).toBeInTheDocument()
       expect(screen.getByTestId('location')).toHaveTextContent(
-        '/competitions/testnet-trading-2026',
+        '/competitions/testnet-trading-2026-09',
       )
     })
     expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
@@ -80,7 +80,7 @@ describe('Protocol Explorer rollout routing', () => {
     await waitFor(() => {
       expect(screen.queryByText('protocol-transactions')).not.toBeInTheDocument()
       expect(screen.getByTestId('location')).toHaveTextContent(
-        '/competitions/testnet-trading-2026',
+        '/competitions/testnet-trading-2026-09',
       )
     })
   })
@@ -141,7 +141,7 @@ describe('Protocol Explorer rollout routing', () => {
     await waitFor(() => {
       expect(screen.getByText('competition-leaderboard')).toBeInTheDocument()
       expect(screen.getByTestId('location')).toHaveTextContent(
-        '/competitions/testnet-trading-2026',
+        '/competitions/testnet-trading-2026-09',
       )
     })
     expect(screen.queryByRole('heading', {
@@ -176,7 +176,7 @@ describe('Protocol Explorer rollout routing', () => {
     renderRoutes('/wallets/0x1234')
     await waitFor(() => {
       expect(screen.getByTestId('location')).toHaveTextContent(
-        '/competitions/testnet-trading-2026/wallets/0x1234',
+        '/competitions/testnet-trading-2026-09/wallets/0x1234',
       )
     })
   })

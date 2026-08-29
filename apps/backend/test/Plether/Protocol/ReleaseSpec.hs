@@ -1,6 +1,6 @@
 module Plether.Protocol.ReleaseSpec (spec) where
 
-import Control.Monad (filterM)
+import Control.Monad (filterM, forM_)
 import Data.Aeson (Value (..), eitherDecodeFileStrict, withObject, (.:))
 import Data.Aeson.KeyMap qualified as KM
 import Data.Aeson.Types (Parser, parseEither)
@@ -9,7 +9,15 @@ import Data.Maybe (fromJust)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Paths_plether_api (getDataFileName)
-import Plether.Config (Config (..))
+import Plether.Config
+  ( Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Protocol.Governance
 import Plether.Protocol.Parameters (ParameterDefinition (..), parameterCatalog)
 import Plether.Protocol.Release
@@ -22,41 +30,52 @@ spec :: Spec
 spec = do
   describe "knownProtocolReleases" $ do
     it "pins the current Arbitrum Sepolia deployment metadata" $ do
-      let release = sepoliaRelease
+      let release = currentSepoliaRelease
 
-      prId release `shouldBe` "arbitrum-sepolia-2026-07"
-      prName release `shouldBe` "Plether Perps — July 2026"
+      prId release `shouldBe` "arbitrum-sepolia-2026-08-v1.2.0"
+      prName release `shouldBe` "Plether Perps — August 2026 (v1.2.0)"
       prChainId release `shouldBe` 421614
-      prDeploymentBlock release `shouldBe` 288439939
+      prDeploymentBlock release `shouldBe` 302257125
       prCalculationVersion release `shouldBe` "protocol-transparency-v1"
-      prUsdc release `shouldBe` "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+      prUsdc release `shouldBe` "0x1647e41f49ED6D688936092B5a291c4B28106343"
+      protocolReleaseId 421614 `shouldBe` prId release
 
-    it "pins every monitored contract address for the release" $ do
-      releaseAddresses sepoliaRelease
+    it "pins every monitored contract address for the current release" $ do
+      releaseAddresses currentSepoliaRelease
         `shouldBe`
-          [ "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
-          , "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C"
-          , "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
-          , "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39"
-          , "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
-          , "0x4E202C06e2C378d1a85577ac631e592AB66f23FB"
-          , "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
-          , "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
-          , "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
-          , "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
-          , "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+          [ "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+          , "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
+          , "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+          , "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
+          , "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+          , "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+          , "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+          , "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+          , "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+          , "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+          , "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
           ]
 
-    it "contains only complete, unique contract addresses" $ do
-      let addresses = prUsdc sepoliaRelease : releaseAddresses sepoliaRelease
-          normalized = map T.toLower addresses
+    it "preserves the July deployment as a historical release" $ do
+      prId julySepoliaRelease `shouldBe` "arbitrum-sepolia-2026-07"
+      prName julySepoliaRelease `shouldBe` "Plether Perps — July 2026"
+      prDeploymentBlock julySepoliaRelease `shouldBe` 288439939
+      prUsdc julySepoliaRelease `shouldBe` "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+      prOrderRouter julySepoliaRelease
+        `shouldBe` "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
 
-      addresses `shouldSatisfy` all isValidAddress
-      normalized `shouldSatisfy` all (/= zeroAddress)
-      length (nub normalized) `shouldBe` length normalized
+    it "contains only complete, unique contract addresses in every release" $
+      forM_ knownProtocolReleases $ \release -> do
+        let addresses = prUsdc release : releaseAddresses release
+            normalized = map T.toLower addresses
+
+        addresses `shouldSatisfy` all isValidAddress
+        normalized `shouldSatisfy` all (/= zeroAddress)
+        length (nub normalized) `shouldBe` length normalized
 
     it "publishes only explicit non-secret operational addresses and labels permissionless roles" $ do
-      let wallets = prOperationalWallets sepoliaRelease
+      let wallets = prOperationalWallets julySepoliaRelease
+      prOperationalWallets currentSepoliaRelease `shouldBe` []
       map powRole wallets
         `shouldBe` ["oracle_updater", "order_keeper"]
       map powAddress wallets
@@ -74,26 +93,27 @@ spec = do
         wallets
         `shouldSatisfy` all (== 66)
 
-    it "keeps the packaged release manifest in parity with the compiled release" $ do
+    it "keeps every packaged release in parity with the compiled release table" $ do
       manifestPath <- resolveReleaseManifestPath
       decoded <- eitherDecodeFileStrict manifestPath
-      case decoded >>= parseEither parseManifestRelease of
+      case decoded >>= parseEither parseManifestReleases of
         Left decodeError ->
           expectationFailure $
             "Could not decode packaged protocol release manifest: " <> decodeError
-        Right (currentReleaseId, manifestRelease) -> do
+        Right (currentReleaseId, manifestReleases) -> do
           let compiledCurrentRelease = currentProtocolRelease baseConfig
           currentReleaseId `shouldBe` prId compiledCurrentRelease
-          manifestRelease `shouldBe` protocolReleaseToJson compiledCurrentRelease
+          manifestReleases
+            `shouldBe` map protocolReleaseToJson knownProtocolReleases
 
-    it "keeps the manifest ABI in parity with every parameter and governance schema read" $ do
+    it "keeps every release ABI in parity with parameter and governance schema reads" $ do
       manifestPath <- resolveReleaseManifestPath
       decoded <- eitherDecodeFileStrict manifestPath
       case decoded >>= parseEither parseManifestAnalytics of
         Left decodeError ->
           expectationFailure $
             "Could not decode packaged protocol analytics ABI: " <> decodeError
-        Right (manifestReads, manifestEvents) -> do
+        Right releaseAnalytics -> do
           let requiredReads =
                 nub $
                   map pdGetter parameterCatalog
@@ -110,17 +130,21 @@ spec = do
                        ]
               requiredEvents =
                 nub $
-                  [ gedSignature eventDefinition
+                  ledgerEventSignatures
+                    <> [ gedSignature eventDefinition
                   | definition <- governanceCategoryDefinitions
                   , eventDefinition <- gcdEvents definition
                   ]
                     <> map gredSignature governanceRoleEvents
 
-          requiredReads \\ manifestReads `shouldBe` []
-          requiredEvents \\ manifestEvents `shouldBe` []
-          "PoolConfigCancelled()" `elem` manifestEvents `shouldBe` False
-          length (nub manifestReads) `shouldBe` length manifestReads
-          length (nub manifestEvents) `shouldBe` length manifestEvents
+          map (\(releaseId, _, _) -> releaseId) releaseAnalytics
+            `shouldBe` map prId knownProtocolReleases
+          forM_ releaseAnalytics $ \(_, manifestReads, manifestEvents) -> do
+            requiredReads \\ manifestReads `shouldBe` []
+            requiredEvents \\ manifestEvents `shouldBe` []
+            "PoolConfigCancelled()" `elem` manifestEvents `shouldBe` False
+            length (nub manifestReads) `shouldBe` length manifestReads
+            length (nub manifestEvents) `shouldBe` length manifestEvents
 
   describe "currentProtocolRelease" $ do
     it "resolves the known release case-insensitively by chain and router" $ do
@@ -128,11 +152,11 @@ spec = do
             currentProtocolRelease
               baseConfig
                 { cfgPerpsOrderRouter =
-                    T.toLower (prOrderRouter sepoliaRelease)
+                    T.toLower (prOrderRouter currentSepoliaRelease)
                 , cfgPerpsIndexerStartBlock = 1
                 }
 
-      release `shouldBe` sepoliaRelease
+      release `shouldBe` currentSepoliaRelease
 
     it "does not reuse the known release when the configured router differs" $ do
       let release =
@@ -143,7 +167,7 @@ spec = do
                 }
 
       prId release `shouldBe` "chain-421614-block-123"
-      prId release `shouldNotBe` prId sepoliaRelease
+      prId release `shouldNotBe` prId currentSepoliaRelease
       prOrderRouter release `shouldBe` alternateRouter
       prDeploymentBlock release `shouldBe` 123
 
@@ -186,9 +210,11 @@ spec = do
           length (nub releaseIds) == length releaseIds
 
   describe "protocolReleaseById" $ do
-    it "resolves a checked-in release on the configured RPC chain" $
-      protocolReleaseById baseConfig (prId sepoliaRelease)
-        `shouldBe` Just sepoliaRelease
+    it "resolves current and historical checked-in releases on the configured RPC chain" $ do
+      protocolReleaseById baseConfig (prId currentSepoliaRelease)
+        `shouldBe` Just currentSepoliaRelease
+      protocolReleaseById baseConfig (prId julySepoliaRelease)
+        `shouldBe` Just julySepoliaRelease
 
     it "resolves a configured fallback release without aliasing it to a manifest release" $ do
       let fallbackConfig =
@@ -200,50 +226,47 @@ spec = do
 
       protocolReleaseById fallbackConfig (prId fallback)
         `shouldBe` Just fallback
-      protocolReleaseById fallbackConfig (prId sepoliaRelease)
-        `shouldBe` Just sepoliaRelease
+      protocolReleaseById fallbackConfig (prId currentSepoliaRelease)
+        `shouldBe` Just currentSepoliaRelease
+      protocolReleaseById fallbackConfig (prId julySepoliaRelease)
+        `shouldBe` Just julySepoliaRelease
 
     it "rejects unknown release IDs" $
       protocolReleaseById baseConfig "unknown-release"
         `shouldBe` Nothing
 
-parseManifestRelease :: Value -> Parser (Text, Value)
-parseManifestRelease =
+parseManifestReleases :: Value -> Parser (Text, [Value])
+parseManifestReleases =
   withObject "ProtocolReleaseManifest" $ \manifest -> do
     currentReleaseId <- manifest .: "currentReleaseId"
     releases <- manifest .: "releases" :: Parser [Value]
     case find (hasReleaseId currentReleaseId) releases of
       Nothing -> fail "currentReleaseId does not identify an entry in releases"
-      Just (Object release) ->
-        pure
-          ( currentReleaseId
-          , Object $ KM.delete "analyticsAbi" release
-          )
-      Just _ -> fail "release entry is not an object"
+      Just _ -> do
+        manifestReleases <- traverse withoutAnalyticsAbi releases
+        pure (currentReleaseId, manifestReleases)
  where
   hasReleaseId releaseId (Object release) =
     KM.lookup "releaseId" release == Just (String releaseId)
   hasReleaseId _ _ = False
+  withoutAnalyticsAbi (Object release) =
+    pure $ Object $ KM.delete "analyticsAbi" release
+  withoutAnalyticsAbi _ = fail "release entry is not an object"
 
-parseManifestAnalytics :: Value -> Parser ([Text], [Text])
+parseManifestAnalytics :: Value -> Parser [(Text, [Text], [Text])]
 parseManifestAnalytics =
   withObject "ProtocolReleaseManifest" $ \manifest -> do
-    currentReleaseId <- manifest .: "currentReleaseId"
     releases <- manifest .: "releases" :: Parser [Value]
-    currentRelease <-
-      case find (hasReleaseId currentReleaseId) releases of
-        Just release -> pure release
-        Nothing -> fail "currentReleaseId does not identify an entry in releases"
-    withObject "ProtocolRelease" parseRelease currentRelease
+    traverse (withObject "ProtocolRelease" parseRelease) releases
  where
   parseRelease release = do
+    releaseId <- release .: "releaseId"
     analytics <- release .: "analyticsAbi"
-    withObject "ProtocolAnalyticsAbi" parseAnalytics analytics
+    (manifestReads, manifestEvents) <-
+      withObject "ProtocolAnalyticsAbi" parseAnalytics analytics
+    pure (releaseId, manifestReads, manifestEvents)
   parseAnalytics analytics =
     (,) <$> analytics .: "reads" <*> analytics .: "events"
-  hasReleaseId releaseId (Object release) =
-    KM.lookup "releaseId" release == Just (String releaseId)
-  hasReleaseId _ _ = False
 
 resolveReleaseManifestPath :: IO FilePath
 resolveReleaseManifestPath = do
@@ -260,8 +283,15 @@ resolveReleaseManifestPath = do
     path : _ -> path
     [] -> packaged
 
-sepoliaRelease :: ProtocolRelease
-sepoliaRelease =
+currentSepoliaRelease :: ProtocolRelease
+currentSepoliaRelease =
+  fromJust $
+    find
+      ((== "arbitrum-sepolia-2026-08-v1.2.0") . prId)
+      knownProtocolReleases
+
+julySepoliaRelease :: ProtocolRelease
+julySepoliaRelease =
   fromJust $
     find
       ((== "arbitrum-sepolia-2026-07") . prId)
@@ -280,6 +310,22 @@ releaseAddresses release =
   , prSeniorVault release
   , prJuniorVault release
   , prPletherOracle release
+  ]
+
+ledgerEventSignatures :: [Text]
+ledgerEventSignatures =
+  [ "OrderCommitted(uint64,address,uint8)"
+  , "OrderExecuted(uint64,uint256)"
+  , "OrderFailed(uint64,uint8)"
+  , "PositionOpened(address,uint8,uint256,uint256,uint256)"
+  , "PositionClosed(address,uint8,uint256,uint256,int256)"
+  , "PositionLiquidated(address,uint8,uint256,uint256,uint256)"
+  , "MarginAdded(address,uint256)"
+  , "Deposit(address,address,uint256)"
+  , "Withdraw(address,address,uint256)"
+  , "Deposit(address,address,uint256,uint256)"
+  , "Withdraw(address,address,address,uint256,uint256)"
+  , "Transfer(address,address,uint256)"
   ]
 
 zeroAddress :: Text
@@ -306,21 +352,40 @@ baseConfig =
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
     , cfgProtocolExplorerEnabled = True
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = "https://arb-sepolia.example"
     , cfgPerpsChainId = 421614
-    , cfgPerpsUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
-    , cfgPerpsOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
-    , cfgPerpsCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
-    , cfgPerpsMarginClearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
-    , cfgPerpsPletherOracle = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
-    , cfgPerpsAccountLens = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
-    , cfgPerpsPublicLens = "0x4E202C06e2C378d1a85577ac631e592AB66f23FB"
-    , cfgPerpsHousePool = "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
-    , cfgPerpsSeniorVault = "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
-    , cfgPerpsJuniorVault = "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
-    , cfgPerpsOrderRouterAdmin = "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C"
-    , cfgPerpsCfdEngineAdmin = "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39"
-    , cfgPerpsIndexerStartBlock = 288439939
+    , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
+    , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , cfgPerpsCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+    , cfgPerpsCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+    , cfgPerpsCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
+    , cfgPerpsMarginClearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+    , cfgPerpsPletherOracle = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
+    , cfgPerpsAccountLens = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
+    , cfgPerpsPublicLens = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSeniorVault = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgPerpsJuniorVault = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+    , cfgPerpsOrderRouterAdmin = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
+    , cfgPerpsCfdEngineAdmin = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
+    , cfgPerpsIndexerStartBlock = 302257125
+    , cfgVaultHistoryHousePoolAddress = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgVaultHistorySeniorVaultAddress = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+    , cfgVaultHistoryJuniorVaultAddress = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+    , cfgVaultHistoryDeploymentBlock = 302257125
+    , cfgVaultHistoryRpcUrl = "https://archive.example"
+    , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = currentCompetitionReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -329,4 +394,22 @@ baseConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
+    }
+
+currentCompetitionReleaseManifest :: CompetitionReleaseManifest
+currentCompetitionReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = prId currentSepoliaRelease
+    , crmChainId = prChainId currentSepoliaRelease
+    , crmUsdc = prUsdc currentSepoliaRelease
+    , crmOrderRouter = prOrderRouter currentSepoliaRelease
+    , crmMarginClearinghouse = prMarginClearinghouse currentSepoliaRelease
+    , crmAccountLens = prAccountLens currentSepoliaRelease
+    , crmCfdEngine = prCfdEngine currentSepoliaRelease
+    , crmCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
+    , crmSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
+    , crmPletherOracle = prPletherOracle currentSepoliaRelease
+    , crmIndexerStartBlock = prDeploymentBlock currentSepoliaRelease
     }

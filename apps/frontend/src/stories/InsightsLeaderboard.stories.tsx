@@ -105,7 +105,7 @@ function InsightsLeaderboardPreview() {
     <MemoryRouter>
       <main className="min-h-screen bg-app-bg px-4 py-8 text-content-primary sm:px-8">
         <div className="mx-auto max-w-6xl space-y-4">
-          <LeaderboardTitle count={standings.length} />
+          <LeaderboardTitle count={standings.length} competitionSlug={competitionSlug} />
           <Panel>
             <Leaderboard standings={standings} search="" competitionSlug={competitionSlug} />
           </Panel>

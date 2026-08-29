@@ -10,6 +10,7 @@ import {
   useState,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { DocsLink } from './DocsLink'
 
 export interface TooltipDocsLink {
   href: string
@@ -31,6 +32,7 @@ interface TooltipCoordinates {
 
 const TOOLTIP_GAP_PX = 8
 const TOOLTIP_HIDE_DELAY_MS = 300
+const TOOLTIP_OPEN_EVENT = 'plether:tooltip-open'
 const VIEWPORT_MARGIN_PX = 8
 
 export function Tooltip({
@@ -56,8 +58,9 @@ export function Tooltip({
 
   const showTooltip = useCallback(() => {
     clearHideTimer()
+    document.dispatchEvent(new CustomEvent<string>(TOOLTIP_OPEN_EVENT, { detail: tooltipId }))
     setIsVisible(true)
-  }, [clearHideTimer])
+  }, [clearHideTimer, tooltipId])
 
   const scheduleHideTooltip = useCallback(() => {
     clearHideTimer()
@@ -75,8 +78,13 @@ export function Tooltip({
     ) {
       return
     }
+    if (nextTarget instanceof Node) {
+      clearHideTimer()
+      setIsVisible(false)
+      return
+    }
     scheduleHideTooltip()
-  }, [scheduleHideTooltip])
+  }, [clearHideTimer, scheduleHideTooltip])
 
   const updatePosition = useCallback(() => {
     const triggerElement = triggerRef.current
@@ -129,6 +137,19 @@ export function Tooltip({
     if (!isVisible) return
     updatePosition()
   }, [isVisible, updatePosition, content, className])
+
+  useEffect(() => {
+    const handleOtherTooltipOpen = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === tooltipId) return
+      clearHideTimer()
+      setIsVisible(false)
+    }
+
+    document.addEventListener(TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen)
+    return () => {
+      document.removeEventListener(TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen)
+    }
+  }, [clearHideTimer, tooltipId])
 
   useEffect(() => {
     if (!isVisible) return undefined
@@ -185,16 +206,14 @@ export function Tooltip({
           >
             <div>{content}</div>
             {docsLink ? (
-              <a
+              <DocsLink
                 href={docsLink.href}
-                aria-label={`Read: ${docsLink.title}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-2 inline-block cursor-pointer font-medium text-[#FFAB96] underline underline-offset-4 transition-colors hover:text-content-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFAB96]"
+                title={docsLink.title}
+                className="mt-2 inline-block"
               >
                 <span>Read: </span>
                 <span className="italic">{docsLink.title}</span>
-              </a>
+              </DocsLink>
             ) : null}
           </div>,
           document.body

@@ -172,6 +172,236 @@ variable "aa_proxy_origin_token" {
   sensitive = true
 }
 
+variable "provision_insights_registration" {
+  type        = bool
+  default     = false
+  description = "Provision the private credentials and API configuration for first-party Insights competition registration."
+}
+
+variable "enable_insights_registration" {
+  type        = bool
+  default     = false
+  description = "Permit the one-way persisted activation of first-party Insights registration after its secrets, competition, and public edge proxy are ready. Setting false does not pause or close an already activated database window."
+}
+
+variable "insights_registration_public_origin" {
+  type        = string
+  default     = "https://insights.plether.com"
+  description = "Canonical browser origin allowed to run registration. Pages preview origins are intentionally excluded."
+
+  validation {
+    condition     = lower(var.insights_registration_public_origin) == var.insights_registration_public_origin && can(regex("^https://[a-z0-9.-]+$", var.insights_registration_public_origin))
+    error_message = "insights_registration_public_origin must be a canonical lowercase HTTPS origin without credentials, port, path, query, or fragment."
+  }
+}
+
+variable "insights_registration_origin_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Shared secret sent only by the canonical Insights Pages Worker in X-Plether-Registration-Origin."
+
+  validation {
+    condition     = var.insights_registration_origin_token == "" || can(regex("^[!-~]{32,}$", var.insights_registration_origin_token))
+    error_message = "insights_registration_origin_token must be empty or at least 32 printable non-whitespace ASCII characters with no control characters."
+  }
+}
+
+variable "insights_registration_origin_token_next" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional next Pages-to-backend registration origin token accepted during a controlled rotation overlap."
+
+  validation {
+    condition     = var.insights_registration_origin_token_next == "" || can(regex("^[!-~]{32,}$", var.insights_registration_origin_token_next))
+    error_message = "insights_registration_origin_token_next must be empty or at least 32 printable non-whitespace ASCII characters with no control characters."
+  }
+}
+
+variable "turnstile_secret_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Cloudflare Turnstile server-side Siteverify secret for Insights registration."
+
+  validation {
+    condition     = var.turnstile_secret_key == "" || can(regex("^[!-~]+$", var.turnstile_secret_key))
+    error_message = "turnstile_secret_key must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "turnstile_expected_hostname" {
+  type        = string
+  default     = "insights.plether.com"
+  description = "Exact Turnstile hostname accepted by the registration API."
+
+  validation {
+    condition     = lower(var.turnstile_expected_hostname) == var.turnstile_expected_hostname && can(regex("^[a-z0-9.-]+$", var.turnstile_expected_hostname))
+    error_message = "turnstile_expected_hostname must be a canonical lowercase hostname without a scheme, port, path, or wildcard."
+  }
+}
+
+variable "turnstile_expected_action" {
+  type        = string
+  default     = "competition_registration"
+  description = "Exact Turnstile widget action accepted by Siteverify validation."
+
+  validation {
+    condition     = var.turnstile_expected_action == "competition_registration"
+    error_message = "turnstile_expected_action must equal competition_registration so the browser widget and server validation cannot drift."
+  }
+}
+
+variable "x_oauth_client_id" {
+  type        = string
+  default     = ""
+  description = "X OAuth 2.0 client ID for the Insights registration application."
+
+  validation {
+    condition     = var.x_oauth_client_id == "" || can(regex("^[!-~]+$", var.x_oauth_client_id))
+    error_message = "x_oauth_client_id must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "x_oauth_client_secret" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "X OAuth 2.0 client secret for the Insights registration application."
+
+  validation {
+    condition     = var.x_oauth_client_secret == "" || can(regex("^[!-~]+$", var.x_oauth_client_secret))
+    error_message = "x_oauth_client_secret must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "x_oauth_callback_url" {
+  type        = string
+  default     = "https://insights.plether.com/api/insights/v1/competitions/testnet-trading-2026-09/registrations/x/callback"
+  description = "Exact X OAuth callback URL registered for the September 2026 competition."
+
+  validation {
+    condition     = can(regex("^https://[^/?#]+/api/insights/v1/competitions/[^/?#]+/registrations/x/callback$", var.x_oauth_callback_url))
+    error_message = "x_oauth_callback_url must be a clean HTTPS Insights registration callback URL without query parameters or a fragment."
+  }
+}
+
+variable "x_target_user_id" {
+  type        = string
+  default     = ""
+  description = "Stable numeric X user ID that registrants must follow."
+
+  validation {
+    condition     = var.x_target_user_id == "" || can(regex("^[0-9]+$", var.x_target_user_id))
+    error_message = "x_target_user_id must be empty or contain only decimal digits."
+  }
+}
+
+variable "x_target_handle" {
+  type        = string
+  default     = "plether_fi"
+  description = "Public X handle displayed by the registration UI, without @."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_]{1,15}$", var.x_target_handle))
+    error_message = "x_target_handle must be a valid X handle without @."
+  }
+}
+
+variable "insights_registration_email_keys" {
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+  description = "Versioned AES-256-GCM email keyring. Values are 32-byte standard-base64 keys; retain old entries during rotation."
+
+  validation {
+    condition = alltrue([
+      for version, key in var.insights_registration_email_keys :
+      can(regex("^v[1-9][0-9]*$", version)) && can(regex("^[A-Za-z0-9+/]{43}=$", key))
+    ])
+    error_message = "insights_registration_email_keys must map v1-style versions to 32-byte standard-base64 keys."
+  }
+}
+
+variable "insights_registration_email_key_version" {
+  type        = string
+  default     = "v1"
+  description = "Active email-encryption key version; it must exist in insights_registration_email_keys."
+
+  validation {
+    condition     = can(regex("^v[1-9][0-9]*$", var.insights_registration_email_key_version))
+    error_message = "insights_registration_email_key_version must use the v1, v2, ... format."
+  }
+}
+
+variable "insights_registration_email_hmac_key_base64" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Stable 32-byte standard-base64 HMAC key for normalized-email uniqueness. Rotate only with an explicit digest migration."
+
+  validation {
+    condition     = var.insights_registration_email_hmac_key_base64 == "" || can(regex("^[A-Za-z0-9+/]{43}=$", var.insights_registration_email_hmac_key_base64))
+    error_message = "insights_registration_email_hmac_key_base64 must be empty or a 32-byte standard-base64 key."
+  }
+}
+
+variable "insights_registration_session_ttl_seconds" {
+  type        = number
+  default     = 1800
+  description = "Registration session lifetime in seconds."
+
+  validation {
+    condition     = floor(var.insights_registration_session_ttl_seconds) == var.insights_registration_session_ttl_seconds && var.insights_registration_session_ttl_seconds >= 300 && var.insights_registration_session_ttl_seconds <= 3600
+    error_message = "insights_registration_session_ttl_seconds must be a whole number from 300 through 3600."
+  }
+}
+
+variable "insights_registration_ip_rate_limit_per_minute" {
+  type        = number
+  default     = 10
+  description = "Per-client-IP registration request limit per minute."
+
+  validation {
+    condition     = floor(var.insights_registration_ip_rate_limit_per_minute) == var.insights_registration_ip_rate_limit_per_minute && var.insights_registration_ip_rate_limit_per_minute >= 1 && var.insights_registration_ip_rate_limit_per_minute <= 1000
+    error_message = "insights_registration_ip_rate_limit_per_minute must be a whole number from 1 through 1000."
+  }
+}
+
+variable "insights_registration_session_rate_limit_per_minute" {
+  type        = number
+  default     = 30
+  description = "Per-session registration request limit per minute."
+
+  validation {
+    condition     = floor(var.insights_registration_session_rate_limit_per_minute) == var.insights_registration_session_rate_limit_per_minute && var.insights_registration_session_rate_limit_per_minute >= 1 && var.insights_registration_session_rate_limit_per_minute <= 5000
+    error_message = "insights_registration_session_rate_limit_per_minute must be a whole number from 1 through 5000."
+  }
+}
+
+variable "insights_registration_rules_version" {
+  type        = string
+  default     = "2026-09-13"
+  description = "Immutable rules document version recorded with consent."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+$", var.insights_registration_rules_version))
+    error_message = "insights_registration_rules_version may contain only letters, digits, dot, underscore, and hyphen."
+  }
+}
+
+variable "insights_registration_privacy_version" {
+  type        = string
+  default     = "2026-09-13"
+  description = "Immutable privacy notice version recorded with consent."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+$", var.insights_registration_privacy_version))
+    error_message = "insights_registration_privacy_version may contain only letters, digits, dot, underscore, and hyphen."
+  }
+}
+
 variable "aa_ip_rate_limit_per_minute" {
   type    = string
   default = "120"
@@ -207,17 +437,125 @@ variable "api_hostname" {
 variable "operations_alarm_sns_topic_arn" {
   type        = string
   default     = ""
-  description = "Optional SNS topic ARN for AA gas-usage and keeper-health CloudWatch alarms."
+  description = "SNS topic ARN for operational CloudWatch alarms. Required in mainnet."
+
+  validation {
+    condition = var.operations_alarm_sns_topic_arn == trimspace(var.operations_alarm_sns_topic_arn) && (
+      var.operations_alarm_sns_topic_arn == "" || can(
+        regex("^arn:(aws|aws-us-gov|aws-cn):sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]+(\\.fifo)?$", var.operations_alarm_sns_topic_arn)
+      )
+    )
+    error_message = "operations_alarm_sns_topic_arn must be empty or a valid, whitespace-free SNS topic ARN with a 12-digit AWS account ID."
+  }
+}
+
+variable "perps_candle_write_mode" {
+  type        = string
+  default     = "off"
+  description = "Controls additive OHLCV rollup writes. Keep off until the candle schema is migrated, then enable dual writing per environment."
+
+  validation {
+    condition     = contains(["off", "dual"], var.perps_candle_write_mode)
+    error_message = "perps_candle_write_mode must be off or dual."
+  }
+}
+
+variable "perps_candle_read_mode" {
+  type        = string
+  default     = "legacy"
+  description = "Selects the Perps basket-history read source. Rollup mode remains coverage-gated in the backend; shadow is reserved and has no v1 runtime behavior."
+
+  validation {
+    condition     = contains(["legacy", "shadow", "rollup"], var.perps_candle_read_mode)
+    error_message = "perps_candle_read_mode must be legacy, shadow, or rollup."
+  }
+}
+
+variable "perps_candle_read_intervals" {
+  type        = string
+  default     = ""
+  description = "Comma-separated canonical candle intervals enabled for rollup reads during a canary. Empty keeps every rollup endpoint disabled."
+
+  validation {
+    condition = alltrue([
+      for token in regexall("[^,[:space:]]+", var.perps_candle_read_intervals) :
+      contains(["60", "180", "300", "900", "1800", "3600", "86400"], token)
+    ])
+    error_message = "perps_candle_read_intervals may contain only 60, 180, 300, 900, 1800, 3600, or 86400, separated by commas or whitespace."
+  }
+}
+
+variable "perps_candle_shadow_sample_bps" {
+  type        = number
+  default     = 0
+  description = "Reserved for a future bounded shadow comparator; this value has no v1 runtime effect and should remain zero."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_shadow_sample_bps) == var.perps_candle_shadow_sample_bps
+      && var.perps_candle_shadow_sample_bps >= 0
+      && var.perps_candle_shadow_sample_bps <= 10000
+    )
+    error_message = "perps_candle_shadow_sample_bps must be a whole number between 0 and 10000."
+  }
+}
+
+variable "perps_candle_strict_coverage" {
+  type        = bool
+  default     = true
+  description = "Require complete price and volume coverage before a rollup page may be served."
+}
+
+variable "perps_candle_lateness_seconds" {
+  type        = number
+  default     = 120
+  description = "Minimum source-watermark delay before a price candle is considered finalized, from 0 to 86400 seconds."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_lateness_seconds) == var.perps_candle_lateness_seconds
+      && var.perps_candle_lateness_seconds >= 0
+      && var.perps_candle_lateness_seconds <= 86400
+    )
+    error_message = "perps_candle_lateness_seconds must be a whole number between 0 and 86400."
+  }
+}
+
+variable "perps_candle_finalization_grace_seconds" {
+  type        = number
+  default     = 15
+  description = "Bounded publication grace after candle source lateness elapses, from 0 to 60 seconds."
+
+  validation {
+    condition = (
+      floor(var.perps_candle_finalization_grace_seconds) == var.perps_candle_finalization_grace_seconds
+      && var.perps_candle_finalization_grace_seconds >= 0
+      && var.perps_candle_finalization_grace_seconds <= 60
+    )
+    error_message = "perps_candle_finalization_grace_seconds must be a whole number between 0 and 60."
+  }
 }
 
 variable "db_password" {
-  type      = string
-  sensitive = true
+  type        = string
+  sensitive   = true
+  description = "RDS master password. It is percent-encoded before inclusion in the libpq URI."
+
+  validation {
+    condition     = can(regex("^[!-~]{8,128}$", var.db_password))
+    error_message = "db_password must contain 8-128 printable non-whitespace ASCII characters. URI-reserved characters are supported and percent-encoded."
+  }
 }
 
 variable "db_username" {
-  type    = string
-  default = "plether"
+  type        = string
+  default     = "plether"
+  description = "RDS/PostgreSQL master username. It is percent-encoded before inclusion in the libpq URI."
+
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_]{0,62}$", var.db_username))
+    error_message = "db_username must start with a letter and contain at most 63 ASCII letters, digits, or underscores."
+  }
 }
 
 variable "chain_id" {
@@ -246,71 +584,138 @@ variable "perps_chain_id" {
   default = "421614"
 }
 
+variable "vault_history_rpc_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional archive-capable Arbitrum RPC URL used for vault-history backfills. Empty falls back to perps_rpc_url."
+}
+
+variable "vault_history_house_pool_address" {
+  type        = string
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+  description = "HousePool deployment whose Senior and Junior vault performance is indexed."
+}
+
+variable "vault_history_senior_vault_address" {
+  type        = string
+  default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+  description = "Senior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_junior_vault_address" {
+  type        = string
+  default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+  description = "Junior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_deployment_block" {
+  type        = string
+  default     = "302257125"
+  description = "First Arbitrum block eligible for the configured vault deployment's performance history."
+}
+
+variable "vault_history_confirmations" {
+  type        = string
+  default     = "12"
+  description = "Blocks subtracted from the live Arbitrum head before vault-history checkpoints are sampled."
+}
+
 variable "perps_usdc" {
   type    = string
-  default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+  default = "0x1647e41f49ED6D688936092B5a291c4B28106343"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+  default = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+}
+
+variable "perps_house_pool" {
+  type        = string
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+  description = "HousePool bound to the configured v1.2.0 settlement monitor."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+    error_message = "perps_house_pool must be a canonical Ethereum address."
+  }
+}
+
+variable "perps_settlement_monitor_lens" {
+  type        = string
+  default     = "0xd251AC0BD90780c48F31F575152808315200664E"
+  description = "Settlement Monitor facade used by the keeper. Never configure the sidecar address here."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+      && lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
+    )
+    error_message = "perps_settlement_monitor_lens must be the facade, never the v1.2.0 monitor sidecar."
+  }
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+  default = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+  default = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
+}
+
+variable "perps_cfd_engine_settlement_sidecar" {
+  type    = string
+  default = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
+}
+
+variable "perps_cfd_engine_lens" {
+  type    = string
+  default = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+  default = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
 }
 
 variable "perps_account_lens" {
   type    = string
-  default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+  default = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
 }
 
 # Transparency explorer release manifest. These remain ordinary, non-secret
 # deployment inputs so a later release can be indexed without a schema change.
 variable "perps_public_lens" {
   type    = string
-  default = "0x4E202C06e2C378d1a85577ac631e592AB66f23FB"
-}
-
-variable "perps_house_pool" {
-  type    = string
-  default = "0xFA654f4c548130F09C3Fb962AbD4bE32c0357C18"
+  default = "0xC41e92F541cCF19FA203a96CecF3Ae4D2Ed7F60A"
 }
 
 variable "perps_senior_vault" {
   type    = string
-  default = "0x4bAb5448C1BD9A48B978ABcb014F1a8F80F100A8"
+  default = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
 }
 
 variable "perps_junior_vault" {
   type    = string
-  default = "0x7258d6E91fbEFB8a16751575adbe9bBB3086D458"
+  default = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
 }
 
 variable "perps_order_router_admin" {
   type    = string
-  default = "0x3073d6D021eC20b95a8b7C780f5c30c07036ff6C"
+  default = "0x3d0e430D670D74988C1B3e76b6ef018e79ab1E37"
 }
 
 variable "perps_cfd_engine_admin" {
   type    = string
-  default = "0xb256d4E88d649b2A149aA8B8caa3159260eFBc39"
+  default = "0xda1240c36f3a4ddcAB3028F66B15Dfe91702dE2A"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "288439939"
+  default = "302257125"
 }
 
 variable "perps_indexer_confirmations" {
@@ -332,6 +737,28 @@ variable "insights_snapshot_poll_seconds" {
   type        = string
   default     = "60"
   description = "Interval between Plether Insights account snapshot cycles, in seconds. The worker enforces a minimum of 10 seconds."
+}
+
+variable "insights_active_competition_slug" {
+  type        = string
+  default     = ""
+  description = "Explicit Insights competition seed/selection slug. Leave empty to preserve the existing deployed competition; set to testnet-trading-2026-09 only with the new release addresses."
+
+  validation {
+    condition     = var.insights_active_competition_slug == "" || can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.insights_active_competition_slug))
+    error_message = "insights_active_competition_slug must be empty or a lowercase hyphenated slug."
+  }
+}
+
+variable "insights_competition_release_id" {
+  type        = string
+  default     = ""
+  description = "Explicit release-manifest identifier for one-time competition release binding. Leave empty while September is registration-only; binding requires testnet-trading-2026-09."
+
+  validation {
+    condition     = var.insights_competition_release_id == "" || can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.insights_competition_release_id))
+    error_message = "insights_competition_release_id must be empty or a lowercase hyphenated identifier."
+  }
 }
 
 variable "insights_snapshot_multicall_size" {
@@ -385,6 +812,27 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "lp_settlement_enabled" {
+  type        = bool
+  default     = false
+  description = "Enables signer-backed hourly LP settlement after a successful dry-run and keeper funding check."
+}
+
+variable "lp_settlement_poll_seconds" {
+  type        = string
+  default     = "15"
+  description = "Minimum interval between LP settlement monitor cycles in the shared keeper process."
+
+  validation {
+    condition = try(
+      can(regex("^[1-9][0-9]*$", var.lp_settlement_poll_seconds))
+      && tonumber(var.lp_settlement_poll_seconds) <= 3600,
+      false
+    )
+    error_message = "lp_settlement_poll_seconds must be a whole number from 1 through 3600."
+  }
+}
+
 variable "liquidation_worker_poll_seconds" {
   type    = string
   default = "600"
@@ -403,6 +851,17 @@ variable "liquidation_worker_multicall_size" {
   validation {
     condition     = can(regex("^([1-9]|[1-9][0-9]|100)$", var.liquidation_worker_multicall_size))
     error_message = "liquidation_worker_multicall_size must be an integer between 1 and 100."
+  }
+}
+
+variable "liquidation_worker_execution_batch_size" {
+  type        = string
+  default     = "20"
+  description = "Number of candidate accounts submitted per executeLiquidationBatch transaction. Must be between 1 and 256."
+
+  validation {
+    condition     = can(regex("^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$", var.liquidation_worker_execution_batch_size))
+    error_message = "liquidation_worker_execution_batch_size must be an integer between 1 and 256."
   }
 }
 
@@ -452,6 +911,23 @@ variable "workers_desired_count" {
   type        = number
   default     = 1
   description = "Desired task count for the consolidated workers service."
+
+  validation {
+    condition     = floor(var.workers_desired_count) == var.workers_desired_count && var.workers_desired_count >= 0
+    error_message = "workers_desired_count must be a non-negative whole number."
+  }
+}
+
+variable "api_container_cpu" {
+  type        = number
+  default     = 512
+  description = "CPU units reserved for the foreground API task independently of background services."
+}
+
+variable "api_container_memory" {
+  type        = number
+  default     = 1024
+  description = "Memory in MiB reserved for the foreground API task independently of background services."
 }
 
 variable "container_cpu" {
@@ -477,4 +953,167 @@ variable "workers_container_memory" {
 variable "db_instance_class" {
   type    = string
   default = "db.t4g.micro"
+}
+
+variable "db_allocated_storage" {
+  type        = number
+  description = "RDS baseline allocated storage in GiB. RDS can grow this through autoscaling but cannot shrink it in place; set it explicitly from the live instance before planning."
+
+  validation {
+    condition     = floor(var.db_allocated_storage) == var.db_allocated_storage && var.db_allocated_storage >= 20
+    error_message = "db_allocated_storage must be a whole number of at least 20 GiB."
+  }
+}
+
+variable "db_storage_type" {
+  type        = string
+  description = "RDS storage volume type. Set this explicitly to gp2 or gp3 so plans cannot silently rely on the provider default."
+
+  validation {
+    condition     = contains(["gp2", "gp3"], var.db_storage_type)
+    error_message = "db_storage_type must be either gp2 or gp3."
+  }
+}
+
+variable "db_storage_encrypted" {
+  type        = bool
+  default     = false
+  description = "Optionally encrypt RDS storage at rest. Existing unencrypted instances must be migrated through encrypted snapshot copy/restore rather than modified in place."
+}
+
+variable "db_kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Optional customer-managed AWS KMS key ARN for encrypted RDS storage. Leave empty to use the AWS-managed RDS key."
+
+  validation {
+    condition = (
+      var.db_kms_key_id == ""
+      || can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9A-Fa-f-]{36}$", var.db_kms_key_id))
+    )
+    error_message = "db_kms_key_id must be empty or a customer-managed AWS KMS key ARN."
+  }
+}
+
+variable "db_ssl_root_cert_path" {
+  type        = string
+  default     = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+  description = "Absolute in-container path to the checksum-pinned AWS RDS CA bundle used by libpq verify-full connections."
+
+  validation {
+    condition     = var.db_ssl_root_cert_path == "/etc/ssl/certs/aws-rds-global-bundle.pem"
+    error_message = "db_ssl_root_cert_path must use the checksum-pinned AWS RDS CA bundle shipped in the backend image."
+  }
+}
+
+variable "db_ca_cert_identifier" {
+  type        = string
+  default     = "rds-ca-rsa2048-g1"
+  description = "Pinned RDS server CA family. The backend image ships the AWS global root bundle so planned CA rotations remain explicit."
+
+  validation {
+    condition = contains([
+      "rds-ca-rsa2048-g1",
+      "rds-ca-rsa4096-g1",
+      "rds-ca-ecc384-g1",
+    ], var.db_ca_cert_identifier)
+    error_message = "db_ca_cert_identifier must be one of the supported RDS G1 CA identifiers."
+  }
+}
+
+variable "db_apply_immediately" {
+  type        = bool
+  default     = false
+  description = "Apply pending RDS modifications immediately during a supervised Sepolia maintenance operation. Keep false for routine plans."
+}
+
+variable "db_backup_retention_days" {
+  type        = number
+  default     = 7
+  description = "Automated RDS backup retention. Production rollup migrations require at least seven days."
+
+  validation {
+    condition = (
+      floor(var.db_backup_retention_days) == var.db_backup_retention_days
+      && var.db_backup_retention_days >= 1
+      && var.db_backup_retention_days <= 35
+    )
+    error_message = "db_backup_retention_days must be a whole number between 1 and 35."
+  }
+}
+
+variable "db_max_allocated_storage" {
+  type        = number
+  default     = 100
+  description = "RDS storage autoscaling ceiling in GiB."
+
+  validation {
+    condition     = floor(var.db_max_allocated_storage) == var.db_max_allocated_storage && var.db_max_allocated_storage >= 50
+    error_message = "db_max_allocated_storage must be a whole number of at least 50 GiB."
+  }
+}
+
+variable "db_deletion_protection" {
+  type        = bool
+  default     = true
+  description = "Protect the RDS instance from accidental deletion."
+}
+
+variable "db_skip_final_snapshot" {
+  type        = bool
+  default     = false
+  description = "Skip the final database snapshot during destruction. Keep false outside disposable environments."
+}
+
+variable "db_final_snapshot_identifier" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Region-unique identifier for this DB lifecycle's final snapshot. Required when final snapshots are enabled; choose a new value before recreating the DB so an earlier retained snapshot cannot block deletion."
+
+  validation {
+    condition = var.db_final_snapshot_identifier == null || try(
+      length(var.db_final_snapshot_identifier) <= 255
+      && can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.db_final_snapshot_identifier))
+      && !strcontains(var.db_final_snapshot_identifier, "--"),
+      false
+    )
+    error_message = "db_final_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
+  }
+}
+
+variable "rds_free_storage_alarm_bytes" {
+  type        = number
+  default     = 5368709120
+  description = "Free RDS storage threshold for the operational alarm (5 GiB by default)."
+
+  validation {
+    condition     = var.rds_free_storage_alarm_bytes > 0
+    error_message = "rds_free_storage_alarm_bytes must be greater than zero."
+  }
+}
+
+variable "rds_freeable_memory_alarm_bytes" {
+  type        = number
+  default     = 134217728
+  description = "Freeable RDS memory threshold for the operational alarm (128 MiB by default)."
+
+  validation {
+    condition     = var.rds_freeable_memory_alarm_bytes > 0
+    error_message = "rds_freeable_memory_alarm_bytes must be greater than zero."
+  }
+}
+
+variable "rds_database_connections_alarm_threshold" {
+  type        = number
+  default     = 60
+  description = "Database connection count that triggers an operational alarm."
+
+  validation {
+    condition = (
+      floor(var.rds_database_connections_alarm_threshold) == var.rds_database_connections_alarm_threshold
+      && var.rds_database_connections_alarm_threshold > 0
+    )
+    error_message = "rds_database_connections_alarm_threshold must be a positive whole number."
+  }
 }

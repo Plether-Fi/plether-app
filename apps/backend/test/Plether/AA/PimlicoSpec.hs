@@ -8,21 +8,36 @@ import qualified Data.ByteString.Base16 as B16
 import Data.Either (isLeft, isRight)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import Data.Time.Clock (addUTCTime)
+import Data.Time.Format (defaultTimeLocale, parseTimeOrError)
 import Plether.AA.Pimlico
-  ( RpcRequest (..)
+  ( PimlicoMethod (..)
+  , RpcRequest (..)
   , SmartCall (..)
   , decodeSmartAccountCalls
   , injectSponsorshipPolicy
+  , isRecoveryReadAuthorized
+  , newPimlicoProxyState
   , parseRpcRequest
+  , recordSubmittedOperation
   , validateActionSequence
   , validateMethodParams
   )
-import Plether.Config (AaConfig (..), Config (..))
+import Plether.Config
+  ( AaConfig (..)
+  , Config (..)
+  , PerpsCandleReadMode (..)
+  , PerpsCandleWriteMode (..)
+  )
 import Plether.Ethereum.Abi
   ( encodeAddress
   , encodeCall
   , encodeUint256
   , selector
+  )
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
   )
 import Test.Hspec
 
@@ -122,6 +137,77 @@ spec = do
         Left failure -> expectationFailure $ showFailure failure
         Right parsed ->
           validateMethodParams parsed `shouldSatisfy` isRight
+
+  describe "recovery read authorization" $ do
+    it "accepts only recent hashes from the original trusted client IP" $ do
+      proxyState <- newPimlicoProxyState
+      let now =
+            parseTimeOrError
+              True
+              defaultTimeLocale
+              "%Y-%m-%dT%H:%M:%SZ"
+              "2026-08-04T12:00:00Z"
+          userOperationHash = "0x" <> T.replicate 64 "a"
+          trustedIp = "203.0.113.10"
+          recoveryRequest requestMethod =
+            RpcRequest
+              Null
+              requestMethod
+              [String $ "0x" <> T.toUpper (T.drop 2 userOperationHash)]
+              KM.empty
+          recoveryMethods =
+            [ GetUserOperationReceipt
+            , GetUserOperationByHash
+            , GetUserOperationStatus
+            ]
+
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            now
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` False
+        )
+        recoveryMethods
+      recordSubmittedOperation
+        proxyState
+        now
+        trustedIp
+        (object ["result" .= userOperationHash])
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            now
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` True
+        )
+        recoveryMethods
+      isRecoveryReadAuthorized
+        proxyState
+        now
+        "203.0.113.11"
+        (recoveryRequest GetUserOperationReceipt)
+        `shouldReturn` False
+      mapM_
+        (\requestMethod ->
+          isRecoveryReadAuthorized
+            proxyState
+            (addUTCTime (24 * 60 * 60) now)
+            trustedIp
+            (recoveryRequest requestMethod)
+            `shouldReturn` False
+        )
+        recoveryMethods
+      isRecoveryReadAuthorized
+        proxyState
+        now
+        trustedIp
+        (RpcRequest Null GetGasPrice [] KM.empty)
+        `shouldReturn` True
 
   describe "SimpleAccount calldata policy" $ do
     it "decodes the canonical v0.8 executeBatch encoding" $ do
@@ -297,15 +383,40 @@ testConfig =
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
     , cfgProtocolExplorerEnabled = True
+    , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
+    , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
+    , cfgPerpsCandleReadIntervals = []
+    , cfgPerpsCandleShadowSampleBps = 0
+    , cfgPerpsCandleStrictCoverage = True
+    , cfgPerpsCandleLatenessSeconds = 120
+    , cfgPerpsCandleFinalizationGraceSeconds = 15
     , cfgPerpsRpcUrl = ""
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = usdc
     , cfgPerpsOrderRouter = router
     , cfgPerpsCfdEngine = engine
+    , cfgPerpsCfdEngineLens = zeroAddress
+    , cfgPerpsCfdEngineSettlementSidecar = zeroAddress
     , cfgPerpsMarginClearinghouse = clearinghouse
     , cfgPerpsPletherOracle = ""
-    , cfgPerpsAccountLens = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsAccountLens = zeroAddress
+    , cfgPerpsPublicLens = zeroAddress
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSeniorVault = zeroAddress
+    , cfgPerpsJuniorVault = zeroAddress
+    , cfgPerpsOrderRouterAdmin = zeroAddress
+    , cfgPerpsCfdEngineAdmin = zeroAddress
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = 0
+    , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
+    , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
+    , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = "https://archive.example"
+    , cfgVaultHistoryConfirmations = 12
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Just testAaConfig
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -314,18 +425,37 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
     }
 
-entryPoint, sender, owner, attacker, usdc, clearinghouse, router, engine, simpleAccountFactory :: T.Text
+testReleaseManifest :: CompetitionReleaseManifest
+testReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "pimlico-test"
+    , crmChainId = 421614
+    , crmUsdc = usdc
+    , crmOrderRouter = router
+    , crmMarginClearinghouse = clearinghouse
+    , crmAccountLens = zeroAddress
+    , crmCfdEngine = engine
+    , crmCfdEngineLens = zeroAddress
+    , crmSettlementSidecar = zeroAddress
+    , crmPletherOracle = zeroAddress
+    , crmIndexerStartBlock = 0
+    }
+
+entryPoint, sender, owner, attacker, usdc, clearinghouse, router, engine, simpleAccountFactory, zeroAddress :: T.Text
 entryPoint = "0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108"
 sender = "0x1111111111111111111111111111111111111111"
 owner = "0x2222222222222222222222222222222222222222"
 attacker = "0x9999999999999999999999999999999999999999"
-usdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
-clearinghouse = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
-router = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
-engine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+usdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
+clearinghouse = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
+router = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+engine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 simpleAccountFactory = "0x13E9ed32155810FDbd067D4522C492D6f68E5944"
+zeroAddress = "0x0000000000000000000000000000000000000000"
 
 permissionlessDummySignature :: T.Text
 permissionlessDummySignature =

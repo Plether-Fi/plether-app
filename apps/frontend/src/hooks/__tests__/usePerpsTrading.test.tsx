@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   getBlock: vi.fn(),
   readContract: vi.fn(),
   simulateContract: vi.fn(),
+  waitForTransactionReceipt: vi.fn(),
+  writeContractAsync: vi.fn(),
   signTypedDataAsync: vi.fn(),
   executeSponsoredPerpsAction: vi.fn(),
   invalidateQueries: vi.fn(),
@@ -38,6 +40,10 @@ vi.mock('wagmi', () => ({
     getBlock: mocks.getBlock,
     readContract: mocks.readContract,
     simulateContract: mocks.simulateContract,
+    waitForTransactionReceipt: mocks.waitForTransactionReceipt,
+  }),
+  useWriteContract: () => ({
+    writeContractAsync: mocks.writeContractAsync,
   }),
   useSignTypedData: () => ({
     signTypedDataAsync: mocks.signTypedDataAsync,
@@ -56,13 +62,13 @@ vi.mock('../../perps-aa', async (importOriginal) => {
     smartAccountVersion: 'permissionless-simple-v0.8' as const,
     smartAccountIndex: '0',
     smartAccountFactory: '0x4444444444444444444444444444444444444444',
-    usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3',
+    usdc: '0x1647e41f49ED6D688936092B5a291c4B28106343',
     usdcSupportsEip3009: false,
     usdcEip712Name: null,
     usdcEip712Version: null,
-    marginClearinghouse: '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e',
-    cfdEngine: '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a',
-    orderRouter: '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E',
+    marginClearinghouse: '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211',
+    cfdEngine: '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D',
+    orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -145,9 +151,13 @@ function sponsoredResult() {
     transactionHash: TRANSACTION_HASH,
     receipt: {
       success: true,
+      logs: [{
+        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+      }],
       receipt: {
         transactionHash: TRANSACTION_HASH,
         logs: [],
+        status: 'success',
       },
     },
   }
@@ -160,7 +170,12 @@ describe('usePerpsTrading', () => {
     mocks.getBlock.mockResolvedValue({ timestamp: 1_700_000_000n })
     mocks.simulateContract.mockResolvedValue({})
     mocks.executeSponsoredPerpsAction.mockResolvedValue(sponsoredResult())
-    mocks.parseEventLogs.mockReturnValue([{ args: { orderId: 42n } }])
+    mocks.parseEventLogs.mockReturnValue([{
+      args: {
+        account: ACCOUNT,
+        orderId: 42n,
+      },
+    }])
     mocks.readContract.mockImplementation(({ functionName }: { functionName: string }) => {
       switch (functionName) {
         case 'getPendingOrders':
@@ -219,11 +234,15 @@ describe('usePerpsTrading', () => {
       .rejects.toThrow('Expired-order cleanup is keeper-operated')
   })
 
-  it('signals the wallet request from the managed sponsored operation', async () => {
+  it('forwards managed sponsored operation status changes', async () => {
     mocks.identityReady = true
-    const onWalletRequestStart = vi.fn()
+    const onStatus = vi.fn()
+    const onIncluded = vi.fn()
     mocks.executeSponsoredPerpsAction.mockImplementationOnce(async (input) => {
       input.onStatus?.('awaiting-signature')
+      input.onStatus?.('submitting')
+      input.onStatus?.('confirming')
+      input.onIncluded?.(sponsoredResult())
       return sponsoredResult()
     })
 
@@ -237,14 +256,33 @@ describe('usePerpsTrading', () => {
       oraclePrice: 98_300_000n,
       slippagePercent: 0.1,
       isClose: false,
-      onWalletRequestStart,
+      onStatus,
+      onIncluded,
     })).resolves.toEqual({
       hash: TRANSACTION_HASH,
       userOperationHash: USER_OPERATION_HASH,
       orderId: 42n,
     })
 
-    expect(onWalletRequestStart).toHaveBeenCalledTimes(1)
+    expect(onStatus.mock.calls).toEqual([
+      ['awaiting-signature'],
+      ['submitting'],
+      ['confirming'],
+    ])
+    expect(onIncluded).toHaveBeenCalledOnce()
+    expect(onIncluded).toHaveBeenCalledWith({
+      hash: TRANSACTION_HASH,
+      userOperationHash: USER_OPERATION_HASH,
+      orderId: 42n,
+    })
+    expect(mocks.invalidateQueries).toHaveBeenCalledOnce()
+    expect(mocks.parseEventLogs).toHaveBeenCalledWith(
+      expect.objectContaining({
+        logs: [{
+          address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
+        }],
+      })
+    )
     expect(mocks.executeSponsoredPerpsAction).toHaveBeenCalledWith(
       expect.objectContaining({
         ownerAddress: OWNER,
@@ -253,6 +291,30 @@ describe('usePerpsTrading', () => {
           account: ACCOUNT,
         }),
       })
+    )
+  })
+
+  it('rejects an OrderCommitted log that belongs to another account', async () => {
+    mocks.identityReady = true
+    mocks.parseEventLogs.mockReturnValue([{
+      args: {
+        account: OWNER,
+        orderId: 99n,
+      },
+    }])
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      direction: 'long',
+      notionalUsdc: 1_000_000_000n,
+      sizeDelta: 1_000_000_000_000_000_000n,
+      marginUsdc: 200_000_000n,
+      oraclePrice: 98_300_000n,
+      slippagePercent: 0.1,
+      isClose: false,
+    })).rejects.toThrow(
+      'no unique matching OrderCommitted event was found'
     )
   })
 
@@ -339,9 +401,21 @@ describe('usePerpsTrading', () => {
     expect(invalidateOptions.predicate({
       queryKey: ['readContracts', {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
-        contracts: [{ address: PERPS_ARBITRUM_SEPOLIA.cfdEngine }],
+        contracts: [{
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+          functionName: 'positions',
+        }],
       }],
     })).toBe(true)
+    expect(invalidateOptions.predicate({
+      queryKey: ['readContracts', {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        contracts: [{
+          address: PERPS_ARBITRUM_SEPOLIA.cfdEngine,
+          functionName: 'riskParams',
+        }],
+      }],
+    })).toBe(false)
     expect(invalidateOptions.predicate({
       queryKey: ['readContract', {
         chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,

@@ -7,10 +7,16 @@ module Plether.AA.Pimlico
   , handlePimlicoProxy
   , parseRpcRequest
   , validateMethodParams
+  , isRecoveryReadAuthorized
+  , recordSubmittedOperation
   , decodeSmartAccountCalls
   , validateActionSequence
   , injectSponsorshipPolicy
   , resolveTradingAccountAddress
+  , UndeployedTradingAccountFailure (..)
+  , resolveUndeployedTradingAccountAtBlock
+  , OwnedTradingAccountFailure (..)
+  , resolveOwnedTradingAccountAtBlock
   ) where
 
 import Control.Concurrent.STM
@@ -88,6 +94,7 @@ import Plether.Ethereum.Client
   , ethCall
   , rpcCall
   )
+import Plether.Utils.Hex (intToHex)
 import Web.Scotty
   ( ActionM
   , header
@@ -139,7 +146,7 @@ data RateWindow = RateWindow
 data GasUsage = GasUsage
   { guStartedAt :: UTCTime
   , guActualGasCost :: Integer
-  , guSubmittedOperations :: Map.Map Text UTCTime
+  , guSubmittedOperations :: Map.Map Text (UTCTime, Text)
   , guSeenReceipts :: Map.Map Text UTCTime
   , guAlerted :: Bool
   }
@@ -191,6 +198,9 @@ data ProxyFailure = ProxyFailure
   , pfRetryable :: Bool
   }
   deriving stock (Eq, Show)
+
+recoveryReadAuthorizationTtl :: NominalDiffTime
+recoveryReadAuthorizationTtl = 24 * 60 * 60
 
 newPimlicoProxyState :: IO PimlicoProxyState
 newPimlicoProxyState = do
@@ -297,7 +307,20 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
         Left failure -> respondFailure (rrId rpcRequest) failure
         Right mUserOperation ->
           case mUserOperation of
-            Nothing -> relay rpcRequest
+            Nothing -> do
+              recoveryReadAuthorized <-
+                liftIO $
+                  isRecoveryReadAuthorized proxyState now trustedIp rpcRequest
+              if recoveryReadAuthorized
+                then relay rpcRequest
+                else
+                  respondFailure (rrId rpcRequest) $
+                    ProxyFailure
+                      status403
+                      (-32001)
+                      "Forbidden"
+                      "RECOVERY_HASH_NOT_AUTHORIZED"
+                      False
             Just parsed -> do
               accountAllowed <-
                 liftRateCheck
@@ -329,7 +352,11 @@ handleAuthenticatedRequest proxyState cfg aaCfg perpsClient manager now trustedI
             Left failure -> respondFailure (rrId request) failure
             Right (upstreamStatus, upstreamValue, retryAfter) -> do
               when (rrMethod request == SendUserOperation) $
-                liftRecordSubmittedOperation proxyState now upstreamValue
+                liftRecordSubmittedOperation
+                  proxyState
+                  now
+                  trustedIp
+                  upstreamValue
               when (rrMethod request == GetUserOperationReceipt) $
                 liftRecordReceiptCost proxyState aaCfg now request upstreamValue
               setHeader "Content-Type" "application/json"
@@ -424,6 +451,45 @@ validateMethodParams request =
         _ ->
           Left $
             invalidParams "method requires [userOperation, approved EntryPoint]"
+
+isRecoveryReadAuthorized
+  :: PimlicoProxyState
+  -> UTCTime
+  -> Text
+  -> RpcRequest
+  -> IO Bool
+isRecoveryReadAuthorized proxyState now trustedIp request =
+  case recoveryReadHash request of
+    Nothing -> pure True
+    Just userOperationHash ->
+      atomically $ do
+        current <- readTVar $ ppsGasUsage proxyState
+        let recentSubmissions =
+              Map.filter
+                (\(submittedAt, _) ->
+                  diffUTCTime now submittedAt < recoveryReadAuthorizationTtl
+                )
+                (guSubmittedOperations current)
+        writeTVar
+          (ppsGasUsage proxyState)
+          current {guSubmittedOperations = recentSubmissions}
+        pure $
+          maybe
+            False
+            ((== trustedIp) . snd)
+            (Map.lookup (T.toLower userOperationHash) recentSubmissions)
+
+recoveryReadHash :: RpcRequest -> Maybe Text
+recoveryReadHash request
+  | rrMethod request `elem`
+      [ GetUserOperationReceipt
+      , GetUserOperationByHash
+      , GetUserOperationStatus
+      ] =
+      case rrParams request of
+        [String userOperationHash] -> Just userOperationHash
+        _ -> Nothing
+  | otherwise = Nothing
 
 parseUserOperation
   :: PimlicoMethod
@@ -802,6 +868,141 @@ resolveTradingAccountAddress client rawAddress =
   where
     firstFailure = either (Left . pfMessage) Right
 
+-- | Resolve the pinned factory's index-0 account from an undeployed owner EOA
+-- against one exact block. Registration uses this variant so owner code,
+-- factory implementation, derivation, and derived-account code cannot be
+-- sampled from different heads.
+data UndeployedTradingAccountFailure
+  = OwnerAddressAlreadyDeployed
+  | TradingAccountAlreadyDeployed
+  | UndeployedTradingAccountProofUnavailable
+  deriving stock (Show, Eq)
+
+resolveUndeployedTradingAccountAtBlock
+  :: EthClient
+  -> Text
+  -> Integer
+  -> IO (Either UndeployedTradingAccountFailure Text)
+resolveUndeployedTradingAccountAtBlock client rawAddress blockNumber =
+  case normalizeAddress rawAddress of
+    Nothing -> pure $ Left UndeployedTradingAccountProofUnavailable
+    Just owner -> do
+      ownerCode <- readCodeAtBlock client owner blockNumber
+      factoryImplementation <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          selectorAccountImplementation
+          blockNumber
+      derived <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          (encodeCall "getAddress(address,uint256)" [encodeAddress owner, encodeUint256 0])
+          blockNumber
+      case (ownerCode, factoryImplementation, derived) of
+        (Right code, Right implementation, Right account)
+          | not (BS.null code) -> pure $ Left OwnerAddressAlreadyDeployed
+          | implementation /= simpleAccountImplementation ->
+              pure $ Left UndeployedTradingAccountProofUnavailable
+          | otherwise -> do
+              accountCode <- readCodeAtBlock client account blockNumber
+              pure $ case accountCode of
+                Left _ -> Left UndeployedTradingAccountProofUnavailable
+                Right codeAtAccount
+                  | BS.null codeAtAccount -> Right account
+                  | otherwise -> Left TradingAccountAlreadyDeployed
+        (Left _, _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+        (_, Left _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+        (_, _, Left _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+
+-- | Prove that an EOA controls the deterministic index-0 Trading Account at
+-- one canonical block. Unlike the legacy unused-account check, this proof does
+-- not inspect the derived account's deployment or activity history: clean
+-- competition eligibility is determined from the canonical start snapshot.
+data OwnedTradingAccountFailure
+  = OwnerWalletIsContract
+  | OwnedTradingAccountProofUnavailable
+  deriving stock (Show, Eq)
+
+resolveOwnedTradingAccountAtBlock
+  :: EthClient
+  -> Text
+  -> Integer
+  -> IO (Either OwnedTradingAccountFailure Text)
+resolveOwnedTradingAccountAtBlock client rawAddress blockNumber =
+  case normalizeAddress rawAddress of
+    Nothing -> pure $ Left OwnedTradingAccountProofUnavailable
+    Just owner -> do
+      ownerCode <- readCodeAtBlock client owner blockNumber
+      factoryImplementation <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          selectorAccountImplementation
+          blockNumber
+      derived <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          (encodeCall "getAddress(address,uint256)" [encodeAddress owner, encodeUint256 0])
+          blockNumber
+      pure $ case (ownerCode, factoryImplementation, derived) of
+        (Right code, Right implementation, Right account)
+          | not (BS.null code) -> Left OwnerWalletIsContract
+          | implementation /= simpleAccountImplementation -> Left OwnedTradingAccountProofUnavailable
+          | otherwise -> Right account
+        _ -> Left OwnedTradingAccountProofUnavailable
+
+readContractAddressAtBlock
+  :: EthClient
+  -> Text
+  -> ByteString
+  -> Integer
+  -> IO (Either ProxyFailure Text)
+readContractAddressAtBlock client target calldata blockNumber = do
+  result <- strictEthCallAtBlock client (CallParams target calldata) blockNumber
+  pure $ case result of
+    Left _ -> Left accountValidationUnavailable
+    Right word ->
+      case decodeAddressWord word of
+        Left _ -> Left accountValidationUnavailable
+        Right value -> Right value
+
+readCodeAtBlock :: EthClient -> Text -> Integer -> IO (Either ProxyFailure ByteString)
+readCodeAtBlock client account blockNumber = do
+  result <-
+    rpcCall client "eth_getCode" $
+      toJSON [String account, String $ "0x" <> intToHex blockNumber]
+  pure $ case result of
+    Left _ -> Left accountValidationUnavailable
+    Right (String value) ->
+      maybe
+        (Left accountValidationUnavailable)
+        Right
+        (decodeHex value)
+    Right _ -> Left accountValidationUnavailable
+
+strictEthCallAtBlock
+  :: EthClient
+  -> CallParams
+  -> Integer
+  -> IO (Either ProxyFailure ByteString)
+strictEthCallAtBlock client CallParams {..} blockNumber = do
+  result <-
+    rpcCall client "eth_call" $
+      toJSON
+        [ object
+            [ "to" .= callTo
+            , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+            ]
+        , String $ "0x" <> intToHex blockNumber
+        ]
+  pure $ case result of
+    Right (String value) ->
+      maybe (Left accountValidationUnavailable) Right $ decodeHex value
+    _ -> Left accountValidationUnavailable
+
 verifyDeployedAccountIdentity
   :: EthClient
   -> Text
@@ -980,7 +1181,8 @@ recordReceiptCost proxyState aaCfg now request response =
               current <- readTVar $ ppsGasUsage proxyState
               let withinHour = diffUTCTime now (guStartedAt current) < 3600
                   recentSubmissions =
-                    Map.filter (\submittedAt -> diffUTCTime now submittedAt < 86400) $
+                    Map.filter
+                      (\(submittedAt, _) -> diffUTCTime now submittedAt < 86400) $
                       guSubmittedOperations current
                   recentReceipts =
                     Map.filter (\seenAt -> diffUTCTime now seenAt < 86400) $
@@ -1005,8 +1207,6 @@ recordReceiptCost proxyState aaCfg now request response =
                       next =
                         base
                           { guActualGasCost = total
-                          , guSubmittedOperations =
-                              Map.delete normalizedHash $ guSubmittedOperations base
                           , guSeenReceipts = Map.insert normalizedHash now (guSeenReceipts base)
                           , guAlerted = guAlerted base || shouldAlert
                           }
@@ -1024,9 +1224,10 @@ recordReceiptCost proxyState aaCfg now request response =
 recordSubmittedOperation
   :: PimlicoProxyState
   -> UTCTime
+  -> Text
   -> Value
   -> IO ()
-recordSubmittedOperation proxyState now response =
+recordSubmittedOperation proxyState now trustedIp response =
   case submittedUserOperationHash response of
     Nothing -> pure ()
     Just userOperationHash ->
@@ -1034,9 +1235,9 @@ recordSubmittedOperation proxyState now response =
         modifyTVar' (ppsGasUsage proxyState) $ \current ->
           current
             { guSubmittedOperations =
-                Map.insert userOperationHash now $
+                Map.insert userOperationHash (now, trustedIp) $
                   Map.filter
-                    (\submittedAt -> diffUTCTime now submittedAt < 86400)
+                    (\(submittedAt, _) -> diffUTCTime now submittedAt < 86400)
                     (guSubmittedOperations current)
             }
 
@@ -1413,7 +1614,8 @@ liftRecordReceiptCost state aaCfg now request response =
 liftRecordSubmittedOperation
   :: PimlicoProxyState
   -> UTCTime
+  -> Text
   -> Value
   -> ActionM ()
-liftRecordSubmittedOperation state now response =
-  liftIO $ recordSubmittedOperation state now response
+liftRecordSubmittedOperation state now trustedIp response =
+  liftIO $ recordSubmittedOperation state now trustedIp response

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   canCancelSponsoredOperationLocally,
+  canForceUnlockLegacySponsoredOperation,
+  forceUnlockLegacySponsoredOperation,
   getSponsoredOperationAttentionRevision,
+  hasObservedSponsoredOperationInclusion,
   isSponsoredOperationAttentionStatus,
   isSponsoredOperationTerminal,
   sponsorReasonMessage,
@@ -20,6 +23,16 @@ import { Badge, Modal } from './ui'
 
 const SUCCESS_FEEDBACK_DURATION_MS = 5_000
 const SUCCESS_EXIT_ANIMATION_MS = 240
+const SPONSORSHIP_FAILURE_REASONS = new Set([
+  'RESTART_ESTIMATION',
+  'RATE_LIMITED',
+  'SPONSOR_BUDGET_EXCEEDED',
+  'SIMULATION_FAILED',
+  'SPONSOR_UNAVAILABLE',
+  'POLICY_DENIED',
+  'PAYMASTER_PAUSED',
+  'ACCOUNT_NOT_TRUSTED',
+])
 
 function abbreviatedHash(hash: string): string {
   return `${hash.slice(0, 10)}…${hash.slice(-8)}`
@@ -55,6 +68,56 @@ function formatOperationTime(timestamp: number): string {
   })
 }
 
+function validOperationTimestamp(
+  timestamp: number | undefined
+): number | undefined {
+  if (
+    timestamp === undefined ||
+    !Number.isFinite(timestamp) ||
+    timestamp < 0
+  ) {
+    return undefined
+  }
+  return timestamp
+}
+
+function operationStatusTimestamps(
+  operation: SponsoredOperation
+): SponsoredOperation['statusTimestamps'] | undefined {
+  return (operation as {
+    statusTimestamps?: SponsoredOperation['statusTimestamps']
+  }).statusTimestamps
+}
+
+function operationHeaderTimestamp(
+  operation: SponsoredOperation
+): { label: 'Started at' | 'Last updated'; timestamp: number } | undefined {
+  const createdAt = validOperationTimestamp(operation.createdAt)
+  if (createdAt !== undefined) {
+    return { label: 'Started at', timestamp: createdAt }
+  }
+
+  const earliestLifecycleTimestamp = Object.values(
+    operationStatusTimestamps(operation) ?? {}
+  )
+    .map(validOperationTimestamp)
+    .filter((timestamp): timestamp is number => timestamp !== undefined)
+    .sort((a, b) => a - b)
+    .at(0)
+  if (earliestLifecycleTimestamp !== undefined) {
+    return { label: 'Started at', timestamp: earliestLifecycleTimestamp }
+  }
+
+  const updatedAt = validOperationTimestamp(operation.updatedAt)
+  return updatedAt === undefined
+    ? undefined
+    : { label: 'Last updated', timestamp: updatedAt }
+}
+
+function operationSortTimestamp(operation: SponsoredOperation): number {
+  return operationHeaderTimestamp(operation)?.timestamp ?? 0
+}
+
 function isFailedStatus(status: SponsoredOperationStatus): boolean {
   return [
     'failed',
@@ -67,14 +130,35 @@ function isFailedStatus(status: SponsoredOperationStatus): boolean {
 function isUnreviewedAttentionOperation(
   operation: SponsoredOperation
 ): boolean {
-  if (!isSponsoredOperationAttentionStatus(operation.status)) return false
+  if (
+    isAwaitingSafeConfirmation(operation) ||
+    !isSponsoredOperationAttentionStatus(operation.status)
+  ) {
+    return false
+  }
 
   return (operation.acknowledgedAttentionRevision ?? 0) <
     getSponsoredOperationAttentionRevision(operation)
 }
 
-function isInProgressStatus(status: SponsoredOperationStatus): boolean {
-  return !isSponsoredOperationTerminal(status) && status !== 'receipt-timeout'
+function isAwaitingSafeConfirmation(
+  operation: SponsoredOperation
+): boolean {
+  return !isSponsoredOperationTerminal(operation.status) &&
+    hasObservedSponsoredOperationInclusion(operation)
+}
+
+function isForegroundInProgressOperation(
+  operation: SponsoredOperation
+): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    !isSponsoredOperationTerminal(operation.status) &&
+    operation.status !== 'receipt-timeout'
+}
+
+function isAttentionOperation(operation: SponsoredOperation): boolean {
+  return !isAwaitingSafeConfirmation(operation) &&
+    isSponsoredOperationAttentionStatus(operation.status)
 }
 
 function actionCountLabel(count: number): string {
@@ -89,6 +173,73 @@ function statusBadgeVariant(
   if (status === 'receipt-timeout') return 'warning'
   if (status === 'awaiting-signature') return 'info'
   return 'warning'
+}
+
+function isSubmissionUncertain(operation: SponsoredOperation): boolean {
+  if (
+    !operation.userOperationHash ||
+    isAwaitingSafeConfirmation(operation)
+  ) {
+    return false
+  }
+
+  return operation.status === 'receipt-timeout' ||
+    (
+      operation.reason !== undefined &&
+      (
+        operation.status === 'submitting' ||
+        operation.status === 'confirming'
+      )
+    )
+}
+
+function operationStatusLabel(operation: SponsoredOperation): string {
+  if (isAwaitingSafeConfirmation(operation)) {
+    return 'Included onchain'
+  }
+  if (!isSubmissionUncertain(operation)) {
+    return sponsoredOperationStatusLabel(operation.status)
+  }
+
+  return operation.status === 'receipt-timeout'
+    ? 'Submission status unknown'
+    : 'Checking submission status'
+}
+
+function operationReasonMessage(
+  operation: SponsoredOperation
+): string | undefined {
+  if (isAwaitingSafeConfirmation(operation)) return undefined
+  if (isSubmissionUncertain(operation)) {
+    return 'Plether could not verify whether this transaction was submitted or included. We’re checking its status. Do not retry this action yet.'
+  }
+
+  switch (operation.status) {
+    case 'execution-reverted':
+      return 'The transaction was included but failed during onchain execution.'
+    case 'dropped':
+      return 'The bundler reported that this operation was dropped, but Plether could not independently verify its final onchain outcome.'
+    case 'replaced':
+      return 'The Trading Account nonce was consumed by another operation. Refresh account state before trying this action again.'
+    case 'expired':
+      return 'This operation expired before it was included onchain. It is safe to retry the action.'
+    case 'outcome-unknown':
+      return operation.forcedLegacyUnlock
+        ? 'You force-released this stale local lock. Plether cannot prove whether the old action executed or may still execute later. Close or reload every other Plether tab, then review your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+        : 'The old nonce can no longer land, but Plether could not prove which operation consumed it. Refresh and review your Trading Account before taking another action. Do not blindly retry it.'
+    case 'failed':
+      if (!operation.reason) return undefined
+      if (!SPONSORSHIP_FAILURE_REASONS.has(operation.reason)) {
+        return 'Plether could not prepare or submit this transaction. Your action was not sent.'
+      }
+      return sponsorReasonMessage(new SponsorRequestError({
+        reason: operation.reason,
+        message: operation.reason,
+        retryable: operation.retryable ?? false,
+      }))
+    default:
+      return undefined
+  }
 }
 
 function HashActions({
@@ -194,6 +345,10 @@ function OperationHistoryItem({
   operation: SponsoredOperation
   manifest: ReturnType<typeof usePerpsIdentity>['manifest']
 }) {
+  const [legacyUnlockState, setLegacyUnlockState] = useState<
+    'idle' | 'working' | 'blocked'
+  >('idle')
+  const submissionUncertain = isSubmissionUncertain(operation)
   const userOperationUrl = operation.userOperationHash && manifest
     ? manifest.userOperationExplorerUrlTemplate.replace(
         '{userOperationHash}',
@@ -206,6 +361,13 @@ function OperationHistoryItem({
         operation.transactionHash
       )
     : undefined
+  const includedTransactionUrl =
+    operation.includedTransactionHash && manifest
+      ? manifest.transactionExplorerUrlTemplate.replace(
+          '{transactionHash}',
+          operation.includedTransactionHash
+        )
+      : undefined
   const replacementUserOperationUrl =
     operation.replacementUserOperationHash && manifest
       ? manifest.userOperationExplorerUrlTemplate.replace(
@@ -213,38 +375,76 @@ function OperationHistoryItem({
           operation.replacementUserOperationHash
         )
       : undefined
-  const primaryExplorerUrl = transactionUrl ?? replacementUserOperationUrl ?? userOperationUrl
+  const primaryExplorerUrl =
+    transactionUrl ??
+    includedTransactionUrl ??
+    replacementUserOperationUrl ??
+    userOperationUrl
   const primaryExplorerLabel = transactionUrl
     ? 'View transaction on Blockscout'
-    : replacementUserOperationUrl
-      ? 'View replacement operation'
-      : 'Track operation on Blockscout'
-  const reasonMessage = operation.reason
-    ? sponsorReasonMessage(new SponsorRequestError({
-        reason: operation.reason,
-        message: operation.reason,
-        retryable: operation.retryable ?? false,
-      }))
-    : undefined
+    : includedTransactionUrl
+      ? 'View included transaction on Blockscout'
+      : replacementUserOperationUrl
+        ? 'View replacement operation'
+        : submissionUncertain
+          ? 'Check operation on Blockscout'
+          : 'Track operation on Blockscout'
+  const reasonMessage = operationReasonMessage(operation)
   const canCancelLocally = canCancelSponsoredOperationLocally(operation)
+  const canForceUnlockLegacy =
+    canForceUnlockLegacySponsoredOperation(operation)
   const hasTechnicalDetails = Boolean(
     operation.userOperationHash ??
+    operation.includedTransactionHash ??
     operation.transactionHash ??
     operation.replacementUserOperationHash
   )
-  const wasSubmitted = hasTechnicalDetails
-  const sponsorshipSummary = wasSubmitted && operation.sponsorshipAccepted
-    ? 'Sponsored by Plether · 0 ETH network gas'
-    : isSponsoredOperationTerminal(operation.status) && !wasSubmitted
-      ? 'Not submitted · No network gas used'
-      : operation.sponsorshipAccepted
-        ? 'Gas sponsorship approved'
-        : undefined
-  const itemTone = isSponsoredOperationAttentionStatus(operation.status)
+  const wasSafelyConfirmed =
+    operation.transactionHash !== undefined &&
+    operation.transactionHashVerified === true
+  const awaitingSafeConfirmation =
+    isAwaitingSafeConfirmation(operation)
+  const headerTimestamp = operationHeaderTimestamp(operation)
+  const includedAt = operation.includedTransactionHash
+    ? validOperationTimestamp(operation.inclusionObservedAt)
+    : undefined
+  const safelyConfirmedAt = operation.status === 'confirmed'
+    ? validOperationTimestamp(
+        operationStatusTimestamps(operation)?.confirmed
+      )
+    : undefined
+  const sponsorshipSummary = operation.status === 'outcome-unknown'
+    ? 'Past onchain outcome unverified'
+    : awaitingSafeConfirmation && operation.sponsorshipAccepted
+      ? 'Sponsored by Plether · 0 ETH network gas'
+      : submissionUncertain && operation.sponsorshipAccepted
+        ? 'Gas sponsorship approved · Submission unconfirmed'
+        : wasSafelyConfirmed && operation.sponsorshipAccepted
+          ? 'Sponsored by Plether · 0 ETH network gas'
+          : isSponsoredOperationTerminal(operation.status) &&
+              !wasSafelyConfirmed &&
+              (
+                operation.userOperationHash === undefined ||
+                operation.status === 'expired'
+              )
+            ? 'Not included · No network gas used'
+            : isSponsoredOperationTerminal(operation.status) &&
+                !wasSafelyConfirmed
+              ? 'Past onchain outcome unverified'
+              : operation.sponsorshipAccepted
+                ? 'Gas sponsorship approved'
+                : undefined
+  const sponsorshipSummaryTone =
+    (wasSafelyConfirmed || awaitingSafeConfirmation) && !submissionUncertain
+      ? 'text-positive'
+      : 'text-content-secondary'
+  const itemTone = isAttentionOperation(operation)
     ? 'border-brand-orange/50'
-    : isInProgressStatus(operation.status)
-      ? 'border-[#FFAB96]/50'
-      : 'border-brand-border/30'
+    : awaitingSafeConfirmation
+      ? 'border-positive/40'
+      : isForegroundInProgressOperation(operation)
+        ? 'border-[#FFAB96]/50'
+        : 'border-brand-border/30'
 
   return (
     <article
@@ -256,23 +456,55 @@ function OperationHistoryItem({
           <h3 className="font-semibold text-content-primary">
             {sponsoredOperationActionLabel(operation.action)}
           </h3>
-          <time
-            dateTime={new Date(operation.updatedAt).toISOString()}
-            className="whitespace-nowrap text-xs text-content-secondary"
-          >
-            {formatOperationTime(operation.updatedAt)}
-          </time>
+          {headerTimestamp ? (
+            <span className="whitespace-nowrap text-xs text-content-secondary">
+              <span>{headerTimestamp.label}</span>{' '}
+              <time dateTime={new Date(headerTimestamp.timestamp).toISOString()}>
+                {formatOperationTime(headerTimestamp.timestamp)}
+              </time>
+            </span>
+          ) : null}
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Badge variant={statusBadgeVariant(operation.status)}>
-            {sponsoredOperationStatusLabel(operation.status)}
+          <Badge
+            variant={
+              awaitingSafeConfirmation
+                ? 'success'
+                : statusBadgeVariant(operation.status)
+            }
+          >
+            {operationStatusLabel(operation)}
           </Badge>
           {sponsorshipSummary ? (
-            <span className={`text-xs ${wasSubmitted ? 'text-positive' : 'text-content-secondary'}`}>
+            <span className={`text-xs ${sponsorshipSummaryTone}`}>
               {sponsorshipSummary}
             </span>
           ) : null}
         </div>
+        {includedAt !== undefined || safelyConfirmedAt !== undefined ? (
+          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-content-secondary">
+            {includedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Inclusion observed at</dt>
+                <dd>
+                  <time dateTime={new Date(includedAt).toISOString()}>
+                    {formatOperationTime(includedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+            {safelyConfirmedAt !== undefined ? (
+              <div className="flex gap-1">
+                <dt>Safely confirmed at</dt>
+                <dd>
+                  <time dateTime={new Date(safelyConfirmedAt).toISOString()}>
+                    {formatOperationTime(safelyConfirmedAt)}
+                  </time>
+                </dd>
+              </div>
+            ) : null}
+          </dl>
+        ) : null}
       </div>
 
       {operation.action === 'place-order' && operation.status === 'confirmed' ? (
@@ -281,16 +513,22 @@ function OperationHistoryItem({
         </p>
       ) : null}
 
+      {awaitingSafeConfirmation ? (
+        <p className="border border-positive/30 bg-positive/10 p-3 text-xs leading-5 text-content-secondary">
+          The transaction is onchain. Safety verification continues in the background; no action is required.
+        </p>
+      ) : null}
+
       {reasonMessage ? (
         <p className="border border-brand-orange/30 bg-brand-orange/10 p-3 text-xs leading-5 text-content-secondary">
           {reasonMessage}
-          {operation.retryable
+          {operation.status === 'failed' && operation.retryable
             ? ' Retry the same Trading Account action or contact support.'
             : ''}
         </p>
       ) : null}
 
-      {primaryExplorerUrl || canCancelLocally ? (
+      {primaryExplorerUrl || canCancelLocally || canForceUnlockLegacy ? (
         <div className="flex flex-wrap items-center gap-3">
           {primaryExplorerUrl ? (
             <a
@@ -316,6 +554,40 @@ function OperationHistoryItem({
               Cancel local request
             </button>
           ) : null}
+          {canForceUnlockLegacy ? (
+            <>
+              <button
+                type="button"
+                disabled={legacyUnlockState === 'working'}
+                className="border border-brand-orange/50 px-3 py-1.5 text-xs font-semibold text-[#FFAB96] transition-colors hover:border-[#FFAB96] hover:text-content-primary disabled:cursor-wait disabled:opacity-60"
+                onClick={() => {
+                  const confirmed = globalThis.confirm(
+                    'Force-release this stale local lock? The old action may already have executed or may still execute later. Close or reload every other Plether tab, then check your Trading Account and operation hash. Do not repeat the action unless you accept that risk.'
+                  )
+                  if (!confirmed) return
+
+                  setLegacyUnlockState('working')
+                  void forceUnlockLegacySponsoredOperation(operation.id)
+                    .then((unlocked) => {
+                      setLegacyUnlockState(unlocked ? 'idle' : 'blocked')
+                    })
+                }}
+              >
+                {legacyUnlockState === 'working'
+                  ? 'Checking lane…'
+                  : 'Force-release stale local lock'}
+              </button>
+              {legacyUnlockState === 'blocked' ? (
+                <span
+                  role="status"
+                  className="text-xs text-content-secondary"
+                >
+                  Another tab or status check is using this Trading Account.
+                  Close it or wait a moment, then try again.
+                </span>
+              ) : null}
+            </>
+          ) : null}
         </div>
       ) : null}
 
@@ -337,6 +609,14 @@ function OperationHistoryItem({
                 hash={operation.transactionHash}
                 label="Transaction"
                 explorerUrl={transactionUrl}
+              />
+            ) : null}
+            {!operation.transactionHash &&
+            operation.includedTransactionHash ? (
+              <HashActions
+                hash={operation.includedTransactionHash}
+                label="Included transaction"
+                explorerUrl={includedTransactionUrl}
               />
             ) : null}
             {operation.replacementUserOperationHash ? (
@@ -373,16 +653,20 @@ export function SponsoredOperationHistoryButton() {
           (ownerAddress === undefined ||
             operation.ownerAddress.toLowerCase() === ownerAddress)
         )
-        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .sort((a, b) =>
+          operationSortTimestamp(b) - operationSortTimestamp(a) ||
+          a.id.localeCompare(b.id)
+        )
     : []
-  const attentionOperations = accountOperations.filter(
-    (operation) => isSponsoredOperationAttentionStatus(operation.status)
-  )
+  const attentionOperations = accountOperations.filter(isAttentionOperation)
   const unreviewedAttentionOperations = attentionOperations.filter(
     isUnreviewedAttentionOperation
   )
   const inProgressOperations = accountOperations.filter(
-    (operation) => isInProgressStatus(operation.status)
+    isForegroundInProgressOperation
+  )
+  const includedOperations = accountOperations.filter(
+    isAwaitingSafeConfirmation
   )
   const openedAttentionOperationIds = new Set(
     openedActivity?.identityKey === identityKey
@@ -400,7 +684,8 @@ export function SponsoredOperationHistoryButton() {
   const recentOperations = accountOperations.filter(
     (operation) =>
       !needsAttentionOperationIds.has(operation.id) &&
-      !isInProgressStatus(operation.status)
+      !isForegroundInProgressOperation(operation) &&
+      !isAwaitingSafeConfirmation(operation)
   )
   const [confirmationFeedback, setConfirmationFeedback] = useState<{
     identityKey: string
@@ -521,6 +806,7 @@ export function SponsoredOperationHistoryButton() {
     activeConfirmationFeedback?.phase === 'exiting'
   const unreviewedAttentionCount = unreviewedAttentionOperations.length
   const inProgressCount = inProgressOperations.length
+  const includedCount = includedOperations.length
   const attentionSummaryCount = openedActivity?.identityKey === identityKey
     ? needsAttentionOperations.length
     : 0
@@ -530,25 +816,34 @@ export function SponsoredOperationHistoryButton() {
       ? 'border-brand-orange text-brand-orange hover:bg-brand-orange/15'
       : inProgressCount > 0
         ? 'border-[#FFAB96] text-[#FFAB96] hover:bg-[#FFAB96]/15'
-        : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
+        : includedCount > 0
+          ? 'border-positive text-positive hover:bg-positive/15'
+          : 'border-brand-border/50 text-content-secondary hover:border-[#FFAB96] hover:text-[#FFAB96]'
   const buttonIcon = unreviewedAttentionCount > 0
     ? 'warning'
     : inProgressCount > 0
       ? 'progress_activity'
-      : 'history'
+      : includedCount > 0
+        ? 'check_circle'
+        : 'history'
   const buttonTitle = showConfirmationFeedback
     ? 'Transaction confirmed'
     : unreviewedAttentionCount > 0
       ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
       : inProgressCount > 0
         ? `${actionCountLabel(inProgressCount)} in progress`
-        : 'Trading Account activity'
+        : includedCount > 0
+          ? `${actionCountLabel(includedCount)} included onchain`
+          : 'Trading Account activity'
   const buttonStatusLabel = [
     unreviewedAttentionCount > 0
       ? `${actionCountLabel(unreviewedAttentionCount)} ${unreviewedAttentionCount === 1 ? 'needs' : 'need'} attention`
       : null,
     inProgressCount > 0
       ? `${actionCountLabel(inProgressCount)} in progress`
+      : null,
+    includedCount > 0
+      ? `${actionCountLabel(includedCount)} included onchain`
       : null,
   ].filter(Boolean).join('; ')
   const openActivityLabel = buttonStatusLabel
@@ -560,16 +855,36 @@ export function SponsoredOperationHistoryButton() {
   const statusSummary = attentionSummaryCount > 0
     ? {
         title: `${actionCountLabel(attentionSummaryCount)} ${attentionSummaryCount === 1 ? 'needs' : 'need'} attention`,
-        description: `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.${inProgressCount > 0 ? ` ${actionCountLabel(inProgressCount)} still in progress.` : ''}`,
+        description: [
+          `Review the highlighted ${attentionSummaryCount === 1 ? 'action' : 'actions'} before retrying.`,
+          inProgressCount > 0
+            ? `${actionCountLabel(inProgressCount)} still in progress.`
+            : null,
+          includedCount > 0
+            ? `${actionCountLabel(includedCount)} included onchain; safety verification continues in the background.`
+            : null,
+        ].filter(Boolean).join(' '),
         tone: 'border-brand-orange/40 bg-brand-orange/10',
       }
     : inProgressCount > 0
       ? {
           title: `${actionCountLabel(inProgressCount)} in progress`,
-          description: 'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+          description: [
+            'Plether is waiting for wallet approval, sponsorship, submission, or onchain confirmation.',
+            includedCount > 0
+              ? `${actionCountLabel(includedCount)} already included onchain; safety verification continues in the background.`
+              : null,
+          ].filter(Boolean).join(' '),
           tone: 'border-[#FFAB96]/40 bg-[#FFAB96]/10',
         }
-      : null
+      : includedCount > 0
+        ? {
+            title: `${actionCountLabel(includedCount)} included onchain`,
+            description:
+              'Safety verification continues in the background. No action is required.',
+            tone: 'border-positive/40 bg-positive/10',
+          }
+        : null
 
   if (
     !identity.isAaManifestConfigured ||
@@ -682,6 +997,21 @@ export function SponsoredOperationHistoryButton() {
                 In progress
               </h3>
               {inProgressOperations.map((operation) => (
+                <OperationHistoryItem
+                  key={operation.id}
+                  operation={operation}
+                  manifest={identity.manifest}
+                />
+              ))}
+            </section>
+          ) : null}
+
+          {includedOperations.length > 0 ? (
+            <section className="space-y-3" aria-labelledby="sponsored-activity-included">
+              <h3 id="sponsored-activity-included" className="text-sm font-semibold uppercase tracking-wide text-positive">
+                Included onchain
+              </h3>
+              {includedOperations.map((operation) => (
                 <OperationHistoryItem
                   key={operation.id}
                   operation={operation}
