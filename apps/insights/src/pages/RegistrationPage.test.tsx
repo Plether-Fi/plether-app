@@ -307,7 +307,9 @@ describe('RegistrationPage', () => {
 
     renderPage()
     expect(screen.getByText(/clean starting state is checked at the competition baseline/i)).toBeInTheDocument()
+    expect(screen.getByText('My X handle will be public.').tagName).toBe('LI')
     expect(screen.getByText(/confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages/i)).toBeInTheDocument()
+    expect(screen.getByText(/private owner-wallet-to-Trading-Account link is protected and retained indefinitely/i).tagName).toBe('LI')
     expect(screen.queryByText(/confirmed email is encrypted and retained indefinitely/i)).not.toBeInTheDocument()
     const consents = screen.getAllByRole('checkbox')
     fireEvent.click(consents[0])
