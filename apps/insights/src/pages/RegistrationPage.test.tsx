@@ -72,7 +72,7 @@ const competition = {
     status: 'open',
     opensAt: '2026-08-28T10:00:00Z',
     closesAt: '2026-09-20T21:00:00Z',
-    minimumXAccountAgeDays: 90,
+    minimumXAccountAgeDays: 30,
     targetXHandle: 'plether_fi',
     rulesVersion: 'rules-v1',
     privacyVersion: 'privacy-v1',
@@ -118,7 +118,7 @@ describe('RegistrationPage', () => {
   it('accepts only the pinned X OAuth authorization endpoint and PKCE parameters', () => {
     const state = 'a'.repeat(43)
     const challenge = 'b'.repeat(43)
-    const validUrl = `https://x.com/i/oauth2/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Finsights.plether.com%2Fapi%2Finsights%2Fv1%2Fcompetitions%2Ftestnet-trading-2026-09%2Fregistrations%2Fx%2Fcallback&scope=users.read%20users.email%20follows.read&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`
+    const validUrl = `https://x.com/i/oauth2/authorize?response_type=code&client_id=client&redirect_uri=https%3A%2F%2Finsights.plether.com%2Fapi%2Finsights%2Fv1%2Fcompetitions%2Ftestnet-trading-2026-09%2Fregistrations%2Fx%2Fcallback&scope=tweet.read%20users.read%20users.email%20follows.read&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`
     expect(safeXAuthorizationUrl(validUrl)).toBe(validUrl)
     expect(() => safeXAuthorizationUrl(validUrl.replace('https://x.com', 'https://evil.example'))).toThrow('invalid authorization')
     expect(() => safeXAuthorizationUrl(validUrl.replace('/i/oauth2/authorize', '/attacker'))).toThrow('invalid authorization')

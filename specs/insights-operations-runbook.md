@@ -115,7 +115,7 @@ Before provisioning the application:
 1. Fund the X developer account and confirm that its API credit balance covers
    the expected registrations plus retries.
 2. Configure OAuth 2.0 Authorization Code with PKCE and the scopes
-   `users.read users.email follows.read`.
+   `tweet.read users.read users.email follows.read`.
 3. Register this exact callback, without a query string or fragment:
 
    ```text

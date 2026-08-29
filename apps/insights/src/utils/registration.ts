@@ -29,7 +29,7 @@ const X_OAUTH_PARAMETERS = [
   'code_challenge',
   'code_challenge_method',
 ] as const
-const X_OAUTH_SCOPES = ['follows.read', 'users.email', 'users.read']
+const X_OAUTH_SCOPES = ['follows.read', 'tweet.read', 'users.email', 'users.read']
 
 export function safeXAuthorizationUrl(value: string): string {
   const url = new URL(value)
