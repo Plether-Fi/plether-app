@@ -186,7 +186,7 @@ buildXAuthorizationUrl config competitionSlug state codeChallenge
                 [ ("response_type", "code")
                 , ("client_id", TE.encodeUtf8 $ rcXClientId config)
                 , ("redirect_uri", TE.encodeUtf8 $ rcXCallbackUrl config)
-                , ("scope", "users.read users.email follows.read")
+                , ("scope", "tweet.read users.read users.email follows.read")
                 , ("state", TE.encodeUtf8 state)
                 , ("code_challenge", TE.encodeUtf8 codeChallenge)
                 , ("code_challenge_method", "S256")
@@ -250,7 +250,7 @@ exchangeXAuthorizationCode manager config code verifier
           else do
             tokenResponse <- either (const $ Left providerUnavailable) Right $ eitherDecodeStrict' body
             let grantedScopes = T.words $ xtrScope tokenResponse
-                requiredScopes = ["users.read", "users.email", "follows.read"]
+                requiredScopes = ["tweet.read", "users.read", "users.email", "follows.read"]
             if T.toCaseFold (xtrTokenType tokenResponse) /= "bearer"
                 || T.null (xtrAccessToken tokenResponse)
                 || T.length (xtrAccessToken tokenResponse) > 8192
