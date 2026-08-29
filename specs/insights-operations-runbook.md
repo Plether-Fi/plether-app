@@ -404,9 +404,11 @@ Expired sessions, OAuth challenges/tokens, wallet challenges, signatures, and
 uncompleted identity details are cleanup targets. Registration initialization
 invokes the database cleanup path; verify remaining expired-row counts through a
 restricted database audit after each deployment, and run approved maintenance
-if normal restarts do not provide the required cleanup cadence. Do not delete
-completed application email data: the privacy notice commits to indefinite
-encrypted retention.
+if normal restarts do not provide the required cleanup cadence. Completed
+application email data remains encrypted and available for competition
+integrity, duplicate prevention, and competition-relevant messages. Do not
+delete it without an approved retention-policy change and corresponding
+application support.
 
 Rotate the Pages-to-backend origin token without an outage:
 

@@ -306,7 +306,8 @@ describe('RegistrationPage', () => {
     )
 
     renderPage()
-    expect(screen.getByText(/confirmed email is encrypted and retained indefinitely.*private owner-wallet-to-Trading-Account link.*retained indefinitely/i)).toBeInTheDocument()
+    expect(screen.getByText(/confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages/i)).toBeInTheDocument()
+    expect(screen.queryByText(/confirmed email is encrypted and retained indefinitely/i)).not.toBeInTheDocument()
     const consents = screen.getAllByRole('checkbox')
     fireEvent.click(consents[0])
     fireEvent.click(consents[1])
