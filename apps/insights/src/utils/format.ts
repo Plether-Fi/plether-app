@@ -96,6 +96,17 @@ export function formatUtc(value: string | null | undefined): string {
   }).format(date)
 }
 
+export function formatCountdown(target: string, now: number): string {
+  const targetTime = new Date(target).getTime()
+  const remaining = Number.isFinite(targetTime) ? Math.max(0, targetTime - now) : 0
+  const seconds = Math.floor(remaining / 1_000)
+  const days = Math.floor(seconds / 86_400)
+  const hours = Math.floor((seconds % 86_400) / 3_600)
+  const minutes = Math.floor((seconds % 3_600) / 60)
+  const finalSeconds = seconds % 60
+  return `${String(days)}d ${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${finalSeconds.toString().padStart(2, '0')}s`
+}
+
 export function formatPrice(value: string | null | undefined): string {
   if (!value) return '—'
   const parsed = Number(value)

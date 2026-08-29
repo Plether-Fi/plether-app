@@ -1,18 +1,8 @@
 import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api'
 import { useUtcNow } from '../hooks/useUtcNow'
-import { formatCompactUsdc, formatRoi, formatUsdc, formatUtc } from '../utils/format'
+import { formatCompactUsdc, formatCountdown, formatRoi, formatUsdc, formatUtc } from '../utils/format'
 import { EmptyState, Panel, Pnl, StatusBadge, WalletIdentity } from './ui'
-
-function countdownTo(target: string, now: number): string {
-  const remaining = Math.max(0, new Date(target).getTime() - now)
-  const seconds = Math.floor(remaining / 1_000)
-  const days = Math.floor(seconds / 86_400)
-  const hours = Math.floor((seconds % 86_400) / 3_600)
-  const minutes = Math.floor((seconds % 3_600) / 60)
-  const finalSeconds = seconds % 60
-  return `${String(days)}d ${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${finalSeconds.toString().padStart(2, '0')}s`
-}
 
 function statusLabel(status: Competition['status']): string {
   const labels: Record<Competition['status'], string> = {
@@ -28,7 +18,7 @@ function statusLabel(status: Competition['status']): string {
 export function CompetitionHero({ competition }: { competition: Competition }) {
   const now = useUtcNow()
   const target = competition.status === 'scheduled' ? competition.startsAt : competition.tradingCutoffAt
-  const countdown = countdownTo(target, now)
+  const countdown = formatCountdown(target, now)
   const showCountdown = competition.status === 'scheduled' || competition.status === 'live'
   // Registration mutations are authorized against the backend/database clock.
   // A visitor's device clock must not hide an otherwise open server window.

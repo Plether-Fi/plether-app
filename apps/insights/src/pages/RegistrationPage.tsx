@@ -17,7 +17,8 @@ import {
 import { RegistrationWalletStep } from '../components/RegistrationWalletStep'
 import { TurnstileWidget } from '../components/TurnstileWidget'
 import { ErrorState, LoadingState, Panel } from '../components/ui'
-import { formatUtc, shortAddress, xProfileUrl } from '../utils/format'
+import { useUtcNow } from '../hooks/useUtcNow'
+import { formatCountdown, formatUtc, shortAddress, xProfileUrl } from '../utils/format'
 import { registrationErrorCodeMessage, registrationErrorMessage, safeXAuthorizationUrl } from '../utils/registration'
 
 const configuredTurnstileSiteKey = typeof import.meta.env.VITE_TURNSTILE_SITE_KEY === 'string'
@@ -131,21 +132,49 @@ function RegistrationUnavailable({ competition }: { competition: Competition }) 
   return <ErrorState title="Registration is closed" message={`Registration closed ${formatUtc(metadata.closesAt)}.`} />
 }
 
-function Completion({ registration, participantCount }: { registration: RegistrationSession; participantCount?: number }) {
+function Completion({ competition, registration }: { competition: Competition; registration: RegistrationSession }) {
   const handle = registration.identity?.xHandle
   const profileUrl = xProfileUrl(handle)
+  const now = useUtcNow()
+  const startsAt = new Date(competition.startsAt).getTime()
+  const cutoffAt = new Date(competition.tradingCutoffAt).getTime()
+  const beforeStart = Number.isFinite(startsAt) && now < startsAt
+  const beforeCutoff = Number.isFinite(cutoffAt) && now < cutoffAt
+  const countdownTarget = beforeStart ? competition.startsAt : competition.tradingCutoffAt
+  const countdownLabel = beforeStart ? 'Competition starts in' : beforeCutoff ? 'Competition ends in' : 'Competition ended'
+  const completionMessage = beforeStart
+    ? 'Registration is complete. Trade with the verified Plether Trading Account when the competition opens.'
+    : beforeCutoff
+      ? 'Registration is complete. Trade with the verified Plether Trading Account before the competition ends.'
+      : 'Registration is complete. The competition trading window has ended.'
+
   return (
     <Panel className="overflow-hidden">
       <div className="border-b border-positive/30 bg-positive/10 px-5 py-6 sm:px-7">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-positive">Registration complete</p>
         <h1 className="mt-2 text-3xl font-semibold">Congratulations, you’re in.</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-content-secondary">
-          Registration is complete. Trade with the verified Plether Trading Account when the competition opens.
+          {completionMessage}
         </p>
-        {participantCount !== undefined && (
+        <div className="mt-5 border-l-2 border-positive pl-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">{countdownLabel}</p>
+          <time
+            dateTime={countdownTarget}
+            role="timer"
+            className="mt-1 block font-mono text-2xl font-semibold tabular-nums text-positive"
+          >
+            {beforeStart || beforeCutoff ? formatCountdown(countdownTarget, now) : formatUtc(competition.tradingCutoffAt)}
+          </time>
+          {(beforeStart || beforeCutoff) && (
+            <p className="mt-1 text-xs text-content-tertiary">
+              {beforeStart ? 'Starts' : 'Ends'} {formatUtc(countdownTarget)}
+            </p>
+          )}
+        </div>
+        {competition.participantCount !== undefined && (
           <p className="mt-5 flex items-baseline gap-2 text-content-secondary">
-            <span className="font-mono text-2xl font-semibold tabular-nums text-positive">{participantCount.toLocaleString()}</span>
-            <span className="text-sm">{participantCount === 1 ? 'participant registered so far' : 'participants registered so far'}</span>
+            <span className="font-mono text-2xl font-semibold tabular-nums text-positive">{competition.participantCount.toLocaleString()}</span>
+            <span className="text-sm">{competition.participantCount === 1 ? 'participant registered so far' : 'participants registered so far'}</span>
           </p>
         )}
       </div>
@@ -279,7 +308,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
     return (
       <div className="space-y-5">
         <StepRail completed={STEPS.length} />
-        <Completion registration={registration} participantCount={competition.participantCount} />
+        <Completion competition={competition} registration={registration} />
       </div>
     )
   }

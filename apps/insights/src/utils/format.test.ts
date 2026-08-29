@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatCompactUsdc, formatRoi, formatSignedUsdc, formatUsdc, isWalletAddress, xProfileUrl } from './format'
+import { formatCompactUsdc, formatCountdown, formatRoi, formatSignedUsdc, formatUsdc, isWalletAddress, xProfileUrl } from './format'
 
 describe('USDC formatting', () => {
   it('keeps six-decimal integer units lossless and rounds for display', () => {
@@ -24,6 +24,12 @@ describe('USDC formatting', () => {
 })
 
 describe('other public value formatting', () => {
+  it('formats countdowns and clamps completed countdowns at zero', () => {
+    const target = '2026-09-13T21:00:00Z'
+    expect(formatCountdown(target, Date.parse('2026-09-10T20:59:58Z'))).toBe('3d 00h 00m 02s')
+    expect(formatCountdown(target, Date.parse('2026-09-13T21:00:01Z'))).toBe('0d 00h 00m 00s')
+  })
+
   it('formats basis points as a signed percentage', () => {
     expect(formatRoi(100)).toBe('+1.00%')
     expect(formatRoi(-25)).toBe('-0.25%')

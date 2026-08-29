@@ -5,6 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { safeXAuthorizationUrl } from '../utils/registration'
 import { RegistrationPage } from './RegistrationPage'
 
+const timeMocks = vi.hoisted(() => ({ now: Date.parse('2026-09-10T20:59:58Z') }))
+
+vi.mock('../hooks/useUtcNow', () => ({
+  useUtcNow: () => timeMocks.now,
+}))
+
 const apiMocks = vi.hoisted(() => {
   class MockInsightsApiError extends Error {
     status = 409
@@ -89,6 +95,7 @@ function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  timeMocks.now = Date.parse('2026-09-10T20:59:58Z')
   apiMocks.useCurrentCompetition.mockReturnValue({
     data: competition,
     isLoading: false,
@@ -250,10 +257,40 @@ describe('RegistrationPage', () => {
     expect(screen.getByRole('heading', { name: 'Congratulations, you’re in.' })).toBeInTheDocument()
     expect(screen.getByText('127')).toBeInTheDocument()
     expect(screen.getByText('participants registered so far')).toBeInTheDocument()
+    expect(screen.getByText('Competition starts in')).toBeInTheDocument()
+    expect(screen.getByRole('timer')).toHaveTextContent('3d 00h 00m 02s')
+    expect(screen.getByText('Starts 13 Sept 2026, 21:00 UTC')).toBeInTheDocument()
     expect(screen.getAllByText('Registration complete')).toHaveLength(2)
     expect(screen.queryByText(/pending the standard integrity review/i)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '@alice ↗' })).toHaveAttribute('href', 'https://x.com/alice')
     expect(screen.getByRole('link', { name: 'Open Plether testnet ↗' })).toHaveAttribute('href', 'https://app.sepolia.plether.com')
+  })
+
+  it('counts down to the competition cutoff after trading starts', () => {
+    timeMocks.now = Date.parse('2026-09-20T21:00:00Z')
+    apiMocks.useRegistrationSession.mockReturnValue({
+      data: {
+        status: 'completed',
+        csrfToken: 'csrf',
+        expiresAt: '2026-08-28T12:00:00Z',
+        steps: { xIdentity: 'verified', xFollow: 'verified', wallet: 'verified', completed: true },
+        identity: { xHandle: 'alice', maskedEmail: 'a***@example.com' },
+        wallet: {
+          ownerAddress: '0x1111111111111111111111111111111111111111',
+          tradingAccount: '0x2222222222222222222222222222222222222222',
+        },
+        requiredConsents: { rulesVersion: 'rules-v1', privacyVersion: 'privacy-v1' },
+      },
+      isLoading: false,
+      isError: false,
+      isFetching: false,
+    })
+
+    renderPage()
+    expect(screen.getByText('Competition ends in')).toBeInTheDocument()
+    expect(screen.getByRole('timer')).toHaveTextContent('5d 00h 00m 00s')
+    expect(screen.getByText('Ends 25 Sept 2026, 21:00 UTC')).toBeInTheDocument()
+    expect(screen.getByText(/before the competition ends/i)).toBeInTheDocument()
   })
 
   it('shows the review step and requires both versioned consents', () => {
