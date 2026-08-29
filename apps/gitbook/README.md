@@ -39,7 +39,7 @@ During live execution, the price comes from a post-commit oracle update—not a 
 
 Plether uses a bounded market price. This makes the maximum modeled payout of every position calculable before the protocol accepts it.
 
-Before a trade can increase risk, the protocol checks whether the HousePool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout. If it does not, the trade is rejected.
+Before a trade can increase risk, the protocol checks whether the HousePool has enough physically backed assets, after existing trader-claim liabilities, to cover the resulting worst-case aggregate trader payout plus the configured liability-scaled settlement buffer. If it does not, the trade is rejected.
 
 Plether does not forcibly reduce an unrelated profitable position to cover another trader’s loss. There is no counterparty auto-deleveraging.
 
@@ -58,9 +58,9 @@ LP[^lp] capital backs trader payouts and absorbs bad debt. Realized carry[^carry
 
 **Liability is the product. Return is what LPs receive for underwriting it.**
 
-LP withdrawals are subject to cooldowns, reserved obligations, available pool liquidity, oracle state, and solvency checks. Capital already required to support trader liabilities cannot leave the pool.
+LP deposits and withdrawals use hourly vault requests. Withdrawals are also subject to holder cooldowns, Senior-first funding, reserved obligations, available pool liquidity, oracle state, and solvency checks. Capital already required to support trader liabilities cannot leave the pool.
 
-To provide liquidity, start with the [Liquidity provider quickstart](liquidity-provider-quickstart.md). The task-oriented guides under **Providing liquidity on Plether** cover tranche selection, deposits, pending epochs, position monitoring and withdrawals.
+To provide liquidity, start with the [Liquidity provider quickstart](liquidity-provider-quickstart.md). The task-oriented guides under **Providing liquidity on Plether** cover tranche selection, hourly deposits and withdrawals, pending-request management, performance, position monitoring and risk.
 
 ### Market hours and risk
 

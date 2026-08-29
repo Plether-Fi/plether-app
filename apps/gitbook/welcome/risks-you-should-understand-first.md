@@ -34,7 +34,7 @@ This lets Plether calculate the maximum gross directional payout of every positi
 * LONG USD cannot accrue directional profit below a raw basket mark of 0.00.
 * SHORT USD cannot accrue directional profit above a raw basket mark of 2.00.
 
-Before accepting a trade that increases risk, Plether checks whether physically backed HousePool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability.
+Before accepting a trade that increases risk, Plether checks whether physically backed HousePool assets, after existing trader-claim liabilities, can cover the resulting worst-case aggregate directional liability plus the configured liability-scaled settlement buffer.
 
 This is an admission rule. It does not guarantee that:
 
@@ -74,7 +74,7 @@ The distinction is simple:
 | A trader profits                         | Available HousePool cash               | The complete fresh payout is credited immediately or recorded in full as a senior trader claim; released margin follows separately |
 | The HousePool incurs a loss              | Junior tranche                         | Senior is impaired after available Junior value is exhausted                           |
 | Senior earns its target coupon           | Available Junior value                 | The coupon is limited by available Junior principal                                    |
-| A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new risk and affected withdrawals while protective actions remain |
+| A terminal transition exposes insolvency | Protocol availability                  | Degraded mode blocks new trader risk and new LP deposits; eligible LP withdrawal requests may still queue, but no new withdrawal USDC is allocated while degraded remains latched. Already-funded actions remain usable; funding resumes only after solvency recovery and an explicit clear. |
 
 This waterfall determines who bears economic losses. It does not guarantee when sufficient cash will be available.
 
@@ -271,7 +271,7 @@ Junior can be impaired or wiped out by:
 
 Junior receives residual upside because it occupies the first-loss position.
 
-A wiped Junior tranche[^tranche] cannot be silently restored through ordinary deposits. Recovery requires explicit recapitalization or realized protocol revenue.
+A wiped Junior tranche[^tranche] cannot be silently restored through ordinary deposits. Recovery requires explicit recapitalization or future reconciled LP-owned value. A positive marked receivable can affect NAV but does not provide withdrawal cash until collected.
 
 ### Senior tranche risk
 
@@ -325,25 +325,26 @@ During frozen-oracle periods, withdrawals may remain available under stale-price
 
 Capital already required to support trader obligations cannot leave the pool.
 
-### Pending-deposit risk
+### Hourly vault-request risk
 
-When trader positions are open, ordinary LP deposits enter through pending deposit epochs rather than receiving active shares immediately.
+All LP deposits and withdrawals enter an hourly request queue. A deposit moves USDC into vault escrow before shares are ready; a withdrawal moves the quoted shares into escrow before USDC is funded.
 
-The user funds the request before shares are minted. Cancellation is available only before the activation period begins. After activation, finalization is permissionless and determines the batch share price.
+A request can normally be cancelled only while the interface still offers **Cancel deposit** or **Cancel withdrawal**. At the request's expected processing boundary, that cancellation window closes even if no settlement transaction has begun. The LP then waits for the outcomes shown under **Your position**:
 
-Transaction ordering can affect entry economics. For example, a matured epoch may be finalized shortly before another transaction realizes a large trader loss.
+* **Shares ready** or **Refund available** for a deposit;
+* **USDC ready** and/or **Shares ready to return** for a withdrawal.
 
-Pending does not mean risk-free or freely cancellable.
+A partly funded withdrawal can expose both actions only when the remaining shares quote to zero assets and enter terminal refund state. An ordinary insufficient-liquidity remainder stays queued. If any USDC is claimable, the interface shows **USDC ready** as the status even when a zero-value share remainder can also be returned.
+
+The final conversion is set during processing, not when the preview is opened. A deposit can therefore produce a different share count from its estimate, and queued withdrawal shares continue gaining or losing value until USDC is allocated. Senior withdrawals receive funding priority over Junior withdrawals.
+
+The settlement path is permissionless, and an enabled, healthy keeper can submit eligible hourly processing. The current interface exposes no user finalization action. An expected time is not a guarantee: a disabled or unavailable keeper, oracle, liquidity, health or governance gate can delay processing, and **Hourly processing paused** can leave otherwise valid requests waiting. Pending does not mean risk-free, immediately cancellable or fixed-price.
 
 ### NAV and accounting risk
 
-Plether deliberately does not treat unrealized trader losses as immediately withdrawable LP profit.
+Plether uses one exact signed, collateral-capped Terminal NAV snapshot for both deposit and withdrawal accounting. Marked trader gains reduce LP NAV; marked trader losses can increase it only up to the collectible amount backed by pledged collateral and eligible same-account claims.
 
-This reduces the risk of LPs withdrawing against assets the pool has not yet received. It can also temporarily understate LP value, particularly in Junior.
-
-Value can change materially when trader PnL[^pnl] becomes realized.
-
-Deposit pricing, withdrawal pricing and conservative liability accounting answer different questions. They should not be expected to produce identical values at all times.
+That positive marked receivable is accounting value, not physical HousePool cash, and does not increase free withdrawal liquidity until collected. Deposit and withdrawal quotes can still differ because ERC-4626 rounds in different directions and the frozen-oracle fee applies only to withdrawal funding.
 
 A displayed share price or historical APY is not a guarantee of future redemption value.
 
@@ -449,7 +450,7 @@ If keeper infrastructure is unavailable:
 
 * Orders can remain queued
 * Liquidations can be delayed
-* Pending LP epochs can remain unfinalized
+* Hourly LP requests can remain unprocessed
 * Users cannot cancel committed orders
 * Restoring service may not clear the entire queue immediately
 
@@ -553,7 +554,7 @@ Do not deposit unless you can answer yes to each question:
 * Can I tolerate partial or total loss of principal?
 * Can I tolerate cooldowns, blocked withdrawals and frozen-market surcharges?
 * Do I understand that trader claims rank ahead of LP withdrawals?
-* Do I understand pending-deposit activation, cancellation and finalization?
+* Do I understand hourly deposit and withdrawal processing, the cancellation window, and the separate claim or refund actions?
 * Have I reviewed current directional skew, open liability, free cash and tranche impairment?
 * Do I understand that a target coupon or projected return is not guaranteed?
 * Can I hold the LP position through an extended period of reduced liquidity?

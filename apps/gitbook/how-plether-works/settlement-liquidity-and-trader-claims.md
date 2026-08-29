@@ -298,16 +298,16 @@ When aggregate claims are fully covered:
 3. Plether submits the eligible sponsored Trading Account operation.
 4. The full claim moves from the HousePool to the clearinghouse.
 5. The Trading Account’s claim balance is reduced by the same amount.
-6. The Margin Account receives the settlement credit.
-7. The trader can withdraw through the normal sponsored Margin Account withdrawal flow.
+6. If the Trading Account still has an open position, the credit is added to its PnL pledge; it is not free, withdrawable or reusable margin while that position remains open.
+7. If the Trading Account is flat, the credit becomes free Margin Account balance and can use the normal sponsored withdrawal flow.
 
 Claim settlement requires authorization from the Trading Account’s owner wallet and is all-or-nothing. The sponsor and bundler[^bundler] can relay the authorized operation, but they cannot create the owner signature. The protocol does not support entering a smaller settlement amount.
 
-If the account still has an open position, carry is checkpointed before the claim credit changes the account balance. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due.
+If the account still has an open position, carry is checkpointed before the claim credit changes its PnL pledge. The full claim is settled, but the account’s overall balance increase can be smaller if carry was due. Only a flat account receives the settlement as free balance.
 
-![Trader claim with aggregate coverage, settlement availability, Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
+![Trader claim with aggregate coverage, settlement availability, the flat-account Margin Account destination and action](../.gitbook/assets/screenshots/storybook-documentation-trader-claims--available-to-settle.png)
 
-Aggregate coverage is enforced onchain. The screenshot is an illustrative documentation prototype; the current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
+Aggregate coverage is enforced onchain. The screenshot is an illustrative documentation prototype of the flat-account branch; a claim settled while a position remains open credits PnL pledge instead. The current live trader card does not preflight aggregate coverage before showing **Settle Claim**, so an under-covered settlement attempt fails.
 
 ### A claim is not position collateral
 
@@ -362,7 +362,7 @@ Settlement liquidity, claim serviceability and LP withdrawal liquidity answer di
 | ------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Can a new positive close be paid now? | The full payout must fit after reserving all existing trader claims                             |
 | Can an existing claim be settled?     | Physical HousePool assets must cover all aggregate trader claims                               |
-| Can an LP withdraw?                   | Assets must remain after live trader liability, claims and other explicit reserves are deducted |
+| Can an LP withdraw?                   | Assets must remain after live trader liability, its settlement buffer, claims and other explicit reserves are deducted |
 
 A generic “Pool liquidity” number should therefore not be treated as a guarantee that a particular payout or claim can be settled.
 
@@ -389,6 +389,7 @@ The simplified LP withdrawal reserve is therefore:
 ```
 Core withdrawal reserve
 = maximum modeled live liability
++ liability-scaled settlement buffer
 + aggregate trader claims
 ```
 
@@ -399,6 +400,7 @@ Free LP liquidity
 = max(
     physical HousePool assets
     − maximum modeled live liability
+    − liability-scaled settlement buffer
     − aggregate trader claims
     − other explicit reserves,
     0
@@ -411,7 +413,7 @@ Trader claims rank ahead of both LP tranches. A Senior LP is senior relative to 
 
 Within the LP stack:
 
-* Junior capital absorbs realized losses first.
+* Junior capital absorbs reconciled LP losses first.
 * Senior capital is affected after Junior is exhausted.
 * Neither tranche can withdraw cash reserved for trader claims.
 
@@ -467,7 +469,7 @@ Similarly, bad debt telemetry alone is not the degraded-mode condition. What mat
 
 A waived frozen-close spread is neither an asset nor bad debt. It therefore does not increase effective backing and does not create an additional degraded-mode liability.
 
-While degraded, risk-increasing trades and LP withdrawals are blocked. Risk-reducing actions such as closes and liquidations remain available, along with recovery and recapitalization paths.
+While degraded, risk-increasing trades and new LP deposits are blocked. Otherwise-eligible LP withdrawal requests can still enter the queue, but no new withdrawal USDC is allocated while the degraded latch remains active. Already-funded withdrawal actions remain usable. Funding can resume only after effective solvency is restored and the protocol owner explicitly clears degraded mode. Risk-reducing actions such as closes and liquidations remain available, along with recovery and recapitalization paths.
 
 Claim settlement uses its own aggregate-coverage test. A fully covered claim can therefore be settled even while the protocol remains degraded for its live positions.
 

@@ -835,7 +835,7 @@ describe('Vaults page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'withdraw' }))
     expect(screen.getByText('Withdrawal cooldown active')).toBeInTheDocument()
-    expect(screen.getByText(/Receiving more psLP shares in your wallet restarts this one-hour cooldown/i))
+    expect(screen.getByText(/Moving processed shares to your wallet, cancelling a withdrawal, or returning a zero-value remainder restarts this one-hour cooldown/i))
       .toBeInTheDocument()
   })
 
@@ -911,7 +911,7 @@ describe('Vaults page', () => {
     expect(screen.getByText(/fresh live price is published/i)).toBeInTheDocument()
     expect(screen.queryByText(/not accepting new funded deposit requests/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/current pool or vault safety state/i)).not.toBeInTheDocument()
-    expect(screen.getAllByText('0.25% active')).toHaveLength(2)
+    expect(screen.getAllByText('0.25% active')).toHaveLength(1)
     screen.getAllByText('0.25% active').forEach((value) => {
       expect(value).toHaveClass('text-brand-orange')
     })
@@ -919,7 +919,7 @@ describe('Vaults page', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /withdraw/i }))
     expect(screen.getByText('Temporary withdrawal surcharge active')).toBeInTheDocument()
-    expect(screen.getByText(/when your withdrawal is processed, more shares will be needed/i)).toBeInTheDocument()
+    expect(screen.getByText(/your request locks the quoted shares; if the fee is still active when funding occurs, those shares produce less USDC/i)).toBeInTheDocument()
     expect(screen.getByText(/wait for live pricing to return/i)).toBeInTheDocument()
   })
 
