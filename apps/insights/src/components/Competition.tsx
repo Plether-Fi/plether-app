@@ -4,20 +4,16 @@ import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCompactUsdc, formatCountdown, formatRoi, formatUsdc, formatUtc } from '../utils/format'
 import { EmptyState, Panel, Pnl, StatusBadge, WalletIdentity } from './ui'
 
-function labelUsdc(value: string, kind: 'real' | 'mock'): string {
-  return value.replace(/ USDC$/, ` ${kind} USDC`)
-}
-
-function formatRealUsdc(value: string): string {
-  return labelUsdc(formatUsdc(value), 'real')
+function labelMockUsdc(value: string): string {
+  return value.replace(/ USDC$/, ' mock USDC')
 }
 
 function formatMockUsdc(value: string): string {
-  return labelUsdc(formatUsdc(value), 'mock')
+  return labelMockUsdc(formatUsdc(value))
 }
 
 function formatCompactMockUsdc(value: string | null | undefined): string {
-  return labelUsdc(formatCompactUsdc(value), 'mock')
+  return labelMockUsdc(formatCompactUsdc(value))
 }
 
 function statusLabel(status: Competition['status']): string {
@@ -89,9 +85,9 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
 
 function prizePool(prizes: Competition['prizes']): string {
   try {
-    return formatRealUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString())
+    return formatUsdc(prizes.reduce((total, prize) => total + BigInt(prize.amount), 0n).toString())
   } catch {
-    return '2,000.00 real USDC'
+    return '2,000.00 USDC'
   }
 }
 
@@ -129,7 +125,7 @@ function PrizeAward({ standing }: { standing: Standing }) {
   if (standing.prizePlace === null || standing.prizeAmountUsdc === null) return null
   const places = standing.prizePlaces.length > 0 ? standing.prizePlaces : [standing.prizePlace]
   const placeLabel = places.length > 1 ? `Places ${places.join('–')} tie` : `Place #${String(places[0])}`
-  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatRealUsdc(standing.prizeAmountUsdc)}</div>
+  return <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-brand-yellow">{placeLabel} · {formatUsdc(standing.prizeAmountUsdc)}</div>
 }
 
 function DesktopTable({ standings, competitionSlug }: { standings: Standing[]; competitionSlug: string }) {
@@ -221,7 +217,7 @@ export function RulesSummary({ competition }: { competition: Competition }) {
   return (
     <Panel className="grid gap-px bg-brand-border/20 sm:grid-cols-3">
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at a <strong className="text-content-primary">+1% net return or better</strong> after trading costs and log at least five active FX-session days.</p></div>
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">{prizeSchedule} real USDC</strong> for the top {competition.prizes.length} eligible traders.</p></div>
+      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">{prizeSchedule} USDC</strong> for the top {competition.prizes.length} eligible traders.</p></div>
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Fair play</p><p className="mt-2 text-sm leading-6 text-content-secondary">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p></div>
     </Panel>
   )
