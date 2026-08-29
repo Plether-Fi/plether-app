@@ -2321,7 +2321,7 @@ function OverviewTab({
         />
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-x-3 gap-y-6 xl:grid-cols-2">
         <section className="border border-brand-border/30 bg-surface-panel p-5">
           <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
@@ -3406,24 +3406,6 @@ function ActivityTab({
       {requestsLoading && depositRequests.length === 0 && redeemRequests.length === 0 ? (
         <p className="text-sm text-content-secondary">Checking your pending activity…</p>
       ) : null}
-
-      <section className="border border-brand-border/30 bg-surface-panel p-5">
-        <h3 className="text-lg font-semibold text-content-primary">Block explorer</h3>
-        <p className="mt-1 text-sm text-content-secondary">
-          View the complete public transaction history for this vault.
-        </p>
-        <a
-          href={`${EXPLORER_BASE_URL}/${tranche.address}`}
-          target="_blank"
-          rel="noreferrer"
-          className="group mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach"
-        >
-          <span className="group-hover:underline group-hover:underline-offset-4">
-            View all transactions
-          </span>
-          <span className="material-symbols-outlined text-lg">open_in_new</span>
-        </a>
-      </section>
 
       <VaultRequestActionModal
         action={requestAction}
@@ -4712,7 +4694,6 @@ function VaultDetail({
                 {tranche.description}
               </p>
               <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-content-secondary">
-                <TokenLabel token="USDC" />
                 <a
                   href={`${EXPLORER_BASE_URL}/${tranche.address}`}
                   target="_blank"
@@ -4796,44 +4777,43 @@ function VaultDetail({
         </Alert>
       ) : null}
 
-      <nav
-        aria-label={`${tranche.name} page sections`}
-        className="sticky z-10 border border-brand-border/30 bg-app-bg px-4 lg:w-[calc(100%-24rem)]"
-        style={{ top: stickyElementTop }}
-      >
-        <div className="flex items-stretch gap-6 overflow-x-auto">
-          <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
-            On this page
-          </span>
-          {sections.map((section, index) => (
-            <button
-              key={section.id}
-              type="button"
-              aria-label={section.label}
-              aria-current={activeSection === section.id ? 'location' : undefined}
-              aria-controls={section.anchor}
-              onClick={() => {
-                scrollToSection(section.id)
-              }}
-              className={`group relative flex shrink-0 items-center gap-2 py-3 text-sm font-semibold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:transition-transform ${
-                activeSection === section.id
-                  ? 'text-content-primary after:scale-x-100 after:bg-brand-peach'
-                  : 'text-content-secondary after:scale-x-0 after:bg-brand-peach hover:text-brand-peach hover:after:scale-x-100'
-              }`}
-            >
-              <span className={`font-mono text-[10px] ${
-                activeSection === section.id ? 'text-brand-peach' : 'text-content-secondary/70'
-              }`}>
-                {String(index + 1).padStart(2, '0')}
-              </span>
-              <span>{section.label}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
-
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">
+          <nav
+            aria-label={`${tranche.name} page sections`}
+            className="relative sticky z-10 border border-brand-border/30 bg-app-bg px-4 before:pointer-events-none before:absolute before:-left-px before:-right-px before:bottom-[calc(100%+1px)] before:h-4 before:bg-app-bg before:content-['']"
+            style={{ top: stickyElementTop }}
+          >
+            <div className="flex items-stretch gap-6 overflow-x-auto">
+              <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
+                On this page
+              </span>
+              {sections.map((section, index) => (
+                <button
+                  key={section.id}
+                  type="button"
+                  aria-label={section.label}
+                  aria-current={activeSection === section.id ? 'location' : undefined}
+                  aria-controls={section.anchor}
+                  onClick={() => {
+                    scrollToSection(section.id)
+                  }}
+                  className={`group relative flex shrink-0 items-center gap-2 py-3 text-sm font-semibold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:transition-transform ${
+                    activeSection === section.id
+                      ? 'text-content-primary after:scale-x-100 after:bg-brand-peach'
+                      : 'text-content-secondary after:scale-x-0 after:bg-brand-peach hover:text-brand-peach hover:after:scale-x-100'
+                  }`}
+                >
+                  <span className={`font-mono text-[10px] ${
+                    activeSection === section.id ? 'text-brand-peach' : 'text-content-secondary/70'
+                  }`}>
+                    {String(index + 1).padStart(2, '0')}
+                  </span>
+                  <span>{section.label}</span>
+                </button>
+              ))}
+            </div>
+          </nav>
 
           <section
             id="overview"
