@@ -1349,7 +1349,6 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
-        ParsedUsdcTransfer {} -> pure ()
       pure $
         if isMarketVolumeActivity parsed
           then Just $ biTimestamp blockInfo
@@ -2179,21 +2178,6 @@ isLowerHexDigit :: Char -> Bool
 isLowerHexDigit value =
   (value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')
 
-parseLogEntry :: Value -> Maybe RpcLog
-parseLogEntry = \case
-  Object obj -> Just $
-    RpcLog
-      { rlAddress = getString "address" obj
-      , rlTopics = map decodeHex $ getStringArray "topics" obj
-      , rlData = decodeHex $ getString "data" obj
-      , rlTxHash = getString "transactionHash" obj
-      , rlBlockNumber = hexToInteger $ strip0x $ getString "blockNumber" obj
-      , rlBlockHash = getString "blockHash" obj
-      , rlTxIndex = hexToInteger $ strip0x $ getString "transactionIndex" obj
-      , rlLogIndex = hexToInteger $ strip0x $ getString "logIndex" obj
-      }
-  _ -> Nothing
-
 rpcCallAny :: (Aeson.ToJSON params) => Manager -> [Text] -> IORef Integer -> Text -> params -> IO (Either Text Value)
 rpcCallAny manager rpcUrls reqIdRef method params = tryUrls rpcUrls
   where
@@ -2299,8 +2283,3 @@ requiredString key obj =
   case KM.lookup (Key.fromText key) obj of
     Just (String value) | not (T.null value) -> Right value
     _ -> Left $ "Transaction response is missing string field " <> key
-
-getStringArray :: Text -> Aeson.Object -> [Text]
-getStringArray key obj = case KM.lookup (Key.fromText key) obj of
-  Just (Array arr) -> [s | String s <- toList arr]
-  _ -> []

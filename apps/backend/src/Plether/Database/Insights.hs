@@ -1733,13 +1733,19 @@ invalidateSnapshotBatchesAfter conn slug safeBlock safeBlockHash =
 -- with a partially rebuilt activity history.
 invalidateCompetitionSnapshotsForReleaseRebuild :: Connection -> Integer -> Text -> IO ()
 invalidateCompetitionSnapshotsForReleaseRebuild conn chainId releaseRouter = do
-  rows <- query conn
-    "SELECT slug FROM insights_competitions\
-    \ WHERE chain_id = ? AND release_router = ? AND finalized = FALSE FOR UPDATE"
-    (chainId, normalizeAddress releaseRouter)
-    :: IO [Only Text]
-  let slugs = [slug | Only slug <- rows]
-  mapM_ invalidate slugs
+  schemaState <- query_ conn
+    "SELECT to_regclass('public.insights_competitions') IS NOT NULL"
+    :: IO [Only Bool]
+  case schemaState of
+    [Only True] -> do
+      rows <- query conn
+        "SELECT slug FROM insights_competitions\
+        \ WHERE chain_id = ? AND release_router = ? AND finalized = FALSE FOR UPDATE"
+        (chainId, normalizeAddress releaseRouter)
+        :: IO [Only Text]
+      let slugs = [slug | Only slug <- rows]
+      mapM_ invalidate slugs
+    _ -> pure ()
   where
     invalidate slug = do
       _ <- execute conn
