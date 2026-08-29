@@ -42,11 +42,6 @@ resource "aws_db_instance" "postgres" {
     }
 
     precondition {
-      condition     = !var.provision_insights_registration || var.db_storage_encrypted
-      error_message = "First-party Insights registration requires encrypted RDS storage. Existing unencrypted RDS instances cannot be encrypted in place; plan an encrypted snapshot copy/restore migration and endpoint cutover instead of applying a replacement directly."
-    }
-
-    precondition {
       condition     = var.db_max_allocated_storage >= ceil(var.db_allocated_storage * 110 / 100)
       error_message = "db_max_allocated_storage must be at least 10 percent greater than db_allocated_storage for RDS storage autoscaling."
     }

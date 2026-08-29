@@ -100,10 +100,10 @@ db_allocated_storage           = 40
 # Desired final type. For an existing gp2 instance, keep gp2 through the
 # retention/PITR activation stage and change only this value in the next plan.
 db_storage_type                = "gp3"
-# Launch gate: an existing unencrypted instance cannot be toggled in place.
-# Plan an encrypted snapshot copy/restore and endpoint cutover; do not apply a
-# replacement plan directly. Registration provisioning fails while this is false.
-db_storage_encrypted           = true
+# Optional hardening for a new or already encrypted database. Keep false for an
+# existing unencrypted instance; enabling it requires a separately planned
+# encrypted snapshot copy/restore and endpoint cutover.
+db_storage_encrypted           = false
 db_kms_key_id                  = "" # Uses the AWS-managed RDS key; optionally set a reviewed customer-key ARN.
 db_ssl_root_cert_path          = "/etc/ssl/certs/aws-rds-global-bundle.pem"
 db_ca_cert_identifier          = "rds-ca-rsa2048-g1"

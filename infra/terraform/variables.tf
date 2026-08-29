@@ -851,7 +851,7 @@ variable "db_storage_type" {
 variable "db_storage_encrypted" {
   type        = bool
   default     = false
-  description = "Encrypt RDS storage at rest. The false default preserves existing unencrypted instances; first-party registration requires true and an existing instance must be migrated through encrypted snapshot copy/restore rather than modified in place."
+  description = "Optionally encrypt RDS storage at rest. Existing unencrypted instances must be migrated through encrypted snapshot copy/restore rather than modified in place."
 }
 
 variable "db_kms_key_id" {

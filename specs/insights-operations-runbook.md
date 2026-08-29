@@ -59,13 +59,15 @@ then record their reviewed addresses and deployment transaction hashes in the
 restricted launch record. Terraform rejects a partial, inherited, or role-
 swapped July manifest.
 
-### Registration database encryption and TLS gate
+### Registration database TLS and optional storage encryption
 
-First-party registration may be provisioned only on encrypted RDS storage. Set
-`db_storage_encrypted = true` for a new or already encrypted database and leave
+RDS storage encryption is optional defense in depth because registration email
+addresses are independently encrypted at the application layer. For a new or
+already encrypted database, set `db_storage_encrypted = true` and leave
 `db_kms_key_id = ""` to use the AWS-managed RDS key, or supply a reviewed
-customer-managed KMS key ARN. Pin `db_ca_cert_identifier` to a supported RDS G1
-CA and keep:
+customer-managed KMS key ARN. Do not enable it directly on an existing
+unencrypted instance because RDS would require replacement. Pin
+`db_ca_cert_identifier` to a supported RDS G1 CA and keep:
 
 ```hcl
 db_ssl_root_cert_path = "/etc/ssl/certs/aws-rds-global-bundle.pem"
@@ -94,16 +96,15 @@ tests. After any `init-schema` task, deploy/restart the same reviewed API image 
 its idempotent runtime ensure functions run, then verify registration and
 competition schema health before enabling registration.
 
-An existing unencrypted RDS instance cannot be encrypted in place. Do **not**
-change `db_storage_encrypted` and apply a replacement: the resource has
-`prevent_destroy`, and registration provisioning fails closed while storage is
-unencrypted. Prepare a separately reviewed migration that copies a final source
-snapshot with encryption enabled, restores it under a temporary identifier,
-validates row counts and certificate-verified connections, quiesces writers,
-performs the final delta/cutover, and then deliberately reconciles the endpoint
-and Terraform state. Retain the source instance and snapshots through the
-rollback window. Never disable `prevent_destroy` as a shortcut in the ordinary
-registration plan.
+An existing unencrypted RDS instance cannot be encrypted in place. If storage
+encryption is adopted later, do **not** change `db_storage_encrypted` and apply a
+replacement: the resource has `prevent_destroy`. Prepare a separately reviewed
+migration that copies a final source snapshot with encryption enabled, restores
+it under a temporary identifier, validates row counts and certificate-verified
+connections, quiesces writers, performs the final delta/cutover, and then
+deliberately reconciles the endpoint and Terraform state. Retain the source
+instance and snapshots through the rollback window. Never disable
+`prevent_destroy` as a shortcut in the ordinary registration plan.
 
 ### X developer application
 
@@ -197,10 +198,10 @@ The plan must show `INSIGHTS_REGISTRATION_PROVISIONED=true` and
 `INSIGHTS_REGISTRATION_ENABLED=false` on the API, registration secrets attached
 despite activation being false, the September release manifest on the API and
 both snapshot-worker topologies, and no secret values in plain ECS environment
-variables. It must also show encrypted RDS storage, the pinned RDS CA, and no
-database destroy or replacement. If the existing database is unencrypted, stop
-here and execute the separately reviewed encrypted snapshot copy/restore
-migration before provisioning registration.
+variables. It must also show the pinned RDS CA and no database destroy or
+replacement. Storage encryption is optional; if the existing database is
+unencrypted, the plan must preserve that setting rather than propose a database
+replacement.
 
 Run the backend suite and the Insights lint, tests, and production build. The
 Insights worker tests are a launch gate because they cover canonical-host
