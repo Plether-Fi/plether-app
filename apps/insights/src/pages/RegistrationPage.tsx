@@ -400,7 +400,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
               <div className="flex items-start gap-3">
                 <input id="accept-registration-privacy" type="checkbox" checked={acceptPrivacy} onChange={(event) => { setAcceptPrivacy(event.target.checked) }} aria-describedby="registration-privacy-details" className="mt-1 h-4 w-4 shrink-0 accent-brand-orange" />
                 <div>
-                  <label htmlFor="accept-registration-privacy" className="font-semibold text-content-primary">I accept the privacy notice:</label>
+                  <label htmlFor="accept-registration-privacy">I accept the privacy notice:</label>
                   <ul id="registration-privacy-details" className="mt-1 list-disc space-y-1 pl-5">
                     <li>My X handle will be public.</li>
                     <li>My confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages.</li>
