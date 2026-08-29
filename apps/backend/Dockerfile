@@ -14,6 +14,12 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://get-ghcup.haskell.org | \
     sh
 ENV PATH="/opt/.ghcup/bin:${PATH}"
 
+ARG AWS_RDS_CA_BUNDLE_URL=https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+ARG AWS_RDS_CA_BUNDLE_SHA256=e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3
+RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --retry 3 \
+      --output /tmp/aws-rds-global-bundle.pem "$AWS_RDS_CA_BUNDLE_URL" && \
+    echo "$AWS_RDS_CA_BUNDLE_SHA256  /tmp/aws-rds-global-bundle.pem" | sha256sum --check --strict
+
 WORKDIR /build
 
 COPY apps/backend/plether-api.cabal apps/backend/cabal.project apps/backend/cabal.project.freeze ./
@@ -42,7 +48,7 @@ COPY apps/frontend/scripts/perps-oracle-worker.mjs scripts/perps-oracle-worker.m
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq5 libsecp256k1-1 libstdc++6 ca-certificates && \
+    libpq5 libsecp256k1-1 libstdc++6 ca-certificates postgresql-client && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/plether-api-bin /usr/local/bin/plether-api
@@ -53,11 +59,13 @@ COPY --from=builder /build/plether-perps-indexer-bin /usr/local/bin/plether-perp
 COPY --from=builder /build/plether-insights-worker-bin /usr/local/bin/plether-insights-worker
 COPY --from=builder /build/plether-insights-admin-bin /usr/local/bin/plether-insights-admin
 COPY --from=builder /build/plether-candle-admin-bin /usr/local/bin/plether-candle-admin
+COPY --from=builder --chmod=0644 /tmp/aws-rds-global-bundle.pem /etc/ssl/certs/aws-rds-global-bundle.pem
 COPY --from=oracle-worker /usr/local/bin/node /usr/local/bin/node
 COPY --from=oracle-worker /oracle /app/oracle
 COPY apps/frontend/src/contracts/addresses.sepolia.json /app/config/addresses.sepolia.json
 COPY apps/frontend/src/contracts/addresses.arbitrum-sepolia.json /app/config/addresses.arbitrum-sepolia.json
 COPY apps/frontend/src/contracts/addresses.mainnet.json /app/config/addresses.mainnet.json
+COPY apps/backend/schema.sql /app/schema.sql
 
 WORKDIR /app
 EXPOSE 3001

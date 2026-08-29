@@ -12,7 +12,9 @@ resource "aws_db_instance" "postgres" {
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
   storage_type          = var.db_storage_type
-  storage_encrypted     = false
+  storage_encrypted     = var.db_storage_encrypted
+  kms_key_id            = var.db_storage_encrypted && var.db_kms_key_id != "" ? var.db_kms_key_id : null
+  ca_cert_identifier    = var.db_ca_cert_identifier
   apply_immediately     = var.db_apply_immediately
 
   db_name  = "plether"
@@ -29,6 +31,21 @@ resource "aws_db_instance" "postgres" {
   backup_retention_period = var.db_backup_retention_days
 
   lifecycle {
+    # Storage encryption cannot be enabled in place. Keep Terraform from
+    # replacing the database while an operator prepares an encrypted snapshot
+    # copy/restore and an explicitly reviewed endpoint/state cutover.
+    prevent_destroy = true
+
+    precondition {
+      condition     = var.db_storage_encrypted || var.db_kms_key_id == ""
+      error_message = "db_kms_key_id may be set only when db_storage_encrypted=true."
+    }
+
+    precondition {
+      condition     = !var.provision_insights_registration || var.db_storage_encrypted
+      error_message = "First-party Insights registration requires encrypted RDS storage. Existing unencrypted RDS instances cannot be encrypted in place; plan an encrypted snapshot copy/restore migration and endpoint cutover instead of applying a replacement directly."
+    }
+
     precondition {
       condition     = var.db_max_allocated_storage >= ceil(var.db_allocated_storage * 110 / 100)
       error_message = "db_max_allocated_storage must be at least 10 percent greater than db_allocated_storage for RDS storage autoscaling."

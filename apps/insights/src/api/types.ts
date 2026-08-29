@@ -7,6 +7,18 @@ export interface CompetitionPrize {
   amount: UsdcUnits
 }
 
+export type CompetitionRegistrationStatus = 'upcoming' | 'open' | 'closed'
+
+export interface CompetitionRegistration {
+  status: CompetitionRegistrationStatus
+  opensAt: string
+  closesAt: string
+  minimumXAccountAgeDays: number
+  targetXHandle: string
+  rulesVersion: string
+  privacyVersion: string
+}
+
 export interface Competition {
   id: string
   slug: string
@@ -23,6 +35,41 @@ export interface Competition {
   latestIndexedAt: string | null
   participantCount?: number
   eligibleCount?: number
+  registration?: CompetitionRegistration
+  fxSessionBoundaryUtc?: string
+}
+
+export type RegistrationStepStatus = 'pending' | 'verified'
+export type RegistrationApplicationStatus = 'in_progress' | 'completed'
+
+export interface RegistrationSession {
+  status: RegistrationApplicationStatus
+  csrfToken: string
+  expiresAt: string
+  oauthErrorCode?: string | null
+  steps: {
+    xIdentity: RegistrationStepStatus
+    xFollow: RegistrationStepStatus
+    wallet: RegistrationStepStatus
+    completed: boolean
+  }
+  requiredConsents: {
+    rulesVersion: string
+    privacyVersion: string
+  }
+  identity?: {
+    xHandle: string
+    maskedEmail: string
+  }
+  wallet?: {
+    ownerAddress: string
+    tradingAccount: string
+  }
+}
+
+export interface WalletChallenge {
+  message: string
+  expiresAt: string
 }
 
 export interface Standing {
@@ -87,6 +134,7 @@ export interface WalletResponse {
   competition: Competition
   wallet: WalletDetails
   activity: WalletActivity[] | null
+  activityStatus: 'live' | 'omitted_after_finalization'
 }
 
 export interface InsightsStatus {

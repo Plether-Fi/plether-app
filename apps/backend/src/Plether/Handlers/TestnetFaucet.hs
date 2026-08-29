@@ -453,7 +453,7 @@ finalizeSubmittedClaim pool cfg address token txHash receipt
       successResult <-
         runFaucetStage "persist_success" eitherBooleanOutcome $
           withFaucetDb pool $ \conn ->
-            markTestnetFaucetClaimSuccess conn address token txHash
+            markTestnetFaucetClaimSuccess conn address token txHash (receiptBlockNumber receipt)
       pure $ case successResult of
         Left err -> Left err
         Right False ->

@@ -39,6 +39,7 @@ spec = do
             , frScoreCutoffTimestamp = 100
             , frResultsTimestamp = 150
             , frStartBlock = Just 100
+            , frStartBlockHash = Just "0xstart"
             , frScoreCutoffBlock = Just 123
             , frParticipantCount = 2
             , frMissingTraderReferences = 0
@@ -55,6 +56,7 @@ spec = do
       finalizationBlockers
         (ready
           { frNowTimestamp = 99
+          , frStartBlockHash = Nothing
           , frScoreCutoffBlock = Nothing
           , frMissingTraderReferences = 1
           , frUnresolvedReviews = 2
@@ -63,6 +65,7 @@ spec = do
         `shouldBe`
           [ "the scoring cutoff has not passed"
           , "the scheduled results publication time has not arrived"
+          , "the canonical start block hash has not been resolved"
           , "the canonical final block has not been resolved"
           , "1 participant registration(s) are missing a private trader reference"
           , "2 participant review(s) are still pending or under review"
@@ -85,9 +88,74 @@ spec = do
       crStartingBalanceUsdc july2026Competition `shouldBe` 100_000_000_000
       minimumProfitUsdc july2026Competition `shouldBe` 1_000_000_000
       crMinimumActiveDays july2026Competition `shouldBe` 5
+      fxSessionBoundaryUtcText july2026Competition `shouldBe` "22:00"
       crPrizeUsdc july2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
       crPaymentDeadlineAt july2026Competition
         `shouldBe` UTCTime (fromGregorian 2026 8 10) (secondsToDiffTime $ 16 * 60 * 60)
+
+  describe "September 2026 competition defaults" $ do
+    it "uses the versioned September schedule with no close-only period" $ do
+      crSlug september2026Competition `shouldBe` "testnet-trading-2026-09"
+      crStartAt september2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 9 13) (secondsToDiffTime $ 21 * 60 * 60)
+      crNewRiskCutoffAt september2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 9 25) (secondsToDiffTime $ 21 * 60 * 60)
+      crScoreCutoffAt september2026Competition `shouldBe` crNewRiskCutoffAt september2026Competition
+      crRegistrationClosesAt september2026Competition
+        `shouldBe` Just (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 21 * 60 * 60))
+      crResultsAt september2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 9 28) (secondsToDiffTime $ 12 * 60 * 60)
+      crPaymentDeadlineAt september2026Competition
+        `shouldBe` UTCTime (fromGregorian 2026 10 3) 0
+
+    it "retains the bankroll, qualification thresholds, and prizes" $ do
+      crStartingBalanceUsdc september2026Competition `shouldBe` 100_000_000_000
+      minimumProfitUsdc september2026Competition `shouldBe` 1_000_000_000
+      crMinimumActiveDays september2026Competition `shouldBe` 5
+      crPrizeUsdc september2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
+      crScoringVersion september2026Competition `shouldBe` "cash-flow-adjusted-v1"
+      crScoringVersion july2026Competition `shouldBe` "account-value-v1"
+      fxSessionBoundaryUtcText september2026Competition `shouldBe` "21:00"
+      crMinimumXAccountAgeDays september2026Competition `shouldBe` Just 90
+      crTargetXHandle september2026Competition `shouldBe` Just "plether_fi"
+
+    it "is selected only through its exact versioned slug" $ do
+      competitionRulesForSlug september2026CompetitionSlug `shouldBe` Just september2026Competition
+      competitionRulesForSlug "testnet-trading-2026-09-typo" `shouldBe` Nothing
+
+    it "requires the registration opener to run strictly before close" $ do
+      canInitiallySeedCompetitionAt
+        september2026Competition
+        (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 20 * 60 * 60 + 59 * 60 + 59))
+        `shouldBe` True
+      canInitiallySeedCompetitionAt
+        september2026Competition
+        (UTCTime (fromGregorian 2026 9 20) (secondsToDiffTime $ 21 * 60 * 60))
+        `shouldBe` False
+
+    it "still permits an existing immutable competition row to restart after close" $ do
+      let afterClose = UTCTime (fromGregorian 2026 9 21) 0
+      canSeedCompetitionRowAt False september2026Competition afterClose `shouldBe` False
+      canSeedCompetitionRowAt True september2026Competition afterClose `shouldBe` True
+
+  describe "competition registration metadata states" $ do
+    it "accepts historical, staged, and atomically opened metadata" $ do
+      competitionRegistrationState Nothing Nothing Nothing Nothing
+        `shouldBe` RegistrationUnconfigured
+      competitionRegistrationState Nothing (Just 200) (Just 90) (Just "plether_fi")
+        `shouldBe` RegistrationConfiguredUnopened
+      competitionRegistrationState (Just 100) (Just 200) (Just 90) (Just "plether_fi")
+        `shouldBe` RegistrationOpened 100 200
+
+    it "rejects partial, blank, negative-age, and empty registration windows" $ do
+      competitionRegistrationState Nothing (Just 200) Nothing (Just "plether_fi")
+        `shouldBe` RegistrationMetadataInvalid
+      competitionRegistrationState Nothing (Just 200) (Just 90) (Just " ")
+        `shouldBe` RegistrationMetadataInvalid
+      competitionRegistrationState Nothing (Just 200) (Just (-1)) (Just "plether_fi")
+        `shouldBe` RegistrationMetadataInvalid
+      competitionRegistrationState (Just 200) (Just 200) (Just 90) (Just "plether_fi")
+        `shouldBe` RegistrationMetadataInvalid
 
   describe "immutable competition seed metadata" $ do
     let expected = competitionSeedMetadataFor
@@ -96,20 +164,25 @@ spec = do
           " 0xAa00000000000000000000000000000000000001 "
           "0xBb00000000000000000000000000000000000002"
           "0xCc00000000000000000000000000000000000003"
+          "0xDd00000000000000000000000000000000000004"
+          fixtureManifest
 
     it "normalizes deployment addresses before persistence and comparison" $ do
       csmReleaseRouter expected `shouldBe` "0xaa00000000000000000000000000000000000001"
       csmUsdcAddress expected `shouldBe` "0xbb00000000000000000000000000000000000002"
       csmMarginClearinghouseAddress expected `shouldBe` "0xcc00000000000000000000000000000000000003"
+      csmAccountLensAddress expected `shouldBe` "0xdd00000000000000000000000000000000000004"
 
     it "identifies deployment and scoring changes instead of silently accepting them" $ do
       let stored = expected
             { csmChainId = 1
             , csmMinimumProfitBps = 200
+            , csmAccountLensAddress = "0xee00000000000000000000000000000000000005"
             }
       competitionSeedMismatches expected stored
         `shouldBe`
           [ CompetitionSeedMismatch "chain_id" "1" "421614"
+          , CompetitionSeedMismatch "account_lens_address" "0xee00000000000000000000000000000000000005" "0xdd00000000000000000000000000000000000004"
           , CompetitionSeedMismatch "minimum_profit_bps" "200" "100"
           ]
 
@@ -120,6 +193,18 @@ spec = do
         expected
         legacy {csmRulesVersion = "different"}
         `shouldBe` False
+
+    it "never applies the July payout migration to a newer competition" $ do
+      let septemberExpected = competitionSeedMetadataFor
+            september2026Competition
+            421_614
+            "0xAa00000000000000000000000000000000000001"
+            "0xBb00000000000000000000000000000000000002"
+            "0xCc00000000000000000000000000000000000003"
+            "0xDd00000000000000000000000000000000000004"
+            fixtureManifest
+          deceptiveLegacy = septemberExpected {csmPaymentDeadlineTimestamp = 1_786_319_999}
+      isLegacyPaymentDeadlineOnlyMismatch septemberExpected deceptiveLegacy `shouldBe` False
 
     it "reports no mismatches for an idempotent restart" $ do
       competitionSeedMismatches expected expected `shouldBe` []
@@ -149,6 +234,70 @@ spec = do
               }
       sbFinalPnlUsdc score `shouldBe` 2_250_000_000
 
+    it "scores a prefunded bankroll and one official post-baseline allocation identically" $ do
+      let prefunded = calculateScore $
+            ScoreInput
+              { siStartingSnapshot = snapshot False 0 100_000_000_000 0
+              , siCurrentSnapshot = snapshot False 0 105_000_000_000 0
+              , siDepositsSinceStartUsdc = 0
+              , siWithdrawalsSinceStartUsdc = 0
+              , siManualAdjustmentsUsdc = 0
+              }
+          allocatedAfterBaseline = calculateScore $
+            ScoreInput
+              { siStartingSnapshot = snapshot False 0 0 0
+              , siCurrentSnapshot = snapshot False 0 105_000_000_000 0
+              , siDepositsSinceStartUsdc = 100_000_000_000
+              , siWithdrawalsSinceStartUsdc = 0
+              , siManualAdjustmentsUsdc = 0
+              }
+      sbFinalPnlUsdc prefunded `shouldBe` 5_000_000_000
+      sbFinalPnlUsdc allocatedAfterBaseline `shouldBe` sbFinalPnlUsdc prefunded
+
+    it "scores a legitimate complete zero terminal state instead of freezing an older snapshot" $ do
+      let score = calculateScore $
+            ScoreInput
+              { siStartingSnapshot = snapshot False 0 100_000_000_000 0
+              , siCurrentSnapshot = snapshot False 0 0 0
+              , siDepositsSinceStartUsdc = 0
+              , siWithdrawalsSinceStartUsdc = 0
+              , siManualAdjustmentsUsdc = 0
+              }
+      sbCurrentAccountValueUsdc score `shouldBe` 0
+      sbFinalPnlUsdc score `shouldBe` (-100_000_000_000)
+
+  describe "fundingIntegrityFlags" $ do
+    it "accepts the two permitted 100,000 bankroll paths" $ do
+      fundingIntegrityFlags (FundingIntegrityInput (Just 100_000_000_000) False 0 100_000_000_000 [100_000_000_000] 100_000_000_000 [] 0 100_000_000_000)
+        `shouldBe` []
+      fundingIntegrityFlags (FundingIntegrityInput (Just 0) False 0 100_000_000_000 [] 0 [(100_000_000_000, True)] 0 100_000_000_000)
+        `shouldBe` []
+
+    it "flags excess, late, and unverifiable funding for private review" $ do
+      fundingIntegrityFlags
+        (FundingIntegrityInput (Just 0) False 0 100_000_000_000 [] 0 [(50_000_000_000, False)] 1 50_000_000_000)
+        `shouldBe`
+          [ "official_allocation_amount_invalid"
+          , "official_allocation_not_before_trading"
+          , "unverified_deposit_provenance"
+          ]
+
+    it "flags positions and pending orders already present at the canonical baseline" $ do
+      fundingIntegrityFlags
+        (FundingIntegrityInput (Just 100_000_000_000) True 2 100_000_000_000 [100_000_000_000] 100_000_000_000 [] 0 100_000_000_000)
+        `shouldBe` ["baseline_open_position", "baseline_pending_orders"]
+
+    it "rejects an unproven prefunded bankroll, prebaseline round trips, and excess capacity" $ do
+      fundingIntegrityFlags
+        (FundingIntegrityInput (Just 100_000_000_000) False 0 100_000_000_000 [] 100_000_000_000 [] 0 100_000_000_000)
+        `shouldBe` ["baseline_official_allocation_count_invalid"]
+      fundingIntegrityFlags
+        (FundingIntegrityInput (Just 0) False 0 100_000_000_000 [100_000_000_000] 0 [(100_000_000_000, True)] 0 200_000_000_000)
+        `shouldBe`
+          [ "unexpected_prebaseline_official_allocation"
+          , "funding_capacity_exceeded"
+          ]
+
   describe "qualification" $ do
     it "treats exactly +1% and five active days as mechanically qualified" $ do
       let result = qualification july2026Competition EligibilityPending 1_000_000_000 5
@@ -169,14 +318,14 @@ spec = do
 
   describe "FX active sessions" $ do
     it "maps the Sunday 22:00 UTC reopen to Monday" $ do
-      fxSessionDay 1_784_498_400 `shouldBe` Just (fromGregorian 2026 7 20)
+      fxSessionDay july2026Competition 1_784_498_400 `shouldBe` Just (fromGregorian 2026 7 20)
 
     it "moves to the next named session at 22:00 UTC" $ do
-      fxSessionDay 1_784_584_799 `shouldBe` Just (fromGregorian 2026 7 20)
-      fxSessionDay 1_784_584_800 `shouldBe` Just (fromGregorian 2026 7 21)
+      fxSessionDay july2026Competition 1_784_584_799 `shouldBe` Just (fromGregorian 2026 7 20)
+      fxSessionDay july2026Competition 1_784_584_800 `shouldBe` Just (fromGregorian 2026 7 21)
 
     it "rejects the closed weekend interval" $ do
-      fxSessionDay 1_784_930_400 `shouldBe` Nothing
+      fxSessionDay july2026Competition 1_784_930_400 `shouldBe` Nothing
 
     it "counts only executed voluntary opens and closes inside the competition window" $ do
       activeSessionDays july2026Competition
@@ -193,5 +342,50 @@ spec = do
     it "excludes executions at the exact score cutoff" $ do
       activeSessionDay july2026Competition "Close" 1_785_535_200 `shouldBe` Nothing
 
+    it "uses the September 21:00 UTC boundary" $ do
+      fxSessionDay september2026Competition 1_789_419_599
+        `shouldBe` Just (fromGregorian 2026 9 14)
+      fxSessionDay september2026Competition 1_789_419_600
+        `shouldBe` Just (fromGregorian 2026 9 15)
+
+    it "offers exactly the ten September weekday sessions inside the window" $ do
+      activeSessionDays september2026Competition
+        [ ("Open", 1_789_387_200)
+        , ("Open", 1_789_473_600)
+        , ("Open", 1_789_560_000)
+        , ("Open", 1_789_646_400)
+        , ("Open", 1_789_732_800)
+        , ("Open", 1_789_992_000)
+        , ("Open", 1_790_078_400)
+        , ("Open", 1_790_164_800)
+        , ("Open", 1_790_251_200)
+        , ("Open", 1_790_337_600)
+        ]
+        `shouldBe` map (fromGregorian 2026 9) [14, 15, 16, 17, 18, 21, 22, 23, 24, 25]
+
+    it "treats the September scoring interval as half-open" $ do
+      activeSessionDay september2026Competition "Open" 1_789_333_199 `shouldBe` Nothing
+      activeSessionDay september2026Competition "Open" 1_789_333_200
+        `shouldBe` Just (fromGregorian 2026 9 14)
+      activeSessionDay september2026Competition "Close" 1_790_369_999
+        `shouldBe` Just (fromGregorian 2026 9 25)
+      activeSessionDay september2026Competition "Close" 1_790_370_000 `shouldBe` Nothing
+
 snapshot :: Bool -> Integer -> Integer -> Integer -> EquitySnapshot
 snapshot = EquitySnapshot
+
+fixtureManifest :: CompetitionReleaseManifest
+fixtureManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "fixture-release"
+    , crmChainId = 421_614
+    , crmUsdc = "0xa200000000000000000000000000000000000002"
+    , crmOrderRouter = "0xa100000000000000000000000000000000000001"
+    , crmMarginClearinghouse = "0xa300000000000000000000000000000000000003"
+    , crmAccountLens = "0xa400000000000000000000000000000000000004"
+    , crmCfdEngine = "0xd100000000000000000000000000000000000001"
+    , crmCfdEngineLens = "0xd200000000000000000000000000000000000002"
+    , crmSettlementSidecar = "0xd300000000000000000000000000000000000003"
+    , crmPletherOracle = "0xd400000000000000000000000000000000000004"
+    , crmIndexerStartBlock = 1
+    }

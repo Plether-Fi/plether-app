@@ -1,20 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { Competition, Standing } from '../api'
+import { useUtcNow } from '../hooks/useUtcNow'
 import { formatCompactUsdc, formatRoi, formatUsdc, formatUtc } from '../utils/format'
 import { EmptyState, Panel, Pnl, StatusBadge, WalletIdentity } from './ui'
 
-function useCountdown(target: string): string {
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setNow(Date.now())
-    }, 1_000)
-    return () => {
-      window.clearInterval(timer)
-    }
-  }, [])
-
+function countdownTo(target: string, now: number): string {
   const remaining = Math.max(0, new Date(target).getTime() - now)
   const seconds = Math.floor(remaining / 1_000)
   const days = Math.floor(seconds / 86_400)
@@ -36,9 +26,20 @@ function statusLabel(status: Competition['status']): string {
 }
 
 export function CompetitionHero({ competition }: { competition: Competition }) {
+  const now = useUtcNow()
   const target = competition.status === 'scheduled' ? competition.startsAt : competition.tradingCutoffAt
-  const countdown = useCountdown(target)
+  const countdown = countdownTo(target, now)
   const showCountdown = competition.status === 'scheduled' || competition.status === 'live'
+  // Registration mutations are authorized against the backend/database clock.
+  // A visitor's device clock must not hide an otherwise open server window.
+  const registrationOpen = competition.registration?.status === 'open'
+  const registrationStatus = competition.registration
+    ? competition.registration.status === 'upcoming'
+      ? `Registration opens ${formatUtc(competition.registration.opensAt)}`
+      : competition.registration.status === 'closed'
+        ? `Registration closed ${formatUtc(competition.registration.closesAt)}`
+        : `Registration closes ${formatUtc(competition.registration.closesAt)}`
+    : 'View application details and eligibility'
 
   return (
     <div className="relative overflow-hidden border border-brand-border/25 bg-surface-panel px-5 py-7 sm:px-8 sm:py-9">
@@ -56,6 +57,15 @@ export function CompetitionHero({ competition }: { competition: Competition }) {
           <p className="mt-4 max-w-2xl text-sm leading-6 text-content-secondary sm:text-base">
             Follow every registered trader’s performance, activity, and prize eligibility from finalized onchain data.
           </p>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <Link
+              to={`/competitions/${encodeURIComponent(competition.slug)}/register`}
+              className={`border border-brand-orange px-5 py-2.5 text-sm font-semibold transition-colors hover:bg-brand-peach hover:text-app-bg ${registrationOpen ? 'bg-brand-orange text-content-primary' : 'bg-brand-orange/10 text-brand-peach'}`}
+            >
+              {registrationOpen ? 'Enter competition' : 'Competition application'}
+            </Link>
+            <span className="text-xs text-content-tertiary">{registrationStatus}</span>
+          </div>
         </div>
         <div className="min-w-64 border-l-2 border-brand-orange pl-4 lg:text-right">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-tertiary">
@@ -185,11 +195,14 @@ export function Leaderboard({ standings, search, competitionSlug }: { standings:
   return <><DesktopTable standings={standings} competitionSlug={competitionSlug} /><MobileList standings={standings} competitionSlug={competitionSlug} /></>
 }
 
-export function LeaderboardTitle({ count }: { count: number }) {
+export function LeaderboardTitle({ count, competitionSlug }: { count: number; competitionSlug: string }) {
+  const rankingScope = competitionSlug === 'testnet-trading-2026'
+    ? 'zero-trade accounts are unranked'
+    : 'all registered accounts remain in the raw P&L ranking'
   return (
     <div>
       <h2 className="text-xl font-semibold sm:text-2xl">Leaderboard</h2>
-      <p className="mt-1 text-sm text-content-secondary">Overall rank by net account return after trading costs · zero-trade accounts are unranked · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
+      <p className="mt-1 text-sm text-content-secondary">Overall rank by net account return after trading costs · {rankingScope} · prize places exclude ineligible traders · {count} {count === 1 ? 'trader' : 'traders'} shown</p>
     </div>
   )
 }

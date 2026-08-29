@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-import { useInsightsStatus } from '../api'
+import { useCurrentCompetition, useInsightsStatus } from '../api'
 import { formatUtc } from '../utils/format'
 
 function navClass({ isActive }: { isActive: boolean }): string {
@@ -13,6 +13,12 @@ function navClass({ isActive }: { isActive: boolean }): string {
 }
 
 function Header() {
+  const competition = useCurrentCompetition()
+  const registrationOpen = competition.data?.registration?.status === 'open'
+  const registrationPath = competition.data
+    ? `/competitions/${encodeURIComponent(competition.data.slug)}/register`
+    : '/register'
+
   return (
     <header className="sticky top-0 z-40 border-b border-brand-border/25 bg-surface-panel/95 backdrop-blur">
       <div className="mx-auto flex min-h-16 max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
@@ -26,6 +32,9 @@ function Header() {
         <nav className="flex items-center gap-1" aria-label="Primary navigation">
           <NavLink to="/" end className={navClass}>Leaderboard</NavLink>
           <NavLink to="/methodology" className={navClass}>Methodology</NavLink>
+          <NavLink to={registrationPath} className={navClass}>
+            {registrationOpen ? 'Enter competition' : 'Application'}
+          </NavLink>
         </nav>
       </div>
     </header>
@@ -44,7 +53,7 @@ function Footer() {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <span>© 2026 Plether</span>
           <Link to="/methodology" className="text-content-secondary hover:text-brand-peach">Scoring methodology</Link>
-          <a href="https://plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether ↗</a>
+          <a href="https://app.sepolia.plether.com" className="text-content-secondary hover:text-brand-peach">Trade on Plether testnet ↗</a>
         </div>
         <div className="flex items-center gap-2" title={indexedAt ? `Indexed ${formatUtc(indexedAt)}` : undefined}>
           <span className={`h-2 w-2 rounded-full ${isLive ? 'bg-positive' : status.isLoading ? 'bg-brand-yellow' : 'bg-brand-orange'}`} />

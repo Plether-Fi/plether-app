@@ -57,8 +57,19 @@ function Vpi({ value }: { value: string | null }) {
   )
 }
 
-function ActivityTable({ activity }: { activity: WalletActivity[] | null }) {
-  if (!activity?.length) return <EmptyState title="No activity yet" message="Finalized competition activity will appear here." />
+function ActivityTable({ activity, activityStatus }: {
+  activity: WalletActivity[] | null
+  activityStatus: 'live' | 'omitted_after_finalization'
+}) {
+  if (activityStatus === 'omitted_after_finalization') {
+    return (
+      <EmptyState
+        title="Activity history archived"
+        message="The immutable final standing is shown above. Live event history is intentionally omitted after finalization."
+      />
+    )
+  }
+  if (!activity?.length) return <EmptyState title="No activity yet" message="Competition activity will appear here." />
 
   return (
     <>
@@ -159,7 +170,7 @@ export function WalletPage() {
     return <ErrorState title="Unable to load wallet" />
   }
 
-  const { wallet, activity, competition } = query.data
+  const { wallet, activity, activityStatus, competition } = query.data
   const profileUrl = xProfileUrl(wallet.displayName)
   const explorerUrl = `${ARBITRUM_SEPOLIA_EXPLORER}/address/${wallet.address}`
   return (
@@ -232,7 +243,7 @@ export function WalletPage() {
 
       <Panel>
         <div className="border-b border-brand-border/20 px-5 py-4"><h2 className="text-lg font-semibold">Competition activity</h2><p className="mt-1 text-xs text-content-tertiary">Finalized protocol events, newest first · realized values are directional price P&amp;L before account costs</p></div>
-        <ActivityTable activity={activity ?? null} />
+        <ActivityTable activity={activity ?? null} activityStatus={activityStatus} />
       </Panel>
     </div>
   )

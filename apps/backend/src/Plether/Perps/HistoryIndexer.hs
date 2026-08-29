@@ -7,6 +7,8 @@ module Plether.Perps.HistoryIndexer
   , runPerpsIndexer
   , perpsEventTopics
   , parsePerpsLog
+  , parseUsdcTransfer
+  , transferTopic
   , RpcLog (..)
   , BlockInfo (..)
   , ParsedPerpsLog (..)
@@ -62,6 +64,7 @@ import Network.HTTP.Client
   )
 import Plether.Config (PerpsCandleWriteMode (..))
 import Plether.Database (DbPool, withDb)
+import Plether.Database.Insights (invalidateCompetitionSnapshotsForReleaseRebuild)
 import Plether.Database.Candles
   ( RollupCoverage (..)
   , RollupKind (VolumeRollup)
@@ -76,6 +79,7 @@ import Plether.Database.Candles
 import Plether.Database.Schema
   ( PerpsExecutionEvidenceRow (..)
   , assertPerpsReplayActivityExact
+  , assertPerpsReplayUsdcTransferExact
   , assertPerpsReplayEventExact
   , assertPerpsReplayExpiredCleanupExact
   , assertPerpsReplayExpiredCleanupIfReadyExact
@@ -89,6 +93,7 @@ import Plether.Database.Schema
   , insertPerpsExpiredCleanupActivityIfReady
   , insertPerpsActivity
   , insertPerpsEvent
+  , insertPerpsUsdcTransfer
   , lockPerpsIndexerTransaction
   , lockPerpsReplayOrders
   , markPerpsExecutionEvidenceAttempt
@@ -119,7 +124,8 @@ import Plether.Utils.Hex (hexToInteger, intToHex)
 import System.Timeout (timeout)
 
 data PerpsAddresses = PerpsAddresses
-  { paOrderRouter :: Text
+  { paUsdc :: Text
+  , paOrderRouter :: Text
   , paCfdEngine :: Text
   , paCfdEngineLens :: Text
   , paCfdEngineSettlementSidecar :: Text
@@ -131,7 +137,8 @@ data PerpsAddresses = PerpsAddresses
 defaultPerpsAddresses :: PerpsAddresses
 defaultPerpsAddresses =
   PerpsAddresses
-    { paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+    { paUsdc = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+    , paOrderRouter = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
     , paCfdEngine = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
     , paCfdEngineLens = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
     , paCfdEngineSettlementSidecar = "0x0b652c4d4610234e221403076c116292f935b424"
@@ -199,6 +206,7 @@ data ParsedPerpsLog
   | ParsedOrderFailed Integer Int Text Value
   | ParsedPositionActivity Text Text Int (Maybe Integer) (Maybe Integer) (Maybe Integer) (Maybe Integer) Value
   | ParsedMarginActivity Text Text Integer Value
+  | ParsedUsdcTransfer Text Text Integer Value
   deriving stock (Show, Eq)
 
 data TradeCosts = TradeCosts
@@ -241,6 +249,9 @@ depositTopic = keccak256Text "Deposit(address,address,uint256)"
 
 withdrawTopic :: ByteString
 withdrawTopic = keccak256Text "Withdraw(address,address,uint256)"
+
+transferTopic :: ByteString
+transferTopic = keccak256Text "Transfer(address,address,uint256)"
 
 perpsEventTopics :: [ByteString]
 perpsEventTopics =
@@ -439,7 +450,7 @@ runBoundedReplay manager pool cfg replayOptions = do
         manager
         (picRpcUrls cfg)
         reqIdRef
-        (perpsAddresses cfg)
+        cfg
         fromBlock
         toBlock
   forM_ logs $ \logEntry ->
@@ -492,7 +503,7 @@ runBoundedReplay manager pool cfg replayOptions = do
       maybe
         (fail "Allowlisted Perps replay log could not be decoded")
         pure
-        (parsePerpsLog logEntry)
+        (parseConfiguredLog cfg logEntry)
     txInfo <-
       requireRpc "eth_getTransactionByHash(replay)" $
         getReplayTransactionInfo manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
@@ -679,7 +690,8 @@ validateReplayLogAbi logEntry =
       | topic == marginAddedTopic -> requireShape 2 32 indexedTopics
       | topic == depositTopic -> requireShape 3 32 indexedTopics
       | topic == withdrawTopic -> requireShape 3 32 indexedTopics
-      | otherwise -> Left "Replay log topic is not in the allowlisted Perps ABI"
+      | topic == transferTopic -> requireShape 3 32 indexedTopics
+      | otherwise -> Left "Replay log topic is not in the allowlisted release ABI"
     [] -> Left "Replay log has no event topic"
  where
   requireShape totalTopicCount dataBytes indexedTopics = do
@@ -733,7 +745,13 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
     then pure False
     else do
       logs <- requireRpc "eth_getLogs" $
-        getLogs manager (picRpcUrls cfg) reqIdRef (perpsAddresses cfg) startBlock endBlock
+        getLogs manager (picRpcUrls cfg) reqIdRef cfg startBlock endBlock
+      forM_ logs $ \logEntry -> do
+        either (fail . T.unpack) pure $
+          validateReplayLogScope startBlock endBlock (perpsAddresses cfg) logEntry
+        either (fail . T.unpack) pure $ validateReplayLogAbi logEntry
+        unless (maybe False (const True) $ parseConfiguredLog cfg logEntry) $
+          fail "Allowlisted release log could not be decoded for its configured contract"
       let orderedLogs =
             sortOn
               (\logEntry -> (rlBlockNumber logEntry, rlTxIndex logEntry, rlLogIndex logEntry))
@@ -772,7 +790,7 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
 
       enrichedLogs <- forM validatedLogs $ \(logEntry, blockInfo) -> do
         mTxFrom <- getTransactionFrom manager (picRpcUrls cfg) reqIdRef (rlTxHash logEntry)
-        let parsedLog = parsePerpsLog logEntry
+        let parsedLog = parseConfiguredLog cfg logEntry
         tradeCosts <- case parsedLog of
           Just parsed@(ParsedPositionActivity kind _ _ _ _ _ _ _)
             | kind == "Open" || kind == "Close" -> do
@@ -851,7 +869,8 @@ runOneRange manager pool cfg explicitFrom explicitTo = do
               (biTimestamp endInfo)
               0
         when certifiesCanonicalContinuity $
-          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) endBlock (Just $ biHash endInfo)
+          setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
+            (picStartBlock cfg) endBlock (Just $ biHash endInfo)
         pure certifiesCanonicalContinuity
       logInfoEvery
         300
@@ -939,6 +958,10 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
                 (paOrderRouter $ picAddresses cfg)
                 rewindBlock
             else pure []
+        invalidateCompetitionSnapshotsForReleaseRebuild
+          conn
+          (picChainId cfg)
+          (paOrderRouter $ picAddresses cfg)
         deletePerpsHistoryFromBlock conn (picChainId cfg) (paOrderRouter $ picAddresses cfg) rewindBlock
         -- Rebuild while the dataset is still coverage-gated. A minute may now
         -- be empty because its sole trade was orphaned; recomputing it also
@@ -949,7 +972,8 @@ verifyCursor manager pool cfg reqIdRef lastBlock (Just storedHash) = do
           (paOrderRouter $ picAddresses cfg)
           affectedVolumeMinutes
           (picCandleLatenessSeconds cfg)
-        setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg) newCursor Nothing
+        setPerpsIndexerState conn (picChainId cfg) (picIndexerName cfg) (paOrderRouter $ picAddresses cfg)
+          (picStartBlock cfg) newCursor Nothing
 
 enrichPendingExecutionEvidence
   :: Manager
@@ -1240,7 +1264,7 @@ processLog
   -> RpcLog
   -> IO (Maybe Integer)
 processLog conn cfg blockInfo txFrom tradeCosts logEntry =
-  case parsePerpsLog logEntry of
+  case parseConfiguredLog cfg logEntry of
     Nothing -> pure Nothing
     Just parsed ->
       processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
@@ -1254,7 +1278,24 @@ processParsedLog
   -> RpcLog
   -> ParsedPerpsLog
   -> IO (Maybe Integer)
-processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed = do
+processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
+  | ParsedUsdcTransfer fromAddress toAddress amount _ <- parsed = do
+      insertPerpsUsdcTransfer
+        conn
+        (picChainId cfg)
+        (paOrderRouter $ picAddresses cfg)
+        (paUsdc $ picAddresses cfg)
+        fromAddress
+        toAddress
+        amount
+        (rlTxHash logEntry)
+        (rlBlockNumber logEntry)
+        (rlBlockHash logEntry)
+        (rlTxIndex logEntry)
+        (rlLogIndex logEntry)
+        (biTimestamp blockInfo)
+      pure Nothing
+  | otherwise = do
       let eventName = parsedEventName parsed
           account = parsedAccount parsed
           orderId = parsedOrderId parsed
@@ -1308,6 +1349,7 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed = do
             kind Nothing Nothing Nothing Nothing Nothing (Just amount) Nothing (rlTxHash logEntry)
             (rlBlockNumber logEntry) (rlBlockHash logEntry) (rlTxIndex logEntry) (rlLogIndex logEntry)
             (biTimestamp blockInfo) payload
+        ParsedUsdcTransfer {} -> pure ()
       pure $
         if isMarketVolumeActivity parsed
           then Just $ biTimestamp blockInfo
@@ -1318,7 +1360,28 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed = do
 -- semantics. Replay therefore verifies the exact canonical projection after
 -- every prepared log. Any mismatch aborts and rolls back the whole range.
 assertPreparedReplayLogExact :: Connection -> PerpsIndexerConfig -> PreparedReplayLog -> IO ()
-assertPreparedReplayLogExact conn cfg prepared = do
+assertPreparedReplayLogExact conn cfg prepared =
+  case prlParsed prepared of
+    ParsedUsdcTransfer fromAddress toAddress amount _ ->
+      let logEntry = prlLog prepared
+       in assertPerpsReplayUsdcTransferExact
+            conn
+            (picChainId cfg)
+            (paOrderRouter $ picAddresses cfg)
+            (paUsdc $ picAddresses cfg)
+            fromAddress
+            toAddress
+            amount
+            (rlTxHash logEntry)
+            (rlBlockNumber logEntry)
+            (rlBlockHash logEntry)
+            (rlTxIndex logEntry)
+            (rlLogIndex logEntry)
+            (biTimestamp $ prlBlockInfo prepared)
+    _ -> assertPreparedPerpsLogExact conn cfg prepared
+
+assertPreparedPerpsLogExact :: Connection -> PerpsIndexerConfig -> PreparedReplayLog -> IO ()
+assertPreparedPerpsLogExact conn cfg prepared = do
   let logEntry = prlLog prepared
       blockInfo = prlBlockInfo prepared
       parsed = prlParsed prepared
@@ -1433,6 +1496,7 @@ assertPreparedReplayLogExact conn cfg prepared = do
         logIndex
         timestamp
         payload
+    ParsedUsdcTransfer {} -> pure ()
 
 -- Keep this predicate aligned with the canonical volume query. Only position
 -- lifecycle events that contain both notional inputs contribute to OHLCV.
@@ -1441,6 +1505,14 @@ isMarketVolumeActivity = \case
   ParsedPositionActivity kind _ _ (Just _) (Just _) _ _ _ ->
     kind `elem` ["Open", "Close", "Liquidated"]
   _ -> False
+
+parseConfiguredLog :: PerpsIndexerConfig -> RpcLog -> Maybe ParsedPerpsLog
+parseConfiguredLog cfg logEntry
+  | normalizeHex (rlAddress logEntry) == normalizeHex (paUsdc $ picAddresses cfg) =
+      case rlTopics logEntry of
+        topic : _ | topic == transferTopic -> parseUsdcTransfer logEntry
+        _ -> Nothing
+  | otherwise = parsePerpsLog logEntry
 
 parsePerpsLog :: RpcLog -> Maybe ParsedPerpsLog
 parsePerpsLog logEntry =
@@ -1455,6 +1527,24 @@ parsePerpsLog logEntry =
       | topic == marginAddedTopic -> parseMarginAdded logEntry
       | topic == depositTopic -> parseDepositWithdraw "Deposit" logEntry
       | topic == withdrawTopic -> parseDepositWithdraw "Withdraw" logEntry
+    _ -> Nothing
+
+parseUsdcTransfer :: RpcLog -> Maybe ParsedPerpsLog
+parseUsdcTransfer logEntry =
+  case rlTopics logEntry of
+    [topic, _, _]
+      | topic == transferTopic
+      , all ((== 32) . BS.length) (rlTopics logEntry)
+      , BS.length (rlData logEntry) == 32 -> do
+          fromAddress <- indexedAddress (rlTopics logEntry) 1
+          toAddress <- indexedAddress (rlTopics logEntry) 2
+          let amount = wordAt (rlData logEntry) 0
+          pure $ ParsedUsdcTransfer fromAddress toAddress amount $
+            object
+              [ "from" .= fromAddress
+              , "to" .= toAddress
+              , "amount" .= show amount
+              ]
     _ -> Nothing
 
 parseOrderCommitted :: RpcLog -> Maybe ParsedPerpsLog
@@ -1694,12 +1784,14 @@ parsedEventName = \case
   ParsedMarginActivity kind _ _ _
     | kind == "Add margin" -> "MarginAdded"
     | otherwise -> kind
+  ParsedUsdcTransfer {} -> "Transfer"
 
 parsedAccount :: ParsedPerpsLog -> Maybe Text
 parsedAccount = \case
   ParsedOrderCommitted _ account _ _ -> Just account
   ParsedPositionActivity _ account _ _ _ _ _ _ -> Just account
   ParsedMarginActivity _ account _ _ -> Just account
+  ParsedUsdcTransfer _ toAddress _ _ -> Just toAddress
   _ -> Nothing
 
 parsedOrderId :: ParsedPerpsLog -> Maybe Integer
@@ -1722,6 +1814,7 @@ parsedPayload = \case
   ParsedOrderFailed _ _ _ payload -> payload
   ParsedPositionActivity _ _ _ _ _ _ _ payload -> payload
   ParsedMarginActivity _ _ _ payload -> payload
+  ParsedUsdcTransfer _ _ _ payload -> payload
 
 terminalStatus :: Text -> Text
 terminalStatus "Expired" = "Expired / Cleaned up"
@@ -1748,6 +1841,14 @@ activityKey logEntry kind orderId =
 
 perpsAddresses :: PerpsIndexerConfig -> [Text]
 perpsAddresses cfg =
+  [ paUsdc (picAddresses cfg)
+  , paOrderRouter (picAddresses cfg)
+  , paCfdEngine (picAddresses cfg)
+  , paMarginClearinghouse (picAddresses cfg)
+  ]
+
+perpsContractAddresses :: PerpsIndexerConfig -> [Text]
+perpsContractAddresses cfg =
   [ paOrderRouter (picAddresses cfg)
   , paCfdEngine (picAddresses cfg)
   , paMarginClearinghouse (picAddresses cfg)
@@ -1970,25 +2071,15 @@ executionFeedIds = traverse decodeFeedId basketComponents
 renderRpcError :: RpcError -> Text
 renderRpcError = T.pack . show
 
-getLogs :: Manager -> [Text] -> IORef Integer -> [Text] -> Integer -> Integer -> IO (Either Text [RpcLog])
-getLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
-  let topics = map (String . ("0x" <>) . bytesToHex) perpsEventTopics
-      filterObject = object
-        [ "address" .= addresses
-        , "topics" .= [topics]
-        , "fromBlock" .= ("0x" <> intToHex fromBlock)
-        , "toBlock" .= ("0x" <> intToHex toBlock)
-        ]
-  result <- rpcCallAny manager rpcUrls reqIdRef "eth_getLogs" [filterObject]
-  pure $ case result of
-    Left err -> Left err
-    Right (Array arr) -> Right $ catMaybes $ map parseLogEntry (toList arr)
-    Right _ -> Left "Expected logs array"
+getLogs :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
+getLogs manager rpcUrls reqIdRef cfg fromBlock toBlock = do
+  perpsResult <- getLogsFor manager rpcUrls reqIdRef (perpsContractAddresses cfg) perpsEventTopics fromBlock toBlock
+  transferResult <- getLogsFor manager rpcUrls reqIdRef [paUsdc $ picAddresses cfg] [transferTopic] fromBlock toBlock
+  pure $ (<>) <$> perpsResult <*> transferResult
 
-getReplayLogs
-  :: Manager -> [Text] -> IORef Integer -> [Text] -> Integer -> Integer -> IO (Either Text [RpcLog])
-getReplayLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
-  let topics = map (String . ("0x" <>) . bytesToHex) perpsEventTopics
+getLogsFor :: Manager -> [Text] -> IORef Integer -> [Text] -> [ByteString] -> Integer -> Integer -> IO (Either Text [RpcLog])
+getLogsFor manager rpcUrls reqIdRef addresses eventTopics fromBlock toBlock = do
+  let topics = map (String . ("0x" <>) . bytesToHex) eventTopics
       filterObject = object
         [ "address" .= addresses
         , "topics" .= [topics]
@@ -2000,6 +2091,10 @@ getReplayLogs manager rpcUrls reqIdRef addresses fromBlock toBlock = do
     Left err -> Left err
     Right (Array arr) -> traverse parseReplayLogEntry $ toList arr
     Right _ -> Left "Expected logs array"
+
+getReplayLogs
+  :: Manager -> [Text] -> IORef Integer -> PerpsIndexerConfig -> Integer -> Integer -> IO (Either Text [RpcLog])
+getReplayLogs = getLogs
 
 parseReplayLogEntry :: Value -> Either Text RpcLog
 parseReplayLogEntry = \case

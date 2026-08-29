@@ -41,6 +41,10 @@ db_allocated_storage = 40
 # Desired final/new-instance type. Keep an existing gp2 instance on gp2 until
 # backup retention and PITR are active, then plan the gp3 conversion separately.
 db_storage_type      = "gp3"
+db_storage_encrypted = false
+db_kms_key_id        = ""
+db_ssl_root_cert_path = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+db_ca_cert_identifier = "rds-ca-rsa2048-g1"
 db_apply_immediately = false
 db_backup_retention_days = 7
 db_max_allocated_storage = 100

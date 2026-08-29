@@ -94,6 +94,7 @@ module Plether.Database.Schema
   , updatePerpsOrderOracleEvidence
   , updatePerpsOrderEconomicsEvidence
   , insertPerpsActivity
+  , insertPerpsUsdcTransfer
   , perpsOrderBaseSelectSql
   , getPerpsOrdersByAccount
   , getPerpsOrderById
@@ -112,6 +113,7 @@ module Plether.Database.Schema
   , assertPerpsReplayOrderCommittedExact
   , assertPerpsReplayOrderTerminalExact
   , assertPerpsReplayActivityExact
+  , assertPerpsReplayUsdcTransferExact
   , assertPerpsReplayExpiredCleanupExact
   , assertPerpsReplayExpiredCleanupIfReadyExact
   , configurePerpsReplayTransaction
@@ -175,6 +177,7 @@ data TestnetFaucetClaimRow = TestnetFaucetClaimRow
   , tfcTokenAddress :: Text
   , tfcTxHash :: Maybe Text
   , tfcRawTx :: Maybe Text
+  , tfcMintBlockNumber :: Maybe Integer
   , tfcStatus :: Text
   , tfcError :: Maybe Text
   }
@@ -183,6 +186,7 @@ data TestnetFaucetClaimRow = TestnetFaucetClaimRow
 instance FromRow TestnetFaucetClaimRow where
   fromRow = TestnetFaucetClaimRow
     <$> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -199,6 +203,7 @@ ensureTestnetFaucetSchema conn = do
     \token_address VARCHAR(42) NOT NULL,\
     \tx_hash VARCHAR(66),\
     \raw_tx TEXT,\
+    \mint_block_number BIGINT,\
     \status VARCHAR(16) NOT NULL,\
     \error TEXT,\
     \created_at TIMESTAMP DEFAULT NOW(),\
@@ -206,6 +211,7 @@ ensureTestnetFaucetSchema conn = do
     \PRIMARY KEY (address, token_address)\
     \)"
   _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS raw_tx TEXT"
+  _ <- execute_ conn "ALTER TABLE testnet_faucet_claims ADD COLUMN IF NOT EXISTS mint_block_number BIGINT"
   _ <- execute_ conn "ALTER TABLE testnet_faucet_claims DROP CONSTRAINT IF EXISTS testnet_faucet_claims_pkey"
   _ <- execute_ conn
     "ALTER TABLE testnet_faucet_claims \
@@ -218,7 +224,7 @@ ensureTestnetFaucetSchema conn = do
 getTestnetFaucetClaim :: Connection -> Text -> Text -> IO (Maybe TestnetFaucetClaimRow)
 getTestnetFaucetClaim conn address tokenAddress = do
   rows <- query conn
-    "SELECT address, amount, token_address, tx_hash, raw_tx, status, error \
+    "SELECT address, amount, token_address, tx_hash, raw_tx, mint_block_number, status, error \
     \FROM testnet_faucet_claims WHERE address = ? AND token_address = ?"
     (T.toLower address, T.toLower tokenAddress)
   pure $ case rows of
@@ -241,6 +247,7 @@ beginTestnetFaucetClaimSql =
   \amount = EXCLUDED.amount,\
   \tx_hash = NULL,\
   \raw_tx = NULL,\
+  \mint_block_number = NULL,\
   \status = 'preparing',\
   \error = NULL,\
   \updated_at = NOW() \
@@ -261,16 +268,16 @@ markTestnetFaucetClaimSubmittedSql =
   \tx_hash = ?, raw_tx = ?, status = 'submitted', error = NULL, updated_at = NOW() \
   \WHERE address = ? AND token_address = ? AND status = 'preparing'"
 
-markTestnetFaucetClaimSuccess :: Connection -> Text -> Text -> Text -> IO Bool
-markTestnetFaucetClaimSuccess conn address tokenAddress txHash = do
+markTestnetFaucetClaimSuccess :: Connection -> Text -> Text -> Text -> Integer -> IO Bool
+markTestnetFaucetClaimSuccess conn address tokenAddress txHash mintBlockNumber = do
   affected <- execute conn markTestnetFaucetClaimSuccessSql
-    (T.toLower txHash, T.toLower address, T.toLower tokenAddress, T.toLower txHash)
+    (T.toLower txHash, mintBlockNumber, T.toLower address, T.toLower tokenAddress, T.toLower txHash)
   pure $ affected > (0 :: Int64)
 
 markTestnetFaucetClaimSuccessSql :: Query
 markTestnetFaucetClaimSuccessSql =
   "UPDATE testnet_faucet_claims SET \
-  \tx_hash = ?, raw_tx = NULL, status = 'success', error = NULL, updated_at = NOW() \
+  \tx_hash = ?, raw_tx = NULL, mint_block_number = ?, status = 'success', error = NULL, updated_at = NOW() \
   \WHERE address = ? AND token_address = ? AND tx_hash = ? \
   \AND status IN ('submitted', 'success')"
 
@@ -301,7 +308,7 @@ markTestnetFaucetClaimReverted conn address tokenAddress txHash err = do
 markTestnetFaucetClaimRevertedSql :: Query
 markTestnetFaucetClaimRevertedSql =
   "UPDATE testnet_faucet_claims SET \
-  \raw_tx = NULL, status = 'failed', error = ?, updated_at = NOW() \
+  \raw_tx = NULL, mint_block_number = NULL, status = 'failed', error = ?, updated_at = NOW() \
   \WHERE address = ? AND token_address = ? AND tx_hash = ? AND status = 'submitted'"
 
 data InsertRow = InsertRow
@@ -1839,6 +1846,7 @@ data PerpsReplayHistorySnapshot = PerpsReplayHistorySnapshot
   { prhsEvents :: [Text]
   , prhsOrders :: [Text]
   , prhsActivity :: [Text]
+  , prhsUsdcTransfers :: [Text]
   }
   deriving stock (Eq, Show)
 
@@ -2017,6 +2025,42 @@ assertPerpsReplayActivityExact conn chainId releaseRouter contractAddress eventK
     ) :: IO [Only Integer]
   assertExactlyOneReplayRow "account activity" rows
 
+assertPerpsReplayUsdcTransferExact
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+assertPerpsReplayUsdcTransferExact conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
+  rows <- query conn
+    "SELECT 1::BIGINT FROM perps_usdc_transfers \
+    \WHERE chain_id = ? AND release_router = ? AND token_address = ? \
+    \AND from_address = ? AND to_address = ? AND amount = ? AND tx_hash = ? \
+    \AND block_number = ? AND block_hash = ? AND tx_index = ? AND log_index = ? AND timestamp = ?"
+    ( chainId
+    , normalizeRouter releaseRouter
+    , normalizeRouter tokenAddress
+    , T.toLower fromAddress
+    , T.toLower toAddress
+    , amount
+    , T.toLower txHash
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , logIndex
+    , timestamp
+    ) :: IO [Only Integer]
+  assertExactlyOneReplayRow "USDC transfer" rows
+
 assertPerpsReplayExpiredCleanupExact :: Connection -> Integer -> Text -> Integer -> IO ()
 assertPerpsReplayExpiredCleanupExact conn chainId orderRouter orderId =
   assertPerpsReplayExpiredCleanupWithRequirement conn chainId orderRouter orderId True
@@ -2124,11 +2168,19 @@ getPerpsReplayHistorySnapshot conn chainId releaseRouter fromBlock toBlock order
           \ ORDER BY block_number, tx_index, log_index, event_key) snapshot"
           (chainId, router, fromBlock, toBlock, In orderIds)
     :: IO [Only Text]
+  transfers <- query conn
+    "SELECT row_to_json(snapshot)::text FROM (\
+    \ SELECT chain_id, release_router, token_address, from_address, to_address, amount, tx_hash, \
+    \ block_number, block_hash, tx_index, log_index, timestamp FROM perps_usdc_transfers \
+    \ WHERE chain_id = ? AND release_router = ? AND block_number BETWEEN ? AND ? \
+    \ ORDER BY block_number, tx_index, log_index) snapshot"
+    (chainId, router, fromBlock, toBlock) :: IO [Only Text]
   pure $
     PerpsReplayHistorySnapshot
       { prhsEvents = map fromOnly events
       , prhsOrders = map fromOnly orders
       , prhsActivity = map fromOnly activity
+      , prhsUsdcTransfers = map fromOnly transfers
       }
 
 ensurePerpsHistorySchema :: Connection -> IO ()
@@ -2311,17 +2363,89 @@ ensurePerpsHistorySchema conn = do
     \ON perps_account_activity(chain_id, release_router, account, block_number) \
     \WHERE activity_type = 'Open'"
   _ <- execute_ conn
+    "CREATE TABLE IF NOT EXISTS perps_usdc_transfers (\
+    \chain_id BIGINT NOT NULL,\
+    \release_router TEXT NOT NULL,\
+    \token_address TEXT NOT NULL,\
+    \from_address TEXT NOT NULL,\
+    \to_address TEXT NOT NULL,\
+    \amount NUMERIC(78,0) NOT NULL,\
+    \tx_hash TEXT NOT NULL,\
+    \block_number BIGINT NOT NULL,\
+    \block_hash TEXT NOT NULL,\
+    \tx_index BIGINT NOT NULL,\
+    \log_index BIGINT NOT NULL,\
+    \timestamp BIGINT NOT NULL,\
+    \created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \PRIMARY KEY (chain_id, release_router, tx_hash, log_index),\
+    \CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0),\
+    \CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$'),\
+    \CHECK (from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'),\
+    \CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$')\
+    \)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_inbound \
+    \ON perps_usdc_transfers(chain_id, release_router, token_address, to_address, block_number, tx_index, log_index)"
+  _ <- execute_ conn
+    "CREATE INDEX IF NOT EXISTS idx_perps_usdc_transfers_outbound \
+    \ON perps_usdc_transfers(chain_id, release_router, token_address, from_address, block_number, tx_index, log_index)"
+  _ <- execute_ conn
+    "DO $$ BEGIN \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
+    \  AND conname = 'perps_usdc_transfers_canonical_values') THEN \
+    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_values \
+    \  CHECK (chain_id > 0 AND amount >= 0 AND block_number >= 0 AND tx_index >= 0 AND log_index >= 0 AND timestamp >= 0); \
+    \ END IF; \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
+    \  AND conname = 'perps_usdc_transfers_canonical_addresses') THEN \
+    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_addresses \
+    \  CHECK (release_router ~ '^0x[0-9a-f]{40}$' AND token_address ~ '^0x[0-9a-f]{40}$' \
+    \   AND from_address ~ '^0x[0-9a-f]{40}$' AND to_address ~ '^0x[0-9a-f]{40}$'); \
+    \ END IF; \
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_usdc_transfers'::regclass \
+    \  AND conname = 'perps_usdc_transfers_canonical_hashes') THEN \
+    \  ALTER TABLE perps_usdc_transfers ADD CONSTRAINT perps_usdc_transfers_canonical_hashes \
+    \  CHECK (tx_hash ~ '^0x[0-9a-f]{64}$' AND block_hash ~ '^0x[0-9a-f]{64}$'); \
+    \ END IF; END $$"
+  _ <- execute_ conn
     "CREATE TABLE IF NOT EXISTS perps_indexer_state (\
     \indexer_name TEXT NOT NULL,\
     \chain_id BIGINT NOT NULL,\
     \release_router TEXT,\
+    \configured_start_block BIGINT,\
     \last_indexed_block BIGINT NOT NULL,\
     \last_indexed_block_hash TEXT,\
-    \updated_at TIMESTAMP DEFAULT NOW(),\
-    \PRIMARY KEY (indexer_name, chain_id)\
+    \updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
+    \PRIMARY KEY (indexer_name, chain_id),\
+    \CONSTRAINT perps_indexer_state_release_scope CHECK (\
+    \ indexer_name NOT LIKE 'perps-history-costs-v1:%' OR\
+    \ (release_router IS NOT NULL AND configured_start_block > 0))\
     \)"
   _ <- execute_ conn
     "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS release_router TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_indexer_state ADD COLUMN IF NOT EXISTS configured_start_block BIGINT"
+  _ <- execute_ conn
+    "DO $$ BEGIN\
+    \ IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = current_schema()\
+    \   AND table_name = 'perps_indexer_state' AND column_name = 'updated_at'\
+    \   AND data_type = 'timestamp without time zone') THEN\
+    \   ALTER TABLE perps_indexer_state ALTER COLUMN updated_at TYPE TIMESTAMPTZ\
+    \     USING updated_at AT TIME ZONE 'UTC';\
+    \ END IF; END $$"
+  _ <- execute_ conn
+    "UPDATE perps_indexer_state SET updated_at = NOW() WHERE updated_at IS NULL"
+  _ <- execute_ conn
+    "ALTER TABLE perps_indexer_state ALTER COLUMN updated_at SET DEFAULT NOW(),\
+    \ ALTER COLUMN updated_at SET NOT NULL"
+  _ <- execute_ conn
+    "DO $$ BEGIN\
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_indexer_state'::regclass\
+    \   AND conname = 'perps_indexer_state_release_scope') THEN\
+    \   ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_release_scope CHECK (\
+    \     indexer_name NOT LIKE 'perps-history-costs-v1:%' OR\
+    \     (release_router IS NOT NULL AND configured_start_block > 0)) NOT VALID;\
+    \ END IF; END $$"
   pure ()
 
 insertPerpsEvent
@@ -2746,6 +2870,48 @@ insertPerpsActivity conn chainId releaseRouter contractAddress eventKey account 
     )
   pure ()
 
+insertPerpsUsdcTransfer
+  :: Connection
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+insertPerpsUsdcTransfer conn chainId releaseRouter tokenAddress fromAddress toAddress amount txHash blockNumber blockHash txIndex logIndex timestamp = do
+  affected <- execute conn
+    "INSERT INTO perps_usdc_transfers \
+    \(chain_id, release_router, token_address, from_address, to_address, amount, tx_hash, block_number, block_hash, tx_index, log_index, timestamp) \
+    \VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (chain_id, release_router, tx_hash, log_index) DO UPDATE SET timestamp = EXCLUDED.timestamp \
+    \WHERE perps_usdc_transfers.token_address = EXCLUDED.token_address \
+    \AND perps_usdc_transfers.from_address = EXCLUDED.from_address AND perps_usdc_transfers.to_address = EXCLUDED.to_address \
+    \AND perps_usdc_transfers.amount = EXCLUDED.amount AND perps_usdc_transfers.block_number = EXCLUDED.block_number \
+    \AND perps_usdc_transfers.block_hash = EXCLUDED.block_hash AND perps_usdc_transfers.tx_index = EXCLUDED.tx_index \
+    \AND perps_usdc_transfers.timestamp = EXCLUDED.timestamp"
+    ( chainId
+    , normalizeRouter releaseRouter
+    , normalizeRouter tokenAddress
+    , T.toLower fromAddress
+    , T.toLower toAddress
+    , amount
+    , T.toLower txHash
+    , blockNumber
+    , T.toLower blockHash
+    , txIndex
+    , logIndex
+    , timestamp
+    )
+  unless (affected == 1) $
+    fail "Canonical USDC transfer conflicts with a previously indexed event identity"
+
 perpsOrderBaseSelectSql :: Query
 perpsOrderBaseSelectSql =
   "SELECT o.order_id, o.order_router, o.account, o.side, o.commit_tx_hash, o.commit_block_number, o.commit_timestamp, \
@@ -2997,17 +3163,32 @@ lockPerpsIndexerTransaction conn chainId indexerName releaseRouter = do
   unless (length rows == 1) $
     fail "Could not acquire the Perps indexer transaction lock"
 
-setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Maybe Text -> IO ()
-setPerpsIndexerState conn chainId indexerName releaseRouter blockNumber blockHash = do
+setPerpsIndexerState :: Connection -> Integer -> Text -> Text -> Integer -> Integer -> Maybe Text -> IO ()
+setPerpsIndexerState conn chainId indexerName releaseRouter configuredStartBlock blockNumber blockHash = do
   let scopedName = scopedIndexerName indexerName releaseRouter
-  _ <- execute conn
-    "DELETE FROM perps_indexer_state WHERE indexer_name = ? AND chain_id = ?"
-    (scopedName, chainId)
-  _ <- execute conn
-    "INSERT INTO perps_indexer_state (indexer_name, chain_id, release_router, last_indexed_block, last_indexed_block_hash) \
-    \VALUES (?, ?, ?, ?, ?)"
-    (scopedName, chainId, normalizeRouter releaseRouter, blockNumber, fmap T.toLower blockHash)
-  pure ()
+  unless (configuredStartBlock > 0) $
+    fail "Perps indexer configured start block must be positive"
+  affected <- execute conn
+    "INSERT INTO perps_indexer_state \
+    \(indexer_name, chain_id, release_router, configured_start_block, last_indexed_block, last_indexed_block_hash) \
+    \VALUES (?, ?, ?, ?, ?, ?) \
+    \ON CONFLICT (indexer_name, chain_id) DO UPDATE SET \
+    \ release_router = EXCLUDED.release_router,\
+    \ configured_start_block = COALESCE(perps_indexer_state.configured_start_block, EXCLUDED.configured_start_block),\
+    \ last_indexed_block = EXCLUDED.last_indexed_block,\
+    \ last_indexed_block_hash = EXCLUDED.last_indexed_block_hash,\
+    \ updated_at = NOW() \
+    \WHERE perps_indexer_state.configured_start_block IS NULL \
+    \   OR perps_indexer_state.configured_start_block = EXCLUDED.configured_start_block"
+    ( scopedName
+    , chainId
+    , normalizeRouter releaseRouter
+    , configuredStartBlock
+    , blockNumber
+    , fmap T.toLower blockHash
+    )
+  unless (affected == 1) $
+    fail "Immutable Perps indexer configured start block mismatch; refusing to mix release history"
 
 scopedIndexerName :: Text -> Text -> Text
 scopedIndexerName indexerName releaseRouter =
@@ -3015,6 +3196,9 @@ scopedIndexerName indexerName releaseRouter =
 
 deletePerpsHistoryFromBlock :: Connection -> Integer -> Text -> Integer -> IO ()
 deletePerpsHistoryFromBlock conn chainId releaseRouter blockNumber = do
+  _ <- execute conn
+    "DELETE FROM perps_usdc_transfers WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
+    (chainId, normalizeRouter releaseRouter, blockNumber)
   _ <- execute conn
     "DELETE FROM perps_account_activity WHERE chain_id = ? AND release_router = ? AND block_number >= ?"
     (chainId, normalizeRouter releaseRouter, blockNumber)

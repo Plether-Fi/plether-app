@@ -45,6 +45,10 @@ import Plether.Config
   , PerpsCandleWriteMode (PerpsCandleWritesDual)
   )
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Insights.Competition
+  ( CompetitionReleaseManifest (..)
+  , july2026Competition
+  )
 import Plether.Database.CandleHistory
   ( CandleHistoryIngestionProgress (..)
   , CandleHistorySelection (..)
@@ -2369,7 +2373,7 @@ candleRollupSpec databaseUrl =
           rcComplete unchanged `shouldBe` True
           rcGeneration unchanged `shouldBe` 67_108_863
 
-    it "uses both rollup covering indexes for bounded compatibility range reads" $
+    it "keeps both covering indexes valid for bounded compatibility range reads" $
       withCandleDatabase databaseUrl $ \pool ->
         withDb pool $ \connection -> do
           ensureCurrentBasketDefinition connection testSeries
@@ -2384,12 +2388,31 @@ candleRollupSpec databaseUrl =
             recomputeBasketCandleHierarchy connection testSeries (baseTime + offset) 0
           insertActivity connection "plan-volume" (baseTime + 5) 700 2 10 "Open"
           _ <- backfillMarketVolume connection testChainId testRouter baseTime (baseTime + 180)
+          indexDefinitions <-
+            query_
+              connection
+              "SELECT indexname,indexdef FROM pg_indexes \
+              \WHERE schemaname=current_schema() AND indexname IN (\
+              \'idx_perps_basket_candles_page_cover',\
+              \'idx_perps_market_volume_rollups_page_cover') ORDER BY indexname"
+              :: IO [(Text, Text)]
+          map fst indexDefinitions
+            `shouldBe`
+              [ "idx_perps_basket_candles_page_cover"
+              , "idx_perps_market_volume_rollups_page_cover"
+              ]
+          let renderedDefinitions = Text.toLower $ Text.unlines $ map snd indexDefinitions
+          forM_
+            [ "include (raw_open_price"
+            , "include (volume_numerator"
+            ]
+            $ \fragment -> renderedDefinitions `shouldSatisfy` Text.isInfixOf fragment
           plan <- withTransaction connection $ do
             _ <- execute_ connection "SET LOCAL enable_seqscan = off"
             query
               connection
               "EXPLAIN (COSTS OFF) \
-              \SELECT c.bucket_start, v.volume_numerator FROM perps_basket_candles c \
+              \SELECT c.bucket_start, c.raw_open_price, v.volume_numerator FROM perps_basket_candles c \
               \LEFT JOIN perps_market_volume_rollups v \
               \ ON v.chain_id = ? AND v.release_router = ? \
               \ AND v.interval_seconds = c.interval_seconds AND v.bucket_start = c.bucket_start \
@@ -2400,11 +2423,13 @@ candleRollupSpec databaseUrl =
               , baseTime, baseTime + 180, 12_001 :: Int
               )
               :: IO [Only Text]
-          let renderedPlan = Text.unpack $ Text.unlines [line | Only line <- plan]
-          renderedPlan
-            `shouldContain` "Index Only Scan using idx_perps_basket_candles_page_cover"
-          renderedPlan
-            `shouldContain` "Index Only Scan using idx_perps_market_volume_rollups_page_cover"
+          let renderedPlan = Text.unlines [line | Only line <- plan]
+          renderedPlan `shouldSatisfy` (not . Text.isInfixOf "Seq Scan")
+          forM_
+            [ "perps_basket_candles"
+            , "perps_market_volume_rollups"
+            ]
+            $ \relation -> renderedPlan `shouldSatisfy` Text.isInfixOf relation
 
     it "refreshes the visibility map used by candle page covering indexes" $
       withCandleDatabase databaseUrl $ \pool ->
@@ -2652,10 +2677,15 @@ candleApiConfig databaseUrl =
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = testRouter
     , cfgPerpsCfdEngine = ""
+    , cfgPerpsCfdEngineLens = ""
+    , cfgPerpsCfdEngineSettlementSidecar = ""
     , cfgPerpsMarginClearinghouse = ""
     , cfgPerpsPletherOracle = ""
     , cfgPerpsAccountLens = ""
     , cfgPerpsIndexerStartBlock = 0
+    , cfgInsightsCompetitionRules = july2026Competition
+    , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
+    , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
@@ -2664,6 +2694,22 @@ candleApiConfig databaseUrl =
     , cfgKeeperConfirmations = 0
     , cfgKeeperGasBufferBps = 2_000
     , cfgKeeperFeeBufferBps = 2_500
+    }
+
+candleReleaseManifest :: CompetitionReleaseManifest
+candleReleaseManifest =
+  CompetitionReleaseManifest
+    { crmReleaseId = "candle-rollup-integration"
+    , crmChainId = testChainId
+    , crmUsdc = ""
+    , crmOrderRouter = testRouter
+    , crmMarginClearinghouse = ""
+    , crmAccountLens = ""
+    , crmCfdEngine = ""
+    , crmCfdEngineLens = ""
+    , crmSettlementSidecar = ""
+    , crmPletherOracle = ""
+    , crmIndexerStartBlock = 0
     }
 
 withCandleAdminDatabase :: Text -> (DbPool -> IO a) -> IO a

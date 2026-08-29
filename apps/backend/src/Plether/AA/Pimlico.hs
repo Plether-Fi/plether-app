@@ -13,6 +13,8 @@ module Plether.AA.Pimlico
   , validateActionSequence
   , injectSponsorshipPolicy
   , resolveTradingAccountAddress
+  , UndeployedTradingAccountFailure (..)
+  , resolveUndeployedTradingAccountAtBlock
   ) where
 
 import Control.Concurrent.STM
@@ -90,6 +92,7 @@ import Plether.Ethereum.Client
   , ethCall
   , rpcCall
   )
+import Plether.Utils.Hex (intToHex)
 import Web.Scotty
   ( ActionM
   , header
@@ -862,6 +865,103 @@ resolveTradingAccountAddress client rawAddress =
               pure $ submitted <$ firstFailure verified
   where
     firstFailure = either (Left . pfMessage) Right
+
+-- | Resolve the pinned factory's index-0 account from an undeployed owner EOA
+-- against one exact block. Registration uses this variant so owner code,
+-- factory implementation, derivation, and derived-account code cannot be
+-- sampled from different heads.
+data UndeployedTradingAccountFailure
+  = OwnerAddressAlreadyDeployed
+  | TradingAccountAlreadyDeployed
+  | UndeployedTradingAccountProofUnavailable
+  deriving stock (Show, Eq)
+
+resolveUndeployedTradingAccountAtBlock
+  :: EthClient
+  -> Text
+  -> Integer
+  -> IO (Either UndeployedTradingAccountFailure Text)
+resolveUndeployedTradingAccountAtBlock client rawAddress blockNumber =
+  case normalizeAddress rawAddress of
+    Nothing -> pure $ Left UndeployedTradingAccountProofUnavailable
+    Just owner -> do
+      ownerCode <- readCodeAtBlock client owner blockNumber
+      factoryImplementation <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          selectorAccountImplementation
+          blockNumber
+      derived <-
+        readContractAddressAtBlock
+          client
+          simpleAccountFactory
+          (encodeCall "getAddress(address,uint256)" [encodeAddress owner, encodeUint256 0])
+          blockNumber
+      case (ownerCode, factoryImplementation, derived) of
+        (Right code, Right implementation, Right account)
+          | not (BS.null code) -> pure $ Left OwnerAddressAlreadyDeployed
+          | implementation /= simpleAccountImplementation ->
+              pure $ Left UndeployedTradingAccountProofUnavailable
+          | otherwise -> do
+              accountCode <- readCodeAtBlock client account blockNumber
+              pure $ case accountCode of
+                Left _ -> Left UndeployedTradingAccountProofUnavailable
+                Right codeAtAccount
+                  | BS.null codeAtAccount -> Right account
+                  | otherwise -> Left TradingAccountAlreadyDeployed
+        (Left _, _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+        (_, Left _, _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+        (_, _, Left _) -> pure $ Left UndeployedTradingAccountProofUnavailable
+
+readContractAddressAtBlock
+  :: EthClient
+  -> Text
+  -> ByteString
+  -> Integer
+  -> IO (Either ProxyFailure Text)
+readContractAddressAtBlock client target calldata blockNumber = do
+  result <- strictEthCallAtBlock client (CallParams target calldata) blockNumber
+  pure $ case result of
+    Left _ -> Left accountValidationUnavailable
+    Right word ->
+      case decodeAddressWord word of
+        Left _ -> Left accountValidationUnavailable
+        Right value -> Right value
+
+readCodeAtBlock :: EthClient -> Text -> Integer -> IO (Either ProxyFailure ByteString)
+readCodeAtBlock client account blockNumber = do
+  result <-
+    rpcCall client "eth_getCode" $
+      toJSON [String account, String $ "0x" <> intToHex blockNumber]
+  pure $ case result of
+    Left _ -> Left accountValidationUnavailable
+    Right (String value) ->
+      maybe
+        (Left accountValidationUnavailable)
+        Right
+        (decodeHex value)
+    Right _ -> Left accountValidationUnavailable
+
+strictEthCallAtBlock
+  :: EthClient
+  -> CallParams
+  -> Integer
+  -> IO (Either ProxyFailure ByteString)
+strictEthCallAtBlock client CallParams {..} blockNumber = do
+  result <-
+    rpcCall client "eth_call" $
+      toJSON
+        [ object
+            [ "to" .= callTo
+            , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
+            ]
+        , String $ "0x" <> intToHex blockNumber
+        ]
+  pure $ case result of
+    Right (String value) ->
+      maybe (Left accountValidationUnavailable) Right $ decodeHex value
+    _ -> Left accountValidationUnavailable
 
 verifyDeployedAccountIdentity
   :: EthClient

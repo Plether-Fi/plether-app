@@ -37,6 +37,10 @@ db_allocated_storage       = 20
 # Desired final/new-instance type. Preserve a live gp2 value until any pending
 # retention/PITR activation completes, then plan gp3 separately.
 db_storage_type            = "gp3"
+db_storage_encrypted       = false
+db_kms_key_id              = ""
+db_ssl_root_cert_path      = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+db_ca_cert_identifier      = "rds-ca-rsa2048-g1"
 db_apply_immediately       = false
 db_backup_retention_days   = 7
 db_max_allocated_storage   = 100

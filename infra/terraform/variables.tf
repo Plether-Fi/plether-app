@@ -172,6 +172,236 @@ variable "aa_proxy_origin_token" {
   sensitive = true
 }
 
+variable "provision_insights_registration" {
+  type        = bool
+  default     = false
+  description = "Provision the private credentials and API configuration for first-party Insights competition registration."
+}
+
+variable "enable_insights_registration" {
+  type        = bool
+  default     = false
+  description = "Permit the one-way persisted activation of first-party Insights registration after its secrets, competition, and public edge proxy are ready. Setting false does not pause or close an already activated database window."
+}
+
+variable "insights_registration_public_origin" {
+  type        = string
+  default     = "https://insights.plether.com"
+  description = "Canonical browser origin allowed to run registration. Pages preview origins are intentionally excluded."
+
+  validation {
+    condition     = lower(var.insights_registration_public_origin) == var.insights_registration_public_origin && can(regex("^https://[a-z0-9.-]+$", var.insights_registration_public_origin))
+    error_message = "insights_registration_public_origin must be a canonical lowercase HTTPS origin without credentials, port, path, query, or fragment."
+  }
+}
+
+variable "insights_registration_origin_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Shared secret sent only by the canonical Insights Pages Worker in X-Plether-Registration-Origin."
+
+  validation {
+    condition     = var.insights_registration_origin_token == "" || can(regex("^[!-~]{32,}$", var.insights_registration_origin_token))
+    error_message = "insights_registration_origin_token must be empty or at least 32 printable non-whitespace ASCII characters with no control characters."
+  }
+}
+
+variable "insights_registration_origin_token_next" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional next Pages-to-backend registration origin token accepted during a controlled rotation overlap."
+
+  validation {
+    condition     = var.insights_registration_origin_token_next == "" || can(regex("^[!-~]{32,}$", var.insights_registration_origin_token_next))
+    error_message = "insights_registration_origin_token_next must be empty or at least 32 printable non-whitespace ASCII characters with no control characters."
+  }
+}
+
+variable "turnstile_secret_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Cloudflare Turnstile server-side Siteverify secret for Insights registration."
+
+  validation {
+    condition     = var.turnstile_secret_key == "" || can(regex("^[!-~]+$", var.turnstile_secret_key))
+    error_message = "turnstile_secret_key must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "turnstile_expected_hostname" {
+  type        = string
+  default     = "insights.plether.com"
+  description = "Exact Turnstile hostname accepted by the registration API."
+
+  validation {
+    condition     = lower(var.turnstile_expected_hostname) == var.turnstile_expected_hostname && can(regex("^[a-z0-9.-]+$", var.turnstile_expected_hostname))
+    error_message = "turnstile_expected_hostname must be a canonical lowercase hostname without a scheme, port, path, or wildcard."
+  }
+}
+
+variable "turnstile_expected_action" {
+  type        = string
+  default     = "competition_registration"
+  description = "Exact Turnstile widget action accepted by Siteverify validation."
+
+  validation {
+    condition     = var.turnstile_expected_action == "competition_registration"
+    error_message = "turnstile_expected_action must equal competition_registration so the browser widget and server validation cannot drift."
+  }
+}
+
+variable "x_oauth_client_id" {
+  type        = string
+  default     = ""
+  description = "X OAuth 2.0 client ID for the Insights registration application."
+
+  validation {
+    condition     = var.x_oauth_client_id == "" || can(regex("^[!-~]+$", var.x_oauth_client_id))
+    error_message = "x_oauth_client_id must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "x_oauth_client_secret" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "X OAuth 2.0 client secret for the Insights registration application."
+
+  validation {
+    condition     = var.x_oauth_client_secret == "" || can(regex("^[!-~]+$", var.x_oauth_client_secret))
+    error_message = "x_oauth_client_secret must be empty or printable non-whitespace ASCII without control characters."
+  }
+}
+
+variable "x_oauth_callback_url" {
+  type        = string
+  default     = "https://insights.plether.com/api/insights/v1/competitions/testnet-trading-2026-09/registrations/x/callback"
+  description = "Exact X OAuth callback URL registered for the September 2026 competition."
+
+  validation {
+    condition     = can(regex("^https://[^/?#]+/api/insights/v1/competitions/[^/?#]+/registrations/x/callback$", var.x_oauth_callback_url))
+    error_message = "x_oauth_callback_url must be a clean HTTPS Insights registration callback URL without query parameters or a fragment."
+  }
+}
+
+variable "x_target_user_id" {
+  type        = string
+  default     = ""
+  description = "Stable numeric X user ID that registrants must follow."
+
+  validation {
+    condition     = var.x_target_user_id == "" || can(regex("^[0-9]+$", var.x_target_user_id))
+    error_message = "x_target_user_id must be empty or contain only decimal digits."
+  }
+}
+
+variable "x_target_handle" {
+  type        = string
+  default     = "plether_fi"
+  description = "Public X handle displayed by the registration UI, without @."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_]{1,15}$", var.x_target_handle))
+    error_message = "x_target_handle must be a valid X handle without @."
+  }
+}
+
+variable "insights_registration_email_keys" {
+  type        = map(string)
+  default     = {}
+  sensitive   = true
+  description = "Versioned AES-256-GCM email keyring. Values are 32-byte standard-base64 keys; retain old entries during rotation."
+
+  validation {
+    condition = alltrue([
+      for version, key in var.insights_registration_email_keys :
+      can(regex("^v[1-9][0-9]*$", version)) && can(regex("^[A-Za-z0-9+/]{43}=$", key))
+    ])
+    error_message = "insights_registration_email_keys must map v1-style versions to 32-byte standard-base64 keys."
+  }
+}
+
+variable "insights_registration_email_key_version" {
+  type        = string
+  default     = "v1"
+  description = "Active email-encryption key version; it must exist in insights_registration_email_keys."
+
+  validation {
+    condition     = can(regex("^v[1-9][0-9]*$", var.insights_registration_email_key_version))
+    error_message = "insights_registration_email_key_version must use the v1, v2, ... format."
+  }
+}
+
+variable "insights_registration_email_hmac_key_base64" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Stable 32-byte standard-base64 HMAC key for normalized-email uniqueness. Rotate only with an explicit digest migration."
+
+  validation {
+    condition     = var.insights_registration_email_hmac_key_base64 == "" || can(regex("^[A-Za-z0-9+/]{43}=$", var.insights_registration_email_hmac_key_base64))
+    error_message = "insights_registration_email_hmac_key_base64 must be empty or a 32-byte standard-base64 key."
+  }
+}
+
+variable "insights_registration_session_ttl_seconds" {
+  type        = number
+  default     = 1800
+  description = "Registration session lifetime in seconds."
+
+  validation {
+    condition     = floor(var.insights_registration_session_ttl_seconds) == var.insights_registration_session_ttl_seconds && var.insights_registration_session_ttl_seconds >= 300 && var.insights_registration_session_ttl_seconds <= 3600
+    error_message = "insights_registration_session_ttl_seconds must be a whole number from 300 through 3600."
+  }
+}
+
+variable "insights_registration_ip_rate_limit_per_minute" {
+  type        = number
+  default     = 10
+  description = "Per-client-IP registration request limit per minute."
+
+  validation {
+    condition     = floor(var.insights_registration_ip_rate_limit_per_minute) == var.insights_registration_ip_rate_limit_per_minute && var.insights_registration_ip_rate_limit_per_minute >= 1 && var.insights_registration_ip_rate_limit_per_minute <= 1000
+    error_message = "insights_registration_ip_rate_limit_per_minute must be a whole number from 1 through 1000."
+  }
+}
+
+variable "insights_registration_session_rate_limit_per_minute" {
+  type        = number
+  default     = 30
+  description = "Per-session registration request limit per minute."
+
+  validation {
+    condition     = floor(var.insights_registration_session_rate_limit_per_minute) == var.insights_registration_session_rate_limit_per_minute && var.insights_registration_session_rate_limit_per_minute >= 1 && var.insights_registration_session_rate_limit_per_minute <= 5000
+    error_message = "insights_registration_session_rate_limit_per_minute must be a whole number from 1 through 5000."
+  }
+}
+
+variable "insights_registration_rules_version" {
+  type        = string
+  default     = "2026-09-13"
+  description = "Immutable rules document version recorded with consent."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+$", var.insights_registration_rules_version))
+    error_message = "insights_registration_rules_version may contain only letters, digits, dot, underscore, and hyphen."
+  }
+}
+
+variable "insights_registration_privacy_version" {
+  type        = string
+  default     = "2026-09-13"
+  description = "Immutable privacy notice version recorded with consent."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._-]+$", var.insights_registration_privacy_version))
+    error_message = "insights_registration_privacy_version may contain only letters, digits, dot, underscore, and hyphen."
+  }
+}
+
 variable "aa_ip_rate_limit_per_minute" {
   type    = string
   default = "120"
@@ -307,13 +537,25 @@ variable "perps_candle_finalization_grace_seconds" {
 }
 
 variable "db_password" {
-  type      = string
-  sensitive = true
+  type        = string
+  sensitive   = true
+  description = "RDS master password. It is percent-encoded before inclusion in the libpq URI."
+
+  validation {
+    condition     = can(regex("^[!-~]{8,128}$", var.db_password))
+    error_message = "db_password must contain 8-128 printable non-whitespace ASCII characters. URI-reserved characters are supported and percent-encoded."
+  }
 }
 
 variable "db_username" {
-  type    = string
-  default = "plether"
+  type        = string
+  default     = "plether"
+  description = "RDS/PostgreSQL master username. It is percent-encoded before inclusion in the libpq URI."
+
+  validation {
+    condition     = can(regex("^[A-Za-z][A-Za-z0-9_]{0,62}$", var.db_username))
+    error_message = "db_username must start with a letter and contain at most 63 ASCII letters, digits, or underscores."
+  }
 }
 
 variable "chain_id" {
@@ -400,6 +642,28 @@ variable "insights_snapshot_poll_seconds" {
   type        = string
   default     = "60"
   description = "Interval between Plether Insights account snapshot cycles, in seconds. The worker enforces a minimum of 10 seconds."
+}
+
+variable "insights_active_competition_slug" {
+  type        = string
+  default     = ""
+  description = "Explicit Insights competition seed/selection slug. Leave empty to preserve the existing deployed competition; set to testnet-trading-2026-09 only with the new release addresses."
+
+  validation {
+    condition     = var.insights_active_competition_slug == "" || can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.insights_active_competition_slug))
+    error_message = "insights_active_competition_slug must be empty or a lowercase hyphenated slug."
+  }
+}
+
+variable "insights_competition_release_id" {
+  type        = string
+  default     = ""
+  description = "Explicit release-manifest identifier for competition activation. September seeding requires it to equal testnet-trading-2026-09."
+
+  validation {
+    condition     = var.insights_competition_release_id == "" || can(regex("^[a-z0-9]+(-[a-z0-9]+)*$", var.insights_competition_release_id))
+    error_message = "insights_competition_release_id must be empty or a lowercase hyphenated identifier."
+  }
 }
 
 variable "insights_snapshot_multicall_size" {
@@ -581,6 +845,52 @@ variable "db_storage_type" {
   validation {
     condition     = contains(["gp2", "gp3"], var.db_storage_type)
     error_message = "db_storage_type must be either gp2 or gp3."
+  }
+}
+
+variable "db_storage_encrypted" {
+  type        = bool
+  default     = false
+  description = "Encrypt RDS storage at rest. The false default preserves existing unencrypted instances; first-party registration requires true and an existing instance must be migrated through encrypted snapshot copy/restore rather than modified in place."
+}
+
+variable "db_kms_key_id" {
+  type        = string
+  default     = ""
+  description = "Optional customer-managed AWS KMS key ARN for encrypted RDS storage. Leave empty to use the AWS-managed RDS key."
+
+  validation {
+    condition = (
+      var.db_kms_key_id == ""
+      || can(regex("^arn:aws[a-z-]*:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9A-Fa-f-]{36}$", var.db_kms_key_id))
+    )
+    error_message = "db_kms_key_id must be empty or a customer-managed AWS KMS key ARN."
+  }
+}
+
+variable "db_ssl_root_cert_path" {
+  type        = string
+  default     = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+  description = "Absolute in-container path to the checksum-pinned AWS RDS CA bundle used by libpq verify-full connections."
+
+  validation {
+    condition     = var.db_ssl_root_cert_path == "/etc/ssl/certs/aws-rds-global-bundle.pem"
+    error_message = "db_ssl_root_cert_path must use the checksum-pinned AWS RDS CA bundle shipped in the backend image."
+  }
+}
+
+variable "db_ca_cert_identifier" {
+  type        = string
+  default     = "rds-ca-rsa2048-g1"
+  description = "Pinned RDS server CA family. The backend image ships the AWS global root bundle so planned CA rotations remain explicit."
+
+  validation {
+    condition = contains([
+      "rds-ca-rsa2048-g1",
+      "rds-ca-rsa4096-g1",
+      "rds-ca-ecc384-g1",
+    ], var.db_ca_cert_identifier)
+    error_message = "db_ca_cert_identifier must be one of the supported RDS G1 CA identifiers."
   }
 }
 

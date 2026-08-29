@@ -36,53 +36,133 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get database URL
-        id: db
-        run: |
-          DB_URL=$(aws ssm get-parameter --name "/plether/${{ env.ENV }}/database-url" --with-decryption --query 'Parameter.Value' --output text)
-          echo "::add-mask::$DB_URL"
-          echo "url=$DB_URL" >> "$GITHUB_OUTPUT"
-
       - name: Init schema
         if: inputs.action == 'init-schema'
-        env:
-          DATABASE_URL: ${{ steps.db.outputs.url }}
         run: |
-          SUBNETS=$(aws ecs describe-services --cluster plether-${{ env.ENV }} --services plether-api \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text | tr '\t' ',')
-          SG=$(aws ecs describe-services --cluster plether-${{ env.ENV }} --services plether-api \
-            --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' --output text)
-          EXEC_ROLE=$(aws ecs describe-task-definition --task-definition plether-${{ env.ENV }} \
-            --query 'taskDefinition.executionRoleArn' --output text)
+          set -euo pipefail
 
-          SQL_B64=$(base64 -w0 apps/backend/schema.sql)
+          CLUSTER="plether-${{ env.ENV }}"
+          SERVICE_FILE="$RUNNER_TEMP/db-manage-service.json"
+          NETWORK_FILE="$RUNNER_TEMP/db-manage-network.json"
+          SOURCE_TASK_DEFINITION_FILE="$RUNNER_TEMP/db-manage-source-task-definition.json"
+          ADMIN_TASK_DEFINITION_FILE="$RUNNER_TEMP/db-manage-task-definition.json"
 
-          TASK_DEF_ARN=$(aws ecs register-task-definition \
-            --family plether-db-manage \
-            --requires-compatibilities FARGATE \
-            --network-mode awsvpc \
-            --cpu 256 --memory 512 \
-            --execution-role-arn "$EXEC_ROLE" \
-            --container-definitions "[{
-              \"name\": \"psql\",
-              \"image\": \"postgres:16-alpine\",
-              \"essential\": true,
-              \"command\": [\"sh\", \"-c\", \"echo $SQL_B64 | base64 -d | psql --set=ON_ERROR_STOP=1 \\\"$DATABASE_URL\\\"\"]
-            }]" \
-            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services plether-api > "$SERVICE_FILE"
 
-          TASK_ARN=$(aws ecs run-task \
-            --cluster plether-${{ env.ENV }} \
+          jq --exit-status \
+            '(.failures | length) == 0
+             and (.services | length) == 1
+             and .services[0].status == "ACTIVE"
+             and (.services[0].taskDefinition | type == "string")' \
+            "$SERVICE_FILE" >/dev/null
+
+          SOURCE_TASK_DEFINITION=$(jq -r '.services[0].taskDefinition' "$SERVICE_FILE")
+          jq '
+            .services[0].networkConfiguration.awsvpcConfiguration
+            | {awsvpcConfiguration: {
+                subnets: .subnets,
+                securityGroups: .securityGroups,
+                assignPublicIp: (.assignPublicIp // "DISABLED")
+              }}
+          ' "$SERVICE_FILE" > "$NETWORK_FILE"
+
+          aws ecs describe-task-definition \
+            --task-definition "$SOURCE_TASK_DEFINITION" > "$SOURCE_TASK_DEFINITION_FILE"
+          jq --exit-status \
+            --arg databaseParameterSuffix ":parameter/plether/${{ env.ENV }}/database-url" \
+            '
+            (.taskDefinition.containerDefinitions
+             | map(select(.name == "plether-api"))
+             | length) == 1
+            and (.taskDefinition.runtimePlatform.cpuArchitecture == "ARM64")
+            and (.taskDefinition.containerDefinitions[]
+                 | select(.name == "plether-api")
+                 | .image
+                 | (type == "string" and length > 0))
+            and ([.taskDefinition.containerDefinitions[]
+                  | select(.name == "plether-api")
+                  | .secrets[]?
+                  | select(
+                      .name == "DATABASE_URL"
+                      and (.valueFrom | endswith($databaseParameterSuffix))
+                    )]
+                 | length) == 1
+          ' "$SOURCE_TASK_DEFINITION_FILE" >/dev/null
+
+          jq \
+            --arg environment "${{ env.ENV }}" \
+            --arg region "$AWS_REGION" \
+            '
+            .taskDefinition as $source
+            | ($source.containerDefinitions[] | select(.name == "plether-api")) as $api
+            | ($api.secrets[] | select(.name == "DATABASE_URL")) as $databaseSecret
+            | {
+                family: ("plether-" + $environment + "-db-manage"),
+                executionRoleArn: $source.executionRoleArn,
+                taskRoleArn: $source.taskRoleArn,
+                networkMode: "awsvpc",
+                requiresCompatibilities: ["FARGATE"],
+                cpu: "256",
+                memory: "512",
+                runtimePlatform: $source.runtimePlatform,
+                containerDefinitions: [{
+                  name: "plether-db-manage",
+                  image: $api.image,
+                  essential: true,
+                  command: [
+                    "sh",
+                    "-c",
+                    "exec psql --set=ON_ERROR_STOP=1 --file=/app/schema.sql \"$DATABASE_URL\""
+                  ],
+                  secrets: [$databaseSecret],
+                  environment: [],
+                  portMappings: [],
+                  mountPoints: [],
+                  volumesFrom: [],
+                  logConfiguration: {
+                    logDriver: "awslogs",
+                    options: {
+                      "awslogs-group": ("/ecs/plether-" + $environment),
+                      "awslogs-region": $region,
+                      "awslogs-stream-prefix": "db-manage"
+                    }
+                  }
+                }]
+              }
+          ' "$SOURCE_TASK_DEFINITION_FILE" > "$ADMIN_TASK_DEFINITION_FILE"
+
+          TASK_DEFINITION=$(aws ecs register-task-definition \
+            --cli-input-json "file://$ADMIN_TASK_DEFINITION_FILE" \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          RUN_RESULT=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
             --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SG],assignPublicIp=ENABLED}" \
-            --task-definition "$TASK_DEF_ARN" \
-            --query 'tasks[0].taskArn' --output text)
+            --network-configuration "file://$NETWORK_FILE" \
+            --task-definition "$TASK_DEFINITION")
+
+          if [ "$(jq -r '.failures | length' <<< "$RUN_RESULT")" != "0" ]; then
+            echo "::error title=ECS rejected database task::Inspect the private ECS failure response."
+            exit 1
+          fi
+
+          TASK_ARN=$(jq -r '.tasks[0].taskArn // empty' <<< "$RUN_RESULT")
+          if [ -z "$TASK_ARN" ]; then
+            echo "::error title=Database task was not started::ECS returned no task ARN."
+            exit 1
+          fi
 
           echo "Running task $TASK_ARN..."
-          aws ecs wait tasks-stopped --cluster plether-${{ env.ENV }} --tasks "$TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$TASK_ARN"
 
-          EXIT_CODE=$(aws ecs describe-tasks --cluster plether-${{ env.ENV }} --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[?name==`plether-db-manage`].exitCode | [0]' \
+            --output text)
           echo "Task exit code: $EXIT_CODE"
           [ "$EXIT_CODE" = "0" ]
 

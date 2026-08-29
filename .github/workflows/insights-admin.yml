@@ -9,9 +9,14 @@ on:
         type: choice
         options:
           - register
+          - stage-wallet-remap
+          - stage-trading-account-remap
+          - apply-wallet-remaps
           - review
           - list
           - finalize
+          - registration-key-preflight
+          - rotate-registration-email-key
       request_id:
         description: Opaque ID of the one-time SSM SecureString request
         required: true
@@ -99,10 +104,14 @@ jobs:
                 type == "string" and length > 0 and length <= $max;
               def wallet:
                 type == "string" and test("^0x[0-9A-Fa-f]{40}$");
+              def competition_slug:
+                . == "testnet-trading-2026" or . == "testnet-trading-2026-09";
+              def key_version:
+                type == "string" and test("^v[1-9][0-9]*$");
               def safe_arg:
                 type == "string"
                 and length <= 2000
-                and (test("[\\u0000-\\u001F\\u007F]") | not);
+                and (explode | all(. >= 32 and . != 127));
 
               type == "object"
               and .requestId == $request_id
@@ -111,24 +120,61 @@ jobs:
               and ([.args[] | safe_arg] | all)
               and .args[0] == $action
               and (
-                ($action == "list" and (.args | length) == 1)
+                ($action == "list"
+                  and (.args | length) == 2
+                  and (.args[1] | competition_slug))
+                or
+                ($action == "registration-key-preflight"
+                  and (.args | length) == 2
+                  and (.args[1] | key_version))
+                or
+                ($action == "rotate-registration-email-key"
+                  and (.args | length) == 3
+                  and (.args[1] | key_version)
+                  and (.args[2] | test("^[1-9][0-9]*$")))
                 or
                 ($action == "register"
-                  and ((.args | length) == 3 or (.args | length) == 4)
-                  and (.args[1] | nonempty(200))
-                  and (.args[2] | wallet)
-                  and ((.args | length) == 3 or (.args[3] | nonempty(80))))
+                  and ((.args | length) == 4 or (.args | length) == 5)
+                  and (.args[1] | competition_slug)
+                  and .args[1] != "testnet-trading-2026-09"
+                  and (.args[2] | nonempty(200))
+                  and (.args[3] | wallet)
+                  and ((.args | length) == 4 or (.args[4] | nonempty(80))))
+                or
+                ($action == "stage-wallet-remap"
+                  and (.args | length) == 5
+                  and (.args[1] | competition_slug)
+                  and .args[1] != "testnet-trading-2026-09"
+                  and (.args[2] | nonempty(200))
+                  and (.args[3] | wallet)
+                  and (.args[4] | wallet))
+                or
+                ($action == "stage-trading-account-remap"
+                  and (.args | length) == 4
+                  and (.args[1] | competition_slug)
+                  and .args[1] != "testnet-trading-2026-09"
+                  and (.args[2] | nonempty(200))
+                  and (.args[3] | wallet))
+                or
+                ($action == "apply-wallet-remaps"
+                  and (.args | length) == 4
+                  and (.args[1] | competition_slug)
+                  and .args[1] != "testnet-trading-2026-09"
+                  and (.args[2] | test("^[1-9][0-9]*$"))
+                  and (.args[3] | nonempty(128)))
                 or
                 ($action == "review"
-                  and ((.args | length) == 4 or (.args | length) == 5)
-                  and (.args[1] | wallet)
-                  and (["pending", "eligible", "under_review", "ineligible"] | index(.args[2]) != null)
-                  and (.args[3] | nonempty(128))
-                  and ((.args | length) == 4 or (.args[4] | nonempty(2000))))
+                  and ((.args | length) == 5 or (.args | length) == 6)
+                  and (.args[1] | competition_slug)
+                  and (.args[2] | wallet)
+                  and (.args[3] as $status | ["pending", "eligible", "under_review", "ineligible"] | index($status) != null)
+                  and (.args[4] | nonempty(128))
+                  and ((.args | length) == 5 or (.args[5] | nonempty(2000))))
                 or
                 ($action == "finalize"
-                  and ((.args | length) == 2)
-                  and (.args[1] | nonempty(128)))
+                  and ((.args | length) == 3)
+                  and (.args[1] | competition_slug)
+                  and (.args[2] | nonempty(128)))
               )
             ' "$REQUEST_FILE" >/dev/null; then
             echo "::error title=Rejected private request::The request ID or allowlisted command shape does not match this dispatch."
