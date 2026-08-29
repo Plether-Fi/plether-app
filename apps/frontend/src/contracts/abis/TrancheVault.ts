@@ -53,6 +53,20 @@ export const TRANCHE_VAULT_READ_ABI = [
   },
   {
     type: 'function',
+    name: 'DEPOSIT_COOLDOWN',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'lastDepositTime',
+    stateMutability: 'view',
+    inputs: [{ name: '', type: 'address' }],
+    outputs: [{ name: '', type: 'uint256' }],
+  },
+  {
+    type: 'function',
     name: 'estimateDepositShares',
     stateMutability: 'view',
     inputs: [{ name: 'assets', type: 'uint256' }],

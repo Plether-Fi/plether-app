@@ -184,6 +184,7 @@ interface TrancheLiveData {
   userShares?: bigint
   maxRequestDeposit?: bigint
   maxRequestRedeem?: bigint
+  withdrawalCooldownEndsAt?: bigint
   allowance?: bigint
   currentEpoch?: bigint
   nextRequestEpoch?: bigint
@@ -612,6 +613,32 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
         abi: PERPS_HOUSE_POOL_ABI,
         functionName: 'minTrancheDepositUsdc',
       },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'lastDepositTime',
+        args: [readAccount],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'DEPOSIT_COOLDOWN',
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'lastDepositTime',
+        args: [readAccount],
+      },
+      {
+        chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID,
+        address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+        abi: TRANCHE_VAULT_READ_ABI,
+        functionName: 'DEPOSIT_COOLDOWN',
+      },
     ],
     query: {
       refetchInterval: 60_000,
@@ -653,6 +680,10 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
     const reservedSeniorDepositAssetsUsdc = asBigInt(readResult(results, 30))
     const seniorReservationsWithinLimits = asBoolean(readResult(results, 31))
     const minTrancheDepositUsdc = asBigInt(readResult(results, 32))
+    const seniorLastDepositTime = asBigInt(readResult(results, 33))
+    const seniorWithdrawalCooldown = asBigInt(readResult(results, 34))
+    const juniorLastDepositTime = asBigInt(readResult(results, 35))
+    const juniorWithdrawalCooldown = asBigInt(readResult(results, 36))
     const totalAssetsUsdc = poolView?.totalAssetsUsdc
     const freeUsdc = poolView?.freeUsdc
     const withdrawalReservedUsdc = poolView?.withdrawalReservedUsdc
@@ -785,6 +816,10 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           userShares: seniorUserShares,
           maxRequestDeposit: seniorMaxRequestDeposit,
           maxRequestRedeem: seniorMaxRequestRedeem,
+          withdrawalCooldownEndsAt: seniorLastDepositTime !== undefined
+            && seniorWithdrawalCooldown !== undefined
+            ? seniorLastDepositTime + seniorWithdrawalCooldown
+            : undefined,
           allowance: seniorAllowance,
           currentEpoch: seniorCurrentEpoch,
           nextRequestEpoch: seniorNextRequestEpoch,
@@ -816,6 +851,10 @@ function useVaultsSnapshot(address: Address | undefined): VaultsSnapshot {
           userShares: juniorUserShares,
           maxRequestDeposit: juniorMaxRequestDeposit,
           maxRequestRedeem: juniorMaxRequestRedeem,
+          withdrawalCooldownEndsAt: juniorLastDepositTime !== undefined
+            && juniorWithdrawalCooldown !== undefined
+            ? juniorLastDepositTime + juniorWithdrawalCooldown
+            : undefined,
           allowance: juniorAllowance,
           currentEpoch: juniorCurrentEpoch,
           nextRequestEpoch: juniorNextRequestEpoch,
@@ -897,6 +936,43 @@ function formatEpochCountdown(totalSeconds: number): string {
   const minutes = Math.floor(totalSeconds / 60)
   const seconds = totalSeconds % 60
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
+}
+
+function secondsUntilTimestamp(timestamp: bigint | undefined): number {
+  if (timestamp === undefined) return 0
+  return Math.max(0, Number(timestamp) - Math.floor(Date.now() / 1_000))
+}
+
+function useWithdrawalCooldownRemaining(endsAt: bigint | undefined): number {
+  const [remainingSeconds, setRemainingSeconds] = useState(() => secondsUntilTimestamp(endsAt))
+
+  useEffect(() => {
+    const update = () => {
+      setRemainingSeconds(secondsUntilTimestamp(endsAt))
+    }
+
+    update()
+    if (endsAt === undefined) return undefined
+
+    const interval = window.setInterval(update, 1_000)
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [endsAt])
+
+  return remainingSeconds
+}
+
+function WithdrawalCooldownCountdown({ remainingSeconds }: { remainingSeconds: number }) {
+  return (
+    <time
+      dateTime={`PT${String(remainingSeconds)}S`}
+      aria-label={`${String(remainingSeconds)} seconds until withdrawals are available`}
+      className="font-mono font-semibold tabular-nums text-brand-peach"
+    >
+      {formatEpochCountdown(remainingSeconds)}
+    </time>
+  )
 }
 
 function formatShares(amount: bigint | undefined): string {
@@ -2281,6 +2357,12 @@ function OverviewTab({
     && pool.currentTerminalDeficitUsdc > 0n
     ? 'Pool shortfall'
     : depositMode
+  const withdrawalCooldownRemaining = useWithdrawalCooldownRemaining(
+    liveData.withdrawalCooldownEndsAt
+  )
+  const withdrawalCooldownActive = isConnected
+    && (liveData.userShares ?? 0n) > 0n
+    && withdrawalCooldownRemaining > 0
 
   return (
     <div className="space-y-6">
@@ -2297,7 +2379,14 @@ function OverviewTab({
           value={isConnected
             ? formatPositionShares(liveData.maxRequestRedeem, tranche.token)
             : '--'}
-          detail="Shares currently available to withdraw"
+          detail={withdrawalCooldownActive
+            ? (
+              <span>
+                Available in{' '}
+                <WithdrawalCooldownCountdown remainingSeconds={withdrawalCooldownRemaining} />
+              </span>
+            )
+            : 'Shares currently available to withdraw'}
           tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
         />
         <DetailMetric
@@ -2981,6 +3070,12 @@ function ActivityTab({
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
   const hasUserBalance = isConnected && liveData.userShares !== undefined
+  const withdrawalCooldownRemaining = useWithdrawalCooldownRemaining(
+    liveData.withdrawalCooldownEndsAt
+  )
+  const withdrawalCooldownActive = isConnected
+    && (liveData.userShares ?? 0n) > 0n
+    && withdrawalCooldownRemaining > 0
   const claimableUsdc = redeemRequests.reduce(
     (total, request) => total + request.claimableAssets,
     0n
@@ -3065,6 +3160,14 @@ function ActivityTab({
             value={isConnected
               ? formatPositionShares(liveData.maxRequestRedeem, tranche.token)
               : '--'}
+            detail={withdrawalCooldownActive
+              ? (
+                <span>
+                  Available in{' '}
+                  <WithdrawalCooldownCountdown remainingSeconds={withdrawalCooldownRemaining} />
+                </span>
+              )
+              : undefined}
             tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
           />
           <DetailMetric
@@ -3159,7 +3262,7 @@ function ActivityTab({
                       {request.refundableAssets > 0n
                         ? 'This deposit could not be completed. Return the held USDC to your wallet.'
                         : request.claimableShares > 0n
-                          ? 'Your deposit is active and already participates in vault performance. You can now move the shares to your wallet.'
+                          ? `Your deposit is active and already participates in vault performance. Moving the shares to your wallet starts or restarts a one-hour withdrawal cooldown for your entire ${tranche.name} position.`
                           : request.matured
                             ? 'The expected time has passed, but this deposit has not been processed yet.'
                             : 'You can cancel before processing. The final number of shares is set when the deposit is processed.'}
@@ -3671,18 +3774,18 @@ function VaultRequestActionModal({
       case 'claim-deposit':
         return {
           title: 'Move your vault shares to your wallet?',
-          description: 'These shares already participate in vault performance. Moving them to your wallet starts a one-hour wait before they can be transferred or withdrawn.',
+          description: `These shares already participate in vault performance. Moving them to your wallet starts or restarts a one-hour cooldown for every ${tranche.token} share in your wallet. Until it ends, those shares cannot be transferred or used for a withdrawal request.`,
           amountLabel: 'Shares moved',
           amount: shareAmount(action.shares),
           confirmLabel: 'Move shares',
           confirmVariant: 'primary' as const,
           successTitle: 'Vault shares moved',
-          successDescription: <>{shareAmount(action.shares)} is now in your wallet.</>,
+          successDescription: <>{shareAmount(action.shares)} is now in your wallet. Your one-hour withdrawal cooldown has started.</>,
         }
       case 'cancel-withdrawal':
         return {
           title: 'Cancel this withdrawal?',
-          description: 'This withdrawal is still waiting for USDC. Cancelling returns the shares held by the vault to your wallet and restarts their one-hour waiting period.',
+          description: 'This withdrawal is still waiting for USDC. Cancelling returns the shares held by the vault to your wallet and restarts the one-hour withdrawal cooldown for your entire position.',
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Cancel withdrawal',
@@ -3704,7 +3807,7 @@ function VaultRequestActionModal({
       case 'reclaim-withdrawal':
         return {
           title: 'Return your unfunded shares?',
-          description: 'USDC could not be allocated to this part of the withdrawal. Return the remaining shares to your wallet.',
+          description: `USDC could not be allocated to this part of the withdrawal. Returning the remaining shares to your wallet restarts the one-hour withdrawal cooldown for every ${tranche.token} share in your wallet.`,
           amountLabel: 'Shares returned',
           amount: shareAmount(action.shares),
           confirmLabel: 'Return shares',
@@ -4105,6 +4208,12 @@ function VaultActionPanel({
   }>()
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false)
   const [quoteRefreshError, setQuoteRefreshError] = useState<string>()
+  const withdrawalCooldownRemaining = useWithdrawalCooldownRemaining(
+    liveData.withdrawalCooldownEndsAt
+  )
+  const withdrawalCooldownActive = isConnected
+    && (liveData.userShares ?? 0n) > 0n
+    && withdrawalCooldownRemaining > 0
   const amountRaw = parseUsdc(amount)
   const depositMode = getDepositMode(liveData)
   const pendingActivationTimestamp = liveData.nextRequestEpoch !== undefined
@@ -4216,6 +4325,23 @@ function VaultActionPanel({
         : redeemLimitExceeded
           ? 'Amount is above what you can currently withdraw.'
           : undefined
+
+  useEffect(() => {
+    if (liveData.withdrawalCooldownEndsAt === undefined) return undefined
+
+    const millisecondsUntilRefresh = (
+      Number(liveData.withdrawalCooldownEndsAt) * 1_000
+    ) - Date.now()
+    if (millisecondsUntilRefresh <= 0) return undefined
+
+    const timeout = window.setTimeout(() => {
+      snapshot.refresh()
+    }, millisecondsUntilRefresh + 250)
+
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [liveData.withdrawalCooldownEndsAt, snapshot])
 
   const buttonLabel = !isConnected
     ? 'Connect wallet'
@@ -4428,8 +4554,22 @@ function VaultActionPanel({
           ) : null}
 
           {mode === 'withdraw' && liveData.maxRequestRedeem === 0n && isConnected ? (
-            <Alert variant="warning" title="Withdrawals are temporarily unavailable">
-              None of your shares are currently available to withdraw.
+            <Alert
+              variant="warning"
+              title={withdrawalCooldownActive
+                ? 'Withdrawal cooldown active'
+                : 'Withdrawals are temporarily unavailable'}
+            >
+              {withdrawalCooldownActive ? (
+                <>
+                  You can request a withdrawal in{' '}
+                  <WithdrawalCooldownCountdown remainingSeconds={withdrawalCooldownRemaining} />.{' '}
+                  Receiving more {tranche.token} shares in your wallet restarts this one-hour cooldown
+                  for your entire {tranche.name} position.
+                </>
+              ) : (
+                'None of your shares are currently available to withdraw.'
+              )}
             </Alert>
           ) : null}
 

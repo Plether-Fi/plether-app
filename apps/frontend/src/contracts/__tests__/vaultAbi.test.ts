@@ -28,6 +28,8 @@ describe('tranche vault ABI', () => {
       'getRequestEpochWindow',
       'maxRequestDeposit',
       'maxRequestRedeem',
+      'DEPOSIT_COOLDOWN',
+      'lastDepositTime',
       'estimateDepositShares',
       'estimateWithdrawShares',
       'estimateRedeemAssets',

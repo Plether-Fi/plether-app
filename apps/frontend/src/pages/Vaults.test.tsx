@@ -225,6 +225,11 @@ function liveReadFixture({
   juniorMaintenanceFeeAprBps = 200,
   juniorPendingMaintenanceFeeShares = 0,
   seniorUserShares = 250,
+  seniorMaxRequestRedeem = seniorUserShares,
+  seniorLastDepositTime = 0,
+  seniorWithdrawalCooldown = 3_600,
+  juniorLastDepositTime = 0,
+  juniorWithdrawalCooldown = 3_600,
   walletUsdc = 1_000,
 }: {
   degradedMode?: boolean
@@ -240,6 +245,11 @@ function liveReadFixture({
   juniorMaintenanceFeeAprBps?: number
   juniorPendingMaintenanceFeeShares?: number
   seniorUserShares?: number
+  seniorMaxRequestRedeem?: number
+  seniorLastDepositTime?: number
+  seniorWithdrawalCooldown?: number
+  juniorLastDepositTime?: number
+  juniorWithdrawalCooldown?: number
   walletUsdc?: number
 } = {}) {
   return [
@@ -261,7 +271,7 @@ function liveReadFixture({
     success(shares(35_000_000)),
     success(shares(seniorUserShares)),
     success(usdc(seniorMaxRequestDeposit)),
-    success(shares(seniorUserShares)),
+    success(shares(seniorMaxRequestRedeem)),
     success(usdc(50_000_000)),
     success(shares(50_000_000)),
     success(shares(100)),
@@ -315,6 +325,10 @@ function liveReadFixture({
     success(usdc(5_000_000)),
     success(true),
     success(usdc(1)),
+    success(BigInt(seniorLastDepositTime)),
+    success(BigInt(seniorWithdrawalCooldown)),
+    success(BigInt(juniorLastDepositTime)),
+    success(BigInt(juniorWithdrawalCooldown)),
   ]
 }
 
@@ -628,7 +642,7 @@ describe('Vaults page', () => {
       }
     }
     expect(readConfig.query.refetchInterval).toBe(60_000)
-    expect(readConfig.contracts).toHaveLength(33)
+    expect(readConfig.contracts).toHaveLength(37)
     expect(readConfig.contracts.every(({ chainId }) => chainId === 421614)).toBe(true)
     expect(readConfig.contracts.map(({ functionName }) => functionName)).toEqual([
       'getPoolLiquidityView',
@@ -664,6 +678,10 @@ describe('Vaults page', () => {
       'reservedSeniorDepositAssetsUsdc',
       'areSeniorDepositReservationsWithinLimits',
       'minTrancheDepositUsdc',
+      'lastDepositTime',
+      'DEPOSIT_COOLDOWN',
+      'lastDepositTime',
+      'DEPOSIT_COOLDOWN',
     ])
     expect((readConfig.contracts[16] as { args?: bigint[] }).args).toEqual([10n ** 27n])
     expect((readConfig.contracts[17] as { args?: bigint[] }).args).toEqual([10n ** 27n])
@@ -797,6 +815,28 @@ describe('Vaults page', () => {
     expect(screen.queryByText('Onchain action')).not.toBeInTheDocument()
     expect(screen.queryByText(/2 epoch IDs/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/Withdrawal cooldown/i)).not.toBeInTheDocument()
+  })
+
+  it('shows the live withdrawal cooldown wherever withdrawal availability matters', () => {
+    mocks.account.address = '0x1111111111111111111111111111111111111111'
+    mocks.account.isConnected = true
+    mocks.readContractsData = liveReadFixture({
+      seniorHighWaterMark: 70_000_000,
+      seniorMaxRequestRedeem: 0,
+      seniorLastDepositTime: Math.floor(Date.now() / 1_000) - 600,
+      seniorWithdrawalCooldown: 3_600,
+    })
+
+    renderVaults('/vaults/senior')
+
+    expect(screen.getAllByText('Available in').length).toBeGreaterThan(0)
+    expect(screen.getAllByLabelText(/seconds until withdrawals are available/i).length)
+      .toBeGreaterThan(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'withdraw' }))
+    expect(screen.getByText('Withdrawal cooldown active')).toBeInTheDocument()
+    expect(screen.getByText(/Receiving more psLP shares in your wallet restarts this one-hour cooldown/i))
+      .toBeInTheDocument()
   })
 
   it('shows Junior maintenance fee metrics without the explanatory notice', () => {
@@ -941,6 +981,9 @@ describe('Vaults page', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Move shares to wallet' }))
     expect(mocks.vaultClaimDepositShares).not.toHaveBeenCalled()
     const claimDepositFlow = screen.getByRole('dialog', { name: 'Move shares flow' })
+    expect(within(claimDepositFlow).getByText(
+      /starts or restarts a one-hour cooldown for every psLP share/i
+    )).toBeInTheDocument()
     fireEvent.click(within(claimDepositFlow).getByRole('button', { name: 'Move shares' }))
     expect(mocks.vaultClaimDepositShares).toHaveBeenCalledWith(500_002n)
 

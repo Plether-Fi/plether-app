@@ -63,7 +63,7 @@ describe('v1.2.0 vault ABI regression boundary', () => {
     ])
   })
 
-  it('keeps request-state and liquidity tuples exact and exposes estimateMintAssets', () => {
+  it('keeps request-state and liquidity tuples exact and exposes vault estimates and cooldowns', () => {
     expect(outputComponents(PERPS_PUBLIC_LENS_ABI, 'getLpRequestState')).toEqual([
       ['vault', 'address'],
       ['requestId', 'uint256'],
@@ -95,6 +95,8 @@ describe('v1.2.0 vault ABI regression boundary', () => {
       ['degradedMode', 'bool'],
     ])
     expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'estimateMintAssets')).toBe(true)
+    expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'DEPOSIT_COOLDOWN')).toBe(true)
+    expect(TRANCHE_VAULT_READ_ABI.some((entry) => entry.name === 'lastDepositTime')).toBe(true)
   })
 })
 
