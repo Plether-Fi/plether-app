@@ -31,7 +31,8 @@ spec = do
     it "ranks prizes only among reviewed, mechanically qualified participants" $ do
       queryContains leaderboardQuerySql "eligibility_status = 'eligible'"
       queryContains leaderboardQuerySql "active_days >= competition_minimum_active_days"
-      queryContains leaderboardQuerySql "pc.prize_place <= 3"
+      queryContains leaderboardQuerySql "pc.prize_place <= competition_prize_places"
+      queryContains leaderboardQuerySql "(t.fifth_prize_usdc > 0)::INT"
 
     it "preserves July's zero-trade display while ranking every September participant" $ do
       queryContains leaderboardQuerySql

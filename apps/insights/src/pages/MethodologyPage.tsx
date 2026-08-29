@@ -38,7 +38,7 @@ export function MethodologyPage() {
         </Rule>
         <Rule number="05" title="Timing and prizes">
           <p>Trading opens on <strong className="text-content-primary">Sunday, 13 September 2026 at 21:00 UTC</strong> and closes on <strong className="text-content-primary">Friday, 25 September 2026 at 21:00 UTC</strong>. There is no close-only period; opening and increasing positions remain available until the cutoff.</p>
-          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top three eligible traders receive <strong className="text-content-primary">600.00 / 300.00 / 100.00 USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
+          <p>Results are published on <strong className="text-content-primary">28 September at 12:00 UTC</strong>. The top five eligible traders receive <strong className="text-content-primary">600.00 / 500.00 / 400.00 / 300.00 / 200.00 USDC</strong>, paid by 3 October at 00:00 UTC. If a trader is disqualified, the next eligible trader moves up.</p>
           <p>Exact final-P&amp;L ties split the combined prizes for the occupied paid places equally. Wallet address is used only to keep tied rows in a stable display order.</p>
         </Rule>
         <Rule number="06" title="Integrity review">

@@ -15,8 +15,8 @@ beforeEach(() => {
   apiMocks.useCurrentCompetition.mockReturnValue({
     data: {
       id: 'competition-1',
-      slug: 'testnet-trading-2026',
-      name: 'Testnet Trading Competition',
+      slug: 'testnet-trading-2026-09',
+      name: 'September Testnet Trading Competition',
       status: 'live',
       startsAt: '2026-07-20T16:00:00Z',
       tradingCutoffAt: '2026-08-03T16:00:00Z',
@@ -24,7 +24,13 @@ beforeEach(() => {
       startingBalance: '100000000000',
       pnlEligibilityThreshold: '1000000000',
       minActiveDays: 5,
-      prizes: [],
+      prizes: [
+        { place: 1, amount: '600000000' },
+        { place: 2, amount: '500000000' },
+        { place: 3, amount: '400000000' },
+        { place: 4, amount: '300000000' },
+        { place: 5, amount: '200000000' },
+      ],
       latestIndexedBlock: null,
       latestIndexedAt: null,
     },
@@ -51,5 +57,7 @@ describe('LeaderboardPage', () => {
     render(<MemoryRouter><LeaderboardPage /></MemoryRouter>)
 
     expect(screen.getByText('Registered traders').parentElement).toHaveTextContent('358')
+    expect(screen.getByText('Prize pool').parentElement).toHaveTextContent('2,000.00 USDC')
+    expect(screen.getByText(/for the top 5 eligible traders/i)).toBeInTheDocument()
   })
 })

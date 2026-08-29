@@ -226,6 +226,8 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
     first_prize_usdc NUMERIC(78,0) NOT NULL,
     second_prize_usdc NUMERIC(78,0) NOT NULL,
     third_prize_usdc NUMERIC(78,0) NOT NULL,
+    fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
+    fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,
     finalized BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -247,6 +249,11 @@ CREATE TABLE IF NOT EXISTS insights_competitions (
         registration_open_timestamp IS NULL OR NULLIF(BTRIM(privacy_notice_version), '') IS NOT NULL
     )
 );
+
+ALTER TABLE insights_competitions
+    ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
+ALTER TABLE insights_competitions
+    ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS insights_competition_participants (
     competition_slug TEXT NOT NULL REFERENCES insights_competitions(slug) ON DELETE CASCADE,

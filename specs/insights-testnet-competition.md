@@ -118,9 +118,13 @@ There are ten possible qualifying session dates: September 14–18 and 21–25.
 
 ## Prizes and ties
 
+The total prize pool is `2,000` real USDC, awarded across five places:
+
 - First place: `600` real USDC
-- Second place: `300` real USDC
-- Third place: `100` real USDC
+- Second place: `500` real USDC
+- Third place: `400` real USDC
+- Fourth place: `300` real USDC
+- Fifth place: `200` real USDC
 
 An ineligible participant is removed from prize ranking and the next eligible
 participant moves up. Exact P&L ties split the combined prizes for the occupied

@@ -74,7 +74,7 @@ export function LeaderboardPage() {
         <CompetitionStats competition={competitionData} />
       </div>
 
-      <RulesSummary />
+      <RulesSummary competition={competitionData} />
 
       <section aria-labelledby="leaderboard-title" className="space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

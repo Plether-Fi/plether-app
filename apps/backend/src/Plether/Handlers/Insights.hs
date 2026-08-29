@@ -189,7 +189,7 @@ withInsightsReadSnapshot =
       }
 
 competitionRowToJson :: Integer -> Maybe RegistrationConfig -> CompetitionRow -> Value
-competitionRowToJson now _registrationConfig CompetitionRow {..} =
+competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
   object $
     catMaybes
       [ Just $ "slug" .= icrSlug
@@ -212,9 +212,8 @@ competitionRowToJson now _registrationConfig CompetitionRow {..} =
       , Just $ "fxSessionBoundaryUtc" .= formatBoundary icrFxSessionBoundaryUtcMinutes
       , Just $
           "prizes"
-            .= [ object ["place" .= (1 :: Int), "amountUsdc" .= show icrFirstPrizeUsdc]
-               , object ["place" .= (2 :: Int), "amountUsdc" .= show icrSecondPrizeUsdc]
-               , object ["place" .= (3 :: Int), "amountUsdc" .= show icrThirdPrizeUsdc]
+            .= [ object ["place" .= place, "amountUsdc" .= show amount]
+               | (place, amount) <- zip [(1 :: Int) ..] $ competitionPrizeAmounts competition
                ]
       , Just $ "scoringVersion" .= icrScoringVersion
       , Just $ "rulesVersion" .= icrRulesVersion
@@ -310,12 +309,20 @@ leaderboardRowToJson competition LeaderboardRow {..} =
         ilrFundingIntegrityClear
     allocation =
       prizeAllocation
-        [ icrFirstPrizeUsdc competition
-        , icrSecondPrizeUsdc competition
-        , icrThirdPrizeUsdc competition
-        ]
+        (competitionPrizeAmounts competition)
         ilrPrizePlace
         ilrPrizeTieCount
+
+competitionPrizeAmounts :: CompetitionRow -> [Integer]
+competitionPrizeAmounts CompetitionRow {..} =
+  filter
+    (> 0)
+    [ icrFirstPrizeUsdc
+    , icrSecondPrizeUsdc
+    , icrThirdPrizeUsdc
+    , icrFourthPrizeUsdc
+    , icrFifthPrizeUsdc
+    ]
 
 prizeEligibleAfterIntegrityReview :: Bool -> Bool -> Bool -> Bool
 prizeEligibleAfterIntegrityReview mechanicallyQualified reviewedEligible integrityClear =

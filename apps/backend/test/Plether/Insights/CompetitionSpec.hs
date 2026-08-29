@@ -7,6 +7,7 @@ import Plether.Database.Insights
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
+  , isLegacySeptemberPrizeOnlyMismatch
   )
 import Plether.Insights.Competition
 import Test.Hspec
@@ -14,22 +15,22 @@ import Test.Hspec
 spec :: Spec
 spec = do
   describe "prizeAllocation" $ do
-    let prizes = map (* usdcScale) [600, 300, 100]
+    let prizes = map (* usdcScale) [600, 500, 400, 300, 200]
 
     it "assigns an untied eligible participant its occupied prize" $ do
       prizeAllocation prizes (Just 2) (Just 1)
-        `shouldBe` Just (PrizeAllocation 2 [2] $ 300 * usdcScale)
+        `shouldBe` Just (PrizeAllocation 2 [2] $ 500 * usdcScale)
 
     it "splits the combined occupied prizes equally across an exact tie" $ do
       prizeAllocation prizes (Just 1) (Just 2)
-        `shouldBe` Just (PrizeAllocation 1 [1, 2] $ 450 * usdcScale)
+        `shouldBe` Just (PrizeAllocation 1 [1, 2] $ 550 * usdcScale)
 
-    it "shares the last paid place across a tie that extends beyond the podium" $ do
-      prizeAllocation prizes (Just 3) (Just 2)
-        `shouldBe` Just (PrizeAllocation 3 [3] $ 50 * usdcScale)
+    it "shares the last paid place across a tie that extends beyond the awards" $ do
+      prizeAllocation prizes (Just 5) (Just 2)
+        `shouldBe` Just (PrizeAllocation 5 [5] $ 100 * usdcScale)
 
     it "does not create an award outside the paid places" $ do
-      prizeAllocation prizes (Just 4) (Just 1) `shouldBe` Nothing
+      prizeAllocation prizes (Just 6) (Just 1) `shouldBe` Nothing
       prizeAllocation prizes Nothing Nothing `shouldBe` Nothing
 
   describe "finalizationBlockers" $ do
@@ -108,11 +109,12 @@ spec = do
       crPaymentDeadlineAt september2026Competition
         `shouldBe` UTCTime (fromGregorian 2026 10 3) 0
 
-    it "retains the bankroll, qualification thresholds, and prizes" $ do
+    it "retains the bankroll and qualification thresholds with the expanded prize pool" $ do
       crStartingBalanceUsdc september2026Competition `shouldBe` 100_000_000_000
       minimumProfitUsdc september2026Competition `shouldBe` 1_000_000_000
       crMinimumActiveDays september2026Competition `shouldBe` 5
-      crPrizeUsdc september2026Competition `shouldBe` [600_000_000, 300_000_000, 100_000_000]
+      crPrizeUsdc september2026Competition
+        `shouldBe` [600_000_000, 500_000_000, 400_000_000, 300_000_000, 200_000_000]
       crScoringVersion september2026Competition `shouldBe` "cash-flow-adjusted-v1"
       crScoringVersion july2026Competition `shouldBe` "account-value-v1"
       fxSessionBoundaryUtcText september2026Competition `shouldBe` "21:00"
@@ -195,6 +197,19 @@ spec = do
           , CompetitionSeedMismatch "minimum_profit_bps" "200" "100"
           ]
 
+    it "treats every paid place as immutable competition metadata" $ do
+      let septemberExpected = competitionSeedMetadataFor
+            september2026Competition
+            421_614
+            "0xAa00000000000000000000000000000000000001"
+            "0xBb00000000000000000000000000000000000002"
+            "0xCc00000000000000000000000000000000000003"
+            "0xDd00000000000000000000000000000000000004"
+            fixtureManifest
+          stored = septemberExpected {csmFifthPrizeUsdc = 100_000_000}
+      competitionSeedMismatches septemberExpected stored
+        `shouldBe` [CompetitionSeedMismatch "fifth_prize_usdc" "100000000" "200000000"]
+
     it "recognizes only the exact pre-launch payout-deadline correction" $ do
       let legacy = expected {csmPaymentDeadlineTimestamp = 1_786_319_999}
       isLegacyPaymentDeadlineOnlyMismatch expected legacy `shouldBe` True
@@ -214,6 +229,30 @@ spec = do
             fixtureManifest
           deceptiveLegacy = septemberExpected {csmPaymentDeadlineTimestamp = 1_786_319_999}
       isLegacyPaymentDeadlineOnlyMismatch septemberExpected deceptiveLegacy `shouldBe` False
+
+    it "recognizes only the exact pre-launch September prize expansion" $ do
+      let septemberExpected = competitionSeedMetadataFor
+            september2026Competition
+            421_614
+            "0xAa00000000000000000000000000000000000001"
+            "0xBb00000000000000000000000000000000000002"
+            "0xCc00000000000000000000000000000000000003"
+            "0xDd00000000000000000000000000000000000004"
+            fixtureManifest
+          legacyPrizes = septemberExpected
+            { csmSecondPrizeUsdc = 300_000_000
+            , csmThirdPrizeUsdc = 100_000_000
+            , csmFourthPrizeUsdc = 0
+            , csmFifthPrizeUsdc = 0
+            }
+      isLegacySeptemberPrizeOnlyMismatch septemberExpected legacyPrizes
+        `shouldBe` True
+      isLegacySeptemberPrizeOnlyMismatch
+        septemberExpected
+        legacyPrizes {csmMinimumProfitBps = 200}
+        `shouldBe` False
+      isLegacySeptemberPrizeOnlyMismatch expected legacyPrizes
+        `shouldBe` False
 
     it "reports no mismatches for an idempotent restart" $ do
       competitionSeedMismatches expected expected `shouldBe` []

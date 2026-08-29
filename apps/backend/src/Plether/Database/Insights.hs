@@ -15,6 +15,7 @@ module Plether.Database.Insights
   , competitionSeedMetadataFor
   , competitionSeedMismatches
   , isLegacyPaymentDeadlineOnlyMismatch
+  , isLegacySeptemberPrizeOnlyMismatch
   , setCompetitionBoundaryBlocks
   , upsertCompetitionParticipant
   , stageCompetitionParticipantWalletRemap
@@ -87,6 +88,7 @@ import Plether.Insights.Competition
   , july2026CompetitionSlug
   , pendingCompetitionReleaseManifestText
   , participantEligibilityText
+  , september2026CompetitionSlug
   )
 import qualified Plether.Database.Insights.Registration as RegistrationDb
 import Plether.Utils.Address (isValidAddress)
@@ -146,6 +148,8 @@ data CompetitionSeedMetadata = CompetitionSeedMetadata
   , csmFirstPrizeUsdc :: Integer
   , csmSecondPrizeUsdc :: Integer
   , csmThirdPrizeUsdc :: Integer
+  , csmFourthPrizeUsdc :: Integer
+  , csmFifthPrizeUsdc :: Integer
   }
   deriving stock (Show, Eq)
 
@@ -173,6 +177,8 @@ instance FromRow CompetitionSeedMetadata where
     <*> field
     <*> field
     <*> field
+    <*> numericIntegerFieldRequired
+    <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
@@ -217,6 +223,8 @@ instance ToRow CompetitionSeedInsert where
     , toField csmFirstPrizeUsdc
     , toField csmSecondPrizeUsdc
     , toField csmThirdPrizeUsdc
+    , toField csmFourthPrizeUsdc
+    , toField csmFifthPrizeUsdc
     , toField csiReleaseBound
     ]
 
@@ -252,6 +260,8 @@ data CompetitionRow = CompetitionRow
   , icrFirstPrizeUsdc :: Integer
   , icrSecondPrizeUsdc :: Integer
   , icrThirdPrizeUsdc :: Integer
+  , icrFourthPrizeUsdc :: Integer
+  , icrFifthPrizeUsdc :: Integer
   , icrFinalized :: Bool
   , icrUpdatedTimestamp :: Integer
   , icrParticipantCount :: Integer
@@ -288,6 +298,8 @@ instance FromRow CompetitionRow where
     <*> field
     <*> field
     <*> field
+    <*> numericIntegerFieldRequired
+    <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
     <*> numericIntegerFieldRequired
@@ -579,6 +591,8 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     \ first_prize_usdc NUMERIC(78,0) NOT NULL,\
     \ second_prize_usdc NUMERIC(78,0) NOT NULL,\
     \ third_prize_usdc NUMERIC(78,0) NOT NULL,\
+    \ fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,\
+    \ fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0,\
     \ finalized BOOLEAN NOT NULL DEFAULT FALSE,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \ updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
@@ -628,6 +642,10 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS target_x_handle TEXT"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS privacy_notice_version TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fourth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0"
+  _ <- execute_ conn
+    "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fifth_prize_usdc NUMERIC(78,0) NOT NULL DEFAULT 0"
   _ <- execute_ conn
     "ALTER TABLE insights_competitions ADD COLUMN IF NOT EXISTS fx_session_boundary_utc_minutes INTEGER"
   _ <- execute conn
@@ -965,10 +983,10 @@ seedCompetition conn rules chainId releaseRouter usdcAddress marginClearinghouse
       \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp,\
       \ minimum_x_account_age_days, target_x_handle, starting_balance_usdc,\
       \ minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
-      \ first_prize_usdc, second_prize_usdc, third_prize_usdc, release_bound_at)\
+      \ first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc, release_bound_at)\
       \ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,\
       \ NULL,\
-      \ ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN NOW() ELSE NULL END)\
+      \ ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? THEN NOW() ELSE NULL END)\
       \ ON CONFLICT (slug) DO NOTHING"
       CompetitionSeedInsert
         { csiMetadata = insertedExpected
@@ -1104,6 +1122,8 @@ competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearin
     , csmFirstPrizeUsdc = prizeAt 0 rules
     , csmSecondPrizeUsdc = prizeAt 1 rules
     , csmThirdPrizeUsdc = prizeAt 2 rules
+    , csmFourthPrizeUsdc = prizeAt 3 rules
+    , csmFifthPrizeUsdc = prizeAt 4 rules
     }
 
 competitionSeedMismatches
@@ -1136,6 +1156,8 @@ competitionSeedMismatches expected stored = concat
   , mismatchShow "first_prize_usdc" csmFirstPrizeUsdc
   , mismatchShow "second_prize_usdc" csmSecondPrizeUsdc
   , mismatchShow "third_prize_usdc" csmThirdPrizeUsdc
+  , mismatchShow "fourth_prize_usdc" csmFourthPrizeUsdc
+  , mismatchShow "fifth_prize_usdc" csmFifthPrizeUsdc
   ]
   where
     mismatch fieldName getter
@@ -1171,6 +1193,37 @@ isLegacyPaymentDeadlineOnlyMismatch expected stored =
              (T.pack $ show $ csmPaymentDeadlineTimestamp expected)
          ]
 
+-- This is the exact September prize schedule used by the pre-launch seed
+-- before the pool was expanded from three to five paid places. It may be
+-- migrated only while the competition still has no resolved boundaries or
+-- snapshots and trading has not started.
+isLegacySeptemberPrizeOnlyMismatch
+  :: CompetitionSeedMetadata
+  -> CompetitionSeedMetadata
+  -> Bool
+isLegacySeptemberPrizeOnlyMismatch expected stored =
+  csmSlug expected == september2026CompetitionSlug
+    && csmSlug stored == september2026CompetitionSlug
+    && prizeAmounts expected
+      == map (* usdcScale) [600, 500, 400, 300, 200]
+    && prizeAmounts stored
+      == map (* usdcScale) [600, 300, 100, 0, 0]
+    && map csmmField (competitionSeedMismatches expected stored)
+      == [ "second_prize_usdc"
+         , "third_prize_usdc"
+         , "fourth_prize_usdc"
+         , "fifth_prize_usdc"
+         ]
+  where
+    usdcScale = 1_000_000
+    prizeAmounts metadata =
+      [ csmFirstPrizeUsdc metadata
+      , csmSecondPrizeUsdc metadata
+      , csmThirdPrizeUsdc metadata
+      , csmFourthPrizeUsdc metadata
+      , csmFifthPrizeUsdc metadata
+      ]
+
 validateOrMigrateCompetitionSeed
   :: Connection
   -> CompetitionSeedMetadata
@@ -1202,6 +1255,40 @@ validateOrMigrateCompetitionSeed conn expected stored =
                   <> "."
             _ -> seedMismatchError expected mismatches $
               Just "The known pre-launch payout-deadline correction was detected, but automatic migration is allowed only before boundary blocks, snapshots, or finalization exist."
+      | isLegacySeptemberPrizeOnlyMismatch expected stored -> do
+          safeRows <- query conn
+            "SELECT start_block IS NULL AND score_cutoff_block IS NULL AND NOT finalized\
+            \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
+            \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
+            \ FROM insights_competitions WHERE slug = ?"
+            (csmSlug expected, csmSlug expected, csmSlug expected)
+          case safeRows of
+            [Only True] -> do
+              affected <- execute conn
+                "UPDATE insights_competitions SET first_prize_usdc = ?, second_prize_usdc = ?,\
+                \ third_prize_usdc = ?, fourth_prize_usdc = ?, fifth_prize_usdc = ?, updated_at = NOW()\
+                \ WHERE slug = ? AND first_prize_usdc = ? AND second_prize_usdc = ?\
+                \ AND third_prize_usdc = ? AND fourth_prize_usdc = 0 AND fifth_prize_usdc = 0"
+                ( csmFirstPrizeUsdc expected
+                , csmSecondPrizeUsdc expected
+                , csmThirdPrizeUsdc expected
+                , csmFourthPrizeUsdc expected
+                , csmFifthPrizeUsdc expected
+                , csmSlug expected
+                , 600_000_000 :: Integer
+                , 300_000_000 :: Integer
+                , 100_000_000 :: Integer
+                )
+              unless (affected == 1) $
+                seedMismatchError expected mismatches $
+                  Just "The known pre-launch September prize correction changed concurrently; startup refused to overwrite it."
+              putStrLn $
+                "Migrated the pre-launch Plether Insights prize pool for "
+                  <> T.unpack (csmSlug expected)
+                  <> " from 1,000 USDC across three places to 2,000 USDC across five places."
+            _ -> seedMismatchError expected mismatches $
+              Just "The known pre-launch September prize correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
       | otherwise -> seedMismatchError expected mismatches Nothing
 
 seedMismatchError
@@ -2422,7 +2509,7 @@ competitionSeedMetadataSelect =
   \ start_timestamp, new_risk_cutoff_timestamp, score_cutoff_timestamp, results_timestamp,\
   \ payment_deadline_timestamp, starting_balance_usdc, minimum_profit_bps, minimum_active_days,\
   \ fx_session_boundary_utc_minutes, registration_close_timestamp, minimum_x_account_age_days, target_x_handle,\
-  \ scoring_version, rules_version, first_prize_usdc, second_prize_usdc, third_prize_usdc\
+  \ scoring_version, rules_version, first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc\
   \ FROM insights_competitions"
 
 competitionSelect :: Query
@@ -2431,7 +2518,7 @@ competitionSelect =
   \ results_timestamp, payment_deadline_timestamp, registration_open_timestamp, registration_close_timestamp, minimum_x_account_age_days, target_x_handle, privacy_notice_version,\
   \ start_block, start_block_hash, score_cutoff_block, score_cutoff_block_hash,\
   \ starting_balance_usdc, minimum_profit_bps, minimum_active_days, fx_session_boundary_utc_minutes, scoring_version, rules_version,\
-  \ first_prize_usdc, second_prize_usdc, third_prize_usdc, finalized,\
+  \ first_prize_usdc, second_prize_usdc, third_prize_usdc, fourth_prize_usdc, fifth_prize_usdc, finalized,\
   \ EXTRACT(EPOCH FROM updated_at)::bigint,\
   \ (SELECT COUNT(*) FROM insights_competition_participants p WHERE p.competition_slug = insights_competitions.slug)::bigint\
   \ FROM insights_competitions"
@@ -2522,6 +2609,8 @@ leaderboardQuery =
   \ t.starting_balance_usdc AS competition_starting_balance_usdc,\
   \ t.minimum_profit_bps AS competition_minimum_profit_bps,\
   \ t.minimum_active_days AS competition_minimum_active_days,\
+  \ ((t.first_prize_usdc > 0)::INT + (t.second_prize_usdc > 0)::INT + (t.third_prize_usdc > 0)::INT\
+  \   + (t.fourth_prize_usdc > 0)::INT + (t.fifth_prize_usdc > 0)::INT) AS competition_prize_places,\
   \ CASE WHEN ss.wallet IS NULL THEN NULL ELSE GREATEST(0,\
   \   CASE WHEN ss.has_open_position THEN ss.signed_net_equity_usdc ELSE ss.terminal_reachable_usdc END + ss.trader_claims_usdc) END AS starting_value_usdc,\
   \ CASE WHEN cs.wallet IS NULL THEN NULL ELSE GREATEST(0,\
@@ -2560,8 +2649,8 @@ leaderboardQuery =
   \ AND final_pnl_usdc >= competition_starting_balance_usdc * competition_minimum_profit_bps / 10000\
   \ AND active_days >= competition_minimum_active_days\
   \ ), with_prizes AS (\
-  \ SELECT ranked.*, CASE WHEN pc.prize_place <= 3 THEN pc.prize_place ELSE NULL END AS prize_place,\
-  \ CASE WHEN pc.prize_place <= 3 THEN pc.prize_tie_count ELSE NULL END AS prize_tie_count\
+  \ SELECT ranked.*, CASE WHEN pc.prize_place <= competition_prize_places THEN pc.prize_place ELSE NULL END AS prize_place,\
+  \ CASE WHEN pc.prize_place <= competition_prize_places THEN pc.prize_tie_count ELSE NULL END AS prize_tie_count\
   \ FROM ranked LEFT JOIN prize_candidates pc ON pc.wallet = ranked.wallet\
   \ )\
   \ SELECT competition_rank, prize_place, prize_tie_count, wallet, alias, eligibility_status, eligibility_reason,\

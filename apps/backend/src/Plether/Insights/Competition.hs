@@ -201,7 +201,7 @@ september2026Competition =
     , crRegistrationClosesAt = Just $ utc 2026 9 20 21 0 0
     , crMinimumXAccountAgeDays = Just 90
     , crTargetXHandle = Just "plether_fi"
-    , crPrizeUsdc = map (* usdcScale) [600, 300, 100]
+    , crPrizeUsdc = map (* usdcScale) [600, 500, 400, 300, 200]
     , crScoringVersion = "cash-flow-adjusted-v1"
     , crRulesVersion = "2026-09-13"
     }
