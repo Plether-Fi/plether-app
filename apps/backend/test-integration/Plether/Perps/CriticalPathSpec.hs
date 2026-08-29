@@ -43,6 +43,10 @@ import Plether.Config
   , PerpsCandleWriteMode (..)
   )
 import Plether.Database (DbPool, newDbPool, withDb)
+import Plether.Database.Protocol
+  ( deleteProtocolLedgerFromBlock
+  , ensureProtocolSchema
+  )
 import Plether.Database.Schema
   ( deletePerpsHistoryFromBlock
   , ensurePerpsHistorySchema
@@ -59,7 +63,8 @@ import Plether.Insights.Competition
   , july2026Competition
   )
 import Plether.Perps.CriticalPathFixture
-import Plether.Perps.HistoryIndexer (runPerpsIndexer)
+import Plether.Perps.HistoryIndexer (perpsIndexerName, runPerpsIndexer)
+import Plether.Protocol.Release (ProtocolRelease (..))
 import Test.Hspec
   ( Expectation
   , Spec
@@ -292,6 +297,7 @@ prepareDatabase pool = do
       _ -> fail "PostgreSQL did not return exactly one current_database() row"
     ensurePerpsHistorySchema connection
     ensurePerpsKeeperSchema connection
+    ensureProtocolSchema connection criticalPathRelease
   cleanupDatabase pool
 
 cleanupDatabase :: DbPool -> IO ()
@@ -302,6 +308,19 @@ cleanupDatabase pool =
       testChainId
       testRouter
       0
+    deleteProtocolLedgerFromBlock connection criticalPathReleaseId 0
+    void $
+      execute
+        connection
+        "DELETE FROM protocol_indexed_blocks \
+        \WHERE release_id = ? AND indexer_name = ?"
+        (criticalPathReleaseId, perpsIndexerName)
+    void $
+      execute
+        connection
+        "DELETE FROM protocol_indexer_state \
+        \WHERE release_id = ? AND indexer_name = ?"
+        (criticalPathReleaseId, perpsIndexerName)
     void $
       execute
         connection
@@ -548,6 +567,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPythSampleIntervalSeconds = 60
     , cfgPythLatestMaxAgeSeconds = 10
     , cfgPythIngestionEnabled = False
+    , cfgProtocolExplorerEnabled = False
     , cfgPerpsCandleWriteMode = PerpsCandleWritesOff
     , cfgPerpsCandleReadMode = PerpsCandleReadsLegacy
     , cfgPerpsCandleReadIntervals = []
@@ -565,9 +585,20 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsMarginClearinghouse = testClearinghouse
     , cfgPerpsPletherOracle = testOracle
     , cfgPerpsAccountLens = testLens
+    , cfgPerpsPublicLens = testLens
     , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSeniorVault = testEngine
+    , cfgPerpsJuniorVault = testSidecar
+    , cfgPerpsOrderRouterAdmin = testRouter
+    , cfgPerpsCfdEngineAdmin = testEngine
     , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
     , cfgPerpsIndexerStartBlock = commitBlockNumber
+    , cfgVaultHistoryHousePoolAddress = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgVaultHistorySeniorVaultAddress = testEngine
+    , cfgVaultHistoryJuniorVaultAddress = testSidecar
+    , cfgVaultHistoryDeploymentBlock = commitBlockNumber
+    , cfgVaultHistoryRpcUrl = rpcUrl
+    , cfgVaultHistoryConfirmations = 0
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest
     , cfgRegistrationConfig = Nothing
@@ -581,6 +612,32 @@ testConfig databaseUrl rpcUrl =
     , cfgKeeperFeeBufferBps = 2500
     , cfgLpSettlementEnabled = False
     , cfgLpSettlementPollSeconds = 15
+    }
+
+criticalPathReleaseId :: Text
+criticalPathReleaseId = "critical-path-integration"
+
+criticalPathRelease :: ProtocolRelease
+criticalPathRelease =
+  ProtocolRelease
+    { prId = criticalPathReleaseId
+    , prName = "Deterministic critical-path integration"
+    , prChainId = testChainId
+    , prDeploymentBlock = commitBlockNumber
+    , prCalculationVersion = "protocol-transparency-v1"
+    , prUsdc = testUsdc
+    , prOrderRouter = testRouter
+    , prOrderRouterAdmin = testRouter
+    , prCfdEngine = testEngine
+    , prCfdEngineAdmin = testEngine
+    , prMarginClearinghouse = testClearinghouse
+    , prPublicLens = testLens
+    , prAccountLens = testLens
+    , prHousePool = testClearinghouse
+    , prSeniorVault = testSidecar
+    , prJuniorVault = testOracle
+    , prPletherOracle = testOracle
+    , prOperationalWallets = []
     }
 
 testCompetitionReleaseManifest :: CompetitionReleaseManifest
