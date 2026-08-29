@@ -11,7 +11,7 @@ import {
 } from '../api'
 import { TokenInput } from '../components/TokenInput'
 import { PerpsPoolLiquidityDetails } from '../components/PerpsPoolLiquidityDetails'
-import { Alert, Badge, Button, Modal, TokenAmount, TokenLabel, Tooltip } from '../components/ui'
+import { Alert, Badge, Button, DocsLink, Modal, Spinner, SuccessIcon, TokenAmount, TokenLabel, Tooltip } from '../components/ui'
 import { DOCS_LINKS } from '../config/docs'
 import { syncAppKitModalStyleOverrides } from '../config/wagmi'
 import {
@@ -35,18 +35,67 @@ import {
 import { PERPS_POSITION_SIZE_TO_USDC_SCALE } from '../contracts/perpsConstants'
 import {
   useSwitchToArbitrumSepolia,
+  useVaultActivity,
   useVaultRequests,
   useVaultTransactions,
+  type VaultActivityTranche,
   type VaultDepositRequest,
+  type VaultHolderDistribution,
+  type VaultOverviewActivityItem,
   type VaultRedeemRequest,
 } from '../hooks'
 import { dxyExposureFromContractNotional, formatPerpsUsdc } from '../utils/perps'
 import { calculatePerpsPoolCapital } from '../utils/perpsPoolCapital'
 
 type TrancheId = 'senior' | 'junior'
-type DetailTab = 'overview' | 'performance' | 'risk' | 'activity'
+type DetailSectionId = 'overview' | 'performance' | 'position' | 'activity'
 type ActionMode = 'deposit' | 'withdraw'
 type DataStatus = 'live' | 'partial' | 'syncing' | 'unavailable'
+
+type VaultRequestAction =
+  | { kind: 'cancel-deposit'; requestId: bigint; assets: bigint }
+  | { kind: 'recover-deposit'; requestId: bigint; assets: bigint }
+  | { kind: 'claim-deposit'; requestId: bigint; shares: bigint }
+  | { kind: 'cancel-withdrawal'; requestId: bigint; shares: bigint }
+  | { kind: 'claim-withdrawal'; requestId: bigint; shares: bigint; assets: bigint }
+  | { kind: 'reclaim-withdrawal'; requestId: bigint; shares: bigint }
+
+const DEFAULT_STICKY_HEADER_HEIGHT_PX = 144
+const SECTION_NAV_HEIGHT_PX = 56
+const STICKY_ELEMENT_GAP_PX = 16
+
+function useStickyHeaderHeight() {
+  const [height, setHeight] = useState(DEFAULT_STICKY_HEADER_HEIGHT_PX)
+
+  useEffect(() => {
+    const header = document.querySelector<HTMLElement>('[data-app-sticky-header]')
+    if (!header) return
+
+    const updateHeight = () => {
+      const measuredHeight = Math.ceil(header.getBoundingClientRect().height)
+      if (measuredHeight > 0) {
+        setHeight((currentHeight) => (
+          currentHeight === measuredHeight ? currentHeight : measuredHeight
+        ))
+      }
+    }
+
+    updateHeight()
+    window.addEventListener('resize', updateHeight)
+
+    const resizeObserver = typeof ResizeObserver === 'undefined'
+      ? undefined
+      : new ResizeObserver(updateHeight)
+    resizeObserver?.observe(header)
+
+    return () => {
+      window.removeEventListener('resize', updateHeight)
+      resizeObserver?.disconnect()
+    }
+  }, [])
+
+  return height
+}
 
 interface TrancheDefinition {
   id: TrancheId
@@ -78,6 +127,24 @@ interface ContractResult {
   status: 'failure' | 'success'
   result?: unknown
 }
+
+const VAULT_GOVERNANCE_TIMELOCKS = [
+  {
+    mechanism: 'Pool risk settings',
+    delay: '48 hours',
+    effect: 'Changes to the Senior target rate, deposit limits, temporary pricing fees, and price-data requirements.',
+  },
+  {
+    mechanism: 'Junior fee settings',
+    delay: '48 hours',
+    effect: 'Changes to the Junior annual fee or the wallet that receives it.',
+  },
+  {
+    mechanism: 'Trading and pricing settings',
+    delay: '48 hours',
+    effect: 'Changes to market pricing inputs and trade processing that can affect hourly vault processing.',
+  },
+] as const
 
 interface PoolSnapshot {
   totalAssetsUsdc?: bigint
@@ -153,6 +220,7 @@ const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60
 const VAULT_EPOCH_DURATION_SECONDS = 60 * 60
 const VAULT_PERFORMANCE_CHART_COLOR = '#FFAB96'
 const EXPLORER_BASE_URL = 'https://sepolia.arbiscan.io/address'
+const EXPLORER_TX_BASE_URL = 'https://sepolia.arbiscan.io/tx'
 const DEPOSIT_PROBE_ACCOUNT = '0x000000000000000000000000000000000000dEaD' as Address
 const WAD = 10n ** 18n
 
@@ -161,18 +229,18 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     id: 'senior',
     name: 'Senior Vault',
     token: 'psLP',
-    eyebrow: 'Priority capital',
-    shortDescription: 'Targeted return with first access to free LP liquidity.',
+    eyebrow: 'More protected option',
+    shortDescription: 'A targeted return with first priority when withdrawal funds are allocated.',
     description:
-      'Senior exchanges residual upside for relative protection. It receives a Junior-funded target coupon, is restored toward its high-water mark before Junior receives new revenue, and absorbs losses only after Junior is exhausted.',
-    returnModel: 'Target coupon funded by Junior capital',
+      'Senior gives up some upside for greater protection. It receives a targeted return funded by Junior, recovers prior losses before Junior receives new earnings, and takes losses only after Junior is exhausted.',
+    returnModel: 'Targeted return funded by Junior',
     lossPriority: 'Second loss, after Junior',
-    withdrawalPriority: 'Matured requests settle before Junior',
-    upside: 'Target coupon and restoration priority',
-    primaryRisk: 'Coupon can stop and principal can still be impaired',
+    withdrawalPriority: 'Senior withdrawals are funded before Junior',
+    upside: 'Targeted return and recovery priority',
+    primaryRisk: 'The targeted return can stop and the vault can still lose value',
     riskLabel: 'Lower relative risk',
     riskVariant: 'info',
-    targetReturn: 'Target coupon',
+    targetReturn: 'Target return',
     markClassName: 'border-brand-peach/60 bg-brand-peach/10 text-brand-peach',
     valueClassName: 'text-brand-peach',
     barClassName: 'bg-brand-peach',
@@ -183,17 +251,17 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
       },
       {
         label: 'Return',
-        text: 'Receives its target coupon when available; impairment is restored before Junior receives residual revenue',
+        text: 'Receives its targeted return when funds are available; prior losses are recovered before Junior receives new earnings',
       },
       {
         label: 'Withdrawals',
-        text: 'Matured Senior withdrawal requests are funded first from available LP liquidity each epoch',
+        text: 'Senior withdrawals are funded before Junior whenever USDC is available',
       },
     ],
     riskItems: [
-      'The target coupon is not guaranteed and is limited by available Junior capital.',
+      'The targeted return is not guaranteed and is limited by available Junior capital.',
       'Losses can reach Senior after Junior is fully exhausted.',
-      'Trader claims and bounded trading liabilities rank ahead of both LP tranches.',
+      'Amounts owed to traders are paid before either vault can withdraw.',
       'Positive share value does not guarantee immediate withdrawal liquidity.',
     ],
     address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
@@ -202,18 +270,18 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
     id: 'junior',
     name: 'Junior Vault',
     token: 'pjLP',
-    eyebrow: 'Residual capital',
-    shortDescription: 'First-loss capital with variable residual upside.',
+    eyebrow: 'Higher-risk option',
+    shortDescription: 'Takes losses first in exchange for more variable return potential.',
     description:
-      'Junior funds the Senior target coupon and absorbs HousePool losses first. In exchange, it receives residual realized trading revenue, including the LP share of liquidation charges, after Senior restoration and coupon obligations are satisfied.',
-    returnModel: 'Residual HousePool performance',
+      'Junior funds the Senior targeted return and absorbs losses from the shared trading pool first. In exchange, it receives the trading earnings left after Senior is paid, including a share of fees from forced position closures.',
+    returnModel: 'Variable return from trading activity',
     lossPriority: 'First loss',
-    withdrawalPriority: 'Remainder after matured Senior requests and the required buffer',
-    upside: 'Variable residual trading revenue',
-    primaryRisk: 'Can be partially or completely wiped before Senior is impaired',
+    withdrawalPriority: 'Available after Senior withdrawals and the required safety buffer',
+    upside: 'Variable return from trading activity',
+    primaryRisk: 'Can lose some or all of its value before Senior begins taking losses',
     riskLabel: 'Higher relative risk',
     riskVariant: 'warning',
-    targetReturn: 'Variable residual',
+    targetReturn: 'Variable return',
     markClassName: 'border-brand-orange/60 bg-brand-orange/10 text-brand-orange',
     valueClassName: 'text-brand-orange',
     barClassName: 'bg-brand-orange',
@@ -224,18 +292,18 @@ const TRANCHES: Record<TrancheId, TrancheDefinition> = {
       },
       {
         label: 'Return',
-        text: 'Receives residual revenue and the LP share of liquidation charges after Senior obligations',
+        text: 'Receives remaining trading revenue and the vault share of liquidation charges after Senior obligations',
       },
       {
         label: 'Withdrawals',
-        text: 'Matured Junior withdrawals receive eligible liquidity remaining after Senior requests and the required first-loss buffer; they may remain queued',
+        text: 'Junior withdrawals use the cash remaining after Senior withdrawals and the required safety buffer; they may take longer',
       },
     ],
     riskItems: [
-      'Junior pays the Senior target coupon from its own accounting principal.',
-      'Junior absorbs realized HousePool losses before Senior is affected.',
-      'Junior withdrawals can be zero while its shares retain positive accounting value.',
-      'A sufficiently large loss can wipe the tranche out completely.',
+      'Junior funds the Senior targeted return from its own capital.',
+      'Junior absorbs realized losses from the shared trading pool before Senior is affected.',
+      'Junior withdrawals can be unavailable even while its shares still have value.',
+      'A sufficiently large loss can wipe out the vault completely.',
     ],
     address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
   },
@@ -782,7 +850,7 @@ function formatCompactUsdc(amount: bigint | undefined): string {
   const value = Number(formatUnits(amount, USDC_DECIMALS))
   return new Intl.NumberFormat('en-US', {
     notation: 'compact',
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 3,
   }).format(value)
 }
 
@@ -813,7 +881,7 @@ function formatPoolCapacity(amount: bigint | undefined, markPrice: bigint | unde
 
 function formatVaultLimit(amount: bigint | undefined): ReactNode {
   if (amount === undefined) return '--'
-  if (amount >= 2n ** 255n) return 'No contract cap'
+  if (amount >= 2n ** 255n) return 'No fixed limit'
   return formatFullUsd(amount)
 }
 
@@ -823,14 +891,6 @@ function secondsUntilNextVaultEpoch(nowMs = Date.now()): number {
   return secondsIntoEpoch === 0
     ? VAULT_EPOCH_DURATION_SECONDS
     : VAULT_EPOCH_DURATION_SECONDS - secondsIntoEpoch
-}
-
-function secondsUntilVaultTimestamp(targetTimestamp: bigint | undefined, nowMs = Date.now()): number {
-  if (targetTimestamp === undefined) return secondsUntilNextVaultEpoch(nowMs)
-  const nowSeconds = Math.floor(nowMs / 1_000)
-  let futureTarget = Number(targetTimestamp)
-  while (futureTarget <= nowSeconds) futureTarget += VAULT_EPOCH_DURATION_SECONDS
-  return Math.max(0, futureTarget - nowSeconds)
 }
 
 function formatEpochCountdown(totalSeconds: number): string {
@@ -845,6 +905,40 @@ function formatShares(amount: bigint | undefined): string {
   return new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 4,
   }).format(value)
+}
+
+function formatCompactShares(amount: bigint | undefined): string {
+  if (amount === undefined) return '--'
+  const value = Number(formatUnits(amount, SHARE_DECIMALS))
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 3,
+  }).format(value)
+}
+
+function formatPositionValue(value: number | undefined): ReactNode {
+  if (value === undefined) return '--'
+  const exactAmount = value.toLocaleString('en-US', { maximumFractionDigits: 2 })
+  const compactAmount = new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 3,
+  }).format(value)
+
+  return (
+    <span title={`${exactAmount} USDC`} aria-label={`${exactAmount} USDC`}>
+      <TokenAmount amount={compactAmount} />
+    </span>
+  )
+}
+
+function formatPositionShares(amount: bigint | undefined, token: string): ReactNode {
+  if (amount === undefined) return '--'
+  const exactAmount = formatShares(amount)
+  return (
+    <span title={`${exactAmount} ${token}`} aria-label={`${exactAmount} ${token}`}>
+      {formatCompactShares(amount)} {token}
+    </span>
+  )
 }
 
 function formatSharePrice(value: number | undefined): ReactNode {
@@ -956,15 +1050,145 @@ function parseUsdc(value: string): bigint {
 }
 
 function getDepositMode(liveData: TrancheLiveData): string {
-  if (liveData.poolPaused === true) return 'Pool paused'
+  if (liveData.poolPaused === true) return 'Safety pause active'
   if (liveData.depositEnabled === false) return 'Deposits paused'
   if (liveData.maxRequestDeposit === undefined) {
-    return 'Availability unavailable'
+    return 'Deposit status unavailable'
   }
   if (liveData.maxRequestDeposit > 0n) {
-    return 'Queued deposits open'
+    return 'Open for deposits'
   }
-  return 'At current capacity'
+  return 'No deposit capacity right now'
+}
+
+interface DepositUnavailableStatus {
+  reason: string
+  availability: string
+}
+
+const HOUR_MILLISECONDS = 60 * 60 * 1_000
+const NEW_YORK_MARKET_TIME = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+function newYorkMarketParts(timestamp: number): {
+  weekday?: string
+  hour?: number
+  minute?: number
+} {
+  const parts = Object.fromEntries(
+    NEW_YORK_MARKET_TIME.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value])
+  )
+  return {
+    weekday: parts.weekday,
+    hour: parts.hour === undefined ? undefined : Number(parts.hour),
+    minute: parts.minute === undefined ? undefined : Number(parts.minute),
+  }
+}
+
+function scheduledOracleReopenTime(now = Date.now()): number | undefined {
+  const current = newYorkMarketParts(now)
+  const inRecurringWeekendClosure = current.weekday === 'Sat'
+    || (current.weekday === 'Fri' && (current.hour ?? 0) >= 17)
+    || (current.weekday === 'Sun' && (current.hour ?? 24) < 17)
+
+  if (!inRecurringWeekendClosure) return undefined
+
+  const firstWholeHour = Math.floor(now / HOUR_MILLISECONDS) * HOUR_MILLISECONDS
+  for (let offset = 1; offset <= 72; offset += 1) {
+    const candidate = firstWholeHour + offset * HOUR_MILLISECONDS
+    const parts = newYorkMarketParts(candidate)
+    if (parts.weekday === 'Sun' && parts.hour === 17 && parts.minute === 0) {
+      return candidate
+    }
+  }
+
+  return undefined
+}
+
+function formatReopenTime(timestamp: number): string {
+  return new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(new Date(timestamp))
+}
+
+function getDepositUnavailableStatus(
+  tranche: TrancheDefinition,
+  liveData: TrancheLiveData,
+  pool: PoolSnapshot
+): DepositUnavailableStatus {
+  if (liveData.poolPaused === true) {
+    return {
+      reason: 'New deposits have been paused as a safety measure.',
+      availability: 'There is no automatic reopening time. Deposits return when the safety pause is lifted.',
+    }
+  }
+
+  if (pool.oracleFrozen === true) {
+    const reopenTime = scheduledOracleReopenTime()
+    return {
+      reason: 'The live FX market is closed, so new vault shares cannot be priced safely.',
+      availability: reopenTime === undefined
+        ? 'After the market reopens and a fresh price is available.'
+        : `After ${formatReopenTime(reopenTime)} and the first fresh live price is published.`,
+    }
+  }
+
+  if ((pool.currentTerminalDeficitUsdc ?? 0n) > 0n) {
+    return {
+      reason: 'The shared trading pool has an unresolved shortfall, so it cannot accept new deposits.',
+      availability: 'After the shortfall is resolved and balances are verified. There is no fixed reopening time.',
+    }
+  }
+
+  if (pool.degradedMode === true) {
+    return {
+      reason: 'Extra safety restrictions are active, which blocks new vault deposits.',
+      availability: 'After normal operation resumes and balances are verified. There is no fixed reopening time.',
+    }
+  }
+
+  if (pool.markFresh === false) {
+    return {
+      reason: 'The latest market price is too old to price a new vault deposit safely.',
+      availability: 'After fresh market pricing is available. This is normally automatic, but no exact time is guaranteed.',
+    }
+  }
+
+  if (pool.seniorImpaired === true) {
+    return {
+      reason: 'The Senior vault has unrecovered losses, so new deposits are paused.',
+      availability: 'After the Senior vault recovers those losses and balances are verified. There is no fixed reopening time.',
+    }
+  }
+
+  if (tranche.id === 'senior' && liveData.maxRequestDeposit === 0n) {
+    return {
+      reason: 'The Senior vault has reached its current deposit limit.',
+      availability: 'When existing capacity is released, more Junior capital is added, or the deposit limit is raised.',
+    }
+  }
+
+  if (liveData.maxRequestDeposit === undefined || liveData.depositEnabled === undefined) {
+    return {
+      reason: 'The app cannot currently verify the vault\'s live deposit limit.',
+      availability: 'After the live data connection recovers and the vault reports that deposits are open.',
+    }
+  }
+
+  return {
+    reason: 'The shared trading pool is not ready to accept new vault deposits.',
+    availability: 'After its balances are verified and deposits reopen. There is no fixed reopening time.',
+  }
 }
 
 function formatAddress(address: Address): string {
@@ -1028,25 +1252,25 @@ function PoolStat({
   )
 }
 
-function VaultEpochCountdown({ targetTimestamp }: { targetTimestamp?: bigint }) {
+function VaultEpochCountdown() {
   const [remainingSeconds, setRemainingSeconds] = useState(() => (
-    secondsUntilVaultTimestamp(targetTimestamp)
+    secondsUntilNextVaultEpoch()
   ))
 
   useEffect(() => {
     const interval = window.setInterval(() => {
-      setRemainingSeconds(secondsUntilVaultTimestamp(targetTimestamp))
+      setRemainingSeconds(secondsUntilNextVaultEpoch())
     }, 1_000)
 
     return () => {
       window.clearInterval(interval)
     }
-  }, [targetTimestamp])
+  }, [])
 
   return (
     <time
       dateTime={`PT${String(remainingSeconds)}S`}
-      aria-label={`${String(remainingSeconds)} seconds until the vault request cutoff`}
+      aria-label={`${String(remainingSeconds)} seconds until the next hourly processing time`}
       className="font-mono tabular-nums"
     >
       {formatEpochCountdown(remainingSeconds)}
@@ -1341,9 +1565,9 @@ function TrancheCard({
             <div>
               <dt
                 className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
-                title="Current USDC accounting value attributed to this tranche. It need not sum to physical HousePool assets."
+                title="The current total value of this vault, including gains and losses."
               >
-                TVL / NAV
+                Vault value
               </dt>
               <dd className="mt-2 text-xl font-semibold text-content-primary">
                 {formatCompactUsd(liveData.totalAssets)}
@@ -1365,7 +1589,7 @@ function TrancheCard({
             <div>
               <dt
                 className="text-xs font-medium uppercase tracking-[0.14em] text-content-secondary"
-                title="Current USDC accounting value per active vault share."
+                title="The current value of one vault share."
               >
                 Share price
               </dt>
@@ -1394,6 +1618,18 @@ function TrancheCard({
                 <dd className="text-sm leading-5 text-content-secondary">{item.text}</dd>
               </div>
             ))}
+            <div className="contents">
+              <dt className="pt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
+                Fee
+              </dt>
+              <dd className="text-sm leading-5 text-content-secondary">
+                {tranche.id === 'senior'
+                  ? 'Zero fees'
+                  : liveData.maintenanceFeeAprBps === undefined
+                    ? '--'
+                    : `${(Number(liveData.maintenanceFeeAprBps) / 100).toFixed(2)}% annual maintenance fee, paid by issuing new shares`}
+              </dd>
+            </div>
           </dl>
         </div>
 
@@ -1407,6 +1643,397 @@ function TrancheCard({
         </div>
       </article>
     </Link>
+  )
+}
+
+const VAULT_ACTIVITY_PAGE_SIZE = 5
+
+function AddressAvatar({ address }: { address: Address }) {
+  const seed = Number.parseInt(address.slice(2, 8), 16)
+  const colors = ['#FFAB96', '#FF5738', '#29F29A', '#FFE07D']
+  const firstColor = colors[seed % colors.length]
+  const secondColor = colors[Math.floor(seed / colors.length) % colors.length]
+
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-block size-7 shrink-0 rounded-full border border-brand-border/40"
+      style={{
+        background: `conic-gradient(${firstColor} 0 25%, ${secondColor} 0 50%, ${firstColor} 0 75%, ${secondColor} 0)`,
+      }}
+    />
+  )
+}
+
+function DistributionRing({ percentage }: { percentage: number }) {
+  const boundedPercentage = Math.max(0, Math.min(100, percentage))
+  return (
+    <span
+      aria-hidden="true"
+      className="inline-flex size-7 shrink-0 items-center justify-center rounded-full"
+      style={{
+        background: `conic-gradient(#FFAB96 ${String(boundedPercentage)}%, rgba(255, 171, 150, 0.16) 0)`,
+      }}
+    >
+      <span className="size-4 rounded-full bg-surface-panel" />
+    </span>
+  )
+}
+
+function ActivityPager({
+  currentPage,
+  pageCount,
+  label,
+  onPageChange,
+}: {
+  currentPage: number
+  pageCount: number
+  label: string
+  onPageChange: (page: number) => void
+}) {
+  if (pageCount <= 1) return null
+  return (
+    <nav className="flex items-center justify-center gap-3 border-t border-brand-border/20 px-4 py-3" aria-label={label}>
+      <button
+        type="button"
+        className="inline-flex size-9 items-center justify-center border border-brand-border/35 text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach disabled:cursor-not-allowed disabled:opacity-35"
+        disabled={currentPage === 0}
+        aria-label="Previous page"
+        onClick={() => { onPageChange(currentPage - 1) }}
+      >
+        <span className="material-symbols-outlined text-lg">arrow_back</span>
+      </button>
+      <span className="min-w-20 text-center text-xs text-content-secondary">
+        {currentPage + 1} of {pageCount}
+      </span>
+      <button
+        type="button"
+        className="inline-flex size-9 items-center justify-center border border-brand-border/35 text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach disabled:cursor-not-allowed disabled:opacity-35"
+        disabled={currentPage >= pageCount - 1}
+        aria-label="Next page"
+        onClick={() => { onPageChange(currentPage + 1) }}
+      >
+        <span className="material-symbols-outlined text-lg">arrow_forward</span>
+      </button>
+    </nav>
+  )
+}
+
+function formatActivityDate(timestamp: string): string {
+  const date = new Date(timestamp)
+  if (Number.isNaN(date.getTime())) return '--'
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date)
+}
+
+function activityAmount(activity: VaultOverviewActivityItem): ReactNode {
+  if (activity.amountUsdc !== undefined) {
+    const amount = formatFullUsdc(activity.amountUsdc, 2)
+    return (
+      <span
+        title={activity.amountIsEstimate ? 'Current USDC estimate; the final value is set when this withdrawal is processed.' : undefined}
+        className="inline-flex items-baseline gap-1"
+      >
+        {activity.amountIsEstimate ? <span aria-hidden="true">≈</span> : null}
+        <TokenAmount amount={amount} />
+      </span>
+    )
+  }
+  if (activity.shares !== undefined) {
+    return <TokenAmount amount={formatShares(activity.shares)} token={activity.tranche === 'senior' ? 'psLP' : 'pjLP'} />
+  }
+  return '--'
+}
+
+function ActivityTypeLabel({ activity }: { activity: VaultOverviewActivityItem }) {
+  const isDeposit = activity.kind === 'deposit'
+  return (
+    <span className="inline-flex items-center gap-2 font-medium text-content-primary">
+      <span className={`material-symbols-outlined text-lg ${isDeposit ? 'text-positive' : 'text-brand-orange'}`}>
+        {isDeposit ? 'south_west' : 'north_east'}
+      </span>
+      {isDeposit ? 'Deposit submitted' : 'Withdrawal submitted'}
+    </span>
+  )
+}
+
+function VaultActivitySection({
+  holders,
+  activity,
+  tranche,
+  scrollMarginTop,
+  isLoading,
+  isError,
+}: {
+  holders: VaultHolderDistribution[]
+  activity: VaultOverviewActivityItem[]
+  tranche: VaultActivityTranche
+  scrollMarginTop?: number
+  isLoading: boolean
+  isError: boolean
+}) {
+  const [holderPage, setHolderPage] = useState(0)
+  const [activityPage, setActivityPage] = useState(0)
+  const trancheName = tranche === 'senior' ? 'Senior' : 'Junior'
+  const scopedHolders = useMemo(() => {
+    const claimedHolders = holders.flatMap((holder) => {
+      const currentNavUsdc = tranche === 'senior'
+        ? holder.seniorNavUsdc
+        : holder.juniorNavUsdc
+      return currentNavUsdc > 0n ? [{ ...holder, currentNavUsdc }] : []
+    })
+    const claimedNavUsdc = claimedHolders.reduce(
+      (total, holder) => total + holder.currentNavUsdc,
+      0n,
+    )
+
+    return claimedHolders.map((holder) => ({
+      ...holder,
+      shareOfVaultNav: claimedNavUsdc > 0n
+        ? Number(holder.currentNavUsdc * 1_000_000n / claimedNavUsdc) / 10_000
+        : 0,
+    })).sort((left, right) => (
+      left.currentNavUsdc > right.currentNavUsdc
+        ? -1
+        : left.currentNavUsdc < right.currentNavUsdc ? 1 : 0
+    ))
+  }, [holders, tranche])
+  const scopedActivity = useMemo(() => (
+    activity.filter((item) => item.tranche === tranche)
+  ), [activity, tranche])
+  const holderPageCount = Math.max(1, Math.ceil(scopedHolders.length / VAULT_ACTIVITY_PAGE_SIZE))
+  const safeHolderPage = Math.min(holderPage, holderPageCount - 1)
+  const pagedHolders = scopedHolders.slice(
+    safeHolderPage * VAULT_ACTIVITY_PAGE_SIZE,
+    (safeHolderPage + 1) * VAULT_ACTIVITY_PAGE_SIZE,
+  )
+  const activityPageCount = Math.max(1, Math.ceil(scopedActivity.length / VAULT_ACTIVITY_PAGE_SIZE))
+  const safeActivityPage = Math.min(activityPage, activityPageCount - 1)
+  const pagedActivity = scopedActivity.slice(
+    safeActivityPage * VAULT_ACTIVITY_PAGE_SIZE,
+    (safeActivityPage + 1) * VAULT_ACTIVITY_PAGE_SIZE,
+  )
+
+  return (
+    <section
+      id="activity"
+      data-vault-detail-section="activity"
+      aria-labelledby="vault-activity-heading"
+      style={{ scrollMarginTop }}
+    >
+      <div className="mb-4">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
+          Vault activity
+        </p>
+        <h2 id="vault-activity-heading" className="mt-1 text-2xl font-semibold text-content-primary">
+          Holders and recent activity
+        </h2>
+      </div>
+
+      <div className="space-y-6">
+        <div className="border border-brand-border/30 bg-surface-panel">
+          <div className="flex flex-col gap-2 border-b border-brand-border/25 p-5 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-content-primary">Holder distribution</h3>
+              <p className="mt-1 max-w-2xl text-sm leading-5 text-content-secondary">
+                Share of the {trancheName} Vault value already moved into each wallet. Pending
+                deposits and shares still waiting to be moved are not included.
+              </p>
+            </div>
+            <span className="text-xs text-content-secondary">Largest wallet positions</span>
+          </div>
+
+          {isLoading && scopedHolders.length === 0 ? (
+            <div className="flex min-h-36 items-center justify-center"><Spinner /></div>
+          ) : scopedHolders.length === 0 ? (
+            <p className="p-6 text-sm text-content-secondary">
+              {isError ? 'Holder data is temporarily unavailable.' : 'No vault shares have been moved into user wallets yet.'}
+            </p>
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[44rem] border-collapse text-left">
+                  <caption className="sr-only">Vault holder distribution</caption>
+                  <thead className="text-xs uppercase tracking-[0.12em] text-content-secondary">
+                    <tr>
+                      <th scope="col" className="px-5 py-3 font-medium">Holder</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Current value</th>
+                      <th scope="col" className="px-5 py-3 font-medium">% of wallet-held value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedHolders.map((holder) => (
+                      <tr key={holder.address} className="border-t border-brand-border/20">
+                        <td className="px-5 py-4">
+                          <a
+                            href={`${EXPLORER_BASE_URL}/${holder.address}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group inline-flex items-center gap-3 text-sm font-medium text-content-primary hover:text-brand-peach"
+                          >
+                            <AddressAvatar address={holder.address} />
+                            <span>
+                              <span className="group-hover:underline group-hover:underline-offset-4">{formatAddress(holder.address)}</span>
+                            </span>
+                          </a>
+                        </td>
+                        <td className="px-5 py-4 text-sm font-semibold text-content-primary">
+                          <TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} />
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className="inline-flex items-center gap-3 text-sm font-semibold text-content-primary">
+                            <DistributionRing percentage={holder.shareOfVaultNav} />
+                            {holder.shareOfVaultNav.toFixed(2)}%
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <ul className="divide-y divide-brand-border/20 md:hidden">
+                {pagedHolders.map((holder) => (
+                  <li key={holder.address} className="space-y-4 p-5">
+                    <a
+                      href={`${EXPLORER_BASE_URL}/${holder.address}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-3 text-sm font-medium text-content-primary hover:text-brand-peach hover:underline hover:underline-offset-4"
+                    >
+                      <AddressAvatar address={holder.address} />
+                      {formatAddress(holder.address)}
+                    </a>
+                    <div className="flex items-end justify-between gap-4">
+                      <div>
+                        <p className="text-[10px] uppercase tracking-[0.12em] text-content-secondary">Current value</p>
+                        <p className="mt-1 font-semibold text-content-primary"><TokenAmount amount={formatFullUsdc(holder.currentNavUsdc, 2)} /></p>
+                      </div>
+                      <span className="inline-flex items-center gap-2 text-sm font-semibold text-content-primary">
+                        <DistributionRing percentage={holder.shareOfVaultNav} />
+                        {holder.shareOfVaultNav.toFixed(2)}%
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <ActivityPager
+                currentPage={safeHolderPage}
+                pageCount={holderPageCount}
+                label="Holder distribution pages"
+                onPageChange={setHolderPage}
+              />
+            </>
+          )}
+        </div>
+
+        <div className="border border-brand-border/30 bg-surface-panel">
+          <div className="flex flex-col gap-4 border-b border-brand-border/25 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-content-primary">Recent deposits and withdrawals</h3>
+              <p className="mt-1 text-sm text-content-secondary">The latest activity submitted to the {trancheName} Vault.</p>
+            </div>
+            <span className="inline-flex items-center gap-2 text-xs text-content-secondary">
+              <span className="material-symbols-outlined text-base">calendar_today</span>
+              Latest submissions
+            </span>
+          </div>
+
+          {isLoading && scopedActivity.length === 0 ? (
+            <div className="flex min-h-36 items-center justify-center"><Spinner /></div>
+          ) : pagedActivity.length === 0 ? (
+            <p className="p-6 text-sm text-content-secondary">
+              {isError ? 'Recent activity is temporarily unavailable.' : `No ${trancheName} Vault activity found yet.`}
+            </p>
+          ) : (
+            <>
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full min-w-[62rem] border-collapse text-left">
+                  <caption className="sr-only">Recent vault activity</caption>
+                  <thead className="text-xs uppercase tracking-[0.12em] text-content-secondary">
+                    <tr>
+                      <th scope="col" className="px-5 py-3 font-medium">Date</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Type</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Amount</th>
+                      <th scope="col" className="px-5 py-3 font-medium">User</th>
+                      <th scope="col" className="px-5 py-3 font-medium">Transaction</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pagedActivity.map((item) => (
+                      <tr key={item.id} className="border-t border-brand-border/20 text-sm">
+                        <td className="whitespace-nowrap px-5 py-4 text-content-secondary">{formatActivityDate(item.timestamp)}</td>
+                        <td className="whitespace-nowrap px-5 py-4"><ActivityTypeLabel activity={item} /></td>
+                        <td className="whitespace-nowrap px-5 py-4 font-semibold text-content-primary">{activityAmount(item)}</td>
+                        <td className="px-5 py-4">
+                          <a
+                            href={`${EXPLORER_BASE_URL}/${item.account}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 text-content-primary hover:text-brand-peach hover:underline hover:underline-offset-4"
+                          >
+                            <AddressAvatar address={item.account} />
+                            {formatAddress(item.account)}
+                          </a>
+                        </td>
+                        <td className="px-5 py-4">
+                          <a
+                            href={`${EXPLORER_TX_BASE_URL}/${item.transactionHash}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-content-primary hover:text-brand-peach hover:underline hover:underline-offset-4"
+                          >
+                            {item.transactionHash.slice(0, 6)}…{item.transactionHash.slice(-4)}
+                            <span className="material-symbols-outlined text-base">open_in_new</span>
+                          </a>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <ul className="divide-y divide-brand-border/20 lg:hidden">
+                {pagedActivity.map((item) => (
+                  <li key={item.id} className="space-y-4 p-5">
+                    <div className="flex items-start justify-between gap-4">
+                      <ActivityTypeLabel activity={item} />
+                    </div>
+                    <div className="flex items-baseline justify-between gap-4">
+                      <span className="text-xs text-content-secondary">Amount</span>
+                      <span className="font-semibold text-content-primary">{activityAmount(item)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 border-t border-brand-border/20 pt-3 text-xs">
+                      <span className="text-content-secondary">{formatActivityDate(item.timestamp)}</span>
+                      <a
+                        href={`${EXPLORER_TX_BASE_URL}/${item.transactionHash}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-content-primary hover:text-brand-peach hover:underline hover:underline-offset-4"
+                      >
+                        View transaction
+                        <span className="material-symbols-outlined text-base">open_in_new</span>
+                      </a>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              <ActivityPager
+                currentPage={safeActivityPage}
+                pageCount={activityPageCount}
+            label="Recent activity pages"
+                onPageChange={setActivityPage}
+              />
+            </>
+          )}
+        </div>
+      </div>
+    </section>
   )
 }
 
@@ -1436,15 +2063,14 @@ function VaultsOverview({
         <div className="flex flex-col gap-6 border-b border-brand-border/25 p-6 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-3xl">
             <p className="text-xs font-semibold uppercase tracking-[0.2em] text-brand-peach">
-              Plether HousePool
+              Plether vaults
             </p>
             <h1 className="mt-3 text-3xl font-semibold tracking-tight text-content-primary sm:text-4xl">
-              Supply the balance sheet behind the market.
+              Provide liquidity that keeps the market running.
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-content-secondary">
-              Deposit USDC into Senior or Junior vault shares. Both tranches underwrite the same
-              HousePool, but they take different positions in the loss, revenue, and withdrawal
-              waterfall.
+              Deposit USDC into the Senior or Junior Vault. Both supply the same trading pool, but
+              they take different positions when profits, losses, and withdrawal funds are shared.
             </p>
           </div>
 
@@ -1455,7 +2081,7 @@ function VaultsOverview({
             className="group inline-flex self-start items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-content-primary transition-colors hover:border-brand-peach hover:text-brand-peach"
           >
             <span className="group-hover:underline group-hover:underline-offset-4">
-              Read the LP guide
+              Learn how the vaults work
             </span>
             <span className="material-symbols-outlined text-lg">open_in_new</span>
           </a>
@@ -1463,35 +2089,31 @@ function VaultsOverview({
 
         <dl className="grid grid-cols-1 gap-x-4 gap-y-6 p-6 sm:grid-cols-2 lg:grid-cols-4">
           <PoolStat
-            label="HousePool assets"
+            label="Total pool funds"
             value={formatCompactUsd(pool.totalAssetsUsdc)}
-            tooltip="Canonical physical HousePool assets. This can differ from the sum of tranche accounting NAV."
+            tooltip="The total USDC currently held by the shared trading pool."
             stackedOnMobile
           />
           <PoolStat
-            label="Withdrawal reserve"
+            label="Reserved funds"
             value={formatCompactUsd(pool.withdrawalReservedUsdc)}
-            subvalue="Trader liabilities protected first"
-            tooltip="Capital reserved for bounded trader liability, claims, and other protected amounts."
+            subvalue="Set aside for trader payouts"
+            tooltip="USDC reserved for trader withdrawals and other protected payments."
             stackedOnMobile
           />
           <PoolStat
-            label="Free liquidity"
+            label="Available liquidity"
             value={formatCompactUsd(pool.freeUsdc)}
-            subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of total assets`}
-            tooltip="Physical USDC remaining after protected withdrawal reserves. This is not the same as total tranche NAV."
+            subvalue={freeLiquidityRatio === undefined ? 'Live value unavailable' : `${freeLiquidityRatio.toFixed(1)}% of pool funds`}
+            tooltip="USDC available after amounts reserved for trader withdrawals and other protected payments."
             stackedOnMobile
             startsTabletRow
           />
           <PoolStat
-            label="Request cutoff"
-            value={(
-              <VaultEpochCountdown
-                targetTimestamp={snapshot.tranches.senior.nextRequestCutoffTime}
-              />
-            )}
-            subvalue="Requests after this timer join the following hourly batch"
-            tooltip="The shared deposit and withdrawal queue closes five minutes before each hourly settlement boundary."
+            label="Next processing time in"
+            value={<VaultEpochCountdown />}
+            subvalue="Deposits and withdrawals submitted during the final five minutes are processed the following hour."
+            tooltip="Deposits and withdrawals are processed on the hour. Submit at least five minutes beforehand to join that processing time."
             stackedOnMobile
           />
         </dl>
@@ -1499,17 +2121,17 @@ function VaultsOverview({
 
       {snapshot.tranches.senior.lpEpochSettlementPaused === true
         || snapshot.tranches.junior.lpEpochSettlementPaused === true ? (
-          <Alert variant="warning" title="Epoch settlement paused">
-            New requests, already-funded claims, eligible cancellations, and refunds remain
-            available. Deposit requests will not activate and redemption requests will not receive
-            new funding until governance resumes hourly settlement.
+          <Alert variant="warning" title="Hourly processing paused">
+            You can still submit deposits or withdrawals, move ready funds to your wallet, cancel
+            pending activity, and return available funds or shares. New deposits will not start
+            earning and withdrawals will not receive new funds until hourly processing resumes.
           </Alert>
         ) : null}
 
       <section>
         <div className="mb-4">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
-            Choose a tranche
+            Choose a vault
           </p>
           <h2 className="mt-1 text-2xl font-semibold text-content-primary">USDC vaults</h2>
         </div>
@@ -1533,13 +2155,13 @@ function VaultsOverview({
       >
         <div className="mb-4">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-content-secondary">
-            HousePool liquidity
+            Shared pool liquidity
           </p>
           <h2
             id="pool-liquidity-heading"
             className="mt-1 text-2xl font-semibold text-content-primary"
           >
-            Capacity and capital waterfall
+            Trading capacity and loss protection
           </h2>
         </div>
         <div className="border border-brand-border/30 bg-surface-panel p-5">
@@ -1592,6 +2214,33 @@ function DetailMetric({
   )
 }
 
+function RequestMetric({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: ReactNode
+  tone?: 'default' | 'positive' | 'warning'
+}) {
+  const valueClassName = tone === 'positive'
+    ? 'text-positive'
+    : tone === 'warning'
+      ? 'text-warning'
+      : 'text-content-primary'
+
+  return (
+    <div className="min-w-0 bg-app-bg p-4">
+      <dt className="text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
+        {label}
+      </dt>
+      <dd className={`mt-1 truncate text-base font-semibold ${valueClassName}`} title={typeof value === 'string' ? value : undefined}>
+        {value}
+      </dd>
+    </div>
+  )
+}
+
 function DetailRow({
   label,
   value,
@@ -1630,7 +2279,7 @@ function OverviewTab({
   const depositMode = getDepositMode(liveData)
   const depositState = pool.currentTerminalDeficitUsdc !== undefined
     && pool.currentTerminalDeficitUsdc > 0n
-    ? 'Terminal deficit'
+    ? 'Pool shortfall'
     : depositMode
 
   return (
@@ -1639,79 +2288,89 @@ function OverviewTab({
         <DetailMetric
           label="Your position"
           value={isConnected && positionValue !== undefined
-            ? <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />
+            ? formatPositionValue(positionValue)
             : '--'}
-          detail={isConnected ? `${formatShares(liveData.userShares)} ${tranche.token}` : 'Connect a wallet to view'}
+          detail={isConnected ? formatPositionShares(liveData.userShares, tranche.token) : 'Connect a wallet to view'}
         />
         <DetailMetric
-          label="Requestable shares"
+          label="Shares available to withdraw"
           value={isConnected
-            ? `${formatShares(liveData.maxRequestRedeem)} ${tranche.token}`
+            ? formatPositionShares(liveData.maxRequestRedeem, tranche.token)
             : '--'}
-          detail="Shares that can enter the withdrawal queue now"
+          detail="Shares currently available to withdraw"
           tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
         />
         <DetailMetric
-          label="Pool funding capacity"
+          label="Available withdrawal liquidity"
           value={formatCompactUsd(poolWithdrawCap)}
           detail={tranche.id === 'senior'
-            ? 'Canonical Senior capacity for the next settlement'
-            : 'Canonical Junior capacity after Senior priority'}
+            ? 'The most Senior withdrawals that can be funded at the next processing time'
+            : 'The most Junior withdrawals that can be funded after Senior priority'}
         />
         <DetailMetric
           label="Deposit availability"
           value={depositState}
-          detail={depositMode === 'Queued deposits open'
+          detail={depositMode === 'Open for deposits'
             ? (
               <span>
-                Current request window closes in{' '}
-                <VaultEpochCountdown targetTimestamp={liveData.nextRequestCutoffTime} />
+                Current hourly window ends in <VaultEpochCountdown />
               </span>
             )
-            : 'The contract is not accepting new deposit requests'}
-          tone={depositState === 'Terminal deficit' ? 'negative' : 'warning'}
+            : 'New deposits are not available right now'}
+          tone={depositState === 'Pool shortfall' ? 'negative' : 'warning'}
         />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-2">
         <section className="border border-brand-border/30 bg-surface-panel p-5">
-          <h3 className="text-lg font-semibold text-content-primary">Vault configuration</h3>
+          <h3 className="text-lg font-semibold text-content-primary">How this vault works</h3>
           <dl className="mt-3">
             <DetailRow label="Asset" value="USDC" />
-            <DetailRow label="Vault share" value={tranche.token} />
-            <DetailRow label="Vault standard" value="ERC-4626 shares + async epoch queue" />
+            <DetailRow label="Vault share symbol" value={tranche.token} />
+            <DetailRow label="Processing" value="Every hour" />
             <DetailRow label="Network" value="Arbitrum Sepolia" />
-            <DetailRow label="Deposit path" value={depositMode} />
-            <DetailRow label="Settlement cadence" value="Hourly shared batch" />
-            <DetailRow label="Request cutoff" value="5 minutes before each hour" />
+            <DetailRow label="Deposits" value={depositMode} />
+            <DetailRow label="Submission deadline" value="5 minutes before each hour" />
             <DetailRow
-              label="Current target batch"
+              label="Next processing time"
               value={liveData.nextRequestEpoch === undefined
                 ? 'Unavailable'
                 : new Date(Number(liveData.nextRequestEpoch * 3_600n) * 1_000).toLocaleString()}
             />
             <DetailRow
-              label="Request fee"
+              label={(
+                <span>
+                  <span className="block">Temporary pricing fee</span>
+                  <span className="mt-1 block max-w-md text-xs leading-5 text-content-secondary">
+                    {pool.oracleFrozen === true
+                      ? 'Active while live market pricing is unavailable. Wait for pricing to resume before withdrawing when possible.'
+                      : 'Charged only when live market pricing is temporarily unavailable.'}
+                  </span>
+                </span>
+              )}
               value={liveData.frozenLpFeeBps === undefined
                 ? 'Unavailable'
-                : `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}%`}
+                : pool.oracleFrozen === true
+                  ? `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% active`
+                  : `Inactive · ${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}%`}
+              valueClassName={pool.oracleFrozen === true ? 'text-brand-orange' : 'text-content-primary'}
             />
             {tranche.id === 'junior' ? (
               <>
                 <DetailRow
-                  label="Maintenance fee APR"
+                  label="Annual vault fee"
                   value={liveData.maintenanceFeeAprBps === undefined
                     ? 'Unavailable'
                     : `${(Number(liveData.maintenanceFeeAprBps) / 100).toFixed(2)}%`}
                 />
                 <DetailRow
-                  label="Pending maintenance-fee shares"
+                  label="Accrued fee shares"
                   value={liveData.pendingMaintenanceFeeShares === undefined
                     ? 'Unavailable'
                     : `${formatShares(liveData.pendingMaintenanceFeeShares)} ${tranche.token}`}
                 />
                 <DetailRow
-                  label="Maintenance-fee recipient"
+                  label="Fee recipient"
                   value={liveData.maintenanceFeeRecipient === undefined
                     ? 'Unavailable'
                     : (
@@ -1733,25 +2392,25 @@ function OverviewTab({
             {tranche.id === 'senior' ? (
               <>
                 <DetailRow
-                  label="Senior deposit capacity"
+                  label="Remaining Senior capacity"
                   value={formatVaultLimit(pool.seniorDepositCapacityUsdc)}
                 />
                 <DetailRow
-                  label="Absolute Senior cap"
+                  label="Maximum Senior value"
                   value={formatVaultLimit(pool.maxSeniorExposureUsdc)}
                 />
                 <DetailRow
-                  label="Maximum Senior share"
+                  label="Maximum Senior share of pool capital"
                   value={pool.maxSeniorShareBps === undefined
                     ? 'Unavailable'
                     : `${(Number(pool.maxSeniorShareBps) / 100).toFixed(2)}%`}
                 />
                 <DetailRow
-                  label="Reserved queued Senior deposits"
+                  label="Amount reserved for pending deposits"
                   value={formatFullUsd(pool.reservedSeniorDepositAssetsUsdc)}
                 />
                 <DetailRow
-                  label="Queued deposits within limits"
+                  label="Pending deposits within current limits"
                   value={pool.seniorReservationsWithinLimits === undefined
                     ? 'Unavailable'
                     : pool.seniorReservationsWithinLimits ? 'Yes' : 'No'}
@@ -1762,7 +2421,7 @@ function OverviewTab({
               </>
             ) : null}
             <DetailRow
-              label="Deposit queue backlog"
+              label="Deposits past their expected processing time"
               value={liveData.depositBacklog === undefined
                 ? 'Unavailable'
                 : liveData.depositBacklog ? 'Yes' : 'No'}
@@ -1771,7 +2430,7 @@ function OverviewTab({
                 : liveData.depositBacklog ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
-              label="Withdrawal queue backlog"
+              label="Withdrawals past their expected processing time"
               value={liveData.redeemBacklog === undefined
                 ? 'Unavailable'
                 : liveData.redeemBacklog ? 'Yes' : 'No'}
@@ -1780,7 +2439,7 @@ function OverviewTab({
                 : liveData.redeemBacklog ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
-              label="Vault contract"
+              label="Vault address"
               value={(
                 <a
                   href={`${EXPLORER_BASE_URL}/${tranche.address}`}
@@ -1797,44 +2456,44 @@ function OverviewTab({
         </section>
 
         <section className="border border-brand-border/30 bg-surface-panel p-5">
-          <h3 className="text-lg font-semibold text-content-primary">Live HousePool state</h3>
+          <h3 className="text-lg font-semibold text-content-primary">Shared pool status</h3>
           <dl className="mt-3">
-            <DetailRow label="Total HousePool assets" value={formatFullUsd(pool.totalAssetsUsdc, 0)} />
-            <DetailRow label="Free LP liquidity" value={formatFullUsd(pool.freeUsdc, 0)} />
-            <DetailRow label="Protected withdrawal reserve" value={formatFullUsd(pool.withdrawalReservedUsdc, 0)} />
-            <DetailRow label="Pending trading revenue" value={formatFullUsd(pool.pendingTradingRevenueUsdc)} />
-            <DetailRow label="Pending recapitalization" value={formatFullUsd(pool.pendingRecapitalizationUsdc)} />
+            <DetailRow label="Total pool funds" value={formatFullUsd(pool.totalAssetsUsdc, 0)} />
+            <DetailRow label="Available liquidity" value={formatFullUsd(pool.freeUsdc, 0)} />
+            <DetailRow label="Reserved for trader withdrawals" value={formatFullUsd(pool.withdrawalReservedUsdc, 0)} />
+            <DetailRow label="Trading revenue awaiting distribution" value={formatFullUsd(pool.pendingTradingRevenueUsdc)} />
+            <DetailRow label="Funds awaiting loss recovery" value={formatFullUsd(pool.pendingRecapitalizationUsdc)} />
             <DetailRow
-              label="Terminal deficit"
+              label="Unresolved pool shortfall"
               value={formatFullUsd(pool.currentTerminalDeficitUsdc)}
               valueClassName={(pool.currentTerminalDeficitUsdc ?? 0n) > 0n
                 ? 'text-brand-orange'
                 : 'text-positive'}
             />
             <DetailRow
-              label="Oracle mark"
-              value={pool.markFresh === undefined ? 'Unavailable' : pool.markFresh ? 'Fresh' : 'Stale'}
+              label="Market price"
+              value={pool.markFresh === undefined ? 'Unavailable' : pool.markFresh ? 'Up to date' : 'Out of date'}
               valueClassName={pool.markFresh === undefined ? 'text-content-secondary' : pool.markFresh ? 'text-positive' : 'text-brand-orange'}
             />
             <DetailRow
-              label="Oracle frozen"
-              value={pool.oracleFrozen === undefined ? 'Unavailable' : pool.oracleFrozen ? 'Yes' : 'No'}
+              label="Live pricing available"
+              value={pool.oracleFrozen === undefined ? 'Unavailable' : pool.oracleFrozen ? 'No' : 'Yes'}
               valueClassName={pool.oracleFrozen === undefined ? 'text-content-secondary' : pool.oracleFrozen ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
-              label="Protocol mode"
-              value={pool.degradedMode === undefined ? 'Unavailable' : pool.degradedMode ? 'Degraded' : 'Normal'}
+              label="Safety restrictions"
+              value={pool.degradedMode === undefined ? 'Unavailable' : pool.degradedMode ? 'Active' : 'None'}
               valueClassName={pool.degradedMode === undefined ? 'text-content-secondary' : pool.degradedMode ? 'text-brand-orange' : 'text-positive'}
             />
             <DetailRow
-              label="Pool paused"
+              label="New deposits paused"
               value={liveData.poolPaused === undefined ? 'Unavailable' : liveData.poolPaused ? 'Yes' : 'No'}
               valueClassName={liveData.poolPaused === undefined
                 ? 'text-content-secondary'
                 : liveData.poolPaused ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
-              label="Epoch settlement paused"
+              label="Hourly processing paused"
               value={liveData.lpEpochSettlementPaused === undefined
                 ? 'Unavailable'
                 : liveData.lpEpochSettlementPaused ? 'Yes' : 'No'}
@@ -1843,10 +2502,10 @@ function OverviewTab({
                 : liveData.lpEpochSettlementPaused ? 'text-warning' : 'text-positive'}
             />
             <DetailRow
-              label="Withdrawal funding"
+              label="New withdrawal funding"
               value={liveData.settlementLive === undefined
                 ? 'Unavailable'
-                : liveData.settlementLive ? 'Live' : 'Deferred'}
+                : liveData.settlementLive ? 'Available' : 'Waiting'}
               valueClassName={liveData.settlementLive === undefined
                 ? 'text-content-secondary'
                 : liveData.settlementLive ? 'text-positive' : 'text-warning'}
@@ -1855,41 +2514,24 @@ function OverviewTab({
         </section>
       </div>
 
-      {tranche.id === 'junior' ? (
-        <Alert variant="info" title="How the Junior maintenance fee works">
-          The fee is paid by minting shares to the configured recipient, which dilutes existing
-          Junior shares. Pending dilution is already included in the effective supply used for the
-          displayed share price and in realized APY.
-        </Alert>
-      ) : null}
-
       {tranche.id === 'senior' ? (
         <section className="border border-brand-border/30 bg-surface-panel p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
-                Senior protection account
-              </p>
-              <h3 className="mt-1 text-lg font-semibold text-content-primary">High-water mark</h3>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
-                Paid coupons and restored principal increase the protected Senior claim. If Senior
-                falls below this mark, future pool revenue restores the gap before Junior receives
-                residual upside.
-              </p>
-            </div>
-            <Badge variant={pool.seniorImpaired === undefined ? 'default' : pool.seniorImpaired ? 'danger' : 'success'}>
-              {pool.seniorImpaired === undefined
-                ? 'Impairment status unavailable'
-                : pool.seniorImpaired
-                  ? 'Senior impaired'
-                  : 'Senior not impaired'}
-            </Badge>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-brand-peach">
+              Senior protection
+            </p>
+            <h3 className="mt-1 text-lg font-semibold text-content-primary">Protected balance</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
+              Earned returns and recovered losses increase Senior's protected balance. If the
+              vault falls below it, future pool revenue fills the gap before Junior receives new
+              earnings.
+            </p>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <DetailMetric label="Senior principal" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
-            <DetailMetric label="High-water mark" value={formatCompactUsd(pool.seniorHighWaterMarkUsdc)} />
+            <DetailMetric label="Current Senior capital" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
+            <DetailMetric label="Protected balance" value={formatCompactUsd(pool.seniorHighWaterMarkUsdc)} />
             <DetailMetric
-              label="Impairment gap"
+              label="Amount still to recover"
               value={formatCompactUsd(pool.seniorImpairmentGapUsdc)}
               tone={pool.seniorImpaired === true ? 'negative' : pool.seniorImpaired === false ? 'positive' : 'default'}
             />
@@ -1897,24 +2539,21 @@ function OverviewTab({
         </section>
       ) : (
         <section className="border border-brand-border/30 bg-surface-panel p-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-positive">
-                Junior protection account
-              </p>
-              <h3 className="mt-1 text-lg font-semibold text-content-primary">First-loss buffer</h3>
-              <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
-                Junior principal is the buffer protecting Senior. It funds the Senior target
-                coupon and absorbs realized losses before Senior principal is reduced.
-              </p>
-            </div>
-            <Badge variant="warning">Subordinated capital</Badge>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-positive">
+              Senior loss protection
+            </p>
+            <h3 className="mt-1 text-lg font-semibold text-content-primary">Junior loss buffer</h3>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-content-secondary">
+              Junior capital protects Senior. It funds the Senior targeted return and absorbs
+              realized losses before the Senior Vault loses value.
+            </p>
           </div>
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <DetailMetric label="Junior principal" value={formatCompactUsd(pool.juniorPrincipalUsdc)} />
-            <DetailMetric label="Senior claim ahead" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
+            <DetailMetric label="Junior capital" value={formatCompactUsd(pool.juniorPrincipalUsdc)} />
+            <DetailMetric label="Senior priority balance" value={formatCompactUsd(pool.seniorPrincipalUsdc)} />
             <DetailMetric
-              label="Pool max withdraw"
+              label="Available for Junior withdrawals"
               value={formatCompactUsd(pool.juniorPoolWithdrawCapUsdc)}
               tone={(pool.juniorPoolWithdrawCapUsdc ?? 0n) > 0n ? 'positive' : 'warning'}
             />
@@ -1922,24 +2561,54 @@ function OverviewTab({
         </section>
       )}
 
-      <section className="grid gap-px border border-brand-border/30 bg-brand-border/20 md:grid-cols-2">
-        <div className="bg-surface-panel p-5">
+      <section className="border border-brand-border/30 bg-surface-panel">
+        <div className="border-b border-brand-border/25 p-5">
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-            Return position
+            Change safeguards
           </p>
-          <h3 className={`mt-2 text-xl font-semibold ${tranche.valueClassName}`}>
-            {tranche.returnModel}
+          <h3
+            id={`vault-timelocks-${tranche.id}`}
+            className="mt-1 text-lg font-semibold text-content-primary"
+          >
+            Delayed settings changes
           </h3>
-          <p className="mt-2 text-sm leading-6 text-content-secondary">{tranche.upside}</p>
-        </div>
-        <div className="bg-surface-panel p-5">
-          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-            Risk position
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-content-secondary">
+            Important rules for this vault cannot change immediately. Every change below must be
+            announced 48 hours before it can take effect.
           </p>
-          <h3 className="mt-2 text-xl font-semibold text-content-primary">{tranche.lossPriority}</h3>
-          <p className="mt-2 text-sm leading-6 text-content-secondary">{tranche.primaryRisk}</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table
+            aria-labelledby={`vault-timelocks-${tranche.id}`}
+            className="w-full min-w-[480px] text-left"
+          >
+            <thead className="bg-app-bg text-[10px] font-semibold uppercase tracking-[0.14em] text-content-secondary">
+              <tr>
+                <th scope="col" className="px-5 py-3">Setting</th>
+                <th scope="col" className="px-5 py-3">Notice period</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-brand-border/20">
+              {VAULT_GOVERNANCE_TIMELOCKS.map((timelock) => (
+                <tr key={timelock.mechanism}>
+                  <th scope="row" className="px-5 py-4 text-left">
+                    <span className="block text-sm font-semibold text-content-primary">
+                      {timelock.mechanism}
+                    </span>
+                    <span className="mt-1 block max-w-3xl text-sm font-normal leading-6 text-content-secondary">
+                      {timelock.effect}
+                    </span>
+                  </th>
+                  <td className="w-36 whitespace-nowrap px-5 py-4 align-top font-mono text-sm font-semibold text-brand-peach">
+                    {timelock.delay}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       </section>
+
     </div>
   )
 }
@@ -2021,7 +2690,7 @@ function PerformanceChart({
         <div>
           <h3 className="text-lg font-semibold text-content-primary">Seven-day share price</h3>
           <p className="mt-1 text-sm text-content-secondary">
-            Actual USDC accounting value per vault share at hourly checkpoints.
+            The value of one vault share, recorded every hour.
           </p>
         </div>
         <span className="self-start border border-brand-border/30 bg-app-bg px-3 py-1.5 text-xs font-semibold uppercase text-content-secondary">
@@ -2228,15 +2897,15 @@ function PerformanceTab({
             {(
               tranche.id === 'senior'
                 ? [
-                    'Target coupon actually transferred from Junior principal',
-                    'Restoration from future realized pool revenue after impairment',
-                    'Tranche-retained frozen-oracle surcharges, when active',
+                    'Targeted returns funded by Junior capital',
+                    'Recovery of earlier losses from future pool revenue',
+                    'Temporary pricing fees retained by the vault, when active',
                   ]
                 : [
                     'Collected trader losses',
-                    'Realized carry paid for LP-backed exposure',
-                    'Positive VPI and other trader-to-pool price adjustments',
-                    'Residual revenue after Senior restoration and coupon allocation',
+                    'Trading fees paid for positions backed by vault funds',
+                    'Favorable price adjustments paid by traders to the pool',
+                    'Revenue remaining after Senior losses and targeted returns are covered',
                   ]
             ).map((item) => (
               <li key={item} className="flex gap-2 text-sm leading-6 text-content-secondary">
@@ -2254,14 +2923,14 @@ function PerformanceTab({
               tranche.id === 'senior'
                 ? [
                     'Trader profits and rebates after Junior is exhausted',
-                    'Bad debt or operational loss that reaches Senior',
-                    'Other realized HousePool losses that reach Senior principal',
+                    'Unpaid trader losses or operational losses that reach Senior',
+                    'Other realized pool losses after Junior is exhausted',
                   ]
                 : [
-                    'Profitable trader settlements and VPI rebates',
-                    'The Senior target coupon',
-                    'Liquidation shortfalls, bad debt, and first-loss absorption',
-                    'Oracle, smart-contract, or stablecoin failure',
+                    'Profits and rebates paid to traders',
+                    'The Senior targeted return',
+                    'Liquidation shortfalls, unpaid losses, and other first-loss events',
+                    'Pricing, vault, or stablecoin failures',
                   ]
             ).map((item) => (
               <li key={item} className="flex gap-2 text-sm leading-6 text-content-secondary">
@@ -2274,107 +2943,10 @@ function PerformanceTab({
       </div>
 
       <Alert variant="info" title="How performance is calculated">
-        Seven-day realized APY annualizes the actual change between indexed vault share-price
-        checkpoints. It is historical, can be negative, and is not a forecast or guaranteed return.
+        Seven-day realized APY turns the vault's actual seven-day share-price change into an annual
+        rate for easier comparison. It is historical, can be negative, and is not a forecast or
+        guaranteed return.
       </Alert>
-    </div>
-  )
-}
-
-function RiskTab({ tranche }: { tranche: TrancheDefinition }) {
-  return (
-    <div className="space-y-6">
-      <Alert variant="warning" title={`${tranche.name} is not principal-protected`}>
-        {tranche.primaryRisk}. Trader claims rank ahead of both tranches, and vault share value can
-        fall to zero in severe conditions.
-      </Alert>
-
-      <section className="border border-brand-border/30 bg-surface-panel p-5">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-              Relative risk
-            </p>
-            <h3 className="mt-1 text-xl font-semibold text-content-primary">{tranche.riskLabel}</h3>
-          </div>
-          <Badge variant={tranche.riskVariant}>{tranche.lossPriority}</Badge>
-        </div>
-        <div className="mt-5 grid gap-3 sm:grid-cols-2">
-          {tranche.riskItems.map((item, index) => (
-            <div key={item} className="border border-brand-border/25 bg-app-bg p-4">
-              <span className="text-xs font-semibold text-brand-peach">0{index + 1}</span>
-              <p className="mt-2 text-sm leading-6 text-content-secondary">{item}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="overflow-hidden border border-brand-border/30 bg-surface-panel">
-        <div className="border-b border-brand-border/25 p-5">
-          <h3 className="text-lg font-semibold text-content-primary">Senior vs Junior</h3>
-          <p className="mt-1 text-sm text-content-secondary">
-            The distinction is internal economic priority, not a legal guarantee.
-          </p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-[720px] w-full text-left text-sm">
-            <thead className="bg-app-bg text-xs uppercase tracking-[0.1em] text-content-secondary">
-              <tr>
-                <th className="px-5 py-3 font-medium">Dimension</th>
-                <th className="px-5 py-3 font-medium text-brand-peach">Senior</th>
-                <th className="px-5 py-3 font-medium text-positive">Junior</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-brand-border/20">
-              {[
-                ['Return', 'Target coupon funded by Junior', 'Residual pool performance'],
-                ['Loss order', 'After Junior is exhausted', 'First loss'],
-                ['Revenue order', 'Restored to high-water mark first', 'Residual after Senior'],
-                ['Withdrawal priority', 'Matured requests settle first', 'Remainder after Senior requests and buffer'],
-                ['Can lose principal?', 'Yes', 'Yes'],
-                ['Can be wiped out?', 'Yes', 'Yes'],
-              ].map(([dimension, senior, junior]) => (
-                <tr key={dimension}>
-                  <th className="px-5 py-4 font-medium text-content-primary">{dimension}</th>
-                  <td className="px-5 py-4 text-content-secondary">{senior}</td>
-                  <td className="px-5 py-4 text-content-secondary">{junior}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="grid gap-4 md:grid-cols-2">
-        {[
-          {
-            icon: 'code',
-            title: 'Smart-contract risk',
-            text: 'Vault, HousePool, oracle, and trading contracts may contain defects or behave unexpectedly.',
-          },
-          {
-            icon: 'currency_exchange',
-            title: 'USDC risk',
-            text: 'The vault is denominated in USDC and depends on the stablecoin remaining transferable and near its intended value.',
-          },
-          {
-            icon: 'sensors_off',
-            title: 'Oracle and market-state risk',
-            text: 'Frozen or stale oracle conditions can change fees, deposit availability, and withdrawal behavior.',
-          },
-          {
-            icon: 'water_drop',
-            title: 'Withdrawal liquidity risk',
-            text: 'Accounting value can exceed immediately withdrawable USDC because trader liabilities are protected first.',
-          },
-        ].map((item) => (
-          <div key={item.title} className="border border-brand-border/30 bg-surface-panel p-5">
-            <span className="material-symbols-outlined text-3xl text-warning">{item.icon}</span>
-            <h3 className="mt-3 text-lg font-semibold text-content-primary">{item.title}</h3>
-            <p className="mt-2 text-sm leading-6 text-content-secondary">{item.text}</p>
-          </div>
-        ))}
-      </section>
     </div>
   )
 }
@@ -2404,6 +2976,7 @@ function ActivityTab({
   onRefreshRequests: () => void
   onSwitchNetwork: () => void
 }) {
+  const [requestAction, setRequestAction] = useState<VaultRequestAction>()
   const positionValue = liveData.userShares !== undefined && liveData.sharePrice !== undefined
     ? Number(formatUnits(liveData.userShares, SHARE_DECIMALS)) * liveData.sharePrice
     : undefined
@@ -2415,6 +2988,7 @@ function ActivityTab({
   const vaultTransactions = useVaultTransactions({
     vaultAddress: tranche.address,
     allowance: liveData.allowance,
+    showTransactionModal: false,
     onSuccess: () => {
       snapshot.refresh()
       onRefreshRequests()
@@ -2430,9 +3004,37 @@ function ActivityTab({
     })
   }
 
-  function prepareRequestAction(action: () => void) {
+  function openRequestAction(action: VaultRequestAction) {
     vaultTransactions.reset()
-    action()
+    setRequestAction(action)
+  }
+
+  function submitRequestAction() {
+    if (!requestAction) return
+    switch (requestAction.kind) {
+      case 'cancel-deposit':
+      case 'recover-deposit':
+        vaultTransactions.cancelPendingDeposit(requestAction.requestId)
+        break
+      case 'claim-deposit':
+        vaultTransactions.claimDepositShares(requestAction.requestId)
+        break
+      case 'cancel-withdrawal':
+        vaultTransactions.cancelRedeemRequest(requestAction.requestId)
+        break
+      case 'claim-withdrawal':
+        vaultTransactions.claimRedeem(requestAction.requestId, requestAction.shares)
+        break
+      case 'reclaim-withdrawal':
+        vaultTransactions.claimRedeemRefund(requestAction.requestId)
+        break
+    }
+  }
+
+  function closeRequestAction() {
+    if (vaultTransactions.isRunning) return
+    vaultTransactions.reset()
+    setRequestAction(undefined)
   }
 
   return (
@@ -2444,7 +3046,7 @@ function ActivityTab({
           </p>
           <h3 className="mt-1 text-xl font-semibold text-content-primary">
             {hasUserBalance
-              ? `${formatShares(liveData.userShares)} ${tranche.token}`
+              ? formatPositionShares(liveData.userShares, tranche.token)
               : isConnected
                 ? 'Balance unavailable'
                 : 'Wallet not connected'}
@@ -2455,22 +3057,18 @@ function ActivityTab({
           <DetailMetric
             label="Current value"
             value={isConnected && positionValue !== undefined
-              ? (
-                <TokenAmount
-                  amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })}
-                />
-              )
+              ? formatPositionValue(positionValue)
               : '--'}
           />
           <DetailMetric
-            label="Requestable shares"
+            label="Shares available to withdraw"
             value={isConnected
-              ? `${formatShares(liveData.maxRequestRedeem)} ${tranche.token}`
+              ? formatPositionShares(liveData.maxRequestRedeem, tranche.token)
               : '--'}
             tone={(liveData.maxRequestRedeem ?? 0n) > 0n ? 'positive' : 'default'}
           />
           <DetailMetric
-            label="Claimable withdrawal"
+            label="USDC ready for wallet"
             value={isConnected ? formatFullUsd(claimableUsdc) : '--'}
             tone={claimableUsdc > 0n ? 'positive' : 'default'}
           />
@@ -2481,14 +3079,14 @@ function ActivityTab({
         <div className="border-b border-brand-border/25 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-content-primary">Deposit requests</h3>
+              <h3 className="text-lg font-semibold text-content-primary">Pending deposits</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                Funded USDC waits in escrow until the protocol settles its hourly batch.
+                The vault holds your USDC until the next eligible hourly processing time.
               </p>
             </div>
             {depositRequests.length > 0 ? (
               <Badge variant="info">
-                {depositRequests.length} active {depositRequests.length === 1 ? 'request' : 'requests'}
+                {depositRequests.length} pending {depositRequests.length === 1 ? 'deposit' : 'deposits'}
               </Badge>
             ) : null}
           </div>
@@ -2502,8 +3100,8 @@ function ActivityTab({
                 : request.claimableShares > 0n
                   ? 'Shares ready'
                   : request.matured
-                    ? 'Awaiting settlement'
-                    : 'Queued'
+                    ? 'Waiting for processing'
+                    : 'Pending'
               const statusVariant = request.refundableAssets > 0n
                 ? 'warning'
                 : request.claimableShares > 0n
@@ -2518,11 +3116,11 @@ function ActivityTab({
                   : request.claimableAssets
 
               return (
-                <article key={String(request.requestId)} className="space-y-5 p-5">
+                <article key={String(request.requestId)} className="space-y-4 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-                        Request {String(request.requestId)}
+                        Deposit reference #{String(request.requestId)}
                       </p>
                       <h4 className="mt-1 text-xl font-semibold text-content-primary">
                         {formatFullUsd(displayedAssets)} deposited
@@ -2531,58 +3129,61 @@ function ActivityTab({
                     <Badge variant={statusVariant}>{statusLabel}</Badge>
                   </div>
 
-                  <dl className="grid gap-3 sm:grid-cols-2">
-                    <DetailRow
-                      label="Target settlement"
+                  <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
+                    <RequestMetric
+                      label="Expected processing"
                       value={settlementLabel(request.targetTimestamp)}
                     />
-                    <DetailRow
-                      label="Current share estimate"
-                      value={`${formatShares(request.pendingSharesEstimate)} ${tranche.token}`}
+                    <RequestMetric
+                        label="Estimated shares"
+                      value={formatPositionShares(request.pendingSharesEstimate, tranche.token)}
                     />
                     {request.claimableShares > 0n ? (
-                      <DetailRow
-                        label="Claimable shares"
-                        value={`${formatShares(request.claimableShares)} ${tranche.token}`}
-                        valueClassName="text-positive"
+                      <RequestMetric
+                        label="Shares ready for wallet"
+                        value={formatPositionShares(request.claimableShares, tranche.token)}
+                        tone="positive"
                       />
                     ) : null}
                     {request.refundableAssets > 0n ? (
-                      <DetailRow
-                        label="Recoverable USDC"
+                      <RequestMetric
+                        label="USDC ready to return"
                         value={formatFullUsd(request.refundableAssets)}
-                        valueClassName="text-warning"
+                        tone="warning"
                       />
                     ) : null}
                   </dl>
 
-                  <p className="text-sm leading-6 text-content-secondary">
-                    {request.refundableAssets > 0n
-                      ? 'The batch did not activate this deposit. Recover the escrowed USDC.'
-                      : request.claimableShares > 0n
-                        ? 'The protocol settled the batch. Claim the allocated shares into your wallet.'
-                        : request.matured
-                          ? 'The target time has passed, but the protocol has not settled this batch yet.'
-                          : 'You can cancel before settlement. The final share amount is fixed only when the batch settles.'}
-                  </p>
+                  <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="max-w-3xl text-sm leading-6 text-content-secondary">
+                      {request.refundableAssets > 0n
+                        ? 'This deposit could not be completed. Return the held USDC to your wallet.'
+                        : request.claimableShares > 0n
+                          ? 'Your deposit is active and already participates in vault performance. You can now move the shares to your wallet.'
+                          : request.matured
+                            ? 'The expected time has passed, but this deposit has not been processed yet.'
+                            : 'You can cancel before processing. The final number of shares is set when the deposit is processed.'}
+                    </p>
 
-                  {isWrongNetwork ? (
-                    <Button type="button" variant="secondary" onClick={onSwitchNetwork}>
-                      Switch to Arbitrum Sepolia
-                    </Button>
-                  ) : (
-                    <div className="flex flex-wrap gap-3">
+                    {isWrongNetwork ? (
+                      <Button type="button" variant="secondary" className="shrink-0" onClick={onSwitchNetwork}>
+                        Switch to Arbitrum Sepolia
+                      </Button>
+                    ) : (
+                      <div className="flex shrink-0 flex-wrap gap-3">
                       {request.claimableShares > 0n ? (
                         <Button
                           type="button"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.claimDepositShares(request.requestId)
+                            openRequestAction({
+                              kind: 'claim-deposit',
+                              requestId: request.requestId,
+                              shares: request.claimableShares,
                             })
                           }}
                         >
-                          Claim shares
+                          Move shares to wallet
                         </Button>
                       ) : null}
                       {request.refundableAssets > 0n ? (
@@ -2591,12 +3192,14 @@ function ActivityTab({
                           variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.cancelPendingDeposit(request.requestId)
+                            openRequestAction({
+                              kind: 'recover-deposit',
+                              requestId: request.requestId,
+                              assets: request.refundableAssets,
                             })
                           }}
                         >
-                          Recover USDC
+                          Return USDC to wallet
                         </Button>
                       ) : null}
                       {request.pendingAssets > 0n && !request.matured ? (
@@ -2605,23 +3208,26 @@ function ActivityTab({
                           variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.cancelPendingDeposit(request.requestId)
+                            openRequestAction({
+                              kind: 'cancel-deposit',
+                              requestId: request.requestId,
+                              assets: request.pendingAssets,
                             })
                           }}
                         >
-                          Cancel request
+                          Cancel deposit
                         </Button>
                       ) : null}
-                    </div>
-                  )}
+                      </div>
+                    )}
+                  </div>
                 </article>
               )
             })}
           </div>
         ) : (
           <div className="px-6 py-8 text-center">
-            <p className="text-sm text-content-secondary">No active deposit requests.</p>
+            <p className="text-sm text-content-secondary">No pending deposits.</p>
           </div>
         )}
       </section>
@@ -2630,14 +3236,14 @@ function ActivityTab({
         <div className="border-b border-brand-border/25 p-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-lg font-semibold text-content-primary">Withdrawal requests</h3>
+              <h3 className="text-lg font-semibold text-content-primary">Pending withdrawals</h3>
               <p className="mt-1 text-sm text-content-secondary">
-                Shares stay exposed to vault performance until their request is funded.
+                Your shares can change in value until enough USDC is available for the withdrawal.
               </p>
             </div>
             {redeemRequests.length > 0 ? (
               <Badge variant="info">
-                {redeemRequests.length} active {redeemRequests.length === 1 ? 'request' : 'requests'}
+                {redeemRequests.length} pending {redeemRequests.length === 1 ? 'withdrawal' : 'withdrawals'}
               </Badge>
             ) : null}
           </div>
@@ -2650,10 +3256,10 @@ function ActivityTab({
               const statusLabel = request.claimableAssets > 0n
                 ? 'USDC ready'
                 : request.refundPending
-                  ? 'Shares recoverable'
+                  ? 'Shares ready to return'
                   : request.matured
-                    ? 'Awaiting funding'
-                    : 'Queued'
+                    ? 'Waiting for USDC'
+                    : 'Pending'
               const displayedShares = request.pendingShares > 0n
                 ? request.pendingShares
                 : request.claimableShares > 0n
@@ -2661,14 +3267,14 @@ function ActivityTab({
                   : request.refundableShares
 
               return (
-                <article key={String(request.requestId)} className="space-y-5 p-5">
+                <article key={String(request.requestId)} className="space-y-4 p-5">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-                        Request {String(request.requestId)}
+                        Withdrawal reference #{String(request.requestId)}
                       </p>
                       <h4 className="mt-1 text-xl font-semibold text-content-primary">
-                        {formatShares(displayedShares)} {tranche.token} queued
+                        {formatPositionShares(displayedShares, tranche.token)} requested for withdrawal
                       </h4>
                     </div>
                     <Badge variant={actionReady ? 'success' : request.matured ? 'info' : 'warning'}>
@@ -2676,63 +3282,64 @@ function ActivityTab({
                     </Badge>
                   </div>
 
-                  <dl className="grid gap-3 sm:grid-cols-2">
-                    <DetailRow
-                      label="Target settlement"
+                  <dl className="grid gap-px border border-brand-border/20 bg-brand-border/20 sm:grid-cols-2">
+                    <RequestMetric
+                      label="Expected processing"
                       value={settlementLabel(request.targetTimestamp)}
                     />
-                    <DetailRow
-                      label="Current USDC estimate"
+                    <RequestMetric
+                      label="Estimated USDC"
                       value={formatFullUsd(request.pendingAssetsEstimate)}
                     />
                     {request.claimableAssets > 0n ? (
-                      <DetailRow
-                        label="Claimable USDC"
+                      <RequestMetric
+                        label="USDC ready for wallet"
                         value={formatFullUsd(request.claimableAssets)}
-                        valueClassName="text-positive"
+                        tone="positive"
                       />
                     ) : null}
                     {request.refundableShares > 0n ? (
-                      <DetailRow
-                        label="Recoverable shares"
-                        value={`${formatShares(request.refundableShares)} ${tranche.token}`}
-                        valueClassName="text-warning"
+                      <RequestMetric
+                        label="Shares ready to return"
+                        value={formatPositionShares(request.refundableShares, tranche.token)}
+                        tone="warning"
                       />
                     ) : null}
                   </dl>
 
-                  <p className="text-sm leading-6 text-content-secondary">
-                    {request.claimableAssets > 0n
-                      ? 'This portion has been funded and can be claimed as USDC.'
-                      : request.refundPending
-                        ? 'This request was not funded. Reclaim the remaining escrowed shares.'
-                        : request.matured
-                          ? tranche.id === 'senior'
-                            ? 'The request is eligible and remains queued until settlement liquidity is available.'
-                            : 'The request is eligible. Senior withdrawals are funded first, so Junior may remain queued.'
-                          : 'You can cancel before settlement. The shares continue to gain or lose value while queued.'}
-                  </p>
+                  <div className="flex flex-col gap-4 border-t border-brand-border/20 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="max-w-3xl text-sm leading-6 text-content-secondary">
+                      {request.claimableAssets > 0n
+                        ? 'USDC is ready and can now be moved to your wallet.'
+                        : request.refundPending
+                          ? 'This withdrawal could not be funded. Return the remaining shares to your wallet.'
+                          : request.matured
+                            ? tranche.id === 'senior'
+                              ? 'The withdrawal is ready to process and is waiting for enough available USDC.'
+                              : 'The withdrawal is ready to process. Senior is funded first, so Junior may wait longer.'
+                            : 'You can cancel before processing. The shares continue to gain or lose value while waiting.'}
+                    </p>
 
-                  {isWrongNetwork ? (
-                    <Button type="button" variant="secondary" onClick={onSwitchNetwork}>
-                      Switch to Arbitrum Sepolia
-                    </Button>
-                  ) : (
-                    <div className="flex flex-wrap gap-3">
+                    {isWrongNetwork ? (
+                      <Button type="button" variant="secondary" className="shrink-0" onClick={onSwitchNetwork}>
+                        Switch to Arbitrum Sepolia
+                      </Button>
+                    ) : (
+                      <div className="flex shrink-0 flex-wrap gap-3">
                       {request.claimableAssets > 0n && request.claimableShares > 0n ? (
                         <Button
                           type="button"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.claimRedeem(
-                                request.requestId,
-                                request.claimableShares
-                              )
+                            openRequestAction({
+                              kind: 'claim-withdrawal',
+                              requestId: request.requestId,
+                              shares: request.claimableShares,
+                              assets: request.claimableAssets,
                             })
                           }}
                         >
-                          Claim USDC
+                          Move USDC to wallet
                         </Button>
                       ) : null}
                       {request.refundPending ? (
@@ -2741,12 +3348,14 @@ function ActivityTab({
                           variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.claimRedeemRefund(request.requestId)
+                            openRequestAction({
+                              kind: 'reclaim-withdrawal',
+                              requestId: request.requestId,
+                              shares: request.refundableShares,
                             })
                           }}
                         >
-                          Reclaim shares
+                          Return shares to wallet
                         </Button>
                       ) : null}
                       {request.pendingShares > 0n && !request.matured ? (
@@ -2755,31 +3364,34 @@ function ActivityTab({
                           variant="secondary"
                           disabled={vaultTransactions.isRunning}
                           onClick={() => {
-                            prepareRequestAction(() => {
-                              vaultTransactions.cancelRedeemRequest(request.requestId)
+                            openRequestAction({
+                              kind: 'cancel-withdrawal',
+                              requestId: request.requestId,
+                              shares: request.pendingShares,
                             })
                           }}
                         >
-                          Cancel request
+                          Cancel withdrawal
                         </Button>
                       ) : null}
-                    </div>
-                  )}
+                      </div>
+                    )}
+                  </div>
                 </article>
               )
             })}
           </div>
         ) : (
           <div className="px-6 py-8 text-center">
-            <p className="text-sm text-content-secondary">No active withdrawal requests.</p>
+            <p className="text-sm text-content-secondary">No pending withdrawals.</p>
           </div>
         )}
       </section>
 
       {requestDiscoveryError ? (
-        <Alert variant="warning" title="Older request history is unavailable">
-          Current request IDs are still checked onchain. Retry to restore older unclaimed requests
-          from explorer event history.
+        <Alert variant="warning" title="Older activity is unavailable">
+          The app still checks your latest pending activity. Retry to restore older unfinished
+          deposits and withdrawals from the block explorer.
           <Button
             type="button"
             variant="secondary"
@@ -2792,17 +3404,13 @@ function ActivityTab({
       ) : null}
 
       {requestsLoading && depositRequests.length === 0 && redeemRequests.length === 0 ? (
-        <p className="text-sm text-content-secondary">Checking your vault requests…</p>
-      ) : null}
-
-      {vaultTransactions.error ? (
-        <p className="text-sm text-brand-orange">{vaultTransactions.error}</p>
+        <p className="text-sm text-content-secondary">Checking your pending activity…</p>
       ) : null}
 
       <section className="border border-brand-border/30 bg-surface-panel p-5">
-        <h3 className="text-lg font-semibold text-content-primary">Contract activity</h3>
+        <h3 className="text-lg font-semibold text-content-primary">Block explorer</h3>
         <p className="mt-1 text-sm text-content-secondary">
-          Full transaction history remains available on the block explorer.
+          View the complete public transaction history for this vault.
         </p>
         <a
           href={`${EXPLORER_BASE_URL}/${tranche.address}`}
@@ -2811,11 +3419,25 @@ function ActivityTab({
           className="group mt-5 inline-flex items-center gap-2 border border-brand-border/40 px-4 py-2 text-sm font-semibold text-brand-peach hover:border-brand-peach"
         >
           <span className="group-hover:underline group-hover:underline-offset-4">
-            View contract activity
+            View all transactions
           </span>
           <span className="material-symbols-outlined text-lg">open_in_new</span>
         </a>
       </section>
+
+      <VaultRequestActionModal
+        action={requestAction}
+        tranche={tranche}
+        transactionStatus={vaultTransactions.status}
+        transactionPhase={vaultTransactions.phase}
+        transactionSteps={vaultTransactions.steps}
+        currentTransactionStep={vaultTransactions.currentStepIndex}
+        transactionHash={vaultTransactions.hash}
+        submissionError={vaultTransactions.error}
+        onClose={closeRequestAction}
+        onReset={vaultTransactions.reset}
+        onSubmit={submitRequestAction}
+      />
     </div>
   )
 }
@@ -2837,9 +3459,404 @@ function PreviewRow({
   )
 }
 
+export type VaultLifecycleStep = 'review' | 'wallet' | 'queued'
+type VaultTransactionStatus = 'idle' | 'running' | 'success' | 'error'
+type VaultTransactionPhase = 'idle' | 'awaiting_wallet' | 'confirming_onchain' | 'complete' | 'error'
+
+const VAULT_LIFECYCLE_STEPS: { id: VaultLifecycleStep; label: string }[] = [
+  { id: 'review', label: 'Review' },
+  { id: 'wallet', label: 'Wallet' },
+  { id: 'queued', label: 'Submitted' },
+]
+
+export function VaultLifecycleSteps({
+  currentStep,
+  finalLabel = 'Submitted',
+}: {
+  currentStep: VaultLifecycleStep
+  finalLabel?: string
+}) {
+  const currentIndex = VAULT_LIFECYCLE_STEPS.findIndex(({ id }) => id === currentStep)
+  const steps = VAULT_LIFECYCLE_STEPS.map((step) => (
+    step.id === 'queued' ? { ...step, label: finalLabel } : step
+  ))
+
+  return (
+    <div className="relative">
+      <div
+        className="absolute top-[7px] h-px bg-brand-border/35"
+        style={{ left: 'calc(16.666667% + 0.5rem)', width: 'calc(33.333333% - 1rem)' }}
+      />
+      <div
+        className="absolute top-[7px] h-px bg-brand-border/35"
+        style={{ left: 'calc(50% + 0.5rem)', width: 'calc(33.333333% - 1rem)' }}
+      />
+      <ol className="relative grid grid-cols-3 gap-2">
+        {steps.map((step, index) => {
+          const isCurrent = index === currentIndex
+          const isFuture = index > currentIndex
+          const dotClassName = isCurrent
+            ? 'border-brand-peach bg-brand-peach'
+            : isFuture
+              ? 'border-brand-border/30 bg-surface-panel'
+              : 'border-content-secondary/50 bg-content-secondary/50'
+          const labelClassName = isCurrent
+            ? 'text-brand-peach'
+            : isFuture
+              ? 'text-content-secondary/50'
+              : 'text-content-secondary'
+
+          return (
+            <li
+              key={step.id}
+              className="relative min-w-0 text-center"
+              aria-current={isCurrent ? 'step' : undefined}
+            >
+              <div className="flex justify-center">
+                <span className={`relative z-10 h-3.5 w-3.5 rounded-full border-2 ${dotClassName}`} />
+              </div>
+              <div className="mt-3 min-w-0">
+                <div className={`text-base font-semibold ${labelClassName}`}>{step.label}</div>
+              </div>
+            </li>
+          )
+        })}
+      </ol>
+    </div>
+  )
+}
+
+export function VaultRequestQueuedState({
+  mode,
+  targetSettlement,
+  transactionHash,
+  onClose,
+  onViewRequest,
+}: {
+  mode: ActionMode
+  targetSettlement: string
+  transactionHash?: string | null
+  onClose: () => void
+  onViewRequest: () => void
+}) {
+  return (
+    <div className="space-y-5 text-center">
+      <SuccessIcon className="mx-auto" />
+      <div>
+        <h2 className="text-2xl font-semibold text-content-primary">
+          {mode === 'deposit' ? 'Deposit submitted' : 'Withdrawal submitted'}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-content-secondary">
+          Expected processing: {targetSettlement}. Track it from Your position.
+        </p>
+      </div>
+      {transactionHash ? (
+        <a
+          href={`${EXPLORER_TX_BASE_URL}/${transactionHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group inline-flex items-center gap-2 text-sm font-semibold text-brand-peach"
+        >
+          <span className="group-hover:underline group-hover:underline-offset-4">View transaction</span>
+          <span className="material-symbols-outlined text-lg">open_in_new</span>
+        </a>
+      ) : null}
+      <div className="grid grid-cols-2 gap-3 pt-2">
+        <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
+          Done
+        </Button>
+        <Button type="button" className="w-full" onClick={onViewRequest}>
+          View activity
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+function VaultTransactionSteps({
+  steps,
+  currentStepIndex,
+  phase,
+}: {
+  steps: string[]
+  currentStepIndex: number
+  phase: VaultTransactionPhase
+}) {
+  return (
+    <ol className="space-y-4 border border-brand-border/25 bg-app-bg p-4">
+      {steps.map((step, index) => {
+        const isComplete = index < currentStepIndex || phase === 'complete'
+        const isCurrent = index === currentStepIndex && !isComplete
+        const isError = isCurrent && phase === 'error'
+
+        return (
+          <li key={`${step}-${String(index)}`} className="flex items-center gap-3">
+            {isComplete ? (
+              <span className="material-symbols-outlined flex h-6 w-6 items-center justify-center rounded-full bg-positive text-base text-app-bg">
+                check
+              </span>
+            ) : isError ? (
+              <span className="material-symbols-outlined flex h-6 w-6 items-center justify-center rounded-full bg-brand-orange text-base text-app-bg">
+                close
+              </span>
+            ) : isCurrent ? (
+              <Spinner size="md" variant={phase === 'confirming_onchain' ? 'confirming' : 'default'} />
+            ) : (
+              <span className="h-6 w-6 rounded-full border-2 border-content-secondary/40" />
+            )}
+            <div className="min-w-0">
+              <p className={`text-sm font-semibold ${isError ? 'text-brand-orange' : isCurrent ? 'text-content-primary' : 'text-content-secondary'}`}>
+                {step}
+              </p>
+              {isCurrent && !isError ? (
+                <p className="mt-0.5 text-xs text-content-secondary">
+                  {phase === 'confirming_onchain'
+                    ? 'Submitted — waiting for network confirmation'
+                    : 'Confirm this transaction in your wallet'}
+                </p>
+              ) : null}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
+function VaultRequestActionModal({
+  action,
+  tranche,
+  transactionStatus,
+  transactionPhase,
+  transactionSteps,
+  currentTransactionStep,
+  transactionHash,
+  submissionError,
+  onClose,
+  onReset,
+  onSubmit,
+}: {
+  action?: VaultRequestAction
+  tranche: TrancheDefinition
+  transactionStatus: VaultTransactionStatus
+  transactionPhase: VaultTransactionPhase
+  transactionSteps: string[]
+  currentTransactionStep: number
+  transactionHash?: string | null
+  submissionError?: string | null
+  onClose: () => void
+  onReset: () => void
+  onSubmit: () => void
+}) {
+  if (!action) return null
+
+  const isRunning = transactionStatus === 'running'
+  const lifecycleStep: VaultLifecycleStep = transactionStatus === 'idle'
+    ? 'review'
+    : transactionStatus === 'success'
+      ? 'queued'
+      : 'wallet'
+  const shareAmount = (shares: bigint) => (
+    <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+      <span>{formatShares(shares)}</span>
+      <TokenLabel token={tranche.token} />
+    </span>
+  )
+  const copy = (() => {
+    switch (action.kind) {
+      case 'cancel-deposit':
+        return {
+          title: 'Cancel this deposit?',
+          description: 'The deposit is still pending. Cancelling returns the USDC held by the vault to your wallet.',
+          amountLabel: 'USDC returned',
+          amount: formatFullUsd(action.assets),
+          confirmLabel: 'Cancel deposit',
+          confirmVariant: 'danger' as const,
+          successTitle: 'Deposit cancelled',
+          successDescription: <>{formatFullUsd(action.assets)} held by the vault has been returned to your wallet.</>,
+        }
+      case 'recover-deposit':
+        return {
+          title: 'Return this deposit?',
+          description: 'The deposit could not be completed. Return the refundable USDC held by the vault to your wallet.',
+          amountLabel: 'USDC returned',
+          amount: formatFullUsd(action.assets),
+          confirmLabel: 'Return USDC',
+          confirmVariant: 'primary' as const,
+          successTitle: 'USDC returned',
+          successDescription: <>{formatFullUsd(action.assets)} has been returned to your wallet.</>,
+        }
+      case 'claim-deposit':
+        return {
+          title: 'Move your vault shares to your wallet?',
+          description: 'These shares already participate in vault performance. Moving them to your wallet starts a one-hour wait before they can be transferred or withdrawn.',
+          amountLabel: 'Shares moved',
+          amount: shareAmount(action.shares),
+          confirmLabel: 'Move shares',
+          confirmVariant: 'primary' as const,
+          successTitle: 'Vault shares moved',
+          successDescription: <>{shareAmount(action.shares)} is now in your wallet.</>,
+        }
+      case 'cancel-withdrawal':
+        return {
+          title: 'Cancel this withdrawal?',
+          description: 'This withdrawal is still waiting for USDC. Cancelling returns the shares held by the vault to your wallet and restarts their one-hour waiting period.',
+          amountLabel: 'Shares returned',
+          amount: shareAmount(action.shares),
+          confirmLabel: 'Cancel withdrawal',
+          confirmVariant: 'danger' as const,
+          successTitle: 'Withdrawal cancelled',
+          successDescription: <>{shareAmount(action.shares)} has been returned to your wallet.</>,
+        }
+      case 'claim-withdrawal':
+        return {
+          title: 'Move your USDC to your wallet?',
+          description: 'USDC has been allocated to this withdrawal and is ready to move to your wallet.',
+          amountLabel: 'USDC moved',
+          amount: formatFullUsd(action.assets),
+          confirmLabel: 'Move USDC',
+          confirmVariant: 'primary' as const,
+          successTitle: 'USDC moved to wallet',
+          successDescription: <>{formatFullUsd(action.assets)} has been transferred to your wallet.</>,
+        }
+      case 'reclaim-withdrawal':
+        return {
+          title: 'Return your unfunded shares?',
+          description: 'USDC could not be allocated to this part of the withdrawal. Return the remaining shares to your wallet.',
+          amountLabel: 'Shares returned',
+          amount: shareAmount(action.shares),
+          confirmLabel: 'Return shares',
+          confirmVariant: 'primary' as const,
+          successTitle: 'Vault shares returned',
+          successDescription: <>{shareAmount(action.shares)} has been returned to your wallet.</>,
+        }
+    }
+  })()
+
+  return (
+    <Modal
+      isOpen
+      onClose={onClose}
+      ariaLabel={`${copy.confirmLabel} flow`}
+      headerContent={<VaultLifecycleSteps currentStep={lifecycleStep} finalLabel="Complete" />}
+      showCloseButton={false}
+      closeOnBackdrop={!isRunning}
+      closeOnEscape={!isRunning}
+      size="lg"
+      inertBackground
+      analyticsId="vault_request_action_flow"
+      analyticsSurface="vaults"
+      analyticsProperties={{ tranche: tranche.id, action: action.kind }}
+    >
+      {transactionStatus === 'idle' ? (
+        <div className="space-y-5">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+              Reference {String(action.requestId)}
+            </p>
+            <h2 className="mt-1 text-xl font-semibold text-content-primary">{copy.title}</h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">{copy.description}</p>
+          </div>
+          <section className="border border-brand-border/25 bg-app-bg p-4">
+            <PreviewRow label={copy.amountLabel} value={copy.amount} />
+          </section>
+          <div className="grid grid-cols-2 gap-3">
+            <Button type="button" variant="secondary" className="w-full" onClick={onClose}>
+              Back
+            </Button>
+            <Button
+              type="button"
+              variant={copy.confirmVariant}
+              className="w-full"
+              onClick={onSubmit}
+            >
+              {copy.confirmLabel}
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {transactionStatus === 'running' ? (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-xl font-semibold text-content-primary">
+              {transactionPhase === 'confirming_onchain'
+                ? 'Waiting for network confirmation'
+                : 'Confirm in your wallet'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">
+              Keep this window open until this step finishes.
+            </p>
+          </div>
+          <VaultTransactionSteps
+            steps={transactionSteps}
+            currentStepIndex={currentTransactionStep}
+            phase={transactionPhase}
+          />
+        </div>
+      ) : null}
+
+      {transactionStatus === 'error' ? (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-xl font-semibold text-brand-orange">The action did not complete</h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">
+              Nothing else will run until you retry.
+            </p>
+          </div>
+          <VaultTransactionSteps
+            steps={transactionSteps}
+            currentStepIndex={currentTransactionStep}
+            phase="error"
+          />
+          {submissionError ? (
+            <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm leading-6 text-brand-orange">
+              {submissionError}
+            </div>
+          ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
+              Back to review
+            </Button>
+            <Button type="button" className="w-full" onClick={onSubmit}>
+              Try again
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
+      {transactionStatus === 'success' ? (
+        <div className="space-y-5 text-center">
+          <SuccessIcon className="mx-auto" />
+          <div>
+            <h2 className="text-2xl font-semibold text-content-primary">{copy.successTitle}</h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">{copy.successDescription}</p>
+          </div>
+          {transactionHash ? (
+            <a
+              href={`${EXPLORER_TX_BASE_URL}/${transactionHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="group inline-flex items-center gap-2 text-sm font-semibold text-brand-peach"
+            >
+              <span className="group-hover:underline group-hover:underline-offset-4">View transaction</span>
+              <span className="material-symbols-outlined text-lg">open_in_new</span>
+            </a>
+          ) : null}
+          <Button type="button" className="w-full" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      ) : null}
+    </Modal>
+  )
+}
+
 function VaultPreviewModal({
   isOpen,
   onClose,
+  onReset,
+  onViewRequest,
   mode,
   tranche,
   amount,
@@ -2849,15 +3866,20 @@ function VaultPreviewModal({
   performance,
   oracleFrozen,
   pendingActivationTimestamp,
-  quoteCapturedAt,
   canSubmit,
   needsApproval,
-  isSubmitting,
+  transactionStatus,
+  transactionPhase,
+  transactionSteps,
+  currentTransactionStep,
+  transactionHash,
   onSubmit,
   submissionError,
 }: {
   isOpen: boolean
   onClose: () => void
+  onReset: () => void
+  onViewRequest: () => void
   mode: ActionMode
   tranche: TrancheDefinition
   amount: string
@@ -2867,151 +3889,196 @@ function VaultPreviewModal({
   performance?: CompleteVaultPerformance
   oracleFrozen?: boolean
   pendingActivationTimestamp?: number
-  quoteCapturedAt?: number
   canSubmit: boolean
   needsApproval: boolean
-  isSubmitting: boolean
+  transactionStatus: VaultTransactionStatus
+  transactionPhase: VaultTransactionPhase
+  transactionSteps: string[]
+  currentTransactionStep: number
+  transactionHash?: string | null
   onSubmit: () => void
   submissionError?: string | null
 }) {
-  const submitLabel = mode === 'withdraw'
-    ? 'Queue withdrawal'
-    : needsApproval
-      ? 'Approve & queue'
-      : 'Queue deposit'
+  const isRunning = transactionStatus === 'running'
+  const lifecycleStep: VaultLifecycleStep = transactionStatus === 'idle'
+    ? 'review'
+    : transactionStatus === 'success'
+      ? 'queued'
+      : 'wallet'
+  const actionName = mode === 'deposit' ? 'deposit' : 'withdrawal'
+  const targetSettlement = pendingActivationTimestamp === undefined
+    ? 'Next processing time'
+    : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`${mode === 'deposit' ? 'Deposit' : 'Withdrawal'} preview`}
-      size="md"
-      bodyClassName="p-0"
+      ariaLabel={`${mode === 'deposit' ? 'Deposit' : 'Withdrawal'} flow`}
+      headerContent={<VaultLifecycleSteps currentStep={lifecycleStep} />}
+      showCloseButton={false}
+      closeOnBackdrop={!isRunning}
+      closeOnEscape={!isRunning}
+      size="lg"
       inertBackground
+      analyticsId={`vault_${mode}_flow`}
+      analyticsSurface="vaults"
+      analyticsProperties={{ tranche: tranche.id }}
     >
-      <div className="space-y-5 p-6">
-        <div className="flex items-center gap-3 border border-brand-border/30 bg-app-bg p-4">
-          <TrancheMark tranche={tranche} size="md" />
-          <div>
-            <p className="text-xs uppercase tracking-[0.12em] text-content-secondary">
-              Selected tranche
+      {transactionStatus === 'idle' ? (
+        <div className="space-y-5">
+          <p className="text-xl font-semibold leading-7 text-content-primary">
+            You are {mode === 'deposit' ? 'depositing' : 'withdrawing'}{' '}
+            <TokenAmount amount={amount || '0.00'} /> {mode === 'deposit' ? 'into' : 'from'}{' '}
+            {tranche.name}.
+          </p>
+
+          <section className="border border-brand-border/25 bg-app-bg p-4">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
+              {mode === 'deposit' ? 'Deposit' : 'Withdrawal'} preview
             </p>
-            <p className="mt-1 font-semibold text-content-primary">{tranche.name}</p>
+            <div className="space-y-3">
+              <PreviewRow
+                label={mode === 'deposit' ? 'USDC to deposit' : 'USDC to withdraw'}
+                value={<TokenAmount amount={amount || '0.00'} />}
+              />
+              <PreviewRow
+                label={mode === 'withdraw' ? 'Estimated shares used' : 'Estimated shares received'}
+                value={estimatedShares === undefined
+                  ? 'Latest estimate unavailable'
+                  : `${estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tranche.token}`}
+              />
+              <PreviewRow label="Current share price" value={formatSharePrice(sharePrice)} />
+              {performance ? (
+                <PreviewRow
+                  label="7d realized APY"
+                  value={formatSignedPercent(performance.apy7d)}
+                  valueClassName={performanceValueClassName(performance.apy7d)}
+                />
+              ) : null}
+              <PreviewRow
+                label="Processing"
+                value={mode === 'deposit' ? depositMode : 'Processed hourly when USDC is available'}
+              />
+              <PreviewRow label="Expected processing" value={targetSettlement} />
+              {oracleFrozen === true ? (
+                <PreviewRow label="Temporary pricing fee" value="May apply when processed" />
+              ) : null}
+            </div>
+          </section>
+
+          <div className="border border-brand-peach/30 bg-brand-peach/10 p-4 text-sm leading-6 text-brand-peach">
+            <p className="font-semibold">Your final amount is set when processed</p>
+            <p className="mt-1 text-content-secondary">
+              {mode === 'deposit'
+                ? 'The displayed shares are an estimate and may change before processing.'
+                : 'Your shares continue gaining or losing value until the withdrawal is funded.'}
+            </p>
+          </div>
+
+          {!canSubmit ? (
+            <Alert variant="warning" title="Action unavailable">
+              This action is temporarily unavailable based on the latest vault status.
+            </Alert>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full"
+              onClick={onClose}
+              analyticsId="vault_preview_closed"
+              analyticsSurface="vaults"
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant={mode === 'withdraw' ? 'secondary' : 'primary'}
+              className="w-full"
+              disabled={!canSubmit}
+              onClick={onSubmit}
+              analyticsId={`vault_${mode}_submitted`}
+              analyticsSurface="vaults"
+              analyticsProperties={{ tranche: tranche.id }}
+            >
+              {canSubmit ? `Confirm ${actionName}` : 'Unavailable'}
+            </Button>
+          </div>
+          {mode === 'deposit' && needsApproval ? (
+            <p className="text-center text-xs leading-5 text-content-secondary">
+              Your wallet will first ask you to approve this USDC amount, then confirm the deposit.
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {transactionStatus === 'running' ? (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-xl font-semibold text-content-primary">
+              {transactionPhase === 'confirming_onchain'
+                ? 'Waiting for network confirmation'
+                : 'Confirm in your wallet'}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">
+              Keep this window open. Each required transaction appears here in order.
+            </p>
+          </div>
+          <VaultTransactionSteps
+            steps={transactionSteps}
+            currentStepIndex={currentTransactionStep}
+            phase={transactionPhase}
+          />
+        </div>
+      ) : null}
+
+      {transactionStatus === 'error' ? (
+        <div className="space-y-5">
+          <div>
+            <h2 className="text-xl font-semibold text-brand-orange">
+              The {mode === 'deposit' ? 'deposit' : 'withdrawal'} was not submitted
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-content-secondary">
+              No later step will run until you retry.
+            </p>
+          </div>
+          <VaultTransactionSteps
+            steps={transactionSteps}
+            currentStepIndex={currentTransactionStep}
+            phase="error"
+          />
+          {submissionError ? (
+            <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm leading-6 text-brand-orange">
+              {submissionError}
+            </div>
+          ) : null}
+          <div className="grid grid-cols-2 gap-3">
+            <Button type="button" variant="secondary" className="w-full" onClick={onReset}>
+              Back to review
+            </Button>
+            <Button type="button" className="w-full" onClick={onSubmit}>
+              Try again
+            </Button>
           </div>
         </div>
+      ) : null}
 
-        <div className="space-y-3">
-          <PreviewRow
-            label={mode === 'deposit' ? 'USDC deposited' : 'USDC requested'}
-            value={<TokenAmount amount={amount || '0.00'} />}
-          />
-          <PreviewRow
-            label={
-              mode === 'withdraw'
-                ? 'Estimated shares burned'
-                : 'Current indicative shares'
-            }
-            value={
-              estimatedShares === undefined
-                ? 'Live quote unavailable'
-                : `${estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tranche.token}`
-            }
-          />
-          <PreviewRow label="Current share price" value={formatSharePrice(sharePrice)} />
-          {performance ? (
-            <PreviewRow
-              label="7d realized APY"
-              value={formatSignedPercent(performance.apy7d)}
-              valueClassName={performanceValueClassName(performance.apy7d)}
-            />
-          ) : null}
-          <PreviewRow
-            label={mode === 'deposit' ? 'Deposit path' : 'Settlement'}
-            value={mode === 'deposit' ? depositMode : 'Hourly withdrawal queue'}
-          />
-          <PreviewRow
-            label="Target settlement"
-            value={
-              pendingActivationTimestamp === undefined
-                ? 'Next eligible hourly batch'
-                : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
-                    month: 'short',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })
-            }
-          />
-          <PreviewRow
-            label="Frozen-oracle surcharge"
-            value={oracleFrozen === undefined ? 'State unavailable' : oracleFrozen ? 'Included in live vault quote where supported' : 'Inactive'}
-          />
-          <PreviewRow label="Network" value="Arbitrum Sepolia" />
-          <PreviewRow label="Relative risk" value={tranche.riskLabel} />
-          <PreviewRow
-            label="Quote refreshed"
-            value={
-              quoteCapturedAt === undefined
-                ? 'Unavailable'
-                : new Date(quoteCapturedAt).toLocaleTimeString('en-US', {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                    second: '2-digit',
-                  })
-            }
-          />
-        </div>
-
-        <Alert variant="info" title="The final amount is set at settlement">
-            This is a current estimate, not a guaranteed batch outcome. {mode === 'deposit'
-              ? 'The final shares are calculated when the deposit batch settles.'
-              : 'Queued shares remain exposed to gains and losses until the withdrawal is funded.'}
-          </Alert>
-
-        {canSubmit ? (
-          <Alert variant="info" title="What happens next">
-            Confirming starts {needsApproval ? 'an exact USDC approval followed by ' : ''}
-            {mode === 'deposit'
-              ? 'a funded vault-deposit request'
-              : 'a vault-share withdrawal request'}.
-            The app simulates each transaction before asking your wallet to submit it.
-          </Alert>
-        ) : (
-          <Alert variant="warning" title="Action unavailable">
-            The live vault gates do not currently permit this action.
-          </Alert>
-        )}
-
-        {submissionError ? (
-          <p className="text-sm leading-6 text-brand-orange">{submissionError}</p>
-        ) : null}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3 border-t border-brand-border/30 p-4">
-        <Button
-          type="button"
-          variant="secondary"
-          className="w-full"
-          onClick={onClose}
-          analyticsId="vault_preview_closed"
-          analyticsSurface="vaults"
-        >
-          Cancel
-        </Button>
-        <Button
-          type="button"
-          variant={mode === 'withdraw' ? 'secondary' : 'primary'}
-          className="w-full"
-          disabled={!canSubmit}
-          isLoading={isSubmitting}
-          onClick={onSubmit}
-          analyticsId={`vault_${mode}_submitted`}
-          analyticsSurface="vaults"
-          analyticsProperties={{ tranche: tranche.id }}
-        >
-          {canSubmit ? submitLabel : 'Unavailable'}
-        </Button>
-      </div>
+      {transactionStatus === 'success' ? (
+        <VaultRequestQueuedState
+          mode={mode}
+          targetSettlement={targetSettlement}
+          transactionHash={transactionHash}
+          onClose={onClose}
+          onViewRequest={onViewRequest}
+        />
+      ) : null}
     </Modal>
   )
 }
@@ -3052,7 +4119,7 @@ function VaultActionPanel({
   const [showPreview, setShowPreview] = useState(false)
   const [reviewQuote, setReviewQuote] = useState<{
     estimatedShares: number
-    capturedAt: number
+    estimatedSharesRaw: bigint
   }>()
   const [isRefreshingQuote, setIsRefreshingQuote] = useState(false)
   const [quoteRefreshError, setQuoteRefreshError] = useState<string>()
@@ -3064,10 +4131,8 @@ function VaultActionPanel({
   const vaultTransactions = useVaultTransactions({
     vaultAddress: tranche.address,
     allowance: liveData.allowance,
+    showTransactionModal: false,
     onSuccess: () => {
-      setAmount('')
-      setShowPreview(false)
-      setReviewQuote(undefined)
       snapshot.refresh()
       onRefreshRequests()
     },
@@ -3112,7 +4177,7 @@ function VaultActionPanel({
     : undefined
   const maxAmount = mode === 'deposit' ? snapshot.walletUsdc : estimatedPositionUsdc
   const exceedsAvailable = isConnected && maxAmount !== undefined && amountRaw > maxAmount
-  const liveDepositLimit = depositMode === 'Queued deposits open'
+  const liveDepositLimit = depositMode === 'Open for deposits'
     ? liveData.maxRequestDeposit
     : 0n
   const depositLimitExceeded = mode === 'deposit'
@@ -3140,7 +4205,10 @@ function VaultActionPanel({
     || (snapshot.pool.currentTerminalDeficitUsdc ?? 0n) > 0n
   )
   const depositUnavailable = mode === 'deposit'
-    && depositMode !== 'Queued deposits open'
+    && depositMode !== 'Open for deposits'
+  const depositUnavailableStatus = depositUnavailable
+    ? getDepositUnavailableStatus(tranche, liveData, snapshot.pool)
+    : undefined
   const quoteUnavailable = amountRaw > 0n && !isQuotePending && estimatedShares === undefined
   const actionBlocked = actionDataUnavailable || safetyBlocked || depositUnavailable
   const needsApproval = mode === 'deposit'
@@ -3156,15 +4224,15 @@ function VaultActionPanel({
   const canSubmitTransaction = isConnected
     && !isWrongNetwork
     && !formInvalid
-    && (mode === 'withdraw' || depositMode === 'Queued deposits open')
+    && (mode === 'withdraw' || depositMode === 'Open for deposits')
   const inputError = exceedsAvailable
     ? `Exceeds available ${mode === 'deposit' ? 'balance' : 'withdrawal limit'}.`
     : depositLimitExceeded
-      ? 'Exceeds the live deposit-request maximum.'
+      ? 'Amount is above the current deposit limit.'
       : belowMinimumDeposit
         ? `The minimum vault deposit is ${formatFullUsdc(snapshot.pool.minTrancheDepositUsdc)} USDC.`
         : redeemLimitExceeded
-          ? 'Exceeds the number of shares currently eligible for a withdrawal request.'
+          ? 'Amount is above what you can currently withdraw.'
           : undefined
 
   const buttonLabel = !isConnected
@@ -3173,7 +4241,7 @@ function VaultActionPanel({
       ? isSwitchingNetwork
         ? 'Switching network...'
         : 'Switch to Arbitrum Sepolia'
-      : `Review ${mode}`
+      : mode === 'deposit' ? 'Review deposit' : 'Review withdrawal'
 
   async function handlePrimaryAction() {
     if (!isConnected) {
@@ -3197,17 +4265,18 @@ function VaultActionPanel({
       )
 
       if (refreshedSharesRaw === undefined) {
-        setQuoteRefreshError('The live vault quote could not be refreshed. Please try again.')
+        setQuoteRefreshError('The latest estimate could not be refreshed. Please try again.')
         return
       }
 
       setReviewQuote({
         estimatedShares: Number(formatUnits(refreshedSharesRaw, SHARE_DECIMALS)),
-        capturedAt: Date.now(),
+        estimatedSharesRaw: refreshedSharesRaw,
       })
+      vaultTransactions.reset()
       setShowPreview(true)
     } catch {
-      setQuoteRefreshError('The live vault quote could not be refreshed. Please try again.')
+      setQuoteRefreshError('The latest estimate could not be refreshed. Please try again.')
     } finally {
       setIsRefreshingQuote(false)
     }
@@ -3216,14 +4285,33 @@ function VaultActionPanel({
   function handleTransactionSubmit() {
     if (!canSubmitTransaction) return
 
-    setShowPreview(false)
     vaultTransactions.reset()
     if (mode === 'deposit') {
       vaultTransactions.requestDeposit(amountRaw)
     } else {
-      if (quotedSharesRaw === undefined) return
-      vaultTransactions.requestRedeem(quotedSharesRaw)
+      if (reviewQuote?.estimatedSharesRaw === undefined) return
+      vaultTransactions.requestRedeem(reviewQuote.estimatedSharesRaw)
     }
+  }
+
+  function handlePreviewClose() {
+    if (vaultTransactions.isRunning) return
+    const shouldClearForm = vaultTransactions.isSuccess
+    setShowPreview(false)
+    vaultTransactions.reset()
+    if (shouldClearForm) {
+      setAmount('')
+      setReviewQuote(undefined)
+    }
+  }
+
+  function handleViewRequest() {
+    if (vaultTransactions.isRunning) return
+    setShowPreview(false)
+    setAmount('')
+    setReviewQuote(undefined)
+    vaultTransactions.reset()
+    onViewRequests()
   }
 
   return (
@@ -3251,7 +4339,7 @@ function VaultActionPanel({
                 }}
                 className={`px-4 py-2 text-sm font-semibold capitalize transition-colors ${
                   mode === item
-                    ? 'bg-surface-panel text-content-primary'
+                    ? 'bg-brand-peach text-app-bg'
                     : 'text-content-secondary hover:text-brand-peach'
                 }`}
               >
@@ -3279,12 +4367,12 @@ function VaultActionPanel({
             <PreviewRow
               label={
                 mode === 'withdraw'
-                  ? 'Shares burned'
-                  : 'Current indicative shares'
+                  ? 'Estimated shares used'
+                  : 'Estimated shares you’ll receive'
               }
               value={
                 isQuotePending
-                  ? 'Loading quote...'
+                  ? 'Updating estimate...'
                   : estimatedShares === undefined
                     ? '--'
                     : `${estimatedShares.toLocaleString('en-US', { maximumFractionDigits: 6 })} ${tranche.token}`
@@ -3292,12 +4380,12 @@ function VaultActionPanel({
             />
             {mode === 'deposit' ? (
               <>
-                <PreviewRow label="Deposit path" value={depositMode} />
+                <PreviewRow label="Deposit status" value={depositMode} />
                 <PreviewRow
-                  label="Target settlement"
+                  label="Expected processing"
                   value={
                     pendingActivationTimestamp === undefined
-                      ? 'Next eligible hourly batch'
+                      ? 'Next processing time'
                       : new Date(pendingActivationTimestamp * 1_000).toLocaleString('en-US', {
                           month: 'short',
                           day: 'numeric',
@@ -3316,10 +4404,10 @@ function VaultActionPanel({
                     : <TokenAmount amount={positionValue.toLocaleString('en-US', { maximumFractionDigits: 2 })} />}
                 />
                 <PreviewRow
-                  label="Current estimated receipt"
+                  label="Estimated USDC you’ll receive"
                   value={<TokenAmount amount={amount || '0.00'} />}
                 />
-                <PreviewRow label="Settlement" value="Queued; Senior requests are funded first" />
+                <PreviewRow label="Processing" value="Processed hourly; Senior withdrawals are funded first" />
               </>
             )}
             {performance ? (
@@ -3330,29 +4418,49 @@ function VaultActionPanel({
               />
             ) : null}
             <PreviewRow
-              label="Oracle surcharge"
-              value={snapshot.pool.oracleFrozen === undefined ? 'State unavailable' : snapshot.pool.oracleFrozen ? 'Reflected by vault preview where supported' : 'Inactive'}
+              label="Temporary pricing fee"
+              value={liveData.frozenLpFeeBps === undefined || snapshot.pool.oracleFrozen === undefined
+                ? 'State unavailable'
+                : snapshot.pool.oracleFrozen
+                  ? `${(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% active`
+                  : 'Inactive'}
+              valueClassName={snapshot.pool.oracleFrozen === true ? 'text-brand-orange' : 'text-content-primary'}
             />
           </div>
 
-          {mode === 'deposit' && depositMode === 'Queued deposits open' ? (
-            <Alert variant="info" title="This deposit will be queued">
-              USDC moves into vault escrow now. You can cancel before settlement. After the
-              protocol settles the batch, claim the shares from Your position.
+          {mode === 'deposit' && depositMode === 'Open for deposits' ? (
+            <Alert variant="info" title="This deposit is processed hourly">
+              The vault holds your USDC immediately. You can cancel before it is processed.
+              Once your shares are ready, move them to your wallet from Your position.
             </Alert>
           ) : null}
 
-          {mode === 'deposit' && depositMode !== 'Queued deposits open' ? (
+          {depositUnavailableStatus ? (
             <Alert variant="warning" title="Deposits unavailable">
-              The vault is not accepting new funded deposit requests right now.
+              <p>{depositUnavailableStatus.reason}</p>
+              <p className="mt-2">
+                <span className="font-semibold">Available again:</span>{' '}
+                {depositUnavailableStatus.availability}
+              </p>
             </Alert>
           ) : null}
 
           {mode === 'withdraw' && liveData.maxRequestRedeem === 0n && isConnected ? (
-            <Alert variant="warning" title="No shares can be queued right now">
-              The contract currently reports zero eligible shares for a new withdrawal request.
+            <Alert variant="warning" title="Withdrawals are temporarily unavailable">
+              None of your shares are currently available to withdraw.
             </Alert>
           ) : null}
+
+          {mode === 'withdraw'
+            && snapshot.pool.oracleFrozen === true
+            && liveData.frozenLpFeeBps !== undefined ? (
+              <Alert variant="warning" title="Temporary withdrawal surcharge active">
+                A temporary {(Number(liveData.frozenLpFeeBps) / 100).toFixed(2)}% fee is active
+                because live market pricing is unavailable. If it is still active when your
+                withdrawal is processed, more shares will be needed. Unless the withdrawal is
+                urgent, wait for live pricing to return.
+              </Alert>
+            ) : null}
 
           <Button
             type="button"
@@ -3377,22 +4485,9 @@ function VaultActionPanel({
             {buttonLabel}
           </Button>
 
-          {safetyBlocked ? (
+          {actionDataUnavailable && mode !== 'deposit' ? (
             <p className="text-xs leading-5 text-brand-orange">
-              New deposits are paused by the current pool or vault safety state. Existing
-              withdrawal requests can still be queued and managed.
-            </p>
-          ) : null}
-          {actionDataUnavailable ? (
-            <p className="text-xs leading-5 text-brand-orange">
-              Live HousePool, vault, or wallet data is incomplete, so financial previews are
-              disabled.
-            </p>
-          ) : null}
-          {mode === 'deposit' && snapshot.pool.degradedMode === true && snapshot.pool.seniorImpaired !== true ? (
-            <p className="text-xs leading-5 text-warning">
-              Degraded mode is active. Deposit availability still depends on the vault&apos;s
-              separate live safety gates.
+              Some live pool, vault, or wallet data is unavailable, so the preview is disabled.
             </p>
           ) : null}
           {switchError ? <p className="text-xs leading-5 text-brand-orange">{switchError}</p> : null}
@@ -3405,7 +4500,7 @@ function VaultActionPanel({
 
           <p className="text-xs leading-5 text-content-secondary">
             Vault shares can rise or fall in value. A displayed position is not a promise of
-            immediate redemption, and recent APY is not a forecast.
+            an immediate withdrawal, and recent APY is not a forecast.
           </p>
         </div>
 
@@ -3414,11 +4509,11 @@ function VaultActionPanel({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-content-secondary">
-                  Your request queue
+                  Your pending activity
                 </p>
                 <p className="mt-1 text-lg font-semibold text-content-primary">
-                  {depositRequests.length + redeemRequests.length} active{' '}
-                  {depositRequests.length + redeemRequests.length === 1 ? 'request' : 'requests'}
+                  {depositRequests.length + redeemRequests.length} pending{' '}
+                  {depositRequests.length + redeemRequests.length === 1 ? 'item' : 'items'}
                 </p>
                 <p className="mt-1 text-xs leading-5 text-content-secondary">
                   {depositRequests.length} deposit · {redeemRequests.length} withdrawal
@@ -3432,7 +4527,7 @@ function VaultActionPanel({
                   || redeemRequests.some(({ claimableAssets, refundPending }) => (
                     claimableAssets > 0n || refundPending
                   ))
-                  ? 'Action ready'
+                  ? 'Action needed'
                   : 'In progress'}
               </Badge>
             </div>
@@ -3442,7 +4537,7 @@ function VaultActionPanel({
               className="mt-4 w-full"
               onClick={onViewRequests}
             >
-              View & manage
+              Review pending activity
             </Button>
           </div>
         ) : null}
@@ -3450,9 +4545,9 @@ function VaultActionPanel({
 
       <VaultPreviewModal
         isOpen={showPreview}
-        onClose={() => {
-          setShowPreview(false)
-        }}
+        onClose={handlePreviewClose}
+        onReset={vaultTransactions.reset}
+        onViewRequest={handleViewRequest}
         mode={mode}
         tranche={tranche}
         amount={amount}
@@ -3462,10 +4557,13 @@ function VaultActionPanel({
         performance={performance}
         oracleFrozen={snapshot.pool.oracleFrozen}
         pendingActivationTimestamp={pendingActivationTimestamp}
-        quoteCapturedAt={reviewQuote?.capturedAt}
         canSubmit={canSubmitTransaction}
         needsApproval={needsApproval}
-        isSubmitting={vaultTransactions.isRunning}
+        transactionStatus={vaultTransactions.status}
+        transactionPhase={vaultTransactions.phase}
+        transactionSteps={vaultTransactions.steps}
+        currentTransactionStep={vaultTransactions.currentStepIndex}
+        transactionHash={vaultTransactions.hash}
         onSubmit={handleTransactionSubmit}
         submissionError={vaultTransactions.error}
       />
@@ -3496,10 +4594,21 @@ function VaultDetail({
   isSwitchingNetwork: boolean
   switchError?: string
 }) {
-  const [activeTab, setActiveTab] = useState<DetailTab>('overview')
+  const [activeSection, setActiveSection] = useState<DetailSectionId>('overview')
+  const stickyHeaderHeight = useStickyHeaderHeight()
+  const stickyElementTop = stickyHeaderHeight + STICKY_ELEMENT_GAP_PX
+  const sectionScrollOffset = stickyElementTop + SECTION_NAV_HEIGHT_PX
   const liveData = snapshot.tranches[tranche.id]
   const performance = getCompleteVaultPerformance(history, tranche.id)
   const hasPerformance = performance !== undefined
+  const vaultActivity = useVaultActivity({
+    seniorTotalAssets: snapshot.tranches.senior.totalAssets,
+    seniorEffectiveSupply: snapshot.tranches.senior.effectiveTotalSupply
+      ?? snapshot.tranches.senior.totalSupply,
+    juniorTotalAssets: snapshot.tranches.junior.totalAssets,
+    juniorEffectiveSupply: snapshot.tranches.junior.effectiveTotalSupply
+      ?? snapshot.tranches.junior.totalSupply,
+  })
   const vaultRequests = useVaultRequests({
     controller: ownerAddress,
     isSenior: tranche.id === 'senior',
@@ -3508,30 +4617,75 @@ function VaultDetail({
   const poolWithdrawCap = tranche.id === 'senior'
     ? snapshot.pool.seniorPoolWithdrawCapUsdc
     : snapshot.pool.juniorPoolWithdrawCapUsdc
-  const tabs: { id: DetailTab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    ...(hasPerformance ? [{ id: 'performance' as const, label: 'Performance' }] : []),
-    { id: 'risk', label: 'Risk' },
-    { id: 'activity', label: 'Your position' },
-  ]
-  const displayedTab = activeTab === 'performance' && !hasPerformance ? 'overview' : activeTab
+  const sections = useMemo<{ id: DetailSectionId; anchor: string; label: string }[]>(() => [
+    { id: 'overview', anchor: 'overview', label: 'Overview' },
+    ...(hasPerformance
+      ? [{ id: 'performance' as const, anchor: 'performance', label: 'Performance' }]
+      : []),
+    { id: 'position', anchor: 'your-position', label: 'Your position' },
+    { id: 'activity', anchor: 'activity', label: 'Activity' },
+  ], [hasPerformance])
 
-  function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, index: number) {
-    let nextIndex: number | undefined
+  function scrollToSection(sectionId: DetailSectionId) {
+    const section = sections.find((candidate) => candidate.id === sectionId)
+    if (!section) return
 
-    if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length
-    if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length
-    if (event.key === 'Home') nextIndex = 0
-    if (event.key === 'End') nextIndex = tabs.length - 1
-    if (nextIndex === undefined) return
-
-    event.preventDefault()
-    const nextTab = tabs[nextIndex]
-    setActiveTab(nextTab.id)
-    window.requestAnimationFrame(() => {
-      document.getElementById(`vault-tab-${tranche.id}-${nextTab.id}`)?.focus()
+    setActiveSection(section.id)
+    document.getElementById(section.anchor)?.scrollIntoView?.({
+      behavior: 'smooth',
+      block: 'start',
     })
+    window.history.replaceState(window.history.state, '', `#${section.anchor}`)
   }
+
+  useEffect(() => {
+    const sectionIds = new Set(sections.map((section) => section.anchor))
+    const requestedAnchor = window.location.hash.slice(1)
+    if (sectionIds.has(requestedAnchor)) {
+      const requestedSection = sections.find((section) => section.anchor === requestedAnchor)
+      if (requestedSection) setActiveSection(requestedSection.id)
+    } else {
+      setActiveSection('overview')
+    }
+
+    const updateActiveSection = () => {
+      let nextSection = sections[0]
+      const currentScrollTop = window.scrollY
+      const maximumScrollTop = Math.max(
+        document.documentElement.scrollHeight - window.innerHeight,
+        0,
+      )
+
+      for (const section of sections) {
+        const element = document.getElementById(section.anchor)
+        if (!element) continue
+
+        const sectionViewportTop = element.getBoundingClientRect().top
+        const sectionTop = sectionViewportTop + currentScrollTop
+        const activationScrollTop = Math.min(
+          Math.max(sectionTop - sectionScrollOffset, 0),
+          maximumScrollTop,
+        )
+
+        if (maximumScrollTop > 0) {
+          if (currentScrollTop < activationScrollTop) break
+        } else if (sectionViewportTop > sectionScrollOffset) {
+          break
+        }
+        nextSection = section
+      }
+      if (nextSection) setActiveSection(nextSection.id)
+    }
+
+    updateActiveSection()
+    window.addEventListener('scroll', updateActiveSection, { passive: true })
+    window.addEventListener('resize', updateActiveSection)
+
+    return () => {
+      window.removeEventListener('scroll', updateActiveSection)
+      window.removeEventListener('resize', updateActiveSection)
+    }
+  }, [sectionScrollOffset, sections])
 
   return (
     <div className="space-y-6">
@@ -3577,7 +4731,7 @@ function VaultDetail({
           hasPerformance ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
         }`}>
           <PoolStat
-            label="Tranche TVL / NAV"
+            label="Current vault value"
             value={formatCompactUsd(liveData.totalAssets)}
             subvalue={tranche.id === 'senior'
               ? (
@@ -3588,13 +4742,13 @@ function VaultDetail({
                 </span>
               )
               : liveData.maxRequestDeposit === undefined
-                ? 'Current request limit unavailable'
+                ? 'Current deposit limit unavailable'
                 : (
                   <span>
-                    Current request limit: {formatVaultLimit(liveData.maxRequestDeposit)}
+                    Current deposit limit: {formatVaultLimit(liveData.maxRequestDeposit)}
                   </span>
                 )}
-            tooltip="Current ERC-4626 totalAssets accounting value. This can rise or fall and is not cumulative deposits."
+            tooltip="The current estimated value of this vault. It can rise or fall and is not the same as cumulative deposits."
           />
           {performance ? (
             <PoolStat
@@ -3602,7 +4756,7 @@ function VaultDetail({
               value={formatSignedPercent(performance.apy7d)}
               subvalue={`${formatSignedPercent(performance.return7d)} actual 7d return`}
               valueClassName={performanceValueClassName(performance.apy7d)}
-              tooltip="Annualized historical return calculated from seven days of indexed share-price checkpoints."
+              tooltip="Annualized historical return calculated from share prices recorded over the last seven days."
             />
           ) : null}
           <PoolStat
@@ -3611,97 +4765,160 @@ function VaultDetail({
             subvalue={`1 ${tranche.token}`}
           />
           <PoolStat
-            label="Pool withdrawal cap"
+            label="Estimated withdrawal liquidity"
             value={formatCompactUsd(poolWithdrawCap)}
             subvalue={tranche.withdrawalPriority}
           />
           <PoolStat
-            label="Return model"
+            label="How returns work"
             value={tranche.targetReturn}
-            subvalue={tranche.returnModel}
-            valueClassName="text-warning"
+            subvalue={(
+              <>
+                {tranche.returnModel}{' '}
+                <DocsLink
+                  href={DOCS_LINKS.poolLiquidity.href}
+                  title={DOCS_LINKS.poolLiquidity.title}
+                  className="whitespace-nowrap"
+                >
+                  Learn more
+                </DocsLink>
+              </>
+            )}
           />
         </dl>
       </section>
 
       {liveData.lpEpochSettlementPaused === true ? (
-        <Alert variant="warning" title="Epoch settlement paused">
-          You can still submit requests, claim already-funded assets or shares, and use any
-          cancellation or refund action offered for your request. Deposit requests will not
-          activate and redemption requests will not receive new funding until governance resumes
-          hourly settlement.
+        <Alert variant="warning" title="Hourly processing paused">
+          You can still submit deposits or withdrawals, move ready funds to your wallet, cancel
+          pending activity, and return available funds or shares. New deposits will not start
+          earning and withdrawals will not receive new funds until hourly processing resumes.
         </Alert>
       ) : null}
 
+      <nav
+        aria-label={`${tranche.name} page sections`}
+        className="sticky z-10 border border-brand-border/30 bg-app-bg px-4 lg:w-[calc(100%-24rem)]"
+        style={{ top: stickyElementTop }}
+      >
+        <div className="flex items-stretch gap-6 overflow-x-auto">
+          <span className="hidden shrink-0 items-center border-r border-brand-border/25 pr-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-content-secondary sm:flex">
+            On this page
+          </span>
+          {sections.map((section, index) => (
+            <button
+              key={section.id}
+              type="button"
+              aria-label={section.label}
+              aria-current={activeSection === section.id ? 'location' : undefined}
+              aria-controls={section.anchor}
+              onClick={() => {
+                scrollToSection(section.id)
+              }}
+              className={`group relative flex shrink-0 items-center gap-2 py-3 text-sm font-semibold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:origin-left after:transition-transform ${
+                activeSection === section.id
+                  ? 'text-content-primary after:scale-x-100 after:bg-brand-peach'
+                  : 'text-content-secondary after:scale-x-0 after:bg-brand-peach hover:text-brand-peach hover:after:scale-x-100'
+              }`}
+            >
+              <span className={`font-mono text-[10px] ${
+                activeSection === section.id ? 'text-brand-peach' : 'text-content-secondary/70'
+              }`}>
+                {String(index + 1).padStart(2, '0')}
+              </span>
+              <span>{section.label}</span>
+            </button>
+          ))}
+        </div>
+      </nav>
+
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-6">
-          <div
-            role="tablist"
-            aria-label={`${tranche.name} details`}
-            className="flex overflow-x-auto border border-brand-border/30 bg-surface-panel p-1"
-          >
-            {tabs.map((tab, index) => (
-              <button
-                key={tab.id}
-                id={`vault-tab-${tranche.id}-${tab.id}`}
-                type="button"
-                role="tab"
-                aria-selected={displayedTab === tab.id}
-                aria-controls={`vault-panel-${tranche.id}`}
-                tabIndex={displayedTab === tab.id ? 0 : -1}
-                onClick={() => {
-                  setActiveTab(tab.id)
-                }}
-                onKeyDown={(event) => {
-                  handleTabKeyDown(event, index)
-                }}
-                className={`shrink-0 px-4 py-2 text-sm font-semibold transition-colors ${
-                  displayedTab === tab.id
-                    ? 'bg-app-bg text-content-primary'
-                    : 'text-content-secondary hover:text-brand-peach'
-                }`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
 
-          <div
-            id={`vault-panel-${tranche.id}`}
-            role="tabpanel"
-            aria-labelledby={`vault-tab-${tranche.id}-${displayedTab}`}
+          <section
+            id="overview"
+            data-vault-detail-section="overview"
+            aria-labelledby={`vault-section-heading-${tranche.id}-overview`}
+            className="space-y-4"
+            style={{ scrollMarginTop: sectionScrollOffset }}
           >
-            {displayedTab === 'overview' ? (
-              <OverviewTab
-                tranche={tranche}
-                liveData={liveData}
-                snapshot={snapshot}
-                isConnected={isConnected}
-              />
-            ) : null}
-            {displayedTab === 'performance' && performance ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+                Vault details
+              </p>
+              <h2
+                id={`vault-section-heading-${tranche.id}-overview`}
+                className="mt-1 text-2xl font-semibold text-content-primary"
+              >
+                Overview
+              </h2>
+            </div>
+            <OverviewTab
+              tranche={tranche}
+              liveData={liveData}
+              snapshot={snapshot}
+              isConnected={isConnected}
+            />
+          </section>
+
+          {performance ? (
+            <section
+              id="performance"
+              data-vault-detail-section="performance"
+              aria-labelledby={`vault-section-heading-${tranche.id}-performance`}
+              className="space-y-4"
+              style={{ scrollMarginTop: sectionScrollOffset }}
+            >
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+                  Historical results
+                </p>
+                <h2
+                  id={`vault-section-heading-${tranche.id}-performance`}
+                  className="mt-1 text-2xl font-semibold text-content-primary"
+                >
+                  Performance
+                </h2>
+              </div>
               <PerformanceTab tranche={tranche} performance={performance} />
-            ) : null}
-            {displayedTab === 'risk' ? <RiskTab tranche={tranche} /> : null}
-            {displayedTab === 'activity' ? (
-              <ActivityTab
-                tranche={tranche}
-                liveData={liveData}
-                snapshot={snapshot}
-                isConnected={isConnected}
-                isWrongNetwork={isWrongNetwork}
-                depositRequests={vaultRequests.depositRequests}
-                redeemRequests={vaultRequests.redeemRequests}
-                requestsLoading={vaultRequests.isLoading}
-                requestDiscoveryError={vaultRequests.discoveryError}
-                onRefreshRequests={vaultRequests.refresh}
-                onSwitchNetwork={onSwitchNetwork}
-              />
-            ) : null}
-          </div>
+            </section>
+          ) : null}
+
+          <section
+            id="your-position"
+            data-vault-detail-section="activity"
+            aria-labelledby={`vault-section-heading-${tranche.id}-activity`}
+            className="space-y-4"
+            style={{ scrollMarginTop: sectionScrollOffset }}
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-content-secondary">
+                Wallet and pending activity
+              </p>
+              <h2
+                id={`vault-section-heading-${tranche.id}-activity`}
+                className="mt-1 text-2xl font-semibold text-content-primary"
+              >
+                Your position
+              </h2>
+            </div>
+            <ActivityTab
+              tranche={tranche}
+              liveData={liveData}
+              snapshot={snapshot}
+              isConnected={isConnected}
+              isWrongNetwork={isWrongNetwork}
+              depositRequests={vaultRequests.depositRequests}
+              redeemRequests={vaultRequests.redeemRequests}
+              requestsLoading={vaultRequests.isLoading}
+              requestDiscoveryError={vaultRequests.discoveryError}
+              onRefreshRequests={vaultRequests.refresh}
+              onSwitchNetwork={onSwitchNetwork}
+            />
+          </section>
         </div>
 
-        <div className="lg:sticky lg:top-32">
+        <div className="lg:sticky" style={{ top: stickyElementTop }}>
           <VaultActionPanel
             key={tranche.id}
             tranche={tranche}
@@ -3718,11 +4935,20 @@ function VaultDetail({
             redeemRequests={vaultRequests.redeemRequests}
             onRefreshRequests={vaultRequests.refresh}
             onViewRequests={() => {
-              setActiveTab('activity')
+              scrollToSection('position')
             }}
           />
         </div>
       </div>
+
+      <VaultActivitySection
+        holders={vaultActivity.holders}
+        activity={vaultActivity.activity}
+        tranche={tranche.id}
+        scrollMarginTop={sectionScrollOffset}
+        isLoading={vaultActivity.isLoading}
+        isError={vaultActivity.isError}
+      />
     </div>
   )
 }

@@ -33,15 +33,21 @@ vi.mock('../useTransactionSequence', () => ({
   useTransactionSequence: () => ({
     execute: mocks.execute,
     reset: mocks.reset,
+    status: 'idle',
+    phase: 'idle',
+    steps: [],
+    currentStepIndex: -1,
     isRunning: false,
     isSuccess: false,
     isError: false,
     error: null,
+    hash: null,
   }),
 }))
 
 interface SequenceConfig {
   type: string
+  showModal?: boolean
   buildSteps: () => {
     label: string
     action: () => Promise<`0x${string}` | undefined>
@@ -101,6 +107,29 @@ describe('useVaultTransactions', () => {
 
     const config = mocks.execute.mock.calls[0][0] as SequenceConfig
     expect(config.buildSteps().map(({ label }) => label)).toEqual(['Queue deposit'])
+  })
+
+  it('keeps every vault action embedded when the shared modal is disabled', () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 5_000_000n,
+      showTransactionModal: false,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+      result.current.requestRedeem(1_000_000n)
+      result.current.cancelPendingDeposit(500_001n)
+      result.current.cancelRedeemRequest(500_002n)
+      result.current.claimDepositShares(500_003n)
+      result.current.claimRedeem(500_004n, 1_000_000n)
+      result.current.claimRedeemRefund(500_005n)
+    })
+
+    expect(mocks.execute).toHaveBeenCalledTimes(7)
+    for (const [config] of mocks.execute.mock.calls) {
+      expect((config as SequenceConfig).showModal).toBe(false)
+    }
   })
 
   it('approves exact USDC and submits a queued deposit request', async () => {

@@ -40,6 +40,13 @@ export {
   type VaultDepositRequest,
   type VaultRedeemRequest,
 } from './useVaultRequests'
+export {
+  useVaultActivity,
+  type VaultActivityKind,
+  type VaultActivityTranche,
+  type VaultHolderDistribution,
+  type VaultOverviewActivityItem,
+} from './useVaultActivity'
 export { useMintFlow } from './useMintFlow'
 export { usePerpsMarket } from './usePerpsMarket'
 export { usePerpsAccount, type PerpsPendingOrder, type PerpsPosition } from './usePerpsAccount'

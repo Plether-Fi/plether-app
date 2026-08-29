@@ -13,12 +13,14 @@ interface UseVaultTransactionsOptions {
   vaultAddress: Address
   allowance?: bigint
   onSuccess?: () => void
+  showTransactionModal?: boolean
 }
 
 export function useVaultTransactions({
   vaultAddress,
   allowance,
   onSuccess,
+  showTransactionModal = true,
 }: UseVaultTransactionsOptions) {
   const config = useConfig()
   const publicClient = usePublicClient({ chainId: PERPS_ARBITRUM_SEPOLIA_CHAIN_ID })
@@ -44,6 +46,7 @@ export function useVaultTransactions({
     void sequence.execute({
       title: 'Queueing USDC for Plether Vault',
       type: 'supply',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => {
         const steps: TransactionStep[] = []
 
@@ -97,13 +100,14 @@ export function useVaultTransactions({
       },
       onSuccess,
     })
-  }, [allowance, config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [allowance, config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const requestRedeem = useCallback((shares: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Queueing a Plether Vault withdrawal',
       type: 'withdraw',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Queue withdrawal',
         action: async () => {
@@ -127,13 +131,14 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const cancelPendingDeposit = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Cancelling queued vault deposit',
       type: 'withdraw',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Recover USDC',
         action: async () => {
@@ -157,13 +162,14 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const cancelRedeemRequest = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Cancelling queued vault withdrawal',
       type: 'supply',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Cancel withdrawal',
         action: async () => {
@@ -187,13 +193,14 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const claimDepositShares = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Claiming Plether Vault shares',
       type: 'supply',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Claim shares',
         action: async () => {
@@ -217,13 +224,14 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const claimRedeem = useCallback((requestId: bigint, shares: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Claiming funded vault withdrawal',
       type: 'withdraw',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Claim USDC',
         action: async () => {
@@ -247,13 +255,14 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   const claimRedeemRefund = useCallback((requestId: bigint) => {
     const expectedAddress = getAccount(config).address
     void sequence.execute({
       title: 'Reclaiming unfunded vault shares',
       type: 'supply',
+      showModal: showTransactionModal,
       buildSteps: (): TransactionStep[] => [{
         label: 'Reclaim shares',
         action: async () => {
@@ -277,7 +286,7 @@ export function useVaultTransactions({
       }],
       onSuccess,
     })
-  }, [config, onSuccess, requireTransactionContext, sequence, vaultAddress, writeContractAsync])
+  }, [config, onSuccess, requireTransactionContext, sequence, showTransactionModal, vaultAddress, writeContractAsync])
 
   return {
     requestDeposit,
@@ -290,6 +299,11 @@ export function useVaultTransactions({
     isRunning: sequence.isRunning,
     isSuccess: sequence.isSuccess,
     isError: sequence.isError,
+    status: sequence.status,
+    phase: sequence.phase,
+    steps: sequence.steps,
+    currentStepIndex: sequence.currentStepIndex,
+    hash: sequence.hash,
     error: sequence.error,
     reset: sequence.reset,
   }
