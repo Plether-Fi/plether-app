@@ -1,4 +1,5 @@
-aws_region                       = "us-east-1"
+aws_region                       = "ap-southeast-1"
+expected_aws_account_id          = "932542905614"
 environment                      = "sepolia"
 posthog_project_token            = "phc_YOUR_POSTHOG_PROJECT_TOKEN"
 posthog_otlp_host                = "eu.i.posthog.com"
@@ -55,7 +56,7 @@ insights_registration_privacy_version             = "2026-09-13"
 # the reviewed manifest (including perps_indexer_start_block), set this ID to
 # the exact competition slug.
 # insights_competition_release_id  = "testnet-trading-2026-09"
-alb_certificate_arn            = "arn:aws:acm:us-east-1:ACCOUNT_ID:certificate/CERTIFICATE_ID"
+alb_certificate_arn            = "arn:aws:acm:ap-southeast-1:932542905614:certificate/CERTIFICATE_ID"
 api_hostname                   = "api.sepolia.plether.com"
 operations_alarm_sns_topic_arn = ""
 aa_ip_rate_limit_per_minute    = "120"
@@ -105,6 +106,7 @@ liquidation_worker_index_batch_size = "5000"
 liquidation_worker_reorg_overlap_blocks = "12"
 liquidation_worker_pending_replacement_seconds = "120"
 liquidation_worker_desired_count     = 1
+api_desired_count                    = 1
 consolidate_workers            = true
 api_container_cpu              = 1024
 api_container_memory           = 2048
@@ -117,10 +119,9 @@ db_allocated_storage           = 40
 # Desired final type. For an existing gp2 instance, keep gp2 through the
 # retention/PITR activation stage and change only this value in the next plan.
 db_storage_type                = "gp3"
-# Optional hardening for a new or already encrypted database. Keep false for an
-# existing unencrypted instance; enabling it requires a separately planned
-# encrypted snapshot copy/restore and endpoint cutover.
-db_storage_encrypted           = false
+# The company account restores the encrypted Singapore snapshot. Never point
+# this configuration at the source account's unencrypted Virginia instance.
+db_storage_encrypted           = true
 db_kms_key_id                  = "" # Uses the AWS-managed RDS key; optionally set a reviewed customer-key ARN.
 db_ssl_root_cert_path          = "/etc/ssl/certs/aws-rds-global-bundle.pem"
 db_ca_cert_identifier          = "rds-ca-rsa2048-g1"
@@ -132,6 +133,9 @@ db_skip_final_snapshot         = false
 # Must be unique in this AWS region for the current DB lifecycle. Choose a new
 # suffix before recreating the instance so the prior final snapshot is retained.
 db_final_snapshot_identifier = "plether-sepolia-final-20260812-a"
+# Set during the company-account migration to the encrypted snapshot copied
+# into ap-southeast-1. Keep null for a brand-new database.
+db_snapshot_identifier       = null
 
 # First deploy with these safe values. After the candle-admin migration, set
 # write mode to dual; change read mode only after full Sepolia coverage verifies.

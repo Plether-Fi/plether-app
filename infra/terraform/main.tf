@@ -1,5 +1,7 @@
 terraform {
-  required_version = ">= 1.5"
+  required_version = "~> 1.16.0"
+
+  backend "s3" {}
 
   required_providers {
     aws = {
@@ -10,8 +12,8 @@ terraform {
 }
 
 provider "aws" {
-  region  = var.aws_region
-  profile = "plether"
+  region              = var.aws_region
+  allowed_account_ids = [var.expected_aws_account_id]
 
   default_tags {
     tags = {
