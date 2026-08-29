@@ -82,4 +82,52 @@ describe('Modal analytics', () => {
       close_reason: 'state_change',
     }))
   })
+
+  it('names the dialog, traps focus, and restores the trigger', async () => {
+    const onClose = vi.fn()
+    const { rerender } = render(
+      <>
+        <button type="button">Open preview</button>
+        <Modal isOpen={false} onClose={onClose} title="Accessible preview">
+          <button type="button">Confirm action</button>
+        </Modal>
+      </>
+    )
+
+    const trigger = screen.getByRole('button', { name: 'Open preview' })
+    trigger.focus()
+
+    rerender(
+      <>
+        <button type="button">Open preview</button>
+        <Modal isOpen onClose={onClose} title="Accessible preview" inertBackground>
+          <button type="button">Confirm action</button>
+        </Modal>
+      </>
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Accessible preview' })
+    const closeButton = screen.getByRole('button', { name: 'Close dialog' })
+    const confirmButton = screen.getByRole('button', { name: 'Confirm action' })
+    expect(dialog).toBeInTheDocument()
+    await waitFor(() => {
+      expect(closeButton).toHaveFocus()
+    })
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(confirmButton).toHaveFocus()
+
+    rerender(
+      <>
+        <button type="button">Open preview</button>
+        <Modal isOpen={false} onClose={onClose} title="Accessible preview">
+          <button type="button">Confirm action</button>
+        </Modal>
+      </>
+    )
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Open preview' })).toHaveFocus()
+    })
+  })
 })

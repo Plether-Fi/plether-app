@@ -1,0 +1,305 @@
+import { act, renderHook } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
+import { useVaultTransactions } from '../useVaultTransactions'
+
+const mocks = vi.hoisted(() => ({
+  address: '0x1111111111111111111111111111111111111111' as `0x${string}` | undefined,
+  chainId: 421614,
+  execute: vi.fn(),
+  reset: vi.fn(),
+  simulateContract: vi.fn(),
+  writeContractAsync: vi.fn(),
+}))
+
+vi.mock('wagmi', () => ({
+  useConfig: () => ({ id: 'test-config' }),
+  usePublicClient: () => ({
+    simulateContract: mocks.simulateContract,
+  }),
+  useWriteContract: () => ({
+    writeContractAsync: mocks.writeContractAsync,
+  }),
+}))
+
+vi.mock('@wagmi/core', () => ({
+  getAccount: () => ({
+    address: mocks.address,
+    chainId: mocks.chainId,
+  }),
+}))
+
+vi.mock('../useTransactionSequence', () => ({
+  useTransactionSequence: () => ({
+    execute: mocks.execute,
+    reset: mocks.reset,
+    status: 'idle',
+    phase: 'idle',
+    steps: [],
+    currentStepIndex: -1,
+    isRunning: false,
+    isSuccess: false,
+    isError: false,
+    error: null,
+    hash: null,
+  }),
+}))
+
+interface SequenceConfig {
+  type: string
+  showModal?: boolean
+  buildSteps: () => {
+    label: string
+    action: () => Promise<`0x${string}` | undefined>
+  }[]
+}
+
+describe('useVaultTransactions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    mocks.address = '0x1111111111111111111111111111111111111111'
+    mocks.chainId = 421614
+    mocks.execute.mockResolvedValue(undefined)
+    mocks.simulateContract.mockResolvedValue({ request: {} })
+    mocks.writeContractAsync.mockResolvedValue('0xabc')
+  })
+
+  it('approves exact USDC before queueing a deposit when allowance is insufficient', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe('supply')
+    const steps = config.buildSteps()
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
+
+    await steps[0].action()
+    await steps[1].action()
+
+    expect(mocks.simulateContract).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.usdc,
+      functionName: 'approve',
+      args: [PERPS_ARBITRUM_SEPOLIA.seniorVault, 2_000_000n],
+    }))
+    expect(mocks.simulateContract).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      functionName: 'requestDeposit',
+      args: [2_000_000n, mocks.address],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips approval when the current allowance covers a queued deposit', () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 5_000_000n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.buildSteps().map(({ label }) => label)).toEqual(['Queue deposit'])
+  })
+
+  it('keeps every vault action embedded when the shared modal is disabled', () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 5_000_000n,
+      showTransactionModal: false,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+      result.current.requestRedeem(1_000_000n)
+      result.current.cancelPendingDeposit(500_001n)
+      result.current.cancelRedeemRequest(500_002n)
+      result.current.claimDepositShares(500_003n)
+      result.current.claimRedeem(500_004n, 1_000_000n)
+      result.current.claimRedeemRefund(500_005n)
+    })
+
+    expect(mocks.execute).toHaveBeenCalledTimes(7)
+    for (const [config] of mocks.execute.mock.calls) {
+      expect((config as SequenceConfig).showModal).toBe(false)
+    }
+  })
+
+  it('approves exact USDC and submits a queued deposit request', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(4_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe('supply')
+    const steps = config.buildSteps()
+    expect(steps.map(({ label }) => label)).toEqual(['Approve USDC', 'Queue deposit'])
+
+    await steps[0].action()
+    await steps[1].action()
+
+    expect(mocks.simulateContract).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      functionName: 'requestDeposit',
+      args: [4_000_000n, mocks.address],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      chainId: 421614,
+      functionName: 'requestDeposit',
+    }))
+  })
+
+  it('simulates and submits an asynchronous share redemption request', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestRedeem(3_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe('withdraw')
+    const [requestStep] = config.buildSteps()
+    expect(requestStep.label).toBe('Queue withdrawal')
+    await requestStep.action()
+
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      functionName: 'requestRedeem',
+      args: [3_000_000n, mocks.address, mocks.address],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      account: mocks.address,
+      chainId: 421614,
+      functionName: 'requestRedeem',
+    }))
+  })
+
+  it.each([
+    ['cancelPendingDeposit', 'Recover USDC', 'withdraw'],
+    ['claimDepositShares', 'Claim shares', 'supply'],
+  ] as const)('simulates and submits %s for an epoch', async (method, label, type) => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current[method](500_002n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    expect(config.type).toBe(type)
+    const [step] = config.buildSteps()
+    expect(step.label).toBe(label)
+    await step.action()
+
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      address: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      functionName: method,
+      args: [500_002n],
+    }))
+    expect(mocks.writeContractAsync).toHaveBeenCalledWith(expect.objectContaining({
+      account: mocks.address,
+      chainId: 421614,
+      functionName: method,
+    }))
+  })
+
+  it('cancels a queued withdrawal for the connected controller', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.cancelRedeemRequest(500_002n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    const [step] = config.buildSteps()
+    await step.action()
+    expect(mocks.simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      functionName: 'cancelRedeemRequest',
+      args: [500_002n, mocks.address, mocks.address],
+    }))
+  })
+
+  it('claims funded withdrawal assets and an unfunded share refund', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.juniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.claimRedeem(500_002n, 3_000_000n)
+    })
+    let config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    await config.buildSteps()[0].action()
+    expect(mocks.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'claimRedeem',
+      args: [500_002n, 3_000_000n, mocks.address, mocks.address],
+    }))
+
+    act(() => {
+      result.current.claimRedeemRefund(500_003n)
+    })
+    config = mocks.execute.mock.calls[1][0] as SequenceConfig
+    await config.buildSteps()[0].action()
+    expect(mocks.simulateContract).toHaveBeenLastCalledWith(expect.objectContaining({
+      functionName: 'claimRedeemRefund',
+      args: [500_003n, mocks.address, mocks.address],
+    }))
+  })
+
+  it('stops a multi-step deposit if the connected account changes after approval', async () => {
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      allowance: 0n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    const [approveStep, depositStep] = config.buildSteps()
+    await approveStep.action()
+    mocks.address = '0x2222222222222222222222222222222222222222'
+
+    await expect(depositStep.action()).rejects.toThrow('wallet account changed')
+    expect(mocks.writeContractAsync).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects submission outside Arbitrum Sepolia before simulation', async () => {
+    mocks.chainId = 1
+    const { result } = renderHook(() => useVaultTransactions({
+      vaultAddress: PERPS_ARBITRUM_SEPOLIA.seniorVault,
+      allowance: 10_000_000n,
+    }))
+
+    act(() => {
+      result.current.requestDeposit(2_000_000n)
+    })
+
+    const config = mocks.execute.mock.calls[0][0] as SequenceConfig
+    const [depositStep] = config.buildSteps()
+    await expect(depositStep.action()).rejects.toThrow('Switch to Arbitrum Sepolia')
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.writeContractAsync).not.toHaveBeenCalled()
+  })
+})

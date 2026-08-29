@@ -22,7 +22,14 @@ import Plether.Ethereum.Contracts.CfdEngineAccountLens
   ( AccountLedgerSnapshot (..)
   , getAccountLedgerSnapshotCall
   )
-import Plether.Ethereum.Contracts.Perps (positionLiquidatedTopic)
+import Plether.Ethereum.Contracts.Perps
+  ( LiquidationBatchResult (..)
+  , lbiAccount
+  , lbiResult
+  , liquidationBatchItemTopic
+  , liquidationBatchStoppedTopic
+  , positionLiquidatedTopic
+  )
 import qualified Plether.Ethereum.Multicall as Multicall
 import Plether.Ethereum.Rpc (RpcLog (..), TxReceipt (..))
 import Plether.Ethereum.Transaction (Tx1559 (..))
@@ -32,6 +39,7 @@ import Plether.Insights.Competition
   )
 import Plether.LiquidationWorker
   ( FreshLiquidationRiskInputs (..)
+  , LiquidationBatchProgress (..)
   , LiquidationBasketComponent (..)
   , LiquidationRiskGlobals (..)
   , PythStoredPrice (..)
@@ -62,6 +70,7 @@ import Plether.LiquidationWorker
   , selectLiquidationSimulationCandidates
   , pythStoredPriceCalls
   , transactionMaximumCost
+  , validateLiquidationBatchReceipt
   , validateMergedLiquidationBasket
   )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
@@ -81,14 +90,21 @@ spec = do
         workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
         lwcPollSeconds workerCfg `shouldBe` 600
 
-    it "inherits the account lens and defaults to 1,000-account scans in Multicall chunks of ten" $ do
+    it "inherits the account lens and defaults to bounded scan, read, and execution batches" $ do
       withUnsetEnv "PERPS_ACCOUNT_LENS" $
         withUnsetEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" $
-          withUnsetEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" $ do
-            workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
-            lwcAccountLens workerCfg `shouldBe` configuredAccountLens
-            lwcScanBatchSize workerCfg `shouldBe` 1_000
-            lwcMulticallSize workerCfg `shouldBe` 10
+          withUnsetEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" $
+            withUnsetEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" $ do
+              workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+              lwcAccountLens workerCfg `shouldBe` configuredAccountLens
+              lwcScanBatchSize workerCfg `shouldBe` 1_000
+              lwcMulticallSize workerCfg `shouldBe` 10
+              lwcExecutionBatchSize workerCfg `shouldBe` 20
+
+    it "clamps execution batches to the router's 256-account limit" $ do
+      withEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" "999" $ do
+        workerCfg <- loadLiquidationWorkerConfig testConfig "private-key"
+        lwcExecutionBatchSize workerCfg `shouldBe` 256
 
   describe "liquidation snapshot batching" $ do
     it "builds ordered, allow-failure account-lens calls" $ do
@@ -339,6 +355,70 @@ spec = do
       isLiquidationReceiptFor cfdEngine account (receipt True cfdEngine otherAccount) `shouldBe` False
       isLiquidationReceiptFor cfdEngine account (receipt True otherEngine account) `shouldBe` False
 
+  describe "validateLiquidationBatchReceipt" $ do
+    it "accepts a complete ordered batch with isolated per-account outcomes" $ do
+      let batchReceipt =
+            receiptWithLogs
+              True
+              [ liquidationBatchItemLog 0 account LiquidationBatchLiquidated 25 BS.empty
+              , liquidationBatchItemLog 1 otherAccount LiquidationBatchFailed 0 (BS.pack [0xde, 0xad, 0xbe, 0xef])
+              ]
+      case validateLiquidationBatchReceipt orderRouter [account, otherAccount] batchReceipt of
+        Right progress -> do
+          lbpNextIndex progress `shouldBe` 2
+          map lbiResult (lbpItems progress)
+            `shouldBe` [LiquidationBatchLiquidated, LiquidationBatchFailed]
+        Left err -> expectationFailure $ "unexpected receipt validation error: " <> show err
+
+    it "accepts a gas-bounded attempted prefix and leaves the suffix retryable" $ do
+      let batchReceipt =
+            receiptWithLogs
+              True
+              [ liquidationBatchItemLog 0 account LiquidationBatchSkippedSolvent 0 BS.empty
+              , liquidationBatchStoppedLog 1
+              ]
+      case validateLiquidationBatchReceipt orderRouter [account, otherAccount] batchReceipt of
+        Right progress -> do
+          lbpNextIndex progress `shouldBe` 1
+          map lbiAccount (lbpItems progress) `shouldBe` [account]
+        Left err -> expectationFailure $ "unexpected receipt validation error: " <> show err
+
+    it "reconciles persisted batches independently of database row order" $ do
+      let batchReceipt =
+            receiptWithLogs
+              True
+              [ liquidationBatchItemLog 0 account LiquidationBatchSkippedSolvent 0 BS.empty
+              , liquidationBatchItemLog 1 otherAccount LiquidationBatchSkippedNoPosition 0 BS.empty
+              ]
+      case validateLiquidationBatchReceipt orderRouter [otherAccount, account] batchReceipt of
+        Right progress -> lbpNextIndex progress `shouldBe` 2
+        Left err -> expectationFailure $ "unexpected receipt validation error: " <> show err
+
+    it "rejects gaps, foreign accounts, and inconsistent stop indices" $ do
+      validateLiquidationBatchReceipt
+        orderRouter
+        [account, otherAccount]
+        (receiptWithLogs True [liquidationBatchItemLog 1 otherAccount LiquidationBatchSkippedSolvent 0 BS.empty])
+        `shouldSatisfy` isLeft
+      validateLiquidationBatchReceipt
+        orderRouter
+        [account, otherAccount]
+        ( receiptWithLogs
+            True
+            [liquidationBatchItemLog 0 foreignAccount LiquidationBatchSkippedSolvent 0 BS.empty]
+        )
+        `shouldSatisfy` isLeft
+      validateLiquidationBatchReceipt
+        orderRouter
+        [account, otherAccount]
+        ( receiptWithLogs
+            True
+            [ liquidationBatchItemLog 0 account LiquidationBatchSkippedSolvent 0 BS.empty
+            , liquidationBatchStoppedLog 2
+            ]
+        )
+        `shouldSatisfy` isLeft
+
   describe "isExpectedLiquidationSimulationRevert" $ do
     it "accepts the exact solvent and no-position engine reverts" $ do
       isExpectedLiquidationSimulationRevert
@@ -561,6 +641,9 @@ account = "0x1111111111111111111111111111111111111111"
 otherAccount :: Text
 otherAccount = "0x2222222222222222222222222222222222222222"
 
+foreignAccount :: Text
+foreignAccount = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
 accountLens :: Text
 accountLens = "0x9999999999999999999999999999999999999999"
 
@@ -569,6 +652,9 @@ pythContract = "0x8888888888888888888888888888888888888888"
 
 cfdEngine :: Text
 cfdEngine = "0x3333333333333333333333333333333333333333"
+
+orderRouter :: Text
+orderRouter = "0x7777777777777777777777777777777777777777"
 
 otherEngine :: Text
 otherEngine = "0x4444444444444444444444444444444444444444"
@@ -616,7 +702,15 @@ testConfig =
     , cfgPerpsMarginClearinghouse = "0x3333333333333333333333333333333333333333"
     , cfgPerpsPletherOracle = "0x4444444444444444444444444444444444444444"
     , cfgPerpsAccountLens = configuredAccountLens
-    , cfgPerpsIndexerStartBlock = 288439939
+    , cfgPerpsHousePool = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+    , cfgPerpsSettlementMonitorLens = "0xd251AC0BD90780c48F31F575152808315200664E"
+    , cfgPerpsIndexerStartBlock = 302257125
+    , cfgVaultHistoryHousePoolAddress = "0x0000000000000000000000000000000000000001"
+    , cfgVaultHistorySeniorVaultAddress = "0x0000000000000000000000000000000000000002"
+    , cfgVaultHistoryJuniorVaultAddress = "0x0000000000000000000000000000000000000003"
+    , cfgVaultHistoryDeploymentBlock = 0
+    , cfgVaultHistoryRpcUrl = "https://archive.example"
+    , cfgVaultHistoryConfirmations = 12
     , cfgInsightsCompetitionRules = july2026Competition
     , cfgInsightsCompetitionReleaseManifest = liquidationReleaseManifest
     , cfgRegistrationConfig = Nothing
@@ -628,6 +722,8 @@ testConfig =
     , cfgKeeperConfirmations = 1
     , cfgKeeperGasBufferBps = 2000
     , cfgKeeperFeeBufferBps = 2500
+    , cfgLpSettlementEnabled = False
+    , cfgLpSettlementPollSeconds = 15
     }
 
 liquidationReleaseManifest :: CompetitionReleaseManifest
@@ -657,6 +753,17 @@ withUnsetEnv name action =
     (maybe (unsetEnv name) (setEnv name))
     (const action)
 
+withEnv :: String -> String -> IO a -> IO a
+withEnv name value action =
+  bracket
+    (do
+        previous <- lookupEnv name
+        setEnv name value
+        pure previous
+    )
+    (maybe (unsetEnv name) (setEnv name))
+    (const action)
+
 receipt :: Bool -> Text -> Text -> TxReceipt
 receipt succeeded emitter eventAccount =
   TxReceipt
@@ -677,6 +784,57 @@ receipt succeeded emitter eventAccount =
             }
         ]
     }
+
+receiptWithLogs :: Bool -> [RpcLog] -> TxReceipt
+receiptWithLogs succeeded logs =
+  TxReceipt
+    { receiptTxHash = "0xbatch"
+    , receiptBlockNumber = 124
+    , receiptSucceeded = succeeded
+    , receiptLogs = logs
+    }
+
+liquidationBatchItemLog
+  :: Integer
+  -> Text
+  -> LiquidationBatchResult
+  -> Integer
+  -> BS.ByteString
+  -> RpcLog
+liquidationBatchItemLog index eventAccount result bounty selector =
+  RpcLog
+    { rpcLogTxHash = "0xbatch"
+    , rpcLogBlockNumber = 124
+    , rpcLogAddress = orderRouter
+    , rpcLogTopics =
+        [ liquidationBatchItemTopic
+        , encodeUint256 index
+        , encodeAddress eventAccount
+        ]
+    , rpcLogData =
+        encodeUint256 (liquidationBatchResultCode result)
+          <> encodeUint256 bounty
+          <> BS.take 4 selector
+          <> BS.replicate (28 + max 0 (4 - BS.length selector)) 0
+    }
+
+liquidationBatchStoppedLog :: Integer -> RpcLog
+liquidationBatchStoppedLog nextIndex =
+  RpcLog
+    { rpcLogTxHash = "0xbatch"
+    , rpcLogBlockNumber = 124
+    , rpcLogAddress = orderRouter
+    , rpcLogTopics = [liquidationBatchStoppedTopic, encodeUint256 nextIndex]
+    , rpcLogData = BS.empty
+    }
+
+liquidationBatchResultCode :: LiquidationBatchResult -> Integer
+liquidationBatchResultCode result =
+  case result of
+    LiquidationBatchLiquidated -> 0
+    LiquidationBatchSkippedNoPosition -> 1
+    LiquidationBatchSkippedSolvent -> 2
+    LiquidationBatchFailed -> 3
 
 isLeft :: Either a b -> Bool
 isLeft value =

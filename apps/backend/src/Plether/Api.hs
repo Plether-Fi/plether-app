@@ -64,6 +64,7 @@ import Plether.Handlers.PerpsHistory
   , getPerpsMarketStatsResponse
   , waitForPerpsOrderTerminal
   )
+import Plether.Handlers.VaultPerformance (getVaultPerformanceHistory)
 import Plether.Handlers.Quote
   ( getBurnQuote
   , getLeverageQuote
@@ -103,6 +104,10 @@ import Plether.Types.Perps
   , isCanonicalBasketCandleInterval
   , parseCanonicalPositiveInteger
   , parseBasketHistoryQueryParams
+  )
+import Plether.Types.VaultPerformance
+  ( VaultPerformanceDeployment (..)
+  , isCanonicalVaultPerformanceRequest
   )
 import Plether.Types (ApiError)
 import qualified Plether.Types.Error as E
@@ -399,6 +404,29 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState = do
       Nothing ->
         handleServiceUnavailable $
           E.internalError "DATABASE_URL is not configured; perps market stats are unavailable"
+
+  get "/api/perps/vaults/history" $ do
+    queryKeys <- currentQueryKeys
+    mRange <- queryParamMaybe "range"
+    mInterval <- queryParamMaybe "interval"
+    if not $ isCanonicalVaultPerformanceRequest queryKeys mRange mInterval
+      then
+        handleError $
+          E.invalidAmount "vault history is restricted to range=7d and interval=3600"
+      else case mPool of
+        Just pool -> do
+          let deployment =
+                VaultPerformanceDeployment
+                  { vpdChainId = cfgPerpsChainId cfg
+                  , vpdHousePool = cfgVaultHistoryHousePoolAddress cfg
+                  , vpdSeniorVault = cfgVaultHistorySeniorVaultAddress cfg
+                  , vpdJuniorVault = cfgVaultHistoryJuniorVaultAddress cfg
+                  }
+          result <- liftIO $ getVaultPerformanceHistory pool deployment
+          handleResult result
+        Nothing ->
+          handleServiceUnavailable $
+            E.internalError "DATABASE_URL is not configured; vault performance history is unavailable"
 
   get "/api/perps/basket/history" $ do
     handlerStartedAt <- liftIO getMonotonicTimeNSec

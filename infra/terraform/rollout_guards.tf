@@ -74,3 +74,30 @@ resource "terraform_data" "perps_candle_rollout_guard" {
     }
   }
 }
+
+resource "terraform_data" "lp_settlement_keeper_guard" {
+  input = {
+    keeper_environment = local.keeper_environment
+  }
+
+  lifecycle {
+    precondition {
+      condition = {
+        for setting in local.keeper_environment : setting.name => setting.value
+      }["PERPS_HOUSE_POOL"] == var.perps_house_pool
+      error_message = "The shared dedicated/consolidated keeper environment must include PERPS_HOUSE_POOL."
+    }
+
+    precondition {
+      condition = {
+        for setting in local.keeper_environment : setting.name => setting.value
+      }["PERPS_SETTLEMENT_MONITOR_LENS"] == var.perps_settlement_monitor_lens
+      error_message = "The shared dedicated/consolidated keeper environment must include the Settlement Monitor facade."
+    }
+
+    precondition {
+      condition     = lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
+      error_message = "The v1.2.0 Settlement Monitor sidecar must never be configured as the keeper facade."
+    }
+  }
+}

@@ -8,7 +8,7 @@ Each share represents a proportional claim on one tranche[^tranche] of the House
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. The metrics described below belong to that in-progress frontend; historical APY[^apy] and performance data are not yet indexed.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits, pending-deposit lifecycle actions and synchronous withdrawals are available on the current development branch. The metrics described below belong to that in-progress frontend; historical APY[^apy] and performance data are not yet indexed.
 >
 > The Perps page's existing `Deposit` and `Withdraw` controls operate a trader's **Margin Account**, not an LP vault.
 

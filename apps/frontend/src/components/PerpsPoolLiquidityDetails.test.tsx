@@ -16,20 +16,23 @@ describe('PerpsPoolLiquidityDetails', () => {
   it('shows opening capacity and the Junior-to-Senior capital waterfall', () => {
     render(<PerpsPoolLiquidityDetails {...HEALTHY_PROPS} />)
 
-    expect(screen.getByText('Estimated LONG capacity')).toBeVisible()
+    expect(screen.getByText('Estimated LONG trading capacity')).toBeVisible()
     expect(screen.getByText('2.8M USDC')).toBeVisible()
-    expect(screen.getByText('Estimated SHORT capacity')).toBeVisible()
+    expect(screen.getByText('Estimated SHORT trading capacity')).toBeVisible()
     expect(screen.getByText('1.1M USDC')).toBeVisible()
     expect(screen.getByRole('img', {
-      name: 'LP principal composition: Junior first loss 32%; Senior last loss 68%',
+      name: 'Vault capital: Junior 32%; Senior 68%',
     })).toBeVisible()
     expect(screen.getByText('Junior · 32%').parentElement).toHaveStyle({ width: '32%' })
     expect(screen.getByText('Senior · 68%').parentElement).toHaveStyle({ width: '68%' })
     expect(screen.queryByText('(32%)')).not.toBeInTheDocument()
     expect(screen.queryByText('(68%)')).not.toBeInTheDocument()
-    expect(screen.getByText('Senior principal at high-water mark')).toBeVisible()
-    expect(screen.getByText(/Junior absorbs the first/)).toHaveTextContent(
-      'Junior absorbs the first 3.2M USDC of realized pool losses'
+    expect(screen.getByText('Senior is at its protected balance')).toBeVisible()
+    expect(screen.getByText(/Junior protects Senior from the first/)).toHaveTextContent(
+      'Junior protects Senior from the first 3.2M USDC of pool losses'
+    )
+    expect(screen.getByText(/Withdrawals depend on the liquidity available/)).toHaveTextContent(
+      'Available trading capacity is an estimate and can change before a trade is submitted. Withdrawals depend on the liquidity available at each hourly processing time.'
     )
   })
 
@@ -44,8 +47,8 @@ describe('PerpsPoolLiquidityDetails', () => {
       />
     )
 
-    expect(screen.getByText('Junior first-loss buffer exhausted')).toBeVisible()
-    expect(screen.getByText('The next realized pool loss would reduce Senior principal')).toBeVisible()
+    expect(screen.getByText('Junior protection is depleted')).toBeVisible()
+    expect(screen.getByText("Further pool losses would reduce Senior's value")).toBeVisible()
 
     rerender(
       <PerpsPoolLiquidityDetails
@@ -60,7 +63,9 @@ describe('PerpsPoolLiquidityDetails', () => {
       />
     )
 
-    expect(screen.getByText(/Senior impaired by/)).toHaveTextContent('Senior impaired by 900K USDC')
-    expect(screen.queryByText('The next realized pool loss would reduce Senior principal')).not.toBeInTheDocument()
+    expect(screen.getByText(/Senior is below its protected balance by/)).toHaveTextContent(
+      'Senior is below its protected balance by 900K USDC'
+    )
+    expect(screen.queryByText("Further pool losses would reduce Senior's value")).not.toBeInTheDocument()
   })
 })

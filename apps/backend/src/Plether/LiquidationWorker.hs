@@ -12,6 +12,8 @@ module Plether.LiquidationWorker
   , liquidationPendingSignerAction
   , isInsufficientFundsRpcError
   , liquidationPayloadFingerprint
+  , LiquidationBatchProgress (..)
+  , validateLiquidationBatchReceipt
   , payloadGlobalSimulationRevertSelector
   , isLiquidationReceiptFor
   , isExpectedLiquidationSimulationRevert
@@ -50,13 +52,13 @@ import Data.Aeson.Types (Parser)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
-import Data.List (nub, sort)
-import Data.Maybe (fromMaybe)
+import Data.List (nub, sort, sortOn)
+import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Scientific (floatingOrInteger)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Database.PostgreSQL.Simple (Connection)
+import Database.PostgreSQL.Simple (Connection, withTransaction)
 import Plether.Config (Config (..))
 import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
@@ -75,9 +77,10 @@ import Plether.Database.Schema
   , getPerpsLiquidationLastIndexedBlock
   , getPerpsLiquidationRejectedPayload
   , getPerpsLiquidationSignerRetry
-  , getPendingPerpsLiquidationCandidate
+  , getPendingPerpsLiquidationCandidates
   , markPerpsLiquidationCandidateChecked
   , recordPerpsLiquidationCandidateError
+  , recordPerpsLiquidationCandidateRetryableError
   , recordPerpsLiquidationCandidateBroadcastAttempt
   , recordPerpsLiquidationCandidatePending
   , recordPerpsLiquidationRejectedPayload
@@ -152,6 +155,12 @@ data LiquidationPendingSignerAction
   | WaitForPendingSignerTransaction
   deriving stock (Show, Eq)
 
+data LiquidationBatchProgress = LiquidationBatchProgress
+  { lbpItems :: [Perps.LiquidationBatchItem]
+  , lbpNextIndex :: Integer
+  }
+  deriving stock (Show, Eq)
+
 data LiquidationWorkerConfig = LiquidationWorkerConfig
   { lwcChainId :: Integer
   , lwcOrderRouter :: Text
@@ -162,6 +171,7 @@ data LiquidationWorkerConfig = LiquidationWorkerConfig
   , lwcPollSeconds :: Int
   , lwcScanBatchSize :: Int
   , lwcMulticallSize :: Int
+  , lwcExecutionBatchSize :: Int
   , lwcIndexerStartBlock :: Integer
   , lwcIndexerConfirmations :: Int
   , lwcIndexerBatchSize :: Integer
@@ -177,6 +187,7 @@ loadLiquidationWorkerConfig cfg privateKey = do
   pollSeconds <- readEnv "LIQUIDATION_WORKER_POLL_SECONDS" 600
   scanBatchSize <- readEnv "LIQUIDATION_WORKER_SCAN_BATCH_SIZE" 1_000
   multicallSize <- readEnv "LIQUIDATION_WORKER_MULTICALL_SIZE" 10
+  executionBatchSize <- readEnv "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE" 20
   indexerStartBlock <- readEnv "LIQUIDATION_WORKER_START_BLOCK" (cfgPerpsIndexerStartBlock cfg)
   indexerConfirmations <- readEnv "LIQUIDATION_WORKER_CONFIRMATIONS" 1
   indexerBatchSize <- readEnv "LIQUIDATION_WORKER_INDEX_BATCH_SIZE" 5_000
@@ -195,6 +206,7 @@ loadLiquidationWorkerConfig cfg privateKey = do
       , lwcPollSeconds = max 1 pollSeconds
       , lwcScanBatchSize = max 1 scanBatchSize
       , lwcMulticallSize = max 1 $ min 100 multicallSize
+      , lwcExecutionBatchSize = max 1 $ min 256 executionBatchSize
       , lwcIndexerStartBlock = max 0 indexerStartBlock
       , lwcIndexerConfirmations = max 0 indexerConfirmations
       , lwcIndexerBatchSize = max 1 indexerBatchSize
@@ -957,13 +969,14 @@ runLiquidationWorker cfg pool client mode dryRun =
       let delaySeconds = min pendingReconciliationPollSeconds remainingSeconds
       threadDelay $ delaySeconds * 1_000_000
       pending <-
-        getPendingPerpsLiquidationCandidate
+        getPendingPerpsLiquidationCandidates
           conn
           (lwcChainId cfg)
           (lwcCfdEngine cfg)
           (lwcPendingReplacementSeconds cfg)
           pendingBroadcastRetrySeconds
-      forM_ pending $ reconcilePendingCandidate cfg conn client workerAddress
+      unless (null pending) $
+        reconcilePendingCandidates cfg conn client workerAddress pending
       waitForNextSweep conn workerAddress $ remainingSeconds - delaySeconds
 
 runIteration :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO ()
@@ -1083,15 +1096,15 @@ liquidationIndexRange configuredStart confirmations batchSize overlapBlocks last
 processCandidates :: LiquidationWorkerConfig -> Connection -> EthClient -> Text -> Bool -> IO ()
 processCandidates cfg conn client workerAddress dryRun = do
   pending <-
-    getPendingPerpsLiquidationCandidate
+    getPendingPerpsLiquidationCandidates
       conn
       (lwcChainId cfg)
       (lwcCfdEngine cfg)
       (lwcPendingReplacementSeconds cfg)
       pendingBroadcastRetrySeconds
   case pending of
-    Just candidate -> reconcilePendingCandidate cfg conn client workerAddress candidate
-    Nothing -> do
+    candidates@(_ : _) -> reconcilePendingCandidates cfg conn client workerAddress candidates
+    [] -> do
       signerReady <-
         if dryRun
           then pure True
@@ -1353,15 +1366,19 @@ processCandidates cfg conn client workerAddress dryRun = do
                    ]
             )
         Right updateFee ->
-          processCandidateBatch candidates payloadKey updateData updateFee
+          processExecutionBatches
+            (chunksOf (lwcExecutionBatchSize cfg) candidates)
+            payloadKey
+            updateData
+            updateFee
 
-    processCandidateBatch [] _ _ _ = pure ()
-    processCandidateBatch (candidate : rest) payloadKey updateData updateFee = do
+    processExecutionBatches [] _ _ _ = pure ()
+    processExecutionBatches (batch : rest) payloadKey updateData updateFee = do
       canContinue <-
-        processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate
-      when canContinue $ processCandidateBatch rest payloadKey updateData updateFee
+        processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateData updateFee batch
+      when canContinue $ processExecutionBatches rest payloadKey updateData updateFee
 
-processCandidate
+processLiquidationBatch
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
@@ -1370,19 +1387,14 @@ processCandidate
   -> Text
   -> [ByteString]
   -> Integer
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> IO Bool
-processCandidate cfg conn client workerAddress dryRun payloadKey updateData updateFee candidate = do
-  let account = plcrAccount candidate
-      callData = Perps.executeLiquidationCall account updateData
+processLiquidationBatch cfg conn client workerAddress dryRun payloadKey updateData updateFee candidates = do
+  let accounts = map plcrAccount candidates
+      callData = Perps.executeLiquidationBatchCall accounts updateData
   gasResult <- ethEstimateGas client workerAddress (lwcOrderRouter cfg) updateFee callData
   case gasResult of
     Left err
-      | isExpectedLiquidationSimulationRevert err -> do
-          -- A healthy position and a liquidation race both revert during simulation.
-          -- The next sweep re-reads authoritative on-chain position state.
-          markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
-          pure True
       | Just selectorText <- payloadGlobalSimulationRevertSelector err -> do
           let failure = "liquidation simulation rejected Pyth payload: " <> rpcErrorText err
           recordPerpsLiquidationRejectedPayload
@@ -1392,87 +1404,106 @@ processCandidate cfg conn client workerAddress dryRun payloadKey updateData upda
             payloadKey
             selectorText
             failure
-          recordCandidateError cfg conn candidate "simulation" failure
+          forM_ candidates $ \candidate ->
+            recordCandidateError cfg conn candidate "batch_simulation" failure
           logError
             "liquidation_pyth_payload_rejected"
             "Liquidation worker suppressed a deterministic Pyth payload until the cache changes"
-            ( candidateLogFields cfg candidate
-                <> [ field "payload_key" payloadKey
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "accounts" accounts
+                   , field "payload_key" payloadKey
                    , field "revert_selector" selectorText
                    , field "error" failure
                    ]
             )
           pure False
       | otherwise -> do
-          recordCandidateError cfg conn candidate "simulation" $
-            "liquidation simulation failed: " <> rpcErrorText err
+          forM_ candidates $ \candidate ->
+            recordCandidateError cfg conn candidate "batch_simulation" $
+              "liquidation batch simulation failed: " <> rpcErrorText err
           pure False
     Right estimatedGas -> do
       logInfo
-        "liquidation_opportunity_detected"
-        "Liquidation opportunity passed transaction simulation"
-        ( candidateLogFields cfg candidate
-            <> [ field "estimated_gas" estimatedGas
+        "liquidation_batch_opportunity_detected"
+        "Liquidation batch passed transaction simulation"
+        ( workerLogFields cfg
+            <> [ field "candidate_count" $ length candidates
+               , field "accounts" accounts
+               , field "estimated_gas" estimatedGas
                , field "update_fee_wei" $ show updateFee
                , field "dry_run" dryRun
                ]
         )
       if dryRun
         then do
-          markPerpsLiquidationCandidateChecked conn (lwcChainId cfg) (lwcCfdEngine cfg) account
+          forM_ candidates $ \candidate ->
+            markPerpsLiquidationCandidateChecked
+              conn
+              (lwcChainId cfg)
+              (lwcCfdEngine cfg)
+              (plcrAccount candidate)
           pure True
         else do
           prepared <-
             prepareLiquidationTransaction cfg client workerAddress estimatedGas updateFee callData
           case prepared of
             Left err -> do
-              recordCandidateError cfg conn candidate "transaction_prepare" err
+              forM_ candidates $ \candidate ->
+                recordCandidateError cfg conn candidate "batch_transaction_prepare" err
               pure False
             Right (tx, signed) -> do
               affordabilityResult <- checkTransactionAffordability client workerAddress tx
               case affordabilityResult of
                 Left err -> do
                   recordSignerTransactionRetry cfg conn tx err
-                  recordCandidateError cfg conn candidate "transaction_affordability" err
+                  forM_ candidates $ \candidate ->
+                    recordCandidateError cfg conn candidate "batch_transaction_affordability" err
                   pure False
                 Right _ -> do
                   let rawTx = signedRawTransaction signed
                       txHash = signedTransactionHash signed
-                      pendingCandidate =
-                        candidate
-                          { plcrAttemptCount = plcrAttemptCount candidate + 1
-                          , plcrPendingTxHash = Just txHash
-                          , plcrPendingNonce = Just $ txNonce tx
-                          }
+                      pendingCandidates =
+                        [ candidate
+                            { plcrAttemptCount = plcrAttemptCount candidate + 1
+                            , plcrPendingTxHash = Just txHash
+                            , plcrPendingNonce = Just $ txNonce tx
+                            }
+                        | candidate <- candidates
+                        ]
                   -- Persist the deterministic signed hash before broadcast. If the
                   -- RPC response is lost, the next iteration reconciles this nonce
                   -- instead of creating a transaction behind it.
-                  persistPendingTransaction cfg conn workerAddress account tx signed
-                  recordPendingBroadcastAttempt cfg conn account
+                  persistPendingTransactionBatch cfg conn workerAddress candidates tx signed
+                  recordPendingBroadcastAttemptBatch cfg conn candidates
                   sendResult <- ethSendRawTransaction client rawTx
                   case sendResult of
                     Left err -> do
                       when (isInsufficientFundsRpcError err) $
                         recordSignerTransactionRetry cfg conn tx (rpcErrorText err)
-                      recordCandidateError cfg conn pendingCandidate "transaction_broadcast" $
-                        "broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
+                      forM_ pendingCandidates $ \candidate ->
+                        recordCandidateError cfg conn candidate "batch_transaction_broadcast" $
+                          "batch broadcast result uncertain for " <> txHash <> ": " <> rpcErrorText err
                       pure False
                     Right returnedHash
                       | normalizeAddress returnedHash /= normalizeAddress txHash -> do
-                          recordCandidateErrorWith
-                            cfg
-                            conn
-                            pendingCandidate
-                            "broadcast_hash_mismatch"
-                            [field "returned_transaction_hash" returnedHash]
-                            "RPC returned a transaction hash that did not match the signed transaction hash"
+                          forM_ pendingCandidates $ \candidate ->
+                            recordCandidateErrorWith
+                              cfg
+                              conn
+                              candidate
+                              "batch_broadcast_hash_mismatch"
+                              [field "returned_transaction_hash" returnedHash]
+                              "RPC returned a transaction hash that did not match the signed batch transaction hash"
                           pure False
                       | otherwise -> do
                           logInfo
-                            "liquidation_transaction_submitted"
-                            "Liquidation transaction was submitted"
-                            ( candidateLogFields cfg pendingCandidate
-                                <> [ field "transaction_hash" txHash
+                            "liquidation_batch_transaction_submitted"
+                            "Liquidation batch transaction was submitted"
+                            ( workerLogFields cfg
+                                <> [ field "candidate_count" $ length candidates
+                                   , field "accounts" accounts
+                                   , field "transaction_hash" txHash
                                    , field "nonce" $ txNonce tx
                                    , field "gas_limit" $ txGasLimit tx
                                    , field "value_wei" $ show $ txValue tx
@@ -1483,10 +1514,11 @@ processCandidate cfg conn client workerAddress dryRun payloadKey updateData upda
                           receiptResult <- waitForReceipt client txHash 60
                           case receiptResult of
                             Left err -> do
-                              recordCandidateError cfg conn pendingCandidate "receipt_wait" err
+                              forM_ pendingCandidates $ \candidate ->
+                                recordCandidateError cfg conn candidate "batch_receipt_wait" err
                               pure False
                             Right receipt ->
-                              handleLiquidationReceipt cfg conn client pendingCandidate receipt
+                              handleLiquidationBatchReceipt cfg conn client pendingCandidates receipt
 
 prepareLiquidationTransaction
   :: LiquidationWorkerConfig
@@ -1553,6 +1585,19 @@ persistPendingTransaction cfg conn sender account tx signed =
     (txMaxPriorityFeePerGas tx)
     (txMaxFeePerGas tx)
 
+persistPendingTransactionBatch
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> Text
+  -> [PerpsLiquidationCandidateRow]
+  -> Tx1559
+  -> SignedTransaction
+  -> IO ()
+persistPendingTransactionBatch cfg conn sender candidates tx signed =
+  withTransaction conn $
+    forM_ candidates $ \candidate ->
+      persistPendingTransaction cfg conn sender (plcrAccount candidate) tx signed
+
 recordPendingBroadcastAttempt :: LiquidationWorkerConfig -> Connection -> Text -> IO ()
 recordPendingBroadcastAttempt cfg conn account =
   recordPerpsLiquidationCandidateBroadcastAttempt
@@ -1561,57 +1606,86 @@ recordPendingBroadcastAttempt cfg conn account =
     (lwcCfdEngine cfg)
     account
 
-reconcilePendingCandidate
+recordPendingBroadcastAttemptBatch
   :: LiquidationWorkerConfig
   -> Connection
-  -> EthClient
-  -> Text
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> IO ()
-reconcilePendingCandidate cfg conn client workerAddress candidate =
-  case
-      ( plcrPendingTxHash candidate
-      , plcrPendingNonce candidate
-      , plcrPendingSender candidate
-      , plcrPendingRawTx candidate
-      )
-    of
-    (Just txHash, Just nonce, Just pendingSender, Just rawTxHex) -> do
-      receiptResult <- ethGetTransactionReceipt client txHash
-      case receiptResult of
-        Left err ->
-          recordCandidateError cfg conn candidate "pending_receipt_lookup" $
-            "pending receipt lookup failed for " <> txHash <> ": " <> rpcErrorText err
-        Right (Just receipt) -> do
-          _ <- handleLiquidationReceipt cfg conn client candidate receipt
-          pure ()
-        Right Nothing
-          | normalizeAddress pendingSender /= normalizeAddress workerAddress ->
-              recordCandidateCritical cfg conn candidate "liquidation_signer_mismatch" $
-                "pending liquidation was signed by "
-                  <> pendingSender
-                  <> " but the configured key resolves to "
-                  <> workerAddress
-                  <> "; refusing automatic rebroadcast or replacement until manually reconciled"
-          | otherwise ->
-              reconcileMissingReceipt cfg conn client pendingSender candidate nonce txHash rawTxHex
-    _ ->
-      -- Never clear a partially persisted pending transaction automatically: it
-      -- may still be live on-chain, and doing so could create a second nonce lane.
-      recordCandidateCritical cfg conn candidate "liquidation_pending_state_invalid" $
-        "incomplete pending liquidation state requires manual reconciliation"
+recordPendingBroadcastAttemptBatch cfg conn candidates =
+  withTransaction conn $
+    forM_ candidates $ \candidate ->
+      recordPendingBroadcastAttempt cfg conn (plcrAccount candidate)
 
-reconcileMissingReceipt
+reconcilePendingCandidates
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
   -> Text
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
+  -> IO ()
+reconcilePendingCandidates _ _ _ _ [] = pure ()
+reconcilePendingCandidates cfg conn client workerAddress candidates@(_ : _) =
+  case sharedPendingTransaction candidates of
+    Just (txHash, nonce, pendingSender, rawTxHex)
+      | normalizeAddress pendingSender /= normalizeAddress workerAddress ->
+          forM_ candidates $ \pendingCandidate ->
+            recordCandidateCritical cfg conn pendingCandidate "liquidation_signer_mismatch" $
+              "pending liquidation batch was signed by "
+                <> pendingSender
+                <> " but the configured key resolves to "
+                <> workerAddress
+                <> "; refusing automatic rebroadcast or replacement until manually reconciled"
+      | otherwise -> do
+          receiptResult <- ethGetTransactionReceipt client txHash
+          case receiptResult of
+            Left err ->
+              forM_ candidates $ \pendingCandidate ->
+                recordCandidateError cfg conn pendingCandidate "pending_batch_receipt_lookup" $
+                  "pending batch receipt lookup failed for " <> txHash <> ": " <> rpcErrorText err
+            Right (Just receipt) -> do
+              _ <- handleLiquidationBatchReceipt cfg conn client candidates receipt
+              pure ()
+            Right Nothing ->
+              reconcileMissingBatchReceipt cfg conn client pendingSender candidates nonce txHash rawTxHex
+    Nothing ->
+      -- Never clear partially persisted batch state automatically: the shared
+      -- transaction may still be live and a second nonce lane would be unsafe.
+      forM_ candidates $ \pendingCandidate ->
+        recordCandidateCritical cfg conn pendingCandidate "liquidation_pending_batch_state_invalid" $
+          "inconsistent or incomplete pending liquidation batch requires manual reconciliation"
+
+sharedPendingTransaction
+  :: [PerpsLiquidationCandidateRow]
+  -> Maybe (Text, Integer, Text, Text)
+sharedPendingTransaction [] = Nothing
+sharedPendingTransaction candidates@(candidate : _) = do
+  txHash <- plcrPendingTxHash candidate
+  nonce <- plcrPendingNonce candidate
+  sender <- plcrPendingSender candidate
+  rawTx <- plcrPendingRawTx candidate
+  let expected = (Just txHash, Just nonce, Just sender, Just rawTx)
+  if all (\row -> pendingIdentity row == expected) candidates
+    then Just (txHash, nonce, sender, rawTx)
+    else Nothing
+  where
+    pendingIdentity row =
+      ( plcrPendingTxHash row
+      , plcrPendingNonce row
+      , plcrPendingSender row
+      , plcrPendingRawTx row
+      )
+
+reconcileMissingBatchReceipt
+  :: LiquidationWorkerConfig
+  -> Connection
+  -> EthClient
+  -> Text
+  -> [PerpsLiquidationCandidateRow]
   -> Integer
   -> Text
   -> Text
   -> IO ()
-reconcileMissingReceipt cfg conn client pendingSender candidate nonce txHash rawTxHex = do
+reconcileMissingBatchReceipt cfg conn client pendingSender candidates nonce txHash rawTxHex = do
   latestResult <- ethBlockNumber client
   confirmedNonceResult <-
     case latestResult of
@@ -1624,95 +1698,94 @@ reconcileMissingReceipt cfg conn client pendingSender candidate nonce txHash raw
   case confirmedNonceResult of
     Right confirmedNonce
       | confirmedNonce > nonce ->
-          resolveConsumedPendingNonce cfg conn client candidate txHash nonce
+          resolveConsumedPendingBatchNonce cfg conn client candidates txHash nonce
     _
-      | plcrPendingStale candidate -> do
+      | any plcrPendingStale candidates -> do
           signerReady <- checkSignerTransactionReadiness cfg conn
-          case liquidationPendingSignerAction signerReady (plcrPendingBroadcastDue candidate) of
+          case liquidationPendingSignerAction signerReady (any plcrPendingBroadcastDue candidates) of
             ReplacePendingSignerTransaction ->
-              replacePendingTransaction cfg conn client pendingSender candidate nonce txHash rawTxHex
+              replacePendingBatchTransaction cfg conn client pendingSender candidates nonce txHash rawTxHex
             RebroadcastPendingSignerTransaction ->
-              rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+              rebroadcastPendingBatchTransaction cfg conn client candidates nonce txHash rawTxHex
             WaitForPendingSignerTransaction -> pure ()
       | otherwise ->
-          when (plcrPendingBroadcastDue candidate) $
-            rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+          when (any plcrPendingBroadcastDue candidates) $
+            rebroadcastPendingBatchTransaction cfg conn client candidates nonce txHash rawTxHex
 
-rebroadcastPendingTransaction
+rebroadcastPendingBatchTransaction
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> Integer
   -> Text
   -> Text
   -> IO ()
-rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex =
+rebroadcastPendingBatchTransaction cfg conn client candidates nonce txHash rawTxHex =
   case decodeHexUpdate rawTxHex of
     Left err ->
-      recordCandidateCritical cfg conn candidate "liquidation_pending_transaction_invalid" $
-        "pending raw transaction could not be decoded for " <> txHash <> ": " <> err
+      forM_ candidates $ \candidate ->
+        recordCandidateCritical cfg conn candidate "liquidation_pending_batch_transaction_invalid" $
+          "pending batch raw transaction could not be decoded for " <> txHash <> ": " <> err
     Right rawTx -> do
-      recordPendingBroadcastAttempt cfg conn (plcrAccount candidate)
+      recordPendingBroadcastAttemptBatch cfg conn candidates
       rebroadcastResult <- ethSendRawTransaction client rawTx
       case rebroadcastResult of
         Left err -> do
           when (isInsufficientFundsRpcError err) $
-            forM_ (pendingCandidateMaximumCost candidate) $ \requiredBalance ->
+            forM_ (pendingCandidateMaximumCost =<< firstCandidate candidates) $ \requiredBalance ->
               recordSignerReadinessFailure cfg conn requiredBalance (rpcErrorText err)
-          recordCandidateError cfg conn candidate "transaction_rebroadcast" $
-            "waiting for pending transaction " <> txHash <> " after rebroadcast: " <> rpcErrorText err
+          forM_ candidates $ \candidate ->
+            recordCandidateError cfg conn candidate "batch_transaction_rebroadcast" $
+              "waiting for pending batch transaction " <> txHash <> " after rebroadcast: " <> rpcErrorText err
         Right returnedHash
           | normalizeAddress returnedHash == normalizeAddress txHash ->
               logInfoEvery
                 60
-                "liquidation_transaction_rebroadcast"
-                "Liquidation worker rebroadcast the persisted transaction"
-                ( candidateLogFields cfg candidate
-                    <> [ field "transaction_hash" txHash
+                "liquidation_batch_transaction_rebroadcast"
+                "Liquidation worker rebroadcast the persisted batch transaction"
+                ( workerLogFields cfg
+                    <> [ field "candidate_count" $ length candidates
+                       , field "transaction_hash" txHash
                        , field "nonce" nonce
                        ]
                 )
           | otherwise ->
-              recordCandidateErrorWith
-                cfg
-                conn
-                candidate
-                "rebroadcast_hash_mismatch"
-                [field "returned_transaction_hash" returnedHash]
-                "Rebroadcast RPC hash did not match the persisted transaction hash"
+              forM_ candidates $ \candidate ->
+                recordCandidateErrorWith
+                  cfg
+                  conn
+                  candidate
+                  "batch_rebroadcast_hash_mismatch"
+                  [field "returned_transaction_hash" returnedHash]
+                  "Rebroadcast RPC hash did not match the persisted batch transaction hash"
 
-replacePendingTransaction
+replacePendingBatchTransaction
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
   -> Text
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> Integer
   -> Text
   -> Text
   -> IO ()
-replacePendingTransaction cfg conn client pendingSender candidate nonce txHash rawTxHex =
-  case
-      ( plcrPendingCallData candidate
-      , plcrPendingValue candidate
-      , plcrPendingGasLimit candidate
-      , plcrPendingMaxPriorityFeePerGas candidate
-      , plcrPendingMaxFeePerGas candidate
-      )
-    of
-    (Just callDataHex, Just value, Just gasLimit, Just oldPriorityFee, Just oldMaxFee) ->
+replacePendingBatchTransaction cfg conn client pendingSender candidates nonce txHash rawTxHex =
+  case firstCandidate candidates >>= sharedReplacementState candidates of
+    Just (Just callDataHex, Just value, Just gasLimit, Just oldPriorityFee, Just oldMaxFee) ->
       case decodeHexUpdate callDataHex of
         Left err ->
-          recordCandidateCritical cfg conn candidate "liquidation_replacement_state_invalid" $
-            "pending calldata could not be decoded for same-nonce replacement: " <> err
+          forM_ candidates $ \candidate ->
+            recordCandidateCritical cfg conn candidate "liquidation_batch_replacement_state_invalid" $
+              "pending batch calldata could not be decoded for same-nonce replacement: " <> err
         Right callData -> do
           gasPriceResult <- ethGasPrice client
           priorityResult <- ethMaxPriorityFeePerGas client
           case gasPriceResult of
             Left err ->
-              recordCandidateError cfg conn candidate "replacement_fee_quote" $
-                "could not price same-nonce replacement: " <> rpcErrorText err
+              forM_ candidates $ \candidate ->
+                recordCandidateError cfg conn candidate "batch_replacement_fee_quote" $
+                  "could not price same-nonce batch replacement: " <> rpcErrorText err
             Right gasPrice -> do
               let priorityBase = either (const gasPrice) id priorityResult
                   (replacementPriorityFee, replacementMaxFee) =
@@ -1735,258 +1808,324 @@ replacePendingTransaction cfg conn client pendingSender candidate nonce txHash r
                       }
               signResult <- signTransaction (lwcPrivateKey cfg) replacementTx
               case signResult of
-                Left err -> recordCandidateError cfg conn candidate "replacement_sign" err
+                Left err ->
+                  forM_ candidates $ \candidate ->
+                    recordCandidateError cfg conn candidate "batch_replacement_sign" err
                 Right signed -> do
                   affordabilityResult <- checkTransactionAffordability client pendingSender replacementTx
                   case affordabilityResult of
                     Left err -> do
                       recordSignerTransactionRetry cfg conn replacementTx err
-                      recordCandidateError cfg conn candidate "replacement_affordability" err
-                      when (plcrPendingBroadcastDue candidate) $
-                        rebroadcastPendingTransaction cfg conn client candidate nonce txHash rawTxHex
+                      forM_ candidates $ \candidate ->
+                        recordCandidateError cfg conn candidate "batch_replacement_affordability" err
+                      when (any plcrPendingBroadcastDue candidates) $
+                        rebroadcastPendingBatchTransaction cfg conn client candidates nonce txHash rawTxHex
                     Right _ -> do
                       let replacementHash = signedTransactionHash signed
-                          replacementCandidate =
-                            candidate
-                              { plcrAttemptCount = plcrAttemptCount candidate + 1
-                              , plcrPendingTxHash = Just replacementHash
-                              , plcrPendingNonce = Just nonce
-                              }
-                      persistPendingTransaction
-                        cfg
-                        conn
-                        pendingSender
-                        (plcrAccount candidate)
-                        replacementTx
-                        signed
-                      recordPendingBroadcastAttempt cfg conn (plcrAccount candidate)
+                          replacementCandidates =
+                            [ candidate
+                                { plcrAttemptCount = plcrAttemptCount candidate + 1
+                                , plcrPendingTxHash = Just replacementHash
+                                , plcrPendingNonce = Just nonce
+                                }
+                            | candidate <- candidates
+                            ]
+                      persistPendingTransactionBatch cfg conn pendingSender candidates replacementTx signed
+                      recordPendingBroadcastAttemptBatch cfg conn candidates
                       sendResult <- ethSendRawTransaction client (signedRawTransaction signed)
                       case sendResult of
                         Left err -> do
                           when (isInsufficientFundsRpcError err) $
                             recordSignerTransactionRetry cfg conn replacementTx (rpcErrorText err)
-                          recordCandidateError cfg conn replacementCandidate "replacement_broadcast" $
-                            "same-nonce replacement broadcast is uncertain for "
-                              <> replacementHash
-                              <> ": "
-                              <> rpcErrorText err
+                          forM_ replacementCandidates $ \candidate ->
+                            recordCandidateError cfg conn candidate "batch_replacement_broadcast" $
+                              "same-nonce batch replacement broadcast is uncertain for "
+                                <> replacementHash
+                                <> ": "
+                                <> rpcErrorText err
                         Right returnedHash
                           | normalizeAddress returnedHash == normalizeAddress replacementHash ->
                               logWarn
-                                "liquidation_transaction_replaced"
-                                "Liquidation worker replaced a stale transaction at the same nonce"
-                                ( candidateLogFields cfg replacementCandidate
-                                    <> maybe
-                                      []
-                                      (\previousHash -> [field "previous_transaction_hash" previousHash])
-                                      (plcrPendingTxHash candidate)
-                                    <> [ field "transaction_hash" returnedHash
+                                "liquidation_batch_transaction_replaced"
+                                "Liquidation worker replaced a stale batch transaction at the same nonce"
+                                ( workerLogFields cfg
+                                    <> [ field "candidate_count" $ length candidates
+                                       , field "previous_transaction_hash" txHash
+                                       , field "transaction_hash" returnedHash
                                        , field "nonce" nonce
                                        , field "max_priority_fee_per_gas_wei" $ show replacementPriorityFee
                                        , field "max_fee_per_gas_wei" $ show replacementMaxFee
                                        ]
                                 )
                           | otherwise ->
-                              recordCandidateErrorWith
-                                cfg
-                                conn
-                                replacementCandidate
-                                "replacement_hash_mismatch"
-                                [field "returned_transaction_hash" returnedHash]
-                                "Replacement RPC hash did not match the signed transaction hash"
+                              forM_ replacementCandidates $ \candidate ->
+                                recordCandidateErrorWith
+                                  cfg
+                                  conn
+                                  candidate
+                                  "batch_replacement_hash_mismatch"
+                                  [field "returned_transaction_hash" returnedHash]
+                                  "Replacement RPC hash did not match the signed batch transaction hash"
     _ ->
-      recordCandidateCritical cfg conn candidate "liquidation_replacement_state_incomplete" $
-        "pending liquidation lacks fee or calldata fields required for same-nonce replacement"
+      forM_ candidates $ \candidate ->
+        recordCandidateCritical cfg conn candidate "liquidation_batch_replacement_state_incomplete" $
+          "pending liquidation batch lacks consistent fee or calldata fields required for same-nonce replacement"
 
-resolveConsumedPendingNonce
+sharedReplacementState
+  :: [PerpsLiquidationCandidateRow]
+  -> PerpsLiquidationCandidateRow
+  -> Maybe (Maybe Text, Maybe Integer, Maybe Integer, Maybe Integer, Maybe Integer)
+sharedReplacementState candidates candidate =
+  let state = replacementState candidate
+   in if all ((== state) . replacementState) candidates then Just state else Nothing
+  where
+    replacementState row =
+      ( plcrPendingCallData row
+      , plcrPendingValue row
+      , plcrPendingGasLimit row
+      , plcrPendingMaxPriorityFeePerGas row
+      , plcrPendingMaxFeePerGas row
+      )
+
+resolveConsumedPendingBatchNonce
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> Text
   -> Integer
   -> IO ()
-resolveConsumedPendingNonce cfg conn client candidate txHash nonce = do
-  confirmedPosition <- getConfirmedPositionSize cfg client (plcrAccount candidate)
-  case confirmedPosition of
+resolveConsumedPendingBatchNonce cfg conn client candidates txHash nonce =
+  ethBlockNumber client >>= \case
     Left err ->
-      recordCandidateError cfg conn candidate "consumed_nonce_position_read" $
-        "nonce "
-          <> T.pack (show nonce)
-          <> " was consumed but confirmed position verification failed: "
-          <> rpcErrorText err
-    Right 0 -> do
-      deletePerpsLiquidationCandidate
-        conn
-        (lwcChainId cfg)
-        (lwcCfdEngine cfg)
-        (plcrAccount candidate)
-      logInfo
-        "liquidation_nonce_reconciled"
-        "Consumed liquidation nonce resolved with no remaining position"
-        ( candidateLogFields cfg candidate
-            <> [ field "transaction_hash" txHash
-               , field "nonce" nonce
-               , field "position_open" False
-               ]
-        )
-    Right _ -> do
-      clearPerpsLiquidationCandidatePending
-        conn
-        (lwcChainId cfg)
-        (lwcCfdEngine cfg)
-        (plcrAccount candidate)
-      markPerpsLiquidationCandidateChecked
-        conn
-        (lwcChainId cfg)
-        (lwcCfdEngine cfg)
-        (plcrAccount candidate)
-      logWarn
-        "liquidation_nonce_reconciled"
-        "Consumed liquidation nonce resolved while the account still has an open position"
-        ( candidateLogFields cfg candidate
-            <> [ field "transaction_hash" txHash
-               , field "nonce" nonce
-               , field "position_open" True
-               ]
-        )
+      forM_ candidates $ \candidate ->
+        recordCandidateError cfg conn candidate "consumed_batch_nonce_head_read" $
+          "nonce " <> T.pack (show nonce) <> " was consumed but the confirmed head could not be read: " <> rpcErrorText err
+    Right latestBlock -> do
+      let confirmedBlock = max 0 $ latestBlock - fromIntegral (lwcIndexerConfirmations cfg)
+      positions <- loadConfirmedPositionSizes cfg client confirmedBlock candidates
+      let positionFailures = [(candidate, err) | (candidate, Left err) <- positions]
+      if null positionFailures
+        then do
+          withTransaction conn $
+            forM_ positions $ \(candidate, confirmedPosition) ->
+              case confirmedPosition of
+                Left _ -> pure ()
+                Right 0 -> deleteCandidate cfg conn candidate
+                Right _ -> do
+                  clearPendingCandidate cfg conn candidate
+                  markCandidateChecked cfg conn candidate
+          logWarn
+            "liquidation_batch_nonce_reconciled"
+            "Consumed liquidation batch nonce was reconciled from confirmed position state"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "transaction_hash" txHash
+                   , field "nonce" nonce
+                   ]
+            )
+        else
+          forM_ positionFailures $ \(candidate, err) ->
+            recordCandidateError cfg conn candidate "consumed_batch_nonce_position_read" $
+              "nonce " <> T.pack (show nonce) <> " was consumed but confirmed position verification failed: " <> err
 
-handleLiquidationReceipt
+handleLiquidationBatchReceipt
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
   -> TxReceipt
   -> IO Bool
-handleLiquidationReceipt cfg conn client candidate receipt = do
+handleLiquidationBatchReceipt cfg conn client candidates receipt = do
   latestResult <- ethBlockNumber client
   case latestResult of
     Left err -> do
-      recordCandidateErrorWith
-        cfg
-        conn
-        candidate
-        "confirmation_depth_read"
-        (receiptLogFields receipt)
-        ("could not verify confirmation depth: " <> rpcErrorText err)
+      forM_ candidates $ \candidate ->
+        recordCandidateErrorWith cfg conn candidate "batch_confirmation_depth_read" (receiptLogFields receipt) $
+          "could not verify batch confirmation depth: " <> rpcErrorText err
       pure False
     Right latestBlock
       | latestBlock < receiptBlockNumber receipt + fromIntegral (lwcIndexerConfirmations cfg) -> do
           logInfoEvery
             60
-            "liquidation_receipt_confirmations_pending"
-            "Liquidation receipt is waiting for confirmation depth"
-            ( candidateLogFields cfg candidate
-                <> [ field "transaction_hash" $ receiptTxHash receipt
+            "liquidation_batch_receipt_confirmations_pending"
+            "Liquidation batch receipt is waiting for confirmation depth"
+            ( workerLogFields cfg
+                <> [ field "candidate_count" $ length candidates
+                   , field "transaction_hash" $ receiptTxHash receipt
                    , field "receipt_block_number" $ receiptBlockNumber receipt
                    , field "chain_head_block" latestBlock
                    , field "required_confirmations" $ lwcIndexerConfirmations cfg
                    ]
             )
           pure False
-      | otherwise -> handleConfirmedLiquidationReceipt cfg conn client candidate receipt
+      | otherwise -> handleConfirmedLiquidationBatchReceipt cfg conn client candidates latestBlock receipt
 
-handleConfirmedLiquidationReceipt
+handleConfirmedLiquidationBatchReceipt
   :: LiquidationWorkerConfig
   -> Connection
   -> EthClient
-  -> PerpsLiquidationCandidateRow
+  -> [PerpsLiquidationCandidateRow]
+  -> Integer
   -> TxReceipt
   -> IO Bool
-handleConfirmedLiquidationReceipt cfg conn client candidate receipt
-  | isLiquidationReceiptFor (lwcCfdEngine cfg) (plcrAccount candidate) receipt = do
-      postReceiptPosition <- getConfirmedPositionSize cfg client (plcrAccount candidate)
-      case postReceiptPosition of
-        Left err -> do
-          -- Keep the confirmed hash until post-state can be verified. This
-          -- prevents deleting a newer PositionOpened that was indexed while the
-          -- liquidation transaction was pending.
-          recordCandidateErrorWith
-            cfg
-            conn
-            candidate
-            "post_receipt_position_read"
-            (receiptLogFields receipt)
-            ("liquidation post-state verification failed: " <> rpcErrorText err)
-          pure False
-        Right 0 -> do
-          deletePerpsLiquidationCandidate
-            conn
-            (lwcChainId cfg)
-            (lwcCfdEngine cfg)
-            (plcrAccount candidate)
-          logInfo
-            "liquidation_confirmed"
-            "Liquidation transaction confirmed and the position is closed"
-            ( candidateLogFields cfg candidate
-                <> [ field "transaction_hash" $ receiptTxHash receipt
-                   , field "receipt_block_number" $ receiptBlockNumber receipt
-                   , field "position_reopened" False
-                   ]
-            )
-          pure True
-        Right _ -> do
-          clearPerpsLiquidationCandidatePending
-            conn
-            (lwcChainId cfg)
-            (lwcCfdEngine cfg)
-            (plcrAccount candidate)
-          markPerpsLiquidationCandidateChecked
-            conn
-            (lwcChainId cfg)
-            (lwcCfdEngine cfg)
-            (plcrAccount candidate)
-          logWarn
-            "liquidation_confirmed_position_reopened"
-            "Liquidation confirmed but the account has a newer open position"
-            ( candidateLogFields cfg candidate
-                <> [ field "transaction_hash" $ receiptTxHash receipt
-                   , field "receipt_block_number" $ receiptBlockNumber receipt
-                   , field "position_reopened" True
-                   ]
-            )
-          pure True
-  | receiptSucceeded receipt = do
-      -- Keep the confirmed hash as a circuit breaker. A successful call without
-      -- the engine event indicates a router/ABI invariant failure; automatically
-      -- resubmitting would burn gas indefinitely.
-      recordCandidateCriticalWith
-        cfg
-        conn
-        candidate
-        "liquidation_receipt_invariant_failed"
-        (receiptLogFields receipt)
-        "Confirmed transaction omitted the expected CFD-engine PositionLiquidated event"
-      pure False
-  | otherwise = do
-      clearPerpsLiquidationCandidatePending
-        conn
-        (lwcChainId cfg)
-        (lwcCfdEngine cfg)
-        (plcrAccount candidate)
-      let err = "liquidation transaction reverted: " <> receiptTxHash receipt
-      persistCandidateError cfg conn candidate err
-      logError
-        "liquidation_transaction_reverted"
-        "Liquidation transaction reverted on-chain"
-        (candidateLogFields cfg candidate <> receiptLogFields receipt <> [field "error" err])
+handleConfirmedLiquidationBatchReceipt cfg conn client candidates latestBlock receipt
+  | not (receiptSucceeded receipt) = do
+      let err = "liquidation batch transaction reverted: " <> receiptTxHash receipt
+      withTransaction conn $
+        forM_ candidates $ \candidate -> do
+          clearPendingCandidate cfg conn candidate
+          persistCandidateError cfg conn candidate err
+      logError "liquidation_batch_transaction_reverted" "Liquidation batch transaction reverted on-chain" $
+        workerLogFields cfg <> receiptLogFields receipt <> [field "candidate_count" $ length candidates, field "error" err]
       pure True
+  | otherwise =
+      case validateLiquidationBatchReceipt (lwcOrderRouter cfg) (map plcrAccount candidates) receipt of
+        Left err -> do
+          forM_ candidates $ \candidate ->
+            recordCandidateCriticalWith cfg conn candidate "liquidation_batch_receipt_invariant_failed" (receiptLogFields receipt) err
+          pure False
+        Right progress -> do
+          let confirmedBlock = max 0 $ latestBlock - fromIntegral (lwcIndexerConfirmations cfg)
+          positions <- loadConfirmedPositionSizes cfg client confirmedBlock candidates
+          let positionFailures =
+                [(candidate, err) | (candidate, Left err) <- positions]
+              invalidLiquidations =
+                [ candidate
+                | candidate <- candidates
+                , Just item <- [itemForAccount progress $ plcrAccount candidate]
+                , Perps.lbiResult item == Perps.LiquidationBatchLiquidated
+                , not $ isLiquidationReceiptFor (lwcCfdEngine cfg) (plcrAccount candidate) receipt
+                ]
+          case (positionFailures, invalidLiquidations) of
+            (_ : _, _) -> do
+              forM_ positionFailures $ \(candidate, err) ->
+                recordCandidateErrorWith cfg conn candidate "batch_post_receipt_position_read" (receiptLogFields receipt) $
+                  "liquidation batch post-state verification failed: " <> err
+              pure False
+            (_, _ : _) -> do
+              forM_ candidates $ \candidate ->
+                recordCandidateCriticalWith
+                  cfg conn candidate "liquidation_batch_item_invariant_failed" (receiptLogFields receipt)
+                  "batch reported a liquidation without the matching engine PositionLiquidated event"
+              pure False
+            ([], []) -> do
+              outcomes <-
+                withTransaction conn $
+                  forM positions $ \(candidate, positionResult) ->
+                    reconcileBatchItem cfg conn receipt progress candidate positionResult
+              logInfo
+                "liquidation_batch_confirmed"
+                "Liquidation batch transaction was reconciled account by account"
+                ( workerLogFields cfg
+                    <> receiptLogFields receipt
+                    <> [ field "candidate_count" $ length candidates
+                       , field "attempted_count" $ lbpNextIndex progress
+                       , field "reconciled_count" $ length [() | True <- outcomes]
+                       ]
+                )
+              pure $ and outcomes
 
-getConfirmedPositionSize
+reconcileBatchItem
   :: LiquidationWorkerConfig
-  -> EthClient
-  -> Text
-  -> IO (Either RpcError Integer)
-getConfirmedPositionSize cfg client account = do
-  latestResult <- ethBlockNumber client
-  case latestResult of
-    Left err -> pure $ Left err
-    Right latestBlock ->
-      Perps.getPositionSizeAtBlock
-        client
-        (lwcCfdEngine cfg)
-        account
-        (max 0 $ latestBlock - fromIntegral (lwcIndexerConfirmations cfg))
+  -> Connection
+  -> TxReceipt
+  -> LiquidationBatchProgress
+  -> PerpsLiquidationCandidateRow
+  -> Either Text Integer
+  -> IO Bool
+reconcileBatchItem cfg conn receipt progress candidate positionResult =
+  case positionResult of
+    Left err -> do
+      recordCandidateErrorWith cfg conn candidate "batch_post_receipt_position_read" (receiptLogFields receipt) $
+        "liquidation batch post-state verification failed: " <> err
+      pure False
+    Right positionSize ->
+      case itemForAccount progress (plcrAccount candidate) of
+        Nothing -> do
+          clearPendingCandidate cfg conn candidate
+          retryCandidate cfg conn candidate "liquidation batch stopped before attempting this account"
+          pure True
+        Just item -> reconcileAttemptedItem item positionSize
+  where
+    reconcileAttemptedItem item positionSize =
+      case Perps.lbiResult item of
+        Perps.LiquidationBatchLiquidated
+          | not $ isLiquidationReceiptFor (lwcCfdEngine cfg) (plcrAccount candidate) receipt -> do
+              recordCandidateCriticalWith
+                cfg conn candidate "liquidation_batch_item_invariant_failed" (receiptLogFields receipt)
+                "batch item reported liquidation without the matching engine PositionLiquidated event"
+              pure False
+          | positionSize == 0 -> deleteCandidate cfg conn candidate >> pure True
+          | otherwise -> clearAndCheck >> pure True
+        Perps.LiquidationBatchSkippedNoPosition
+          | positionSize == 0 -> deleteCandidate cfg conn candidate >> pure True
+          | otherwise -> do
+              clearPendingCandidate cfg conn candidate
+              retryCandidate cfg conn candidate "batch reported no position but confirmed state is still open"
+              pure True
+        Perps.LiquidationBatchSkippedSolvent
+          | positionSize == 0 -> deleteCandidate cfg conn candidate >> pure True
+          | otherwise -> clearAndCheck >> pure True
+        Perps.LiquidationBatchFailed -> do
+          clearPendingCandidate cfg conn candidate
+          retryCandidate cfg conn candidate $
+            "isolated liquidation batch item failed with selector " <> encodeHex (Perps.lbiErrorSelector item)
+          pure True
+      where
+        clearAndCheck = do
+          clearPendingCandidate cfg conn candidate
+          markCandidateChecked cfg conn candidate
+
+itemForAccount :: LiquidationBatchProgress -> Text -> Maybe Perps.LiquidationBatchItem
+itemForAccount progress account =
+  firstCandidate $
+    filter
+      ((== normalizeAddress account) . normalizeAddress . Perps.lbiAccount)
+      (lbpItems progress)
+
+firstCandidate :: [a] -> Maybe a
+firstCandidate = \case
+  value : _ -> Just value
+  [] -> Nothing
+
+clearPendingCandidate :: LiquidationWorkerConfig -> Connection -> PerpsLiquidationCandidateRow -> IO ()
+clearPendingCandidate cfg conn candidate =
+  clearPerpsLiquidationCandidatePending
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    (plcrAccount candidate)
+
+markCandidateChecked :: LiquidationWorkerConfig -> Connection -> PerpsLiquidationCandidateRow -> IO ()
+markCandidateChecked cfg conn candidate =
+  markPerpsLiquidationCandidateChecked
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    (plcrAccount candidate)
+
+deleteCandidate :: LiquidationWorkerConfig -> Connection -> PerpsLiquidationCandidateRow -> IO ()
+deleteCandidate cfg conn candidate =
+  deletePerpsLiquidationCandidate
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    (plcrAccount candidate)
+
+retryCandidate :: LiquidationWorkerConfig -> Connection -> PerpsLiquidationCandidateRow -> Text -> IO ()
+retryCandidate cfg conn candidate err = do
+  recordPerpsLiquidationCandidateRetryableError
+    conn
+    (lwcChainId cfg)
+    (lwcCfdEngine cfg)
+    (plcrAccount candidate)
+    err
+  logWarnEvery
+    60
+    "liquidation_batch_item_retryable"
+    "Liquidation batch left an account eligible for a later retry"
+    (candidateLogFields cfg candidate <> [field "error" err])
 
 recordCandidateError
   :: LiquidationWorkerConfig
@@ -2068,6 +2207,7 @@ workerLogFields cfg =
   , field "poll_seconds" $ lwcPollSeconds cfg
   , field "scan_batch_size" $ lwcScanBatchSize cfg
   , field "multicall_size" $ lwcMulticallSize cfg
+  , field "execution_batch_size" $ lwcExecutionBatchSize cfg
   ]
 
 candidateLogFields :: LiquidationWorkerConfig -> PerpsLiquidationCandidateRow -> [LogField]
@@ -2133,6 +2273,41 @@ isLiquidationReceiptFor cfdEngine account receipt =
   where
     normalizedEngine = normalizeAddress cfdEngine
     normalizedAccount = normalizeAddress account
+
+validateLiquidationBatchReceipt
+  :: Text
+  -> [Text]
+  -> TxReceipt
+  -> Either Text LiquidationBatchProgress
+validateLiquidationBatchReceipt orderRouter accounts receipt
+  | not (receiptSucceeded receipt) = Left "liquidation batch transaction reverted"
+  | null accounts = Left "liquidation batch receipt has no submitted accounts"
+  | length stops > 1 = Left "liquidation batch receipt emitted more than one stop marker"
+  | null items && null stops = Left "liquidation batch receipt omitted all result and stop events"
+  | map Perps.lbiIndex items /= [0 .. fromIntegral (length items) - 1] =
+      Left "liquidation batch item indices are not a contiguous prefix"
+  | length items > length accounts = Left "liquidation batch emitted more items than submitted accounts"
+  | length itemAccounts /= length (nub itemAccounts) =
+      Left "liquidation batch emitted a duplicate account result"
+  | any (`notElem` submittedAccounts) itemAccounts =
+      Left "liquidation batch emitted a result for an account that was not submitted"
+  | nextIndex /= fromIntegral (length items) =
+      Left "liquidation batch stop index does not match the attempted prefix"
+  | null stops && length items /= length accounts =
+      Left "liquidation batch ended without accounting for every submitted account"
+  | otherwise = Right $ LiquidationBatchProgress items nextIndex
+  where
+    routerLogs =
+      filter
+        ((== normalizeAddress orderRouter) . normalizeAddress . rpcLogAddress)
+        (receiptLogs receipt)
+    items = sortOn Perps.lbiIndex $ mapMaybe Perps.decodeLiquidationBatchItem routerLogs
+    itemAccounts = map (normalizeAddress . Perps.lbiAccount) items
+    submittedAccounts = map normalizeAddress accounts
+    stops = mapMaybe Perps.decodeLiquidationBatchStoppedIndex routerLogs
+    nextIndex = case stops of
+      stop : _ -> stop
+      [] -> fromIntegral $ length accounts
 
 isExpectedLiquidationSimulationRevert :: RpcError -> Bool
 isExpectedLiquidationSimulationRevert = \case

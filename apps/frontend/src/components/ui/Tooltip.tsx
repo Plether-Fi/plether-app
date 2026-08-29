@@ -32,6 +32,7 @@ interface TooltipCoordinates {
 
 const TOOLTIP_GAP_PX = 8
 const TOOLTIP_HIDE_DELAY_MS = 300
+const TOOLTIP_OPEN_EVENT = 'plether:tooltip-open'
 const VIEWPORT_MARGIN_PX = 8
 
 export function Tooltip({
@@ -57,8 +58,9 @@ export function Tooltip({
 
   const showTooltip = useCallback(() => {
     clearHideTimer()
+    document.dispatchEvent(new CustomEvent<string>(TOOLTIP_OPEN_EVENT, { detail: tooltipId }))
     setIsVisible(true)
-  }, [clearHideTimer])
+  }, [clearHideTimer, tooltipId])
 
   const scheduleHideTooltip = useCallback(() => {
     clearHideTimer()
@@ -76,8 +78,13 @@ export function Tooltip({
     ) {
       return
     }
+    if (nextTarget instanceof Node) {
+      clearHideTimer()
+      setIsVisible(false)
+      return
+    }
     scheduleHideTooltip()
-  }, [scheduleHideTooltip])
+  }, [clearHideTimer, scheduleHideTooltip])
 
   const updatePosition = useCallback(() => {
     const triggerElement = triggerRef.current
@@ -130,6 +137,19 @@ export function Tooltip({
     if (!isVisible) return
     updatePosition()
   }, [isVisible, updatePosition, content, className])
+
+  useEffect(() => {
+    const handleOtherTooltipOpen = (event: Event) => {
+      if ((event as CustomEvent<string>).detail === tooltipId) return
+      clearHideTimer()
+      setIsVisible(false)
+    }
+
+    document.addEventListener(TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen)
+    return () => {
+      document.removeEventListener(TOOLTIP_OPEN_EVENT, handleOtherTooltipOpen)
+    }
+  }, [clearHideTimer, tooltipId])
 
   useEffect(() => {
     if (!isVisible) return undefined

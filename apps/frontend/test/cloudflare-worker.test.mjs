@@ -11,6 +11,8 @@ const ACTIVE_CANDLE_URL =
   'https://app.plether.com/api/perps/v1/perps/basket/candles?interval=300&cursor=1800150000';
 const CURRENT_CANDLE_URL =
   'https://app.plether.com/api/perps/v1/perps/basket/candles/current?interval=300';
+const VAULT_HISTORY_URL =
+  'https://app.plether.com/api/perps/v1/perps/vaults/history?interval=3600&range=7d';
 
 afterEach(() => {
   mock.restoreAll();
@@ -173,6 +175,165 @@ describe('Cloudflare API proxy history caching and Server-Timing', () => {
 
     assert.equal(response.headers.get('Server-Timing'), null);
     assert.equal(fetchMock.mock.calls[0].arguments[1].cf, undefined);
+  });
+});
+
+describe('Cloudflare API proxy vault history caching', () => {
+  it('caches the exact anonymous seven-day query under a canonical key', async () => {
+    mock.method(Date, 'now', () => 1_800_000_000_000);
+    const cacheMatch = mock.fn(async () => undefined);
+    const cachePut = mock.fn(async () => undefined);
+    const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+    Object.defineProperty(globalThis, 'caches', {
+      configurable: true,
+      value: {
+        default: {
+          match: cacheMatch,
+          put: cachePut,
+        },
+      },
+    });
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(
+      '{"data":{"complete":true}}',
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+    const backgroundWork = [];
+
+    let response;
+    try {
+      response = await worker.fetch(
+        new Request(VAULT_HISTORY_URL),
+        workerEnv(),
+        { waitUntil: (promise) => backgroundWork.push(promise) },
+      );
+      await Promise.all(backgroundWork);
+    } finally {
+      if (originalCaches === undefined) delete globalThis.caches;
+      else Object.defineProperty(globalThis, 'caches', originalCaches);
+    }
+
+    const canonicalUrl =
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=3600';
+    assert.equal(fetchMock.mock.callCount(), 1);
+    assert.equal(
+      fetchMock.mock.calls[0].arguments[0].href,
+      'https://sepolia-api.plether.test/api/perps/vaults/history?range=7d&interval=3600',
+    );
+    assert.equal(fetchMock.mock.calls[0].arguments[1].cf, undefined);
+    assert.equal(cacheMatch.mock.callCount(), 1);
+    assert.equal(cacheMatch.mock.calls[0].arguments[0].url, canonicalUrl);
+    assert.equal(cachePut.mock.callCount(), 1);
+    assert.equal(cachePut.mock.calls[0].arguments[0].url, canonicalUrl);
+    assert.equal(
+      cachePut.mock.calls[0].arguments[1].headers.get('Cache-Control'),
+      'public, max-age=0, s-maxage=360',
+    );
+    assert.equal(
+      response.headers.get('Cache-Control'),
+      'public, max-age=0, s-maxage=60, stale-while-revalidate=300',
+    );
+    assert.equal(response.headers.get('X-Plether-Edge-Cache'), 'MISS');
+    assert.equal(await response.text(), '{"data":{"complete":true}}');
+  });
+
+  it('does not share-cache vault history with missing, duplicate, extra, or unsupported queries', async () => {
+    const cacheMatch = mock.fn(async () => undefined);
+    const cachePut = mock.fn(async () => undefined);
+    const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+    Object.defineProperty(globalThis, 'caches', {
+      configurable: true,
+      value: {
+        default: {
+          match: cacheMatch,
+          put: cachePut,
+        },
+      },
+    });
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(
+      '{"data":{}}',
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+    const urls = [
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?interval=3600',
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=30d&interval=3600',
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=300',
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&interval=3600&cursor=1',
+      'https://app.plether.com/api/perps/v1/perps/vaults/history?range=7d&range=7d&interval=3600',
+    ];
+
+    const responses = [];
+    try {
+      for (const url of urls) {
+        responses.push(await worker.fetch(new Request(url), workerEnv()));
+      }
+    } finally {
+      if (originalCaches === undefined) delete globalThis.caches;
+      else Object.defineProperty(globalThis, 'caches', originalCaches);
+    }
+
+    assert.equal(fetchMock.mock.callCount(), urls.length);
+    assert.equal(cacheMatch.mock.callCount(), 0);
+    assert.equal(cachePut.mock.callCount(), 0);
+    for (const response of responses) {
+      assert.equal(response.headers.get('X-Plether-Edge-Cache'), null);
+    }
+  });
+
+  it('does not share-cache credential-bearing or non-GET vault history requests', async () => {
+    const cacheMatch = mock.fn(async () => undefined);
+    const cachePut = mock.fn(async () => undefined);
+    const originalCaches = Object.getOwnPropertyDescriptor(globalThis, 'caches');
+    Object.defineProperty(globalThis, 'caches', {
+      configurable: true,
+      value: {
+        default: {
+          match: cacheMatch,
+          put: cachePut,
+        },
+      },
+    });
+    const fetchMock = mock.method(globalThis, 'fetch', async () => new Response(
+      '{"data":{}}',
+      { headers: { 'Content-Type': 'application/json' } },
+    ));
+
+    let authenticatedResponse;
+    let postResponse;
+    try {
+      authenticatedResponse = await worker.fetch(
+        new Request(VAULT_HISTORY_URL, {
+          headers: {
+            Authorization: 'Bearer private-token',
+            Cookie: 'session=private-session',
+          },
+        }),
+        workerEnv(),
+      );
+      postResponse = await worker.fetch(
+        new Request(VAULT_HISTORY_URL, {
+          method: 'POST',
+          body: '{}',
+        }),
+        workerEnv(),
+      );
+    } finally {
+      if (originalCaches === undefined) delete globalThis.caches;
+      else Object.defineProperty(globalThis, 'caches', originalCaches);
+    }
+
+    assert.equal(fetchMock.mock.callCount(), 2);
+    assert.equal(cacheMatch.mock.callCount(), 0);
+    assert.equal(cachePut.mock.callCount(), 0);
+    assert.equal(
+      fetchMock.mock.calls[0].arguments[1].headers.get('Authorization'),
+      'Bearer private-token',
+    );
+    assert.equal(
+      fetchMock.mock.calls[0].arguments[1].headers.get('Cookie'),
+      'session=private-session',
+    );
+    assert.equal(authenticatedResponse.headers.get('X-Plether-Edge-Cache'), null);
+    assert.equal(postResponse.headers.get('X-Plether-Edge-Cache'), null);
   });
 });
 
