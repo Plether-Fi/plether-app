@@ -27,7 +27,7 @@ export function Layout({ children }: LayoutProps) {
   return (
     <div className="flex min-h-screen min-h-dvh min-w-0 flex-col bg-app-bg text-content-primary">
       {isConnected && <WrongNetworkBanner />}
-      <div className="sticky top-0 z-50">
+      <div data-app-sticky-header className="sticky top-0 z-50">
         {isSepoliaDeployment() ? <SepoliaNoticeBar /> : null}
         <Header />
       </div>

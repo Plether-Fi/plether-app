@@ -75,7 +75,15 @@ data Config = Config
   , cfgPerpsMarginClearinghouse :: Text
   , cfgPerpsPletherOracle :: Text
   , cfgPerpsAccountLens :: Text
+  , cfgPerpsHousePool :: Text
+  , cfgPerpsSettlementMonitorLens :: Text
   , cfgPerpsIndexerStartBlock :: Integer
+  , cfgVaultHistoryHousePoolAddress :: Text
+  , cfgVaultHistorySeniorVaultAddress :: Text
+  , cfgVaultHistoryJuniorVaultAddress :: Text
+  , cfgVaultHistoryDeploymentBlock :: Integer
+  , cfgVaultHistoryRpcUrl :: Text
+  , cfgVaultHistoryConfirmations :: Integer
   , cfgInsightsCompetitionRules :: CompetitionRules
   , cfgInsightsCompetitionReleaseManifest :: CompetitionReleaseManifest
   , cfgRegistrationConfig :: Maybe RegistrationConfig
@@ -87,6 +95,8 @@ data Config = Config
   , cfgKeeperConfirmations :: Int
   , cfgKeeperGasBufferBps :: Integer
   , cfgKeeperFeeBufferBps :: Integer
+  , cfgLpSettlementEnabled :: Bool
+  , cfgLpSettlementPollSeconds :: Int
   }
   deriving stock (Show)
 
@@ -379,6 +389,14 @@ loadConfig = do
       mPerpsMarginClearinghouse <- lookupEnv "PERPS_MARGIN_CLEARINGHOUSE"
       mPerpsPletherOracle <- lookupEnv "PERPS_PLETHER_ORACLE"
       mPerpsIndexerStartBlockStr <- lookupEnv "PERPS_INDEXER_START_BLOCK"
+      perpsHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "PERPS_HOUSE_POOL"
+      perpsSettlementMonitorLens <- fromMaybe "0xd251AC0BD90780c48F31F575152808315200664E" <$> lookupEnv "PERPS_SETTLEMENT_MONITOR_LENS"
+      vaultHistoryHousePool <- fromMaybe "0x86939a377A78EDe8EEe5445765ac77c9016E35E2" <$> lookupEnv "VAULT_HISTORY_HOUSE_POOL_ADDRESS"
+      vaultHistorySeniorVault <- fromMaybe "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710" <$> lookupEnv "VAULT_HISTORY_SENIOR_VAULT_ADDRESS"
+      vaultHistoryJuniorVault <- fromMaybe "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb" <$> lookupEnv "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS"
+      vaultHistoryDeploymentBlockStr <- fromMaybe "302257125" <$> lookupEnv "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+      mVaultHistoryRpcUrl <- lookupEnv "VAULT_HISTORY_RPC_URL"
+      vaultHistoryConfirmationsStr <- fromMaybe "12" <$> lookupEnv "VAULT_HISTORY_CONFIRMATIONS"
       mInsightsCompetitionSlug <- lookupEnv "INSIGHTS_ACTIVE_COMPETITION_SLUG"
       mInsightsCompetitionReleaseId <- lookupEnv "INSIGHTS_COMPETITION_RELEASE_ID"
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
@@ -396,6 +414,8 @@ loadConfig = do
       keeperConfirmationsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_CONFIRMATIONS"
       keeperGasBufferBpsStr <- fromMaybe "2000" <$> lookupEnv "KEEPER_GAS_BUFFER_BPS"
       keeperFeeBufferBpsStr <- fromMaybe "2500" <$> lookupEnv "KEEPER_FEE_BUFFER_BPS"
+      lpSettlementEnabledStr <- fromMaybe "false" <$> lookupEnv "LP_SETTLEMENT_ENABLED"
+      lpSettlementPollSecondsStr <- fromMaybe "15" <$> lookupEnv "LP_SETTLEMENT_POLL_SECONDS"
 
       let chainId = fromMaybe 11155111 (readMaybe chainIdStr)
           indexerStartBlock = fromMaybe 0 (readMaybe indexerBlockStr)
@@ -521,6 +541,57 @@ loadConfig = do
               , fromIntegral finalizationGraceSeconds
               )
 
+          vaultHistoryConfig = do
+            deploymentBlock <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_DEPLOYMENT_BLOCK"
+                vaultHistoryDeploymentBlockStr
+            confirmations <-
+              parseNonNegativeInteger
+                "VAULT_HISTORY_CONFIRMATIONS"
+                vaultHistoryConfirmationsStr
+            let addresses =
+                  [ ("VAULT_HISTORY_HOUSE_POOL_ADDRESS", vaultHistoryHousePool)
+                  , ("VAULT_HISTORY_SENIOR_VAULT_ADDRESS", vaultHistorySeniorVault)
+                  , ("VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", vaultHistoryJuniorVault)
+                  ]
+            case [name | (name, address) <- addresses, not $ isCanonicalVaultAddress address] of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              [] ->
+                Right
+                  ( deploymentBlock
+                  , confirmations
+                  , fromMaybe (T.pack perpsRpcUrl) $ nonBlankText mVaultHistoryRpcUrl
+                  )
+
+          lpSettlementConfig = do
+            enabled <-
+              maybe
+                (Left "LP_SETTLEMENT_ENABLED must be a boolean")
+                Right
+                (parseBoolStrict lpSettlementEnabledStr)
+            pollSeconds <-
+              parseBoundedWholeNumber
+                "LP_SETTLEMENT_POLL_SECONDS"
+                1
+                3_600
+                lpSettlementPollSecondsStr
+            case
+                [ name
+                | (name, address) <-
+                    [ ("PERPS_HOUSE_POOL", perpsHousePool)
+                    , ("PERPS_SETTLEMENT_MONITOR_LENS", perpsSettlementMonitorLens)
+                    ]
+                , not $ isCanonicalVaultAddress address
+                ]
+              of
+              invalid : _ -> Left $ invalid <> " must be a valid Ethereum address"
+              []
+                | T.toLower (T.strip $ T.pack perpsSettlementMonitorLens)
+                    == "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151" ->
+                    Left "PERPS_SETTLEMENT_MONITOR_LENS must be the facade, not the v1.2.0 monitor sidecar"
+                | otherwise -> Right (enabled, pollSeconds)
+
           competitionConfig = do
             rules <-
               validateInsightsCompetitionActivation
@@ -553,11 +624,21 @@ loadConfig = do
                     [perpsUsdc, perpsOrderRouter, perpsCfdEngine, perpsMarginClearinghouse]
               Left _ -> False
 
-      case (validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr, aaConfig, candleConfig, competitionConfig) of
-        (Left err, _, _, _) -> pure $ Left err
-        (_, Left err, _, _) -> pure $ Left err
-        (_, _, Left err, _) -> pure $ Left err
-        (_, _, _, Left err) -> pure $ Left err
+      case
+          ( validatePythLatestMaxAgeSeconds pythLatestMaxAgeStr
+          , aaConfig
+          , candleConfig
+          , vaultHistoryConfig
+          , lpSettlementConfig
+          , competitionConfig
+          )
+        of
+        (Left err, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -569,6 +650,12 @@ loadConfig = do
                 , candleLatenessSeconds
                 , candleFinalizationGraceSeconds
                 )
+          , Right
+              ( vaultHistoryDeploymentBlock
+                , vaultHistoryConfirmations
+                , vaultHistoryRpcUrl
+                )
+          , Right (lpSettlementEnabled, lpSettlementPollSeconds)
           , Right (insightsCompetitionRules, resolvedRegistrationConfig)
           ) -> do
           eDeployments <- loadDeployments addressFile
@@ -609,7 +696,15 @@ loadConfig = do
                 , cfgPerpsMarginClearinghouse = T.pack perpsMarginClearinghouse
                 , cfgPerpsPletherOracle = T.pack perpsPletherOracle
                 , cfgPerpsAccountLens = T.pack perpsAccountLens
+                , cfgPerpsHousePool = T.pack perpsHousePool
+                , cfgPerpsSettlementMonitorLens = T.pack perpsSettlementMonitorLens
                 , cfgPerpsIndexerStartBlock = perpsIndexerStartBlock
+                , cfgVaultHistoryHousePoolAddress = T.pack vaultHistoryHousePool
+                , cfgVaultHistorySeniorVaultAddress = T.pack vaultHistorySeniorVault
+                , cfgVaultHistoryJuniorVaultAddress = T.pack vaultHistoryJuniorVault
+                , cfgVaultHistoryDeploymentBlock = vaultHistoryDeploymentBlock
+                , cfgVaultHistoryRpcUrl = vaultHistoryRpcUrl
+                , cfgVaultHistoryConfirmations = vaultHistoryConfirmations
                 , cfgInsightsCompetitionRules = insightsCompetitionRules
                 , cfgInsightsCompetitionReleaseManifest =
                     let defaultReleaseId
@@ -638,6 +733,8 @@ loadConfig = do
                 , cfgKeeperConfirmations = max 0 keeperConfirmations
                 , cfgKeeperGasBufferBps = max 0 keeperGasBufferBps
                 , cfgKeeperFeeBufferBps = max 0 keeperFeeBufferBps
+                , cfgLpSettlementEnabled = lpSettlementEnabled
+                , cfgLpSettlementPollSeconds = lpSettlementPollSeconds
                 }
 
 firstEnv :: [String] -> IO (Maybe String)
@@ -755,13 +852,30 @@ parseBoundedWholeNumber name lower upper raw =
   where
     normalized = T.unpack $ T.strip $ T.pack raw
 
+parseNonNegativeInteger :: String -> String -> Either String Integer
+parseNonNegativeInteger name raw =
+  case readMaybe normalized of
+    Just value
+      | show value == normalized
+      , value >= 0 -> Right value
+    _ -> Left $ name <> " must be a non-negative whole number"
+  where
+    normalized = T.unpack $ T.strip $ T.pack raw
+
+isCanonicalVaultAddress :: String -> Bool
+isCanonicalVaultAddress raw =
+  let address = T.strip $ T.pack raw
+   in T.length address == 42
+        && T.toLower (T.take 2 address) == "0x"
+        && isValidAddress address
+
 validAaDeploymentAddresses :: String -> String -> String -> String -> Bool
 validAaDeploymentAddresses usdc router engine clearinghouse =
   and
-    [ reviewed usdc "0xb15503d70b0eaa644dc6650d2a248762f7c5bce3"
-    , reviewed router "0x04e3103752f623fbcdcd01f588590af4c53e4c1e"
-    , reviewed engine "0x6a25ea1015b5f032d8a2d95d57aefcb99219bf0a"
-    , reviewed clearinghouse "0x19c2f60f6312eaf9acde4c2b04551a05ca9be76e"
+    [ reviewed usdc "0x1647e41f49ed6d688936092b5a291c4b28106343"
+    , reviewed router "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+    , reviewed engine "0x3dc9c0a1f9c745a4b08bd5c2e6c7ae613561c20d"
+    , reviewed clearinghouse "0x2f98787f6dcc3b1f2e4a2afa5acf410159b9f211"
     ]
   where
     reviewed raw expected =

@@ -8,9 +8,9 @@ Use this guide after deciding which tranche[^tranche] fits your risk tolerance. 
 
 > **Current interface status**
 >
-> The `Vaults` interface is under development and is not yet part of the published testnet application. Immediate deposits and synchronous withdrawals exist only on the current development branch; the pending lifecycle remains preview-only. The `Senior Vault`, `Junior Vault`, `Deposit USDC`, `Review deposit`, `Deposit preview` and `Approve & deposit` controls described below must not be treated as live until the published application explicitly enables them.
+> The `Vaults` interface is under development and is not yet part of the published testnet application. The current development branch supports immediate deposits, funded epoch requests, request discovery, cancellation, finalization, claims and synchronous withdrawals. These controls must not be treated as published until the deployed application exposes them.
 >
-> The in-progress interface can preview the pending-epoch route, but pending controls, pending history and APY history are not enabled. The disabled state is labeled `Lifecycle coming soon`. A preview is not a funded request.
+> Historical APY and full vault-activity indexing are not enabled. A preview is still not a funded request: the approval and `Queue deposit` transaction must both confirm before USDC enters vault escrow.
 >
 > Do not attempt to reproduce the flow by sending USDC directly to a vault or the HousePool. Wait until the application explicitly enables the verified LP action or use a separately documented direct-contract procedure from the deployment operator.
 
@@ -95,7 +95,7 @@ The in-progress `Deposit preview` shows:
 * **Expected activation:** in this transaction for an immediate deposit, or dependent on epoch eligibility
 * **Frozen-oracle surcharge:** inactive, included in the quote where supported or state unavailable
 * **Network** and **Quote refreshed** time
-* An onchain-action notice and a final `Approve & deposit`, `Deposit USDC`, `Lifecycle coming soon` or `Unavailable` state
+* An onchain-action notice and a final `Approve & deposit`, `Deposit USDC`, `Approve & queue`, `Queue deposit` or `Unavailable` state
 
 The owner-wallet balance appears on the amount form rather than in the modal. The current preview does not show the balance after deposit, a numeric surcharge rate or an exact pending activation epoch. Calculate the expected remaining balance yourself, use the vault quote and onchain configuration for the active surcharge, and do not infer a pending deadline that is not displayed.
 
@@ -174,7 +174,7 @@ After it confirms:
 
 The current contracts use one-hour epoch identifiers and assign requests two epochs ahead, producing an approximate one-to-two-hour wait before activation. This is not a guaranteed finalization time.
 
-The in-progress frontend currently shows this route for preview only and labels the disabled action `Lifecycle coming soon`. Do not approve or transfer funds on the assumption that the disabled pending lifecycle will complete them later.
+The in-progress frontend submits this route through the verified vault's `requestDeposit` method and then displays the request under **Your position**. Do not send USDC directly to the vault; only the funded-request method creates the epoch accounting needed for cancellation and claiming.
 
 Read [Manage a pending deposit](manage-a-pending-deposit.md) before funding this route, including its cancellation boundary and recovery behavior.
 
@@ -206,7 +206,7 @@ Save every applicable transaction hash: the approval, when required, and the dep
 | --- | --- | --- |
 | Approval confirmed, but the owner-wallet USDC balance did not change | Approval creates allowance only | Return to the verified vault flow and confirm the deposit or funded-request transaction |
 | USDC moved, but no LP shares appeared | The route may be pending, or the trader Margin Account deposit may have been used | Check the transaction target and pending-epoch record; a Margin Account credit is not an LP position |
-| `Deposit preview` shows pending but no request exists | The current pending flow is preview-only/disabled | Do not send funds manually; wait for the funded request action to be enabled |
+| `Deposit preview` showed pending but no request exists | Only the approval confirmed, the request failed, or event discovery is still refreshing | Check the funded-request receipt, refresh **Your position**, and do not send funds manually |
 | Immediate deposit became unavailable | A position opened or another execution-time gate changed | Refresh the preview and use the protocol-selected route; do not bypass the gate |
 | Wallet shows an unfamiliar spender | The approval is not for the verified selected vault | Reject it and re-check the official deployment metadata |
 | Approval or deposit is stuck | Network, RPC or fee conditions may have changed | Check the transaction hash before retrying; avoid creating multiple funded requests |

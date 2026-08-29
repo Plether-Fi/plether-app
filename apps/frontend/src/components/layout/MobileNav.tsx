@@ -3,9 +3,14 @@ import { isPrimaryAppDeployment } from '../../utils/deployment'
 
 const navLinks = [
   { path: '/', label: 'Perps', icon: 'trending_up', color: 'positive' },
+  { path: '/vaults', label: 'Vaults', icon: 'account_balance', color: 'brand-peach' },
 ]
 
 const colorStyles: Record<string, { active: string; hover: string }> = {
+  'brand-peach': {
+    active: 'text-brand-peach bg-brand-peach/10',
+    hover: 'hover:text-[#FFAB96]',
+  },
   'positive': {
     active: 'text-positive bg-positive/10',
     hover: 'hover:text-positive',
@@ -21,7 +26,8 @@ export function MobileNav() {
     <nav className="safe-area-bottom fixed inset-x-0 bottom-0 z-40 border-t border-brand-border/30 bg-surface-panel lg:hidden">
       <div className="flex min-h-16 items-stretch justify-around">
         {navLinks.map(({ path, label, icon, color }) => {
-          const isActive = location.pathname === path
+          const isActive = location.pathname === path ||
+            (path === '/vaults' && location.pathname.startsWith('/vaults/'))
           const styles = colorStyles[color]
           return (
             <Link

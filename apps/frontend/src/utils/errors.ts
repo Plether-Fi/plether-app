@@ -81,6 +81,16 @@ const ERROR_SELECTORS: Record<string, string> = {
   '0xb94abeec': 'Exceeds maximum redeem amount - position may be locked or insufficient liquidity',
   '0xfe9cceec': 'Exceeds maximum withdraw amount',
 
+  // Plether tranche vault errors
+  '0x053347a4': 'Vault shares are still in the one-hour deposit cooldown',
+  '0x15fb1002': 'Vault deposits are currently unavailable',
+  '0x1ac3a5cc': 'Cannot deposit for an existing holder from a different wallet',
+  '0x470a09ff': 'Withdrawal is below the one USDC minimum unless it is a complete residual exit',
+  '0x5616d460': 'This tranche is terminally wiped and cannot accept deposits',
+  '0xd88a5404': 'Deposit is below the one USDC minimum',
+  '0xf563b79c': 'Vault trading lifecycle is not active',
+  '0xf5afaf53': 'Senior impairment currently blocks tranche deposits',
+
   // ERC20 errors
   '0x94280d62': 'Invalid spender address',
   '0x96c6fd1e': 'Invalid sender address',

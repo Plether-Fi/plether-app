@@ -5,7 +5,7 @@
  * automatic caching, refetching, and state management.
  */
 
-import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
+import { useQuery, useInfiniteQuery, type UseQueryResult } from '@tanstack/react-query';
 import { useEffect, useState, useCallback, useRef, useSyncExternalStore } from 'react';
 import { Result } from 'better-result';
 import { perpsApi, spotApi, PlethApiError } from './client';
@@ -21,6 +21,7 @@ import type {
   WebSocketMessage,
   BasketHistoryRange,
   PerpsCandleIntervalSeconds,
+  VaultHistory,
 } from './types';
 
 // =============================================================================
@@ -48,6 +49,7 @@ export const apiQueryKeys = {
     basketCurrentCandle: (intervalSeconds: PerpsCandleIntervalSeconds) =>
       [...apiQueryKeys.perps.basketCandlesAll(), 'current', intervalSeconds] as const,
     marketStats: () => [...apiQueryKeys.perps.all(), 'marketStats'] as const,
+    vaultHistory: () => [...apiQueryKeys.perps.all(), 'vaultHistory', '7d', 3600] as const,
   },
   user: {
     all: (address: string) => ['user', SPOT_API_SCOPE, address] as const,
@@ -195,6 +197,28 @@ export function usePerpsMarketStats() {
     queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsMarketStats(signal)),
     staleTime: 30 * 1000,
     refetchInterval: (query) => query.state.status === 'error' ? 60 * 1000 : 30 * 1000,
+    retry: retryTransientFailureOnce,
+    retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
+  });
+}
+
+export const VAULT_HISTORY_QUERY_POLICY = {
+  staleTime: 60_000,
+  refetchInterval: 60_000,
+} as const;
+
+/**
+ * Fetches one deployment-aware history document for both tranches. TanStack
+ * Query keeps the last successful document available when a background
+ * refresh fails. Every successful response is accepted so the UI fails closed
+ * when the backend reports incomplete or stale indexer coverage.
+ */
+export function usePerpsVaultHistory(): UseQueryResult<ApiResponse<VaultHistory>, PlethApiError> {
+  return useQuery<ApiResponse<VaultHistory>, PlethApiError>({
+    queryKey: apiQueryKeys.perps.vaultHistory(),
+    queryFn: async ({ signal }) => unwrapResult(await perpsApi.getPerpsVaultHistory(signal)),
+    staleTime: VAULT_HISTORY_QUERY_POLICY.staleTime,
+    refetchInterval: VAULT_HISTORY_QUERY_POLICY.refetchInterval,
     retry: retryTransientFailureOnce,
     retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 10_000),
   });

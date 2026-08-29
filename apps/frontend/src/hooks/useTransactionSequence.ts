@@ -23,20 +23,26 @@ export interface SequenceConfig {
   type?: TransactionType
   buildSteps: () => TransactionStep[]
   onSuccess?: (hash: string) => void
+  showModal?: boolean
 }
 
 type SequenceStatus = 'idle' | 'running' | 'success' | 'error'
+type SequencePhase = 'idle' | 'awaiting_wallet' | 'confirming_onchain' | 'complete' | 'error'
 
 interface SequenceState {
   status: SequenceStatus
+  phase: SequencePhase
   currentStepIndex: number
+  steps: string[]
   error: string | null
   hash: string | null
 }
 
 const initialState: SequenceState = {
   status: 'idle',
+  phase: 'idle',
   currentStepIndex: -1,
+  steps: [],
   error: null,
   hash: null,
 }
@@ -57,31 +63,39 @@ export function useTransactionSequence() {
 
   const execute = useCallback(async (config: SequenceConfig) => {
     abortRef.current = { aborted: false }
-    const { title, type, buildSteps, onSuccess } = config
+    const { title, type, buildSteps, onSuccess, showModal = true } = config
     const steps = buildSteps()
     const transactionId = crypto.randomUUID()
 
     const modalSteps = steps.flatMap(s => [s.label, 'Confirming onchain (~12s)'])
 
-    // Add to transaction store (single source of truth)
-    txStore.addTransaction({
-      id: transactionId,
-      type: type ?? 'mint',
-      status: 'pending',
-      title,
-      steps: modalSteps.map(label => ({ label, status: 'pending' as const })),
-    })
+    // The shared transaction store powers the legacy sheet and its pending badge.
+    // Embedded flows own their complete lifecycle, so they must not register there.
+    if (showModal) {
+      txStore.addTransaction({
+        id: transactionId,
+        type: type ?? 'mint',
+        status: 'pending',
+        title,
+        steps: modalSteps.map(label => ({ label, status: 'pending' as const })),
+      })
+      txModal.open({
+        transactionId,
+        onRetry: () => {
+          reset()
+          void execute(config)
+        },
+      })
+    }
 
-    // Open modal (UI only)
-    txModal.open({
-      transactionId,
-      onRetry: () => {
-        reset()
-        void execute(config)
-      },
+    setState({
+      status: 'running',
+      phase: 'awaiting_wallet',
+      currentStepIndex: 0,
+      steps: steps.map(({ label }) => label),
+      error: null,
+      hash: null,
     })
-
-    setState({ status: 'running', currentStepIndex: 0, error: null, hash: null })
 
     let lastHash: string | null = null
 
@@ -91,8 +105,12 @@ export function useTransactionSequence() {
       const step = steps[i]
       const modalStepBase = i * 2
 
-      txStore.setStepInProgress(transactionId, modalStepBase)
-      setState(s => ({ ...s, currentStepIndex: i }))
+      if (showModal) txStore.setStepInProgress(transactionId, modalStepBase)
+      setState(s => ({
+        ...s,
+        phase: 'awaiting_wallet',
+        currentStepIndex: i,
+      }))
 
       try {
         const hash = await step.action()
@@ -104,7 +122,8 @@ export function useTransactionSequence() {
 
         lastHash = hash
 
-        txStore.setStepInProgress(transactionId, modalStepBase + 1)
+        if (showModal) txStore.setStepInProgress(transactionId, modalStepBase + 1)
+        setState(s => ({ ...s, phase: 'confirming_onchain', hash }))
 
         const receipt = await publicClient.waitForTransactionReceipt({ hash })
 
@@ -130,15 +149,22 @@ export function useTransactionSequence() {
         const error = parseTransactionError(err)
         const message = getErrorMessage(error)
 
-        setState(s => ({ ...s, status: 'error', error: message }))
-        txStore.setStepError(transactionId, modalStepBase, message)
+        setState(s => ({ ...s, status: 'error', phase: 'error', error: message }))
+        if (showModal) txStore.setStepError(transactionId, modalStepBase, message)
         return
       }
     }
 
     if (lastHash) {
-      setState({ status: 'success', currentStepIndex: steps.length, error: null, hash: lastHash })
-      txStore.setStepSuccess(transactionId, lastHash)
+      setState({
+        status: 'success',
+        phase: 'complete',
+        currentStepIndex: steps.length,
+        steps: steps.map(({ label }) => label),
+        error: null,
+        hash: lastHash,
+      })
+      if (showModal) txStore.setStepSuccess(transactionId, lastHash)
       onSuccess?.(lastHash)
     }
   }, [publicClient, txModal, txStore, reset])
@@ -147,6 +173,8 @@ export function useTransactionSequence() {
     execute,
     reset,
     status: state.status,
+    phase: state.phase,
+    steps: state.steps,
     currentStepIndex: state.currentStepIndex,
     isIdle: state.status === 'idle',
     isRunning: state.status === 'running',

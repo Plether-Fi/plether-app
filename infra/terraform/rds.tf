@@ -5,9 +5,11 @@ resource "aws_db_subnet_group" "main" {
 
 resource "aws_db_instance" "postgres" {
   identifier     = "plether-${var.environment}"
-  engine         = "postgres"
-  engine_version = "16"
+  engine         = var.db_snapshot_identifier == null ? "postgres" : null
+  engine_version = var.db_snapshot_identifier == null ? "16" : null
   instance_class = var.db_instance_class
+
+  snapshot_identifier = var.db_snapshot_identifier
 
   allocated_storage     = var.db_allocated_storage
   max_allocated_storage = var.db_max_allocated_storage
@@ -17,9 +19,9 @@ resource "aws_db_instance" "postgres" {
   ca_cert_identifier    = var.db_ca_cert_identifier
   apply_immediately     = var.db_apply_immediately
 
-  db_name  = "plether"
-  username = var.db_username
-  password = var.db_password
+  db_name  = var.db_snapshot_identifier == null ? "plether" : null
+  username = var.db_snapshot_identifier == null ? var.db_username : null
+  password = var.db_snapshot_identifier == null ? var.db_password : null
 
   db_subnet_group_name      = aws_db_subnet_group.main.name
   vpc_security_group_ids    = [aws_security_group.rds.id]

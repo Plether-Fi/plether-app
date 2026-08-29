@@ -71,6 +71,23 @@ locals {
     { name = "PERPS_CANDLE_FINALIZATION_GRACE_SECONDS", value = tostring(var.perps_candle_finalization_grace_seconds) },
   ]
 
+  keeper_environment = [
+    { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+    { name = "PERPS_USDC", value = var.perps_usdc },
+    { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
+    { name = "PERPS_HOUSE_POOL", value = var.perps_house_pool },
+    { name = "PERPS_SETTLEMENT_MONITOR_LENS", value = var.perps_settlement_monitor_lens },
+    { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
+    { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
+    { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
+    { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
+    { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
+    { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
+    { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
+    { name = "LP_SETTLEMENT_ENABLED", value = tostring(var.lp_settlement_enabled) },
+    { name = "LP_SETTLEMENT_POLL_SECONDS", value = var.lp_settlement_poll_seconds },
+  ]
+
   pyth_api_key_secret = local.effective_pyth_api_key_parameter_arn != null ? [
     {
       name      = "PYTH_API_KEY"
@@ -82,6 +99,13 @@ locals {
     {
       name      = "FAUCET_PRIVATE_KEY"
       valueFrom = aws_ssm_parameter.faucet_private_key[0].arn
+    }
+  ] : []
+
+  vault_history_rpc_secret = trimspace(var.vault_history_rpc_url) != "" ? [
+    {
+      name      = "VAULT_HISTORY_RPC_URL"
+      valueFrom = aws_ssm_parameter.vault_history_rpc_url[0].arn
     }
   ] : []
 
@@ -275,12 +299,17 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets, local.insights_registration_secrets)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
       { name = "CHAIN_ID", value = var.chain_id },
       { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
+      { name = "VAULT_HISTORY_HOUSE_POOL_ADDRESS", value = var.vault_history_house_pool_address },
+      { name = "VAULT_HISTORY_SENIOR_VAULT_ADDRESS", value = var.vault_history_senior_vault_address },
+      { name = "VAULT_HISTORY_JUNIOR_VAULT_ADDRESS", value = var.vault_history_junior_vault_address },
+      { name = "VAULT_HISTORY_DEPLOYMENT_BLOCK", value = var.vault_history_deployment_block },
+      { name = "VAULT_HISTORY_CONFIRMATIONS", value = var.vault_history_confirmations },
       { name = "PERPS_USDC", value = var.perps_usdc },
       { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
       { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
@@ -390,7 +419,7 @@ resource "aws_ecs_service" "api" {
   name                              = "plether-api"
   cluster                           = aws_ecs_cluster.main.id
   task_definition                   = aws_ecs_task_definition.api.arn
-  desired_count                     = 1
+  desired_count                     = var.api_desired_count
   launch_type                       = "FARGATE"
   health_check_grace_period_seconds = 300
 
@@ -423,6 +452,8 @@ resource "aws_ecs_task_definition" "keeper" {
   task_role_arn            = aws_iam_role.ecs_task.arn
   enable_fault_injection   = false
   tags                     = {}
+
+  depends_on = [terraform_data.lp_settlement_keeper_guard]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -457,18 +488,7 @@ resource "aws_ecs_task_definition" "keeper" {
       }
     ]
 
-    environment = [
-      { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
-      { name = "PERPS_USDC", value = var.perps_usdc },
-      { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
-      { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-      { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
-      { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
-      { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
-      { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
-      { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
-      { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
-    ]
+    environment = local.keeper_environment
   }, local.otel_log_router_container])
 }
 
@@ -547,6 +567,7 @@ resource "aws_ecs_task_definition" "liquidation_worker" {
       { name = "LIQUIDATION_WORKER_POLL_SECONDS", value = var.liquidation_worker_poll_seconds },
       { name = "LIQUIDATION_WORKER_SCAN_BATCH_SIZE", value = var.liquidation_worker_scan_batch_size },
       { name = "LIQUIDATION_WORKER_MULTICALL_SIZE", value = var.liquidation_worker_multicall_size },
+      { name = "LIQUIDATION_WORKER_EXECUTION_BATCH_SIZE", value = var.liquidation_worker_execution_batch_size },
       { name = "LIQUIDATION_WORKER_CONFIRMATIONS", value = var.liquidation_worker_confirmations },
       { name = "LIQUIDATION_WORKER_INDEX_BATCH_SIZE", value = var.liquidation_worker_index_batch_size },
       { name = "LIQUIDATION_WORKER_REORG_OVERLAP_BLOCKS", value = var.liquidation_worker_reorg_overlap_blocks },
@@ -838,7 +859,10 @@ resource "aws_ecs_task_definition" "workers" {
   enable_fault_injection   = false
   tags                     = {}
 
-  depends_on = [terraform_data.perps_candle_rollout_guard]
+  depends_on = [
+    terraform_data.perps_candle_rollout_guard,
+    terraform_data.lp_settlement_keeper_guard,
+  ]
 
   runtime_platform {
     cpu_architecture        = "ARM64"
@@ -873,17 +897,7 @@ resource "aws_ecs_task_definition" "workers" {
         }
       ]
 
-      environment = [
-        { name = "PERPS_CHAIN_ID", value = var.perps_chain_id },
-        { name = "PERPS_ORDER_ROUTER", value = var.perps_order_router },
-        { name = "PERPS_PLETHER_ORACLE", value = var.perps_plether_oracle },
-        { name = "PERPS_INDEXER_START_BLOCK", value = var.perps_indexer_start_block },
-        { name = "KEEPER_POLL_SECONDS", value = var.keeper_poll_seconds },
-        { name = "KEEPER_MAX_BATCH_SIZE", value = var.keeper_max_batch_size },
-        { name = "KEEPER_CONFIRMATIONS", value = var.keeper_confirmations },
-        { name = "KEEPER_GAS_BUFFER_BPS", value = var.keeper_gas_buffer_bps },
-        { name = "KEEPER_FEE_BUFFER_BPS", value = var.keeper_fee_buffer_bps },
-      ]
+      environment = local.keeper_environment
     },
     {
       name             = "plether-basket-worker"

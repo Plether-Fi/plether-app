@@ -1,6 +1,17 @@
 variable "aws_region" {
   type    = string
-  default = "us-east-1"
+  default = "ap-southeast-1"
+}
+
+variable "expected_aws_account_id" {
+  type        = string
+  default     = "932542905614"
+  description = "AWS account that Terraform is allowed to manage. The provider refuses credentials for any other account."
+
+  validation {
+    condition     = can(regex("^[0-9]{12}$", var.expected_aws_account_id))
+    error_message = "expected_aws_account_id must be a 12-digit AWS account ID without separators."
+  }
 }
 
 variable "environment" {
@@ -578,49 +589,111 @@ variable "perps_chain_id" {
   default = "421614"
 }
 
+variable "vault_history_rpc_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Optional archive-capable Arbitrum RPC URL used for vault-history backfills. Empty falls back to perps_rpc_url."
+}
+
+variable "vault_history_house_pool_address" {
+  type        = string
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+  description = "HousePool deployment whose Senior and Junior vault performance is indexed."
+}
+
+variable "vault_history_senior_vault_address" {
+  type        = string
+  default     = "0xB5A9a9d634197B8F0EA7c4042CF8d5701767D710"
+  description = "Senior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_junior_vault_address" {
+  type        = string
+  default     = "0xdf306B52eaC722D5994E2cc93D2818F391d68Adb"
+  description = "Junior TrancheVault deployment whose performance is indexed."
+}
+
+variable "vault_history_deployment_block" {
+  type        = string
+  default     = "302257125"
+  description = "First Arbitrum block eligible for the configured vault deployment's performance history."
+}
+
+variable "vault_history_confirmations" {
+  type        = string
+  default     = "12"
+  description = "Blocks subtracted from the live Arbitrum head before vault-history checkpoints are sampled."
+}
+
 variable "perps_usdc" {
   type    = string
-  default = "0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3"
+  default = "0x1647e41f49ED6D688936092B5a291c4B28106343"
 }
 
 variable "perps_order_router" {
   type    = string
-  default = "0x04E3103752f623fBcDcD01f588590Af4c53E4c1E"
+  default = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+}
+
+variable "perps_house_pool" {
+  type        = string
+  default     = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
+  description = "HousePool bound to the configured v1.2.0 settlement monitor."
+
+  validation {
+    condition     = can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_house_pool))
+    error_message = "perps_house_pool must be a canonical Ethereum address."
+  }
+}
+
+variable "perps_settlement_monitor_lens" {
+  type        = string
+  default     = "0xd251AC0BD90780c48F31F575152808315200664E"
+  description = "Settlement Monitor facade used by the keeper. Never configure the sidecar address here."
+
+  validation {
+    condition = (
+      can(regex("^0x[0-9A-Fa-f]{40}$", var.perps_settlement_monitor_lens))
+      && lower(var.perps_settlement_monitor_lens) != "0xe1fc0a465dabdfd8ee33d4aa960108f800b3f151"
+    )
+    error_message = "perps_settlement_monitor_lens must be the facade, never the v1.2.0 monitor sidecar."
+  }
 }
 
 variable "perps_plether_oracle" {
   type    = string
-  default = "0xADfEd3bf768D810309B97b4dF9F9E77Eaa3a401c"
+  default = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"
 }
 
 variable "perps_cfd_engine" {
   type    = string
-  default = "0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a"
+  default = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
 }
 
 variable "perps_cfd_engine_settlement_sidecar" {
   type    = string
-  default = "0x0b652c4D4610234e221403076C116292F935b424"
+  default = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
 }
 
 variable "perps_cfd_engine_lens" {
   type    = string
-  default = "0xa9aA4097874e9622eAABeE68f65Ff5e3757728C5"
+  default = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
 }
 
 variable "perps_margin_clearinghouse" {
   type    = string
-  default = "0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e"
+  default = "0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211"
 }
 
 variable "perps_account_lens" {
   type    = string
-  default = "0xC4C886A6F1D7CB22C833AC1b29f29Da43AfbcCd1"
+  default = "0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1"
 }
 
 variable "perps_indexer_start_block" {
   type    = string
-  default = "288439939"
+  default = "302257125"
 }
 
 variable "perps_indexer_confirmations" {
@@ -717,6 +790,27 @@ variable "keeper_fee_buffer_bps" {
   default = "2500"
 }
 
+variable "lp_settlement_enabled" {
+  type        = bool
+  default     = false
+  description = "Enables signer-backed hourly LP settlement after a successful dry-run and keeper funding check."
+}
+
+variable "lp_settlement_poll_seconds" {
+  type        = string
+  default     = "15"
+  description = "Minimum interval between LP settlement monitor cycles in the shared keeper process."
+
+  validation {
+    condition = try(
+      can(regex("^[1-9][0-9]*$", var.lp_settlement_poll_seconds))
+      && tonumber(var.lp_settlement_poll_seconds) <= 3600,
+      false
+    )
+    error_message = "lp_settlement_poll_seconds must be a whole number from 1 through 3600."
+  }
+}
+
 variable "liquidation_worker_poll_seconds" {
   type    = string
   default = "600"
@@ -735,6 +829,17 @@ variable "liquidation_worker_multicall_size" {
   validation {
     condition     = can(regex("^([1-9]|[1-9][0-9]|100)$", var.liquidation_worker_multicall_size))
     error_message = "liquidation_worker_multicall_size must be an integer between 1 and 100."
+  }
+}
+
+variable "liquidation_worker_execution_batch_size" {
+  type        = string
+  default     = "20"
+  description = "Number of candidate accounts submitted per executeLiquidationBatch transaction. Must be between 1 and 256."
+
+  validation {
+    condition     = can(regex("^([1-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-6])$", var.liquidation_worker_execution_batch_size))
+    error_message = "liquidation_worker_execution_batch_size must be an integer between 1 and 256."
   }
 }
 
@@ -772,6 +877,17 @@ variable "liquidation_worker_desired_count" {
   type        = number
   default     = 1
   description = "Desired task count for the dedicated liquidation worker service."
+}
+
+variable "api_desired_count" {
+  type        = number
+  default     = 1
+  description = "Desired API task count. Set to zero while restoring or validating a migrated database."
+
+  validation {
+    condition     = floor(var.api_desired_count) == var.api_desired_count && var.api_desired_count >= 0
+    error_message = "api_desired_count must be a non-negative whole number."
+  }
 }
 
 variable "consolidate_workers" {
@@ -850,8 +966,8 @@ variable "db_storage_type" {
 
 variable "db_storage_encrypted" {
   type        = bool
-  default     = false
-  description = "Optionally encrypt RDS storage at rest. Existing unencrypted instances must be migrated through encrypted snapshot copy/restore rather than modified in place."
+  default     = true
+  description = "Encrypt RDS storage at rest. The company-account migration restores from an encrypted snapshot; existing unencrypted instances must be migrated through snapshot copy/restore rather than modified in place."
 }
 
 variable "db_kms_key_id" {
@@ -952,6 +1068,23 @@ variable "db_final_snapshot_identifier" {
       false
     )
     error_message = "db_final_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
+  }
+}
+
+variable "db_snapshot_identifier" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Optional target-region manual snapshot used only to create this RDS lifecycle. Keep the value stable after restoration because changing it replaces the DB instance."
+
+  validation {
+    condition = var.db_snapshot_identifier == null || try(
+      length(var.db_snapshot_identifier) <= 255
+      && can(regex("^[a-z]([a-z0-9-]*[a-z0-9])?$", var.db_snapshot_identifier))
+      && !strcontains(var.db_snapshot_identifier, "--"),
+      false
+    )
+    error_message = "db_snapshot_identifier must start with a lowercase letter, contain only lowercase letters, digits, and single hyphens, not end in a hyphen, and be at most 255 characters."
   }
 }
 

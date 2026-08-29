@@ -53,16 +53,16 @@ const manifest = {
   smartAccountVersion: 'permissionless-simple-v0.8' as const,
   smartAccountIndex: '0',
   smartAccountFactory: FACTORY,
-  usdc: '0xB15503d70B0eAa644dc6650d2A248762F7c5bCE3' as Address,
+  usdc: '0x1647e41f49ED6D688936092B5a291c4B28106343' as Address,
   usdcSupportsEip3009: false,
   usdcEip712Name: null,
   usdcEip712Version: null,
   marginClearinghouse:
-    '0x19c2f60f6312EAF9acDE4C2b04551a05cA9bE76e' as Address,
+    '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211' as Address,
   cfdEngine:
-    '0x6A25eA1015b5f032d8a2D95d57AEfcB99219bF0a' as Address,
+    '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D' as Address,
   orderRouter:
-    '0x04E3103752f623fBcDcD01f588590Af4c53E4c1E' as Address,
+    '0x97A901dE2B267c307E264FD5F71403F8072F73e7' as Address,
   userOperationExplorerUrlTemplate:
     'https://example.com/user-operation/{userOperationHash}',
   transactionExplorerUrlTemplate:

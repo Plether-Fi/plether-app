@@ -11,7 +11,7 @@ export const DOCS_LINKS = {
   },
   poolLiquidity: {
     href: `${DOCS_BASE_URL}/how-plether-works/the-housepool-and-tranche-waterfall`,
-    title: 'The HousePool and tranche waterfall',
+    title: 'How the shared pool protects Senior and Junior vaults',
   },
   marketCostOfCarry: {
     href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#cost-of-carry`,
