@@ -59,13 +59,12 @@ spec = do
 
     it "projects the canonical terminal event block hash" $ do
       queryContains perpsOrderBaseSelectSql "terminal_event.block_hash"
-      queryContains perpsOrderBaseSelectSql "e.contract_address = o.order_router"
       queryContains perpsOrderBaseSelectSql "e.block_number = o.terminal_block_number"
-      queryContains perpsOrderBaseSelectSql "CASE WHEN o.terminal_status = 'Executed' THEN 'OrderExecuted' ELSE 'OrderFailed' END"
+      queryContains perpsOrderBaseSelectSql "WHEN o.receipt_hash IS NOT NULL THEN 'OrderFinalized'"
 
     it "correlates batched activity with the nearest preceding OrderExecuted event" $ do
       queryContains perpsOrderBaseSelectSql "e.order_id = o.order_id"
-      queryContains perpsOrderBaseSelectSql "e.contract_address = o.order_router"
+      queryContains perpsOrderBaseSelectSql "'OrderFinalized'"
       queryContains perpsOrderBaseSelectSql "o.terminal_status = 'Executed'"
       queryContains perpsOrderBaseSelectSql "a.activity_type IN ('Open', 'Close')"
       queryContains perpsOrderBaseSelectSql "a.log_index < terminal_event.log_index"
@@ -183,6 +182,13 @@ executedOrderRow =
     , porOracleMinPublishTime = Just 1_785_437_834
     , porOracleMaxPublishTime = Just 1_785_437_834
     , porOracleDerivationVersion = Just 1
+    , porClientOrderId = Nothing
+    , porReceiptHash = Nothing
+    , porTerminalReason = Nothing
+    , porPendingReason = Nothing
+    , porExecutionMode = Nothing
+    , porFailedConstraint = Nothing
+    , porReceiptEconomics = Nothing
     , porCleanupActor = Nothing
     , porActivityType = Just "Close"
     , porActivitySizeDelta = Just 98_308_614_058_332_359_914_207
@@ -262,6 +268,7 @@ testConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
     , cfgPerpsCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , cfgPerpsCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"

@@ -757,11 +757,49 @@ validateActionSequence cfg sender owner calls = do
           Left $ policyDenied "Single-call action target is not approved"
 
     validateOrder dataBytes = do
-      words' <- fixedWords selectorCommitOrder 5 dataBytes
-      case map bytesToInteger words' of
-        [side, sizeDelta, marginDelta, _targetPrice, closeWord] -> do
+      words' <- fixedWords selectorCommitOrder 18 dataBytes
+      case words' of
+        [ clientOrderIdWord
+          , sideWord
+          , sizeDeltaWord
+          , marginDeltaWord
+          , targetPriceWord
+          , closeWordBytes
+          , validUntilWord
+          , allowedExecutionModesWord
+          , expectedConfigHashWord
+          , _maxExecutionBountyWord
+          , _maxExecutionNotionalWord
+          , _maxGrossAccountDebitWord
+          , _maxActionChargeWord
+          , _maxExplicitFeesWord
+          , _maxPostPositionSizeWord
+          , _minPostSettlementBalanceWord
+          , _minPostPositionEquityWord
+          , maxPostLeverageWord
+          ] -> do
+          let side = bytesToInteger sideWord
+              sizeDelta = bytesToInteger sizeDeltaWord
+              marginDelta = bytesToInteger marginDeltaWord
+              targetPrice = bytesToInteger targetPriceWord
+              closeWord = bytesToInteger closeWordBytes
+              validUntil = bytesToInteger validUntilWord
+              allowedExecutionModes = bytesToInteger allowedExecutionModesWord
+              maxPostLeverageBps = bytesToInteger maxPostLeverageWord
           unless
-            ((side == 0 || side == 1) && sizeDelta > 0 && (closeWord == 0 || closeWord == 1))
+            ( not (BS.all (== 0) clientOrderIdWord)
+                && BS.take 8 clientOrderIdWord /= reservedClientOrderPrefix
+                && (side == 0 || side == 1)
+                && sizeDelta > 0
+                && targetPrice > 0
+                && (closeWord == 0 || closeWord == 1)
+                && validUntil > 0
+                && validUntil <= maxUint64
+                && allowedExecutionModes `elem` [1, 2, 4]
+                && not (BS.all (== 0) expectedConfigHashWord)
+                && maxPostLeverageBps > 0
+                && maxPostLeverageBps <= maxUint32
+            )
             $ Left $ policyDenied "Order arguments are invalid"
           when (closeWord == 1 && marginDelta /= 0) $
             Left $ policyDenied "Close orders must have zero margin delta"
@@ -1560,7 +1598,16 @@ selectorWithdrawMargin :: ByteString
 selectorWithdrawMargin = decodeSelector "0cea7534"
 
 selectorCommitOrder :: ByteString
-selectorCommitOrder = decodeSelector "878f1de2"
+selectorCommitOrder = decodeSelector "d4da06d2"
+
+reservedClientOrderPrefix :: ByteString
+reservedClientOrderPrefix = decodeSelector "504c455448455221"
+
+maxUint64 :: Integer
+maxUint64 = 18446744073709551615
+
+maxUint32 :: Integer
+maxUint32 = 4294967295
 
 selectorAddMargin :: ByteString
 selectorAddMargin = decodeSelector "cf70cb69"

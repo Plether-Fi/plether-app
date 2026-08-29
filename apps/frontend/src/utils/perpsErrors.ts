@@ -54,6 +54,22 @@ const PERPS_ERROR_ABI = parseAbi([
   'error OrderRouter__CloseOnlyWindow()',
   'error OrderRouter__InsufficientGas()',
   'error OrderRouter__PredictableOpenInvalid(uint8 code)',
+  'error OrderRouter__ZeroClientOrderId()',
+  'error OrderRouter__ZeroTargetPrice()',
+  'error OrderRouter__InvalidValidUntil()',
+  'error OrderRouter__InvalidExecutionModeMask()',
+  'error OrderRouter__ExecutionConfigMismatch(bytes32 expectedConfigHash,bytes32 currentConfigHash)',
+  'error OrderRouter__ZeroPostLeverageBound()',
+  'error OrderRouter__ExecutionBountyAboveGrossDebit(uint256 executionBountyUsdc,uint256 maximumGrossDebitUsdc)',
+  'error OrderRouter__ProtectionActive()',
+
+  'error OrderLifecycleBook__ZeroClientOrderId()',
+  'error OrderLifecycleBook__ClientIdConflict(address account,bytes32 clientOrderId,bytes32 existingIntentHash,bytes32 suppliedIntentHash)',
+  'error OrderLifecycleBook__ClientIdDomainMismatch(bytes32 clientOrderId,bool protocolIntent)',
+  'error OrderLifecycleBook__ExecutionBountyAboveBound(uint256 actualBountyUsdc,uint256 maximumBountyUsdc)',
+
+  'error CfdOrderPolicyEvaluator__ExecutionModeDisallowed(uint8 mode,uint8 allowedExecutionModes)',
+  'error CfdOrderPolicyEvaluator__ConstraintViolation(uint8 constraint,uint256 actual,uint256 limit)',
 
   'error PletherOracle__MissingUpdateData()',
   'error PletherOracle__InsufficientFee(uint256 provided,uint256 required)',
@@ -121,6 +137,18 @@ export const PERPS_ORDER_FAILURE_MESSAGES: Partial<Record<number, string>> = {
   3: 'The engine hit an internal panic while settling this order.',
   4: 'The account was liquidated before this order executed.',
   5: 'The engine rejected the order during reveal.',
+}
+
+const V2_CONSTRAINT_LABELS: Partial<Record<number, string>> = {
+  1: 'execution bounty',
+  2: 'execution notional',
+  3: 'gross account debit',
+  4: 'action charge',
+  5: 'explicit fees',
+  6: 'post-position size',
+  7: 'post-settlement balance',
+  8: 'post-position equity',
+  9: 'post-position leverage',
 }
 
 function getNestedString(error: unknown, keys: string[], depth = 0): string | undefined {
@@ -328,6 +356,35 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'Reduce size is larger than the current queued position.'
     case 'OrderRouter__TooManyPendingOrders':
       return 'You already have too many pending orders. Wait for one to execute or expire.'
+    case 'OrderRouter__ZeroClientOrderId':
+    case 'OrderLifecycleBook__ZeroClientOrderId':
+      return 'The order client ID is zero. Review the order again to generate a secure ID.'
+    case 'OrderLifecycleBook__ClientIdDomainMismatch':
+      return 'The order client ID uses the protocol-reserved PLETHER! prefix. Review the order again to generate a public ID.'
+    case 'OrderLifecycleBook__ClientIdConflict':
+      return 'Order integrity error: this client order ID is already bound to different deadline, bounds, or trade fields.'
+    case 'OrderRouter__ZeroTargetPrice':
+      return 'A bounded V2 order requires a nonzero target price.'
+    case 'OrderRouter__InvalidValidUntil':
+      return 'The reviewed order deadline expired or is outside the current maximum order age. Review a fresh order.'
+    case 'OrderRouter__InvalidExecutionModeMask':
+      return 'The reviewed execution regime is invalid. Review the order again.'
+    case 'OrderRouter__ExecutionConfigMismatch':
+      return 'Protocol configuration changed after review. Review a fresh order with the current configuration.'
+    case 'OrderRouter__ZeroPostLeverageBound':
+      return 'The reviewed order is missing its required leverage ceiling.'
+    case 'OrderRouter__ExecutionBountyAboveGrossDebit':
+    case 'OrderLifecycleBook__ExecutionBountyAboveBound':
+      return 'The current execution bounty exceeds the reviewed order bounds. Review a fresh order.'
+    case 'OrderRouter__ProtectionActive':
+      return 'Active position protection blocks discretionary orders. Cancel or finalize the protection first.'
+    case 'CfdOrderPolicyEvaluator__ExecutionModeDisallowed':
+      return 'The market regime changed after review. Review a fresh order for the current regime.'
+    case 'CfdOrderPolicyEvaluator__ConstraintViolation': {
+      const constraint = argNumber(args)
+      const label = V2_CONSTRAINT_LABELS[constraint ?? -1] ?? 'financial protection'
+      return `Execution would violate the reviewed ${label} bound. Review a fresh order.`
+    }
     case 'OrderRouter__DegradedMode':
       return 'The market is degraded. New positions cannot be opened right now.'
     case 'OrderRouter__CloseOnlyWindow':

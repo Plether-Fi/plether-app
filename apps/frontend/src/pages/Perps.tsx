@@ -300,6 +300,7 @@ export function Perps() {
             orderHistory={perpsHistory.orderHistory}
             ordersIndexedThroughBlockRaw={perpsHistory.ordersIndexedThroughBlockRaw}
             pendingOrderCount={perpsAccount.pendingOrders.length}
+            activePositionProtectionId={perpsAccount.activePositionProtectionId}
             maxPendingOrders={perpsAccount.maxPendingOrders}
             firstPendingOrderId={perpsAccount.firstPendingOrderId}
             firstPendingOrderExpiryTime={perpsAccount.firstPendingOrderExpiryTime}

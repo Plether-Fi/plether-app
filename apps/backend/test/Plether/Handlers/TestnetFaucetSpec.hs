@@ -243,6 +243,7 @@ testConfig chainId perpsChainId =
     , cfgPerpsChainId = perpsChainId
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x0000000000000000000000000000000000000000"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngineLens = "0x0000000000000000000000000000000000000000"
     , cfgPerpsCfdEngineSettlementSidecar = "0x0000000000000000000000000000000000000000"

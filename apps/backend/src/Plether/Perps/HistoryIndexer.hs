@@ -46,7 +46,7 @@ import Data.Foldable (toList)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (sortOn)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (catMaybes, fromMaybe)
+import Data.Maybe (catMaybes, fromMaybe, isJust)
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -99,6 +99,8 @@ import Plether.Database.Schema
   , markPerpsExecutionEvidenceAttempt
   , setPerpsIndexerState
   , updatePerpsOrderEconomicsEvidence
+  , updatePerpsOrderLifecycleIdentity
+  , updatePerpsOrderLifecycleReceipt
   , updatePerpsOrderOracleEvidence
   , upsertPerpsOrderCommitted
   , upsertPerpsOrderTerminal
@@ -126,6 +128,7 @@ import System.Timeout (timeout)
 data PerpsAddresses = PerpsAddresses
   { paUsdc :: Text
   , paOrderRouter :: Text
+  , paOrderLifecycleBook :: Maybe Text
   , paCfdEngine :: Text
   , paCfdEngineLens :: Text
   , paCfdEngineSettlementSidecar :: Text
@@ -139,6 +142,7 @@ defaultPerpsAddresses =
   PerpsAddresses
     { paUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , paOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , paOrderLifecycleBook = Nothing
     , paCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
     , paCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , paCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
@@ -202,6 +206,8 @@ data TransactionInfo = TransactionInfo
 
 data ParsedPerpsLog
   = ParsedOrderCommitted Integer Text Int Value
+  | ParsedIntentRegistered Integer Text Text Int Value
+  | ParsedOrderFinalized Integer Text Text Text Text Text Text (Maybe Text) Integer Value Value
   | ParsedOrderExecuted Integer Integer Value
   | ParsedOrderFailed Integer Int Text Value
   | ParsedPositionActivity Text Text Int (Maybe Integer) (Maybe Integer) (Maybe Integer) (Maybe Integer) Value
@@ -232,6 +238,16 @@ orderExecutedTopic = keccak256Text "OrderExecuted(uint64,uint256)"
 orderFailedTopic :: ByteString
 orderFailedTopic = keccak256Text "OrderFailed(uint64,uint8)"
 
+intentRegisteredTopic :: ByteString
+intentRegisteredTopic =
+  keccak256Text
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+
+orderFinalizedTopic :: ByteString
+orderFinalizedTopic =
+  keccak256Text
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"
 
@@ -256,6 +272,8 @@ transferTopic = keccak256Text "Transfer(address,address,uint256)"
 perpsEventTopics :: [ByteString]
 perpsEventTopics =
   [ orderCommittedTopic
+  , intentRegisteredTopic
+  , orderFinalizedTopic
   , orderExecutedTopic
   , orderFailedTopic
   , positionOpenedTopic
@@ -682,6 +700,8 @@ validateReplayLogAbi logEntry =
   case rlTopics logEntry of
     topic : indexedTopics
       | topic == orderCommittedTopic -> requireShape 3 32 indexedTopics
+      | topic == intentRegisteredTopic -> requireShape 4 (20 * 32) indexedTopics
+      | topic == orderFinalizedTopic -> requireShape 4 (46 * 32) indexedTopics
       | topic == orderExecutedTopic -> requireShape 2 32 indexedTopics
       | topic == orderFailedTopic -> requireShape 2 32 indexedTopics
       | topic == positionOpenedTopic -> requireShape 2 128 indexedTopics
@@ -1311,6 +1331,41 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             upsertPerpsOrderCommitted conn (picChainId cfg) releaseRouter oid account' side' (rlTxHash logEntry)
               (rlBlockNumber logEntry) (biTimestamp blockInfo)
             insertPerpsExpiredCleanupActivityIfReady conn (picChainId cfg) releaseRouter oid
+        ParsedIntentRegistered oid account' clientOrderId side' _ -> do
+          upsertPerpsOrderCommitted conn (picChainId cfg) releaseRouter oid account' side' (rlTxHash logEntry)
+            (rlBlockNumber logEntry) (biTimestamp blockInfo)
+          updatePerpsOrderLifecycleIdentity
+            conn
+            (picChainId cfg)
+            releaseRouter
+            oid
+            clientOrderId
+        ParsedOrderFinalized oid _account clientOrderId receiptHash status terminalReason' mode failedConstraint executionPrice economics _ -> do
+          upsertPerpsOrderTerminal
+            conn
+            (picChainId cfg)
+            releaseRouter
+            oid
+            status
+            (if status == "Executed" then Nothing else Just terminalReason')
+            (Just executionPrice)
+            Nothing
+            (rlTxHash logEntry)
+            (rlBlockNumber logEntry)
+            (biTimestamp blockInfo)
+          updatePerpsOrderLifecycleReceipt
+            conn
+            (picChainId cfg)
+            releaseRouter
+            oid
+            clientOrderId
+            receiptHash
+            terminalReason'
+            mode
+            failedConstraint
+            economics
+        ParsedOrderExecuted _ _ _
+          | isJust (paOrderLifecycleBook $ picAddresses cfg) -> pure ()
         ParsedOrderExecuted oid executionPrice _ ->
           upsertPerpsOrderTerminal
             conn
@@ -1324,6 +1379,8 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             (rlTxHash logEntry)
             (rlBlockNumber logEntry)
             (biTimestamp blockInfo)
+        ParsedOrderFailed _ _ _ _
+          | isJust (paOrderLifecycleBook $ picAddresses cfg) -> pure ()
         ParsedOrderFailed oid reason reasonName _ -> do
           upsertPerpsOrderTerminal
             conn
@@ -1421,6 +1478,9 @@ assertPreparedPerpsLogExact conn cfg prepared = do
         blockNumber
         timestamp
       assertPerpsReplayExpiredCleanupIfReadyExact conn chainId releaseRouter orderId
+    ParsedIntentRegistered {} -> pure ()
+    ParsedOrderFinalized {} -> pure ()
+    ParsedOrderExecuted {} | isJust (paOrderLifecycleBook $ picAddresses cfg) -> pure ()
     ParsedOrderExecuted orderId executionPrice _ ->
       assertPerpsReplayOrderTerminalExact
         conn
@@ -1434,6 +1494,7 @@ assertPreparedPerpsLogExact conn cfg prepared = do
         txHash
         blockNumber
         timestamp
+    ParsedOrderFailed {} | isJust (paOrderLifecycleBook $ picAddresses cfg) -> pure ()
     ParsedOrderFailed orderId reason reasonName _ -> do
       assertPerpsReplayOrderTerminalExact
         conn
@@ -1518,6 +1579,8 @@ parsePerpsLog logEntry =
   case rlTopics logEntry of
     topic : _
       | topic == orderCommittedTopic -> parseOrderCommitted logEntry
+      | topic == intentRegisteredTopic -> parseIntentRegistered logEntry
+      | topic == orderFinalizedTopic -> parseOrderFinalized logEntry
       | topic == orderExecutedTopic -> parseOrderExecuted logEntry
       | topic == orderFailedTopic -> parseOrderFailed logEntry
       | topic == positionOpenedTopic -> parsePositionOpened logEntry
@@ -1553,6 +1616,87 @@ parseOrderCommitted logEntry = do
   let side = fromInteger $ wordAt (rlData logEntry) 0
   pure $ ParsedOrderCommitted oid account side $
     object ["orderId" .= show oid, "account" .= account, "side" .= side]
+
+parseIntentRegistered :: RpcLog -> Maybe ParsedPerpsLog
+parseIntentRegistered logEntry = do
+  unless (BS.length (rlData logEntry) == 20 * 32) Nothing
+  oid <- indexedUint (rlTopics logEntry) 1
+  account <- indexedAddress (rlTopics logEntry) 2
+  clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
+  let side = fromInteger $ wordAt (rlData logEntry) 3
+      payload = object
+        [ "orderId" .= show oid
+        , "account" .= account
+        , "clientOrderId" .= clientOrderId
+        , "intentHash" .= hexWordAt (rlData logEntry) 0
+        , "executionBountyUsdc" .= show (wordAt (rlData logEntry) 1)
+        , "side" .= side
+        , "validUntil" .= show (wordAt (rlData logEntry) 8)
+        , "allowedExecutionModes" .= wordAt (rlData logEntry) 9
+        , "expectedConfigHash" .= hexWordAt (rlData logEntry) 10
+        ]
+  pure $ ParsedIntentRegistered oid account clientOrderId side payload
+
+parseOrderFinalized :: RpcLog -> Maybe ParsedPerpsLog
+parseOrderFinalized logEntry = do
+  unless (BS.length (rlData logEntry) == 46 * 32) Nothing
+  oid <- indexedUint (rlTopics logEntry) 1
+  account <- indexedAddress (rlTopics logEntry) 2
+  clientOrderId <- indexedBytes32 (rlTopics logEntry) 3
+  let bytes = rlData logEntry
+      receiptHash = hexWordAt bytes 0
+      lifecycleStatus = fromInteger (wordAt bytes 9) :: Int
+      terminalReasonCode = fromInteger (wordAt bytes 10) :: Int
+      executionModeCode = fromInteger (wordAt bytes 11) :: Int
+      executionPrice = wordAt bytes 14
+      failedConstraintCode = fromInteger (wordAt bytes 25) :: Int
+      terminalReason = terminalReasonName terminalReasonCode
+      status
+        | lifecycleStatus == 2 && terminalReasonCode == 1 = "Executed"
+        | terminalReasonCode == 2 = "Expired / Cleaned up"
+        | otherwise = "Failed"
+      mode = executionModeName executionModeCode
+      failedConstraint =
+        if failedConstraintCode == 0
+          then Nothing
+          else Just $ failedConstraintName failedConstraintCode
+      economics = object
+        [ "executionNotionalUsdc" .= show (wordAt bytes 29)
+        , "realizedPnlUsdc" .= show (intWordAt bytes 30)
+        , "vpiUsdc" .= show (intWordAt bytes 31)
+        , "carryUsdc" .= show (intWordAt bytes 32)
+        , "executionFeeUsdc" .= show (wordAt bytes 33)
+        , "frozenSpreadUsdc" .= show (wordAt bytes 34)
+        , "actionChargeAssessedUsdc" .= show (wordAt bytes 35)
+        , "actionChargeCollectedUsdc" .= show (wordAt bytes 36)
+        , "grossAccountDebitUsdc" .= show (wordAt bytes 37)
+        , "preSettlementBalanceUsdc" .= show (wordAt bytes 38)
+        , "postSettlementBalanceUsdc" .= show (wordAt bytes 39)
+        , "preTraderClaimBalanceUsdc" .= show (wordAt bytes 40)
+        , "postTraderClaimBalanceUsdc" .= show (wordAt bytes 41)
+        , "postPositionSize" .= show (wordAt bytes 42)
+        , "postPositionMarginUsdc" .= show (wordAt bytes 43)
+        , "postPositionEquityUsdc" .= show (intWordAt bytes 44)
+        , "postLeverageBps" .= show (wordAt bytes 45)
+        ]
+      payload = object
+        [ "orderId" .= show oid
+        , "account" .= account
+        , "clientOrderId" .= clientOrderId
+        , "receiptHash" .= receiptHash
+        , "terminalBlock" .= show (wordAt bytes 1)
+        , "terminalTime" .= show (wordAt bytes 2)
+        , "status" .= lifecycleStatus
+        , "terminalReason" .= terminalReason
+        , "executionMode" .= mode
+        , "failedConstraint" .= failedConstraint
+        , "executionPrice" .= show executionPrice
+        , "economics" .= economics
+        ]
+  pure $
+    ParsedOrderFinalized
+      oid account clientOrderId receiptHash status terminalReason mode failedConstraint
+      executionPrice economics payload
 
 parseOrderExecuted :: RpcLog -> Maybe ParsedPerpsLog
 parseOrderExecuted logEntry = do
@@ -1773,6 +1917,8 @@ parseDepositWithdraw kind logEntry = do
 parsedEventName :: ParsedPerpsLog -> Text
 parsedEventName = \case
   ParsedOrderCommitted {} -> "OrderCommitted"
+  ParsedIntentRegistered {} -> "IntentRegistered"
+  ParsedOrderFinalized {} -> "OrderFinalized"
   ParsedOrderExecuted {} -> "OrderExecuted"
   ParsedOrderFailed {} -> "OrderFailed"
   ParsedPositionActivity kind _ _ _ _ _ _ _
@@ -1788,6 +1934,8 @@ parsedEventName = \case
 parsedAccount :: ParsedPerpsLog -> Maybe Text
 parsedAccount = \case
   ParsedOrderCommitted _ account _ _ -> Just account
+  ParsedIntentRegistered _ account _ _ _ -> Just account
+  ParsedOrderFinalized _ account _ _ _ _ _ _ _ _ _ -> Just account
   ParsedPositionActivity _ account _ _ _ _ _ _ -> Just account
   ParsedMarginActivity _ account _ _ -> Just account
   ParsedUsdcTransfer _ toAddress _ _ -> Just toAddress
@@ -1796,6 +1944,8 @@ parsedAccount = \case
 parsedOrderId :: ParsedPerpsLog -> Maybe Integer
 parsedOrderId = \case
   ParsedOrderCommitted oid _ _ _ -> Just oid
+  ParsedIntentRegistered oid _ _ _ _ -> Just oid
+  ParsedOrderFinalized oid _ _ _ _ _ _ _ _ _ _ -> Just oid
   ParsedOrderExecuted oid _ _ -> Just oid
   ParsedOrderFailed oid _ _ _ -> Just oid
   _ -> Nothing
@@ -1803,12 +1953,15 @@ parsedOrderId = \case
 parsedSide :: ParsedPerpsLog -> Maybe Int
 parsedSide = \case
   ParsedOrderCommitted _ _ side _ -> Just side
+  ParsedIntentRegistered _ _ _ side _ -> Just side
   ParsedPositionActivity _ _ side _ _ _ _ _ -> Just side
   _ -> Nothing
 
 parsedPayload :: ParsedPerpsLog -> Value
 parsedPayload = \case
   ParsedOrderCommitted _ _ _ payload -> payload
+  ParsedIntentRegistered _ _ _ _ payload -> payload
+  ParsedOrderFinalized _ _ _ _ _ _ _ _ _ _ payload -> payload
   ParsedOrderExecuted _ _ payload -> payload
   ParsedOrderFailed _ _ _ payload -> payload
   ParsedPositionActivity _ _ _ _ _ _ _ payload -> payload
@@ -1827,6 +1980,40 @@ orderFailReasonName = \case
   3 -> "EnginePanic"
   4 -> "AccountLiquidated"
   5 -> "EngineRevert"
+  n -> "Unknown(" <> T.pack (show n) <> ")"
+
+terminalReasonName :: Int -> Text
+terminalReasonName = \case
+  0 -> "None"
+  1 -> "Executed"
+  2 -> "Expired"
+  3 -> "Slippage"
+  4 -> "Config mismatch"
+  5 -> "Mode disallowed"
+  6 -> "Risk off"
+  7 -> "Planner rejected"
+  8 -> "Constraint violation"
+  9 -> "Account liquidated"
+  n -> "Unknown(" <> T.pack (show n) <> ")"
+
+executionModeName :: Int -> Text
+executionModeName = \case
+  1 -> "Live"
+  2 -> "FAD"
+  3 -> "Frozen"
+  n -> "Unknown(" <> T.pack (show n) <> ")"
+
+failedConstraintName :: Int -> Text
+failedConstraintName = \case
+  1 -> "Execution bounty"
+  2 -> "Execution notional"
+  3 -> "Gross account debit"
+  4 -> "Action charge"
+  5 -> "Explicit fees"
+  6 -> "Post-position size"
+  7 -> "Post-settlement balance"
+  8 -> "Post-position equity"
+  9 -> "Post leverage"
   n -> "Unknown(" <> T.pack (show n) <> ")"
 
 activityKey :: RpcLog -> Text -> Maybe Integer -> Text
@@ -1851,7 +2038,7 @@ perpsContractAddresses cfg =
   [ paOrderRouter (picAddresses cfg)
   , paCfdEngine (picAddresses cfg)
   , paMarginClearinghouse (picAddresses cfg)
-  ]
+  ] <> maybe [] pure (paOrderLifecycleBook $ picAddresses cfg)
 
 requireRpc :: Text -> IO (Either Text a) -> IO a
 requireRpc label action = do
@@ -2241,6 +2428,16 @@ indexedAddress :: [ByteString] -> Int -> Maybe Text
 indexedAddress topics idx
   | idx < length topics = Just $ "0x" <> T.drop 24 (bytesToHex (topics !! idx))
   | otherwise = Nothing
+
+indexedBytes32 :: [ByteString] -> Int -> Maybe Text
+indexedBytes32 topics idx
+  | idx < length topics && BS.length (topics !! idx) == 32 =
+      Just $ "0x" <> bytesToHex (topics !! idx)
+  | otherwise = Nothing
+
+hexWordAt :: ByteString -> Int -> Text
+hexWordAt bytes index =
+  "0x" <> bytesToHex (BS.take 32 $ BS.drop (index * 32) bytes)
 
 wordAt :: ByteString -> Int -> Integer
 wordAt bytes index = bytesToInteger $ BS.take 32 $ BS.drop (index * 32) bytes

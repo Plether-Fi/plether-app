@@ -64,8 +64,51 @@ interface CommitAndExecuteResult {
   failedReason?: number
 }
 
-const SIDE_BULL = 0
-const SIDE_BEAR = 1
+// The public manifest still points at the pre-V2 deployment. Keep its fork
+// coverage executable until the V2 deployment addresses are published; the
+// bounded V2 request path is covered by unit tests in the meantime.
+const LEGACY_COMMIT_ORDER_ABI = [{
+  type: 'function',
+  name: 'commitOrder',
+  stateMutability: 'nonpayable',
+  inputs: [
+    { name: 'side', type: 'uint8' },
+    { name: 'sizeDelta', type: 'uint256' },
+    { name: 'marginDelta', type: 'uint256' },
+    { name: 'targetPrice', type: 'uint256' },
+    { name: 'isClose', type: 'bool' },
+  ],
+  outputs: [],
+}] as const
+const LEGACY_ORDER_TERMINAL_EVENTS_ABI = [
+  {
+    type: 'event',
+    name: 'OrderCommitted',
+    inputs: [
+      { name: 'orderId', type: 'uint64', indexed: true },
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'side', type: 'uint8', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OrderExecuted',
+    inputs: [
+      { name: 'orderId', type: 'uint64', indexed: true },
+      { name: 'executionPrice', type: 'uint256', indexed: false },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'OrderFailed',
+    inputs: [
+      { name: 'orderId', type: 'uint64', indexed: true },
+      { name: 'reason', type: 'uint8', indexed: false },
+    ],
+  },
+] as const
+const SIDE_LONG = 0
+const SIDE_SHORT = 1
 const USDC = 1_000_000n
 const DEFAULT_OPEN_NOTIONAL_USDC = parseUnits(process.env.PERPS_FORK_TEST_NOTIONAL_USDC ?? '1000', 6)
 const DEFAULT_LEVERAGE = BigInt(process.env.PERPS_FORK_TEST_LEVERAGE ?? '5')
@@ -383,7 +426,7 @@ async function previewOpenIsValid(
   })
   if (code !== 0) {
     console.warn(
-      `[perps-fork] skipped: previewOpenRevertCode returned ${code.toString()} for ${side === SIDE_BEAR ? 'short' : 'long'} open.`
+      `[perps-fork] skipped: previewOpenRevertCode returned ${code.toString()} for ${side === SIDE_SHORT ? 'short' : 'long'} open.`
     )
   }
   return code === 0
@@ -399,7 +442,7 @@ async function commitOrder(
 ): Promise<{ orderId: bigint; hash: Hex; commitTime: bigint }> {
   const hash = await harness.walletClient.writeContract({
     address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_COMMIT_ORDER_ABI,
     functionName: 'commitOrder',
     args: [side, sizeDelta, marginDelta, targetPrice, isClose],
   })
@@ -407,7 +450,7 @@ async function commitOrder(
   expect(receipt.status).toBe('success')
 
   const [committed] = parseEventLogs({
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_ORDER_TERMINAL_EVENTS_ABI,
     eventName: 'OrderCommitted',
     logs: receipt.logs,
   }).filter((event) => event.args.account.toLowerCase() === harness.account.address.toLowerCase())
@@ -451,12 +494,12 @@ async function executeOrder(
   expect(receipt.status).toBe('success')
 
   const [executed] = parseEventLogs({
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_ORDER_TERMINAL_EVENTS_ABI,
     eventName: 'OrderExecuted',
     logs: receipt.logs,
   }).filter((event) => event.args.orderId === orderId)
   const [failed] = parseEventLogs({
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_ORDER_TERMINAL_EVENTS_ABI,
     eventName: 'OrderFailed',
     logs: receipt.logs,
   }).filter((event) => event.args.orderId === orderId)
@@ -496,12 +539,12 @@ async function executeOrderBatch(
   expect(receipt.status).toBe('success')
 
   const executedEvents = parseEventLogs({
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_ORDER_TERMINAL_EVENTS_ABI,
     eventName: 'OrderExecuted',
     logs: receipt.logs,
   })
   const failedEvents = parseEventLogs({
-    abi: PERPS_ORDER_ROUTER_ABI,
+    abi: LEGACY_ORDER_TERMINAL_EVENTS_ABI,
     eventName: 'OrderFailed',
     logs: receipt.logs,
   })
@@ -564,7 +607,7 @@ async function ensureFlat(harness: ForkHarness): Promise<boolean> {
     oraclePrice,
   })
   const targetPrice = getPerpsTargetPrice({
-    direction: position.side === SIDE_BEAR ? 'short' : 'long',
+    direction: position.side === SIDE_SHORT ? 'short' : 'long',
     isClose: true,
     oraclePrice,
     slippagePercent: FORK_TEST_SLIPPAGE_PERCENT,
@@ -601,7 +644,7 @@ async function commitAndExecuteOpen(
   if (!(await previewOpenIsValid(harness, side, sizeDelta, marginDelta, oraclePrice))) return undefined
 
   const targetPrice = getPerpsTargetPrice({
-    direction: side === SIDE_BEAR ? 'short' : 'long',
+    direction: side === SIDE_SHORT ? 'short' : 'long',
     isClose: false,
     oraclePrice,
     slippagePercent: FORK_TEST_SLIPPAGE_PERCENT,
@@ -662,7 +705,7 @@ describe('perps fork lifecycle', () => {
         return
       }
 
-      const result = await commitAndExecuteOpen(harness, SIDE_BULL)
+      const result = await commitAndExecuteOpen(harness, SIDE_LONG)
       if (!result) {
         skipForkTest(ctx, 'long open preconditions were not met.')
         return
@@ -670,7 +713,7 @@ describe('perps fork lifecycle', () => {
 
       const position = await readPosition(harness)
       expect(position.exists).toBe(true)
-      expect(position.side).toBe(SIDE_BULL)
+      expect(position.side).toBe(SIDE_LONG)
       expect(position.size).toBeGreaterThan(0n)
       expect(position.entryPrice).toBe(result.executionPrice)
       expect(position.marginUsdc).toBeGreaterThan(0n)
@@ -695,7 +738,7 @@ describe('perps fork lifecycle', () => {
         return
       }
 
-      const result = await commitAndExecuteOpen(harness, SIDE_BEAR)
+      const result = await commitAndExecuteOpen(harness, SIDE_SHORT)
       if (!result) {
         skipForkTest(ctx, 'short open preconditions were not met.')
         return
@@ -703,7 +746,7 @@ describe('perps fork lifecycle', () => {
 
       const position = await readPosition(harness)
       expect(position.exists).toBe(true)
-      expect(position.side).toBe(SIDE_BEAR)
+      expect(position.side).toBe(SIDE_SHORT)
       expect(position.size).toBeGreaterThan(0n)
       expect(position.entryPrice).toBe(result.executionPrice)
       expect(position.marginUsdc).toBeGreaterThan(0n)
@@ -727,7 +770,7 @@ describe('perps fork lifecycle', () => {
         skipForkTest(ctx, 'test account has an existing position that could not be flattened on the fork.')
         return
       }
-      const opened = await commitAndExecuteOpen(harness, SIDE_BULL)
+      const opened = await commitAndExecuteOpen(harness, SIDE_LONG)
       if (!opened) {
         skipForkTest(ctx, 'initial long open preconditions were not met.')
         return
@@ -751,7 +794,7 @@ describe('perps fork lifecycle', () => {
         oraclePrice,
         slippagePercent: FORK_TEST_SLIPPAGE_PERCENT,
       })
-      await commitAndExecute(harness, SIDE_BULL, sizeDelta, 0n, targetPrice, true)
+      await commitAndExecute(harness, SIDE_LONG, sizeDelta, 0n, targetPrice, true)
 
       const after = await readPosition(harness)
       expect(after.exists ? after.size : 0n).toBe(0n)
@@ -775,7 +818,7 @@ describe('perps fork lifecycle', () => {
         skipForkTest(ctx, 'test account has an existing position that could not be flattened on the fork.')
         return
       }
-      const opened = await commitAndExecuteOpen(harness, SIDE_BULL, (await readMinimumOpenNotional(harness)) * 3n)
+      const opened = await commitAndExecuteOpen(harness, SIDE_LONG, (await readMinimumOpenNotional(harness)) * 3n)
       if (!opened) {
         skipForkTest(ctx, 'initial long open preconditions were not met.')
         return
@@ -792,11 +835,11 @@ describe('perps fork lifecycle', () => {
         slippagePercent: FORK_TEST_SLIPPAGE_PERCENT,
       })
 
-      await commitAndExecute(harness, SIDE_BULL, reduceSize, 0n, targetPrice, true)
+      await commitAndExecute(harness, SIDE_LONG, reduceSize, 0n, targetPrice, true)
 
       const after = await readPosition(harness)
       expect(after.exists).toBe(true)
-      expect(after.side).toBe(SIDE_BULL)
+      expect(after.side).toBe(SIDE_LONG)
       expect(after.size).toBeLessThan(before.size)
       expect(after.size).toBeGreaterThan(0n)
     })
@@ -830,7 +873,7 @@ describe('perps fork lifecycle', () => {
         functionName: 'previewOpenRevertCode',
         args: [
           harness.account.address as Address,
-          SIDE_BULL,
+          SIDE_LONG,
           notionalUsdcToSizeDelta(tooSmallNotional, oraclePrice),
           tooSmallNotional / DEFAULT_LEVERAGE,
           oraclePrice,
@@ -863,9 +906,9 @@ describe('perps fork lifecycle', () => {
       await expect(
         harness.walletClient.writeContract({
           address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-          abi: PERPS_ORDER_ROUTER_ABI,
+          abi: LEGACY_COMMIT_ORDER_ABI,
           functionName: 'commitOrder',
-          args: [SIDE_BULL, 1n, 0n, 0n, true],
+          args: [SIDE_LONG, 1n, 0n, 0n, true],
         })
       ).rejects.toSatisfy((error: unknown) =>
         getPerpsErrorMessage(error, 'commit').includes('There is no queued or live position to reduce')
@@ -890,7 +933,7 @@ describe('perps fork lifecycle', () => {
         skipForkTest(ctx, 'test account has an existing position that could not be flattened on the fork.')
         return
       }
-      const opened = await commitAndExecuteOpen(harness, SIDE_BULL, (await readMinimumOpenNotional(harness)) * 3n)
+      const opened = await commitAndExecuteOpen(harness, SIDE_LONG, (await readMinimumOpenNotional(harness)) * 3n)
       if (!opened) {
         skipForkTest(ctx, 'initial long open preconditions were not met.')
         return
@@ -909,9 +952,9 @@ describe('perps fork lifecycle', () => {
       await expect(
         harness.walletClient.writeContract({
           address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-          abi: PERPS_ORDER_ROUTER_ABI,
+          abi: LEGACY_COMMIT_ORDER_ABI,
           functionName: 'commitOrder',
-          args: [SIDE_BULL, dustSize, 0n, targetPrice, true],
+          args: [SIDE_LONG, dustSize, 0n, targetPrice, true],
         })
       ).rejects.toSatisfy((error: unknown) =>
         getPerpsErrorMessage(error, 'commit').includes('below the minimum executable size')
@@ -945,7 +988,7 @@ describe('perps fork lifecycle', () => {
         return
       }
       const sizeDelta = notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
-      if (!(await previewOpenIsValid(harness, SIDE_BULL, sizeDelta, marginDelta, oraclePrice))) {
+      if (!(await previewOpenIsValid(harness, SIDE_LONG, sizeDelta, marginDelta, oraclePrice))) {
         skipForkTest(ctx, 'previewOpenRevertCode rejected the initial long open.')
         return
       }
@@ -954,7 +997,7 @@ describe('perps fork lifecycle', () => {
       const pythPayload = await fetchHistoricalPythPayloadAfter(latestForkBlock.timestamp + 1n)
       const earliestPublishTime = BigInt(Math.min(...pythPayload.publishTimes))
       await harness.testClient.setNextBlockTimestamp({ timestamp: earliestPublishTime - 1n })
-      const committed = await commitOrder(harness, SIDE_BULL, sizeDelta, marginDelta, 0n, false)
+      const committed = await commitOrder(harness, SIDE_LONG, sizeDelta, marginDelta, 0n, false)
 
       await harness.testClient.setNextBlockTimestamp({ timestamp: committed.commitTime })
       const updateFee = await harness.publicClient.readContract({
@@ -1009,12 +1052,12 @@ describe('perps fork lifecycle', () => {
         return
       }
       const sizeDelta = notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
-      if (!(await previewOpenIsValid(harness, SIDE_BULL, sizeDelta, marginDelta, oraclePrice))) {
+      if (!(await previewOpenIsValid(harness, SIDE_LONG, sizeDelta, marginDelta, oraclePrice))) {
         skipForkTest(ctx, 'previewOpenRevertCode rejected the initial long open.')
         return
       }
 
-      const committed = await commitOrder(harness, SIDE_BULL, sizeDelta, marginDelta, 0n, false)
+      const committed = await commitOrder(harness, SIDE_LONG, sizeDelta, marginDelta, 0n, false)
       const maxOrderAge = await harness.publicClient.readContract({
         address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
         abi: PERPS_ORDER_ROUTER_ABI,
@@ -1068,7 +1111,7 @@ describe('perps fork lifecycle', () => {
       }
 
       const sizeDelta = notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
-      if (!(await previewOpenIsValid(harness, SIDE_BULL, sizeDelta, marginDelta, oraclePrice))) {
+      if (!(await previewOpenIsValid(harness, SIDE_LONG, sizeDelta, marginDelta, oraclePrice))) {
         skipForkTest(ctx, 'previewOpenRevertCode rejected the first batched long open.')
         return
       }
@@ -1078,9 +1121,9 @@ describe('perps fork lifecycle', () => {
       const earliestPublishTime = BigInt(Math.min(...pythPayload.publishTimes))
 
       await harness.testClient.setNextBlockTimestamp({ timestamp: earliestPublishTime - 2n })
-      const first = await commitOrder(harness, SIDE_BULL, sizeDelta, marginDelta, 0n, false)
+      const first = await commitOrder(harness, SIDE_LONG, sizeDelta, marginDelta, 0n, false)
       await harness.testClient.setNextBlockTimestamp({ timestamp: earliestPublishTime - 1n })
-      const second = await commitOrder(harness, SIDE_BULL, sizeDelta, marginDelta, 0n, false)
+      const second = await commitOrder(harness, SIDE_LONG, sizeDelta, marginDelta, 0n, false)
 
       expect(first.orderId).toBeLessThan(second.orderId)
       expect(await readPendingOrderCount(harness)).toBe(2)
@@ -1094,7 +1137,7 @@ describe('perps fork lifecycle', () => {
 
       const position = await readPosition(harness)
       expect(position.exists).toBe(true)
-      expect(position.side).toBe(SIDE_BULL)
+      expect(position.side).toBe(SIDE_LONG)
       expect(position.size).toBeGreaterThanOrEqual(sizeDelta * 2n)
       expect(position.marginUsdc).toBeGreaterThanOrEqual(marginDelta * 2n)
       expect(await readPendingOrderCount(harness)).toBe(0)

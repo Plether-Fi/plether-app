@@ -35,6 +35,15 @@ function validManifest(): Record<string, unknown> {
   }
 }
 
+function validV2Manifest(): Record<string, unknown> {
+  return {
+    ...validManifest(),
+    version: 'perps-aa-arbitrum-sepolia-v2',
+    orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
+  }
+}
+
 describe('parsePerpsAaManifest', () => {
   it('validates the manifest served by the app', () => {
     const manifest = parsePerpsAaManifest(publicManifest)
@@ -68,11 +77,28 @@ describe('parsePerpsAaManifest', () => {
     )
   })
 
+  it('parses the V2 deployment bindings', () => {
+    expect(parsePerpsAaManifest(validV2Manifest())).toMatchObject({
+      version: 'perps-aa-arbitrum-sepolia-v2',
+      orderLifecycleBook: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+      policyEvaluator: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+    })
+  })
+
+  it('rejects a V2 manifest without lifecycle dependencies', () => {
+    const manifest = validV2Manifest()
+    delete manifest.policyEvaluator
+
+    expect(() => parsePerpsAaManifest(manifest)).toThrow(
+      /missing required field "policyEvaluator"/
+    )
+  })
+
   it('rejects unsupported manifest versions', () => {
     const manifest = validManifest()
-    manifest.version = 'perps-aa-arbitrum-sepolia-v2'
+    manifest.version = 'perps-aa-arbitrum-sepolia-v3'
 
-    expect(() => parsePerpsAaManifest(manifest)).toThrow(/supported v1/)
+    expect(() => parsePerpsAaManifest(manifest)).toThrow(/-v1 or -v2/)
   })
 
   it('rejects unsupported account modes', () => {

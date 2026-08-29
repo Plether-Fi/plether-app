@@ -69,6 +69,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
+  prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
   executeOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
@@ -101,6 +102,7 @@ vi.mock('../../hooks', () => ({
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
+    prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
     executeOrder: perpsTradingMocks.executeOrder,
     cleanupExpiredOrder: perpsTradingMocks.cleanupExpiredOrder,
@@ -129,9 +131,52 @@ describe('perps lifecycle labels', () => {
     Object.values(perpsTradingMocks).forEach((mock) => {
       mock.mockReset()
     })
+    perpsTradingMocks.prepareOrder.mockResolvedValue({
+      account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      orderRouter: '0x1111111111111111111111111111111111111111',
+      orderLifecycleBook: '0x2222222222222222222222222222222222222222',
+      request: {
+        clientOrderId: `0x${'12'.repeat(32)}`,
+        side: 0,
+        sizeDelta: 100_000_000n,
+        marginDelta: 20_000_000n,
+        targetPrice: 100_100_000n,
+        isClose: false,
+        bounds: {
+          validUntil: 1_700_000_300n,
+          allowedExecutionModes: 1,
+          expectedConfigHash: `0x${'34'.repeat(32)}`,
+          maxExecutionBountyUsdc: 10_000n,
+          maxExecutionNotionalUsdc: 100_000_000n,
+          maxGrossAccountDebitUsdc: 120_010_000n,
+          maxActionChargeUsdc: 1_000_000n,
+          maxExplicitFeesUsdc: 1_000_000n,
+          maxPostPositionSize: 100_000_000n,
+          minPostSettlementBalanceUsdc: 800_000_000n,
+          minPostPositionEquityUsdc: 20_000_000n,
+          maxPostLeverageBps: 50_000,
+        },
+      },
+      executionBountyUsdc: 10_000n,
+      reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}`,
+      reviewedPrice: 100_000_000n,
+      protection: {
+        validUntil: 1_700_000_300n,
+        executionMode: 1,
+        executionBountyUsdc: 10_000n,
+        maxGrossAccountDebitUsdc: 120_010_000n,
+        maxActionChargeUsdc: 1_000_000n,
+        maxExplicitFeesUsdc: 1_000_000n,
+        maxPostLeverageBps: 50_000,
+        minPostSettlementBalanceUsdc: 800_000_000n,
+        minPostPositionEquityUsdc: 20_000_000n,
+      },
+    })
   })
 
-  function startDelayedSponsoredCommit() {
+  async function startDelayedSponsoredCommit() {
     mockIsConnected = true
     identityMocks.isAaManifestConfigured = true
     wagmiMocks.readContractsData = [{
@@ -151,6 +196,8 @@ describe('perps lifecycle labels', () => {
       />
     )
 
+    await act(async () => undefined)
+    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     expect(perpsTradingMocks.commitOrder).toHaveBeenCalledOnce()
 
@@ -167,7 +214,7 @@ describe('perps lifecycle labels', () => {
 
   it('clears the delayed wallet warning when the signed operation starts submitting', async () => {
     vi.useFakeTimers()
-    const onStatus = startDelayedSponsoredCommit()
+    const onStatus = await startDelayedSponsoredCommit()
 
     act(() => onStatus('awaiting-signature'))
     expect(screen.getByText('Waiting for wallet confirmation')).toBeInTheDocument()
@@ -212,7 +259,7 @@ describe('perps lifecycle labels', () => {
 
   it('cancels the wallet warning timer when signing finishes before the threshold', async () => {
     vi.useFakeTimers()
-    const onStatus = startDelayedSponsoredCommit()
+    const onStatus = await startDelayedSponsoredCommit()
 
     act(() => onStatus('awaiting-signature'))
     await act(async () => {
@@ -273,12 +320,17 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket {...baseProps} orderHistory={[]} />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onStatus?: (
         status: 'awaiting-signature' | 'confirming'
       ) => void
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -296,6 +348,8 @@ describe('perps lifecycle labels', () => {
 
     await act(async () => {
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash: terminalOrder.commitTxHash,
         orderId: terminalOrder.orderId,
       })
@@ -398,9 +452,14 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket {...baseProps} orderHistory={[]} />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -408,6 +467,8 @@ describe('perps lifecycle labels', () => {
 
     await act(async () => {
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash: indexedOrder.commitTxHash,
         orderId: indexedOrder.orderId,
       })
@@ -477,12 +538,17 @@ describe('perps lifecycle labels', () => {
       />
     )
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
     const commitInput = perpsTradingMocks.commitOrder.mock.calls[0]?.[0] as {
       onStatus?: (
         status: 'awaiting-signature' | 'confirming'
       ) => void
       onIncluded?: (result: {
+        account: string
+        clientOrderId: string
         hash: `0x${string}`
         orderId: bigint
       }) => void
@@ -492,6 +558,8 @@ describe('perps lifecycle labels', () => {
       commitInput?.onStatus?.('awaiting-signature')
       commitInput?.onStatus?.('confirming')
       commitInput?.onIncluded?.({
+        account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+        clientOrderId: `0x${'12'.repeat(32)}`,
         hash:
           '0xf4a07414941a4d90b5be13743db20f451e58fcf27ceaba670eac26e5d0b4822e',
         orderId: 9177n,
@@ -1343,7 +1411,9 @@ describe('perps lifecycle labels', () => {
     })
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
 
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
 
@@ -2160,7 +2230,7 @@ describe('perps lifecycle labels', () => {
       expect(screen.getByText('Order failed')).toBeInTheDocument()
     })
 
-    expect(screen.getByText(/The order expired before it could be revealed/i)).toBeInTheDocument()
+    expect(screen.getByText(/The order expired before execution/i)).toBeInTheDocument()
     expect(screen.getAllByText('Unavailable').length).toBeGreaterThan(0)
     expect(screen.queryByRole('button', { name: 'Retry Finalizing' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Back to Preview' })).toBeInTheDocument()

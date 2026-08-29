@@ -125,11 +125,11 @@ export function displayDxyPriceToOraclePrice(displayDxyPrice: bigint | undefined
 }
 
 export function directionToPerpsSide(direction: PerpsDirection): PerpsSide {
-  return direction === 'long' ? PERPS_SIDE.BULL : PERPS_SIDE.BEAR
+  return direction === 'long' ? PERPS_SIDE.LONG : PERPS_SIDE.SHORT
 }
 
 export function perpsSideToDirection(side: number | bigint | undefined): PerpsDirection {
-  return Number(side ?? PERPS_SIDE.BULL) === PERPS_SIDE.BEAR ? 'short' : 'long'
+  return Number(side ?? PERPS_SIDE.LONG) === PERPS_SIDE.SHORT ? 'short' : 'long'
 }
 
 export function perpsSideLabel(side: number | bigint | undefined): string {

@@ -817,6 +817,7 @@ testAddresses =
   PerpsAddresses
     { paUsdc = testUsdc
     , paOrderRouter = testRouter
+    , paOrderLifecycleBook = Nothing
     , paCfdEngine = testEngine
     , paCfdEngineLens = testLens
     , paCfdEngineSettlementSidecar = testSidecar

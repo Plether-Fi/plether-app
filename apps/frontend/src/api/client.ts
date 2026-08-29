@@ -88,6 +88,7 @@ export interface PlethApiConfig {
 
 function deriveWsUrl(baseUrl: string): string {
   if (baseUrl.startsWith('http')) return baseUrl.replace(/^http/, 'ws');
+  if (typeof globalThis.location === 'undefined') return baseUrl;
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   return `${proto}//${location.host}${baseUrl}`;
 }

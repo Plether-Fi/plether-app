@@ -1,6 +1,6 @@
 export const PERPS_SIDE = {
-  BULL: 0,
-  BEAR: 1,
+  LONG: 0,
+  SHORT: 1,
 } as const
 
 export type PerpsSide = typeof PERPS_SIDE[keyof typeof PERPS_SIDE]

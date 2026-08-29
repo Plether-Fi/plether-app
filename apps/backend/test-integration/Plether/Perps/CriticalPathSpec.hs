@@ -560,6 +560,7 @@ testConfig databaseUrl rpcUrl =
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = testClearinghouse
     , cfgPerpsOrderRouter = testRouter
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = testEngine
     , cfgPerpsCfdEngineLens = testLens
     , cfgPerpsCfdEngineSettlementSidecar = testSidecar

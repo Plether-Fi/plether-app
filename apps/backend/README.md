@@ -346,6 +346,7 @@ CHAIN_ID=421614 \
 PERPS_CHAIN_ID=421614 \
 PERPS_USDC=0x1647e41f49ED6D688936092B5a291c4B28106343 \
 PERPS_ORDER_ROUTER=0x97A901dE2B267c307E264FD5F71403F8072F73e7 \
+PERPS_ORDER_LIFECYCLE_BOOK= \
 PERPS_MARGIN_CLEARINGHOUSE=0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211 \
 INSIGHTS_SNAPSHOT_MULTICALL_SIZE=10 \
 DATABASE_URL=postgresql://postgres@localhost:55432/plether \
@@ -533,6 +534,7 @@ Local URLs:
 | `VAULT_HISTORY_RPC_URL` | No | `PERPS_RPC_URL` | Optional archive-capable RPC used for historical vault backfills; keep credentialed values server-side |
 | `PERPS_USDC` | No | Arbitrum Sepolia deployment | Perps mock USDC minted by the testnet faucet |
 | `PERPS_ORDER_ROUTER` | No | Arbitrum Sepolia deployment | Perps order router address |
+| `PERPS_ORDER_LIFECYCLE_BOOK` | No | Empty (legacy) | V2 lifecycle-book address used for canonical intent and finalization receipts |
 | `PERPS_HOUSE_POOL` | No | v1.2.0 Arbitrum Sepolia HousePool | HousePool identity verified against the Settlement Monitor facade at keeper startup |
 | `PERPS_SETTLEMENT_MONITOR_LENS` | No | v1.2.0 Arbitrum Sepolia facade | Operational LP settlement facade; never configure the monitor sidecar |
 | `PERPS_CFD_ENGINE` | No | Arbitrum Sepolia deployment | CFD engine allowed by the managed sponsorship policy and used for liquidation discovery |

@@ -672,6 +672,12 @@ variable "perps_settlement_monitor_lens" {
   }
 }
 
+variable "perps_order_lifecycle_book" {
+  description = "V2 immutable order lifecycle book; leave empty until the bounded-order deployment is ready"
+  type        = string
+  default     = ""
+}
+
 variable "perps_plether_oracle" {
   type    = string
   default = "0xC69ec16EfB71F62984E9b2688396F34062277FdC"

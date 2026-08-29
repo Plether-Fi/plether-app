@@ -21,6 +21,131 @@ const ROUTER_PENDING_ORDER_COMPONENTS = [
   { name: 'executionBountyUsdc', type: 'uint256' },
 ] as const
 
+export const PERPS_EXECUTION_BOUNDS_COMPONENTS = [
+  { name: 'validUntil', type: 'uint64' },
+  { name: 'allowedExecutionModes', type: 'uint8' },
+  { name: 'expectedConfigHash', type: 'bytes32' },
+  { name: 'maxExecutionBountyUsdc', type: 'uint256' },
+  { name: 'maxExecutionNotionalUsdc', type: 'uint256' },
+  { name: 'maxGrossAccountDebitUsdc', type: 'uint256' },
+  { name: 'maxActionChargeUsdc', type: 'uint256' },
+  { name: 'maxExplicitFeesUsdc', type: 'uint256' },
+  { name: 'maxPostPositionSize', type: 'uint256' },
+  { name: 'minPostSettlementBalanceUsdc', type: 'uint256' },
+  { name: 'minPostPositionEquityUsdc', type: 'uint256' },
+  { name: 'maxPostLeverageBps', type: 'uint32' },
+] as const
+
+export const PERPS_ORDER_REQUEST_V2_COMPONENTS = [
+  { name: 'clientOrderId', type: 'bytes32' },
+  { name: 'side', type: 'uint8' },
+  { name: 'sizeDelta', type: 'uint256' },
+  { name: 'marginDelta', type: 'uint256' },
+  { name: 'targetPrice', type: 'uint256' },
+  { name: 'isClose', type: 'bool' },
+  {
+    name: 'bounds',
+    type: 'tuple',
+    components: PERPS_EXECUTION_BOUNDS_COMPONENTS,
+  },
+] as const
+
+const CFD_ORDER_COMPONENTS = [
+  { name: 'account', type: 'address' },
+  { name: 'sizeDelta', type: 'uint256' },
+  { name: 'marginDelta', type: 'uint256' },
+  { name: 'targetPrice', type: 'uint256' },
+  { name: 'commitTime', type: 'uint64' },
+  { name: 'commitBlock', type: 'uint64' },
+  { name: 'orderId', type: 'uint64' },
+  { name: 'side', type: 'uint8' },
+  { name: 'isClose', type: 'bool' },
+] as const
+
+const EXECUTION_ASSESSMENT_COMPONENTS = [
+  { name: 'mode', type: 'uint8' },
+  { name: 'executionNotionalUsdc', type: 'uint256' },
+  { name: 'grossAccountDebitUsdc', type: 'uint256' },
+  { name: 'actionChargeAssessedUsdc', type: 'uint256' },
+  { name: 'actionChargeCollectedUsdc', type: 'uint256' },
+  { name: 'explicitFeesUsdc', type: 'uint256' },
+  { name: 'preSettlementBalanceUsdc', type: 'uint256' },
+  { name: 'postSettlementBalanceUsdc', type: 'uint256' },
+  { name: 'realizedPnlUsdc', type: 'int256' },
+  { name: 'vpiUsdc', type: 'int256' },
+  { name: 'carryUsdc', type: 'uint256' },
+  { name: 'executionFeeUsdc', type: 'uint256' },
+  { name: 'frozenSpreadUsdc', type: 'uint256' },
+  { name: 'preTraderClaimUsdc', type: 'uint256' },
+  { name: 'postTraderClaimUsdc', type: 'uint256' },
+  { name: 'postPositionSize', type: 'uint256' },
+  { name: 'postPositionMarginUsdc', type: 'uint256' },
+  { name: 'postPositionEquityUsdc', type: 'int256' },
+  { name: 'postLeverageBps', type: 'uint256' },
+] as const
+
+const FAILURE_DETAILS_COMPONENTS = [
+  { name: 'selector', type: 'bytes4' },
+  { name: 'category', type: 'uint8' },
+  { name: 'code', type: 'uint8' },
+  { name: 'constraint', type: 'uint8' },
+  { name: 'actual', type: 'uint256' },
+  { name: 'limit', type: 'uint256' },
+  { name: 'revertDataHash', type: 'bytes32' },
+] as const
+
+const ORDER_ECONOMICS_COMPONENTS = [
+  { name: 'executionNotionalUsdc', type: 'uint256' },
+  { name: 'realizedPnlUsdc', type: 'int256' },
+  { name: 'vpiUsdc', type: 'int256' },
+  { name: 'carryUsdc', type: 'int256' },
+  { name: 'executionFeeUsdc', type: 'uint256' },
+  { name: 'frozenSpreadUsdc', type: 'uint256' },
+  { name: 'actionChargeAssessedUsdc', type: 'uint256' },
+  { name: 'actionChargeCollectedUsdc', type: 'uint256' },
+  { name: 'grossAccountDebitUsdc', type: 'uint256' },
+  { name: 'preSettlementBalanceUsdc', type: 'uint256' },
+  { name: 'postSettlementBalanceUsdc', type: 'uint256' },
+  { name: 'preTraderClaimBalanceUsdc', type: 'uint256' },
+  { name: 'postTraderClaimBalanceUsdc', type: 'uint256' },
+  { name: 'postPositionSize', type: 'uint256' },
+  { name: 'postPositionMarginUsdc', type: 'uint256' },
+  { name: 'postPositionEquityUsdc', type: 'int256' },
+  { name: 'postLeverageBps', type: 'uint256' },
+] as const
+
+const ORDER_RECEIPT_COMPONENTS = [
+  { name: 'orderId', type: 'uint64' },
+  { name: 'account', type: 'address' },
+  { name: 'clientOrderId', type: 'bytes32' },
+  { name: 'intentHash', type: 'bytes32' },
+  { name: 'expectedConfigHash', type: 'bytes32' },
+  { name: 'observedConfigHash', type: 'bytes32' },
+  { name: 'status', type: 'uint8' },
+  { name: 'reason', type: 'uint8' },
+  { name: 'executionMode', type: 'uint8' },
+  { name: 'executor', type: 'address' },
+  { name: 'priceSource', type: 'uint8' },
+  { name: 'executionPrice', type: 'uint256' },
+  { name: 'neutralMarkPrice', type: 'uint256' },
+  { name: 'poolDepthUsdc', type: 'uint256' },
+  { name: 'oraclePublishTime', type: 'uint64' },
+  { name: 'priceReachedEngine', type: 'bool' },
+  { name: 'bountyUsdc', type: 'uint256' },
+  { name: 'bountyRecipient', type: 'address' },
+  { name: 'bountyDisposition', type: 'uint8' },
+  {
+    name: 'failure',
+    type: 'tuple',
+    components: FAILURE_DETAILS_COMPONENTS,
+  },
+  {
+    name: 'economics',
+    type: 'tuple',
+    components: ORDER_ECONOMICS_COMPONENTS,
+  },
+] as const
+
 const PRICE_SNAPSHOT_COMPONENTS = [
   { name: 'price', type: 'uint256' },
   { name: 'markPrice', type: 'uint256' },
@@ -224,7 +349,33 @@ const LP_REQUEST_STATE_VIEW_COMPONENTS = [
   { name: 'redeemRefundPending', type: 'bool' },
 ] as const
 
+const POSITION_PROTECTION_VIEW_COMPONENTS = [
+  { name: 'protectionId', type: 'uint64' },
+  { name: 'parentOrderId', type: 'uint64' },
+  { name: 'linkedOrderId', type: 'uint64' },
+  { name: 'account', type: 'address' },
+  { name: 'side', type: 'uint8' },
+  { name: 'size', type: 'uint256' },
+  { name: 'takeProfitTriggerPrice', type: 'uint256' },
+  { name: 'stopLossTriggerPrice', type: 'uint256' },
+  { name: 'triggerBountyUsdc', type: 'uint256' },
+  { name: 'executionBountyUsdc', type: 'uint256' },
+  { name: 'armedAt', type: 'uint64' },
+  { name: 'armedBlock', type: 'uint64' },
+  { name: 'triggerMarkPrice', type: 'uint256' },
+  { name: 'triggerPublishTime', type: 'uint64' },
+  { name: 'triggeredLeg', type: 'uint8' },
+  { name: 'status', type: 'uint8' },
+] as const
+
 export const PERPS_PUBLIC_LENS_ABI = [
+  ...(['ENGINE', 'ORDER_ROUTER', 'HOUSE_POOL'] as const).map((name) => ({
+    type: 'function' as const,
+    name,
+    stateMutability: 'view' as const,
+    inputs: [],
+    outputs: [{ type: 'address' as const }],
+  })),
   {
     type: 'function',
     name: 'getProtocolStatus',
@@ -306,6 +457,19 @@ export const PERPS_PUBLIC_LENS_ABI = [
         name: 'pending',
         type: 'tuple[]',
         components: PENDING_ORDER_COMPONENTS,
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'getActivePositionProtection',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [
+      {
+        name: 'protection',
+        type: 'tuple',
+        components: POSITION_PROTECTION_VIEW_COMPONENTS,
       },
     ],
   },
@@ -405,13 +569,13 @@ export const PERPS_ORDER_ROUTER_ABI = [
     name: 'commitOrder',
     stateMutability: 'nonpayable',
     inputs: [
-      { name: 'side', type: 'uint8' },
-      { name: 'sizeDelta', type: 'uint256' },
-      { name: 'marginDelta', type: 'uint256' },
-      { name: 'targetPrice', type: 'uint256' },
-      { name: 'isClose', type: 'bool' },
+      {
+        name: 'request',
+        type: 'tuple',
+        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
+      },
     ],
-    outputs: [],
+    outputs: [{ name: 'orderId', type: 'uint64' }],
   },
   {
     type: 'function',
@@ -450,13 +614,81 @@ export const PERPS_ORDER_ROUTER_ABI = [
   },
   {
     type: 'function',
+    name: 'openOrderExecutionBountyBps',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'bps', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'minOpenOrderExecutionBountyUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'amount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'maxOpenOrderExecutionBountyUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'amount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'closeOrderExecutionBountyUsdc',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'amount', type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'engine',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'engineAddress', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'lifecycleBook',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'book', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'policyEvaluator',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'evaluator', type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'positionProtectionBook',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'book', type: 'address' }],
+  },
+  {
+    type: 'function',
     name: 'executeOrder',
     stateMutability: 'payable',
     inputs: [
       { name: 'orderId', type: 'uint64' },
       { name: 'pythUpdateData', type: 'bytes[]' },
     ],
-    outputs: [],
+    outputs: [
+      {
+        name: 'result',
+        type: 'tuple',
+        components: [
+          { name: 'orderId', type: 'uint64' },
+          { name: 'status', type: 'uint8' },
+          { name: 'terminalReason', type: 'uint8' },
+          { name: 'pendingReason', type: 'uint8' },
+          { name: 'receiptHash', type: 'bytes32' },
+        ],
+      },
+    ],
   },
   {
     type: 'function',
@@ -466,7 +698,17 @@ export const PERPS_ORDER_ROUTER_ABI = [
       { name: 'maxOrderId', type: 'uint64' },
       { name: 'pythUpdateData', type: 'bytes[]' },
     ],
-    outputs: [],
+    outputs: [
+      {
+        name: 'result',
+        type: 'tuple',
+        components: [
+          { name: 'nextOrderId', type: 'uint64' },
+          { name: 'terminalCount', type: 'uint32' },
+          { name: 'stopReason', type: 'uint8' },
+        ],
+      },
+    ],
   },
   {
     type: 'function',
@@ -495,20 +737,287 @@ export const PERPS_ORDER_ROUTER_ABI = [
     ],
   },
   {
-    type: 'event',
-    name: 'OrderExecuted',
+    type: 'error',
+    name: 'OrderRouter__ZeroClientOrderId',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__InvalidValidUntil',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__InvalidExecutionModeMask',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__ExecutionConfigMismatch',
     inputs: [
-      { name: 'orderId', type: 'uint64', indexed: true },
-      { name: 'executionPrice', type: 'uint256', indexed: false },
+      { name: 'expectedConfigHash', type: 'bytes32' },
+      { name: 'observedConfigHash', type: 'bytes32' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__ProtectionActive',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__ZeroPostLeverageBound',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderRouter__ExecutionBountyAboveGrossDebit',
+    inputs: [
+      { name: 'executionBountyUsdc', type: 'uint256' },
+      { name: 'maxGrossAccountDebitUsdc', type: 'uint256' },
+    ],
+  },
+] as const
+
+export const PERPS_ORDER_LIFECYCLE_BOOK_ABI = [
+  ...(['ROUTER', 'ENGINE', 'CLEARINGHOUSE', 'HOUSE_POOL'] as const).map(
+    (name) => ({
+      type: 'function' as const,
+      name,
+      stateMutability: 'view' as const,
+      inputs: [],
+      outputs: [{ type: 'address' as const }],
+    })
+  ),
+  {
+    type: 'function',
+    name: 'currentExecutionConfigHash',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'configHash', type: 'bytes32' }],
+  },
+  {
+    type: 'function',
+    name: 'resolveClientIntent',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      {
+        name: 'request',
+        type: 'tuple',
+        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
+      },
+    ],
+    outputs: [
+      { name: 'resolution', type: 'uint8' },
+      { name: 'orderId', type: 'uint64' },
+      { name: 'intentHash', type: 'bytes32' },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'clientIntent',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'clientOrderId', type: 'bytes32' },
+    ],
+    outputs: [
+      {
+        name: 'intent',
+        type: 'tuple',
+        components: [
+          { name: 'orderId', type: 'uint64' },
+          { name: 'intentHash', type: 'bytes32' },
+        ],
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'pendingPolicy',
+    stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }],
+    outputs: [
+      {
+        name: 'bounds',
+        type: 'tuple',
+        components: PERPS_EXECUTION_BOUNDS_COMPONENTS,
+      },
+    ],
+  },
+  {
+    type: 'function',
+    name: 'lifecycleStatus',
+    stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }],
+    outputs: [{ name: 'status', type: 'uint8' }],
+  },
+  {
+    type: 'function',
+    name: 'outcome',
+    stateMutability: 'view',
+    inputs: [{ name: 'orderId', type: 'uint64' }],
+    outputs: [
+      {
+        name: 'terminalOutcome',
+        type: 'tuple',
+        components: [
+          { name: 'account', type: 'address' },
+          { name: 'clientOrderId', type: 'bytes32' },
+          { name: 'intentHash', type: 'bytes32' },
+          { name: 'expectedConfigHash', type: 'bytes32' },
+          { name: 'observedConfigHash', type: 'bytes32' },
+          { name: 'status', type: 'uint8' },
+          { name: 'reason', type: 'uint8' },
+          { name: 'executionMode', type: 'uint8' },
+          { name: 'priceSource', type: 'uint8' },
+          { name: 'bountyDisposition', type: 'uint8' },
+          { name: 'terminalBlock', type: 'uint64' },
+          { name: 'terminalTime', type: 'uint64' },
+          { name: 'oraclePublishTime', type: 'uint64' },
+          { name: 'executor', type: 'address' },
+          { name: 'bountyRecipient', type: 'address' },
+          { name: 'executionPrice', type: 'uint256' },
+          { name: 'bountyUsdc', type: 'uint256' },
+          { name: 'failureSelector', type: 'bytes4' },
+          { name: 'failureCategory', type: 'uint8' },
+          { name: 'failureCode', type: 'uint8' },
+          { name: 'failedConstraint', type: 'uint8' },
+          { name: 'revertDataHash', type: 'bytes32' },
+          { name: 'receiptHash', type: 'bytes32' },
+        ],
+      },
     ],
   },
   {
     type: 'event',
-    name: 'OrderFailed',
+    name: 'IntentRegistered',
     inputs: [
       { name: 'orderId', type: 'uint64', indexed: true },
-      { name: 'reason', type: 'uint8', indexed: false },
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'clientOrderId', type: 'bytes32', indexed: true },
+      { name: 'intentHash', type: 'bytes32', indexed: false },
+      { name: 'executionBountyUsdc', type: 'uint256', indexed: false },
+      {
+        name: 'request',
+        type: 'tuple',
+        indexed: false,
+        components: PERPS_ORDER_REQUEST_V2_COMPONENTS,
+      },
     ],
+  },
+  {
+    type: 'event',
+    name: 'OrderFinalized',
+    inputs: [
+      { name: 'orderId', type: 'uint64', indexed: true },
+      { name: 'account', type: 'address', indexed: true },
+      { name: 'clientOrderId', type: 'bytes32', indexed: true },
+      { name: 'receiptHash', type: 'bytes32', indexed: false },
+      { name: 'terminalBlock', type: 'uint64', indexed: false },
+      { name: 'terminalTime', type: 'uint64', indexed: false },
+      {
+        name: 'receipt',
+        type: 'tuple',
+        indexed: false,
+        components: ORDER_RECEIPT_COMPONENTS,
+      },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'OrderLifecycleBook__ZeroClientOrderId',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'OrderLifecycleBook__ClientIdConflict',
+    inputs: [
+      { name: 'account', type: 'address' },
+      { name: 'clientOrderId', type: 'bytes32' },
+      { name: 'existingIntentHash', type: 'bytes32' },
+      { name: 'suppliedIntentHash', type: 'bytes32' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'OrderLifecycleBook__ClientIdDomainMismatch',
+    inputs: [
+      { name: 'clientOrderId', type: 'bytes32' },
+      { name: 'protocolIntent', type: 'bool' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'OrderLifecycleBook__ExecutionBountyAboveBound',
+    inputs: [
+      { name: 'actualBountyUsdc', type: 'uint256' },
+      { name: 'maximumBountyUsdc', type: 'uint256' },
+    ],
+  },
+] as const
+
+export const PERPS_ORDER_POLICY_EVALUATOR_ABI = [
+  {
+    type: 'function',
+    name: 'assessOrder',
+    stateMutability: 'view',
+    inputs: [
+      { name: 'engine', type: 'address' },
+      { name: 'order', type: 'tuple', components: CFD_ORDER_COMPONENTS },
+      { name: 'executor', type: 'address' },
+      { name: 'currentOraclePrice', type: 'uint256' },
+      { name: 'poolDepthUsdc', type: 'uint256' },
+      { name: 'publishTime', type: 'uint64' },
+      {
+        name: 'bounds',
+        type: 'tuple',
+        components: PERPS_EXECUTION_BOUNDS_COMPONENTS,
+      },
+      { name: 'executionBountyUsdc', type: 'uint256' },
+    ],
+    outputs: [
+      {
+        name: 'assessment',
+        type: 'tuple',
+        components: EXECUTION_ASSESSMENT_COMPONENTS,
+      },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'CfdOrderPolicyEvaluator__ExecutionModeDisallowed',
+    inputs: [
+      { name: 'mode', type: 'uint8' },
+      { name: 'allowedExecutionModes', type: 'uint8' },
+    ],
+  },
+  {
+    type: 'error',
+    name: 'CfdOrderPolicyEvaluator__ConstraintViolation',
+    inputs: [
+      { name: 'constraint', type: 'uint8' },
+      { name: 'actual', type: 'uint256' },
+      { name: 'limit', type: 'uint256' },
+    ],
+  },
+] as const
+
+export const PERPS_POSITION_PROTECTION_BOOK_ABI = [
+  {
+    type: 'function',
+    name: 'ROUTER',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'activePositionProtectionId',
+    stateMutability: 'view',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ name: 'protectionId', type: 'uint64' }],
   },
 ] as const
 
@@ -591,6 +1100,27 @@ export const PERPS_CFD_ENGINE_ABI = [
   },
   {
     type: 'function',
+    name: 'lastMarkPrice',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'clearinghouse',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
+    name: 'pool',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
+  {
+    type: 'function',
     name: 'isFadWindow',
     stateMutability: 'view',
     inputs: [],
@@ -638,6 +1168,13 @@ export const PERPS_CFD_ENGINE_ABI = [
 ] as const
 
 export const PERPS_HOUSE_POOL_ABI = [
+  {
+    type: 'function',
+    name: 'totalAssets',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ name: 'assets', type: 'uint256' }],
+  },
   {
     type: 'function',
     name: 'getPoolLiquidityView',
