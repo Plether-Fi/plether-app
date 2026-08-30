@@ -83,6 +83,7 @@ library
         Plether.Perps.ExecutionOracle
         Plether.Perps.ExecutionTrace
         Plether.Perps.CandleFinalizerProbe
+        Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
         Plether.Perps.IndexerOptions
         Plether.Types.History
@@ -297,6 +298,7 @@ test-suite plether-api-test
         Plether.Perps.ExecutionOracleSpec
         Plether.Perps.ExecutionTraceSpec
         Plether.Perps.CandleFinalizerProbeSpec
+        Plether.Perps.ClosedPriceGapSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
         Plether.Database.CandleHistorySpec

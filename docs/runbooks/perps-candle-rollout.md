@@ -497,6 +497,34 @@ Pass criteria for every canonical interval:
   `coverage_state=complete`, an empty `coverage_error`, and an acceptable lag;
 - no partial tranche is exposed as complete coverage.
 
+### Recover a migration-only closed-market price gap
+
+Do not use generic candle repair when strict coverage is disabled only with
+`price_watermark_gap`: there may be no missing candle observation to rebuild.
+For a supervised Sepolia migration gap wholly inside the weekly oracle-frozen
+window, first read the minute `coverage_end` from `status`. Then run:
+
+```bash
+run_candle_admin sepolia recover-closed-price-gap none \
+  -f from_timestamp=EXACT_MINUTE_COVERAGE_END \
+  -f to_timestamp=SUNDAY_2100_UTC_EXCLUSIVE
+```
+
+The protected action dynamically advances through a freshly fetched latest
+payload, not blindly through `to_timestamp`. It aborts unless all six
+authenticated Pyth histories contain no updates in the gap, the latest payload
+passes the deployed onchain Pyth parser, its signed basket exactly matches the
+last stored priority-100 observation, all seven coverage rows retain one exact
+`price_watermark_gap` generation, and the full approved range stays within
+Friday 22:00–Sunday 21:00 UTC. It then republishes coverage atomically with one
+new generation and does not insert, delete, or modify candle prices.
+
+Immediately require a normal `basket_price_watermark_advanced` heartbeat with
+`coverage_state=complete`, then smoke-check the current and history endpoints.
+Any history activity, price mismatch, coverage-state mismatch, approval delay,
+or live-session boundary crossing is a hard failure and requires diagnosis;
+never widen or bypass the proof.
+
 ### Operator-selected price-history target
 
 After the target/progress migration and target-capable basket worker are

@@ -83,6 +83,7 @@ import Plether.Database.Candles
   , CandlePage (..)
   , CandleRange (..)
   , RollupCoverage (..)
+  , PriceGapRecoveryResult (..)
   , RollupKind (..)
   , advanceBasketPriceCoverage
   , advanceMarketVolumeCoverage
@@ -104,6 +105,7 @@ import Plether.Database.Candles
   , lockBasketPriceDataset
   , markRollupCoverageIncomplete
   , recomputeBasketCandleHierarchy
+  , recoverBasketPriceCoverageGap
   , recomputeMarketVolumeHierarchy
   , recomputeMarketVolumeHierarchyBatch
   , beginRollupMaintenance
@@ -1676,6 +1678,75 @@ candleRollupSpec databaseUrl =
           repeated <-
             mapM (requirePriceCoverage connection) canonicalCandleIntervals
           repeated `shouldBe` invalidated
+
+    it "recovers only an exact price watermark gap backed by the stored signed state" $
+      withCandleDatabase databaseUrl $ \pool ->
+        withDb pool $ \connection -> do
+          ensureCurrentBasketDefinition connection testSeries
+          let coverageStart = baseTime
+              coverageEnd = baseTime + 86_400
+              lastObservationTime = coverageEnd - 3_600
+              invalidatingPoll = coverageEnd + 301
+              recoveredThrough = coverageEnd + 3_600
+              initialGeneration = 17
+          changed <-
+            upsertBasketObservation connection $
+              BasketObservationInput
+                { boiSeriesId = testSeries
+                , boiObservationId = "closed-price-gap-last-signed"
+                , boiPublishTime = lastObservationTime
+                , boiBasketPrice = 100
+                , boiComponentPrices = componentPayload
+                , boiSource = "backend_hermes_latest"
+                , boiSourcePriority = 100
+                }
+          changed `shouldBe` True
+          forM_ canonicalCandleIntervals $ \interval ->
+            putPriceCoverage
+              connection
+              interval
+              coverageStart
+              coverageEnd
+              coverageEnd
+              initialGeneration
+              True
+          advanceBasketPriceCoverage connection testSeries invalidatingPoll 120
+
+          recovery <-
+            withTransaction connection $
+              recoverBasketPriceCoverageGap
+                connection
+                testSeries
+                coverageEnd
+                recoveredThrough
+                lastObservationTime
+                100
+                componentPayload
+                120
+          recovery
+            `shouldBe`
+              PriceGapRecoveryResult
+                { pgrPreviousCoverageEnd = coverageEnd
+                , pgrRecoveredThrough = recoveredThrough
+                , pgrGeneration = initialGeneration + 2
+                }
+          forM_ canonicalCandleIntervals $ \interval -> do
+            coverage <- requirePriceCoverage connection interval
+            rcComplete coverage `shouldBe` True
+            rcGeneration coverage `shouldBe` initialGeneration + 2
+            rcLastError coverage `shouldBe` Nothing
+            rcCoverageEnd coverage `shouldBe` Just (alignDownForTest recoveredThrough interval)
+
+          recoverBasketPriceCoverageGap
+            connection
+            testSeries
+            coverageEnd
+            (recoveredThrough + 60)
+            lastObservationTime
+            100
+            componentPayload
+            120
+            `shouldThrow` anyException
 
     it "invalidates complete coarser coverage despite a minute repair marker" $
       withCandleDatabase databaseUrl $ \pool ->
