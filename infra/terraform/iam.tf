@@ -109,15 +109,12 @@ resource "aws_iam_role_policy" "github_deploy" {
         Resource = local.github_deploy_ecs_service_arns
       },
       {
-        Sid      = "EcsDeregisterTaskDefinition"
-        Effect   = "Allow"
-        Action   = "ecs:DeregisterTaskDefinition"
-        Resource = "*"
-      },
-      {
-        Sid      = "EcsTaskDefinitionTags"
-        Effect   = "Allow"
-        Action   = "ecs:TagResource"
+        Sid    = "EcsTaskDefinitions"
+        Effect = "Allow"
+        Action = [
+          "ecs:DeregisterTaskDefinition",
+          "ecs:TagResource",
+        ]
         Resource = "arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task-definition/plether-${var.environment}*"
       },
       {
