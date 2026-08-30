@@ -218,6 +218,10 @@ interface PerpsTradeTicketProps {
   closePreviewFixture?: ClosePreviewView
   /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
   validationErrorFixture?: string
+  /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
+  executionProtectionsFixture?: PreparedPerpsOrderV2
+  /** Opens the protections disclosure on first render in deterministic stories. */
+  initialExecutionProtectionsExpanded?: boolean
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -1648,6 +1652,8 @@ export function PerpsTradeTicket({
   openPreviewFixture,
   closePreviewFixture,
   validationErrorFixture,
+  executionProtectionsFixture,
+  initialExecutionProtectionsExpanded = false,
   oracleFreshness,
   oracleFreshnessTooltip,
   availableToTradeRaw,
@@ -2769,6 +2775,11 @@ export function PerpsTradeTicket({
   const displayedValidationError = enableLiveTrading
     ? liveValidationError
     : validationErrorFixture
+  const displayedExecutionProtections = enableLiveTrading
+    ? preparedOrder
+    : executionProtectionsFixture
+  const shouldShowExecutionProtections = enableLiveTrading ||
+    displayedExecutionProtections !== undefined
   const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
   const previewInitialMarginUsdc = openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
@@ -4119,72 +4130,75 @@ export function PerpsTradeTicket({
                 </div>
               </div>
 
-              {enableLiveTrading ? (
-                <details className="border border-brand-border/20 bg-app-bg p-4">
+              {shouldShowExecutionProtections ? (
+                <details
+                  className="border border-brand-border/20 bg-app-bg p-4"
+                  open={initialExecutionProtectionsExpanded || undefined}
+                >
                   <summary className="cursor-pointer text-sm font-semibold text-content-primary">
                     Execution protections
                   </summary>
-                  {isExecutionProtectionsLoading ? (
+                  {enableLiveTrading && isExecutionProtectionsLoading ? (
                     <p className="mt-3 text-sm text-content-secondary">
                       Deriving protections from one coherent block…
                     </p>
-                  ) : executionProtectionsError ? (
+                  ) : enableLiveTrading && executionProtectionsError ? (
                     <p className="mt-3 text-sm text-brand-orange">
                       {executionProtectionsError}
                     </p>
-                  ) : preparedOrder ? (
+                  ) : displayedExecutionProtections ? (
                     <div className="mt-3">
                       <PreviewRows rows={[
                         {
                           label: 'Client order ID',
-                          value: `${preparedOrder.request.clientOrderId.slice(0, 10)}…${preparedOrder.request.clientOrderId.slice(-8)}`,
+                          value: `${displayedExecutionProtections.request.clientOrderId.slice(0, 10)}…${displayedExecutionProtections.request.clientOrderId.slice(-8)}`,
                         },
                         {
                           label: 'Deadline',
                           value: new Date(
-                            Number(preparedOrder.protection.validUntil) * 1_000
+                            Number(displayedExecutionProtections.protection.validUntil) * 1_000
                           ).toLocaleString(),
                         },
                         {
                           label: 'Pinned regime',
                           value: PERPS_EXECUTION_MODE_LABELS[
-                            preparedOrder.protection.executionMode
+                            displayedExecutionProtections.protection.executionMode
                           ],
                         },
                         {
                           label: 'Maximum account debit',
                           value: `${formatPerpsUsdc(
-                            preparedOrder.protection.maxGrossAccountDebitUsdc
+                            displayedExecutionProtections.protection.maxGrossAccountDebitUsdc
                           )} USDC`,
                         },
                         {
                           label: 'Maximum action charge',
                           value: `${formatPerpsUsdc(
-                            preparedOrder.protection.maxActionChargeUsdc
+                            displayedExecutionProtections.protection.maxActionChargeUsdc
                           )} USDC`,
                         },
                         {
                           label: 'Maximum explicit fees',
                           value: `${formatPerpsUsdc(
-                            preparedOrder.protection.maxExplicitFeesUsdc
+                            displayedExecutionProtections.protection.maxExplicitFeesUsdc
                           )} USDC`,
                         },
                         {
                           label: 'Maximum leverage',
                           value: `${(
-                            preparedOrder.protection.maxPostLeverageBps / 10_000
+                            displayedExecutionProtections.protection.maxPostLeverageBps / 10_000
                           ).toFixed(2)}x`,
                         },
                         {
                           label: 'Minimum settlement balance',
                           value: `${formatPerpsUsdc(
-                            preparedOrder.protection.minPostSettlementBalanceUsdc
+                            displayedExecutionProtections.protection.minPostSettlementBalanceUsdc
                           )} USDC`,
                         },
                         {
                           label: 'Minimum position equity',
                           value: `${formatPerpsUsdc(
-                            preparedOrder.protection.minPostPositionEquityUsdc
+                            displayedExecutionProtections.protection.minPostPositionEquityUsdc
                           )} USDC`,
                         },
                       ]} />
