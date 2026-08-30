@@ -1228,7 +1228,9 @@ isLegacySeptemberPrizeOnlyMismatch expected stored =
 
 -- This is the X-account age requirement used by the pre-launch September
 -- seed before eligibility was relaxed from 90 to 30 days. It may be migrated
--- only before trading starts and before any registration has been completed.
+-- only before trading starts. Completed registrations remain valid because
+-- every account that satisfied the former 90-day minimum also satisfies the
+-- relaxed 30-day minimum.
 isLegacySeptemberXAccountAgeOnlyMismatch
   :: CompetitionSeedMetadata
   -> CompetitionSeedMetadata
@@ -1369,10 +1371,8 @@ validateOrMigrateCompetitionSeed conn expected stored =
             \ AND NOW() < TO_TIMESTAMP(start_timestamp)\
             \ AND NOT EXISTS (SELECT 1 FROM insights_account_snapshots WHERE competition_slug = ?)\
             \ AND NOT EXISTS (SELECT 1 FROM insights_snapshot_batches WHERE competition_slug = ?)\
-            \ AND NOT EXISTS (SELECT 1 FROM insights_registration_applications\
-            \   WHERE competition_slug = ? AND status = 'completed')\
             \ FROM insights_competitions WHERE slug = ?"
-            (csmSlug expected, csmSlug expected, csmSlug expected, csmSlug expected)
+            (csmSlug expected, csmSlug expected, csmSlug expected)
           case safeRows of
             [Only True] -> do
               affected <- execute conn
@@ -1385,9 +1385,9 @@ validateOrMigrateCompetitionSeed conn expected stored =
               putStrLn $
                 "Migrated the pre-launch Plether Insights minimum X-account age for "
                   <> T.unpack (csmSlug expected)
-                  <> " from 90 days to 30 days."
+                  <> " from 90 days to 30 days; existing completed registrations were preserved."
             _ -> seedMismatchError expected mismatches $
-              Just "The known pre-launch September X-account age correction was detected, but automatic migration is allowed only before competition start, completed registrations, boundary blocks, snapshots, or finalization exist."
+              Just "The known pre-launch September X-account age correction was detected, but automatic migration is allowed only before competition start, boundary blocks, snapshots, or finalization exist."
       | otherwise -> seedMismatchError expected mismatches Nothing
 
 seedMismatchError
