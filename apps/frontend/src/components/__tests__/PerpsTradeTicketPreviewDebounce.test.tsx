@@ -164,9 +164,9 @@ describe('Perps trade preview debounce', () => {
 
     const callsBeforeEditing = wagmiMocks.useReadContracts.mock.calls.length
     const sizeInput = screen.getByRole('textbox')
-    fireEvent.change(sizeInput, { target: { value: '101' } })
+    fireEvent.change(sizeInput, { target: { value: '201' } })
 
-    expect((sizeInput as HTMLInputElement).value).toBe('101')
+    expect((sizeInput as HTMLInputElement).value).toBe('201')
     expect(latestReadOptions()).toMatchObject({ contracts: [], query: { enabled: false } })
 
     await act(async () => {
@@ -222,6 +222,26 @@ describe('Perps trade preview debounce', () => {
     expect(within(previewPanel!).queryByText('Position VPI balance')).not.toBeInTheDocument()
     expect(within(previewPanel!).getByLabelText('Pay 25.0 USDC')).toBeInTheDocument()
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
+  })
+
+  it('rounds an open order down to the 100 plDXY protocol quantum', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialSize="5000"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    const options = latestReadOptions()
+    expect(options.contracts[0]?.functionName).toBe('previewOpen')
+    expect(options.contracts[0]?.args?.[2]).toBe(4_900n * 10n ** 18n)
+    expect(screen.getByText(/Rounded down to/)).toHaveTextContent(
+      'Rounded down to 4 969.58 USDC to use the protocol\'s 100 plDXY size increment.'
+    )
   })
 
   it('shows the resulting position VPI balance when increasing an existing position', () => {

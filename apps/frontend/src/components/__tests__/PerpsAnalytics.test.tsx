@@ -128,7 +128,7 @@ vi.mock('../../analytics/perps', () => ({
 function renderTicket(overrides: Partial<Parameters<typeof PerpsTradeTicket>[0]> = {}) {
   return render(
     <PerpsTradeTicket
-      initialSize="100"
+      initialSize="200"
       oraclePriceRaw={99_000_000n}
       oraclePublishTime={1_700_000_000}
       availableToTradeRaw={1_000_000_000n}

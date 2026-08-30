@@ -6,10 +6,14 @@ import {
   formatDisplayDxyPrice,
   formatPerpsSummaryUsdc,
   formatSignedPerpsSummaryUsdc,
+  notionalUsdcToQuantizedOpenSizeDelta,
   oraclePriceToDisplayDxyPrice,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
+  quantizePerpsPositionSize,
+  sizeDeltaToNotionalUsdc,
 } from '../perps'
+import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 
 describe('perps summary USDC formatting', () => {
   it('keeps fractional precision below 100 000 USDC', () => {
@@ -44,6 +48,28 @@ describe('DXY display price helpers', () => {
   it('can convert a display DXY price back to raw oracle price for future inputs', () => {
     expect(displayDxyPriceToOraclePrice(101_690_000n)).toBe(98_310_000n)
     expect(displayDxyPriceToOraclePrice(PERPS_DXY_PRICE_CAP)).toBe(0n)
+  })
+})
+
+describe('perps open size quantum', () => {
+  it('rounds the requested open exposure down to a 100 plDXY increment', () => {
+    const displayPrice = 101_420_000n
+    const sizeDelta = notionalUsdcToQuantizedOpenSizeDelta(5_000_000_000n, displayPrice)
+
+    expect(sizeDelta).toBe(4_900n * 10n ** 18n)
+    expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
+    expect(sizeDeltaToNotionalUsdc(sizeDelta, displayPrice)).toBe(4_969_580_000n)
+  })
+
+  it('can round minimum requirements up to the next valid increment', () => {
+    const justOverOneQuantum = PERPS_POSITION_SIZE_QUANTUM + 1n
+
+    expect(quantizePerpsPositionSize(justOverOneQuantum, 'up')).toBe(
+      2n * PERPS_POSITION_SIZE_QUANTUM
+    )
+    expect(quantizePerpsPositionSize(justOverOneQuantum, 'down')).toBe(
+      PERPS_POSITION_SIZE_QUANTUM
+    )
   })
 })
 

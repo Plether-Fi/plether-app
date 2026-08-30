@@ -109,6 +109,9 @@ const OPEN_REVERT_MESSAGES: Partial<Record<number, string>> = {
   5: 'Fees and price impact would drain the margin for this order.',
   6: 'Initial margin is too low for this order. Lower leverage or reduce size.',
   7: 'The LP pool does not have enough solvency buffer for this order.',
+  8: 'Order size must use 100 plDXY increments. Adjust the exposure and try again.',
+  9: 'The order margin cannot fund the required liquidation reserve. Lower leverage or reduce size.',
+  10: 'The order cannot fully fund the required VPI rebate reserve. Reduce size or try again later.',
 }
 
 const COMMIT_VALIDATION_MESSAGES: Partial<Record<number, string>> = {

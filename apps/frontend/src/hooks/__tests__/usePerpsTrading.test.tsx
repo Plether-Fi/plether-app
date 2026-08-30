@@ -178,7 +178,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
   const request = {
     clientOrderId: CLIENT_ORDER_ID,
     side: 0,
-    sizeDelta: 1_000_000_000_000_000_000n,
+    sizeDelta: 100_000_000_000_000_000_000n,
     marginDelta: 200_000_000n,
     targetPrice: 98_398_300n,
     isClose: false,
@@ -191,7 +191,7 @@ function preparedOrder(): PreparedPerpsOrderV2 {
       maxGrossAccountDebitUsdc: 200_010_000n,
       maxActionChargeUsdc: 2_000_000n,
       maxExplicitFeesUsdc: 2_000_000n,
-      maxPostPositionSize: 1_000_000_000_000_000_000n,
+      maxPostPositionSize: 100_000_000_000_000_000_000n,
       minPostSettlementBalanceUsdc: 700_000_000n,
       minPostPositionEquityUsdc: 198_000_000n,
       maxPostLeverageBps: 50_000,
@@ -225,7 +225,7 @@ function commitInput() {
   return {
     direction: 'long' as const,
     notionalUsdc: 1_000_000_000n,
-    sizeDelta: 1_000_000_000_000_000_000n,
+    sizeDelta: 100_000_000_000_000_000_000n,
     marginUsdc: 200_000_000n,
     oraclePrice: 98_300_000n,
     slippagePercent: 0.1,

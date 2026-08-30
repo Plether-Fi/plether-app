@@ -145,6 +145,7 @@ describe('getPerpsErrorMessage', () => {
     ['OrderRouter__ZeroSize', [], 'Order size must be greater than zero'],
     ['OrderRouter__CommitValidation', [11], 'below the minimum executable size'],
     ['OrderRouter__PredictableOpenInvalid', [4], 'Market skew is too high'],
+    ['OrderRouter__PredictableOpenInvalid', [8], '100 plDXY increments'],
     ['OrderRouter__CloseWithPositiveMargin', [], 'cannot add margin'],
     ['OrderRouter__NoQueuedPosition', [], 'no queued or live position'],
     ['OrderRouter__SideMismatch', [], 'does not match your current position'],
