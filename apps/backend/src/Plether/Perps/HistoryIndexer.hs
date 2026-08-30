@@ -2027,11 +2027,7 @@ activityKey logEntry kind orderId =
 
 perpsAddresses :: PerpsIndexerConfig -> [Text]
 perpsAddresses cfg =
-  [ paUsdc (picAddresses cfg)
-  , paOrderRouter (picAddresses cfg)
-  , paCfdEngine (picAddresses cfg)
-  , paMarginClearinghouse (picAddresses cfg)
-  ]
+  paUsdc (picAddresses cfg) : perpsContractAddresses cfg
 
 perpsContractAddresses :: PerpsIndexerConfig -> [Text]
 perpsContractAddresses cfg =
