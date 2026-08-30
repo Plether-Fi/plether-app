@@ -1,6 +1,12 @@
 import { formatUnits, isHex, parseUnits, type Hex } from 'viem'
 import { getScopedApiBaseUrl } from '../api/client'
-import { PERPS_DECIMALS, PERPS_POSITION_SIZE_TO_USDC_SCALE, PERPS_SIDE, type PerpsSide } from '../contracts/perpsConstants'
+import {
+  PERPS_DECIMALS,
+  PERPS_POSITION_SIZE_QUANTUM,
+  PERPS_POSITION_SIZE_TO_USDC_SCALE,
+  PERPS_SIDE,
+  type PerpsSide,
+} from '../contracts/perpsConstants'
 
 export type PerpsDirection = 'long' | 'short'
 export type PerpsOracleFreshness = 'fresh' | 'checking' | 'market-closed' | 'stale'
@@ -141,6 +147,31 @@ export function notionalUsdcToSizeDelta(notionalUsdc: bigint, oraclePrice: bigin
   return ((notionalUsdc * PERPS_POSITION_SIZE_TO_USDC_SCALE) + oraclePrice - 1n) / oraclePrice
 }
 
+export type PerpsPositionSizeRounding = 'down' | 'up'
+
+export function quantizePerpsPositionSize(
+  sizeDelta: bigint,
+  rounding: PerpsPositionSizeRounding = 'down'
+): bigint {
+  if (sizeDelta <= 0n) return 0n
+  if (rounding === 'up') {
+    return ((sizeDelta + PERPS_POSITION_SIZE_QUANTUM - 1n) / PERPS_POSITION_SIZE_QUANTUM) *
+      PERPS_POSITION_SIZE_QUANTUM
+  }
+  return (sizeDelta / PERPS_POSITION_SIZE_QUANTUM) * PERPS_POSITION_SIZE_QUANTUM
+}
+
+export function notionalUsdcToQuantizedOpenSizeDelta(
+  notionalUsdc: bigint,
+  oraclePrice: bigint,
+  rounding: PerpsPositionSizeRounding = 'down'
+): bigint {
+  return quantizePerpsPositionSize(
+    notionalUsdcToSizeDelta(notionalUsdc, oraclePrice),
+    rounding
+  )
+}
+
 export function sizeDeltaToNotionalUsdc(sizeDelta: bigint | undefined, oraclePrice: bigint | undefined): bigint | undefined {
   if (sizeDelta === undefined || oraclePrice === undefined) return undefined
   return (sizeDelta * oraclePrice) / PERPS_POSITION_SIZE_TO_USDC_SCALE
@@ -157,6 +188,25 @@ export function dxyExposureFromContractNotional(
   }
 
   const sizeDelta = notionalUsdcToSizeDelta(contractNotionalUsdc, rawOraclePrice)
+  return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
+}
+
+export function quantizedDxyExposureFromContractNotional(
+  contractNotionalUsdc: bigint,
+  rawOraclePrice: bigint | undefined,
+  rounding: PerpsPositionSizeRounding
+): bigint | undefined {
+  if (contractNotionalUsdc <= 0n) return 0n
+  const displayDxyPrice = oraclePriceToDisplayDxyPrice(rawOraclePrice)
+  if (rawOraclePrice === undefined || rawOraclePrice <= 0n || displayDxyPrice === undefined || displayDxyPrice <= 0n) {
+    return undefined
+  }
+
+  const sizeDelta = notionalUsdcToQuantizedOpenSizeDelta(
+    contractNotionalUsdc,
+    rawOraclePrice,
+    rounding
+  )
   return sizeDeltaToNotionalUsdc(sizeDelta, displayDxyPrice)
 }
 

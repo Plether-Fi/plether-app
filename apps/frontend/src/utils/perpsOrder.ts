@@ -1,4 +1,4 @@
-import { notionalUsdcToSizeDelta } from './perps'
+import { notionalUsdcToQuantizedOpenSizeDelta, notionalUsdcToSizeDelta } from './perps'
 
 export interface ResolvePerpsSizeDeltaInput {
   isReducingCurrentPosition: boolean
@@ -25,5 +25,7 @@ export function resolvePerpsSizeDelta({
     return currentPositionSize
   }
 
-  return notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
+  return isReducingCurrentPosition
+    ? notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
+    : notionalUsdcToQuantizedOpenSizeDelta(notionalUsdc, oraclePrice)
 }

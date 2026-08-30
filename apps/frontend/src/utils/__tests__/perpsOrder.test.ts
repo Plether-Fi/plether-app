@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { parseUnits } from 'viem'
-import { notionalUsdcToSizeDelta } from '../perps'
+import { notionalUsdcToQuantizedOpenSizeDelta, notionalUsdcToSizeDelta } from '../perps'
+import { PERPS_POSITION_SIZE_QUANTUM } from '../../contracts/perpsConstants'
 import { resolvePerpsSizeDelta } from '../perpsOrder'
 
 const PRICE = 98_413_251n
@@ -36,7 +37,7 @@ describe('resolvePerpsSizeDelta', () => {
     expect(sizeDelta).toBeLessThan(CURRENT_POSITION_SIZE)
   })
 
-  it('uses notional conversion for opens', () => {
+  it('rounds open sizes down to the protocol quantum', () => {
     const openNotional = parseUnits('500', 6)
     const sizeDelta = resolvePerpsSizeDelta({
       isReducingCurrentPosition: false,
@@ -46,6 +47,8 @@ describe('resolvePerpsSizeDelta', () => {
       oraclePrice: PRICE,
     })
 
-    expect(sizeDelta).toBe(notionalUsdcToSizeDelta(openNotional, PRICE))
+    expect(sizeDelta).toBe(notionalUsdcToQuantizedOpenSizeDelta(openNotional, PRICE))
+    expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)
+    expect(sizeDelta).toBeLessThanOrEqual(notionalUsdcToSizeDelta(openNotional, PRICE))
   })
 })

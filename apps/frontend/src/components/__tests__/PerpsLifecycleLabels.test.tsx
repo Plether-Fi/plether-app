@@ -1037,7 +1037,7 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Minimum new position is 1 031.8 USDC.')).toBeInTheDocument()
+    expect(screen.getByText('Minimum new position is 1 117.22 USDC.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
   })
 
