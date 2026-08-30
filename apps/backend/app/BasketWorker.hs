@@ -170,6 +170,7 @@ runWorker args = do
                         pool
                         BasketIngestorConfig
                           { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                          , bicHistoryUrl = cfgPythHistoryUrl cfg
                           , bicApiKey = cfgPythApiKey cfg
                           , bicChainId = cfgPerpsChainId cfg
                           , bicBackfillDays = cfgPythBackfillDays cfg
@@ -185,6 +186,7 @@ runWorker args = do
                 let backfillDays = fromMaybe (cfgPythBackfillDays cfg) (waBackfillDays args)
                 runBasketBackfill manager pool BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicHistoryUrl = cfgPythHistoryUrl cfg
                   , bicApiKey = cfgPythApiKey cfg
                   , bicChainId = cfgPerpsChainId cfg
                   , bicBackfillDays = backfillDays
@@ -317,7 +319,7 @@ runClosedPriceGapRecovery manager ethClient pool cfg expectedCoverageEnd recover
               historyResult <-
                 fetchBasketHistoryActivity
                   manager
-                  (cfgPythBenchmarksUrl cfg)
+                  (cfgPythHistoryUrl cfg)
                   (cfgPythApiKey cfg)
                   expectedCoverageEnd
                   (hbuFetchedAt update)

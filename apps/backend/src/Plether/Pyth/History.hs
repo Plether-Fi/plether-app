@@ -9,6 +9,7 @@ module Plether.Pyth.History
   , deriveTradingViewBasketHistory
   , filterTradingViewHistorySamplesForPersistence
   , minimumBasketHistoryPublicationEnd
+  , pythHistoryRequestUrl
   , fetchBasketSnapshotAt
   , fetchBasketHistoryActivity
   , legacyObservationId
@@ -105,6 +106,7 @@ import Text.Read (readMaybe)
 
 data BasketIngestorConfig = BasketIngestorConfig
   { bicBenchmarksUrl :: Text
+  , bicHistoryUrl :: Text
   , bicApiKey :: Maybe Text
   , bicChainId :: Integer
   , bicBackfillDays :: Int
@@ -264,7 +266,7 @@ instance FromJSON TradingViewHistoryResponse where
       _ -> do
         message <- v .:? "errmsg"
         fail $
-          "Pyth TradingView history returned status "
+          "Pyth Pro history returned status "
             <> T.unpack status
             <> maybe "" ((": " <>) . T.unpack) message
 
@@ -537,7 +539,7 @@ fetchTradingViewCloseHistory
   -> IO (Either Text [(Integer, Scientific)])
 fetchTradingViewCloseHistory
   manager
-  benchmarksUrl
+  historyUrl
   apiKey
   component
   windowStart
@@ -553,7 +555,7 @@ fetchTradingViewCloseHistory
       then
         pure $
           Left $
-            "Pyth TradingView history returned HTTP "
+            "Pyth Pro history returned HTTP "
               <> T.pack (show code)
               <> " for "
               <> bcFeedSymbol component
@@ -567,8 +569,7 @@ fetchTradingViewCloseHistory
     -- the first canonical minute from a recent close immediately before this
     -- endpoint window; derivation below still emits only the requested range.
     fetchStart = max 0 $ windowStart - tradingViewMaximumCarrySeconds
-    requestUrl =
-      stripTrailingSlash benchmarksUrl <> "/v1/shims/tradingview/history"
+    requestUrl = pythHistoryRequestUrl historyUrl component
     queryParams =
       [ ("symbol", Just $ encodeUtf8 $ "FX." <> bcFeedSymbol component)
       , ("resolution", Just "1")
@@ -583,6 +584,13 @@ fetchTradingViewCloseHistory
           [("Authorization", encodeUtf8 $ "Bearer " <> T.strip key)]
         _ -> []
 
+pythHistoryRequestUrl :: Text -> BasketComponent -> Text
+pythHistoryRequestUrl historyUrl component =
+  stripTrailingSlash historyUrl
+    <> "/"
+    <> bcHistoryChannel component
+    <> "/history"
+
 -- | Fetch the authenticated one-minute publication history for every basket
 -- feed without carrying closes forward or manufacturing basket samples. The
 -- recovery caller uses an empty timestamp list as negative evidence only; any
@@ -594,14 +602,14 @@ fetchBasketHistoryActivity
   -> Integer
   -> Integer
   -> IO (Either Text [BasketHistoryActivity])
-fetchBasketHistoryActivity manager benchmarksUrl apiKey windowStart windowEndExclusive = do
+fetchBasketHistoryActivity manager historyUrl apiKey windowStart windowEndExclusive = do
   results <-
     mapConcurrently
       (\component -> do
         result <-
           fetchTradingViewCloseHistory
             manager
-            benchmarksUrl
+            historyUrl
             apiKey
             component
             windowStart
@@ -868,7 +876,7 @@ fetchTradingViewComponentWindow manager cfg windowStart windowEndExclusive =
         ( \component ->
             fetchTradingViewCloseHistory
               manager
-              (bicBenchmarksUrl cfg)
+              (bicHistoryUrl cfg)
               (bicApiKey cfg)
               component
               windowStart

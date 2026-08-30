@@ -2889,6 +2889,7 @@ candleApiConfig databaseUrl =
     , cfgDatabaseUrl = Just databaseUrl
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 1

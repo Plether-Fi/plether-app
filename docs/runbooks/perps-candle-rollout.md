@@ -512,7 +512,7 @@ run_candle_admin sepolia recover-closed-price-gap none \
 
 The protected action dynamically advances through a freshly fetched latest
 payload, not blindly through `to_timestamp`. It aborts unless all six
-authenticated Pyth histories contain no updates in the gap, the latest payload
+authenticated Pyth Pro histories contain no updates in the gap, the latest payload
 passes the deployed onchain Pyth parser, its signed basket exactly matches the
 last stored priority-100 observation, all seven coverage rows retain one exact
 `price_watermark_gap` generation, and the full approved range stays within
@@ -524,6 +524,11 @@ Immediately require a normal `basket_price_watermark_advanced` heartbeat with
 Any history activity, price mismatch, coverage-state mismatch, approval delay,
 or live-session boundary crossing is a hard failure and requires diagnosis;
 never widen or bypass the proof.
+
+History evidence must use `PYTH_HISTORY_URL=https://pyth.dourolabs.app/v1`.
+The legacy Benchmarks `/v1/shims/tradingview/*` endpoints were retired during
+the August 2026 Pyth Core upgrade and a 404 from that host is not evidence of
+an empty market interval.
 
 ### Operator-selected price-history target
 

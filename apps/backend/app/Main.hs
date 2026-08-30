@@ -103,6 +103,7 @@ main = do
           when (cfgPythIngestionEnabled cfg) $ do
             let basketCfg = BasketIngestorConfig
                   { bicBenchmarksUrl = cfgPythBenchmarksUrl cfg
+                  , bicHistoryUrl = cfgPythHistoryUrl cfg
                   , bicApiKey = cfgPythApiKey cfg
                   , bicChainId = cfgPerpsChainId cfg
                   , bicBackfillDays = cfgPythBackfillDays cfg

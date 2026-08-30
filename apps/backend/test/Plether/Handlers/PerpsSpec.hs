@@ -1124,6 +1124,7 @@ rollupConfig =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = ""
+    , cfgPythHistoryUrl = ""
     , cfgPythHermesUrl = ""
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7
