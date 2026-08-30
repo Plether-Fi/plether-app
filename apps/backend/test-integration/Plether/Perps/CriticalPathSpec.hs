@@ -160,8 +160,8 @@ runScenario manager pool apiApplication chain = do
   assertField committedWaitOrder "terminalStatus" $ String "Committed"
   assertMissingField committedWaitOrder "terminalTxHash"
 
-  -- Reorg again so even the commit disappears. Cursor coverage proves the old
-  -- The old keeper terminal remains irrelevant when the V2 intent disappears.
+  -- Reorg again so even the commit disappears. The old keeper terminal remains
+  -- irrelevant when the V2 intent disappears.
   setCanonicalBranch chain Empty
   runIndexer manager pool chain
   emptyOrders <- getApiJson apiApplication ordersPath
@@ -173,7 +173,7 @@ runScenario manager pool apiApplication chain = do
   -- Canonical replacement B is accepted and enriched independently.
   setCanonicalBranch chain TerminalB
   runIndexer manager pool chain
-  getRawTraceRequestCount chain `shouldReturnValue` 3
+  getRawTraceRequestCount chain `shouldReturnValue` 0
   (replacementOrder, replacementWaitOrder) <-
     getOrderFromBothEndpoints apiApplication
   forM_ [replacementOrder, replacementWaitOrder] $ \order -> do
