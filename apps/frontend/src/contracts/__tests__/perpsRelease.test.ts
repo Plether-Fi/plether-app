@@ -75,6 +75,10 @@ describe('pinned bounded-V2 Sepolia release', () => {
       path.join(repositoryRoot, 'infra/terraform/terraform.tfvars.sepolia.example'),
       'utf8'
     )
+    const terraformEcs = readFileSync(
+      path.join(repositoryRoot, 'infra/terraform/ecs.tf'),
+      'utf8'
+    )
     const backendWorkflow = readFileSync(
       path.join(repositoryRoot, '.github/workflows/deploy-backend.yml'),
       'utf8'
@@ -107,6 +111,13 @@ describe('pinned bounded-V2 Sepolia release', () => {
     )
     expect(backendWorkflow).not.toContain(
       'upsert_env("AA_SPONSORSHIP_ENABLED"; "true")'
+    )
+    const apiTaskDefinition = terraformEcs.slice(
+      terraformEcs.indexOf('resource "aws_ecs_task_definition" "api"'),
+      terraformEcs.indexOf('resource "aws_ecs_service" "api"')
+    )
+    expect(apiTaskDefinition).toContain(
+      '{ name = "PERPS_HOUSE_POOL", value = var.perps_house_pool }'
     )
     expect(backendRelease).toContain(publicManifest.version)
     expect(backendRelease).toContain(
