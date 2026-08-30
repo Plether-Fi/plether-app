@@ -24,7 +24,7 @@ const STORY_ADDRESS = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 const STORY_TRADING_ACCOUNT = '0x9314586D4068C73B23a64d7406Ca8FfEeCc2cBFc'
 
 const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
-  version: 'perps-aa-arbitrum-sepolia-v1',
+  version: 'perps-aa-arbitrum-sepolia-v2',
   chainId: 421614,
   entryPoint: '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108',
   entryPointVersion: '0.8',
@@ -40,6 +40,8 @@ const SPONSORED_STORY_MANIFEST: PerpsAaDeploymentManifest = {
   marginClearinghouse: '0x2f98787F6dCC3b1f2E4a2AFa5acf410159b9F211',
   cfdEngine: '0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D',
   orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
+  orderLifecycleBook: '0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E',
+  policyEvaluator: '0xaa4703B190684b5A57b8a9aA432fA043B169D171',
   userOperationExplorerUrlTemplate:
     'https://arbitrum-sepolia.blockscout.com/op/{userOperationHash}',
   transactionExplorerUrlTemplate:

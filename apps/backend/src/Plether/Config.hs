@@ -42,6 +42,7 @@ import Plether.Insights.Registration.Config
   , loadRegistrationConfig
   )
 import Plether.Types.Perps (canonicalBasketCandleIntervals)
+import Plether.Perps.Release (validatePerpsV2ReleaseConfig)
 import System.Environment (lookupEnv)
 import Text.Read (readMaybe)
 
@@ -464,7 +465,7 @@ loadConfig = do
       mAaProxyOriginToken <- firstEnv ["AA_PROXY_ORIGIN_TOKEN"]
       mPimlicoApiKey <- firstEnv ["PIMLICO_API_KEY"]
       mPimlicoPolicyId <- firstEnv ["PIMLICO_SPONSORSHIP_POLICY_ID"]
-      aaSponsorshipEnabledStr <- fromMaybe "true" <$> lookupEnv "AA_SPONSORSHIP_ENABLED"
+      aaSponsorshipEnabledStr <- fromMaybe "false" <$> lookupEnv "AA_SPONSORSHIP_ENABLED"
       aaIpRateLimitStr <- fromMaybe "120" <$> lookupEnv "AA_IP_RATE_LIMIT_PER_MINUTE"
       aaAccountRateLimitStr <- fromMaybe "30" <$> lookupEnv "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE"
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
@@ -546,6 +547,16 @@ loadConfig = do
                       \PERPS_MARGIN_CLEARINGHOUSE deployment addresses"
                 | perpsChainId /= 421614 ->
                     Left "Managed AA sponsorship is supported only on PERPS_CHAIN_ID=421614"
+                | Left releaseFailure <-
+                    validatePerpsV2ReleaseConfig
+                      perpsChainId
+                      (T.pack perpsOrderRouter)
+                      mPerpsOrderLifecycleBook
+                      (T.pack perpsCfdEngine)
+                      (T.pack perpsMarginClearinghouse)
+                      (T.pack perpsHousePool)
+                      perpsIndexerStartBlock ->
+                    Left $ T.unpack releaseFailure
                 | otherwise ->
                     Right $
                       Just $

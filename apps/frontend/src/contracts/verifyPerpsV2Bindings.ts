@@ -29,12 +29,6 @@ export async function verifyPerpsV2DeploymentBindings(
   client: PublicClient,
   manifest: PerpsAaDeploymentManifest
 ): Promise<{ positionProtectionBook: Address; blockNumber: bigint }> {
-  if (!manifest.orderLifecycleBook || !manifest.policyEvaluator) {
-    throw new Error(
-      'Bounded V2 orders require a reviewed perps-aa v2 deployment manifest'
-    )
-  }
-
   const block = await client.getBlock({ blockTag: 'latest' })
   const blockNumber = block.number
   const [
@@ -142,6 +136,11 @@ export async function verifyPerpsV2DeploymentBindings(
     'Router policy evaluator',
     routerPolicyEvaluator,
     manifest.policyEvaluator
+  )
+  requireSameAddress(
+    'Router position-protection Book',
+    positionProtectionBook,
+    PERPS_ARBITRUM_SEPOLIA.positionProtectionBook
   )
   requireSameAddress('Lifecycle Router', lifecycleRouter, manifest.orderRouter)
   requireSameAddress('Lifecycle Engine', lifecycleEngine, manifest.cfdEngine)

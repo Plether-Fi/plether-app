@@ -1,7 +1,5 @@
 import { getAddress, isAddress, type Address } from 'viem'
 
-export const PERPS_AA_MANIFEST_V1_PATTERN =
-  /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v1$/
 export const PERPS_AA_MANIFEST_V2_PATTERN =
   /^perps-aa-[a-z0-9]+(?:-[a-z0-9]+)*-v2$/
 
@@ -31,15 +29,15 @@ export interface PerpsAaDeploymentManifest {
   marginClearinghouse: Address
   cfdEngine: Address
   orderRouter: Address
-  orderLifecycleBook?: Address
-  policyEvaluator?: Address
+  orderLifecycleBook: Address
+  policyEvaluator: Address
   userOperationExplorerUrlTemplate: string
   transactionExplorerUrlTemplate: string
   testnetFaucet: string | null
   sponsorshipEnabled: boolean
 }
 
-const MANIFEST_KEYS = [
+const MANIFEST_V2_KEYS = [
   'version',
   'chainId',
   'entryPoint',
@@ -56,16 +54,12 @@ const MANIFEST_KEYS = [
   'marginClearinghouse',
   'cfdEngine',
   'orderRouter',
+  'orderLifecycleBook',
+  'policyEvaluator',
   'userOperationExplorerUrlTemplate',
   'transactionExplorerUrlTemplate',
   'testnetFaucet',
   'sponsorshipEnabled',
-] as const
-
-const MANIFEST_V2_KEYS = [
-  ...MANIFEST_KEYS,
-  'orderLifecycleBook',
-  'policyEvaluator',
 ] as const
 
 const ZERO_ADDRESS = `0x${'0'.repeat(40)}`
@@ -287,14 +281,13 @@ export function parsePerpsAaManifest(
     ])
   }
   const version = parseNonEmptyString(value.version, 'version')
-  const isV2 = PERPS_AA_MANIFEST_V2_PATTERN.test(version)
-  if (!PERPS_AA_MANIFEST_V1_PATTERN.test(version) && !isV2) {
+  if (!PERPS_AA_MANIFEST_V2_PATTERN.test(version)) {
     invalid(
       'version',
-      'must identify a supported manifest (perps-aa-<network>-v1 or -v2)'
+      'must identify a bounded V2 manifest (perps-aa-<network>-v2)'
     )
   }
-  assertExactKeys(value, isV2 ? MANIFEST_V2_KEYS : MANIFEST_KEYS)
+  assertExactKeys(value, MANIFEST_V2_KEYS)
 
   const smartAccountMode = parseAccountMode(value.smartAccountMode)
 
@@ -368,18 +361,14 @@ export function parsePerpsAaManifest(
     ),
     cfdEngine: parseAddress(value.cfdEngine, 'cfdEngine'),
     orderRouter: parseAddress(value.orderRouter, 'orderRouter'),
-    ...(isV2
-      ? {
-          orderLifecycleBook: parseAddress(
-            value.orderLifecycleBook,
-            'orderLifecycleBook'
-          ),
-          policyEvaluator: parseAddress(
-            value.policyEvaluator,
-            'policyEvaluator'
-          ),
-        }
-      : {}),
+    orderLifecycleBook: parseAddress(
+      value.orderLifecycleBook,
+      'orderLifecycleBook'
+    ),
+    policyEvaluator: parseAddress(
+      value.policyEvaluator,
+      'policyEvaluator'
+    ),
     userOperationExplorerUrlTemplate: parseUrlTemplate(
       value.userOperationExplorerUrlTemplate,
       'userOperationExplorerUrlTemplate',

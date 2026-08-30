@@ -2,6 +2,7 @@ module Main (main) where
 
 import Control.Concurrent (forkIO)
 import Control.Monad (when)
+import qualified Data.Text as T
 import Network.HTTP.Client (newManager)
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Plether.AA.Pimlico (newPimlicoProxyState)
@@ -19,6 +20,7 @@ import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
 import Plether.Pyth.History (BasketIngestorConfig (..), startBasketHistoryIngestor)
+import Plether.Perps.Release (verifyPerpsV2ReleaseBindings)
 import Plether.RequestLogging (newRequestLoggingMiddleware)
 import Plether.Vaults.PerformanceIndexer
   ( VaultPerformanceIndexerConfig (..)
@@ -39,6 +41,30 @@ main = do
     Right cfg -> do
       manager <- newManager tlsManagerSettings
       perpsClient <- newClient (cfgPerpsRpcUrl cfg)
+      case (cfgPerpsChainId cfg, cfgPerpsOrderLifecycleBook cfg) of
+        (421614, Just _) -> do
+          releaseVerification <-
+            verifyPerpsV2ReleaseBindings
+              perpsClient
+              (cfgPerpsChainId cfg)
+              (cfgPerpsOrderRouter cfg)
+              (cfgPerpsOrderLifecycleBook cfg)
+              (cfgPerpsCfdEngine cfg)
+              (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsHousePool cfg)
+              (cfgPerpsIndexerStartBlock cfg)
+          case releaseVerification of
+            Left failure ->
+              ioError $ userError $ "Bounded V2 release verification failed: " <> T.unpack failure
+            Right blockNumber ->
+              logInfo
+                "perps_v2_release_verified"
+                "Bounded V2 contract bindings and runtime hashes are verified"
+                [ field "block_number" blockNumber
+                , field "order_router" $ cfgPerpsOrderRouter cfg
+                , field "order_lifecycle_book" $ cfgPerpsOrderLifecycleBook cfg
+                ]
+        _ -> pure ()
       vaultHistoryClient <- newClient (cfgVaultHistoryRpcUrl cfg)
       mPool <- case cfgDatabaseUrl cfg of
         Just dbUrl -> do

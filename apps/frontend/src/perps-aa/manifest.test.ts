@@ -10,7 +10,7 @@ import {
 
 function validManifest(): Record<string, unknown> {
   return {
-    version: 'perps-aa-arbitrum-sepolia-v1',
+    version: 'perps-aa-arbitrum-sepolia-v2',
     chainId: 421614,
     entryPoint: PERPS_ENTRY_POINT_V08,
     entryPointVersion: '0.8',
@@ -26,6 +26,8 @@ function validManifest(): Record<string, unknown> {
     marginClearinghouse: '0x8888888888888888888888888888888888888888',
     cfdEngine: '0x9999999999999999999999999999999999999999',
     orderRouter: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -35,27 +37,18 @@ function validManifest(): Record<string, unknown> {
   }
 }
 
-function validV2Manifest(): Record<string, unknown> {
-  return {
-    ...validManifest(),
-    version: 'perps-aa-arbitrum-sepolia-v2',
-    orderLifecycleBook: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    policyEvaluator: '0xcccccccccccccccccccccccccccccccccccccccc',
-  }
-}
-
 describe('parsePerpsAaManifest', () => {
   it('validates the manifest served by the app', () => {
     const manifest = parsePerpsAaManifest(publicManifest)
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260826-v1')
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-20260830-v2')
     expect(manifest.chainId).toBe(421614)
   })
 
-  it('parses the reviewed v1 shape and normalizes addresses', () => {
+  it('parses the reviewed V2 shape and normalizes addresses', () => {
     const manifest = parsePerpsAaManifest(validManifest())
 
-    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-v1')
+    expect(manifest.version).toBe('perps-aa-arbitrum-sepolia-v2')
     expect(manifest.chainId).toBe(421614)
     expect(manifest.smartAccountMode).toBe('simple')
     expect(manifest.entryPointVersion).toBe('0.8')
@@ -78,7 +71,7 @@ describe('parsePerpsAaManifest', () => {
   })
 
   it('parses the V2 deployment bindings', () => {
-    expect(parsePerpsAaManifest(validV2Manifest())).toMatchObject({
+    expect(parsePerpsAaManifest(validManifest())).toMatchObject({
       version: 'perps-aa-arbitrum-sepolia-v2',
       orderLifecycleBook: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
       policyEvaluator: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
@@ -86,7 +79,7 @@ describe('parsePerpsAaManifest', () => {
   })
 
   it('rejects a V2 manifest without lifecycle dependencies', () => {
-    const manifest = validV2Manifest()
+    const manifest = validManifest()
     delete manifest.policyEvaluator
 
     expect(() => parsePerpsAaManifest(manifest)).toThrow(
@@ -98,7 +91,14 @@ describe('parsePerpsAaManifest', () => {
     const manifest = validManifest()
     manifest.version = 'perps-aa-arbitrum-sepolia-v3'
 
-    expect(() => parsePerpsAaManifest(manifest)).toThrow(/-v1 or -v2/)
+    expect(() => parsePerpsAaManifest(manifest)).toThrow(/bounded V2 manifest/)
+  })
+
+  it('rejects V1 manifests even when their legacy shape is otherwise valid', () => {
+    const manifest = validManifest()
+    manifest.version = 'perps-aa-arbitrum-sepolia-v1'
+
+    expect(() => parsePerpsAaManifest(manifest)).toThrow(/bounded V2 manifest/)
   })
 
   it('rejects unsupported account modes', () => {
@@ -170,7 +170,7 @@ describe('fetchPerpsAaManifest', () => {
       fetch: fetchManifest,
       signal,
     })).resolves.toMatchObject({
-      version: 'perps-aa-arbitrum-sepolia-v1',
+      version: 'perps-aa-arbitrum-sepolia-v2',
       chainId: 421614,
     })
 

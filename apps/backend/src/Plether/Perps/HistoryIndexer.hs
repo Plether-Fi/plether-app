@@ -4,6 +4,8 @@ module Plether.Perps.HistoryIndexer
   , PerpsIndexerMode (..)
   , defaultPerpsAddresses
   , perpsIndexerName
+  , perpsV2IndexerName
+  , perpsIndexerNameForRelease
   , runPerpsIndexer
   , perpsEventTopics
   , parsePerpsLog
@@ -142,7 +144,7 @@ defaultPerpsAddresses =
   PerpsAddresses
     { paUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , paOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
-    , paOrderLifecycleBook = Nothing
+    , paOrderLifecycleBook = Just "0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E"
     , paCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
     , paCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , paCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"
@@ -152,6 +154,18 @@ defaultPerpsAddresses =
 
 perpsIndexerName :: Text
 perpsIndexerName = "perps-history-costs-v1"
+
+perpsV2IndexerName :: Text
+perpsV2IndexerName = "perps-history-costs-v2"
+
+perpsIndexerNameForRelease :: Integer -> Text -> Maybe Text -> Text
+perpsIndexerNameForRelease chainId router lifecycleBook
+  | chainId == 421614
+      && T.toLower router == "0x97a901de2b267c307e264fd5f71403f8072f73e7"
+      && fmap T.toLower lifecycleBook ==
+        Just "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e" =
+      perpsV2IndexerName
+  | otherwise = perpsIndexerName
 
 data PerpsIndexerMode
   = PerpsIndexerLoop

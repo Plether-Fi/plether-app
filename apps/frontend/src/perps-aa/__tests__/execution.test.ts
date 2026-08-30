@@ -79,7 +79,7 @@ function manifest(
   input: Partial<PerpsAaDeploymentManifest> = {}
 ): PerpsAaDeploymentManifest {
   return {
-    version: 'perps-aa-arbitrum-sepolia-v1',
+    version: 'perps-aa-arbitrum-sepolia-v2',
     chainId: 421614,
     entryPoint: ENTRY_POINT,
     entryPointVersion: '0.8',
@@ -95,6 +95,8 @@ function manifest(
     marginClearinghouse: TARGET,
     cfdEngine: TARGET,
     orderRouter: TARGET,
+    orderLifecycleBook: TARGET,
+    policyEvaluator: TARGET,
     userOperationExplorerUrlTemplate:
       'https://example.com/user-operation/{userOperationHash}',
     transactionExplorerUrlTemplate:

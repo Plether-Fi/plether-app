@@ -328,7 +328,7 @@ prepareDatabase pool = withDb pool $ \conn -> do
   ensureInsightsSchema
     conn testSeptemberRules fixtureChain fixtureRouter fixtureUsdc fixtureClearinghouse fixtureLens fixtureManifest
   setPerpsIndexerState
-    conn fixtureChain "perps-history-costs-v1" fixtureRouter 1 cursorBlock (Just cursorHash)
+    conn fixtureChain "perps-history-costs-v2" fixtureRouter 1 cursorBlock (Just cursorHash)
 
 cleanupDatabase :: DbPool -> IO ()
 cleanupDatabase pool = withDb pool cleanupRows

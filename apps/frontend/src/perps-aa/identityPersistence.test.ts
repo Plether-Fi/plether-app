@@ -40,7 +40,7 @@ function sponsoredIdentity(version = 'permissionless-simple-v0.8') {
       '0x4444444444444444444444444444444444444444',
     accountVersion: version,
     accountIndex: '0',
-    manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+    manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
   })
 }
 

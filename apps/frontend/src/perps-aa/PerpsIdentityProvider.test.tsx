@@ -24,7 +24,7 @@ const accountAddress =
 
 function validManifest(): Record<string, unknown> {
   return {
-    version: 'perps-aa-arbitrum-sepolia-v1',
+    version: 'perps-aa-arbitrum-sepolia-v2',
     chainId: 421614,
     entryPoint: PERPS_ENTRY_POINT_V08,
     entryPointVersion: '0.8',
@@ -40,6 +40,8 @@ function validManifest(): Record<string, unknown> {
     marginClearinghouse: '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
     cfdEngine: '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
     orderRouter: '0xcccccccccccccccccccccccccccccccccccccccc',
+    orderLifecycleBook: '0xdddddddddddddddddddddddddddddddddddddddd',
+    policyEvaluator: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
     userOperationExplorerUrlTemplate:
       'https://explorer.example.com/user-op/{userOperationHash}',
     transactionExplorerUrlTemplate:
@@ -172,14 +174,14 @@ describe('PerpsIdentityProvider', () => {
       factoryAddress: PERMISSIONLESS_SIMPLE_ACCOUNT_V08_FACTORY,
       accountVersion: 'permissionless-simple-v0.8',
       accountIndex: '0',
-      manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-20260826-v2',
     })
     expect(
       writePersistedPerpsIdentity(globalThis.localStorage, previousIdentity).ok
     ).toBe(true)
 
     const nextManifest = validManifest()
-    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260717-v1'
+    nextManifest.version = 'perps-aa-arbitrum-sepolia-20260830-v2'
     const fetchManifest = vi.fn(async () => new Response(
       JSON.stringify(nextManifest),
       {
@@ -218,7 +220,7 @@ describe('PerpsIdentityProvider', () => {
       expect(result.current.status).toBe('ready')
     })
     expect(result.current.identity?.manifestVersion).toBe(
-      'perps-aa-arbitrum-sepolia-20260717-v1'
+      'perps-aa-arbitrum-sepolia-20260830-v2'
     )
   })
 
