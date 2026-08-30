@@ -408,7 +408,6 @@ export const ExecutionProtections: Story = {
   args: {
     ...OpenLongPreview.args,
     executionProtectionsFixture,
-    initialExecutionProtectionsExpanded: true,
   },
   render: (args) => <TicketFrame {...args} />,
 }

@@ -220,8 +220,6 @@ interface PerpsTradeTicketProps {
   validationErrorFixture?: string
   /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
   executionProtectionsFixture?: PreparedPerpsOrderV2
-  /** Opens the protections disclosure on first render in deterministic stories. */
-  initialExecutionProtectionsExpanded?: boolean
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -1653,7 +1651,6 @@ export function PerpsTradeTicket({
   closePreviewFixture,
   validationErrorFixture,
   executionProtectionsFixture,
-  initialExecutionProtectionsExpanded = false,
   oracleFreshness,
   oracleFreshnessTooltip,
   availableToTradeRaw,
@@ -4123,18 +4120,8 @@ export function PerpsTradeTicket({
                 </p>
               </div>
 
-              <div className="border border-brand-border/20 bg-app-bg p-4">
-                <div className="text-sm font-semibold text-content-primary">Delayed execution</div>
-                <div className="mt-2 text-sm text-content-secondary">
-                  This submits your order. Final execution settles shortly after with your accepted price constraints.
-                </div>
-              </div>
-
               {shouldShowExecutionProtections ? (
-                <details
-                  className="border border-brand-border/20 bg-app-bg p-4"
-                  open={initialExecutionProtectionsExpanded || undefined}
-                >
+                <details className="border border-brand-border/20 bg-app-bg p-4">
                   <summary className="cursor-pointer text-sm font-semibold text-content-primary">
                     Execution protections
                   </summary>
@@ -4210,6 +4197,13 @@ export function PerpsTradeTicket({
                   )}
                 </details>
               ) : null}
+
+              <div className="border border-brand-border/20 bg-app-bg p-4">
+                <div className="text-sm font-semibold text-content-primary">Delayed execution</div>
+                <div className="mt-2 text-sm text-content-secondary">
+                  This submits your order. Final execution settles shortly after with your accepted price constraints.
+                </div>
+              </div>
 
               {enableLiveTrading && liveValidationError ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
