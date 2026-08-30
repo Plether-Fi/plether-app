@@ -452,6 +452,30 @@ jobs:
             echo "::warning::Skipping ${{ matrix.service_name }} until Terraform creates its task definition and service"
           fi
 
+      - name: Validate Sepolia faucet guard configuration
+        if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
+        run: |
+          jq --exit-status \
+            --arg container "${{ matrix.container_name }}" \
+            '
+            .containerDefinitions
+            | map(select(.name == $container))
+            | .[0] as $api
+            | ($api.secrets // []) as $secrets
+            | ($api.environment // []) as $environment
+            | ([$secrets[] | select(.name == "FAUCET_PRIVATE_KEY")] | length) == 1
+              and ([$secrets[] | select(
+                .name == "FAUCET_PROXY_ORIGIN_TOKEN"
+                and ((.valueFrom // "") | type == "string" and length > 0)
+              )] | length) == 1
+              and ([$environment[] | select(
+                .name == "FAUCET_CLIENT_REQUESTS_PER_HOUR" and .value == "20"
+              )] | length) == 1
+              and ([$environment[] | select(
+                .name == "FAUCET_GLOBAL_REQUESTS_PER_HOUR" and .value == "200"
+              )] | length) == 1
+            ' task-def.json > /dev/null
+
       - name: Patch Sepolia API task definition
         if: matrix.environment == 'sepolia' && matrix.task_suffix == '' && steps.task-definition-status.outputs.exists == 'true'
         run: |

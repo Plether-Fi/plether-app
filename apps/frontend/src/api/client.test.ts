@@ -6,9 +6,11 @@ import {
   PlethApiError,
   TESTNET_FAUCET_TIMEOUT_MESSAGE,
   TESTNET_FAUCET_TIMEOUT_MS,
+  TESTNET_FAUCET_UPGRADE_REQUIRED_MESSAGE,
   apiScopeToApiPath,
   getScopedApiBaseUrl,
   isUpstreamApiError,
+  testnetFaucetErrorMessage,
 } from './client';
 
 const analyticsMock = vi.hoisted(() => ({
@@ -176,6 +178,34 @@ describe('API request timeouts', () => {
         timeout_ms: TESTNET_FAUCET_TIMEOUT_MS,
       })
     );
+  });
+});
+
+describe('faucet compatibility errors', () => {
+  it('parses UPGRADE_REQUIRED and presents an explicit refresh message', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      error: {
+        code: 'UPGRADE_REQUIRED',
+        message: 'legacy compatibility response',
+      },
+    }), {
+      status: 426,
+      headers: { 'Content-Type': 'application/json' },
+    })));
+    const client = new PlethApiClient({ baseUrl: '/api' });
+
+    const result = await client.claimTestnetFaucet(
+      '0x1111111111111111111111111111111111111111'
+    );
+
+    expect(Result.isError(result)).toBe(true);
+    if (!Result.isError(result)) return;
+    expect(result.error).toMatchObject({
+      code: 'UPGRADE_REQUIRED',
+      status: 426,
+    });
+    expect(testnetFaucetErrorMessage(result.error))
+      .toBe(TESTNET_FAUCET_UPGRADE_REQUIRED_MESSAGE);
   });
 });
 

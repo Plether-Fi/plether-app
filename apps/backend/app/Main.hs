@@ -14,6 +14,7 @@ import Plether.Database.Schema (ensureBasketSnapshotSchema, ensurePerpsHistorySc
 import Plether.Database.VaultPerformance (ensureVaultPerformanceSchema)
 import Plether.Ethereum.Client (newClient)
 import Plether.Handlers.InsightsRegistration (initializeInsightsRegistration)
+import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Indexer (IndexerConfig (..), startIndexer)
 import Plether.Insights.Registration.Cleanup (startRegistrationCleanup)
 import Plether.Logging (field, logError, logInfo, logWarn)
@@ -133,6 +134,7 @@ main = do
       client <- newClient (cfgRpcUrl cfg)
       cache <- newAppCache
       pimlicoProxyState <- newPimlicoProxyState
+      faucetGuardState <- newFaucetGuardState
       requestLogging <- newRequestLoggingMiddleware
       logInfo
         "api_started"
@@ -144,4 +146,4 @@ main = do
         ]
       scotty (cfgPort cfg) $ do
         middleware requestLogging
-        app cache client perpsClient cfg mPool manager pimlicoProxyState
+        app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardState

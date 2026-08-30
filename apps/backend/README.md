@@ -543,6 +543,10 @@ Local URLs:
 | `PERPS_PLETHER_ORACLE` | No | Arbitrum Sepolia deployment | Plether oracle address for update fees and reveal window |
 | `PERPS_ACCOUNT_LENS` | No | Arbitrum Sepolia deployment | Account lens used for exact-block Insights snapshots and liquidation candidate prefiltering |
 | `PERPS_INDEXER_START_BLOCK` | No | `302257125` | Arbitrum Sepolia perps release first block to start keeper/history indexing from |
+| `FAUCET_PRIVATE_KEY` | Faucet | - | Arbitrum Sepolia mock-USDC signer; configuring it also requires the dedicated proxy token |
+| `FAUCET_PROXY_ORIGIN_TOKEN` | With faucet signer | - | Dedicated secret required from the exact trusted Pages/Vite faucet proxy path |
+| `FAUCET_CLIENT_REQUESTS_PER_HOUR` | No | `20` | Rolling-hour accepted request limit per pseudonymous trusted client IP |
+| `FAUCET_GLOBAL_REQUESTS_PER_HOUR` | No | `200` | Rolling-hour accepted request limit across the single API process |
 | `AA_PROXY_ORIGIN_TOKEN` | With managed sponsorship | - | Shared secret required from the trusted Pages/Vite proxy |
 | `PIMLICO_API_KEY` | With managed sponsorship | - | Server-only Pimlico API key |
 | `PIMLICO_SPONSORSHIP_POLICY_ID` | With managed sponsorship | - | Server-injected Pimlico policy ID; browser context is replaced |

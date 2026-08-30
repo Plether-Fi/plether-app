@@ -1,6 +1,7 @@
 module Plether.Config
   ( Config (..)
   , AaConfig (..)
+  , FaucetGuardConfig (..)
   , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , Addresses (..)
@@ -18,6 +19,7 @@ module Plether.Config
   , perpsCandleRollupReadEnabled
   , validatePerpsCandleModeCombination
   , validateInsightsCompetitionActivation
+  , validateFaucetGuardConfig
   ) where
 
 import Data.Aeson (FromJSON (..), Value (..), eitherDecodeFileStrict, withObject, (.:))
@@ -90,6 +92,7 @@ data Config = Config
   , cfgInsightsCompetitionReleaseManifest :: CompetitionReleaseManifest
   , cfgRegistrationConfig :: Maybe RegistrationConfig
   , cfgAaConfig :: Maybe AaConfig
+  , cfgFaucetGuardConfig :: Maybe FaucetGuardConfig
   , cfgFaucetPrivateKey :: Maybe Text
   , cfgKeeperPrivateKey :: Maybe Text
   , cfgKeeperPollSeconds :: Int
@@ -137,6 +140,21 @@ instance Show AaConfig where
       <> show (aaMaxRequestBytes cfg)
       <> ", aaSponsoredGasAlertWeiPerHour = "
       <> show (aaSponsoredGasAlertWeiPerHour cfg)
+      <> "}"
+
+data FaucetGuardConfig = FaucetGuardConfig
+  { fgcProxyOriginToken :: Text
+  , fgcClientRequestsPerHour :: Int
+  , fgcGlobalRequestsPerHour :: Int
+  }
+  deriving stock (Eq)
+
+instance Show FaucetGuardConfig where
+  show cfg =
+    "FaucetGuardConfig {fgcProxyOriginToken = <redacted>, fgcClientRequestsPerHour = "
+      <> show (fgcClientRequestsPerHour cfg)
+      <> ", fgcGlobalRequestsPerHour = "
+      <> show (fgcGlobalRequestsPerHour cfg)
       <> "}"
 
 data Addresses = Addresses
@@ -351,7 +369,47 @@ validatePythLatestMaxAgeSeconds rawValue =
           <> show maxPythLatestMaxAgeSeconds
           <> "; the upper bound preserves headroom below the oracle's 15-second staleness limit"
  where
-  normalizedValue = T.unpack $ T.strip $ T.pack rawValue
+ normalizedValue = T.unpack $ T.strip $ T.pack rawValue
+
+validateFaucetGuardConfig
+  :: Maybe String
+  -> Maybe String
+  -> String
+  -> String
+  -> Either String (Maybe FaucetGuardConfig)
+validateFaucetGuardConfig maybePrivateKey maybeOriginToken clientLimitRaw globalLimitRaw = do
+  clientLimit <-
+    parseBoundedWholeNumber
+      "FAUCET_CLIENT_REQUESTS_PER_HOUR"
+      1
+      1_000_000
+      clientLimitRaw
+  globalLimit <-
+    parseBoundedWholeNumber
+      "FAUCET_GLOBAL_REQUESTS_PER_HOUR"
+      1
+      1_000_000
+      globalLimitRaw
+  if globalLimit < clientLimit
+    then Left "FAUCET_GLOBAL_REQUESTS_PER_HOUR must be at least FAUCET_CLIENT_REQUESTS_PER_HOUR"
+    else
+      case (nonBlankText maybePrivateKey, nonBlankText maybeOriginToken) of
+        (Just _, Nothing) ->
+          Left "FAUCET_PROXY_ORIGIN_TOKEN is required when FAUCET_PRIVATE_KEY is configured"
+        (_, Just token)
+          | maybe False ((/= token) . T.pack) maybeOriginToken ->
+              Left "FAUCET_PROXY_ORIGIN_TOKEN must not have leading or trailing whitespace"
+          | T.length token < 32 ->
+              Left "FAUCET_PROXY_ORIGIN_TOKEN must contain at least 32 characters"
+          | otherwise ->
+              Right $
+                Just
+                  FaucetGuardConfig
+                    { fgcProxyOriginToken = token
+                    , fgcClientRequestsPerHour = clientLimit
+                    , fgcGlobalRequestsPerHour = globalLimit
+                    }
+        (Nothing, Nothing) -> Right Nothing
 
 loadConfig :: IO (Either String Config)
 loadConfig = do
@@ -412,6 +470,9 @@ loadConfig = do
       aaMaxRequestBytesStr <- fromMaybe "262144" <$> lookupEnv "AA_MAX_REQUEST_BYTES"
       aaSponsoredGasAlertWeiStr <- fromMaybe "0" <$> lookupEnv "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR"
       mFaucetPrivateKey <- lookupEnv "FAUCET_PRIVATE_KEY"
+      mFaucetProxyOriginToken <- lookupEnv "FAUCET_PROXY_ORIGIN_TOKEN"
+      faucetClientRequestsPerHourStr <- fromMaybe "20" <$> lookupEnv "FAUCET_CLIENT_REQUESTS_PER_HOUR"
+      faucetGlobalRequestsPerHourStr <- fromMaybe "200" <$> lookupEnv "FAUCET_GLOBAL_REQUESTS_PER_HOUR"
       mKeeperPrivateKey <- lookupEnv "KEEPER_PRIVATE_KEY"
       keeperPollSecondsStr <- fromMaybe "1" <$> lookupEnv "KEEPER_POLL_SECONDS"
       keeperMaxBatchSizeStr <- fromMaybe "20" <$> lookupEnv "KEEPER_MAX_BATCH_SIZE"
@@ -502,6 +563,13 @@ loadConfig = do
                 Left
                   "AA proxy configuration is partial; set all of AA_PROXY_ORIGIN_TOKEN, \
                   \PIMLICO_API_KEY, and PIMLICO_SPONSORSHIP_POLICY_ID"
+
+          faucetGuardConfig =
+            validateFaucetGuardConfig
+              mFaucetPrivateKey
+              mFaucetProxyOriginToken
+              faucetClientRequestsPerHourStr
+              faucetGlobalRequestsPerHourStr
 
           candleConfig = do
             writeMode <- parsePerpsCandleWriteMode candleWriteModeStr
@@ -635,14 +703,16 @@ loadConfig = do
           , vaultHistoryConfig
           , lpSettlementConfig
           , competitionConfig
+          , faucetGuardConfig
           )
         of
-        (Left err, _, _, _, _, _) -> pure $ Left err
-        (_, Left err, _, _, _, _) -> pure $ Left err
-        (_, _, Left err, _, _, _) -> pure $ Left err
-        (_, _, _, Left err, _, _) -> pure $ Left err
-        (_, _, _, _, Left err, _) -> pure $ Left err
-        (_, _, _, _, _, Left err) -> pure $ Left err
+        (Left err, _, _, _, _, _, _) -> pure $ Left err
+        (_, Left err, _, _, _, _, _) -> pure $ Left err
+        (_, _, Left err, _, _, _, _) -> pure $ Left err
+        (_, _, _, Left err, _, _, _) -> pure $ Left err
+        (_, _, _, _, Left err, _, _) -> pure $ Left err
+        (_, _, _, _, _, Left err, _) -> pure $ Left err
+        (_, _, _, _, _, _, Left err) -> pure $ Left err
         ( Right pythLatestMaxAgeSeconds
           , Right resolvedAaConfig
           , Right
@@ -661,6 +731,7 @@ loadConfig = do
                 )
           , Right (lpSettlementEnabled, lpSettlementPollSeconds)
           , Right (insightsCompetitionRules, resolvedRegistrationConfig)
+          , Right resolvedFaucetGuardConfig
           ) -> do
           eDeployments <- loadDeployments addressFile
           case eDeployments of
@@ -732,7 +803,8 @@ loadConfig = do
                       }
                 , cfgRegistrationConfig = resolvedRegistrationConfig
                 , cfgAaConfig = resolvedAaConfig
-                , cfgFaucetPrivateKey = fmap T.pack mFaucetPrivateKey
+                , cfgFaucetGuardConfig = resolvedFaucetGuardConfig
+                , cfgFaucetPrivateKey = nonBlankText mFaucetPrivateKey
                 , cfgKeeperPrivateKey = fmap T.pack mKeeperPrivateKey
                 , cfgKeeperPollSeconds = max 1 keeperPollSeconds
                 , cfgKeeperMaxBatchSize = max 1 keeperMaxBatchSize

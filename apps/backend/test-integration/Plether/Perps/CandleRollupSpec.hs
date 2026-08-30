@@ -2921,6 +2921,7 @@ candleApiConfig databaseUrl =
     , cfgInsightsCompetitionReleaseManifest = candleReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

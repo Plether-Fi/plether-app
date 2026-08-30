@@ -104,6 +104,13 @@ locals {
     }
   ] : []
 
+  faucet_proxy_origin_secret = var.faucet_private_key != "" ? [
+    {
+      name      = "FAUCET_PROXY_ORIGIN_TOKEN"
+      valueFrom = aws_ssm_parameter.faucet_proxy_origin_token[0].arn
+    }
+  ] : []
+
   vault_history_rpc_secret = trimspace(var.vault_history_rpc_url) != "" ? [
     {
       name      = "VAULT_HISTORY_RPC_URL"
@@ -301,7 +308,7 @@ resource "aws_ecs_task_definition" "api" {
         name      = "DATABASE_URL"
         valueFrom = aws_ssm_parameter.database_url.arn
       }
-    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
+    ], local.pyth_api_key_secret, local.faucet_private_key_secret, local.faucet_proxy_origin_secret, local.aa_proxy_secrets, local.vault_history_rpc_secret, local.insights_registration_secrets)
 
     environment = concat([
       { name = "PORT", value = "3001" },
@@ -327,12 +334,28 @@ resource "aws_ecs_task_definition" "api" {
       { name = "AA_ACCOUNT_RATE_LIMIT_PER_MINUTE", value = var.aa_account_rate_limit_per_minute },
       { name = "AA_MAX_REQUEST_BYTES", value = var.aa_max_request_bytes },
       { name = "AA_SPONSORED_GAS_ALERT_WEI_PER_HOUR", value = var.aa_sponsored_gas_alert_wei_per_hour },
+      { name = "FAUCET_CLIENT_REQUESTS_PER_HOUR", value = tostring(var.faucet_client_requests_per_hour) },
+      { name = "FAUCET_GLOBAL_REQUESTS_PER_HOUR", value = tostring(var.faucet_global_requests_per_hour) },
       { name = "CORS_ORIGINS", value = var.cors_origins },
       { name = "INDEXER_START_BLOCK", value = var.indexer_start_block },
     ], local.pyth_environment, local.perps_candle_environment, local.insights_registration_environment, local.insights_competition_environment)
   }, local.otel_log_router_container])
 
   lifecycle {
+    precondition {
+      condition     = var.faucet_global_requests_per_hour >= var.faucet_client_requests_per_hour
+      error_message = "The global faucet request limit must be at least the per-client limit."
+    }
+
+    precondition {
+      condition = var.faucet_private_key == "" || (
+        length(var.faucet_proxy_origin_token) >= 32
+        && var.faucet_proxy_origin_token != var.aa_proxy_origin_token
+        && var.api_desired_count <= 1
+      )
+      error_message = "A configured faucet signer requires a dedicated 32-character-or-longer proxy token and at most one API task."
+    }
+
     precondition {
       condition = !var.provision_aa_proxy || (
         trimspace(var.pimlico_api_key) != ""

@@ -14,6 +14,9 @@ const DEFAULT_API_PROXY_TARGET = 'http://127.0.0.1:3001';
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
 const AA_BACKEND_PROXY_PATH = '/api/aa/pimlico';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
+const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
+const FAUCET_BACKEND_PROXY_PATH = '/api/testnet/faucet';
+const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
 
 type RuntimeEnv = Record<string, string | undefined>;
 
@@ -29,7 +32,7 @@ function parseHeadersFile(): Record<string, string> {
 
 function apiProxyConfig(
   env: RuntimeEnv,
-  authenticateAaProxy = false
+  authenticateProtectedRoutes = false
 ): ProxyOptions {
   const target = env.VITE_API_PROXY_TARGET ?? DEFAULT_API_PROXY_TARGET;
   const preserveProxyPath = env.VITE_API_PROXY_PRESERVE_PATH === '1';
@@ -40,10 +43,11 @@ function apiProxyConfig(
     rewrite: preserveProxyPath
       ? undefined
       : (proxyPath) => proxyPath.replace(/^\/api\/(?:spot|perps)\/v1/, '/api'),
-    configure: authenticateAaProxy
+    configure: authenticateProtectedRoutes
       ? (proxy) => {
           proxy.on('proxyReq', (proxyRequest, request) => {
             proxyRequest.removeHeader(AA_PROXY_AUTH_HEADER);
+            proxyRequest.removeHeader(FAUCET_PROXY_AUTH_HEADER);
             const requestPath = request.url?.split('?', 1)[0];
             if (
               (
@@ -56,6 +60,23 @@ function apiProxyConfig(
               proxyRequest.setHeader(
                 AA_PROXY_AUTH_HEADER,
                 env.AA_PROXY_ORIGIN_TOKEN
+              );
+              proxyRequest.setHeader(
+                'CF-Connecting-IP',
+                request.socket.remoteAddress ?? '127.0.0.1'
+              );
+            }
+            if (
+              (
+                requestPath === FAUCET_PROXY_PATH ||
+                requestPath === FAUCET_BACKEND_PROXY_PATH
+              ) &&
+              env.FAUCET_PROXY_ORIGIN_TOKEN
+            ) {
+              proxyRequest.removeHeader('CF-Connecting-IP');
+              proxyRequest.setHeader(
+                FAUCET_PROXY_AUTH_HEADER,
+                env.FAUCET_PROXY_ORIGIN_TOKEN
               );
               proxyRequest.setHeader(
                 'CF-Connecting-IP',

@@ -1,13 +1,15 @@
 module Plether.ConfigSpec (spec) where
 
 import Plether.Config
-  ( PerpsCandleReadMode (..)
+  ( FaucetGuardConfig (..)
+  , PerpsCandleReadMode (..)
   , PerpsCandleWriteMode (..)
   , parsePerpsCandleReadIntervals
   , parsePerpsCandleReadMode
   , parsePerpsCandleWriteMode
   , perpsCandleRollupReadEnabled
   , validateInsightsCompetitionActivation
+  , validateFaucetGuardConfig
   , validatePerpsCandleModeCombination
   )
 import Plether.Insights.Competition
@@ -210,6 +212,39 @@ spec = do
         []
         False
         `shouldBe` Right ()
+
+  describe "faucet guard configuration" $ do
+    it "defaults to the selected moderate hourly quotas" $
+      validateFaucetGuardConfig
+        (Just "configured-private-key")
+        (Just faucetToken)
+        "20"
+        "200"
+        `shouldBe` Right
+          ( Just
+              FaucetGuardConfig
+                { fgcProxyOriginToken = "0123456789abcdef0123456789abcdef"
+                , fgcClientRequestsPerHour = 20
+                , fgcGlobalRequestsPerHour = 200
+                }
+          )
+
+    it "fails startup when the faucet signer has no proxy token" $
+      validateFaucetGuardConfig
+        (Just "configured-private-key")
+        Nothing
+        "20"
+        "200"
+        `shouldSatisfy` isLeft
+
+    it "rejects short tokens and invalid or inverted quota values" $ do
+      validateFaucetGuardConfig Nothing (Just "too-short") "20" "200"
+        `shouldSatisfy` isLeft
+      validateFaucetGuardConfig Nothing (Just faucetToken) "0" "200"
+        `shouldSatisfy` isLeft
+      validateFaucetGuardConfig Nothing (Just faucetToken) "201" "200"
+        `shouldSatisfy` isLeft
   where
+    faucetToken = "0123456789abcdef0123456789abcdef"
     isLeft (Left _) = True
     isLeft (Right _) = False

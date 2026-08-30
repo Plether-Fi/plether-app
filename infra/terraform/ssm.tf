@@ -72,6 +72,14 @@ resource "aws_ssm_parameter" "faucet_private_key" {
   value = var.faucet_private_key
 }
 
+resource "aws_ssm_parameter" "faucet_proxy_origin_token" {
+  count = var.faucet_private_key != "" ? 1 : 0
+
+  name  = "/plether/${var.environment}/faucet-proxy-origin-token"
+  type  = "SecureString"
+  value = var.faucet_proxy_origin_token
+}
+
 resource "aws_ssm_parameter" "pimlico_api_key" {
   count = var.provision_aa_proxy ? 1 : 0
 

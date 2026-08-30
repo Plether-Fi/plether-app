@@ -164,6 +164,54 @@ variable "faucet_private_key" {
   sensitive = true
 }
 
+variable "faucet_proxy_origin_token" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Dedicated Cloudflare Pages-to-faucet origin credential. Generate at least 32 random bytes and never reuse the AA proxy token."
+
+  validation {
+    condition = (
+      var.faucet_proxy_origin_token == ""
+      || (
+        trimspace(var.faucet_proxy_origin_token) == var.faucet_proxy_origin_token
+        && length(var.faucet_proxy_origin_token) >= 32
+      )
+    )
+    error_message = "faucet_proxy_origin_token must be empty or contain at least 32 whitespace-free characters."
+  }
+}
+
+variable "faucet_client_requests_per_hour" {
+  type        = number
+  default     = 20
+  description = "Maximum accepted Sepolia faucet requests per pseudonymous Cloudflare client IP in a rolling hour."
+
+  validation {
+    condition = (
+      floor(var.faucet_client_requests_per_hour) == var.faucet_client_requests_per_hour
+      && var.faucet_client_requests_per_hour >= 1
+      && var.faucet_client_requests_per_hour <= 1000000
+    )
+    error_message = "faucet_client_requests_per_hour must be a whole number between 1 and 1000000."
+  }
+}
+
+variable "faucet_global_requests_per_hour" {
+  type        = number
+  default     = 200
+  description = "Maximum accepted Sepolia faucet requests across the single API task in a rolling hour."
+
+  validation {
+    condition = (
+      floor(var.faucet_global_requests_per_hour) == var.faucet_global_requests_per_hour
+      && var.faucet_global_requests_per_hour >= 1
+      && var.faucet_global_requests_per_hour <= 1000000
+    )
+    error_message = "faucet_global_requests_per_hour must be a whole number between 1 and 1000000."
+  }
+}
+
 variable "provision_aa_proxy" {
   type        = bool
   default     = false

@@ -26,18 +26,15 @@ import Plether.Handlers.TestnetFaucet
   ( FaucetBroadcastErrorDisposition (..)
   , FaucetClaimDisposition (..)
   , FaucetResponseStatus (..)
-  , TestnetFaucetResponse (..)
   , classifyFaucetBroadcastErrorText
   , classifyTestnetFaucetClaim
   , faucetMintCall
   , faucetRouteTimeoutMicros
-  , gateSubmittedFaucetResponse
   , receiptMatchesPersistedTransaction
   , testnetFaucetAmount
   , testnetFaucetEnabled
   )
 import Plether.Ethereum.Rpc (TxReceipt (..))
-import Plether.Types (ApiError (..), ApiErrorCode (..), ApiResponse (..), mkResponse)
 import Test.Hspec
 
 spec :: Spec
@@ -67,36 +64,6 @@ spec = do
     it "returns before the load balancer's 75-second idle timeout" $ do
       faucetRouteTimeoutMicros `shouldBe` 60_000_000
       faucetRouteTimeoutMicros `shouldSatisfy` (< 75_000_000)
-
-  describe "faucet submitted-response compatibility" $ do
-    let response status =
-          Right $
-            mkResponse
-              0
-              421614
-              TestnetFaucetResponse
-                { tfrAddress = "0x1111111111111111111111111111111111111111"
-                , tfrAmount = testnetFaucetAmount
-                , tfrToken = "0x2222222222222222222222222222222222222222"
-                , tfrTxHash = Just txHash
-                , tfrStatus = status
-                }
-
-    it "returns submitted only to clients that opt into the pending state" $ do
-      case gateSubmittedFaucetResponse True $ response FaucetResponseSubmitted of
-        Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus}} ->
-          tfrStatus `shouldBe` FaucetResponseSubmitted
-        _ -> expectationFailure "async client did not receive the durable submitted state"
-
-      case gateSubmittedFaucetResponse False $ response FaucetResponseSubmitted of
-        Left ApiError {errCode} -> errCode `shouldBe` RateLimited
-        _ -> expectationFailure "legacy client could mistake a submitted transaction for minted funds"
-
-    it "leaves terminal responses unchanged for every client" $
-      case gateSubmittedFaucetResponse False $ response FaucetResponseMinted of
-        Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus}} ->
-          tfrStatus `shouldBe` FaucetResponseMinted
-        _ -> expectationFailure "terminal faucet response was not preserved"
 
   describe "faucetMintCall" $
     it "encodes mint(address,uint256) for the faucet amount" $ do
@@ -263,6 +230,7 @@ testConfig chainId perpsChainId =
     , cfgInsightsCompetitionReleaseManifest = faucetReleaseManifest perpsChainId
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

@@ -441,6 +441,7 @@ testConfig =
     , cfgInsightsCompetitionReleaseManifest = testReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Just testAaConfig
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

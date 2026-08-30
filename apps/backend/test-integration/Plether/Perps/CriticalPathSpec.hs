@@ -479,6 +479,7 @@ testConfig databaseUrl rpcUrl =
     , cfgInsightsCompetitionReleaseManifest = testCompetitionReleaseManifest
     , cfgRegistrationConfig = Nothing
     , cfgAaConfig = Nothing
+    , cfgFaucetGuardConfig = Nothing
     , cfgFaucetPrivateKey = Nothing
     , cfgKeeperPrivateKey = Nothing
     , cfgKeeperPollSeconds = 1

@@ -4,6 +4,8 @@ const ROUTES = {
 };
 const AA_PROXY_PATH = '/api/perps/v1/aa/pimlico';
 const AA_PROXY_AUTH_HEADER = 'X-Plether-AA-Proxy-Token';
+const FAUCET_PROXY_PATH = '/api/perps/v1/testnet/faucet';
+const FAUCET_PROXY_AUTH_HEADER = 'X-Plether-Faucet-Proxy-Token';
 const BASKET_HISTORY_PATH = '/api/perps/basket/history';
 const VAULT_HISTORY_PATH = '/api/perps/v1/perps/vaults/history';
 const CANDLE_PAGE_SIZE = 500;
@@ -628,9 +630,10 @@ const requestHandler = {
 
         const headers = new Headers(request.headers);
         // Never trust or forward a browser-supplied origin-auth token. The
-        // backend may trust CF-Connecting-IP for AA rate limiting only after
-        // this Worker-to-origin credential has been verified.
+        // The backend may trust CF-Connecting-IP for protected endpoints only
+        // after the matching Worker-to-origin credential has been verified.
         headers.delete(AA_PROXY_AUTH_HEADER);
+        headers.delete(FAUCET_PROXY_AUTH_HEADER);
         if (url.pathname === AA_PROXY_PATH) {
           if (!env.AA_PROXY_ORIGIN_TOKEN) {
             return new Response('AA proxy authentication not configured', {
@@ -638,6 +641,22 @@ const requestHandler = {
             });
           }
           headers.set(AA_PROXY_AUTH_HEADER, env.AA_PROXY_ORIGIN_TOKEN);
+        }
+        if (url.pathname === FAUCET_PROXY_PATH) {
+          if (!env.FAUCET_PROXY_ORIGIN_TOKEN) {
+            return new Response('Faucet proxy authentication not configured', {
+              status: 502,
+            });
+          }
+          const cloudflareClientIp = request.headers.get('CF-Connecting-IP');
+          headers.set(
+            FAUCET_PROXY_AUTH_HEADER,
+            env.FAUCET_PROXY_ORIGIN_TOKEN,
+          );
+          headers.delete('CF-Connecting-IP');
+          if (cloudflareClientIp) {
+            headers.set('CF-Connecting-IP', cloudflareClientIp);
+          }
         }
 
         headers.set('Host', backendUrl.hostname);

@@ -95,6 +95,7 @@ library
         Plether.LiquidationWorker
         Plether.Handlers.PerpsHistory
         Plether.Handlers.TestnetFaucet
+        Plether.Handlers.TestnetFaucetGuard
         Plether.Handlers.Insights
         Plether.Handlers.InsightsRegistration
     build-depends:
@@ -288,6 +289,7 @@ test-suite plether-api-test
         Plether.Handlers.VaultPerformanceSpec
         Plether.Handlers.PerpsHistorySpec
         Plether.Handlers.TestnetFaucetSpec
+        Plether.Handlers.TestnetFaucetGuardSpec
         Plether.KeeperSpec
         Plether.LoggingSpec
         Plether.RequestLoggingSpec

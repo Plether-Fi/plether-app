@@ -8,7 +8,6 @@ module Plether.Handlers.TestnetFaucet
   , classifyFaucetBroadcastErrorText
   , receiptMatchesPersistedTransaction
   , faucetRouteTimeoutMicros
-  , gateSubmittedFaucetResponse
   , testnetFaucetAmount
   , testnetFaucetEnabled
   , faucetMintCall
@@ -108,24 +107,6 @@ instance ToJSON TestnetFaucetResponse where
       , "txHash" .= tfrTxHash
       , "status" .= tfrStatus
       ]
-
--- Older cached frontend bundles treat every unfamiliar success status as
--- minted. They receive a retryable 429 until an exact receipt is available;
--- only clients that advertise async confirmation receive `submitted`.
-gateSubmittedFaucetResponse
-  :: Bool
-  -> Either ApiError (ApiResponse TestnetFaucetResponse)
-  -> Either ApiError (ApiResponse TestnetFaucetResponse)
-gateSubmittedFaucetResponse acceptsSubmitted response
-  | acceptsSubmitted = response
-gateSubmittedFaucetResponse
-  _
-  (Right ApiResponse {respData = TestnetFaucetResponse {tfrStatus = FaucetResponseSubmitted}}) =
-  Left $
-    E.mkError
-      E.RateLimited
-      "Faucet transaction submitted and awaiting confirmation. Wait a moment, then retrying is safe."
-gateSubmittedFaucetResponse _ response = response
 
 data FaucetClaimDisposition
   = FaucetAlreadyClaimed

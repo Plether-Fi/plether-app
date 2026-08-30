@@ -166,6 +166,8 @@ const DEFAULT_CONFIG: Required<Omit<PlethApiConfig, 'onError'>> = {
 export const TESTNET_FAUCET_TIMEOUT_MS = 65_000;
 export const TESTNET_FAUCET_TIMEOUT_MESSAGE =
   'The faucet is taking longer than expected. Your request may still complete. Wait a moment, then try again—retrying is safe.';
+export const TESTNET_FAUCET_UPGRADE_REQUIRED_MESSAGE =
+  'Plether was updated. Refresh this page, then try the faucet again.';
 const NETWORK_ERROR_MESSAGE =
   'We could not reach Plether. Check your connection and try again.';
 
@@ -181,9 +183,18 @@ const API_ERROR_CODES = new Set<string>([
   'INVALID_SIDE',
   'RPC_ERROR',
   'RATE_LIMITED',
+  'FORBIDDEN',
+  'UPGRADE_REQUIRED',
   'INTERNAL_ERROR',
   'NETWORK_ERROR',
+  'NOT_FOUND',
 ]);
+
+export function testnetFaucetErrorMessage(error: PlethApiError): string {
+  return error.code === 'UPGRADE_REQUIRED'
+    ? TESTNET_FAUCET_UPGRADE_REQUIRED_MESSAGE
+    : error.message;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
