@@ -256,7 +256,7 @@ spec = do
       isLegacySeptemberPrizeOnlyMismatch expected legacyPrizes
         `shouldBe` False
 
-    it "recognizes only the exact pre-launch September X-account age correction" $ do
+    it "recognizes only the exact pre-launch September 90-to-30 age relaxation" $ do
       let septemberExpected = competitionSeedMetadataFor
             september2026Competition
             421_614
@@ -271,6 +271,14 @@ spec = do
       isLegacySeptemberXAccountAgeOnlyMismatch
         septemberExpected
         legacyAge {csmMinimumProfitBps = 200}
+        `shouldBe` False
+      isLegacySeptemberXAccountAgeOnlyMismatch
+        (septemberExpected {csmMinimumXAccountAgeDays = Just 90})
+        septemberExpected
+        `shouldBe` False
+      isLegacySeptemberXAccountAgeOnlyMismatch
+        (septemberExpected {csmMinimumXAccountAgeDays = Just 60})
+        legacyAge
         `shouldBe` False
       isLegacySeptemberXAccountAgeOnlyMismatch expected legacyAge
         `shouldBe` False
