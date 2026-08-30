@@ -1,6 +1,11 @@
 import type { ComponentProps } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import { PerpsTradeTicket } from '../components/PerpsTradeTicket'
+import {
+  PERPS_EXECUTION_MODE,
+  PERPS_EXECUTION_MODE_MASK,
+  type PreparedPerpsOrderV2,
+} from '../contracts/perpsOrderV2'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import {
   PerpsIdentityContext,
@@ -105,6 +110,50 @@ const currentLongPosition = {
   pendingCarryUsdc: 4_200_000n,
   vpiAccrued: 60n * USDC,
 }
+
+const executionProtectionsFixture = {
+  account: STORY_TRADING_ACCOUNT,
+  manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+  orderRouter: '0x97A901dE2B267c307E264FD5F71403F8072F73e7',
+  orderLifecycleBook: '0x1111111111111111111111111111111111111111',
+  request: {
+    clientOrderId: `0x${'12'.repeat(32)}`,
+    side: 0,
+    sizeDelta: 2_000n * 10n ** 18n,
+    marginDelta: 393_200_000n,
+    targetPrice: 98_250_000n,
+    isClose: false,
+    bounds: {
+      validUntil: 1_788_000_300n,
+      allowedExecutionModes: PERPS_EXECUTION_MODE_MASK.LIVE,
+      expectedConfigHash: `0x${'34'.repeat(32)}`,
+      maxExecutionBountyUsdc: 250_000n,
+      maxExecutionNotionalUsdc: 1_966n * USDC,
+      maxGrossAccountDebitUsdc: 396_236_400n,
+      maxActionChargeUsdc: 1_400_000n,
+      maxExplicitFeesUsdc: 786_400n,
+      maxPostPositionSize: 2_000n * 10n ** 18n,
+      minPostSettlementBalanceUsdc: 9_857_013_600n,
+      minPostPositionEquityUsdc: 391_013_600n,
+      maxPostLeverageBps: 50_000,
+    },
+  },
+  executionBountyUsdc: 250_000n,
+  reviewedBlockNumber: 302_257_125n,
+  reviewedBlockHash: `0x${'56'.repeat(32)}`,
+  reviewedPrice: ORACLE_PRICE,
+  protection: {
+    validUntil: 1_788_000_300n,
+    executionMode: PERPS_EXECUTION_MODE.LIVE,
+    executionBountyUsdc: 250_000n,
+    maxGrossAccountDebitUsdc: 396_236_400n,
+    maxActionChargeUsdc: 1_400_000n,
+    maxExplicitFeesUsdc: 786_400n,
+    maxPostLeverageBps: 50_000,
+    minPostSettlementBalanceUsdc: 9_857_013_600n,
+    minPostPositionEquityUsdc: 391_013_600n,
+  },
+} satisfies PreparedPerpsOrderV2
 
 function openPreviewFixture({
   size,
@@ -350,6 +399,15 @@ export const OpenLongPreview: Story = {
       postSize: 2_000n * 10n ** 18n,
       postMarginUsdc: 393_200_000n,
     }),
+  },
+  render: (args) => <TicketFrame {...args} />,
+}
+
+export const ExecutionProtections: Story = {
+  name: 'Open Long · Execution Protections',
+  args: {
+    ...OpenLongPreview.args,
+    executionProtectionsFixture,
   },
   render: (args) => <TicketFrame {...args} />,
 }

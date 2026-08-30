@@ -14,15 +14,13 @@ import Plether.Insights.Competition
   )
 import Plether.Database.Schema
   ( PerpsIndexerStatusRow (..)
-  , PerpsKeeperTerminalOrderRow (..)
   , PerpsOrderRow (..)
   , pendingPerpsExecutionEvidenceSql
   , perpsExecutionEvidenceLaneLimits
   , perpsOrderBaseSelectSql
   )
 import Plether.Handlers.PerpsHistory
-  ( keeperTerminalIsCanonicallyRejected
-  , orderRowToJson
+  ( orderRowToJson
   , perpsOrdersIndexedThroughBlock
   , perpsHistoryRouter
   , perpsMarketStatsChainId
@@ -59,18 +57,20 @@ spec = do
 
     it "projects the canonical terminal event block hash" $ do
       queryContains perpsOrderBaseSelectSql "terminal_event.block_hash"
-      queryContains perpsOrderBaseSelectSql "e.contract_address = o.order_router"
       queryContains perpsOrderBaseSelectSql "e.block_number = o.terminal_block_number"
-      queryContains perpsOrderBaseSelectSql "CASE WHEN o.terminal_status = 'Executed' THEN 'OrderExecuted' ELSE 'OrderFailed' END"
+      queryContains perpsOrderBaseSelectSql "e.event_name = 'OrderFinalized'"
 
-    it "correlates batched activity with the nearest preceding OrderExecuted event" $ do
+    it "correlates batched activity with the nearest preceding V2 finalization" $ do
       queryContains perpsOrderBaseSelectSql "e.order_id = o.order_id"
-      queryContains perpsOrderBaseSelectSql "e.contract_address = o.order_router"
+      queryContains perpsOrderBaseSelectSql "'OrderFinalized'"
       queryContains perpsOrderBaseSelectSql "o.terminal_status = 'Executed'"
       queryContains perpsOrderBaseSelectSql "a.activity_type IN ('Open', 'Close')"
       queryContains perpsOrderBaseSelectSql "a.log_index < terminal_event.log_index"
       queryContains perpsOrderBaseSelectSql "a.log_index > previous_terminal_event.log_index"
       queryContains perpsOrderBaseSelectSql "ORDER BY a.log_index DESC"
+
+    it "excludes V1 orders that have no lifecycle client identity" $
+      queryContains perpsOrderBaseSelectSql "o.client_order_id IS NOT NULL"
 
     it "serializes signed activity VPI as a lossless decimal string" $
       orderRowToJson
@@ -91,12 +91,20 @@ spec = do
           , "executionPrice" .= ("98391251" :: String)
           , "vpiUsdc" .= ("182822887" :: String)
           , "frozenCloseSpreadUsdc" .= ("0" :: String)
-          , "executionEconomicsVersion" .= (1 :: Int)
+          , "executionEconomicsVersion" .= (2 :: Int)
           , "executionOraclePrice" .= ("98391482" :: String)
           , "executionOracleFrozen" .= False
           , "oracleMinPublishTime" .= ("1785437834" :: String)
           , "oracleMaxPublishTime" .= ("1785437834" :: String)
           , "oracleDerivationVersion" .= (1 :: Int)
+          , "clientOrderId" .= ("0xclient" :: String)
+          , "receiptHash" .= ("0xreceipt" :: String)
+          , "terminalReason" .= ("Executed" :: String)
+          , "executionMode" .= ("Live" :: String)
+          , "receiptEconomics" .= object
+              [ "vpiUsdc" .= ("182822887" :: String)
+              , "frozenSpreadUsdc" .= ("0" :: String)
+              ]
           , "activityType" .= ("Close" :: String)
           , "activitySizeDelta" .= ("98308614058332359914207" :: String)
           , "activityPrice" .= ("98391251" :: String)
@@ -112,47 +120,6 @@ spec = do
     it "does not manufacture an indexed-through proof from returned rows" $
       perpsOrdersIndexedThroughBlock Nothing
         `shouldBe` Nothing
-
-  describe "keeper terminal canonical rejection" $ do
-    it "suppresses a stale keeper terminal after indexed history proves the order is still committed" $
-      keeperTerminalIsCanonicallyRejected
-        0
-        (Just 293_014_724)
-        (Just committedOrderRow)
-        keeperExecutedOrder
-        `shouldBe` True
-
-    it "keeps the fast keeper terminal while canonical history has not reached its block" $
-      keeperTerminalIsCanonicallyRejected
-        0
-        (Just 293_014_723)
-        (Just committedOrderRow)
-        keeperExecutedOrder
-        `shouldBe` False
-
-    it "suppresses a stale keeper terminal after its canonical commit also disappears" $
-      keeperTerminalIsCanonicallyRejected
-        293_014_600
-        (Just 293_014_724)
-        Nothing
-        keeperExecutedOrder
-        `shouldBe` True
-
-    it "does not infer an absent commit that predates the indexer's coverage" $
-      keeperTerminalIsCanonicallyRejected
-        293_014_700
-        (Just 293_014_724)
-        Nothing
-        keeperExecutedOrder
-        `shouldBe` False
-
-    it "suppresses a stale keeper terminal when the canonical commit identity changed" $
-      keeperTerminalIsCanonicallyRejected
-        0
-        (Just 293_014_724)
-        (Just committedOrderRow {porCommitTxHash = Just "0xreplacement"})
-        keeperExecutedOrder
-        `shouldBe` True
 
 queryContains :: Query -> String -> Expectation
 queryContains sql fragment =
@@ -177,12 +144,22 @@ executedOrderRow =
     , porExecutionPrice = Just 98_391_251
     , porExecutionVpiUsdc = Just 182_822_887
     , porExecutionFrozenCloseSpreadUsdc = Just 0
-    , porExecutionEconomicsVersion = Just 1
+    , porExecutionEconomicsVersion = Just 2
     , porExecutionOraclePrice = Just 98_391_482
     , porExecutionOracleFrozen = Just False
     , porOracleMinPublishTime = Just 1_785_437_834
     , porOracleMaxPublishTime = Just 1_785_437_834
     , porOracleDerivationVersion = Just 1
+    , porClientOrderId = Just "0xclient"
+    , porReceiptHash = Just "0xreceipt"
+    , porTerminalReason = Just "Executed"
+    , porPendingReason = Nothing
+    , porExecutionMode = Just "Live"
+    , porFailedConstraint = Nothing
+    , porReceiptEconomics = Just $ object
+        [ "vpiUsdc" .= ("182822887" :: String)
+        , "frozenSpreadUsdc" .= ("0" :: String)
+        ]
     , porCleanupActor = Nothing
     , porActivityType = Just "Close"
     , porActivitySizeDelta = Just 98_308_614_058_332_359_914_207
@@ -190,37 +167,6 @@ executedOrderRow =
     , porActivityVpiUsdc = Just (-182_822_887)
     , porActivityPnlUsdc = Just 104_909_054
     , porSortBlock = 293_014_724
-    }
-
-committedOrderRow :: PerpsOrderRow
-committedOrderRow =
-  executedOrderRow
-    { porTerminalTxHash = Nothing
-    , porTerminalBlockNumber = Nothing
-    , porTerminalBlockHash = Nothing
-    , porTerminalTimestamp = Nothing
-    , porTerminalStatus = "Committed"
-    , porExecutionPrice = Nothing
-    }
-
-keeperExecutedOrder :: PerpsKeeperTerminalOrderRow
-keeperExecutedOrder =
-  PerpsKeeperTerminalOrderRow
-    { pktoOrderId = 9202
-    , pktoOrderRouter = "0xrouter"
-    , pktoAccount = "0xaccount"
-    , pktoSide = 1
-    , pktoCommitBlock = 293_014_692
-    , pktoCommitEventBlock = Just 293_014_692
-    , pktoCommitTime = 1_785_437_833
-    , pktoCommitTxHash = "0xcommit"
-    , pktoStatus = "Executed"
-    , pktoExecutionTxHash = Just "0xreveal"
-    , pktoExecutionBlock = Just 293_014_724
-    , pktoExecutionPrice = Just 98_391_251
-    , pktoFailureTxHash = Nothing
-    , pktoFailureBlock = Nothing
-    , pktoFailureReason = Nothing
     }
 
 indexerStatusRow :: PerpsIndexerStatusRow
@@ -262,6 +208,7 @@ testConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1647e41f49ED6D688936092B5a291c4B28106343"
     , cfgPerpsOrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = "0x3dc9C0A1f9C745A4B08BD5C2E6c7aE613561c20D"
     , cfgPerpsCfdEngineLens = "0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79"
     , cfgPerpsCfdEngineSettlementSidecar = "0x288F70eC7cF0e16ae4FE4b91B5c266B047c83aFF"

@@ -92,6 +92,7 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
             defaultPerpsAddresses
               { paUsdc = cfgPerpsUsdc cfg
               , paOrderRouter = cfgPerpsOrderRouter cfg
+              , paOrderLifecycleBook = cfgPerpsOrderLifecycleBook cfg
               , paCfdEngine = cfgPerpsCfdEngine cfg
               , paCfdEngineLens = cfgPerpsCfdEngineLens cfg
               , paCfdEngineSettlementSidecar = cfgPerpsCfdEngineSettlementSidecar cfg
@@ -277,6 +278,7 @@ parseWorkerArgs addressDefaults env args =
         addressDefaults
           { paUsdc = T.pack $ fromMaybe (T.unpack $ paUsdc addressDefaults) (lookup "PERPS_USDC" env)
           , paOrderRouter = T.pack $ fromMaybe (T.unpack $ paOrderRouter addressDefaults) (lookup "PERPS_ORDER_ROUTER" env)
+          , paOrderLifecycleBook = T.pack <$> lookup "PERPS_ORDER_LIFECYCLE_BOOK" env
           , paCfdEngine = T.pack $ fromMaybe (T.unpack $ paCfdEngine addressDefaults) (lookup "PERPS_CFD_ENGINE" env)
           , paCfdEngineLens = T.pack $ fromMaybe (T.unpack $ paCfdEngineLens addressDefaults) (lookup "PERPS_CFD_ENGINE_LENS" env)
           , paCfdEngineSettlementSidecar =

@@ -8,7 +8,6 @@ module Plether.Handlers.PerpsHistory
   , waitForPerpsOrderTerminal
   , orderRowToJson
   , perpsOrdersIndexedThroughBlock
-  , keeperTerminalIsCanonicallyRejected
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -22,16 +21,14 @@ import Plether.Database (DbPool, withDb)
 import Plether.Database.Schema
   ( PerpsActivityRow (..)
   , PerpsIndexerStatusRow (..)
-  , PerpsKeeperTerminalOrderRow (..)
   , PerpsOrderRow (..)
   , getPerpsActivityByAccount
   , getPerpsIndexerStatus
-  , getPerpsKeeperOrderById
   , getPerpsMarketVolumeSince
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
-import Plether.Perps.HistoryIndexer (orderFailReasonName, perpsIndexerName, terminalStatus)
+import Plether.Perps.HistoryIndexer (perpsIndexerName)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 
@@ -149,44 +146,14 @@ waitForPerpsOrderTerminal pool cfg mRouter orderId mAccount timeoutSeconds = do
   where
     go :: Text -> Maybe Text -> Int -> IO (Bool, Maybe WaitOrderSnapshot)
     go orderRouter account remainingSeconds = do
-      mOrder <- withDb pool $ \conn -> do
-        mKeeperOrder <- getPerpsKeeperOrderById conn orderRouter orderId account
-        mHistoryOrder <- getPerpsOrderById conn (cfgPerpsChainId cfg) orderRouter orderId account
-        -- Read the monotonic cursor last. If the indexer advances between
-        -- these statements, a stale Committed row can delay a keeper result
-        -- for one polling iteration, but an old cursor can never resurrect a
-        -- keeper terminal that canonical history has already disproved.
-        mIndexerStatus <-
-          getPerpsIndexerStatus
+      mOrder <- withDb pool $ \conn ->
+        fmap historyOrderSnapshot
+          <$> getPerpsOrderById
             conn
             (cfgPerpsChainId cfg)
-            perpsIndexerName
             orderRouter
-        let indexedThrough = pisLastIndexedBlock <$> mIndexerStatus
-        pure $ case mHistoryOrder of
-          Just historyOrder | isTerminalHistoryOrder historyOrder ->
-            Just $ historyOrderSnapshot historyOrder
-          _ ->
-            case mKeeperOrder of
-              Just keeperOrder
-                | keeperTerminalIsCanonicallyRejected
-                    (cfgPerpsIndexerStartBlock cfg)
-                    indexedThrough
-                    mHistoryOrder
-                    keeperOrder ->
-                    historyOrderSnapshot <$> mHistoryOrder
-              _ ->
-                case
-                  mKeeperOrder
-                    >>= keeperTerminalOrderSnapshot mHistoryOrder of
-                  Just terminalOrder ->
-                    Just terminalOrder
-                  Nothing ->
-                    case mHistoryOrder of
-                      Just historyOrder ->
-                        Just $ historyOrderSnapshot historyOrder
-                      Nothing ->
-                        keeperOrderSnapshot Nothing <$> mKeeperOrder
+            orderId
+            account
       case mOrder of
         Just row | isTerminalOrder row ->
           pure (False, Just row)
@@ -198,9 +165,6 @@ waitForPerpsOrderTerminal pool cfg mRouter orderId mAccount timeoutSeconds = do
 
     isTerminalOrder :: WaitOrderSnapshot -> Bool
     isTerminalOrder row = wosTerminalStatus row /= "Committed"
-
-    isTerminalHistoryOrder :: PerpsOrderRow -> Bool
-    isTerminalHistoryOrder row = porTerminalStatus row /= "Committed"
 
 data WaitOrderSnapshot = WaitOrderSnapshot
   { wosBlock :: Integer
@@ -215,110 +179,6 @@ historyOrderSnapshot row =
     , wosTerminalStatus = porTerminalStatus row
     , wosJson = orderRowToJson row
     }
-
-keeperTerminalOrderSnapshot
-  :: Maybe PerpsOrderRow
-  -> PerpsKeeperTerminalOrderRow
-  -> Maybe WaitOrderSnapshot
-keeperTerminalOrderSnapshot mHistoryOrder row =
-  case T.toLower $ pktoStatus row of
-    "executed" -> Just $ keeperOrderSnapshot mHistoryOrder row
-    "failed" -> Just $ keeperOrderSnapshot mHistoryOrder row
-    _ -> Nothing
-
-keeperTerminalIsCanonicallyRejected
-  :: Integer
-  -> Maybe Integer
-  -> Maybe PerpsOrderRow
-  -> PerpsKeeperTerminalOrderRow
-  -> Bool
-keeperTerminalIsCanonicallyRejected indexerStartBlock indexedThrough mHistoryOrder keeperOrder =
-  case (indexedThrough, mHistoryOrder, keeperTerminalBlock keeperOrder) of
-    (Just indexedBlock, Just historyOrder, Just keeperBlock) ->
-      porTerminalStatus historyOrder == "Committed"
-        && porOrderId historyOrder == pktoOrderId keeperOrder
-        && normalizeAddress (porOrderRouter historyOrder)
-          == normalizeAddress (pktoOrderRouter keeperOrder)
-        && indexedBlock >= keeperBlock
-    (Just indexedBlock, Nothing, Just keeperBlock) ->
-      indexedBlock >= keeperBlock
-        && keeperCommitCoverageBlock keeperOrder >= indexerStartBlock
-    _ -> False
-  where
-    normalizeAddress = T.toLower . T.strip
-
-keeperCommitCoverageBlock :: PerpsKeeperTerminalOrderRow -> Integer
-keeperCommitCoverageBlock row =
-  maybe (pktoCommitBlock row) id (pktoCommitEventBlock row)
-
-keeperTerminalBlock :: PerpsKeeperTerminalOrderRow -> Maybe Integer
-keeperTerminalBlock row =
-  case T.toLower $ pktoStatus row of
-    "executed" -> pktoExecutionBlock row
-    "failed" -> pktoFailureBlock row
-    _ -> Nothing
-
-keeperOrderSnapshot :: Maybe PerpsOrderRow -> PerpsKeeperTerminalOrderRow -> WaitOrderSnapshot
-keeperOrderSnapshot mHistoryOrder row =
-  WaitOrderSnapshot
-    { wosBlock = maybe commitBlockNumber id terminalBlock
-    , wosTerminalStatus = status
-    , wosJson =
-        object $
-          catMaybes
-            [ Just $ "orderId" .= show (pktoOrderId row)
-            , Just $ "orderRouter" .= pktoOrderRouter row
-            , Just $ "account" .= pktoAccount row
-            , Just $ "side" .= pktoSide row
-            , Just $ "commitTxHash" .= pktoCommitTxHash row
-            , Just $ "commitBlockNumber" .= show commitBlockNumber
-            , Just $ "commitTimestamp" .= commitTimestamp
-            , ("terminalTxHash" .=) <$> terminalTxHash
-            , ("terminalBlockNumber" .=) . show <$> terminalBlock
-            , ("terminalBlockHash" .=) <$> terminalHistoryField porTerminalBlockHash
-            , ("terminalTimestamp" .=) <$> terminalHistoryField porTerminalTimestamp
-            , Just $ "terminalStatus" .= status
-            , ("failureReason" .=) <$> failureReason
-            , ("executionPrice" .=) . show <$> pktoExecutionPrice row
-            , ("vpiUsdc" .=) . show <$> terminalHistoryField porExecutionVpiUsdc
-            , ("frozenCloseSpreadUsdc" .=) . show <$> terminalHistoryField porExecutionFrozenCloseSpreadUsdc
-            , ("executionEconomicsVersion" .=) <$> terminalHistoryField porExecutionEconomicsVersion
-            , ("executionOraclePrice" .=) . show <$> terminalHistoryField porExecutionOraclePrice
-            , ("executionOracleFrozen" .=) <$> terminalHistoryField porExecutionOracleFrozen
-            , ("oracleMinPublishTime" .=) . show <$> terminalHistoryField porOracleMinPublishTime
-            , ("oracleMaxPublishTime" .=) . show <$> terminalHistoryField porOracleMaxPublishTime
-            , ("oracleDerivationVersion" .=) <$> terminalHistoryField porOracleDerivationVersion
-            , ("activityVpiUsdc" .=) . show <$> terminalHistoryField porActivityVpiUsdc
-            ]
-    }
-  where
-    keeperStatus = T.toLower $ pktoStatus row
-    failureReason = orderFailReasonName <$> pktoFailureReason row
-    historyField selector = mHistoryOrder >>= selector
-    terminalHistoryField selector = matchingTerminalHistoryOrder >>= selector
-    commitBlockNumber = maybe (maybe (pktoCommitBlock row) id (pktoCommitEventBlock row)) id (historyField porCommitBlockNumber)
-    commitTimestamp = maybe (pktoCommitTime row) id (historyField porCommitTimestamp)
-    status
-      | keeperStatus == "executed" = "Executed"
-      | keeperStatus == "failed" = terminalStatus $ maybe "Unknown" id failureReason
-      | otherwise = "Committed"
-    terminalTxHash
-      | keeperStatus == "executed" = pktoExecutionTxHash row
-      | keeperStatus == "failed" = pktoFailureTxHash row
-      | otherwise = Nothing
-    terminalBlock
-      = keeperTerminalBlock row
-    matchingTerminalHistoryOrder = do
-      historyOrder <- mHistoryOrder
-      keeperHash <- terminalTxHash
-      historyHash <- porTerminalTxHash historyOrder
-      keeperBlock <- terminalBlock
-      historyBlock <- porTerminalBlockNumber historyOrder
-      if T.toLower keeperHash == T.toLower historyHash
-          && keeperBlock == historyBlock
-          && porTerminalStatus historyOrder == status
-        then Just historyOrder
-        else Nothing
 
 orderRowToJson :: PerpsOrderRow -> Value
 orderRowToJson PerpsOrderRow {..} =
@@ -336,7 +196,6 @@ orderRowToJson PerpsOrderRow {..} =
       , ("terminalBlockHash" .=) <$> porTerminalBlockHash
       , ("terminalTimestamp" .=) <$> porTerminalTimestamp
       , Just $ "terminalStatus" .= porTerminalStatus
-      , ("failureReason" .=) <$> porFailureReason
       , ("executionPrice" .=) . show <$> porExecutionPrice
       , ("vpiUsdc" .=) . show <$> porExecutionVpiUsdc
       , ("frozenCloseSpreadUsdc" .=) . show <$> porExecutionFrozenCloseSpreadUsdc
@@ -346,6 +205,13 @@ orderRowToJson PerpsOrderRow {..} =
       , ("oracleMinPublishTime" .=) . show <$> porOracleMinPublishTime
       , ("oracleMaxPublishTime" .=) . show <$> porOracleMaxPublishTime
       , ("oracleDerivationVersion" .=) <$> porOracleDerivationVersion
+      , ("clientOrderId" .=) <$> porClientOrderId
+      , ("receiptHash" .=) <$> porReceiptHash
+      , ("terminalReason" .=) <$> porTerminalReason
+      , ("pendingReason" .=) <$> porPendingReason
+      , ("executionMode" .=) <$> porExecutionMode
+      , ("failedConstraint" .=) <$> porFailedConstraint
+      , ("receiptEconomics" .=) <$> porReceiptEconomics
       , ("cleanupActor" .=) <$> porCleanupActor
       , ("activityType" .=) <$> porActivityType
       , ("activitySizeDelta" .=) . show <$> porActivitySizeDelta

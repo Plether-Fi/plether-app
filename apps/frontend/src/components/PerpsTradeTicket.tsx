@@ -5,6 +5,10 @@ import { zeroAddress } from 'viem'
 import { openAppKit } from '../config/wagmi'
 import { PERPS_CFD_ENGINE_LENS_ABI } from '../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA, PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
+import {
+  PERPS_EXECUTION_MODE_LABELS,
+  type PreparedPerpsOrderV2,
+} from '../contracts/perpsOrderV2'
 import type { BasketLatest } from '../api'
 import type { PerpsMarketPhase } from '../utils/perpsMarketSchedule'
 import type { PerpsOrderHistoryRow, PerpsPendingOrder, PerpsPosition } from '../hooks'
@@ -52,7 +56,6 @@ import {
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsOpenRevertMessage,
-  getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { DOCS_LINKS } from '../config/docs'
@@ -214,6 +217,8 @@ interface PerpsTradeTicketProps {
   closePreviewFixture?: ClosePreviewView
   /** Static validation message for non-live stories and design review. Ignored when live trading is enabled. */
   validationErrorFixture?: string
+  /** Static V2 protections for deterministic stories and design review. Ignored when live trading is enabled. */
+  executionProtectionsFixture?: PreparedPerpsOrderV2
   oracleFreshness?: PerpsOracleFreshness
   oracleFreshnessTooltip?: string
   oracleBasketComponents?: readonly PerpsBasketComponentPrice[]
@@ -230,6 +235,7 @@ interface PerpsTradeTicketProps {
   orderHistory?: PerpsOrderHistoryRow[]
   ordersIndexedThroughBlockRaw?: bigint
   pendingOrderCount?: number
+  activePositionProtectionId?: bigint
   maxPendingOrders?: bigint
   firstPendingOrderId?: bigint
   firstPendingOrderExpiryTime?: bigint
@@ -467,41 +473,59 @@ function isTerminalOrderFailureMessage(message: string): boolean {
 
 function failureReasonMessage(reason: string | undefined): string | undefined {
   if (!reason) return undefined
-  const code = {
-    Expired: 0,
-    CloseOnly: 1,
-    SlippageExceeded: 2,
-    EnginePanic: 3,
-    AccountLiquidated: 4,
-    EngineRevert: 5,
-  }[reason]
-
-  return code === undefined ? undefined : getPerpsOrderFailureMessage(code)
+  const messages: Record<string, string> = {
+    Expired: 'The order expired before execution. Review and create a fresh order.',
+    Slippage: 'Execution exceeded the reviewed target price.',
+    ConfigMismatch: 'Protocol configuration changed after review.',
+    'Config mismatch': 'Protocol configuration changed after review.',
+    ExecutionModeDisallowed: 'The market regime changed after review.',
+    'Mode disallowed': 'The market regime changed after review.',
+    RiskOff: 'The order was invalidated by protocol risk-off policy.',
+    'Risk off': 'The order was invalidated by protocol risk-off policy.',
+    PlannerRejected: 'The execution planner rejected the order.',
+    'Planner rejected': 'The execution planner rejected the order.',
+    ConstraintViolation: 'Execution would violate the reviewed financial bounds.',
+    'Constraint violation': 'Execution would violate the reviewed financial bounds.',
+    AccountLiquidated: 'The account was liquidated before this order executed.',
+    'Account liquidated': 'The account was liquidated before this order executed.',
+  }
+  return messages[reason]
 }
 
 function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
-  const detail = failureReasonMessage(order.failureReason)
+  const detail = failureReasonMessage(order.terminalReason)
     ?? `Terminal status: ${order.status}. Refresh order history for details.`
   return `Order failed: ${detail}`
 }
 
 function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
   return order.status !== 'Executed'
-    || (
-      order.oracleDerivationVersion !== undefined
-      && order.executionEconomicsVersion !== undefined
-      && order.executionOracleFrozen !== undefined
-    )
+    || (order.receiptHash !== undefined && order.executionEconomicsVersion === 2)
 }
 
 function terminalOrderKey(order: PerpsOrderHistoryRow): string {
   return [
     order.orderId.toString(),
     order.status,
-    order.commitTxHash.toLowerCase(),
+    order.clientOrderId.toLowerCase(),
+    order.commitTxHash?.toLowerCase() ?? '',
     order.revealTxHash?.toLowerCase() ?? '',
     order.terminalBlockNumberRaw?.toString() ?? '',
   ].join(':')
+}
+
+function orderMatchesCommittedIdentity(
+  order: PerpsOrderHistoryRow,
+  identity: {
+    account: string
+    clientOrderId: string
+    hash?: string
+    orderId: bigint
+  }
+): boolean {
+  if (order.orderId !== identity.orderId) return false
+  return order.account.toLowerCase() === identity.account.toLowerCase()
+    && order.clientOrderId.toLowerCase() === identity.clientOrderId.toLowerCase()
 }
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [
@@ -1603,6 +1627,7 @@ export function PerpsTradeTicket({
   openPreviewFixture,
   closePreviewFixture,
   validationErrorFixture,
+  executionProtectionsFixture,
   oracleFreshness,
   oracleFreshnessTooltip,
   availableToTradeRaw,
@@ -1618,6 +1643,7 @@ export function PerpsTradeTicket({
   orderHistory = [],
   ordersIndexedThroughBlockRaw,
   pendingOrderCount,
+  activePositionProtectionId = 0n,
   maxPendingOrders,
   firstPendingOrderId,
   firstPendingOrderExpiryTime,
@@ -1642,6 +1668,7 @@ export function PerpsTradeTicket({
     fundTradingAccount,
     depositMargin,
     withdrawMargin,
+    prepareOrder,
     commitOrder,
     executeOrder,
     cleanupExpiredOrder,
@@ -1667,6 +1694,9 @@ export function PerpsTradeTicket({
   const [isReviewOpen, setIsReviewOpen] = useState(initialReviewOpen)
   const [isSlippageConfigOpen, setIsSlippageConfigOpen] = useState(false)
   const [isPreviewExpanded, setIsPreviewExpanded] = useState(false)
+  const [preparedOrder, setPreparedOrder] = useState<PreparedPerpsOrderV2 | undefined>()
+  const [isExecutionProtectionsLoading, setIsExecutionProtectionsLoading] = useState(false)
+  const [executionProtectionsError, setExecutionProtectionsError] = useState<string | undefined>()
   const [orderId, setOrderId] = useState<bigint | undefined>(initialOrderId)
   const [commitTxHash, setCommitTxHash] = useState<string | undefined>(initialCommitTxHash)
   const [executeTxHash, setExecuteTxHash] = useState<string | undefined>(initialExecuteTxHash)
@@ -1739,11 +1769,15 @@ export function PerpsTradeTicket({
   const commitAttemptIdRef = useRef(0)
   const includedCommitAttemptRef = useRef<number | undefined>(undefined)
   const includedCommitIdentityRef = useRef<{
-    hash: string
+    account: string
+    clientOrderId: string
+    hash?: string
     orderId: bigint
   } | undefined>(undefined)
   const deferredSafeConfirmationErrorRef = useRef<{
-    hash: string
+    account: string
+    clientOrderId: string
+    hash?: string
     message: string
     orderId: bigint
   } | undefined>(undefined)
@@ -1861,11 +1895,7 @@ export function PerpsTradeTicket({
     const includedIdentity = includedCommitIdentityRef.current
     if (
       includedIdentity !== undefined &&
-      (
-        order.orderId !== includedIdentity.orderId ||
-        order.commitTxHash.toLowerCase() !==
-          includedIdentity.hash.toLowerCase()
-      )
+      !orderMatchesCommittedIdentity(order, includedIdentity)
     ) {
       return false
     }
@@ -2035,9 +2065,7 @@ export function PerpsTradeTicket({
     if (
       deferredSafeConfirmationError?.orderId === orderId &&
       !orderHistory.some((row) =>
-        row.orderId === deferredSafeConfirmationError.orderId &&
-        row.commitTxHash.toLowerCase() ===
-          deferredSafeConfirmationError.hash.toLowerCase()
+        orderMatchesCommittedIdentity(row, deferredSafeConfirmationError)
       )
     ) {
       deferredSafeConfirmationErrorRef.current = undefined
@@ -2067,7 +2095,7 @@ export function PerpsTradeTicket({
       row.orderId === orderId &&
       (
         includedIdentity === undefined ||
-        row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+        orderMatchesCommittedIdentity(row, includedIdentity)
       )
     )
     if (indexedOrder && indexedOrder.status !== 'Committed') {
@@ -2564,6 +2592,9 @@ export function PerpsTradeTicket({
         'Confirm the Plether Trading Account before trading.'
     }
     if (!isCorrectChain) return 'Switch to Arbitrum Sepolia.'
+    if (activePositionProtectionId > 0n) {
+      return `Position protection #${activePositionProtectionId.toString()} is active. Cancel or finalize it before placing a discretionary order.`
+    }
     if (!oraclePriceRaw || oraclePriceRaw <= 0n) return 'plDXY Perp price is not available.'
     if (isZeroSize) return 'Enter an order size.'
     if (
@@ -2656,9 +2687,73 @@ export function PerpsTradeTicket({
     }
     return undefined
   })()
+  useEffect(() => {
+    if (
+      !enableLiveTrading ||
+      !isReviewOpen ||
+      lifecycleState !== 'preview' ||
+      liveValidationError ||
+      typeof prepareOrder !== 'function'
+    ) {
+      setPreparedOrder(undefined)
+      setIsExecutionProtectionsLoading(false)
+      setExecutionProtectionsError(undefined)
+      return
+    }
+
+    let cancelled = false
+    setPreparedOrder(undefined)
+    setIsExecutionProtectionsLoading(true)
+    setExecutionProtectionsError(undefined)
+    void prepareOrder({
+      direction: effectiveOrderDirection,
+      notionalUsdc: contractNotionalUsdc,
+      sizeDelta: orderSizeDelta,
+      marginUsdc,
+      oraclePrice: oraclePriceRaw ?? 0n,
+      slippagePercent: slippageNumber,
+      isClose: isReducingCurrentPosition,
+      selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+    }).then((prepared) => {
+      if (!cancelled) setPreparedOrder(prepared)
+    }).catch((error: unknown) => {
+      if (!cancelled) {
+        setExecutionProtectionsError(
+          error instanceof Error
+            ? error.message
+            : 'Execution protections could not be prepared'
+        )
+      }
+    }).finally(() => {
+      if (!cancelled) setIsExecutionProtectionsLoading(false)
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeLeverage,
+    contractNotionalUsdc,
+    effectiveOrderDirection,
+    enableLiveTrading,
+    isReducingCurrentPosition,
+    isReviewOpen,
+    lifecycleState,
+    liveValidationError,
+    marginUsdc,
+    oraclePriceRaw,
+    orderSizeDelta,
+    prepareOrder,
+    slippageNumber,
+  ])
   const displayedValidationError = enableLiveTrading
     ? liveValidationError
     : validationErrorFixture
+  const displayedExecutionProtections = enableLiveTrading
+    ? preparedOrder
+    : executionProtectionsFixture
+  const shouldShowExecutionProtections = enableLiveTrading ||
+    displayedExecutionProtections !== undefined
   const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
   const previewInitialMarginUsdc = openPreview?.marginDeltaUsdc ?? marginUsdc
   const previewMaintenanceMarginUsdc = openPreview?.maintenanceMarginUsdc
@@ -3257,6 +3352,13 @@ export function PerpsTradeTicket({
       setFlowError(liveValidationError)
       return
     }
+    if (!preparedOrder) {
+      setFlowError(
+        executionProtectionsError ??
+          'Wait for execution protections to finish before confirming.'
+      )
+      return
+    }
 
     try {
       debugPerpsCommit('ticket:lifecycle:commitPreparing')
@@ -3273,7 +3375,9 @@ export function PerpsTradeTicket({
       setFinalExecutionEconomicsVersion(undefined)
       setFinalVpiUsdc(undefined)
       const applyIncludedCommit = (result: {
-        hash: string
+        account: string
+        clientOrderId: string
+        hash?: string
         orderId: bigint
       }) => {
         if (commitAttemptIdRef.current !== commitAttemptId) return
@@ -3282,11 +3386,13 @@ export function PerpsTradeTicket({
         const inclusionChanged = previousIdentity !== undefined &&
           (
             previousIdentity.orderId !== result.orderId ||
-            previousIdentity.hash.toLowerCase() !== result.hash.toLowerCase()
+            previousIdentity.clientOrderId.toLowerCase() !==
+              result.clientOrderId.toLowerCase() ||
+            previousIdentity.account.toLowerCase() !== result.account.toLowerCase()
           )
         includedCommitIdentityRef.current = result
         deferredSafeConfirmationErrorRef.current = undefined
-        setCommitTxHash(result.hash)
+        if (result.hash) setCommitTxHash(result.hash)
         setOrderId(result.orderId)
         const isFirstInclusion =
           includedCommitAttemptRef.current !== commitAttemptId
@@ -3333,6 +3439,8 @@ export function PerpsTradeTicket({
         oraclePrice: oraclePriceRaw ?? 0n,
         slippagePercent: slippageNumber,
         isClose: isReducingCurrentPosition,
+        selectedMaxLeverageBps: Math.round(activeLeverage * 10_000),
+        preparedOrder,
         onIncluded: (includedResult) => {
           debugPerpsCommit('ticket:commit-included', {
             hash: includedResult.hash,
@@ -3372,8 +3480,7 @@ export function PerpsTradeTicket({
       const hasIndexedOrderEvidence =
         includedIdentity !== undefined &&
         currentOrderHistory.some((row) =>
-          row.orderId === includedIdentity.orderId &&
-          row.commitTxHash.toLowerCase() === includedIdentity.hash.toLowerCase()
+          orderMatchesCommittedIdentity(row, includedIdentity)
         )
       if (
         inclusionWasReported() &&
@@ -3504,6 +3611,9 @@ export function PerpsTradeTicket({
     setCommittedVpiUsdc(undefined)
     setCommittedPositionVpiAccrued(undefined)
     setCommittedShowsPositionVpiBalance(false)
+    setPreparedOrder(undefined)
+    setIsExecutionProtectionsLoading(false)
+    setExecutionProtectionsError(undefined)
     setFlowError(undefined)
     setCommitExecutionStatus(undefined)
     setWalletRequestWarning(undefined)
@@ -3987,6 +4097,84 @@ export function PerpsTradeTicket({
                 </p>
               </div>
 
+              {shouldShowExecutionProtections ? (
+                <details className="border border-brand-border/20 bg-app-bg p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-content-primary">
+                    Execution protections
+                  </summary>
+                  {enableLiveTrading && isExecutionProtectionsLoading ? (
+                    <p className="mt-3 text-sm text-content-secondary">
+                      Deriving protections from one coherent block…
+                    </p>
+                  ) : enableLiveTrading && executionProtectionsError ? (
+                    <p className="mt-3 text-sm text-brand-orange">
+                      {executionProtectionsError}
+                    </p>
+                  ) : displayedExecutionProtections ? (
+                    <div className="mt-3">
+                      <PreviewRows rows={[
+                        {
+                          label: 'Client order ID',
+                          value: `${displayedExecutionProtections.request.clientOrderId.slice(0, 10)}…${displayedExecutionProtections.request.clientOrderId.slice(-8)}`,
+                        },
+                        {
+                          label: 'Deadline',
+                          value: new Date(
+                            Number(displayedExecutionProtections.protection.validUntil) * 1_000
+                          ).toLocaleString(),
+                        },
+                        {
+                          label: 'Pinned regime',
+                          value: PERPS_EXECUTION_MODE_LABELS[
+                            displayedExecutionProtections.protection.executionMode
+                          ],
+                        },
+                        {
+                          label: 'Maximum account debit',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxGrossAccountDebitUsdc
+                          )} USDC`,
+                        },
+                        {
+                          label: 'Maximum action charge',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxActionChargeUsdc
+                          )} USDC`,
+                        },
+                        {
+                          label: 'Maximum explicit fees',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxExplicitFeesUsdc
+                          )} USDC`,
+                        },
+                        {
+                          label: 'Maximum leverage',
+                          value: `${(
+                            displayedExecutionProtections.protection.maxPostLeverageBps / 10_000
+                          ).toFixed(2)}x`,
+                        },
+                        {
+                          label: 'Minimum settlement balance',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.minPostSettlementBalanceUsdc
+                          )} USDC`,
+                        },
+                        {
+                          label: 'Minimum position equity',
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.minPostPositionEquityUsdc
+                          )} USDC`,
+                        },
+                      ]} />
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-content-secondary">
+                      Protections will appear after the final review is ready.
+                    </p>
+                  )}
+                </details>
+              ) : null}
+
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="text-sm font-semibold text-content-primary">Delayed execution</div>
                 <div className="mt-2 text-sm text-content-secondary">
@@ -4059,7 +4247,12 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   variant={direction === 'short' ? 'danger' : 'primary'}
-                  disabled={enableLiveTrading && Boolean(liveValidationError)}
+                  disabled={enableLiveTrading && (
+                    Boolean(liveValidationError) ||
+                    isExecutionProtectionsLoading ||
+                    Boolean(executionProtectionsError) ||
+                    preparedOrder === undefined
+                  )}
                   analyticsId="confirm_commit"
                   analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {

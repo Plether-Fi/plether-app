@@ -636,15 +636,25 @@ indexNewLogs cfg conn client = do
       if startBlock > confirmedLatest
         then pure ()
         else do
-          logsResult <-
+          routerLogsResult <-
             ethGetLogs
               client
               (cfgPerpsOrderRouter cfg)
               Perps.perpsOrderTopics
               startBlock
               endBlock
-          case logsResult of
-            Left err ->
+          lifecycleLogsResult <-
+            case cfgPerpsOrderLifecycleBook cfg of
+              Nothing -> pure $ Right []
+              Just lifecycleBook ->
+                ethGetLogs
+                  client
+                  lifecycleBook
+                  [Perps.intentRegisteredTopic, Perps.orderFinalizedTopic]
+                  startBlock
+                  endBlock
+          case (routerLogsResult, lifecycleLogsResult) of
+            (Left err, _) ->
               logWarnEvery
                 60
                 "keeper_order_logs_fetch_failed"
@@ -653,7 +663,17 @@ indexNewLogs cfg conn client = do
                 , field "to_block" endBlock
                 , field "error" $ rpcErrorText err
                 ]
-            Right logs -> do
+            (_, Left err) ->
+              logWarnEvery
+                60
+                "keeper_order_lifecycle_logs_fetch_failed"
+                "Keeper could not fetch lifecycle-book logs"
+                [ field "from_block" startBlock
+                , field "to_block" endBlock
+                , field "error" $ rpcErrorText err
+                ]
+            (Right routerLogs, Right lifecycleLogs) -> do
+              let logs = routerLogs <> lifecycleLogs
               forM_ (mapMaybe Perps.decodePerpsOrderEvent logs) (applyOrderEvent cfg conn client)
               setPerpsKeeperLastIndexedBlock conn (cfgPerpsOrderRouter cfg) endBlock
               unless (null logs) $
@@ -687,6 +707,38 @@ applyOrderEvent cfg conn client = \case
     markPerpsKeeperOrderExecuted conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
   Perps.OrderFailed {..} ->
     markPerpsKeeperOrderFailed conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeFailureReason
+  Perps.IntentRegistered {..} -> do
+    metadataResult <- readCommitMetadata cfg client poeOrderId poeBlockNumber
+    case metadataResult of
+      Nothing -> pure ()
+      Just (commitBlock, commitTime) ->
+        upsertPerpsKeeperOrderCommitted
+          conn
+          (cfgPerpsOrderRouter cfg)
+          poeOrderId
+          poeAccount
+          poeSide
+          commitBlock
+          poeBlockNumber
+          commitTime
+          poeTxHash
+  Perps.OrderFinalized {..}
+    | poeLifecycleStatus == 2 && poeTerminalReason == 1 ->
+        markPerpsKeeperOrderExecuted
+          conn
+          (cfgPerpsOrderRouter cfg)
+          poeOrderId
+          poeTxHash
+          poeBlockNumber
+          poeExecutionPrice
+    | otherwise ->
+        markPerpsKeeperOrderFailed
+          conn
+          (cfgPerpsOrderRouter cfg)
+          poeOrderId
+          poeTxHash
+          poeBlockNumber
+          poeTerminalReason
 
 readCommitMetadata :: Config -> EthClient -> Integer -> Integer -> IO (Maybe (Integer, Integer))
 readCommitMetadata cfg client orderId fallbackBlock = do
@@ -1104,7 +1156,12 @@ waitForReceipt client txHash attempts = do
 
 applyReceipt :: Config -> Connection -> [Integer] -> TxReceipt -> IO ()
 applyReceipt cfg conn targetIds receipt = do
-  let orderEvents = mapMaybe Perps.decodePerpsOrderEvent (receiptLogs receipt)
+  let decodedEvents = mapMaybe Perps.decodePerpsOrderEvent (receiptLogs receipt)
+      finalizedOrderIds =
+        [ poeOrderId
+        | Perps.OrderFinalized {..} <- decodedEvents
+        ]
+      orderEvents = filter (notSuperseded finalizedOrderIds) decodedEvents
   seenIds <- foldM applyEvent [] orderEvents
   let missingIds = filter (`notElem` seenIds) targetIds
   if receiptSucceeded receipt
@@ -1130,6 +1187,11 @@ applyReceipt cfg conn targetIds receipt = do
     , field "missing_order_event_count" $ length missingIds
     ]
   where
+    notSuperseded finalizedOrderIds = \case
+      Perps.OrderExecuted {..} -> poeOrderId `notElem` finalizedOrderIds
+      Perps.OrderFailed {..} -> poeOrderId `notElem` finalizedOrderIds
+      _ -> True
+
     applyEvent seen = \case
       Perps.OrderExecuted {..} -> do
         markPerpsKeeperOrderExecuted conn (cfgPerpsOrderRouter cfg) poeOrderId poeTxHash poeBlockNumber poeExecutionPrice
@@ -1147,6 +1209,37 @@ applyReceipt cfg conn targetIds receipt = do
           ]
         pure $ poeOrderId : seen
       Perps.OrderCommitted {} -> pure seen
+      Perps.IntentRegistered {} -> pure seen
+      Perps.OrderFinalized {..}
+        | poeLifecycleStatus == 2 && poeTerminalReason == 1 -> do
+            markPerpsKeeperOrderExecuted
+              conn
+              (cfgPerpsOrderRouter cfg)
+              poeOrderId
+              poeTxHash
+              poeBlockNumber
+              poeExecutionPrice
+            pure $ poeOrderId : seen
+        | otherwise -> do
+            markPerpsKeeperOrderFailed
+              conn
+              (cfgPerpsOrderRouter cfg)
+              poeOrderId
+              poeTxHash
+              poeBlockNumber
+              poeTerminalReason
+            logWarn
+              "keeper_order_finalized_failed"
+              "Perps order reached a canonical failed lifecycle outcome"
+              [ field "order_id" poeOrderId
+              , field "transaction_hash" poeTxHash
+              , field "block_number" poeBlockNumber
+              , field "terminal_reason_code" poeTerminalReason
+              , field "failed_constraint_code" poeFailedConstraint
+              , field "execution_mode" poeExecutionMode
+              , field "receipt_hash" poeReceiptHash
+              ]
+            pure $ poeOrderId : seen
 
 recordAllErrors :: Config -> Connection -> [Integer] -> Text -> IO ()
 recordAllErrors cfg conn orderIds err = do

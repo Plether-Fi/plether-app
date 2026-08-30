@@ -3,11 +3,15 @@ module Plether.Ethereum.Contracts.PerpsSpec (spec) where
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Base16 as B16
 import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
 import Plether.Ethereum.Abi (decodeUint256, encodeAddress, encodeInt256, encodeUint256)
 import Plether.Ethereum.Contracts.Perps
 import Plether.Ethereum.Rpc (RpcLog (..))
 import Plether.Pyth.Basket (PythPricePoint (..))
 import Test.Hspec
+
+hexText :: BS.ByteString -> Text
+hexText = TE.decodeUtf8 . B16.encode
 
 spec :: Spec
 spec = do
@@ -282,6 +286,81 @@ spec = do
             , poeFailureReason = 3
             , poeTxHash = "0x456"
             , poeBlockNumber = 125
+            }
+
+    it "decodes V2 intent identity" $ do
+      let account = "0x1111111111111111111111111111111111111111"
+          clientOrderId = BS.replicate 32 0x11
+          eventData =
+            encodeUint256 999
+              <> encodeUint256 7
+              <> clientOrderId
+              <> encodeUint256 1
+              <> BS.replicate (16 * 32) 0
+          logEntry =
+            RpcLog
+              { rpcLogTxHash = "0xintent"
+              , rpcLogBlockNumber = 126
+              , rpcLogAddress = "0xlifecycle"
+              , rpcLogTopics =
+                  [ intentRegisteredTopic
+                  , encodeUint256 42
+                  , encodeAddress account
+                  , clientOrderId
+                  ]
+              , rpcLogData = eventData
+              }
+      decodePerpsOrderEvent logEntry
+        `shouldBe` Just
+          IntentRegistered
+            { poeOrderId = 42
+            , poeAccount = account
+            , poeClientOrderId = "0x" <> hexText clientOrderId
+            , poeSide = 1
+            , poeTxHash = "0xintent"
+            , poeBlockNumber = 126
+            }
+
+    it "decodes canonical V2 OrderFinalized receipt fields" $ do
+      let account = "0x1111111111111111111111111111111111111111"
+          clientOrderId = BS.replicate 32 0x11
+          receiptHash = BS.replicate 32 0xaa
+          eventWord :: Int -> BS.ByteString
+          eventWord index
+            | index == 0 = receiptHash
+            | index == 9 = encodeUint256 2
+            | index == 10 = encodeUint256 1
+            | index == 11 = encodeUint256 1
+            | index == 14 = encodeUint256 123456
+            | index == 25 = encodeUint256 0
+            | otherwise = encodeUint256 0
+          logEntry =
+            RpcLog
+              { rpcLogTxHash = "0xreceipt"
+              , rpcLogBlockNumber = 127
+              , rpcLogAddress = "0xlifecycle"
+              , rpcLogTopics =
+                  [ orderFinalizedTopic
+                  , encodeUint256 42
+                  , encodeAddress account
+                  , clientOrderId
+                  ]
+              , rpcLogData = mconcat $ map eventWord [0 .. 45]
+              }
+      decodePerpsOrderEvent logEntry
+        `shouldBe` Just
+          OrderFinalized
+            { poeOrderId = 42
+            , poeAccount = account
+            , poeClientOrderId = "0x" <> hexText clientOrderId
+            , poeReceiptHash = "0x" <> hexText receiptHash
+            , poeLifecycleStatus = 2
+            , poeTerminalReason = 1
+            , poeExecutionMode = 1
+            , poeFailedConstraint = 0
+            , poeExecutionPrice = 123456
+            , poeTxHash = "0xreceipt"
+            , poeBlockNumber = 127
             }
 
   describe "position event account decoding" $ do

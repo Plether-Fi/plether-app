@@ -30,6 +30,7 @@ import { reconcilePimlicoUserOperation } from './operationReconciler'
 import { pimlicoSponsorshipValidUntil } from './paymasterValidity'
 import {
   DEFAULT_SPONSORED_OPERATION_LANE,
+  hasDurableSponsoredOperationOrderIntent,
   hasDurableSponsoredOperationSubmission,
   restoreSponsoredOperationLane,
   type SponsoredOperationInclusionObservation,
@@ -39,6 +40,7 @@ import type {
   ManagedUserOperationReceipt,
   PerpsAaSmartAccountRuntime,
 } from './runtimeContext'
+import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 
 export interface ExecuteSponsoredPerpsActionInput {
   manifest: PerpsAaDeploymentManifest
@@ -47,6 +49,7 @@ export interface ExecuteSponsoredPerpsActionInput {
   runtime: PerpsAaSmartAccountRuntime
   authorizationTokenToClearOnConfirmation?: Address
   authorizationNonceToClearOnConfirmation?: Hex
+  orderRequestV2?: PersistedPerpsOrderRequestV2
   lane?: string
   onStatus?: (status: SponsoredExecutionStatus) => void
   onIncluded?: (result: ExecuteSponsoredPerpsActionResult) => void
@@ -369,6 +372,7 @@ export async function executeSponsoredPerpsAction(
       action: input.action.kind,
       authorizationToken: input.authorizationTokenToClearOnConfirmation,
       authorizationNonce: input.authorizationNonceToClearOnConfirmation,
+      orderRequestV2: input.orderRequestV2,
       lane,
       walletFamily: input.runtime.walletFamily,
       walletVersion: input.runtime.walletVersion,
@@ -402,6 +406,20 @@ export async function executeSponsoredPerpsAction(
         message:
           'Pimlico returned a sponsorship format without a recoverable validity deadline',
         retryable: false,
+      })
+    }
+
+    if (
+      input.orderRequestV2 &&
+      !hasDurableSponsoredOperationOrderIntent(
+        activeTracker.id,
+        input.orderRequestV2
+      )
+    ) {
+      throw new SponsoredPreflightError({
+        reason: 'OPERATION_STORE_UNAVAILABLE',
+        message:
+          'The immutable bounded order could not be journaled before signing',
       })
     }
 

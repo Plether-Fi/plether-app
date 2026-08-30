@@ -70,6 +70,7 @@ data Config = Config
   , cfgPerpsChainId :: Integer
   , cfgPerpsUsdc :: Text
   , cfgPerpsOrderRouter :: Text
+  , cfgPerpsOrderLifecycleBook :: Maybe Text
   , cfgPerpsCfdEngine :: Text
   , cfgPerpsCfdEngineLens :: Text
   , cfgPerpsCfdEngineSettlementSidecar :: Text
@@ -385,6 +386,7 @@ loadConfig = do
       mPerpsAccountLens <- lookupEnv "PERPS_ACCOUNT_LENS"
       mPerpsUsdc <- lookupEnv "PERPS_USDC"
       mPerpsOrderRouter <- lookupEnv "PERPS_ORDER_ROUTER"
+      mPerpsOrderLifecycleBook <- nonBlankText <$> lookupEnv "PERPS_ORDER_LIFECYCLE_BOOK"
       mPerpsCfdEngine <- lookupEnv "PERPS_CFD_ENGINE"
       mPerpsCfdEngineLens <- lookupEnv "PERPS_CFD_ENGINE_LENS"
       mPerpsCfdEngineSettlementSidecar <- lookupEnv "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
@@ -693,6 +695,7 @@ loadConfig = do
                 , cfgPerpsChainId = perpsChainId
                 , cfgPerpsUsdc = T.pack perpsUsdc
                 , cfgPerpsOrderRouter = T.pack perpsOrderRouter
+                , cfgPerpsOrderLifecycleBook = mPerpsOrderLifecycleBook
                 , cfgPerpsCfdEngine = T.pack perpsCfdEngine
                 , cfgPerpsCfdEngineLens = T.pack perpsCfdEngineLens
                 , cfgPerpsCfdEngineSettlementSidecar = T.pack perpsCfdEngineSettlementSidecar

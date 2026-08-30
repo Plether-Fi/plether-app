@@ -697,6 +697,7 @@ testConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = "0x1111111111111111111111111111111111111111"
     , cfgPerpsOrderRouter = "0x2222222222222222222222222222222222222222"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = configuredCfdEngine
     , cfgPerpsCfdEngineLens = "0x7777777777777777777777777777777777777777"
     , cfgPerpsCfdEngineSettlementSidecar = "0x8888888888888888888888888888888888888888"

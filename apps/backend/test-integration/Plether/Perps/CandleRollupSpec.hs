@@ -2907,6 +2907,7 @@ candleApiConfig databaseUrl =
     , cfgPerpsChainId = testChainId
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = testRouter
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
     , cfgPerpsCfdEngineLens = ""
     , cfgPerpsCfdEngineSettlementSidecar = ""

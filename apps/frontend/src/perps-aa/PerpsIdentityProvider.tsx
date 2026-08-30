@@ -6,7 +6,8 @@ import {
   type ReactNode,
 } from 'react'
 import { getAddress, isAddress, isAddressEqual, type Address } from 'viem'
-import { useAccount } from 'wagmi'
+import { useAccount, usePublicClient } from 'wagmi'
+import { verifyPerpsV2DeploymentBindings } from '../contracts/verifyPerpsV2Bindings'
 import {
   comparePerpsIdentities,
   createPersistedPerpsIdentity,
@@ -44,6 +45,11 @@ export type PerpsAccountAddressResolver = (input: {
   signal: AbortSignal
 }) => ResolvedPerpsAccount | Promise<ResolvedPerpsAccount>
 
+export type PerpsDeploymentVerifier = (input: {
+  manifest: PerpsAaDeploymentManifest
+  signal: AbortSignal
+}) => void | Promise<void>
+
 interface AsyncIdentityResolution {
   status:
     | 'selection-required'
@@ -63,6 +69,7 @@ interface PerpsIdentityProviderProps {
   chainId?: number
   manifestUrl?: string | null
   accountAddressResolver?: PerpsAccountAddressResolver
+  deploymentVerifier?: PerpsDeploymentVerifier
   refreshIntervalMs?: number | false
   storage?: PerpsIdentityStorage | null
   fetch?: PerpsAaManifestFetch
@@ -70,7 +77,7 @@ interface PerpsIdentityProviderProps {
 
 type WagmiPerpsIdentityProviderProps = Omit<
   PerpsIdentityProviderProps,
-  'ownerAddress' | 'chainId'
+  'ownerAddress' | 'chainId' | 'deploymentVerifier'
 >
 
 const asyncInputIdentityIds = new WeakMap<object, number>()
@@ -120,6 +127,7 @@ async function resolveConfiguredIdentity(input: {
   ownerAddress: Address
   chainId: number
   accountAddressResolver: PerpsAccountAddressResolver
+  deploymentVerifier?: PerpsDeploymentVerifier
   storage: PerpsIdentityStorage | null
   fetch?: PerpsAaManifestFetch
   signal: AbortSignal
@@ -143,6 +151,18 @@ async function resolveConfiguredIdentity(input: {
       `The connected chain (${String(input.chainId)}) does not match the sponsorship manifest (${String(manifest.chainId)}).`,
       manifest
     )
+  }
+
+  if (input.deploymentVerifier !== undefined) {
+    try {
+      await input.deploymentVerifier({ manifest, signal: input.signal })
+    } catch {
+      return blockedResolution(
+        'DEPLOYMENT_BINDING_MISMATCH',
+        'Trading is blocked because the deployed Router, Engine, Clearinghouse, Pool, lifecycle book, or policy evaluator binding does not match the reviewed manifest.',
+        manifest
+      )
+    }
   }
 
   let resolvedAccount: ResolvedPerpsAccount
@@ -298,6 +318,7 @@ export function PerpsIdentityProvider({
   chainId,
   manifestUrl,
   accountAddressResolver,
+  deploymentVerifier,
   refreshIntervalMs = 30_000,
   storage: configuredStorage,
   fetch,
@@ -311,6 +332,7 @@ export function PerpsIdentityProvider({
     chainId ?? 'no-chain',
     ownerAddress?.toLowerCase() ?? 'no-owner',
     asyncInputIdentity(accountAddressResolver),
+    asyncInputIdentity(deploymentVerifier),
     asyncInputIdentity(storage),
     asyncInputIdentity(fetch),
   ].join(':')
@@ -337,6 +359,7 @@ export function PerpsIdentityProvider({
       ownerAddress,
       chainId,
       accountAddressResolver,
+      deploymentVerifier,
       storage,
       fetch,
       signal: abortController.signal,
@@ -351,6 +374,7 @@ export function PerpsIdentityProvider({
     }
   }, [
     accountAddressResolver,
+    deploymentVerifier,
     chainId,
     fetch,
     identityKey,
@@ -597,11 +621,21 @@ export function WagmiPerpsIdentityProvider(
   props: WagmiPerpsIdentityProviderProps
 ) {
   const { address: ownerAddress, chainId } = useAccount()
+  const publicClient = usePublicClient()
+  const deploymentVerifier = useCallback<PerpsDeploymentVerifier>(async ({
+    manifest,
+    signal,
+  }) => {
+    if (!manifest.orderLifecycleBook && !manifest.policyEvaluator) return
+    if (signal.aborted) return
+    await verifyPerpsV2DeploymentBindings(publicClient, manifest)
+  }, [publicClient])
   return (
     <PerpsIdentityProvider
       {...props}
       ownerAddress={ownerAddress}
       chainId={chainId}
+      deploymentVerifier={deploymentVerifier}
     />
   )
 }

@@ -1142,6 +1142,7 @@ rollupConfig =
     , cfgPerpsChainId = 421614
     , cfgPerpsUsdc = ""
     , cfgPerpsOrderRouter = "0xrouter"
+    , cfgPerpsOrderLifecycleBook = Nothing
     , cfgPerpsCfdEngine = ""
     , cfgPerpsCfdEngineLens = ""
     , cfgPerpsCfdEngineSettlementSidecar = ""

@@ -17,6 +17,8 @@ module Plether.Perps.CriticalPathFixture
   , testOrderId
   , testAccount
   , testRouter
+  , testLifecycleBook
+  , testClientOrderId
   , testEngine
   , testSidecar
   , testOracle
@@ -29,11 +31,13 @@ module Plether.Perps.CriticalPathFixture
   , terminalTxHashA
   , commitBlockHashA
   , terminalBlockHashA
+  , receiptHashA
   , committedOnlyCommitTxHash
   , commitTxHashB
   , terminalTxHashB
   , commitBlockHashB
   , terminalBlockHashB
+  , receiptHashB
   , evidenceA
   , evidenceB
   , conflictingEvidence
@@ -439,15 +443,20 @@ handleTrace stateRef rawTraceCountRef unexpectedRef request respond = do
 branchLogs :: FixtureState -> [Value]
 branchLogs state =
   case fsBranch state of
-    TerminalA -> terminalLogs branchA (fsTraceEvidence state)
-    CommittedOnly -> [committedLog branchCommitted]
+    TerminalA -> committedLogs branchA <> terminalLogs branchA (fsTraceEvidence state)
+    CommittedOnly -> committedLogs branchCommitted
     Empty -> []
-    TerminalB -> terminalLogs branchB (fsTraceEvidence state)
+    TerminalB -> committedLogs branchB <> terminalLogs branchB (fsTraceEvidence state)
+
+committedLogs :: BranchFixture -> [Value]
+committedLogs branch =
+  [ committedLog branch
+  , intentRegisteredLog branch
+  ]
 
 terminalLogs :: BranchFixture -> EvidenceFixture -> [Value]
 terminalLogs branch evidence =
-  [ committedLog branch
-  , rpcLog
+  [ rpcLog
       testEngine
       [positionClosedTopic, hexText $ encodeAddress testAccount]
       ( mconcat
@@ -463,9 +472,13 @@ terminalLogs branch evidence =
       0
       0
   , rpcLog
-      testRouter
-      [orderExecutedTopic, hexText $ encodeUint256 testOrderId]
-      (encodeUint256 $ efExecutionPrice evidence)
+      testLifecycleBook
+      [ orderFinalizedTopic
+      , hexText $ encodeUint256 testOrderId
+      , hexText $ encodeAddress testAccount
+      , testClientOrderId
+      ]
+      (orderFinalizedData branch evidence)
       (bfTerminalTxHash branch)
       terminalBlockNumber
       (bfTerminalBlockHash branch)
@@ -487,6 +500,53 @@ committedLog branch =
     (bfCommitBlockHash branch)
     0
     0
+
+intentRegisteredLog :: BranchFixture -> Value
+intentRegisteredLog branch =
+  rpcLog
+    testLifecycleBook
+    [ intentRegisteredTopic
+    , hexText $ encodeUint256 testOrderId
+    , hexText $ encodeAddress testAccount
+    , testClientOrderId
+    ]
+    intentRegisteredData
+    (bfCommitTxHash branch)
+    commitBlockNumber
+    (bfCommitBlockHash branch)
+    0
+    1
+
+intentRegisteredData :: BS.ByteString
+intentRegisteredData =
+  mconcat
+    [ if index == 0 then encodeUint256 0xd100
+      else if index == 1 then encodeUint256 250_000
+      else if index == 3 then encodeUint256 1
+      else if index == 8 then encodeUint256 (commitTimestamp + 300)
+      else if index == 9 then encodeUint256 1
+      else encodeUint256 0
+    | index <- [0 :: Int .. 19]
+    ]
+
+orderFinalizedData :: BranchFixture -> EvidenceFixture -> BS.ByteString
+orderFinalizedData branch evidence =
+  mconcat $ map eventWord [0 :: Int .. 45]
+ where
+  eventWord index
+    | index == 0 = encodeUint256 $ bfReceiptHashWord branch
+    | index == 1 = encodeUint256 terminalBlockNumber
+    | index == 2 = encodeUint256 terminalTimestamp
+    | index == 9 = encodeUint256 2
+    | index == 10 = encodeUint256 1
+    | index == 11 = encodeUint256 1
+    | index == 14 = encodeUint256 $ efExecutionPrice evidence
+    | index == 29 = encodeUint256 100_000_000
+    | index == 30 = encodeInt256 (-75_000_000)
+    | index == 31 = encodeInt256 $ efVpiUsdc evidence
+    | index == 33 = encodeUint256 $ efActivityExecutionFeeUsdc evidence
+    | index == 34 = encodeUint256 $ efFrozenCloseSpreadUsdc evidence
+    | otherwise = encodeUint256 0
 
 rpcLog
   :: Text
@@ -689,7 +749,7 @@ expectedLogsParams =
   Aeson.toJSON
     [ object
         [ "address"
-            .= [testRouter, testEngine, testClearinghouse]
+            .= [testRouter, testEngine, testClearinghouse, testLifecycleBook]
         , "topics"
             .= [map (String . hexText) perpsEventTopics]
         , "fromBlock" .= ("0x64" :: Text)
@@ -773,6 +833,7 @@ data BranchFixture = BranchFixture
   , bfTerminalTxHash :: Text
   , bfCommitBlockHash :: Text
   , bfTerminalBlockHash :: Text
+  , bfReceiptHashWord :: Integer
   }
 
 branchFixture :: CanonicalBranch -> BranchFixture
@@ -789,6 +850,7 @@ branchA =
     , bfTerminalTxHash = terminalTxHashA
     , bfCommitBlockHash = commitBlockHashA
     , bfTerminalBlockHash = terminalBlockHashA
+    , bfReceiptHashWord = 0xa003
     }
 branchCommitted =
   BranchFixture
@@ -796,6 +858,7 @@ branchCommitted =
     , bfTerminalTxHash = fixedHash 0xc002
     , bfCommitBlockHash = fixedHash 0xc100
     , bfTerminalBlockHash = fixedHash 0xc101
+    , bfReceiptHashWord = 0xc003
     }
 branchEmpty =
   BranchFixture
@@ -803,6 +866,7 @@ branchEmpty =
     , bfTerminalTxHash = fixedHash 0xe002
     , bfCommitBlockHash = fixedHash 0xe100
     , bfTerminalBlockHash = fixedHash 0xe101
+    , bfReceiptHashWord = 0xe003
     }
 branchB =
   BranchFixture
@@ -810,6 +874,7 @@ branchB =
     , bfTerminalTxHash = terminalTxHashB
     , bfCommitBlockHash = commitBlockHashB
     , bfTerminalBlockHash = terminalBlockHashB
+    , bfReceiptHashWord = 0xb003
     }
 
 testAddresses :: PerpsAddresses
@@ -817,6 +882,7 @@ testAddresses =
   PerpsAddresses
     { paUsdc = testUsdc
     , paOrderRouter = testRouter
+    , paOrderLifecycleBook = Just testLifecycleBook
     , paCfdEngine = testEngine
     , paCfdEngineLens = testLens
     , paCfdEngineSettlementSidecar = testSidecar
@@ -828,10 +894,11 @@ testChainId, testOrderId :: Integer
 testChainId = 987_654_321
 testOrderId = 42
 
-testAccount, testUsdc, testRouter, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
+testAccount, testUsdc, testRouter, testLifecycleBook, testEngine, testSidecar, testOracle, testLens, testClearinghouse, testKeeper :: Text
 testAccount = fixedAddress 0xa1
 testUsdc = fixedAddress 0xa2
 testRouter = fixedAddress 0xb1
+testLifecycleBook = fixedAddress 0xb7
 testEngine = fixedAddress 0xb2
 testSidecar = fixedAddress 0xb3
 testOracle = fixedAddress 0xb4
@@ -851,6 +918,9 @@ terminalTxHashA = fixedHash 0xa002
 commitBlockHashA = fixedHash 0xa100
 terminalBlockHashA = fixedHash 0xa101
 
+receiptHashA :: Text
+receiptHashA = fixedHash 0xa003
+
 committedOnlyCommitTxHash :: Text
 committedOnlyCommitTxHash = fixedHash 0xc001
 
@@ -859,6 +929,12 @@ commitTxHashB = fixedHash 0xb001
 terminalTxHashB = fixedHash 0xb002
 commitBlockHashB = fixedHash 0xb100
 terminalBlockHashB = fixedHash 0xb101
+
+receiptHashB :: Text
+receiptHashB = fixedHash 0xb003
+
+testClientOrderId :: Text
+testClientOrderId = fixedHash 0xd1
 
 evidenceA, evidenceB, conflictingEvidence :: EvidenceFixture
 evidenceA =
@@ -894,11 +970,15 @@ conflictingEvidence =
 executionTransactionInput :: BS.ByteString
 executionTransactionInput = executeOrderCall testOrderId []
 
-orderCommittedTopic, orderExecutedTopic, positionClosedTopic :: Text
+orderCommittedTopic, intentRegisteredTopic, orderFinalizedTopic, positionClosedTopic :: Text
 orderCommittedTopic =
   hexText $ keccak256Text "OrderCommitted(uint64,address,uint8)"
-orderExecutedTopic =
-  hexText $ keccak256Text "OrderExecuted(uint64,uint256)"
+intentRegisteredTopic =
+  hexText $ keccak256Text
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+orderFinalizedTopic =
+  hexText $ keccak256Text
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
 positionClosedTopic =
   hexText $ keccak256Text "PositionClosed(address,uint8,uint256,uint256,int256)"
 

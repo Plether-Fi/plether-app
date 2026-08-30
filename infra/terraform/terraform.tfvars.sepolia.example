@@ -79,6 +79,7 @@ vault_history_deployment_block     = "302257125"
 vault_history_confirmations        = "12"
 perps_usdc                     = "0x1647e41f49ED6D688936092B5a291c4B28106343"
 perps_order_router             = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
+perps_order_lifecycle_book     = "" # Set from the merged V2 deployment artifact before cutover.
 perps_house_pool               = "0x86939a377A78EDe8EEe5445765ac77c9016E35E2"
 perps_settlement_monitor_lens  = "0xd251AC0BD90780c48F31F575152808315200664E"
 lp_settlement_enabled          = false

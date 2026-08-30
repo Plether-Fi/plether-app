@@ -100,6 +100,8 @@ module Plether.Database.Schema
   , markPerpsExecutionEvidenceAttempt
   , updatePerpsOrderOracleEvidence
   , updatePerpsOrderEconomicsEvidence
+  , updatePerpsOrderLifecycleIdentity
+  , updatePerpsOrderLifecycleReceipt
   , insertPerpsActivity
   , insertPerpsUsdcTransfer
   , perpsOrderBaseSelectSql
@@ -1859,6 +1861,13 @@ data PerpsOrderRow = PerpsOrderRow
   , porOracleMinPublishTime :: Maybe Integer
   , porOracleMaxPublishTime :: Maybe Integer
   , porOracleDerivationVersion :: Maybe Int
+  , porClientOrderId :: Maybe Text
+  , porReceiptHash :: Maybe Text
+  , porTerminalReason :: Maybe Text
+  , porPendingReason :: Maybe Text
+  , porExecutionMode :: Maybe Text
+  , porFailedConstraint :: Maybe Text
+  , porReceiptEconomics :: Maybe Value
   , porCleanupActor :: Maybe Text
   , porActivityType :: Maybe Text
   , porActivitySizeDelta :: Maybe Integer
@@ -1889,6 +1898,13 @@ instance FromRow PerpsOrderRow where
     <*> numericIntegerField
     <*> field
     <*> numericIntegerField
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
+    <*> field
     <*> field
     <*> field
     <*> field
@@ -2437,6 +2453,20 @@ ensurePerpsHistorySchema conn = do
   _ <- execute_ conn
     "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_evidence_last_attempt_at TIMESTAMP"
   _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS client_order_id TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS receipt_hash TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS terminal_reason TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS pending_reason TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS execution_mode TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS failed_constraint TEXT"
+  _ <- execute_ conn
+    "ALTER TABLE perps_orders ADD COLUMN IF NOT EXISTS receipt_economics JSONB"
+  _ <- execute_ conn
     "UPDATE perps_orders SET order_router = '0x0000000000000000000000000000000000000000' WHERE order_router IS NULL"
   _ <- execute_ conn
     "DO $$ \
@@ -2677,6 +2707,53 @@ upsertPerpsOrderCommitted conn chainId orderRouter orderId account side txHash b
     \commit_timestamp = COALESCE(perps_orders.commit_timestamp, EXCLUDED.commit_timestamp),\
     \updated_at = NOW()"
     (chainId, normalizeRouter orderRouter, orderId, T.toLower account, side, T.toLower txHash, blockNumber, timestamp)
+  pure ()
+
+updatePerpsOrderLifecycleIdentity
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> IO ()
+updatePerpsOrderLifecycleIdentity conn chainId orderRouter orderId clientOrderId = do
+  _ <- execute conn
+    "UPDATE perps_orders SET client_order_id = ?, updated_at = NOW() \
+    \WHERE chain_id = ? AND order_router = ? AND order_id = ?"
+    (T.toLower clientOrderId, chainId, normalizeRouter orderRouter, orderId)
+  pure ()
+
+updatePerpsOrderLifecycleReceipt
+  :: Connection
+  -> Integer
+  -> Text
+  -> Integer
+  -> Text
+  -> Text
+  -> Text
+  -> Text
+  -> Maybe Text
+  -> Value
+  -> IO ()
+updatePerpsOrderLifecycleReceipt
+  conn chainId orderRouter orderId clientOrderId receiptHash terminalReason
+  executionMode failedConstraint economics = do
+  _ <- execute conn
+    "UPDATE perps_orders SET \
+    \client_order_id = ?, receipt_hash = ?, terminal_reason = ?, pending_reason = NULL, \
+    \execution_mode = ?, failed_constraint = ?, receipt_economics = ?, \
+    \execution_economics_version = 2, updated_at = NOW() \
+    \WHERE chain_id = ? AND order_router = ? AND order_id = ?"
+    ( T.toLower clientOrderId
+    , T.toLower receiptHash
+    , terminalReason
+    , executionMode
+    , failedConstraint
+    , encode economics
+    , chainId
+    , normalizeRouter orderRouter
+    , orderId
+    )
   pure ()
 
 upsertPerpsOrderTerminal
@@ -3083,24 +3160,24 @@ perpsOrderBaseSelectSql =
   \o.terminal_tx_hash, o.terminal_block_number, terminal_event.block_hash, o.terminal_timestamp, o.terminal_status, o.failure_reason, \
   \o.execution_price, o.execution_vpi_usdc, o.execution_frozen_close_spread_usdc, o.execution_economics_version, \
   \o.execution_oracle_price, o.execution_oracle_frozen, o.oracle_min_publish_time, o.oracle_max_publish_time, \
-  \o.oracle_derivation_version, o.cleanup_actor, a.activity_type, a.size_delta, a.price, a.vpi_usdc, a.pnl_usdc, \
+  \o.oracle_derivation_version, o.client_order_id, o.receipt_hash, o.terminal_reason, o.pending_reason, \
+  \o.execution_mode, o.failed_constraint, o.receipt_economics, o.cleanup_actor, \
+  \a.activity_type, a.size_delta, a.price, a.vpi_usdc, a.pnl_usdc, \
   \COALESCE(o.terminal_block_number, o.commit_block_number, 0) AS sort_block \
   \FROM perps_orders o \
   \LEFT JOIN LATERAL (\
   \  SELECT e.log_index, e.block_hash \
   \  FROM perps_events e \
   \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router \
-  \    AND e.contract_address = o.order_router \
   \    AND e.tx_hash = o.terminal_tx_hash AND e.block_number = o.terminal_block_number AND e.order_id = o.order_id \
-  \    AND e.event_name = CASE WHEN o.terminal_status = 'Executed' THEN 'OrderExecuted' ELSE 'OrderFailed' END \
+  \    AND e.event_name = 'OrderFinalized' \
   \  ORDER BY e.log_index ASC LIMIT 1\
   \) terminal_event ON TRUE \
   \LEFT JOIN LATERAL (\
   \  SELECT e.log_index \
   \  FROM perps_events e \
   \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router \
-  \    AND e.contract_address = o.order_router \
-  \    AND e.tx_hash = o.terminal_tx_hash AND e.event_name IN ('OrderExecuted', 'OrderFailed') \
+  \    AND e.tx_hash = o.terminal_tx_hash AND e.event_name = 'OrderFinalized' \
   \    AND e.log_index < terminal_event.log_index \
   \  ORDER BY e.log_index DESC LIMIT 1\
   \) previous_terminal_event ON terminal_event.log_index IS NOT NULL \
@@ -3114,7 +3191,7 @@ perpsOrderBaseSelectSql =
   \    AND (previous_terminal_event.log_index IS NULL OR a.log_index > previous_terminal_event.log_index) \
   \  ORDER BY a.log_index DESC LIMIT 1\
   \) a ON TRUE \
-  \WHERE o.chain_id = ? AND o.order_router = ?"
+  \WHERE o.chain_id = ? AND o.order_router = ? AND o.client_order_id IS NOT NULL"
 
 getPerpsOrdersByAccount :: Connection -> Integer -> Text -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsOrderRow]
 getPerpsOrdersByAccount conn chainId orderRouter account limit cursor = do

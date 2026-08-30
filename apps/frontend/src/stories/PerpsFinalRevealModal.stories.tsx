@@ -123,6 +123,8 @@ const automaticallyFinalizedOrderHistory = [
     price: '1.0259',
     size: '2 116',
     status: 'Executed',
+    account: STORY_TRADING_ACCOUNT,
+    clientOrderId: `0x${'46'.repeat(32)}`,
     commitTxHash: COMMIT_TX,
     revealTxHash: AUTO_FINALIZE_TX,
   },

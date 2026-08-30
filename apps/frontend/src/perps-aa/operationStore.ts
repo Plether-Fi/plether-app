@@ -24,6 +24,7 @@ import {
 } from './laneLock'
 import { SponsoredOperationLockedError } from './operationLockError'
 import type { ManagedUserOperation } from './runtimeContext'
+import type { PersistedPerpsOrderRequestV2 } from '../contracts/perpsOrderV2'
 
 export { SponsoredOperationLockedError } from './operationLockError'
 
@@ -42,6 +43,8 @@ export interface SponsoredOperation {
   accountMode: string
   manifestVersion: string
   action: PerpsActionKind
+  /** Immutable bounded-order intent, journaled before UserOperation signing. */
+  orderRequestV2?: PersistedPerpsOrderRequestV2
   authorizationToken?: Address
   /** EIP-3009 nonce paired with authorizationToken for owned cleanup. */
   authorizationNonce?: Hex
@@ -105,6 +108,7 @@ interface BeginSponsoredOperationInput {
   accountMode: string
   manifestVersion: string
   action: PerpsActionKind
+  orderRequestV2?: PersistedPerpsOrderRequestV2
   authorizationToken?: Address
   authorizationNonce?: Hex
   lane?: string
@@ -684,6 +688,8 @@ function mergeOperationRecord(
       preferred.userOperationHash ?? other.userOperationHash,
     signedUserOperation:
       preferred.signedUserOperation ?? other.signedUserOperation,
+    orderRequestV2:
+      preferred.orderRequestV2 ?? other.orderRequestV2,
     submissionMetadataVersion:
       preferred.submissionMetadataVersion ??
       other.submissionMetadataVersion,
@@ -3321,6 +3327,23 @@ export function hasDurableSponsoredOperationSubmission(
     return false
   } finally {
     sponsoredOperationSubmissionRevisions.delete(operationId)
+  }
+}
+
+export function hasDurableSponsoredOperationOrderIntent(
+  operationId: string,
+  expected: PersistedPerpsOrderRequestV2
+): boolean {
+  try {
+    const operation = useSponsoredOperationStore.getState().operations
+      .find((candidate) => candidate.id === operationId)
+    const journal = readExactOperationJournal(operationId)
+    return operation?.orderRequestV2 !== undefined &&
+      journal?.orderRequestV2 !== undefined &&
+      JSON.stringify(operation.orderRequestV2) === JSON.stringify(expected) &&
+      JSON.stringify(journal.orderRequestV2) === JSON.stringify(expected)
+  } catch {
+    return false
   }
 }
 

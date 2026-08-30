@@ -7,6 +7,8 @@ module Plether.Ethereum.Contracts.Perps
   , orderCommittedTopic
   , orderExecutedTopic
   , orderFailedTopic
+  , intentRegisteredTopic
+  , orderFinalizedTopic
   , perpsOrderTopics
   , positionOpenedTopic
   , positionLiquidatedTopic
@@ -100,6 +102,27 @@ data PerpsOrderEvent
       , poeTxHash :: Text
       , poeBlockNumber :: Integer
       }
+  | IntentRegistered
+      { poeOrderId :: Integer
+      , poeAccount :: Text
+      , poeClientOrderId :: Text
+      , poeSide :: Integer
+      , poeTxHash :: Text
+      , poeBlockNumber :: Integer
+      }
+  | OrderFinalized
+      { poeOrderId :: Integer
+      , poeAccount :: Text
+      , poeClientOrderId :: Text
+      , poeReceiptHash :: Text
+      , poeLifecycleStatus :: Integer
+      , poeTerminalReason :: Integer
+      , poeExecutionMode :: Integer
+      , poeFailedConstraint :: Integer
+      , poeExecutionPrice :: Integer
+      , poeTxHash :: Text
+      , poeBlockNumber :: Integer
+      }
   deriving stock (Show, Eq)
 
 data LiquidationBatchResult
@@ -152,11 +175,23 @@ orderExecutedTopic = keccak256 $ TE.encodeUtf8 "OrderExecuted(uint64,uint256)"
 orderFailedTopic :: ByteString
 orderFailedTopic = keccak256 $ TE.encodeUtf8 "OrderFailed(uint64,uint8)"
 
+intentRegisteredTopic :: ByteString
+intentRegisteredTopic =
+  keccak256 $ TE.encodeUtf8
+    "IntentRegistered(uint64,address,bytes32,bytes32,uint256,(bytes32,uint8,uint256,uint256,uint256,bool,(uint64,uint8,bytes32,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint32)))"
+
+orderFinalizedTopic :: ByteString
+orderFinalizedTopic =
+  keccak256 $ TE.encodeUtf8
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+
 perpsOrderTopics :: [ByteString]
 perpsOrderTopics =
   [ orderCommittedTopic
   , orderExecutedTopic
   , orderFailedTopic
+  , intentRegisteredTopic
+  , orderFinalizedTopic
   ]
 
 positionOpenedTopic :: ByteString
@@ -202,7 +237,41 @@ decodePerpsOrderEvent RpcLog {..} =
               , poeTxHash = rpcLogTxHash
               , poeBlockNumber = rpcLogBlockNumber
               }
+    topic : orderTopic : accountTopic : clientOrderIdTopic : _
+      | topic == intentRegisteredTopic
+          && BS.length rpcLogData == 20 * 32 ->
+          Just $
+            IntentRegistered
+              { poeOrderId = decodeUint256 orderTopic
+              , poeAccount = decodeAddress accountTopic
+              , poeClientOrderId = hexWord clientOrderIdTopic
+              , poeSide = wordAt 3 rpcLogData
+              , poeTxHash = rpcLogTxHash
+              , poeBlockNumber = rpcLogBlockNumber
+              }
+      | topic == orderFinalizedTopic
+          && BS.length rpcLogData == 46 * 32 ->
+          Just $
+            OrderFinalized
+              { poeOrderId = decodeUint256 orderTopic
+              , poeAccount = decodeAddress accountTopic
+              , poeClientOrderId = hexWord clientOrderIdTopic
+              , poeReceiptHash = hexWord $ wordBytes 0 rpcLogData
+              , poeLifecycleStatus = wordAt 9 rpcLogData
+              , poeTerminalReason = wordAt 10 rpcLogData
+              , poeExecutionMode = wordAt 11 rpcLogData
+              , poeFailedConstraint = wordAt 25 rpcLogData
+              , poeExecutionPrice = wordAt 14 rpcLogData
+              , poeTxHash = rpcLogTxHash
+              , poeBlockNumber = rpcLogBlockNumber
+              }
     _ -> Nothing
+
+wordBytes :: Int -> ByteString -> ByteString
+wordBytes index = BS.take 32 . BS.drop (index * 32)
+
+hexWord :: ByteString -> Text
+hexWord = ("0x" <>) . TE.decodeUtf8 . B16.encode
 
 decodePositionOpenedAccount :: RpcLog -> Maybe Text
 decodePositionOpenedAccount = decodeIndexedPositionAccount positionOpenedTopic

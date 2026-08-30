@@ -38,6 +38,7 @@ const analyticsMocks = vi.hoisted(() => ({
 }))
 
 const tradingMocks = vi.hoisted(() => ({
+  prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
   cleanupExpiredOrder: vi.fn(),
   depositMargin: vi.fn(),
@@ -95,6 +96,7 @@ vi.mock('wagmi', () => ({
 
 vi.mock('../../hooks', () => ({
   usePerpsTrading: () => ({
+    prepareOrder: tradingMocks.prepareOrder,
     cleanupExpiredOrder: tradingMocks.cleanupExpiredOrder,
     commitOrder: tradingMocks.commitOrder,
     depositMargin: tradingMocks.depositMargin,
@@ -143,6 +145,49 @@ describe('Perps analytics', () => {
     mockChainId = 421614
     Object.values(analyticsMocks).forEach((mock) => { mock.mockReset() })
     Object.values(tradingMocks).forEach((mock) => { mock.mockReset() })
+    tradingMocks.prepareOrder.mockResolvedValue({
+      account: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      orderRouter: '0x1111111111111111111111111111111111111111',
+      orderLifecycleBook: '0x2222222222222222222222222222222222222222',
+      request: {
+        clientOrderId: `0x${'12'.repeat(32)}`,
+        side: 0,
+        sizeDelta: 100_000_000n,
+        marginDelta: 20_000_000n,
+        targetPrice: 99_099_000n,
+        isClose: false,
+        bounds: {
+          validUntil: 1_700_000_300n,
+          allowedExecutionModes: 1,
+          expectedConfigHash: `0x${'34'.repeat(32)}`,
+          maxExecutionBountyUsdc: 10_000n,
+          maxExecutionNotionalUsdc: 100_000_000n,
+          maxGrossAccountDebitUsdc: 120_010_000n,
+          maxActionChargeUsdc: 1_000_000n,
+          maxExplicitFeesUsdc: 1_000_000n,
+          maxPostPositionSize: 100_000_000n,
+          minPostSettlementBalanceUsdc: 800_000_000n,
+          minPostPositionEquityUsdc: 20_000_000n,
+          maxPostLeverageBps: 50_000,
+        },
+      },
+      executionBountyUsdc: 10_000n,
+      reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}`,
+      reviewedPrice: 99_000_000n,
+      protection: {
+        validUntil: 1_700_000_300n,
+        executionMode: 1,
+        executionBountyUsdc: 10_000n,
+        maxGrossAccountDebitUsdc: 120_010_000n,
+        maxActionChargeUsdc: 1_000_000n,
+        maxExplicitFeesUsdc: 1_000_000n,
+        maxPostLeverageBps: 50_000,
+        minPostSettlementBalanceUsdc: 800_000_000n,
+        minPostPositionEquityUsdc: 20_000_000n,
+      },
+    })
   })
 
   it('tracks review modal opens with safe properties', async () => {
@@ -188,6 +233,9 @@ describe('Perps analytics', () => {
       initialReviewOpen: true,
     })
 
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Confirm Commit' })).toBeEnabled()
+    })
     fireEvent.click(screen.getByRole('button', { name: 'Confirm Commit' }))
 
     await waitFor(() => {
