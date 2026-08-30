@@ -1,5 +1,6 @@
 module Plether.Pyth.History
   ( BasketIngestorConfig (..)
+  , BasketHistoryActivity (..)
   , basketBackfillGridWindows
   , basketObservationId
   , decodeTradingViewCloseHistory
@@ -9,6 +10,7 @@ module Plether.Pyth.History
   , filterTradingViewHistorySamplesForPersistence
   , minimumBasketHistoryPublicationEnd
   , fetchBasketSnapshotAt
+  , fetchBasketHistoryActivity
   , legacyObservationId
   , runBasketBackfill
   , startBasketHistoryIngestor
@@ -113,6 +115,12 @@ data BasketIngestorConfig = BasketIngestorConfig
   , bicCandleLatenessSeconds :: Integer
   }
   deriving stock (Show)
+
+data BasketHistoryActivity = BasketHistoryActivity
+  { bhaFeedSymbol :: Text
+  , bhaTimestamps :: [Integer]
+  }
+  deriving stock (Eq, Show)
 
 -- | Choose the first Pyth sampling-grid timestamp to ingest. A persisted
 -- history target is authoritative when present; the relative-day window is
@@ -574,6 +582,38 @@ fetchTradingViewCloseHistory
         Just key | not (T.null $ T.strip key) ->
           [("Authorization", encodeUtf8 $ "Bearer " <> T.strip key)]
         _ -> []
+
+-- | Fetch the authenticated one-minute publication history for every basket
+-- feed without carrying closes forward or manufacturing basket samples. The
+-- recovery caller uses an empty timestamp list as negative evidence only; any
+-- returned component update keeps strict coverage disabled.
+fetchBasketHistoryActivity
+  :: Manager
+  -> Text
+  -> Maybe Text
+  -> Integer
+  -> Integer
+  -> IO (Either Text [BasketHistoryActivity])
+fetchBasketHistoryActivity manager benchmarksUrl apiKey windowStart windowEndExclusive = do
+  results <-
+    mapConcurrently
+      (\component -> do
+        result <-
+          fetchTradingViewCloseHistory
+            manager
+            benchmarksUrl
+            apiKey
+            component
+            windowStart
+            windowEndExclusive
+        pure $
+          BasketHistoryActivity (bcFeedSymbol component)
+            . map fst
+            . filter (\(timestamp, _) -> timestamp >= windowStart)
+            <$> result
+      )
+      basketComponents
+  pure $ sequence results
 
 startBasketHistoryIngestor :: Manager -> DbPool -> BasketIngestorConfig -> IO ()
 startBasketHistoryIngestor manager pool cfg = forever $ do

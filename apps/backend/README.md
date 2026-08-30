@@ -146,8 +146,8 @@ reorg discovery and deletion on both history tables.
 The protected workflow defaults `migrate` to a 60-second lock timeout; this
 schema/index operation is distinct from candle data backfill.
 
-Production backfill, repair, and controlled indexer replay run only through the
-protected `candle-admin.yml` workflow. They require
+Production backfill, repair, closed-price-gap recovery, and controlled indexer
+replay run only through the protected `candle-admin.yml` workflow. They require
 `PERPS_CANDLE_WRITE_MODE=dual` and enforce lock, statement, and absolute runtime
 limits; backfill and repair also refuse an empty canonical source domain. The
 admin and backend deployment workflows share an environment-specific
@@ -155,6 +155,16 @@ concurrency group so a deployment cannot change write mode during a mutation.
 Replay is Sepolia-only, accepts an inclusive range of at most 5,000 blocks, and
 runs from a stable deployed indexer digest without moving its canonical cursor
 or coverage certification.
+
+`recover-closed-price-gap` is also Sepolia-only. It is not a candle backfill:
+it never inserts or rewrites a price. The one-shot basket worker requires an
+empty authenticated Pyth minute-history range for all six feeds, validates the
+latest payload through the deployed Pyth contract, matches that signed state to
+the last stored signed observation, and permits the coverage-only publication
+only inside the conservative Friday 22:00–Sunday 21:00 UTC frozen window. The
+protected `from_timestamp` is the exact stored minute coverage terminal;
+`to_timestamp` is an exclusive operator-approved deadline so a delayed approval
+cannot cross into the live FX session.
 
 An arbitrary price-history start is selected with the protected
 `set-history-target` action. Selection is desired state only: the basket worker
