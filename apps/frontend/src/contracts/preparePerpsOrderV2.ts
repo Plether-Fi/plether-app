@@ -315,7 +315,8 @@ export async function preparePerpsOrderV2(
     blockNumber,
   })
 
-  const executionMode = assessments[0].mode
+  const reviewedAssessment = assessments[0]
+  const executionMode = reviewedAssessment.mode
   return {
     account: input.account,
     manifestVersion: manifest.version,
@@ -330,6 +331,11 @@ export async function preparePerpsOrderV2(
       validUntil,
       executionMode,
       executionBountyUsdc,
+      reviewedGrossAccountDebitUsdc: reviewedAssessment.grossAccountDebitUsdc,
+      reviewedActionChargeUsdc: reviewedAssessment.actionChargeAssessedUsdc,
+      reviewedExplicitFeesUsdc: reviewedAssessment.explicitFeesUsdc,
+      reviewedPostSettlementBalanceUsdc: reviewedAssessment.postSettlementBalanceUsdc,
+      reviewedPostPositionEquityUsdc: reviewedAssessment.postPositionEquityUsdc,
       maxGrossAccountDebitUsdc: bounds.maxGrossAccountDebitUsdc,
       maxActionChargeUsdc: bounds.maxActionChargeUsdc,
       maxExplicitFeesUsdc: bounds.maxExplicitFeesUsdc,

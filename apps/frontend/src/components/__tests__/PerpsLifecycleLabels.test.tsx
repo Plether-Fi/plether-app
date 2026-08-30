@@ -166,6 +166,11 @@ describe('perps lifecycle labels', () => {
         validUntil: 1_700_000_300n,
         executionMode: 1,
         executionBountyUsdc: 10_000n,
+        reviewedGrossAccountDebitUsdc: 100_000_000n,
+        reviewedActionChargeUsdc: 800_000n,
+        reviewedExplicitFeesUsdc: 900_000n,
+        reviewedPostSettlementBalanceUsdc: 810_000_000n,
+        reviewedPostPositionEquityUsdc: 21_000_000n,
         maxGrossAccountDebitUsdc: 120_010_000n,
         maxActionChargeUsdc: 1_000_000n,
         maxExplicitFeesUsdc: 1_000_000n,
@@ -174,6 +179,40 @@ describe('perps lifecycle labels', () => {
         minPostPositionEquityUsdc: 20_000_000n,
       },
     })
+  })
+
+  it('shows execution bounds as signed variance from the reviewed estimate', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialReviewOpen
+        initialSize="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={1_000_000_000n}
+      />
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Execution protections')).toBeInTheDocument()
+    })
+    expect(screen.getByText('+20.01%')).not.toBeVisible()
+
+    fireEvent.click(screen.getByText('Execution protections'))
+
+    expect(screen.getByText('+20.01%')).toBeVisible()
+    expect(screen.getByText('+25.00%')).toBeVisible()
+    expect(screen.getByText('+11.11%')).toBeVisible()
+    expect(screen.getByText('−1.23%')).toBeVisible()
+    expect(screen.getByText('−4.76%')).toBeVisible()
+    expect(screen.getByText('5.00x')).toBeVisible()
   })
 
   async function startDelayedSponsoredCommit() {
