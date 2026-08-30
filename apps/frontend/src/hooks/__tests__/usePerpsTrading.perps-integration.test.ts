@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest'
 import { createPublicClient, http, type Address } from 'viem'
 import { arbitrumSepolia } from 'viem/chains'
-import {
-  PERPS_CFD_ENGINE_LENS_ABI,
-  PERPS_ORDER_ROUTER_ABI,
-  PERPS_PUBLIC_LENS_ABI,
-} from '../../contracts/abis'
+import rawManifest from '../../../public/perps-aa-manifest.json'
+import { PERPS_PUBLIC_LENS_ABI } from '../../contracts/abis'
 import { PERPS_ARBITRUM_SEPOLIA } from '../../contracts/perpsAddresses'
-import { getPerpsTargetPrice, sizeDeltaToNotionalUsdc } from '../../utils/perps'
+import { preparePerpsOrderV2 } from '../../contracts/preparePerpsOrderV2'
+import { parsePerpsAaManifest } from '../../perps-aa/manifest'
+import { sizeDeltaToNotionalUsdc } from '../../utils/perps'
 import { resolvePerpsSizeDelta } from '../../utils/perpsOrder'
 
 const rpcUrl = process.env.ARBITRUM_SEPOLIA_RPC_URL
 const account = (process.env.PERPS_INTEGRATION_ACCOUNT ??
   '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B') as Address
+const manifest = parsePerpsAaManifest(rawManifest)
 
 const client = rpcUrl
   ? createPublicClient({
@@ -68,31 +68,24 @@ describe('perps full-close integration', () => {
       maxNotionalUsdc: positionNotional,
       oraclePrice,
     })
-    const targetPrice = getPerpsTargetPrice({
-      direction: side === 1 ? 'short' : 'long',
-      isClose: true,
-      oraclePrice,
-      slippagePercent: 0.1,
-    })
-
     expect(resolvedSizeDelta).toBe(size)
 
-    const closePreview = await client.readContract({
-      address: PERPS_ARBITRUM_SEPOLIA.cfdEngineLens,
-      abi: PERPS_CFD_ENGINE_LENS_ABI,
-      functionName: 'previewClose',
-      args: [account, resolvedSizeDelta, oraclePrice],
+    const prepared = await preparePerpsOrderV2(client, manifest, {
+      account,
+      direction: side === 1 ? 'short' : 'long',
+      side,
+      sizeDelta: resolvedSizeDelta,
+      marginDelta: 0n,
+      slippagePercent: 0.1,
+      isClose: true,
+      selectedMaxLeverageBps: 330_000,
     })
-    expect(tupleValue(closePreview, 0, 'valid')).toBe(true)
 
-    await expect(
-      client.simulateContract({
-        account,
-        address: PERPS_ARBITRUM_SEPOLIA.orderRouter,
-        abi: PERPS_ORDER_ROUTER_ABI,
-        functionName: 'commitOrder',
-        args: [side, resolvedSizeDelta, 0n, targetPrice, true],
-      })
-    ).resolves.toBeDefined()
+    expect(prepared.request.isClose).toBe(true)
+    expect(prepared.request.sizeDelta).toBe(size)
+    expect(prepared.request.bounds.expectedConfigHash).not.toBe(
+      `0x${'0'.repeat(64)}`
+    )
+    expect(prepared.request.bounds.allowedExecutionModes).toBeOneOf([1, 2, 4])
   })
 })

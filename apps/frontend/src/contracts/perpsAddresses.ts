@@ -19,12 +19,9 @@ export interface PerpsContractAddresses {
   pletherOracle: Address
   cfdEngineLens: Address
   cfdEngineAccountLens: Address
-  /** Populated only after the fresh V2 deployment has been verified. */
-  orderLifecycleBook?: Address
-  /** Populated only after the fresh V2 deployment has been verified. */
-  policyEvaluator?: Address
-  /** Populated only after the fresh V2 deployment has been verified. */
-  positionProtectionBook?: Address
+  orderLifecycleBook: Address
+  policyEvaluator: Address
+  positionProtectionBook: Address
 }
 
 export const PERPS_ARBITRUM_SEPOLIA = {
@@ -44,9 +41,7 @@ export const PERPS_ARBITRUM_SEPOLIA = {
   pletherOracle: '0xC69ec16EfB71F62984E9b2688396F34062277FdC',
   cfdEngineLens: '0x140067daAdd28bE4b04e649EEaCf6F5ECbEe8C79',
   cfdEngineAccountLens: '0x429DA61a7a616DeDD84d2a51eB6Dc1bD72427dC1',
-  // PR #71 requires a fresh deployment. These remain deliberately absent
-  // until an authoritative deployment artifact passes the binding checks.
-  orderLifecycleBook: undefined,
-  policyEvaluator: undefined,
-  positionProtectionBook: undefined,
+  orderLifecycleBook: '0xa210928a7E0AE27626B8d0E67Bbd82305438aB9E',
+  policyEvaluator: '0xaa4703B190684b5A57b8a9aA432fA043B169D171',
+  positionProtectionBook: '0xC009E2159146188b272420cF273B0fc12e5Fdfc8',
 } satisfies PerpsContractAddresses

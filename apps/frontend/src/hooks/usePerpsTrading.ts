@@ -87,7 +87,7 @@ interface ExecuteOrderResult {
 
 const PERPS_CONTRACT_ADDRESSES = new Set(
   Object.values(PERPS_ARBITRUM_SEPOLIA)
-    .flatMap((address) => address === undefined ? [] : [address.toLowerCase()])
+    .map((address) => address.toLowerCase())
 )
 const PERPS_DYNAMIC_READ_FUNCTIONS = new Set([
   'allowance',
@@ -786,9 +786,6 @@ export function usePerpsTrading() {
             'A different immutable order is already awaiting recovery. Finish or cancel that sponsored operation before reviewing another order.'
           )
         }
-        if (!sponsored.manifest.orderLifecycleBook) {
-          throw new Error('The persisted V2 order has no active lifecycle book')
-        }
         return {
           account: sponsored.accountAddress,
           manifestVersion: activeOperation.manifestVersion,
@@ -912,7 +909,6 @@ export function usePerpsTrading() {
       if (
         sponsored.manifest.version !== preparedOrder.manifestVersion ||
         !isAddressEqual(sponsored.manifest.orderRouter, preparedOrder.orderRouter) ||
-        !sponsored.manifest.orderLifecycleBook ||
         !isAddressEqual(
           sponsored.manifest.orderLifecycleBook,
           preparedOrder.orderLifecycleBook

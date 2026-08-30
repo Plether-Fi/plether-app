@@ -1758,7 +1758,7 @@ describe('perps lifecycle labels', () => {
         accountAddress: '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B',
         chainId: 421614,
         accountMode: 'simple',
-        manifestVersion: 'perps-aa-arbitrum-sepolia-v1',
+        manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
         action: 'place-order',
         lane: 'default',
         status: 'confirmed',

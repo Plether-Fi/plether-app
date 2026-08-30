@@ -172,7 +172,7 @@ executedOrderRow =
 indexerStatusRow :: PerpsIndexerStatusRow
 indexerStatusRow =
   PerpsIndexerStatusRow
-    { pisIndexerName = "perps-history-costs-v1"
+    { pisIndexerName = "perps-history-costs-v2"
     , pisChainId = 421614
     , pisReleaseRouter = "0xrouter"
     , pisLastIndexedBlock = 293_014_900

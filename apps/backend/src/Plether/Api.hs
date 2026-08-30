@@ -6,13 +6,14 @@ module Plether.Api
 import Control.Exception (evaluate)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:?))
+import Data.Aeson (FromJSON (..), ToJSON, withObject, (.:?), (.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as Key
 import qualified Data.ByteString
 import qualified Data.ByteString.Char8 as BS8
 import qualified Data.ByteString.Lazy as LBS
 import Data.Int (Int64)
+import Data.Either (isRight)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding
@@ -32,10 +33,19 @@ import Network.Wai.Middleware.Cors
   )
 import Plether.Cache (AppCache)
 import Plether.AA.Pimlico (PimlicoProxyState, handlePimlicoProxy)
-import Plether.Config (Config (..), perpsCandleRollupReadEnabled)
+import Plether.Config (AaConfig (..), Config (..), perpsCandleRollupReadEnabled)
 import Plether.Insights.Registration.Config (RegistrationConfig (..))
 import Plether.Ethereum.Client (EthClient)
 import Plether.Handlers.Protocol (getProtocolConfig, getProtocolStatus)
+import Plether.Perps.Release
+  ( perpsV2CalldataPolicy
+  , perpsV2DeploymentBlock
+  , perpsV2ManifestVersion
+  , perpsV2PolicyEvaluator
+  , perpsV2PositionProtectionBook
+  , perpsV2PublicLens
+  , validatePerpsV2ReleaseConfig
+  )
 import Plether.Handlers.Perps
   ( BasketHistoryFetch (..)
   , BasketHistoryTimings (..)
@@ -161,6 +171,40 @@ app cache client perpsClient cfg mPool manager pimlicoProxyState faucetGuardStat
   get "/api/health" $ do
     status status200
     json ("{\"status\":\"ok\"}" :: Text)
+
+  get "/api/aa/status" $ do
+    let releaseConfigured =
+          isRight $
+            validatePerpsV2ReleaseConfig
+              (cfgPerpsChainId cfg)
+              (cfgPerpsOrderRouter cfg)
+              (cfgPerpsOrderLifecycleBook cfg)
+              (cfgPerpsCfdEngine cfg)
+              (cfgPerpsMarginClearinghouse cfg)
+              (cfgPerpsHousePool cfg)
+              (cfgPerpsIndexerStartBlock cfg)
+        sponsorshipEnabled = maybe False aaSponsorshipEnabled $ cfgAaConfig cfg
+    status status200
+    json $
+      Aeson.object
+        [ "manifestVersion" .= perpsV2ManifestVersion
+        , "chainId" .= cfgPerpsChainId cfg
+        , "deploymentBlock" .= perpsV2DeploymentBlock
+        , "usdc" .= cfgPerpsUsdc cfg
+        , "orderRouter" .= cfgPerpsOrderRouter cfg
+        , "orderLifecycleBook" .= cfgPerpsOrderLifecycleBook cfg
+        , "cfdEngine" .= cfgPerpsCfdEngine cfg
+        , "marginClearinghouse" .= cfgPerpsMarginClearinghouse cfg
+        , "housePool" .= cfgPerpsHousePool cfg
+        , "policyEvaluator" .= perpsV2PolicyEvaluator
+        , "positionProtectionBook" .= perpsV2PositionProtectionBook
+        , "perpsPublicLens" .= perpsV2PublicLens
+        , "calldataPolicy" .= perpsV2CalldataPolicy
+        -- A configured lifecycle book makes startup perform the coherent-block
+        -- graph and runtime-code verification before the server can listen.
+        , "bindingsVerified" .= releaseConfigured
+        , "sponsorshipEnabled" .= sponsorshipEnabled
+        ]
 
   post "/api/testnet/faucet" $ do
     suppliedToken <- fmap LT.toStrict <$> header "X-Plether-Faucet-Proxy-Token"

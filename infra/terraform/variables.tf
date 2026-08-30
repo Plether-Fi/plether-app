@@ -220,7 +220,7 @@ variable "provision_aa_proxy" {
 
 variable "enable_aa_sponsorship" {
   type        = bool
-  default     = true
+  default     = false
   description = "Authoritative managed sponsorship issuance/submission kill switch; disable explicitly only when sponsorship must be paused."
 }
 
@@ -721,9 +721,18 @@ variable "perps_settlement_monitor_lens" {
 }
 
 variable "perps_order_lifecycle_book" {
-  description = "V2 immutable order lifecycle book; leave empty until the bounded-order deployment is ready"
+  description = "V2 immutable order lifecycle book from the pinned bounded-order deployment"
   type        = string
   default     = ""
+
+  validation {
+    condition = (
+      var.environment != "sepolia"
+      || var.perps_order_lifecycle_book == ""
+      || lower(var.perps_order_lifecycle_book) == "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e"
+    )
+    error_message = "Sepolia perps_order_lifecycle_book must be empty or the pinned bounded-V2 LifecycleBook."
+  }
 }
 
 variable "perps_plether_oracle" {

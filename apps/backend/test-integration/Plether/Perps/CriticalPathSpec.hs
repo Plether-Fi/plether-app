@@ -51,6 +51,7 @@ import Plether.Database.Schema
   , upsertPerpsKeeperOrderCommitted
   )
 import Plether.Ethereum.Client (EthClient (..))
+import Plether.Handlers.TestnetFaucetGuard (newFaucetGuardState)
 import Plether.Insights.Competition
   ( CompetitionReleaseManifest (..)
   , CompetitionRules (crSlug)
@@ -203,6 +204,7 @@ makeApiApplication
 makeApiApplication manager pool config rpcUrl = do
   cache <- newAppCache
   proxyState <- newPimlicoProxyState
+  faucetGuardState <- newFaucetGuardState
   mainRequestId <- newIORef 1
   perpsRequestId <- newIORef 1
   let client =
@@ -218,7 +220,7 @@ makeApiApplication manager pool config rpcUrl = do
           , clientRequestId = perpsRequestId
           }
   scottyApp $
-    app cache client perpsClient config (Just pool) manager proxyState
+    app cache client perpsClient config (Just pool) manager proxyState faucetGuardState
 
 withCriticalPathDatabase :: Text -> (DbPool -> IO a) -> IO a
 withCriticalPathDatabase databaseUrl action =

@@ -20,7 +20,7 @@ import Plether.Perps.HistoryIndexer
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
   , defaultPerpsAddresses
-  , perpsIndexerName
+  , perpsIndexerNameForRelease
   , runPerpsIndexer
   )
 import qualified Plether.Perps.IndexerOptions as IndexerOptions
@@ -154,7 +154,11 @@ runConfiguredIndexer invocation deploymentEnvironment envArgs cliArgs cfg =
                   , picConfirmations = waConfirmations args
                   , picBatchSize = waBatchSize args
                   , picPollIntervalMicros = max 1 (waPollSeconds args) * 1_000_000
-                  , picIndexerName = perpsIndexerName
+                  , picIndexerName =
+                      perpsIndexerNameForRelease
+                        (cfgPerpsChainId cfg)
+                        (cfgPerpsOrderRouter cfg)
+                        (cfgPerpsOrderLifecycleBook cfg)
                   , picMode = waMode args
                   , picCandleWriteMode = cfgPerpsCandleWriteMode cfg
                   , picCandleLatenessSeconds = cfgPerpsCandleLatenessSeconds cfg

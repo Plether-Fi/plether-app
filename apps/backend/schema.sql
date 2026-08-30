@@ -175,6 +175,10 @@ CREATE TABLE IF NOT EXISTS perps_indexer_state (
     CONSTRAINT perps_indexer_state_release_scope CHECK (
         indexer_name NOT LIKE 'perps-history-costs-v1:%'
         OR (release_router IS NOT NULL AND configured_start_block > 0)
+    ),
+    CONSTRAINT perps_indexer_state_v2_release_scope CHECK (
+        indexer_name NOT LIKE 'perps-history-costs-v2:%'
+        OR (release_router IS NOT NULL AND configured_start_block > 0)
     )
 );
 

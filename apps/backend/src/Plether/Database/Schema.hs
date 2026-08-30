@@ -2614,6 +2614,9 @@ ensurePerpsHistorySchema conn = do
     \PRIMARY KEY (indexer_name, chain_id),\
     \CONSTRAINT perps_indexer_state_release_scope CHECK (\
     \ indexer_name NOT LIKE 'perps-history-costs-v1:%' OR\
+    \ (release_router IS NOT NULL AND configured_start_block > 0)),\
+    \CONSTRAINT perps_indexer_state_v2_release_scope CHECK (\
+    \ indexer_name NOT LIKE 'perps-history-costs-v2:%' OR\
     \ (release_router IS NOT NULL AND configured_start_block > 0))\
     \)"
   _ <- execute_ conn
@@ -2639,6 +2642,12 @@ ensurePerpsHistorySchema conn = do
     \   AND conname = 'perps_indexer_state_release_scope') THEN\
     \   ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_release_scope CHECK (\
     \     indexer_name NOT LIKE 'perps-history-costs-v1:%' OR\
+    \     (release_router IS NOT NULL AND configured_start_block > 0)) NOT VALID;\
+    \ END IF;\
+    \ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'perps_indexer_state'::regclass\
+    \   AND conname = 'perps_indexer_state_v2_release_scope') THEN\
+    \   ALTER TABLE perps_indexer_state ADD CONSTRAINT perps_indexer_state_v2_release_scope CHECK (\
+    \     indexer_name NOT LIKE 'perps-history-costs-v2:%' OR\
     \     (release_router IS NOT NULL AND configured_start_block > 0)) NOT VALID;\
     \ END IF; END $$"
   pure ()
@@ -3240,20 +3249,20 @@ getPerpsOrderById conn chainId orderRouter orderId mAccount = do
     accountQuery =
       baseSelect <> " AND o.account = ? LIMIT 1"
 
-getPerpsActivityByAccount :: Connection -> Integer -> Text -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsActivityRow]
-getPerpsActivityByAccount conn chainId releaseRouter account limit cursor = do
+getPerpsActivityByAccount :: Connection -> Integer -> Text -> Text -> Integer -> Int -> Maybe (Integer, Integer) -> IO [PerpsActivityRow]
+getPerpsActivityByAccount conn chainId releaseRouter account startBlock limit cursor = do
   case cursor of
     Nothing ->
-      query conn baseQuery (chainId, normalizeRouter releaseRouter, T.toLower account, limit)
+      query conn baseQuery (chainId, normalizeRouter releaseRouter, T.toLower account, startBlock, limit)
     Just (cursorBlock, cursorLogIndex) ->
-      query conn cursorQuery (chainId, normalizeRouter releaseRouter, T.toLower account, cursorBlock, cursorBlock, cursorLogIndex, limit)
+      query conn cursorQuery (chainId, normalizeRouter releaseRouter, T.toLower account, startBlock, cursorBlock, cursorBlock, cursorLogIndex, limit)
   where
     baseQuery :: Query
     baseQuery =
       "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
-      \WHERE chain_id = ? AND release_router = ? AND account = ? \
+      \WHERE chain_id = ? AND release_router = ? AND account = ? AND block_number >= ? \
       \ORDER BY block_number DESC, log_index DESC LIMIT ?"
 
     cursorQuery :: Query
@@ -3261,7 +3270,7 @@ getPerpsActivityByAccount conn chainId releaseRouter account limit cursor = do
       "SELECT activity_type, release_router, contract_address, account, actor, order_id, side, price, size_delta, amount_usdc, pnl_usdc, \
       \tx_hash, block_number, timestamp, data, log_index \
       \FROM perps_account_activity \
-      \WHERE chain_id = ? AND release_router = ? AND account = ? \
+      \WHERE chain_id = ? AND release_router = ? AND account = ? AND block_number >= ? \
       \AND (block_number < ? OR (block_number = ? AND log_index < ?)) \
       \ORDER BY block_number DESC, log_index DESC LIMIT ?"
 

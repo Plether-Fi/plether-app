@@ -85,6 +85,7 @@ library
         Plether.Perps.CandleFinalizerProbe
         Plether.Perps.ClosedPriceGap
         Plether.Perps.HistoryIndexer
+        Plether.Perps.Release
         Plether.Perps.IndexerOptions
         Plether.Types.History
         Plether.Indexer
@@ -303,6 +304,7 @@ test-suite plether-api-test
         Plether.Perps.ClosedPriceGapSpec
         Plether.Perps.HistoryIndexerSpec
         Plether.Perps.IndexerOptionsSpec
+        Plether.Perps.ReleaseSpec
         Plether.Database.CandleHistorySpec
         Plether.Database.VaultPerformanceSpec
         Plether.Database.InsightsSpec

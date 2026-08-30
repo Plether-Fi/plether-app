@@ -75,11 +75,6 @@ export async function preparePerpsOrderV2(
   manifest: PerpsAaDeploymentManifest,
   input: PreparePerpsOrderV2Input
 ): Promise<PreparedPerpsOrderV2> {
-  if (!manifest.orderLifecycleBook || !manifest.policyEvaluator) {
-    throw new Error(
-      'The active sponsorship manifest does not support bounded V2 orders'
-    )
-  }
   const orderLifecycleBook = manifest.orderLifecycleBook
   const policyEvaluator = manifest.policyEvaluator
   if (input.sizeDelta <= 0n) throw new Error('Order size must be positive')

@@ -626,7 +626,6 @@ export function WagmiPerpsIdentityProvider(
     manifest,
     signal,
   }) => {
-    if (!manifest.orderLifecycleBook && !manifest.policyEvaluator) return
     if (signal.aborted) return
     await verifyPerpsV2DeploymentBindings(publicClient, manifest)
   }, [publicClient])

@@ -28,7 +28,7 @@ import Plether.Database.Schema
   , getPerpsOrderById
   , getPerpsOrdersByAccount
   )
-import Plether.Perps.HistoryIndexer (perpsIndexerName)
+import Plether.Perps.HistoryIndexer (perpsIndexerNameForRelease)
 import Plether.Types (ApiError, ApiResponse, mkResponse)
 import qualified Plether.Types.Error as E
 
@@ -45,7 +45,12 @@ getPerpsAccountOrders pool cfg mRouter account limit cursor = do
       chainId = cfgPerpsChainId cfg
       orderRouter = perpsHistoryRouter cfg mRouter
   (mIndexerStatus, rows) <- withDb pool $ \conn -> do
-    indexerStatus <- getPerpsIndexerStatus conn chainId perpsIndexerName orderRouter
+    indexerStatus <-
+      getPerpsIndexerStatus
+        conn
+        chainId
+        (perpsIndexerNameForRelease chainId orderRouter $ cfgPerpsOrderLifecycleBook cfg)
+        orderRouter
     orderRows <- getPerpsOrdersByAccount conn chainId orderRouter account pageLimit cursor
     pure (indexerStatus, orderRows)
   pure $
@@ -72,7 +77,14 @@ getPerpsAccountActivity pool cfg mRouter account limit cursor = do
       chainId = cfgPerpsChainId cfg
       orderRouter = perpsHistoryRouter cfg mRouter
   rows <- withDb pool $ \conn ->
-    getPerpsActivityByAccount conn chainId orderRouter account pageLimit cursor
+    getPerpsActivityByAccount
+      conn
+      chainId
+      orderRouter
+      account
+      (cfgPerpsIndexerStartBlock cfg)
+      pageLimit
+      cursor
   pure $
     Right $
       mkResponse (latestActivityBlock rows) chainId $
@@ -113,7 +125,11 @@ getPerpsIndexerStatusResponse
 getPerpsIndexerStatusResponse pool cfg = do
   let chainId = cfgPerpsChainId cfg
   mStatus <- withDb pool $ \conn ->
-    getPerpsIndexerStatus conn chainId perpsIndexerName (cfgPerpsOrderRouter cfg)
+    getPerpsIndexerStatus
+      conn
+      chainId
+      (perpsIndexerNameForRelease chainId (cfgPerpsOrderRouter cfg) $ cfgPerpsOrderLifecycleBook cfg)
+      (cfgPerpsOrderRouter cfg)
   pure $ case mStatus of
     Nothing ->
       Left $ E.internalError "Perps history indexer has not written state yet. Start plether-perps-indexer --once or --loop."

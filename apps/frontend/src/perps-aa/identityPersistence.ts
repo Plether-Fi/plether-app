@@ -5,7 +5,7 @@ import {
   type Address,
 } from 'viem'
 import {
-  PERPS_AA_MANIFEST_V1_PATTERN,
+  PERPS_AA_MANIFEST_V2_PATTERN,
   type PerpsSmartAccountMode,
 } from './manifest'
 
@@ -197,7 +197,7 @@ export function parsePersistedPerpsIdentity(
   )
   const isSameAddress = isAddressEqual(ownerAddress, accountAddress)
 
-  if (!PERPS_AA_MANIFEST_V1_PATTERN.test(manifestVersion)) {
+  if (!PERPS_AA_MANIFEST_V2_PATTERN.test(manifestVersion)) {
     throw new PerpsIdentityValidationError(
       'Sponsored identity manifestVersion is unsupported'
     )
