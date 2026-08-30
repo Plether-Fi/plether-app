@@ -21,6 +21,7 @@ const ORACLE_PRICE = 98_300_000n
 const CURRENT_EXPOSURE = 8_200n
 const ADDED_EXPOSURE = 5_000n
 const RESULTING_EXPOSURE = CURRENT_EXPOSURE + ADDED_EXPOSURE
+const STORY_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B'
 
 const latestBasket = {
   timestamp: 1_700_000_000,
@@ -84,6 +85,8 @@ const executedIncreaseHistory = [
     price: '1.0172',
     size: '5 000',
     status: 'Executed',
+    account: STORY_ACCOUNT,
+    clientOrderId: `0x${'72'.repeat(32)}`,
     commitTxHash: '0x7200000000000000000000000000000000000000000000000000000000000001',
     revealTxHash: '0x7200000000000000000000000000000000000000000000000000000000000002',
   },

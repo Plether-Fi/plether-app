@@ -3170,14 +3170,14 @@ perpsOrderBaseSelectSql =
   \  FROM perps_events e \
   \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router \
   \    AND e.tx_hash = o.terminal_tx_hash AND e.block_number = o.terminal_block_number AND e.order_id = o.order_id \
-  \    AND e.event_name = CASE WHEN o.receipt_hash IS NOT NULL THEN 'OrderFinalized' WHEN o.terminal_status = 'Executed' THEN 'OrderExecuted' ELSE 'OrderFailed' END \
+  \    AND e.event_name = 'OrderFinalized' \
   \  ORDER BY e.log_index ASC LIMIT 1\
   \) terminal_event ON TRUE \
   \LEFT JOIN LATERAL (\
   \  SELECT e.log_index \
   \  FROM perps_events e \
   \  WHERE e.chain_id = o.chain_id AND e.release_router = o.order_router \
-  \    AND e.tx_hash = o.terminal_tx_hash AND e.event_name IN ('OrderExecuted', 'OrderFailed', 'OrderFinalized') \
+  \    AND e.tx_hash = o.terminal_tx_hash AND e.event_name = 'OrderFinalized' \
   \    AND e.log_index < terminal_event.log_index \
   \  ORDER BY e.log_index DESC LIMIT 1\
   \) previous_terminal_event ON terminal_event.log_index IS NOT NULL \
@@ -3191,7 +3191,7 @@ perpsOrderBaseSelectSql =
   \    AND (previous_terminal_event.log_index IS NULL OR a.log_index > previous_terminal_event.log_index) \
   \  ORDER BY a.log_index DESC LIMIT 1\
   \) a ON TRUE \
-  \WHERE o.chain_id = ? AND o.order_router = ?"
+  \WHERE o.chain_id = ? AND o.order_router = ? AND o.client_order_id IS NOT NULL"
 
 getPerpsOrdersByAccount :: Connection -> Integer -> Text -> Text -> Int -> Maybe (Integer, Integer) -> IO [PerpsOrderRow]
 getPerpsOrdersByAccount conn chainId orderRouter account limit cursor = do

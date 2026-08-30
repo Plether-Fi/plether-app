@@ -56,7 +56,6 @@ import {
 import {
   getPerpsCloseInvalidReasonMessage,
   getPerpsOpenRevertMessage,
-  getPerpsOrderFailureMessage,
 } from '../utils/perpsErrors'
 import { getOpenCapacityUnavailableMessage } from '../utils/perpsTradeTicketMessages'
 import { DOCS_LINKS } from '../config/docs'
@@ -477,7 +476,6 @@ function failureReasonMessage(reason: string | undefined): string | undefined {
   const messages: Record<string, string> = {
     Expired: 'The order expired before execution. Review and create a fresh order.',
     Slippage: 'Execution exceeded the reviewed target price.',
-    SlippageExceeded: 'Execution exceeded the reviewed target price.',
     ConfigMismatch: 'Protocol configuration changed after review.',
     'Config mismatch': 'Protocol configuration changed after review.',
     ExecutionModeDisallowed: 'The market regime changed after review.',
@@ -490,16 +488,12 @@ function failureReasonMessage(reason: string | undefined): string | undefined {
     'Constraint violation': 'Execution would violate the reviewed financial bounds.',
     AccountLiquidated: 'The account was liquidated before this order executed.',
     'Account liquidated': 'The account was liquidated before this order executed.',
-    // Legacy history rows remain readable after the V2 cutover.
-    CloseOnly: getPerpsOrderFailureMessage(1),
-    EnginePanic: getPerpsOrderFailureMessage(3),
-    EngineRevert: getPerpsOrderFailureMessage(5),
   }
   return messages[reason]
 }
 
 function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
-  const detail = failureReasonMessage(order.failureReason)
+  const detail = failureReasonMessage(order.terminalReason)
     ?? `Terminal status: ${order.status}. Refresh order history for details.`
   return `Order failed: ${detail}`
 }
@@ -507,18 +501,13 @@ function terminalOrderFailureMessage(order: PerpsOrderHistoryRow): string {
 function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
   return order.status !== 'Executed'
     || (order.receiptHash !== undefined && order.executionEconomicsVersion === 2)
-    || (
-      order.oracleDerivationVersion !== undefined
-      && order.executionEconomicsVersion !== undefined
-      && order.executionOracleFrozen !== undefined
-    )
 }
 
 function terminalOrderKey(order: PerpsOrderHistoryRow): string {
   return [
     order.orderId.toString(),
     order.status,
-    order.clientOrderId?.toLowerCase() ?? '',
+    order.clientOrderId.toLowerCase(),
     order.commitTxHash?.toLowerCase() ?? '',
     order.revealTxHash?.toLowerCase() ?? '',
     order.terminalBlockNumberRaw?.toString() ?? '',
@@ -535,20 +524,8 @@ function orderMatchesCommittedIdentity(
   }
 ): boolean {
   if (order.orderId !== identity.orderId) return false
-  if (
-    order.account &&
-    order.account.toLowerCase() !== identity.account.toLowerCase()
-  ) return false
-  if (order.clientOrderId) {
-    return order.clientOrderId.toLowerCase() ===
-      identity.clientOrderId.toLowerCase()
-  }
-  if (order.commitTxHash && identity.hash) {
-    return order.commitTxHash.toLowerCase() === identity.hash.toLowerCase()
-  }
-  // Legacy API rows may not yet carry the V2 identity. The account-scoped
-  // order id remains sufficient until those rows are backfilled.
-  return true
+  return order.account.toLowerCase() === identity.account.toLowerCase()
+    && order.clientOrderId.toLowerCase() === identity.clientOrderId.toLowerCase()
 }
 
 const ORDER_LIFECYCLE_STEPS: { id: OrderLifecycleStep; label: string }[] = [

@@ -14,14 +14,14 @@ export interface PerpsOrderHistoryRow {
   price: string
   size: string
   status: string
-  account?: Hex
-  clientOrderId?: Hex
+  account: Hex
+  clientOrderId: Hex
   commitTxHash?: Hex
   revealTxHash?: Hex
   receiptHash?: Hex
   terminalBlockNumberRaw?: bigint
   terminalBlockHash?: Hex
-  failureReason?: string
+  terminalReason?: string
   pendingReason?: string
   executionMode?: string
   failedConstraint?: string
@@ -124,7 +124,6 @@ interface BackendOrderRow {
   terminalBlockHash?: string
   terminalTimestamp?: number
   terminalStatus?: string
-  failureReason?: string
   terminalReason?: string
   pendingReason?: string
   executionMode?: string
@@ -224,9 +223,8 @@ function orderKind(row: BackendOrderRow): string {
 }
 
 function orderStatus(row: BackendOrderRow): string {
-  const terminalReason = row.terminalReason ?? row.failureReason
-  if (row.terminalStatus === 'Failed' && terminalReason) {
-    return `Failed: ${orderFailureReasonLabel(terminalReason)}`
+  if (row.terminalStatus === 'Failed' && row.terminalReason) {
+    return `Failed: ${orderFailureReasonLabel(row.terminalReason)}`
   }
   if (row.terminalStatus) return row.terminalStatus
   return 'Committed'
@@ -246,11 +244,7 @@ function orderFailureReasonLabel(reason: string): string {
     'Planner rejected': 'Planner rejected',
     ConstraintViolation: 'Constraint violation',
     'Constraint violation': 'Constraint violation',
-    CloseOnly: 'Close-only',
-    SlippageExceeded: 'Slippage exceeded',
-    EnginePanic: 'Engine panic',
     AccountLiquidated: 'Account liquidated',
-    EngineRevert: 'Engine rejected',
   }[reason] ?? reason
 }
 
@@ -274,17 +268,21 @@ function orderPrice(row: BackendOrderRow): string {
 
 function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
   const orderId = parseBigInt(row.orderId)
+  const account = asHex(row.account)
+  const clientOrderId = asHex(row.clientOrderId)
   const commitTxHash = asHex(row.commitTxHash)
-  if (orderId === undefined) return undefined
+  if (
+    orderId === undefined ||
+    account === undefined ||
+    clientOrderId === undefined
+  ) return undefined
   const executionPriceRaw = parseBigInt(row.executionPrice)
   const executionOraclePriceRaw = parseBigInt(row.executionOraclePrice)
   const oracleMinPublishTimeRaw = parseBigInt(row.oracleMinPublishTime)
   const oracleMaxPublishTimeRaw = parseBigInt(row.oracleMaxPublishTime)
-  const vpiUsdcRaw = parseBigInt(
-    row.vpiUsdc ?? row.receiptEconomics?.vpiUsdc
-  )
+  const vpiUsdcRaw = parseBigInt(row.receiptEconomics?.vpiUsdc)
   const frozenCloseSpreadUsdcRaw = parseBigInt(
-    row.frozenCloseSpreadUsdc ?? row.receiptEconomics?.frozenSpreadUsdc
+    row.receiptEconomics?.frozenSpreadUsdc
   )
   const activitySizeDeltaRaw = parseBigInt(row.activitySizeDelta)
   const activityPriceRaw = parseBigInt(row.activityPrice)
@@ -299,14 +297,14 @@ function mapOrderRow(row: BackendOrderRow): PerpsOrderHistoryRow | undefined {
     price: orderPrice(row),
     size: orderSize(row),
     status: orderStatus(row),
-    account: asHex(row.account),
-    clientOrderId: asHex(row.clientOrderId),
+    account,
+    clientOrderId,
     commitTxHash,
     revealTxHash: asHex(row.terminalTxHash),
     receiptHash: asHex(row.receiptHash),
     terminalBlockNumberRaw: parseBigInt(row.terminalBlockNumber),
     terminalBlockHash: asHex(row.terminalBlockHash),
-    failureReason: row.terminalReason ?? row.failureReason,
+    terminalReason: row.terminalReason,
     pendingReason: row.pendingReason,
     executionMode: row.executionMode,
     failedConstraint: row.failedConstraint,
