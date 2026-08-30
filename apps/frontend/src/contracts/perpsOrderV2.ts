@@ -131,12 +131,6 @@ export interface PerpsExecutionProtectionSummary {
   validUntil: bigint
   executionMode: PerpsExecutionMode
   executionBountyUsdc: bigint
-  /** Current-price assessment retained as the display baseline for bounded variances. */
-  reviewedGrossAccountDebitUsdc?: bigint
-  reviewedActionChargeUsdc?: bigint
-  reviewedExplicitFeesUsdc?: bigint
-  reviewedPostSettlementBalanceUsdc?: bigint
-  reviewedPostPositionEquityUsdc?: bigint
   maxGrossAccountDebitUsdc: bigint
   maxActionChargeUsdc: bigint
   maxExplicitFeesUsdc: bigint

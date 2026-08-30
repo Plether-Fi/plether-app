@@ -749,28 +749,6 @@ function formatPercent(value: number): string {
   })}%`
 }
 
-function formatExecutionProtectionVariance(
-  boundedValue: bigint,
-  reviewedValue: bigint | undefined,
-  absoluteFallback: string
-): string {
-  if (reviewedValue === undefined || reviewedValue <= 0n) return absoluteFallback
-
-  const difference = boundedValue - reviewedValue
-  if (difference === 0n) return '0.00%'
-
-  const absoluteDifference = difference < 0n ? -difference : difference
-  const roundedBasisPoints = (
-    absoluteDifference * 10_000n + reviewedValue / 2n
-  ) / reviewedValue
-  const sign = difference < 0n ? '−' : '+'
-  if (roundedBasisPoints === 0n) return `${sign}<0.01%`
-
-  const wholePercent = roundedBasisPoints / 100n
-  const fractionalPercent = (roundedBasisPoints % 100n).toString().padStart(2, '0')
-  return `${sign}${wholePercent.toString()}.${fractionalPercent}%`
-}
-
 function formatLeverage(value: number): string {
   return `${value.toString()}x`
 }
@@ -4157,9 +4135,6 @@ export function PerpsTradeTicket({
                     </p>
                   ) : displayedExecutionProtections ? (
                     <div className="mt-3">
-                      <p className="mb-3 text-xs leading-5 text-content-secondary">
-                        Percentage limits show variance from the current-price estimate reviewed above.
-                      </p>
                       <PreviewRows rows={[
                         {
                           label: 'Client order ID',
@@ -4179,33 +4154,21 @@ export function PerpsTradeTicket({
                         },
                         {
                           label: 'Maximum account debit',
-                          value: formatExecutionProtectionVariance(
-                            displayedExecutionProtections.protection.maxGrossAccountDebitUsdc,
-                            displayedExecutionProtections.protection.reviewedGrossAccountDebitUsdc,
-                            `${formatPerpsUsdc(
-                              displayedExecutionProtections.protection.maxGrossAccountDebitUsdc
-                            )} USDC`
-                          ),
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxGrossAccountDebitUsdc
+                          )} USDC`,
                         },
                         {
                           label: 'Maximum action charge',
-                          value: formatExecutionProtectionVariance(
-                            displayedExecutionProtections.protection.maxActionChargeUsdc,
-                            displayedExecutionProtections.protection.reviewedActionChargeUsdc,
-                            `${formatPerpsUsdc(
-                              displayedExecutionProtections.protection.maxActionChargeUsdc
-                            )} USDC`
-                          ),
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxActionChargeUsdc
+                          )} USDC`,
                         },
                         {
                           label: 'Maximum explicit fees',
-                          value: formatExecutionProtectionVariance(
-                            displayedExecutionProtections.protection.maxExplicitFeesUsdc,
-                            displayedExecutionProtections.protection.reviewedExplicitFeesUsdc,
-                            `${formatPerpsUsdc(
-                              displayedExecutionProtections.protection.maxExplicitFeesUsdc
-                            )} USDC`
-                          ),
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.maxExplicitFeesUsdc
+                          )} USDC`,
                         },
                         {
                           label: 'Maximum leverage',
@@ -4215,23 +4178,15 @@ export function PerpsTradeTicket({
                         },
                         {
                           label: 'Minimum settlement balance',
-                          value: formatExecutionProtectionVariance(
-                            displayedExecutionProtections.protection.minPostSettlementBalanceUsdc,
-                            displayedExecutionProtections.protection.reviewedPostSettlementBalanceUsdc,
-                            `${formatPerpsUsdc(
-                              displayedExecutionProtections.protection.minPostSettlementBalanceUsdc
-                            )} USDC`
-                          ),
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.minPostSettlementBalanceUsdc
+                          )} USDC`,
                         },
                         {
                           label: 'Minimum position equity',
-                          value: formatExecutionProtectionVariance(
-                            displayedExecutionProtections.protection.minPostPositionEquityUsdc,
-                            displayedExecutionProtections.protection.reviewedPostPositionEquityUsdc,
-                            `${formatPerpsUsdc(
-                              displayedExecutionProtections.protection.minPostPositionEquityUsdc
-                            )} USDC`
-                          ),
+                          value: `${formatPerpsUsdc(
+                            displayedExecutionProtections.protection.minPostPositionEquityUsdc
+                          )} USDC`,
                         },
                       ]} />
                     </div>
