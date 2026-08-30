@@ -14,6 +14,7 @@ import Plether.Pyth.History
   , filterTradingViewHistorySamplesForPersistence
   , legacyObservationId
   , minimumBasketHistoryPublicationEnd
+  , pythHistoryRequestUrl
   )
 import Test.Hspec
 
@@ -62,6 +63,26 @@ spec = do
                 else bcBasePrice component
             )
             / 100_000_000
+
+    it "routes each configured feed through its explicit Pyth Pro history channel" $ do
+      map bcHistoryChannel basketComponents
+        `shouldBe`
+          [ "real_time"
+          , "real_time"
+          , "fixed_rate@200ms"
+          , "fixed_rate@200ms"
+          , "fixed_rate@200ms"
+          , "fixed_rate@200ms"
+          ]
+      map (pythHistoryRequestUrl "https://pyth.dourolabs.app/v1/") basketComponents
+        `shouldBe`
+          [ "https://pyth.dourolabs.app/v1/real_time/history"
+          , "https://pyth.dourolabs.app/v1/real_time/history"
+          , "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
+          , "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
+          , "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
+          , "https://pyth.dourolabs.app/v1/fixed_rate@200ms/history"
+          ]
 
     it "decodes matching close arrays and accepts an explicit no-data response" $ do
       decodeTradingViewCloseHistory

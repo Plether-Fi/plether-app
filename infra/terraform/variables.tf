@@ -105,6 +105,17 @@ variable "pyth_benchmarks_url" {
   default = "https://benchmarks.pyth.network"
 }
 
+variable "pyth_history_url" {
+  type        = string
+  default     = "https://pyth.dourolabs.app/v1"
+  description = "Pyth Pro History API base URL used for authenticated OHLC history after the legacy Benchmarks TradingView endpoints retired."
+
+  validation {
+    condition     = replace(lower(trimspace(var.pyth_history_url)), "/\\/+$/", "") == "https://pyth.dourolabs.app/v1"
+    error_message = "pyth_history_url must use the official Pyth Pro History API base https://pyth.dourolabs.app/v1."
+  }
+}
+
 variable "pyth_backfill_days" {
   type    = string
   default = "7"

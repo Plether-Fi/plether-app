@@ -20,6 +20,7 @@ import GHC.Generics (Generic)
 data BasketComponent = BasketComponent
   { bcSymbol :: Text
   , bcFeedSymbol :: Text
+  , bcHistoryChannel :: Text
   , bcFeedId :: Text
   , bcWeight :: Integer
   , bcBasePrice :: Integer
@@ -72,6 +73,7 @@ basketComponents =
   [ BasketComponent
       { bcSymbol = "EUR/USD"
       , bcFeedSymbol = "EUR/USD"
+      , bcHistoryChannel = "real_time"
       , bcFeedId = "0xa995d00bb36a63cef7fd2c287dc105fc8f3d93779f062f09551b0af3e81ec30b"
       , bcWeight = 576 * 10 ^ (15 :: Int)
       , bcBasePrice = 117_500_000
@@ -80,6 +82,7 @@ basketComponents =
   , BasketComponent
       { bcSymbol = "JPY/USD"
       , bcFeedSymbol = "USD/JPY"
+      , bcHistoryChannel = "real_time"
       , bcFeedId = "0xef2c98c804ba503c6a707e38be4dfbb16683775f195b091252bf24693042fd52"
       , bcWeight = 136 * 10 ^ (15 :: Int)
       , bcBasePrice = 638_000
@@ -88,6 +91,7 @@ basketComponents =
   , BasketComponent
       { bcSymbol = "GBP/USD"
       , bcFeedSymbol = "GBP/USD"
+      , bcHistoryChannel = "fixed_rate@200ms"
       , bcFeedId = "0x84c2dde9633d93d1bcad84e7dc41c9d56578b7ec52fabedc1f335d673df0a7c1"
       , bcWeight = 119 * 10 ^ (15 :: Int)
       , bcBasePrice = 134_480_000
@@ -96,6 +100,7 @@ basketComponents =
   , BasketComponent
       { bcSymbol = "CAD/USD"
       , bcFeedSymbol = "USD/CAD"
+      , bcHistoryChannel = "fixed_rate@200ms"
       , bcFeedId = "0x3112b03a41c910ed446852aacf67118cb1bec67b2cd0b9a214c58cc0eaa2ecca"
       , bcWeight = 91 * 10 ^ (15 :: Int)
       , bcBasePrice = 72_880_000
@@ -104,6 +109,7 @@ basketComponents =
   , BasketComponent
       { bcSymbol = "SEK/USD"
       , bcFeedSymbol = "USD/SEK"
+      , bcHistoryChannel = "fixed_rate@200ms"
       , bcFeedId = "0x8ccb376aa871517e807358d4e3cf0bc7fe4950474dbe6c9ffc21ef64e43fc676"
       , bcWeight = 42 * 10 ^ (15 :: Int)
       , bcBasePrice = 10_860_000
@@ -112,6 +118,7 @@ basketComponents =
   , BasketComponent
       { bcSymbol = "CHF/USD"
       , bcFeedSymbol = "USD/CHF"
+      , bcHistoryChannel = "fixed_rate@200ms"
       , bcFeedId = "0x0b1e3297e69f162877b577b0d6a47a0d63b2392bc8499e6540da4187a63e28f8"
       , bcWeight = 36 * 10 ^ (15 :: Int)
       , bcBasePrice = 126_100_000

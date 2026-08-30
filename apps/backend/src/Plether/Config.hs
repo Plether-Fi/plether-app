@@ -52,6 +52,7 @@ data Config = Config
   , cfgDatabaseUrl :: Maybe Text
   , cfgIndexerStartBlock :: Integer
   , cfgPythBenchmarksUrl :: Text
+  , cfgPythHistoryUrl :: Text
   , cfgPythHermesUrl :: Text
   , cfgPythApiKey :: Maybe Text
   , cfgPythBackfillDays :: Int
@@ -364,6 +365,7 @@ loadConfig = do
       mDatabaseUrl <- lookupEnv "DATABASE_URL"
       indexerBlockStr <- fromMaybe "0" <$> lookupEnv "INDEXER_START_BLOCK"
       pythBenchmarksUrl <- fromMaybe "https://benchmarks.pyth.network" <$> lookupEnv "PYTH_BENCHMARKS_URL"
+      pythHistoryUrl <- fromMaybe "https://pyth.dourolabs.app/v1" <$> lookupEnv "PYTH_HISTORY_URL"
       pythHermesUrl <- fromMaybe (T.unpack defaultPythHermesUrl) <$> lookupEnv "PYTH_HERMES_URL"
       mPythApiKey <- lookupEnv "PYTH_API_KEY"
       pythBackfillDaysStr <- fromMaybe "7" <$> lookupEnv "PYTH_BACKFILL_DAYS"
@@ -673,6 +675,7 @@ loadConfig = do
                 , cfgDatabaseUrl = fmap T.pack mDatabaseUrl
                 , cfgIndexerStartBlock = indexerStartBlock
                 , cfgPythBenchmarksUrl = T.pack pythBenchmarksUrl
+                , cfgPythHistoryUrl = T.pack pythHistoryUrl
                 , cfgPythHermesUrl = T.pack pythHermesUrl
                 , cfgPythApiKey = nonBlankText mPythApiKey
                 , cfgPythBackfillDays = max 1 pythBackfillDays

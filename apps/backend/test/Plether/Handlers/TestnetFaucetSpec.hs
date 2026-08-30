@@ -225,6 +225,7 @@ testConfig chainId perpsChainId =
     , cfgDatabaseUrl = Nothing
     , cfgIndexerStartBlock = 0
     , cfgPythBenchmarksUrl = "https://benchmarks.pyth.network"
+    , cfgPythHistoryUrl = "https://pyth.dourolabs.app/v1"
     , cfgPythHermesUrl = "https://hermes.pyth.network"
     , cfgPythApiKey = Nothing
     , cfgPythBackfillDays = 7

@@ -51,6 +51,7 @@ locals {
   pyth_environment = [
     { name = "PYTH_HERMES_URL", value = local.effective_pyth_hermes_url },
     { name = "PYTH_BENCHMARKS_URL", value = var.pyth_benchmarks_url },
+    { name = "PYTH_HISTORY_URL", value = var.pyth_history_url },
     { name = "PYTH_BACKFILL_DAYS", value = var.pyth_backfill_days },
     { name = "PYTH_SAMPLE_INTERVAL_SECONDS", value = var.pyth_sample_interval_seconds },
     { name = "PYTH_LATEST_MAX_AGE_SECONDS", value = var.pyth_latest_max_age_seconds },

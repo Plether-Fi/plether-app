@@ -577,8 +577,9 @@ Local URLs:
 | `INSIGHTS_ACTIVE_COMPETITION_SLUG` | No | `testnet-trading-2026` | Exact versioned competition selected for seeding, current APIs, and snapshots |
 | `INSIGHTS_COMPETITION_RELEASE_ID` | September release binding | - | Omit during registration-only activation. After contract deployment, set it to `testnet-trading-2026-09` together with explicit nonzero, pairwise-distinct addresses absent from the July manifest and a positive new indexer start; the release then binds once before the baseline and becomes immutable. |
 | `PYTH_HERMES_URL` | No | `https://pyth.dourolabs.app/hermes` | Upgraded Hermes endpoint used by the API and basket worker |
-| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes and Benchmarks, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
-| `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for historical backfills |
+| `PYTH_API_KEY` | With hosted Pyth endpoints | - | Server-only bearer token sent to Hermes, Benchmarks, and Pyth Pro History, entitled to all six basket feeds including FX; blank values fail before a hosted Hermes request |
+| `PYTH_BENCHMARKS_URL` | No | `https://benchmarks.pyth.network` | Benchmarks endpoint used for signed historical update payloads |
+| `PYTH_HISTORY_URL` | No | `https://pyth.dourolabs.app/v1` | Pyth Pro History API used for OHLC backfills and closed-market recovery evidence; the retired Benchmarks TradingView shim is not supported |
 | `PYTH_BACKFILL_DAYS` | No | `7` | Default historical backfill window |
 | `PYTH_SAMPLE_INTERVAL_SECONDS` | No | `60` | Historical backfill sample interval |
 | `PYTH_LATEST_MAX_AGE_SECONDS` | No | `10` | Maximum age accepted when promoting a latest Hermes payload to the cache; values above `10` are rejected to preserve headroom below the oracle's 15-second staleness limit |
