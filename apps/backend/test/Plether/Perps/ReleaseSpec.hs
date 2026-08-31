@@ -72,6 +72,7 @@ spec =
       mismatchCases `shouldSatisfy` all isLeft
 
     it "isolates only the pinned Sepolia release in the V2 cursor namespace" $ do
+      perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi2"
       perpsIndexerNameForRelease
         421614
         perpsV2OrderRouter

@@ -269,6 +269,39 @@ spec = do
       decodeParsedPriceFeeds [feedId] (encodePriceFeedStructs [invalidEmaConfidence])
         `shouldSatisfy` isDecodeError
 
+  describe "bounded V2 lifecycle ABI" $ do
+    it "pins the deployed OrderFinalized topic" $ do
+      hexText orderFinalizedTopic
+        `shouldBe` "449a7e19a9375343901f9775e5874784dc4e77750b1ee0f11e231f87cbe2f1af"
+
+    it "decodes the canonical terminal outcome getter" $ do
+      let receiptHash = BS.replicate 32 0xaa
+          outcomeWord :: Int -> BS.ByteString
+          outcomeWord index
+            | index == 5 = encodeUint256 3
+            | index == 6 = encodeUint256 2
+            | index == 7 = encodeUint256 1
+            | index == 10 = encodeUint256 303858802
+            | index == 15 = encodeUint256 101250000
+            | index == 20 = encodeUint256 4
+            | index == 22 = receiptHash
+            | otherwise = encodeUint256 0
+      decodeOrderTerminalOutcome (mconcat $ map outcomeWord [0 .. 22])
+        `shouldBe` Right
+          OrderTerminalOutcome
+            { otoLifecycleStatus = 3
+            , otoTerminalReason = 2
+            , otoExecutionMode = 1
+            , otoTerminalBlock = 303858802
+            , otoExecutionPrice = 101250000
+            , otoFailedConstraint = 4
+            , otoReceiptHash = receiptHash
+            }
+
+    it "rejects a non-terminal outcome" $ do
+      decodeOrderTerminalOutcome (BS.replicate (23 * 32) 0)
+        `shouldSatisfy` isDecodeError
+
   describe "decodePerpsOrderEvent" $ do
     it "decodes OrderCommitted" $ do
       let logEntry =

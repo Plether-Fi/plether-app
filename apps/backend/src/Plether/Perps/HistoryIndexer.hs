@@ -156,7 +156,7 @@ perpsIndexerName :: Text
 perpsIndexerName = "perps-history-costs-v1"
 
 perpsV2IndexerName :: Text
-perpsV2IndexerName = "perps-history-costs-v2"
+perpsV2IndexerName = "perps-history-costs-v2:finalized-abi2"
 
 perpsIndexerNameForRelease :: Integer -> Text -> Maybe Text -> Text
 perpsIndexerNameForRelease chainId router lifecycleBook
@@ -260,7 +260,7 @@ intentRegisteredTopic =
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic =
   keccak256Text
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
 
 positionOpenedTopic :: ByteString
 positionOpenedTopic = keccak256Text "PositionOpened(address,uint8,uint256,uint256,uint256)"

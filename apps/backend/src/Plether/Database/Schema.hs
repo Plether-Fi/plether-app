@@ -36,6 +36,8 @@ module Plether.Database.Schema
   , upsertPerpsKeeperOrderCommitted
   , markPerpsKeeperOrderExecuted
   , markPerpsKeeperOrderFailed
+  , reconcilePerpsKeeperOrderExecuted
+  , reconcilePerpsKeeperOrderFailed
   , recordPerpsKeeperOrderAttempt
   , recordPerpsKeeperOrderError
   , recordPerpsKeeperOrderImmediateRetryError
@@ -1276,6 +1278,48 @@ markPerpsKeeperOrderFailed conn orderRouter orderId txHash blockNumber failureRe
     \updated_at = NOW() \
     \WHERE order_router = ? AND order_id = ?"
     (T.toLower txHash, blockNumber, failureReason, normalizeRouter orderRouter, orderId)
+  pure ()
+
+-- | Reconcile canonical lifecycle state when the keeper missed the terminal
+-- event. The lifecycle outcome does not contain the Ethereum transaction hash,
+-- so these updates intentionally leave the transaction-evidence columns
+-- untouched instead of storing the receipt hash in them.
+reconcilePerpsKeeperOrderExecuted
+  :: Connection
+  -> Text    -- order_router
+  -> Integer -- order_id
+  -> Integer -- terminal_block
+  -> Integer -- execution_price
+  -> IO ()
+reconcilePerpsKeeperOrderExecuted conn orderRouter orderId blockNumber executionPrice = do
+  _ <- execute conn
+    "UPDATE perps_keeper_orders SET \
+    \status = 'executed', \
+    \execution_block = ?, \
+    \execution_price = ?, \
+    \last_error = NULL, \
+    \updated_at = NOW() \
+    \WHERE order_router = ? AND order_id = ?"
+    (blockNumber, executionPrice, normalizeRouter orderRouter, orderId)
+  pure ()
+
+reconcilePerpsKeeperOrderFailed
+  :: Connection
+  -> Text    -- order_router
+  -> Integer -- order_id
+  -> Integer -- terminal_block
+  -> Integer -- failure_reason
+  -> IO ()
+reconcilePerpsKeeperOrderFailed conn orderRouter orderId blockNumber failureReason = do
+  _ <- execute conn
+    "UPDATE perps_keeper_orders SET \
+    \status = 'failed', \
+    \failure_block = ?, \
+    \failure_reason = ?, \
+    \last_error = NULL, \
+    \updated_at = NOW() \
+    \WHERE order_router = ? AND order_id = ?"
+    (blockNumber, failureReason, normalizeRouter orderRouter, orderId)
   pure ()
 
 recordPerpsKeeperOrderAttempt :: Connection -> Text -> Integer -> IO ()

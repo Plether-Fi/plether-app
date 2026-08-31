@@ -9,9 +9,11 @@ import Plether.Database.Schema
   )
 import Plether.Keeper
   ( FreshPendingOrder (..)
+  , LifecycleRefreshAction (..)
   , LpSettlementDecision (..)
   , V2PreflightAction (..)
   , assessBatchOrderPreflight
+  , assessLifecycleRefresh
   , assessLpSettlementStatus
   , assessSingleOrderPreflight
   , isFrozenClosePayloadReady
@@ -77,6 +79,18 @@ spec = do
 
     it "does not derive expiry from a mutable max-order-age value" $ do
       isOrderPastValidUntil 111 150 `shouldBe` False
+
+  describe "lifecycle queue-head refresh" $ do
+    it "reconciles an already executed or failed queue head instead of reading its cleared policy" $ do
+      assessLifecycleRefresh 2 `shouldBe` Right ReconcileTerminalLifecycle
+      assessLifecycleRefresh 3 `shouldBe` Right ReconcileTerminalLifecycle
+
+    it "reads immutable pending policy only for a pending lifecycle order" $ do
+      assessLifecycleRefresh 1 `shouldBe` Right RefreshPendingLifecycle
+
+    it "rejects a database row that has no lifecycle intent" $ do
+      assessLifecycleRefresh 0
+        `shouldBe` Left "lifecycle book reports that the indexed order is unused"
 
   describe "nextV2GasLimit" $ do
     it "doubles the misleading estimate until V2 execution has a usable envelope" $ do
