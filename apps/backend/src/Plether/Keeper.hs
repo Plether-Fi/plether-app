@@ -1,15 +1,20 @@
 module Plether.Keeper
   ( KeeperMode (..)
   , LpSettlementDecision (..)
+  , FreshPendingOrder (..)
   , runKeeper
   , assessLpSettlementStatus
   , isLpSettlementObservationSafe
   , validateAtomicSettlementPayload
-  , isOrderExpired
+  , isOrderPastValidUntil
   , isOrderRevealReady
   , isFrozenClosePayloadReady
   , isSameBlockMevGuardError
   , selectBatchCandidates
+  , nextV2GasLimit
+  , V2PreflightAction (..)
+  , assessSingleOrderPreflight
+  , assessBatchOrderPreflight
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -52,7 +57,13 @@ import Plether.Database.Schema
   , unlockPerpsKeeperLock
   , upsertPerpsKeeperOrderCommitted
   )
-import Plether.Ethereum.Client (EthClient, RpcError (..), ethBlockNumber)
+import Plether.Ethereum.Client
+  ( CallParams (..)
+  , EthClient
+  , RpcError (..)
+  , ethBlockNumber
+  , ethCallWithTransactionGas
+  )
 import qualified Plether.Ethereum.Contracts.Perps as Perps
 import qualified Plether.Ethereum.Contracts.SettlementMonitor as SettlementMonitor
 import Plether.Ethereum.Rpc
@@ -103,8 +114,25 @@ data ExecutionIntent
 data FreshPendingOrder = FreshPendingOrder
   { fpoOrder :: PerpsKeeperOrderRow
   , fpoIsClose :: Bool
+  , fpoValidUntil :: Integer
   }
   deriving stock (Show)
+
+data OrderCallKind
+  = SingleOrderCall Integer
+  | BatchOrderCall
+  deriving stock (Show, Eq)
+
+data V2PreflightResult
+  = V2PreflightReady Integer
+  | V2PreflightDeferred Text
+
+data V2PreflightAction
+  = V2PreflightSubmit
+  | V2PreflightIncreaseGas
+  | V2PreflightDefer Text
+  | V2PreflightReject Text
+  deriving stock (Show, Eq)
 
 runKeeper :: Config -> DbPool -> EthClient -> KeeperMode -> Bool -> IO ()
 runKeeper cfg pool client mode dryRun =
@@ -487,7 +515,7 @@ executeLpSettlementTransaction cfg conn client dryRun observation target value c
             ]
         else do
           result <-
-            submitKeeperTransactionTo cfg client target value callData $ \txHash -> do
+            submitKeeperTransactionTo cfg client target value callData Nothing $ \txHash -> do
               markLpSettlementAttemptSubmitted
                 conn
                 (cfgPerpsChainId cfg)
@@ -767,17 +795,15 @@ processQueueHead cfg conn client dryRun = do
   case pending of
     [] -> pure ()
     headOrder : _ -> do
-      maxAgeResult <- Perps.maxOrderAge client (cfgPerpsOrderRouter cfg)
       settlementWindowResult <- Perps.orderSettlementWindow client (cfgPerpsPletherOracle cfg)
       chainNowResult <- ethLatestBlockTimestamp client
       latestBlockResult <- ethBlockNumber client
-      case (maxAgeResult, settlementWindowResult, chainNowResult, latestBlockResult) of
-        (Right maxAge, Right settlementWindow, Right chainNow, Right latestBlock) ->
-          decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow chainNow latestBlock
+      case (settlementWindowResult, chainNowResult, latestBlockResult) of
+        (Right settlementWindow, Right chainNow, Right latestBlock) ->
+          decideExecution cfg conn client dryRun pending headOrder settlementWindow chainNow latestBlock
         _ -> do
           let errors =
-                [ either (Just . rpcErrorText) (const Nothing) maxAgeResult
-                , either (Just . rpcErrorText) (const Nothing) settlementWindowResult
+                [ either (Just . rpcErrorText) (const Nothing) settlementWindowResult
                 , either (Just . rpcErrorText) (const Nothing) chainNowResult
                 , either (Just . rpcErrorText) (const Nothing) latestBlockResult
                 ]
@@ -799,9 +825,8 @@ decideExecution
   -> Integer
   -> Integer
   -> Integer
-  -> Integer
   -> IO ()
-decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow chainNow latestBlock = do
+decideExecution cfg conn client dryRun pending headOrder settlementWindow chainNow latestBlock = do
   freshHeadResult <- refreshPendingOrder cfg client headOrder
   case freshHeadResult of
     Left err -> do
@@ -813,7 +838,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
         [ field "order_id" $ pkorOrderId headOrder
         , field "error" err
         ]
-    Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose}
+    Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose, fpoValidUntil}
       | not (isPastCommitBlock latestBlock freshHead) ->
           logInfoEvery
             300
@@ -823,7 +848,7 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
             , field "commit_block" $ pkorCommitBlock freshHead
             , field "chain_head_block" latestBlock
             ]
-      | isOrderExpired chainNow maxAge freshHead ->
+      | isOrderPastValidUntil chainNow fpoValidUntil ->
           submitIntent cfg conn client dryRun $ CleanupExpired freshHead
       | chainNow < pkorCommitTime freshHead + 1 ->
           logInfoEvery
@@ -835,9 +860,9 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
             , field "chain_time" chainNow
             ]
       | otherwise ->
-          executeReadyHead (freshHead : drop 1 pending) freshHead freshHeadIsClose
+          executeReadyHead (drop 1 pending) freshHead freshHeadIsClose fpoValidUntil
   where
-    executeReadyHead pendingWithFreshHead freshHead freshHeadIsClose = do
+    executeReadyHead remainingPending freshHead freshHeadIsClose validUntil = do
       frozenCloseResult <- tryFrozenClosePayload freshHead freshHeadIsClose
       case frozenCloseResult of
         Left err -> do
@@ -853,9 +878,9 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
           submitIntent cfg conn client dryRun $
             ExecuteReady [freshHead] payload publishTimes updateData
         Right Nothing ->
-          executeHistoricalReadyHead pendingWithFreshHead freshHead
+          executeHistoricalReadyHead remainingPending freshHead freshHeadIsClose validUntil
 
-    executeHistoricalReadyHead pendingWithFreshHead freshHead = do
+    executeHistoricalReadyHead remainingPending freshHead freshHeadIsClose validUntil = do
       mPayload <-
         getPythUpdatePayloadForWindow
           conn
@@ -899,21 +924,22 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                     , field "error" err
                     ]
                 Right _ -> do
-                  let candidates =
-                        selectBatchCandidates
-                          chainNow
-                          latestBlock
-                          maxAge
-                          settlementWindow
-                          publishTimes
-                          (cfgKeeperMaxBatchSize cfg)
-                          pendingWithFreshHead
-                  refreshed <- refreshContiguousOrders cfg client candidates
+                  refreshedTail <-
+                    refreshContiguousOrders
+                      cfg
+                      client
+                      (take (cfgKeeperMaxBatchSize cfg - 1) remainingPending)
+                  let refreshed =
+                        FreshPendingOrder
+                          { fpoOrder = freshHead
+                          , fpoIsClose = freshHeadIsClose
+                          , fpoValidUntil = validUntil
+                          }
+                          : refreshedTail
                   let selected =
                         selectBatchCandidates
                           chainNow
                           latestBlock
-                          maxAge
                           settlementWindow
                           publishTimes
                           (cfgKeeperMaxBatchSize cfg)
@@ -971,34 +997,53 @@ decideExecution cfg conn client dryRun pending headOrder maxAge settlementWindow
                       ]
 
 refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text FreshPendingOrder)
-refreshPendingOrder cfg client order = do
-  viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) (pkorOrderId order)
-  pure $ case viewResult of
-    Right view | Perps.povOrderId view == pkorOrderId order ->
-      Right
-        FreshPendingOrder
-          { fpoOrder =
-              order
-                { pkorSide = Perps.povSide view
-                , pkorCommitBlock = Perps.povCommitBlock view
-                , pkorCommitTime = Perps.povCommitTime view
-                }
-          , fpoIsClose = Perps.povIsClose view
-          }
-    Right view ->
-      Left $
-        "router returned pending order "
-          <> T.pack (show $ Perps.povOrderId view)
-          <> " while re-reading order "
-          <> T.pack (show $ pkorOrderId order)
-    Left err ->
-      Left $
-        "could not re-read pending order "
-          <> T.pack (show $ pkorOrderId order)
-          <> ": "
-          <> rpcErrorText err
+refreshPendingOrder cfg client order =
+  case cfgPerpsOrderLifecycleBook cfg of
+    Nothing ->
+      pure $ Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V2 keeper execution"
+    Just lifecycleBook -> do
+      viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) orderId
+      policyResult <- Perps.pendingPolicyValidUntil client lifecycleBook orderId
+      pure $ case (viewResult, policyResult) of
+        (Right view, Right validUntil)
+          | Perps.povOrderId view /= orderId ->
+              Left $
+                "router returned pending order "
+                  <> T.pack (show $ Perps.povOrderId view)
+                  <> " while re-reading order "
+                  <> T.pack (show orderId)
+          | validUntil == 0 ->
+              Left $
+                "lifecycle book returned a zero validUntil while re-reading order "
+                  <> T.pack (show orderId)
+          | otherwise ->
+              Right
+                FreshPendingOrder
+                  { fpoOrder =
+                      order
+                        { pkorSide = Perps.povSide view
+                        , pkorCommitBlock = Perps.povCommitBlock view
+                        , pkorCommitTime = Perps.povCommitTime view
+                        }
+                  , fpoIsClose = Perps.povIsClose view
+                  , fpoValidUntil = validUntil
+                  }
+        (Left err, _) ->
+          Left $
+            "could not re-read pending order "
+              <> T.pack (show orderId)
+              <> ": "
+              <> rpcErrorText err
+        (_, Left err) ->
+          Left $
+            "could not read immutable pending policy for order "
+              <> T.pack (show orderId)
+              <> ": "
+              <> rpcErrorText err
+  where
+    orderId = pkorOrderId order
 
-refreshContiguousOrders :: Config -> EthClient -> [PerpsKeeperOrderRow] -> IO [PerpsKeeperOrderRow]
+refreshContiguousOrders :: Config -> EthClient -> [PerpsKeeperOrderRow] -> IO [FreshPendingOrder]
 refreshContiguousOrders _ _ [] = pure []
 refreshContiguousOrders cfg client (order : orders) = do
   result <- refreshPendingOrder cfg client order
@@ -1012,37 +1057,65 @@ refreshContiguousOrders cfg client (order : orders) = do
         , field "error" err
         ]
       pure []
-    Right freshOrder -> (fpoOrder freshOrder :) <$> refreshContiguousOrders cfg client orders
+    Right freshOrder -> (freshOrder :) <$> refreshContiguousOrders cfg client orders
 
 submitIntent :: Config -> Connection -> EthClient -> Bool -> ExecutionIntent -> IO ()
 submitIntent cfg conn client dryRun intent = do
   let targetOrders = intentOrders intent
       targetIds = map pkorOrderId targetOrders
-      callData =
+      (callKind, callData) =
         case intent of
-          CleanupExpired order -> Perps.executeOrderCall (pkorOrderId order) []
-          ExecuteReady [order] _ _ updateData -> Perps.executeOrderCall (pkorOrderId order) updateData
+          CleanupExpired order ->
+            (SingleOrderCall $ pkorOrderId order, Perps.executeOrderCall (pkorOrderId order) [])
+          ExecuteReady [order] _ _ updateData ->
+            ( SingleOrderCall $ pkorOrderId order
+            , Perps.executeOrderCall (pkorOrderId order) updateData
+            )
           ExecuteReady orders _ _ updateData ->
-            Perps.executeOrderBatchCall (maximum $ map pkorOrderId orders) updateData
+            (BatchOrderCall, Perps.executeOrderBatchCall (maximum $ map pkorOrderId orders) updateData)
   valueResult <- intentValue cfg client intent
   case valueResult of
     Left err -> recordAllErrors cfg conn targetIds err
-    Right value ->
-      if dryRun
-        then
-          logInfo
-            "keeper_transaction_dry_run"
-            "Keeper dry-run prepared a transaction"
+    Right value -> do
+      preflight <- preflightV2OrderTransaction cfg client value callKind callData
+      case preflight of
+        Left err ->
+          if dryRun
+            then
+              logWarn
+                "keeper_transaction_dry_run_failed"
+                "Keeper dry-run V2 preflight failed"
+                [ field "intent" $ describeIntent intent
+                , field "order_ids" targetIds
+                , field "error" err
+                ]
+            else recordAllErrors cfg conn targetIds err
+        Right (V2PreflightDeferred reason) ->
+          logInfoEvery
+            60
+            "keeper_transaction_deferred"
+            "V2 execution preflight made no terminal progress; no transaction was broadcast"
             [ field "intent" $ describeIntent intent
             , field "order_ids" targetIds
-            , field "value_wei" $ show value
+            , field "reason" reason
             ]
-        else do
-          forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
-          sent <- submitKeeperTransaction cfg client value callData
-          case sent of
-            Left err -> recordAllErrors cfg conn targetIds err
-            Right receipt -> applyReceipt cfg conn targetIds receipt
+        Right (V2PreflightReady gasLimit) ->
+          if dryRun
+            then
+              logInfo
+                "keeper_transaction_dry_run"
+                "Keeper dry-run passed typed V2 execution preflight"
+                [ field "intent" $ describeIntent intent
+                , field "order_ids" targetIds
+                , field "value_wei" $ show value
+                , field "gas_limit" gasLimit
+                ]
+            else do
+              forM_ targetIds (recordPerpsKeeperOrderAttempt conn (cfgPerpsOrderRouter cfg))
+              sent <- submitKeeperTransaction cfg client value callData gasLimit
+              case sent of
+                Left err -> recordAllErrors cfg conn targetIds err
+                Right receipt -> applyReceipt cfg conn targetIds receipt
 
 intentValue :: Config -> EthClient -> ExecutionIntent -> IO (Either Text Integer)
 intentValue _ _ (CleanupExpired _) = pure $ Right 0
@@ -1053,8 +1126,8 @@ intentValue cfg client (ExecuteReady orders _ _ updateData) = do
       Left err -> Left $ rpcErrorText err
       Right updateFee -> Right $ updateFee * fromIntegral (length orders)
 
-submitKeeperTransaction :: Config -> EthClient -> Integer -> ByteString -> IO (Either Text TxReceipt)
-submitKeeperTransaction cfg client value callData = do
+submitKeeperTransaction :: Config -> EthClient -> Integer -> ByteString -> Integer -> IO (Either Text TxReceipt)
+submitKeeperTransaction cfg client value callData gasLimit = do
   result <-
     submitKeeperTransactionTo
       cfg
@@ -1062,8 +1135,123 @@ submitKeeperTransaction cfg client value callData = do
       (cfgPerpsOrderRouter cfg)
       value
       callData
+      (Just gasLimit)
       (const $ pure ())
   pure $ either (Left . snd) Right result
+
+preflightV2OrderTransaction
+  :: Config
+  -> EthClient
+  -> Integer
+  -> OrderCallKind
+  -> ByteString
+  -> IO (Either Text V2PreflightResult)
+preflightV2OrderTransaction cfg client value callKind callData =
+  case cfgKeeperPrivateKey cfg of
+    Nothing -> pure $ Left "KEEPER_PRIVATE_KEY is not configured"
+    Just privateKey ->
+      deriveAddress privateKey >>= \case
+        Left err -> pure $ Left err
+        Right fromAddr -> do
+          estimatedResult <-
+            ethEstimateGas client fromAddr (cfgPerpsOrderRouter cfg) value callData
+          case estimatedResult of
+            Left err -> pure $ Left $ rpcErrorText err
+            Right estimatedGas ->
+              let initialGas = max 21_000 $ applyBuffer estimatedGas (cfgKeeperGasBufferBps cfg)
+               in if initialGas > v2OrderGasLimitCap
+                    then
+                      pure $
+                        Left $
+                          "estimated V2 order gas exceeds the keeper safety cap of "
+                            <> T.pack (show v2OrderGasLimitCap)
+                    else runPreflight fromAddr initialGas
+  where
+    runPreflight fromAddr gasLimit = do
+      callResult <-
+        ethCallWithTransactionGas
+          client
+          (CallParams (cfgPerpsOrderRouter cfg) callData)
+          fromAddr
+          value
+          gasLimit
+      case callResult of
+        Left err -> pure $ Left $ rpcErrorText err
+        Right bytes ->
+          case callKind of
+            SingleOrderCall expectedOrderId ->
+              case Perps.decodeOrderExecutionResult bytes of
+                Left err -> pure $ Left $ rpcErrorText err
+                Right result ->
+                  applyAction fromAddr gasLimit False $ assessSingleOrderPreflight expectedOrderId result
+            BatchOrderCall ->
+              case Perps.decodeOrderBatchResult bytes of
+                Left err -> pure $ Left $ rpcErrorText err
+                Right result ->
+                  applyAction
+                    fromAddr
+                    gasLimit
+                    (Perps.obrTerminalCount result > 0)
+                    (assessBatchOrderPreflight result)
+
+    applyAction fromAddr gasLimit hasProgress = \case
+      V2PreflightSubmit -> pure $ Right $ V2PreflightReady gasLimit
+      V2PreflightDefer reason -> pure $ Right $ V2PreflightDeferred reason
+      V2PreflightReject err -> pure $ Left err
+      V2PreflightIncreaseGas
+        | gasLimit < v2OrderGasLimitCap -> retryWithMoreGas fromAddr gasLimit
+        | hasProgress -> pure $ Right $ V2PreflightReady gasLimit
+        | otherwise ->
+            pure $
+              Left $
+                "V2 order execution still reports insufficient gas at the keeper safety cap of "
+                  <> T.pack (show v2OrderGasLimitCap)
+
+    retryWithMoreGas fromAddr gasLimit =
+      case nextV2GasLimit gasLimit v2OrderGasLimitCap of
+        Nothing ->
+          pure $
+            Left $
+              "V2 order execution still reports insufficient gas at the keeper safety cap of "
+                <> T.pack (show v2OrderGasLimitCap)
+        Just nextGas -> runPreflight fromAddr nextGas
+
+v2InsufficientGasReason :: Integer
+v2InsufficientGasReason = 5
+
+v2OrderGasLimitCap :: Integer
+v2OrderGasLimitCap = 30_000_000
+
+nextV2GasLimit :: Integer -> Integer -> Maybe Integer
+nextV2GasLimit currentGas maximumGas
+  | currentGas <= 0 || maximumGas <= 0 || currentGas >= maximumGas = Nothing
+  | otherwise = Just $ min maximumGas (currentGas * 2)
+
+assessSingleOrderPreflight :: Integer -> Perps.OrderExecutionResult -> V2PreflightAction
+assessSingleOrderPreflight expectedOrderId result
+  | Perps.oerOrderId result /= expectedOrderId =
+      V2PreflightReject "executeOrder preflight returned a different order ID"
+  | Perps.oerLifecycleStatus result == 1
+      && Perps.oerPendingReason result == v2InsufficientGasReason =
+      V2PreflightIncreaseGas
+  | Perps.oerLifecycleStatus result == 1 =
+      V2PreflightDefer $
+        "order remains pending with reason "
+          <> T.pack (show $ Perps.oerPendingReason result)
+  | Perps.oerLifecycleStatus result == 2
+      || Perps.oerLifecycleStatus result == 3 =
+      V2PreflightSubmit
+  | otherwise =
+      V2PreflightReject "executeOrder preflight returned no lifecycle outcome"
+
+assessBatchOrderPreflight :: Perps.OrderBatchResult -> V2PreflightAction
+assessBatchOrderPreflight result
+  | Perps.obrStopReason result == v2InsufficientGasReason = V2PreflightIncreaseGas
+  | Perps.obrTerminalCount result > 0 = V2PreflightSubmit
+  | otherwise =
+      V2PreflightDefer $
+        "batch made no terminal progress and stopped with reason "
+          <> T.pack (show $ Perps.obrStopReason result)
 
 simulateKeeperTransaction
   :: Config
@@ -1088,9 +1276,10 @@ submitKeeperTransactionTo
   -> Text
   -> Integer
   -> ByteString
+  -> Maybe Integer
   -> (Text -> IO ())
   -> IO (Either (Bool, Text) TxReceipt)
-submitKeeperTransactionTo cfg client target value callData onBroadcast =
+submitKeeperTransactionTo cfg client target value callData gasLimitOverride onBroadcast =
   case cfgKeeperPrivateKey cfg of
     Nothing -> pure $ Left (False, "KEEPER_PRIVATE_KEY is not configured")
     Just privateKey ->
@@ -1098,14 +1287,20 @@ submitKeeperTransactionTo cfg client target value callData onBroadcast =
         Left err -> pure $ Left (False, err)
         Right fromAddr -> do
           nonceResult <- ethGetTransactionCount client fromAddr
-          gasResult <- ethEstimateGas client fromAddr target value callData
+          gasResult <-
+            case gasLimitOverride of
+              Nothing -> ethEstimateGas client fromAddr target value callData
+              Just gasLimit -> pure $ Right gasLimit
           gasPriceResult <- ethGasPrice client
           priorityResult <- ethMaxPriorityFeePerGas client
           case (nonceResult, gasResult, gasPriceResult) of
             (Right nonce, Right estimatedGas, Right gasPrice) -> do
               let priorityBase = fromRight gasPrice priorityResult
                   maxFeeBase = max gasPrice priorityBase
-                  gasLimit = max 21_000 $ applyBuffer estimatedGas (cfgKeeperGasBufferBps cfg)
+                  gasLimit =
+                    case gasLimitOverride of
+                      Nothing -> max 21_000 $ applyBuffer estimatedGas (cfgKeeperGasBufferBps cfg)
+                      Just explicitGasLimit -> explicitGasLimit
                   maxPriorityFee = applyBuffer priorityBase (cfgKeeperFeeBufferBps cfg)
                   maxFee = max maxPriorityFee $ applyBuffer maxFeeBase (cfgKeeperFeeBufferBps cfg)
                   tx =
@@ -1278,9 +1473,9 @@ decodeHexUpdate value =
     Right bytes -> Right bytes
     Left err -> Left $ "invalid updateData hex: " <> T.pack err
 
-isOrderExpired :: Integer -> Integer -> PerpsKeeperOrderRow -> Bool
-isOrderExpired chainNow maxAge order =
-  maxAge > 0 && chainNow > pkorCommitTime order + maxAge
+isOrderPastValidUntil :: Integer -> Integer -> Bool
+isOrderPastValidUntil chainNow validUntil =
+  validUntil > 0 && chainNow > validUntil
 
 isOrderRevealReady :: Integer -> [Integer] -> PerpsKeeperOrderRow -> Bool
 isOrderRevealReady settlementWindow publishTimes order =
@@ -1302,21 +1497,21 @@ isSameBlockMevGuardError err =
 selectBatchCandidates
   :: Integer -- chain now
   -> Integer -- current block
-  -> Integer -- max order age
   -> Integer -- settlement window
   -> [Integer] -- payload publish times
   -> Int -- max batch size
+  -> [FreshPendingOrder]
   -> [PerpsKeeperOrderRow]
-  -> [PerpsKeeperOrderRow]
-selectBatchCandidates chainNow currentBlock maxAge settlementWindow publishTimes maxBatchSize =
-  take maxBatchSize
-    . takeWhile
-      ( \order ->
-          isPastCommitBlock currentBlock order
-            && ( isOrderExpired chainNow maxAge order
-                  || isOrderRevealReady settlementWindow publishTimes order
-               )
-      )
+selectBatchCandidates chainNow currentBlock settlementWindow publishTimes maxBatchSize =
+  map fpoOrder
+    . take maxBatchSize
+    . takeWhile isReady
+  where
+    isReady FreshPendingOrder {..} =
+      isPastCommitBlock currentBlock fpoOrder
+        && ( isOrderPastValidUntil chainNow fpoValidUntil
+              || isOrderRevealReady settlementWindow publishTimes fpoOrder
+           )
 
 isPastCommitBlock :: Integer -> PerpsKeeperOrderRow -> Bool
 isPastCommitBlock currentBlock order =

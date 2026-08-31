@@ -6,6 +6,7 @@ module Plether.Ethereum.Client
   , ethCall
   , ethCallAt
   , ethCallWithValue
+  , ethCallWithTransactionGas
   , ethCallAtBlock
   , ethBlockNumber
   , CallParams (..)
@@ -190,15 +191,39 @@ ethCall client params = ethCallAt client params Latest
 
 -- | Evaluate an @eth_call@ using an explicit JSON-RPC block tag.
 ethCallAt :: EthClient -> CallParams -> BlockTag -> IO (Either RpcError ByteString)
-ethCallAt client params blockTag = ethCallAtTag client params Nothing blockTag
+ethCallAt client params blockTag = ethCallAtTag client params Nothing Nothing Nothing blockTag
 
 ethCallWithValue :: EthClient -> CallParams -> Integer -> IO (Either RpcError ByteString)
 ethCallWithValue client params value
   | value < 0 = pure $ Left $ RpcJsonError "eth_call value cannot be negative"
-  | otherwise = ethCallAtTag client params (Just value) Latest
+  | otherwise = ethCallAtTag client params Nothing (Just value) Nothing Latest
 
-ethCallAtTag :: EthClient -> CallParams -> Maybe Integer -> BlockTag -> IO (Either RpcError ByteString)
-ethCallAtTag client CallParams {..} maybeValue blockTag =
+-- | Evaluate an @eth_call@ with the same sender, value, and gas envelope that
+-- will be used for a transaction. Some V2 contracts return a typed
+-- "insufficient gas" result instead of reverting.
+ethCallWithTransactionGas
+  :: EthClient
+  -> CallParams
+  -> Text
+  -> Integer
+  -> Integer
+  -> IO (Either RpcError ByteString)
+ethCallWithTransactionGas client params fromAddr value gasLimit
+  | T.null (T.strip fromAddr) = pure $ Left $ RpcJsonError "eth_call from address cannot be empty"
+  | value < 0 = pure $ Left $ RpcJsonError "eth_call value cannot be negative"
+  | gasLimit <= 0 = pure $ Left $ RpcJsonError "eth_call gas must be positive"
+  | otherwise =
+      ethCallAtTag client params (Just fromAddr) (Just value) (Just gasLimit) Latest
+
+ethCallAtTag
+  :: EthClient
+  -> CallParams
+  -> Maybe Text
+  -> Maybe Integer
+  -> Maybe Integer
+  -> BlockTag
+  -> IO (Either RpcError ByteString)
+ethCallAtTag client CallParams {..} maybeFrom maybeValue maybeGas blockTag =
   case renderBlockTag blockTag of
     Left err -> pure $ Left err
     Right renderedBlockTag -> do
@@ -207,7 +232,9 @@ ethCallAtTag client CallParams {..} maybeValue blockTag =
               [ "to" .= callTo
               , "data" .= ("0x" <> TE.decodeUtf8 (B16.encode callData))
               ]
+                <> maybe [] (\fromAddr -> ["from" .= fromAddr]) maybeFrom
                 <> maybe [] (\value -> ["value" .= ("0x" <> intToHex value)]) maybeValue
+                <> maybe [] (\gasLimit -> ["gas" .= ("0x" <> intToHex gasLimit)]) maybeGas
           params =
             Aeson.toJSON
               [ callObject

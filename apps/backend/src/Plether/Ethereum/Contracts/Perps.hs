@@ -1,5 +1,7 @@
 module Plether.Ethereum.Contracts.Perps
   ( PerpsOrderEvent (..)
+  , OrderExecutionResult (..)
+  , OrderBatchResult (..)
   , LiquidationBatchResult (..)
   , LiquidationBatchItem (..)
   , PendingOrderView (..)
@@ -20,6 +22,7 @@ module Plether.Ethereum.Contracts.Perps
   , decodeLiquidationBatchItem
   , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
+  , pendingPolicyValidUntil
   , getPositionSize
   , getPositionSizeAtBlock
   , decodePositionSize
@@ -38,6 +41,8 @@ module Plether.Ethereum.Contracts.Perps
   , validateUniquePythUpdateData
   , executeOrderCall
   , executeOrderBatchCall
+  , decodeOrderExecutionResult
+  , decodeOrderBatchResult
   , executeLiquidationCall
   , executeLiquidationBatchCall
   , settleLpEpochRouterCall
@@ -123,6 +128,24 @@ data PerpsOrderEvent
       , poeTxHash :: Text
       , poeBlockNumber :: Integer
       }
+  deriving stock (Show, Eq)
+
+-- | Typed return value from OrderRouter.executeOrder(uint64,bytes[]).
+data OrderExecutionResult = OrderExecutionResult
+  { oerOrderId :: Integer
+  , oerLifecycleStatus :: Integer
+  , oerTerminalReason :: Integer
+  , oerPendingReason :: Integer
+  , oerReceiptHash :: ByteString
+  }
+  deriving stock (Show, Eq)
+
+-- | Typed return value from OrderRouter.executeOrderBatch(uint64,bytes[]).
+data OrderBatchResult = OrderBatchResult
+  { obrNextOrderId :: Integer
+  , obrTerminalCount :: Integer
+  , obrStopReason :: Integer
+  }
   deriving stock (Show, Eq)
 
 data LiquidationBatchResult
@@ -319,6 +342,14 @@ getPendingOrderView :: EthClient -> Text -> Integer -> IO (Either RpcError Pendi
 getPendingOrderView client orderRouter orderId = do
   result <- ethCall client (CallParams orderRouter (getPendingOrderViewCall orderId))
   pure $ fmap decodePendingOrderView result
+
+pendingPolicyValidUntil :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+pendingPolicyValidUntil client lifecycleBook orderId = do
+  result <-
+    ethCall
+      client
+      (CallParams lifecycleBook $ encodeCall "pendingPolicy(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodePendingPolicyValidUntil
 
 getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
 getPositionSize client cfdEngine account = do
@@ -642,6 +673,9 @@ maxInt64 = 2 ^ (63 :: Integer) - 1
 maxUint64 :: Integer
 maxUint64 = 2 ^ (64 :: Integer) - 1
 
+maxUint32 :: Integer
+maxUint32 = 2 ^ (32 :: Integer) - 1
+
 getOrderExecutionPolicyCall :: Bool -> ByteString
 getOrderExecutionPolicyCall isClose =
   encodeCall "getOrderExecutionPolicy(bool)" [encodeBool isClose]
@@ -667,6 +701,55 @@ executeOrderBatchCall maxOrderId updateData =
     , encodeUint256 64
     , encodeBytesArray updateData
     ]
+
+decodeOrderExecutionResult :: ByteString -> Either RpcError OrderExecutionResult
+decodeOrderExecutionResult bytes
+  | BS.length bytes /= 5 * 32 =
+      Left $ RpcJsonError "executeOrder returned an invalid ExecutionResult length"
+  | orderId > maxUint64 =
+      Left $ RpcJsonError "executeOrder returned an out-of-range order ID"
+  | lifecycleStatus > 3 =
+      Left $ RpcJsonError "executeOrder returned an invalid lifecycle status"
+  | terminalReason > 9 =
+      Left $ RpcJsonError "executeOrder returned an invalid terminal reason"
+  | pendingReason > 9 =
+      Left $ RpcJsonError "executeOrder returned an invalid pending reason"
+  | otherwise =
+      Right
+        OrderExecutionResult
+          { oerOrderId = orderId
+          , oerLifecycleStatus = lifecycleStatus
+          , oerTerminalReason = terminalReason
+          , oerPendingReason = pendingReason
+          , oerReceiptHash = wordBytesAt 4 bytes
+          }
+  where
+    orderId = wordAt 0 bytes
+    lifecycleStatus = wordAt 1 bytes
+    terminalReason = wordAt 2 bytes
+    pendingReason = wordAt 3 bytes
+
+decodeOrderBatchResult :: ByteString -> Either RpcError OrderBatchResult
+decodeOrderBatchResult bytes
+  | BS.length bytes /= 3 * 32 =
+      Left $ RpcJsonError "executeOrderBatch returned an invalid BatchResult length"
+  | nextOrderId > maxUint64 =
+      Left $ RpcJsonError "executeOrderBatch returned an out-of-range next order ID"
+  | terminalCount > maxUint32 =
+      Left $ RpcJsonError "executeOrderBatch returned an out-of-range terminal count"
+  | stopReason > 9 =
+      Left $ RpcJsonError "executeOrderBatch returned an invalid pending reason"
+  | otherwise =
+      Right
+        OrderBatchResult
+          { obrNextOrderId = nextOrderId
+          , obrTerminalCount = terminalCount
+          , obrStopReason = stopReason
+          }
+  where
+    nextOrderId = wordAt 0 bytes
+    terminalCount = wordAt 1 bytes
+    stopReason = wordAt 2 bytes
 
 executeLiquidationCall :: Text -> [ByteString] -> ByteString
 executeLiquidationCall account updateData =
@@ -722,6 +805,16 @@ decodePendingOrderView bytes =
     , povExecutionBountyUsdc = wordAt 9 bytes
     , povNextAccountOrderId = wordAt 10 bytes
     }
+
+decodePendingPolicyValidUntil :: ByteString -> Either RpcError Integer
+decodePendingPolicyValidUntil bytes
+  | BS.length bytes < 32 =
+      Left $ RpcJsonError "pendingPolicy(uint64) returned no ABI words"
+  | validUntil > maxUint64 =
+      Left $ RpcJsonError "pendingPolicy(uint64) returned an out-of-range validUntil"
+  | otherwise = Right validUntil
+  where
+    validUntil = wordAt 0 bytes
 
 decodeOrderExecutionPolicy :: ByteString -> OrderExecutionPolicy
 decodeOrderExecutionPolicy bytes =
