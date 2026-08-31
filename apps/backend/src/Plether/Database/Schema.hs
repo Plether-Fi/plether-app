@@ -104,6 +104,7 @@ module Plether.Database.Schema
   , updatePerpsOrderEconomicsEvidence
   , updatePerpsOrderLifecycleIdentity
   , updatePerpsOrderLifecycleReceipt
+  , updatePerpsOrderLifecycleReceiptSql
   , insertPerpsActivity
   , insertPerpsUsdcTransfer
   , perpsOrderBaseSelectSql
@@ -2785,19 +2786,18 @@ updatePerpsOrderLifecycleReceipt
   -> Text
   -> Text
   -> Text
+  -> Text
   -> Maybe Text
   -> Value
   -> IO ()
 updatePerpsOrderLifecycleReceipt
-  conn chainId orderRouter orderId clientOrderId receiptHash terminalReason
+  conn chainId orderRouter orderId account clientOrderId receiptHash terminalReason
   executionMode failedConstraint economics = do
-  _ <- execute conn
-    "UPDATE perps_orders SET \
-    \client_order_id = ?, receipt_hash = ?, terminal_reason = ?, pending_reason = NULL, \
-    \execution_mode = ?, failed_constraint = ?, receipt_economics = ?, \
-    \execution_economics_version = 2, updated_at = NOW() \
-    \WHERE chain_id = ? AND order_router = ? AND order_id = ?"
-    ( T.toLower clientOrderId
+  let normalizedAccount = T.toLower account
+  affected <- execute conn
+    updatePerpsOrderLifecycleReceiptSql
+    ( normalizedAccount
+    , T.toLower clientOrderId
     , T.toLower receiptHash
     , terminalReason
     , executionMode
@@ -2806,8 +2806,20 @@ updatePerpsOrderLifecycleReceipt
     , chainId
     , normalizeRouter orderRouter
     , orderId
+    , normalizedAccount
     )
-  pure ()
+  unless (affected == 1) $
+    fail "Lifecycle receipt account conflicts with the canonical order identity"
+
+updatePerpsOrderLifecycleReceiptSql :: Query
+updatePerpsOrderLifecycleReceiptSql =
+  "UPDATE perps_orders SET \
+  \account = COALESCE(perps_orders.account, ?), client_order_id = ?, \
+  \receipt_hash = ?, terminal_reason = ?, pending_reason = NULL, \
+  \execution_mode = ?, failed_constraint = ?, receipt_economics = ?, \
+  \execution_economics_version = 2, updated_at = NOW() \
+  \WHERE chain_id = ? AND order_router = ? AND order_id = ? \
+  \AND (account IS NULL OR account = ?)"
 
 upsertPerpsOrderTerminal
   :: Connection

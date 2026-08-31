@@ -15,17 +15,21 @@ import Data.Word (Word8)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Perps.HistoryIndexer
   ( BlockInfo (..)
+  , PerpsAddresses (..)
   , ParsedPerpsLog (..)
   , RpcLog (..)
   , TradeCosts (..)
+  , applyPerpsAddressEnvironment
   , canCertifyIndexedRange
   , decodeCloseTradeCosts
   , decodeOpenTradeCosts
   , decodeReplayTradeCosts
+  , defaultPerpsAddresses
   , isMarketVolumeActivity
   , orderFailReasonName
   , parsePerpsLog
   , parseUsdcTransfer
+  , perpsContractAddressesFor
   , terminalStatus
   , transferTopic
   , validateIndexedBoundary
@@ -44,6 +48,21 @@ import Test.Hspec
 
 spec :: Spec
 spec = do
+  describe "effective worker contract addresses" $ do
+    it "preserves the configured LifecycleBook when no worker override is present" $
+      paOrderLifecycleBook (applyPerpsAddressEnvironment defaultPerpsAddresses [])
+        `shouldBe` paOrderLifecycleBook defaultPerpsAddresses
+
+    it "applies an explicit LifecycleBook worker override" $ do
+      let lifecycleBook = "0x0000000000000000000000000000000000000001"
+      paOrderLifecycleBook
+        (applyPerpsAddressEnvironment defaultPerpsAddresses [("PERPS_ORDER_LIFECYCLE_BOOK", lifecycleBook)])
+        `shouldBe` Just (Text.pack lifecycleBook)
+
+    it "includes the LifecycleBook in the indexed contract allowlist" $
+      perpsContractAddressesFor defaultPerpsAddresses
+        `shouldContain` maybe [] pure (paOrderLifecycleBook defaultPerpsAddresses)
+
   describe "bounded replay invariants" $ do
     let replay =
           ReplayOptions

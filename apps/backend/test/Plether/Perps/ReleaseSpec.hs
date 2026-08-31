@@ -9,9 +9,12 @@ import Plether.Perps.Release
   , validatePerpsV2ReleaseConfig
   )
 import Plether.Perps.HistoryIndexer
-  ( perpsIndexerName
+  ( PerpsAddresses (..)
+  , defaultPerpsAddresses
+  , perpsIndexerName
   , perpsIndexerNameForRelease
   , perpsV2IndexerName
+  , validatePerpsIndexerReleaseConfig
   )
 import Test.Hspec
 
@@ -71,8 +74,25 @@ spec =
             ]
       mismatchCases `shouldSatisfy` all isLeft
 
+    it "validates the effective indexer graph before startup" $
+      validatePerpsIndexerReleaseConfig
+        421614
+        defaultPerpsAddresses
+        housePool
+        perpsV2DeploymentBlock
+        `shouldSatisfy` isRight
+
+    it "fails indexer startup when the effective LifecycleBook is absent or wrong" $ do
+      let wrong = "0x0000000000000000000000000000000000000001"
+          missingLifecycle = defaultPerpsAddresses {paOrderLifecycleBook = Nothing}
+          wrongLifecycle = defaultPerpsAddresses {paOrderLifecycleBook = Just wrong}
+      validatePerpsIndexerReleaseConfig 421614 missingLifecycle housePool perpsV2DeploymentBlock
+        `shouldSatisfy` isLeft
+      validatePerpsIndexerReleaseConfig 421614 wrongLifecycle housePool perpsV2DeploymentBlock
+        `shouldSatisfy` isLeft
+
     it "isolates only the pinned Sepolia release in the V2 cursor namespace" $ do
-      perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi2"
+      perpsV2IndexerName `shouldBe` "perps-history-costs-v2:finalized-abi3"
       perpsIndexerNameForRelease
         421614
         perpsV2OrderRouter

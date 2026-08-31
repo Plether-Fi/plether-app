@@ -3,6 +3,9 @@ module Plether.Perps.HistoryIndexer
   , PerpsIndexerConfig (..)
   , PerpsIndexerMode (..)
   , defaultPerpsAddresses
+  , applyPerpsAddressEnvironment
+  , perpsContractAddressesFor
+  , validatePerpsIndexerReleaseConfig
   , perpsIndexerName
   , perpsV2IndexerName
   , perpsIndexerNameForRelease
@@ -113,6 +116,7 @@ import Plether.Ethereum.Contracts.Perps (parseUniquePythUpdateData)
 import Plether.Indexer.Contracts (keccak256Text)
 import Plether.Logging (LogField, field, logError, logErrorEvery, logInfo, logInfoEvery, logWarn, logWarnEvery)
 import Plether.Perps.IndexerOptions (ReplayOptions (..), validateReplayOptions)
+import Plether.Perps.Release (validatePerpsV2ReleaseConfig)
 import Plether.Perps.ExecutionOracle
   ( ExecutionOracleSnapshot (..)
   , decodeExecutionUpdateData
@@ -156,7 +160,7 @@ perpsIndexerName :: Text
 perpsIndexerName = "perps-history-costs-v1"
 
 perpsV2IndexerName :: Text
-perpsV2IndexerName = "perps-history-costs-v2:finalized-abi2"
+perpsV2IndexerName = "perps-history-costs-v2:finalized-abi3"
 
 perpsIndexerNameForRelease :: Integer -> Text -> Maybe Text -> Text
 perpsIndexerNameForRelease chainId router lifecycleBook
@@ -166,6 +170,58 @@ perpsIndexerNameForRelease chainId router lifecycleBook
         Just "0xa210928a7e0ae27626b8d0e67bbd82305438ab9e" =
       perpsV2IndexerName
   | otherwise = perpsIndexerName
+
+-- | Apply process-level address overrides without erasing addresses already
+-- resolved by the shared application configuration. The previous worker
+-- overlay replaced LifecycleBook with 'Nothing' whenever its local env
+-- allowlist omitted the key, even though 'loadConfig' had resolved it.
+applyPerpsAddressEnvironment
+  :: PerpsAddresses
+  -> [(String, String)]
+  -> PerpsAddresses
+applyPerpsAddressEnvironment addressDefaults env =
+  addressDefaults
+    { paUsdc = addressOverride "PERPS_USDC" $ paUsdc addressDefaults
+    , paOrderRouter = addressOverride "PERPS_ORDER_ROUTER" $ paOrderRouter addressDefaults
+    , paOrderLifecycleBook =
+        case lookup "PERPS_ORDER_LIFECYCLE_BOOK" env of
+          Nothing -> paOrderLifecycleBook addressDefaults
+          Just value -> Just $ T.pack value
+    , paCfdEngine = addressOverride "PERPS_CFD_ENGINE" $ paCfdEngine addressDefaults
+    , paCfdEngineLens = addressOverride "PERPS_CFD_ENGINE_LENS" $ paCfdEngineLens addressDefaults
+    , paCfdEngineSettlementSidecar =
+        addressOverride
+          "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR"
+          (paCfdEngineSettlementSidecar addressDefaults)
+    , paMarginClearinghouse =
+        addressOverride
+          "PERPS_MARGIN_CLEARINGHOUSE"
+          (paMarginClearinghouse addressDefaults)
+    , paPletherOracle = addressOverride "PERPS_PLETHER_ORACLE" $ paPletherOracle addressDefaults
+    }
+ where
+  addressOverride name fallback =
+    T.pack $ fromMaybe (T.unpack fallback) $ lookup name env
+
+-- | Sepolia is bounded-V2-only. Validate the effective worker configuration,
+-- not the shared configuration that existed before worker-local overlays.
+validatePerpsIndexerReleaseConfig
+  :: Integer
+  -> PerpsAddresses
+  -> Text
+  -> Integer
+  -> Either Text ()
+validatePerpsIndexerReleaseConfig chainId addresses housePool startBlock
+  | chainId == 421614 =
+      validatePerpsV2ReleaseConfig
+        chainId
+        (paOrderRouter addresses)
+        (paOrderLifecycleBook addresses)
+        (paCfdEngine addresses)
+        (paMarginClearinghouse addresses)
+        housePool
+        startBlock
+  | otherwise = Right ()
 
 data PerpsIndexerMode
   = PerpsIndexerLoop
@@ -1354,7 +1410,7 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             releaseRouter
             oid
             clientOrderId
-        ParsedOrderFinalized oid _account clientOrderId receiptHash status terminalReason' mode failedConstraint executionPrice economics _ -> do
+        ParsedOrderFinalized oid account' clientOrderId receiptHash status terminalReason' mode failedConstraint executionPrice economics _ -> do
           upsertPerpsOrderTerminal
             conn
             (picChainId cfg)
@@ -1372,6 +1428,7 @@ processParsedLog conn cfg blockInfo txFrom tradeCosts logEntry parsed
             (picChainId cfg)
             releaseRouter
             oid
+            account'
             clientOrderId
             receiptHash
             terminalReason'
@@ -2044,11 +2101,14 @@ perpsAddresses cfg =
   paUsdc (picAddresses cfg) : perpsContractAddresses cfg
 
 perpsContractAddresses :: PerpsIndexerConfig -> [Text]
-perpsContractAddresses cfg =
-  [ paOrderRouter (picAddresses cfg)
-  , paCfdEngine (picAddresses cfg)
-  , paMarginClearinghouse (picAddresses cfg)
-  ] <> maybe [] pure (paOrderLifecycleBook $ picAddresses cfg)
+perpsContractAddresses = perpsContractAddressesFor . picAddresses
+
+perpsContractAddressesFor :: PerpsAddresses -> [Text]
+perpsContractAddressesFor addresses =
+  [ paOrderRouter addresses
+  , paCfdEngine addresses
+  , paMarginClearinghouse addresses
+  ] <> maybe [] pure (paOrderLifecycleBook addresses)
 
 requireRpc :: Text -> IO (Either Text a) -> IO a
 requireRpc label action = do

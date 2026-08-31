@@ -902,7 +902,7 @@ ensureInsightsSchema conn rules chainId releaseRouter usdcAddress marginClearing
       advisoryRows <- query conn
         "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
         \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-        \ THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
+        \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
         \ FROM insights_competitions c WHERE c.slug = ?) locked"
         (Only finalizedSlug) :: IO [Only Integer]
       unless (length advisoryRows == 1) $
@@ -1713,7 +1713,7 @@ finalizeCompetition conn slug finalizedBy verifyCanonicality =
     advisoryRows <- query conn
       "SELECT 1::BIGINT FROM (SELECT pg_advisory_xact_lock(hashtextextended(\
       \ 'perps-indexer:' || (CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-      \ THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
+      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router, c.chain_id))\
       \ FROM insights_competitions c WHERE c.slug = ?) locked"
       (Only slug) :: IO [Only Integer]
     unless (length advisoryRows == 1) $
@@ -1755,7 +1755,7 @@ finalizeCompetition conn slug finalizedBy verifyCanonicality =
                     \ FROM insights_competitions c JOIN perps_indexer_state i\
                     \ ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
                     \ AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-                    \ THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+                    \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
                     \ WHERE c.slug = ? AND c.start_block IS NOT NULL AND c.start_block_hash IS NOT NULL\
                     \ AND c.start_snapshot_block_hash IS NOT NULL AND c.score_cutoff_block IS NOT NULL\
                     \ AND c.score_cutoff_block_hash IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL"
@@ -1901,7 +1901,7 @@ publishAccountSnapshotBatch conn snapshots@(firstSnapshot : _) =
       "SELECT EXISTS (SELECT 1 FROM perps_indexer_state i\
       \ WHERE i.chain_id = ? AND i.release_router = ?\
       \ AND i.indexer_name = ((CASE WHEN ? = 421614 AND ? = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-      \ THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || ?)\
+      \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || ?)\
       \ AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= ?)"
       (chainId, releaseRouter, chainId, releaseRouter, releaseRouter, blockNumber)
     unless (cursorReady == [Only True]) $
@@ -2238,7 +2238,7 @@ insightsDataStatusQuerySql =
   \ FROM perps_indexer_state i\
   \ JOIN target t ON t.chain_id = i.chain_id AND t.release_router = i.release_router\
   \ WHERE i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \ THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || t.release_router) LIMIT 1\
+  \ THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router) LIMIT 1\
   \ )\
   \ SELECT COALESCE(p.participant_count, 0), s.wallet_count, s.start_count, s.final_count,\
   \ s.latest_block, s.latest_timestamp, i.last_indexed_block, i.last_indexed_block_hash,\
@@ -2267,7 +2267,7 @@ perpsCursorNamespace chainId releaseRouter
   | chainId == 421614
       && normalizeAddress releaseRouter ==
         "0x97a901de2b267c307e264fd5f71403f8072f73e7" =
-      "perps-history-costs-v2:finalized-abi2:"
+      "perps-history-costs-v2:finalized-abi3:"
   | otherwise = "perps-history-costs-v1:"
 
 participantSelect :: Query
@@ -2285,7 +2285,7 @@ fundingIntegrityRefreshSql =
   \ SELECT c.*, i.configured_start_block FROM insights_competitions c\
   \ JOIN perps_indexer_state i ON i.chain_id = c.chain_id AND i.release_router = c.release_router\
   \  AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \  THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \  THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \  AND i.configured_start_block IS NOT NULL AND i.last_indexed_block_hash IS NOT NULL\
   \  AND split_part(c.release_manifest, '|', 12) ~ '^[1-9][0-9]*$'\
   \  AND i.configured_start_block = split_part(c.release_manifest, '|', 12)::bigint\
@@ -2476,7 +2476,7 @@ fundingIntegrityRefreshSqlLegacy =
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
   \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND t.start_snapshot_block_hash IS NOT NULL\
@@ -2653,7 +2653,7 @@ leaderboardQuery =
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
   \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind = 'start' AND t.start_block IS NOT NULL AND b.block_number = t.start_block - 1\
   \ AND (LOWER(b.block_hash) = LOWER(t.start_snapshot_block_hash)\
@@ -2665,7 +2665,7 @@ leaderboardQuery =
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
   \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2859,7 +2859,7 @@ walletActivityQuery =
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
   \   AND i.indexer_name = ((CASE WHEN t.chain_id = 421614 AND t.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \   THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
+  \   THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || t.release_router)\
   \   AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number\
   \ WHERE b.snapshot_kind IN ('live', 'final') AND b.timestamp < t.score_cutoff_timestamp\
   \ AND LOWER(b.account_lens_address) = LOWER(t.account_lens_address)\
@@ -2906,7 +2906,7 @@ finalizationReadinessQuery =
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
   \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2922,7 +2922,7 @@ finalizationReadinessQuery =
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
   \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND b.chain_id = c.chain_id AND b.release_router = c.release_router\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)\
@@ -2934,7 +2934,7 @@ finalizationReadinessQuery =
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
   \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address)),\
   \ (SELECT MIN(b.block_hash) FROM insights_snapshot_batches b\
@@ -2943,7 +2943,7 @@ finalizationReadinessQuery =
   \     AND EXISTS (SELECT 1 FROM perps_indexer_state i WHERE i.chain_id = c.chain_id\
   \       AND i.release_router = c.release_router\
   \       AND i.indexer_name = ((CASE WHEN c.chain_id = 421614 AND c.release_router = '0x97a901de2b267c307e264fd5f71403f8072f73e7'\
-  \       THEN 'perps-history-costs-v2:finalized-abi2:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
+  \       THEN 'perps-history-costs-v2:finalized-abi3:' ELSE 'perps-history-costs-v1:' END) || c.release_router)\
   \       AND i.last_indexed_block_hash IS NOT NULL AND i.last_indexed_block >= b.block_number)\
   \     AND LOWER(b.account_lens_address) = LOWER(c.account_lens_address))\
   \ FROM insights_competitions c WHERE c.slug = ? FOR UPDATE OF c"
