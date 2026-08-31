@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { apiQueryKeys } from '../api'
+import { apiQueryKeys, type PerpsCandleIntervalSeconds } from '../api'
 import { Alert } from '../components/ui'
 import type { DxyBasketChartInterval } from '../components/dxyBasketChartConfig'
 import type { OracleMarkPoint } from '../utils/dxyBasketChart'
@@ -11,7 +11,9 @@ import {
   TRADINGVIEW_FAVORITE_RESOLUTIONS,
   chartIntervalForTradingViewResolution,
   isPerpsCandleApiEnabled,
+  secondsForTradingViewResolution,
   tradingViewResolutionForInterval,
+  type PletherVolumeCoverageState,
 } from './pletherDatafeed'
 import type {
   TradingViewIntervalSubscription,
@@ -218,6 +220,7 @@ export function TradingViewAdvancedChart({
   onIntervalChange,
 }: TradingViewAdvancedChartProps) {
   const queryClient = useQueryClient()
+  const useCandleApi = isPerpsCandleApiEnabled()
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetRef = useRef<TradingViewWidget | null>(null)
   const datafeedRef = useRef<PletherDxyDatafeed | null>(null)
@@ -234,6 +237,9 @@ export function TradingViewAdvancedChart({
   const liquidationPriceRef = useRef(liquidationPrice)
   const onIntervalChangeRef = useRef(onIntervalChange)
   const [unavailable, setUnavailable] = useState(false)
+  const [volumeCoverageByInterval, setVolumeCoverageByInterval] = useState<
+    Partial<Record<PerpsCandleIntervalSeconds, PletherVolumeCoverageState>>
+  >({})
 
   const syncLiquidationLine = useCallback((chart: TradingViewChart, price: number | undefined) => {
     const revision = ++liquidationLineRevisionRef.current
@@ -312,7 +318,6 @@ export function TradingViewAdvancedChart({
     let handleVisibleRangeChange: TradingViewVisibleRangeChangedCallback | undefined
     let lastStableVisibleRange: TradingViewVisibleTimeRange | undefined
     const libraryPath = normalizeLibraryPath()
-    const useCandleApi = isPerpsCandleApiEnabled()
     const datafeed = new PletherDxyDatafeed({
       queryClient,
       oracleMark: oracleMarkRef.current,
@@ -334,6 +339,14 @@ export function TradingViewAdvancedChart({
         }).finally(() => {
           widgetRef.current?.activeChart().resetData()
         })
+      },
+      onVolumeCoverageChange: ({ intervalSeconds, state }) => {
+        if (cancelled) return
+        setVolumeCoverageByInterval((previous) => (
+          previous[intervalSeconds] === state
+            ? previous
+            : { ...previous, [intervalSeconds]: state }
+        ))
       },
     })
     datafeedRef.current = datafeed
@@ -472,7 +485,7 @@ export function TradingViewAdvancedChart({
       datafeed.destroy()
       if (datafeedRef.current === datafeed) datafeedRef.current = null
     }
-  }, [queryClient, syncLiquidationLine])
+  }, [queryClient, syncLiquidationLine, useCandleApi])
 
   useEffect(() => {
     datafeedRef.current?.setOracleMark(oracleMark)
@@ -488,6 +501,12 @@ export function TradingViewAdvancedChart({
     void widget.activeChart().setResolution(resolution)
   }, [interval])
 
+  const activeCandleInterval = secondsForTradingViewResolution(
+    tradingViewResolutionForInterval(interval)
+  ) as PerpsCandleIntervalSeconds
+  const volumeUnavailable = useCandleApi &&
+    volumeCoverageByInterval[activeCandleInterval] === 'unavailable'
+
   return (
     <div
       className="relative h-[450px] w-full overflow-hidden border border-brand-border/30 bg-app-bg sm:h-[580px]"
@@ -496,6 +515,13 @@ export function TradingViewAdvancedChart({
     >
       <div ref={containerRef} className="h-full w-full" />
       <div className="pointer-events-none absolute inset-0 -z-10 bg-app-bg" />
+      {!unavailable && volumeUnavailable ? (
+        <div className="pointer-events-none absolute inset-x-4 bottom-4 z-10 sm:right-auto sm:max-w-md">
+          <Alert variant="warning" title="Volume temporarily unavailable">
+            — Price data is still live. Volume is being indexed for this market.
+          </Alert>
+        </div>
+      ) : null}
       {unavailable ? (
         <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center p-4">
           <div className="pointer-events-auto w-full max-w-lg shadow-2xl">

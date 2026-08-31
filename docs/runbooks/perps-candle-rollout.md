@@ -1059,7 +1059,46 @@ Pass criteria:
 
 Set the environment-specific repository variable
 `VITE_PERPS_CANDLE_API_ENABLED_SEPOLIA=true` and deploy the frontend. The
-mainnet variable remains false. The worker allowlist normalizes only exact
+mainnet variable remains false. Do not enable that variable or redeploy an
+already-enabled Sepolia native-candle frontend until the current router's
+volume has been backfilled and verified. The frontend deployment workflow
+queries the direct backend current-candle endpoint for all seven canonical
+intervals before any Cloudflare operation. When the Sepolia flag is enabled,
+the workflow fails unless every response has complete, aligned price and
+volume coverage; a positive price and volume generation; the usable-volume
+generation bit; and the same chain/router as the checked-in Sepolia manifest.
+Each transient request gets at most three attempts with a ten-second timeout.
+
+For the router deployed at block `302257125`, recovery starts at the first
+whole minute after the block timestamp. Never broaden this range to an earlier
+router or fill unknown historical volume with zero:
+
+```bash
+VOLUME_FROM_UNIX=1787759880
+
+# Read VOLUME_TO_UNIX from the greatest whole-minute timestamp at or below the
+# latest perps_indexer_progress.indexed_through_timestamp whose
+# canonical_progress_certified field is true.
+run_candle_admin sepolia status none
+run_candle_admin sepolia backfill volume \
+  -f from_timestamp="$VOLUME_FROM_UNIX" \
+  -f to_timestamp="$VOLUME_TO_UNIX"
+run_candle_admin sepolia status none
+run_candle_admin sepolia verify volume \
+  -f from_timestamp="$VOLUME_FROM_UNIX" \
+  -f to_timestamp="$VOLUME_TO_UNIX"
+```
+
+The standard helper supplies 86,400-second chunks, a 1,800,000 ms statement
+timeout, and a 250 ms inter-chunk throttle. Record the certified indexer event,
+exact exclusive upper bound, workflow run IDs, current router, writer state,
+price and volume generations, and verification output. Require all seven
+public current-candle routes to show complete volume coverage, the legacy
+compatibility history route to return `200`, and both incomplete and
+uninitialized coverage alarms to be `OK` before dispatching the frontend from
+the verified `master` commit.
+
+The worker allowlist normalizes only exact
 candle query shapes, uses single-flight origin refreshes, short TTLs for the
 active/current candle, and long stale-while-revalidate for closed pages. Before
 serving a closed-page cache entry, the worker obtains the authoritative current

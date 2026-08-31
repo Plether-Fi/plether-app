@@ -621,6 +621,40 @@ resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_incomplete" {
   alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
 }
 
+resource "aws_cloudwatch_log_metric_filter" "candle_writer_coverage_uninitialized" {
+  for_each = local.candle_writer_heartbeat_events
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  name           = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  pattern        = "{ $.event = \"${each.value}\" && $.writer_kind = \"${each.key}\" && $.coverage_state = \"uninitialized\" }"
+  log_group_name = aws_cloudwatch_log_group.ecs.name
+
+  metric_transformation {
+    name      = "PerpsCandle${title(each.key)}WriterCoverageUninitialized-${var.environment}"
+    namespace = "Plether/Operations"
+    value     = "1"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "candle_writer_coverage_uninitialized" {
+  for_each = local.candle_writer_heartbeat_events
+
+  depends_on = [terraform_data.perps_candle_rollout_guard]
+
+  alarm_name          = "plether-${var.environment}-candle-${each.key}-writer-coverage-uninitialized"
+  alarm_description   = "The live ${each.key} writer has not published candle coverage for its active dataset."
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  evaluation_periods  = 1
+  metric_name         = aws_cloudwatch_log_metric_filter.candle_writer_coverage_uninitialized[each.key].metric_transformation[0].name
+  namespace           = aws_cloudwatch_log_metric_filter.candle_writer_coverage_uninitialized[each.key].metric_transformation[0].namespace
+  period              = 300
+  statistic           = "Sum"
+  threshold           = 1
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = compact([var.operations_alarm_sns_topic_arn])
+}
+
 resource "aws_cloudwatch_log_metric_filter" "candle_backfill_failed" {
   depends_on = [terraform_data.perps_candle_rollout_guard]
 
