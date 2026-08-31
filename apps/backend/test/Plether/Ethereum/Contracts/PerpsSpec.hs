@@ -89,6 +89,47 @@ spec = do
       executeOrderBatchCall 7 [BS.pack [0x99]]
         `shouldEncodeTo` "0x8c3679bc000000000000000000000000000000000000000000000000000000000000000700000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000019900000000000000000000000000000000000000000000000000000000000000"
 
+    it "decodes the typed executeOrder result including InsufficientGas" $ do
+      let receiptHash = BS.replicate 32 0x11
+          encoded =
+            encodeUint256 7
+              <> encodeUint256 1
+              <> encodeUint256 0
+              <> encodeUint256 5
+              <> receiptHash
+      decodeOrderExecutionResult encoded
+        `shouldBe` Right
+          OrderExecutionResult
+            { oerOrderId = 7
+            , oerLifecycleStatus = 1
+            , oerTerminalReason = 0
+            , oerPendingReason = 5
+            , oerReceiptHash = receiptHash
+            }
+
+    it "decodes a typed batch result with terminal progress" $ do
+      let encoded = encodeUint256 8 <> encodeUint256 2 <> encodeUint256 0
+      decodeOrderBatchResult encoded
+        `shouldBe` Right
+          OrderBatchResult
+            { obrNextOrderId = 8
+            , obrTerminalCount = 2
+            , obrStopReason = 0
+            }
+
+    it "rejects malformed or out-of-range typed execution results" $ do
+      decodeOrderExecutionResult BS.empty `shouldSatisfy` isDecodeError
+      decodeOrderExecutionResult
+        ( encodeUint256 7
+            <> encodeUint256 4
+            <> encodeUint256 0
+            <> encodeUint256 0
+            <> BS.replicate 32 0
+        )
+        `shouldSatisfy` isDecodeError
+      decodeOrderBatchResult (encodeUint256 8 <> encodeUint256 (2 ^ (32 :: Integer)) <> encodeUint256 0)
+        `shouldSatisfy` isDecodeError
+
     it "encodes executeLiquidation(address,bytes[]) with one dynamic bytes value" $ do
       expectedSelector <- parseHex "0x4882af85"
       let account = "0x1111111111111111111111111111111111111111"
