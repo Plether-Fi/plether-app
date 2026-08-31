@@ -39,19 +39,23 @@ jobs:
         run: npm install -g npm@11.6.2
 
       - name: Install dependencies
+        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: npm ci
 
       - name: Install Insights story dependencies
+        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/insights
         run: npm ci
 
       - name: Require TradingView repository token
+        if: env.TARGET_ENV == 'sepolia'
         env:
           TRADINGVIEW_GITHUB_TOKEN: ${{ secrets.TRADINGVIEW_GITHUB_TOKEN }}
         run: test -n "$TRADINGVIEW_GITHUB_TOKEN"
 
       - name: Checkout TradingView Advanced Charts
+        if: env.TARGET_ENV == 'sepolia'
         uses: actions/checkout@v4
         with:
           repository: tradingview/charting_library
@@ -62,6 +66,7 @@ jobs:
           path: .private/tradingview-charting-library
 
       - name: Install TradingView runtime assets
+        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: npm run tradingview:install -- "$GITHUB_WORKSPACE/.private/tradingview-charting-library"
 
@@ -70,15 +75,18 @@ jobs:
         run: |
           if [ "$TARGET_ENV" = "sepolia" ]; then
             echo "project=plether-testnet" >> "$GITHUB_OUTPUT"
+            echo "directory=dist" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=421614" >> "$GITHUB_OUTPUT"
             echo "perps_aa_manifest_url=/perps-aa-manifest.json" >> "$GITHUB_OUTPUT"
           else
             echo "project=plether" >> "$GITHUB_OUTPUT"
+            echo "directory=mainnet-redirect" >> "$GITHUB_OUTPUT"
             echo "default_chain_id=1" >> "$GITHUB_OUTPUT"
             echo "perps_aa_manifest_url=" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build
+        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         env:
           VITE_DEFAULT_CHAIN_ID: ${{ steps.target.outputs.default_chain_id }}
@@ -94,6 +102,7 @@ jobs:
         run: npm run build
 
       - name: Validate TradingView runtime payload
+        if: env.TARGET_ENV == 'sepolia'
         working-directory: apps/frontend
         run: |
           test -s dist/charting_library/charting_library.standalone.js
@@ -229,7 +238,7 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           wranglerVersion: 4.103.0
           workingDirectory: apps/frontend
-          command: pages deploy dist --project-name=${{ steps.target.outputs.project }} --branch=master
+          command: pages deploy ${{ steps.target.outputs.directory }} --project-name=${{ steps.target.outputs.project }} --branch=master
 
       - name: Attach testnet custom domain
         if: env.TARGET_ENV == 'sepolia'
