@@ -599,7 +599,7 @@ describe('perps lifecycle labels', () => {
     ).not.toBeInTheDocument()
   })
 
-  it('distinguishes plDXY Perp exposure from contract and entry notionals', () => {
+  it('distinguishes plDXY Perp exposure from order quantity and execution notional', () => {
     render(
       <>
         <PerpsTradeTicket
@@ -614,7 +614,7 @@ describe('perps lifecycle labels', () => {
             exists: true,
             side: 0,
             direction: 'long',
-            size: 0n,
+            size: 2_000n * 10n ** 18n,
             entryPrice: 98300000n,
             marginUsdc: 400000000n,
             unrealizedPnlUsdc: -250000n,
@@ -630,7 +630,8 @@ describe('perps lifecycle labels', () => {
     )
 
     expect(screen.getAllByText('plDXY Perp exposure').length).toBeGreaterThan(0)
-    expect(screen.getAllByText('Contract notional').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Contract notional')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Order quantity').length).toBeGreaterThan(0)
     expect(screen.getByText('Trade executed at 1.0089 USDC')).toBeInTheDocument()
     const initialConfetti = document.querySelector('[data-finalization-confetti]')
     expect(initialConfetti).toHaveAttribute('aria-hidden', 'true')
@@ -667,6 +668,7 @@ describe('perps lifecycle labels', () => {
     const finalResultQueries = within(finalResult!)
     expect(finalResultQueries.getByText('Order quantity')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution plDXY Perp exposure')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Order quantity')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution reward')).toBeInTheDocument()
@@ -674,14 +676,19 @@ describe('perps lifecycle labels', () => {
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
-    expect(screen.getByText('Entry notional')).toBeInTheDocument()
+    const positionQuantityLabel = screen.getAllByText('Order quantity').find((label) =>
+      label.parentElement?.classList.contains('uppercase')
+    )
+    expect(positionQuantityLabel).toBeDefined()
+    expect(positionQuantityLabel?.closest('div')?.parentElement).toHaveTextContent('2 000')
+    expect(positionQuantityLabel?.closest('div')?.parentElement).toHaveTextContent('plDXY')
     expect(screen.getByText('Entry price')).toBeInTheDocument()
     expect(screen.getByText('1.0170')).toBeInTheDocument()
     expect(screen.queryByText('0.9830')).not.toBeInTheDocument()
     expect(screen.getAllByText('Unrealized PnL').length).toBeGreaterThan(0)
     expect(screen.getByText('Cost of carry')).toBeInTheDocument()
     expect(screen.getByText('1.25')).toBeInTheDocument()
-    expect(screen.getByText(/Entry notional is the executed order size\. plDXY Perp exposure is current displayed exposure\./)).toBeInTheDocument()
+    expect(screen.getByText(/Order quantity stays fixed between size-changing trades\. plDXY Perp exposure moves with the current price\./)).toBeInTheDocument()
   })
 
   it('uses terminal post-position evidence instead of committed full-close intent', () => {
@@ -811,6 +818,7 @@ describe('perps lifecycle labels', () => {
     expect(preview.getByText('Liquidation price')).toBeInTheDocument()
     expect(preview.getByText('Estimated fee')).toBeInTheDocument()
     expect(preview.queryByText('Contract notional')).not.toBeInTheDocument()
+    expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
     expect(preview.queryByText('Maintenance margin')).not.toBeInTheDocument()
     expect(preview.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
@@ -818,7 +826,8 @@ describe('perps lifecycle labels', () => {
     expect(showMoreButton).toHaveAttribute('aria-expanded', 'false')
     fireEvent.click(showMoreButton)
 
-    expect(preview.getByText('Contract notional')).toBeInTheDocument()
+    expect(preview.queryByText('Contract notional')).not.toBeInTheDocument()
+    expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
     expect(preview.getByText('Maintenance margin')).toBeInTheDocument()
     expect(preview.getByText('Estimated execution reward')).toBeInTheDocument()
     expect(preview.getByRole('button', { name: 'Show less' }))

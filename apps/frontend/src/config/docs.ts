@@ -17,9 +17,9 @@ export const DOCS_LINKS = {
     href: `${DOCS_BASE_URL}/how-plether-works/trading-costs-fees-carry-and-vpi#cost-of-carry`,
     title: 'Cost of carry',
   },
-  entryNotional: {
-    href: `${DOCS_BASE_URL}/trading-on-plether-perps/read-your-position-and-account-health#exposure-and-entry-notional`,
-    title: 'Exposure and entry notional',
+  orderQuantity: {
+    href: `${DOCS_BASE_URL}/how-plether-works/how-pnl-is-calculated#exposure-quantity-and-notional-are-different`,
+    title: 'Exposure, quantity and notional are different',
   },
   positionLeverage: {
     href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#position-leverage-and-effective-account-leverage`,
@@ -56,10 +56,6 @@ export const DOCS_LINKS = {
   marginCallSimulator: {
     href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#margin-call-simulator`,
     title: 'Margin Call Simulator',
-  },
-  contractNotional: {
-    href: `${DOCS_BASE_URL}/how-plether-works/margin-leverage-and-liquidation#the-notional-used-for-margin`,
-    title: 'The notional used for margin',
   },
   orderExposure: {
     href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#order-quantity`,

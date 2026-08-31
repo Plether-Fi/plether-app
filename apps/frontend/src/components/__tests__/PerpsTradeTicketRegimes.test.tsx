@@ -244,6 +244,24 @@ describe('perps ticket oracle regime matrix', () => {
     }]
   })
 
+  it('shows order quantity instead of contract notional in the commit preview', () => {
+    renderCloseTicket({
+      marketPhase: 'open',
+      oracleFrozen: false,
+    })
+
+    const preview = commitPreviewQueries()
+    const orderQuantity = preview.getByText('Order quantity')
+    const exposure = preview.getByText('Order exposure')
+    expect(orderQuantity).toBeInTheDocument()
+    expect(orderQuantity.compareDocumentPosition(exposure) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    const orderQuantityRow = orderQuantity.parentElement?.parentElement
+    expect(orderQuantityRow).not.toBeNull()
+    expect(within(orderQuantityRow!).getByText('500')).toBeInTheDocument()
+    expect(within(orderQuantityRow!).getByText('plDXY')).toBeInTheDocument()
+    expect(preview.queryByText('Contract notional')).not.toBeInTheDocument()
+  })
+
   it.each([
     ['live', 'open'],
     ['FAD-only', 'close-only'],
@@ -392,11 +410,6 @@ describe('perps ticket oracle regime matrix', () => {
   })
 
   it.each([
-    {
-      label: 'Contract notional',
-      message: "The protocol's accounting size, calculated using the raw basket price.",
-      docsLink: DOCS_LINKS.contractNotional,
-    },
     {
       label: 'Maintenance margin',
       message: 'At or below this amount, the entire position can be liquidated.',
