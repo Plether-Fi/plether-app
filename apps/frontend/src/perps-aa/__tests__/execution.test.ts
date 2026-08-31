@@ -65,6 +65,30 @@ const REPLACEMENT_TRANSACTION_HASH = `0x${'88'.repeat(32)}` as Hex
 const REPLACEMENT_BLOCK_HASH = `0x${'99'.repeat(32)}` as Hex
 const AUTHORIZATION_NONCE = `0x${'ab'.repeat(32)}` as Hex
 const SPONSORSHIP_VALID_UNTIL = 1_784_869_349n
+const ORDER_CLIENT_ID = `0x${'cd'.repeat(32)}` as Hex
+
+const orderRequestV2 = {
+  version: 2 as const,
+  account: ACCOUNT,
+  clientOrderId: ORDER_CLIENT_ID,
+  side: 0,
+  sizeDelta: '5000000000000000000000',
+  marginDelta: '1001500000',
+  targetPrice: '100100000',
+  isClose: false,
+  validUntil: '2000000060',
+  allowedExecutionModes: 1,
+  expectedConfigHash: `0x${'12'.repeat(32)}` as Hex,
+  maxExecutionBountyUsdc: '200000',
+  maxExecutionNotionalUsdc: '5005000000',
+  maxGrossAccountDebitUsdc: '2500000',
+  maxActionChargeUsdc: '2200000',
+  maxExplicitFeesUsdc: '300000',
+  maxPostPositionSize: '5000000000000000000000',
+  minPostSettlementBalanceUsdc: '999000000',
+  minPostPositionEquityUsdc: '1001000000',
+  maxPostLeverageBps: 50_000,
+}
 
 function paymasterData(): Hex {
   return concatHex([
@@ -325,6 +349,68 @@ describe('executeSponsoredPerpsAction', () => {
       submissionMetadataVersion: 1,
       transactionHash: TRANSACTION_HASH,
     })
+  })
+
+  it('journals an immutable bounded order before requesting its signature', async () => {
+    const signUserOperation = vi.fn(async (value: ManagedUserOperation) => {
+      const pendingOperation =
+        useSponsoredOperationStore.getState().operations[0]!
+      expect(pendingOperation).toMatchObject({
+        status: 'awaiting-signature',
+        orderRequestV2,
+      })
+      const exactJournal = JSON.parse(
+        globalThis.localStorage.getItem(
+          `${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`
+        )!
+      )
+      expect(exactJournal).toMatchObject({
+        version: 1,
+        operation: {
+          id: pendingOperation.id,
+          status: 'awaiting-signature',
+          orderRequestV2,
+        },
+      })
+      expect(pendingOperation.userOperationHash).toBeUndefined()
+      return value
+    })
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action: { ...action, kind: 'place-order' },
+      runtime: runtime({ signUserOperation }),
+      orderRequestV2,
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(signUserOperation).toHaveBeenCalledOnce()
+  })
+
+  it('does not pre-sign journal a generic hashless operation', async () => {
+    const signUserOperation = vi.fn(async (value: ManagedUserOperation) => {
+      const pendingOperation =
+        useSponsoredOperationStore.getState().operations[0]!
+      expect(globalThis.localStorage.getItem(
+        `${SPONSORED_OPERATION_JOURNAL_PREFIX}${pendingOperation.id}`
+      )).toBeNull()
+      return value
+    })
+
+    await expect(executeSponsoredPerpsAction({
+      manifest: manifest(),
+      ownerAddress: OWNER,
+      action,
+      runtime: runtime({ signUserOperation }),
+    })).resolves.toMatchObject({
+      userOperationHash: USER_OPERATION_HASH,
+      transactionHash: TRANSACTION_HASH,
+    })
+
+    expect(signUserOperation).toHaveBeenCalledOnce()
   })
 
   it('resolves at exact successful inclusion and leaves safe confirmation to recovery', async () => {

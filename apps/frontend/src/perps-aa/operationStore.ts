@@ -1439,6 +1439,24 @@ function mergeExactOperationJournals(
       assertCompatibleOperationHashes(operation, journalOperation)
       return mergeOperationRecord(operation, journalOperation)
     }
+    const preSignJournal = readExactOperationJournal(operation.id)
+    if (
+      preSignJournal !== undefined &&
+      preSignJournal.userOperationHash === undefined
+    ) {
+      if (
+        operation.orderRequestV2 === undefined ||
+        preSignJournal.orderRequestV2 === undefined ||
+        JSON.stringify(operation.orderRequestV2) !==
+          JSON.stringify(preSignJournal.orderRequestV2) ||
+        !operationMatchesLane(preSignJournal, operation)
+      ) {
+        throw new Error(
+          'The sponsored-operation pre-sign journal has a mismatched identity'
+        )
+      }
+      return mergeOperationRecord(operation, preSignJournal)
+    }
     const durableOperation = readDurableOperation({
       id: operation.id,
       userOperationHash: operation.userOperationHash,
@@ -1691,7 +1709,8 @@ function writeExactOperationJournal(
   const existing = readExactOperationJournal(operation.id)
   if (
     operation.userOperationHash === undefined &&
-    existing === undefined
+    existing === undefined &&
+    operation.orderRequestV2 === undefined
   ) {
     return undefined
   }
