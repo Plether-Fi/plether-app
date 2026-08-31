@@ -224,7 +224,7 @@ describe('Perps trade preview debounce', () => {
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
   })
 
-  it('rounds an open order down to the 100 plDXY protocol quantum', () => {
+  it('keeps the target input while previewing the quantized order exposure and quantity', () => {
     render(
       <PerpsTradeTicket
         enableLiveTrading
@@ -239,9 +239,39 @@ describe('Perps trade preview debounce', () => {
     const options = latestReadOptions()
     expect(options.contracts[0]?.functionName).toBe('previewOpen')
     expect(options.contracts[0]?.args?.[2]).toBe(4_900n * 10n ** 18n)
-    expect(screen.getByText(/Rounded down to/)).toHaveTextContent(
-      'Rounded down to 4 969.58 USDC to use the protocol\'s 100 plDXY size increment.'
+    expect(screen.getByRole('textbox', { name: 'Target plDXY Perp exposure' }))
+      .toHaveValue('5000')
+    expect(screen.queryByText(/^Rounded down to/)).not.toBeInTheDocument()
+
+    const previewPanel = screen.getByText('Preview').parentElement
+    expect(previewPanel).not.toBeNull()
+    const preview = within(previewPanel!)
+    const orderExposureRow = preview.getByText('Order exposure').closest('div')
+    const orderQuantityRow = preview.getByText('Order quantity').closest('div')
+
+    expect(within(orderExposureRow!).getByText('4 969.58')).toBeInTheDocument()
+    expect(within(orderExposureRow!).getByText('USDC')).toBeInTheDocument()
+    expect(within(orderQuantityRow!).getByText('4 900')).toBeInTheDocument()
+    expect(within(orderQuantityRow!).getByText('plDXY')).toBeInTheDocument()
+  })
+
+  it('rounds a partial close preview down to the 100 plDXY protocol quantum', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialSize="550"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        currentPosition={existingLongPosition}
+      />
     )
+
+    const options = latestReadOptions()
+    expect(options.contracts[0]?.functionName).toBe('previewClose')
+    expect(options.contracts[0]?.args?.[1]).toBe(500n * 10n ** 18n)
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
   })
 
   it('shows the resulting position VPI balance when increasing an existing position', () => {

@@ -45,8 +45,7 @@ import {
 import {
   directionToPerpsSide,
   formatPerpsUsdc,
-  notionalUsdcToQuantizedOpenSizeDelta,
-  notionalUsdcToSizeDelta,
+  notionalUsdcToQuantizedSizeDelta,
   quantizePerpsPositionSize,
   type PerpsDirection,
 } from '../utils/perps'
@@ -761,13 +760,15 @@ export function usePerpsTrading() {
         throw new Error('Order size must be greater than zero')
       }
       if (oraclePrice <= 0n) throw new Error('plDXY Perp price is not available')
-      const requestedSizeDelta = sizeDeltaOverride ?? (isClose
-        ? notionalUsdcToSizeDelta(notionalUsdc, oraclePrice)
-        : notionalUsdcToQuantizedOpenSizeDelta(notionalUsdc, oraclePrice))
-      const sizeDelta = isClose
-        ? requestedSizeDelta
-        : quantizePerpsPositionSize(requestedSizeDelta, 'down')
-      if (sizeDelta <= 0n) throw new Error('Order size is too small')
+      const requestedSizeDelta = sizeDeltaOverride ?? notionalUsdcToQuantizedSizeDelta(
+        notionalUsdc,
+        oraclePrice
+      )
+      if (requestedSizeDelta <= 0n) throw new Error('Order size is too small')
+      if (quantizePerpsPositionSize(requestedSizeDelta, 'down') !== requestedSizeDelta) {
+        throw new Error('Order size must use 100 plDXY increments')
+      }
+      const sizeDelta = requestedSizeDelta
       const sponsored = requireSponsoredExecution()
       const activeOperation = useSponsoredOperationStore
         .getState()
@@ -872,7 +873,7 @@ export function usePerpsTrading() {
       if (sizeDelta <= 0n) {
         throw new Error('Order size is too small')
       }
-      if (!isClose && quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
+      if (quantizePerpsPositionSize(sizeDelta, 'down') !== sizeDelta) {
         throw new Error('Order size must use 100 plDXY increments')
       }
       const marginDelta = isClose ? 0n : marginUsdc

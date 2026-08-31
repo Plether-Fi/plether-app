@@ -673,7 +673,7 @@ describe('perps lifecycle labels', () => {
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution reward')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you entered. Order quantity is the executable whole-lot size. Execution plDXY Perp exposure is that quantity valued at the final displayed price.')).toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
@@ -685,6 +685,80 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Cost of carry')).toBeInTheDocument()
     expect(screen.getByText('1.25')).toBeInTheDocument()
     expect(screen.getByText(/Entry notional is the executed order size\. plDXY Perp exposure is current displayed exposure\./)).toBeInTheDocument()
+  })
+
+  it('uses terminal post-position evidence instead of committed full-close intent', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialSize="1 014.2"
+        initialOrderId={81n}
+        initialCommittedIsFullClose
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 81n,
+          time: '31 Aug, 00:15',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: (100n * 10n ** 18n).toString(),
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position reduced at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position closed at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Target reduction exposure')).toBeInTheDocument()
+  })
+
+  it('uses zero terminal post-position evidence to identify an actual full close', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialSize="1 014.2"
+        initialOrderId={82n}
+        initialCommittedIsFullClose={false}
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 82n,
+          time: '31 Aug, 00:16',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: '0',
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position closed at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position reduced at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Target close exposure')).toBeInTheDocument()
   })
 
   it('resets the review modal lifecycle when it closes', () => {
@@ -1181,6 +1255,157 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Only 2 034 USDC plDXY Perp exposure is available to reduce at the latest plDXY Perp price.')).toBeInTheDocument()
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeDisabled()
+  })
+
+  it('keeps a near-max reduction partial until Max selects the exact full close', () => {
+    const positionSize = 5_000n * 10n ** 18n
+    const positionExposureUsdc = 5_071_000_000n
+
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialReduceOnly
+        initialSize="5070"
+        oraclePriceRaw={98_580_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: positionSize,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: positionExposureUsdc,
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Target plDXY Perp exposure' }))
+      .toHaveValue('5 071')
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+  })
+
+  it('blocks a floored reduction below the partial minimum but exempts an exact full close', async () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 900n * 10n ** 18n,
+        remainingSize: 4_100n * 10n ** 18n,
+        remainingMargin: 800_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialSize="1000"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 5_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: 5_071_000_000n,
+        }}
+      />
+    )
+
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Use Max to close the full position.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.queryByText(/Minimum partial reduction/)).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+    })
+  })
+
+  it('does not treat a sub-minimum projected residual behind a pending order as a guaranteed full close', () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 800n * 10n ** 18n,
+        remainingSize: 1_200n * 10n ** 18n,
+        remainingMargin: 400_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialSize="0"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 2_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 400_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 20_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 1_971_600_000n,
+          entryNotionalUsdc: 1_971_600_000n,
+          dxyExposureUsdc: 2_028_400_000n,
+        }}
+        pendingOrders={[{
+          orderId: 77n,
+          side: 0,
+          direction: 'long',
+          sizeDelta: 1_200n * 10n ** 18n,
+          marginDeltaUsdc: 0n,
+          acceptablePrice: 98_580_000n,
+          isReduceOnly: true,
+          status: 1,
+        }]}
+        pendingOrderCount={1}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Target plDXY Perp exposure' }))
+      .toHaveValue('811.36')
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Review Close' })).not.toBeInTheDocument()
   })
 
   it('allows a profitable full close with no free buying power when the close preview is valid', () => {

@@ -40,7 +40,8 @@ The **Commit Preview** shows the expected result using the market state availabl
 This includes:
 
 * Direction: LONG USD or SHORT USD
-* Target exposure
+* Order exposure
+* Order quantity
 * Contract notional[^notional]
 * Margin
 * Resulting leverage
@@ -51,6 +52,34 @@ This includes:
 * Estimated execution reward
 * Liquidation price
 * Available side capacity
+
+#### Whole-lot order sizing
+
+The amount entered in `Target plDXY Perp exposure` is a USDC[^usdc] target. It is not the quantity stored in the order. Every committed order quantity is aligned to whole `100 plDXY` lots.
+
+For a typed open, increase or partial-reduction target, the interface converts the target at the current displayed plDXY Perp price and rounds the result down to a whole `100 plDXY` lot:
+
+```
+Unrounded quantity
+≈ Target exposure ÷ current displayed price
+
+Order quantity
+= floor(Unrounded quantity ÷ 100 plDXY) × 100 plDXY
+
+Order exposure
+= Order quantity × current displayed price
+```
+
+The **Preview** shows both values:
+
+* **Order exposure** — the whole-lot order quantity valued at the current displayed price
+* **Order quantity** — the plDXY quantity that will be committed
+
+Because the conversion rounds down, **Order exposure** can be lower than **Target exposure**. The fixed order quantity does not change after commitment, but its displayed USDC exposure can change when that quantity is valued at the final execution price.
+
+An explicit full close with no earlier pending orders is different. Selecting `Current Position` or `Max` uses the exact live position quantity. That quantity is already aligned to the `100 plDXY` lot size, so the interface does not convert the displayed USDC exposure again or leave a rounding residual.
+
+When earlier orders are still pending, `Max` can target only the projected remainder. Because an earlier order may fail, that later order is treated as a conditional reduction rather than a guaranteed full close. Finalize or clean up the earlier orders first if you want the later action to be labelled and protected as a full close.
 
 For a voluntary reduction or close, the onchain preview also exposes:
 
@@ -72,14 +101,14 @@ The preview is an estimate, not a quote.
 
 Some values become fixed when the order is committed. Others are determined only when it executes.
 
-| Fixed at commitment             | Determined at execution                    |
-| ------------------------------- | ------------------------------------------ |
-| Direction                       | Eligible oracle observation                |
-| Contract size                   | Final execution price                      |
-| Margin to assign                | Final USDC notional                        |
-| Open, increase, reduce or close | Protocol execution fee                     |
-| Acceptable-price boundary       | VPI charge or rebate                       |
-| Reserved execution reward       | Accrued carry and resulting account health |
+| Fixed at commitment              | Determined at execution                    |
+| -------------------------------- | ------------------------------------------ |
+| Direction                        | Eligible oracle observation                |
+| Order quantity in 100 plDXY lots | Final execution price                      |
+| Margin to assign                 | Final USDC notional                        |
+| Open, increase, reduce or close  | Protocol execution fee                     |
+| Acceptable-price boundary        | VPI charge or rebate                       |
+| Reserved execution reward        | Accrued carry and resulting account health |
 
 The execution-time oracle regime and final frozen-close spread are also determined at execution.
 
@@ -94,7 +123,7 @@ Selecting **Confirm Commit** requests the owner-wallet authorization and submits
 The commitment records:
 
 * LONG USD or SHORT USD
-* Size to add or remove
+* Whole-lot order quantity to add or remove
 * Margin to assign
 * Acceptable-price boundary
 * Whether the order opens risk or reduces it
@@ -378,6 +407,7 @@ The interface shows a **Final Result** containing:
 
 * Final price
 * Target exposure
+* Order quantity
 * Execution exposure
 * Contract notional
 * Margin posted
@@ -388,7 +418,7 @@ The interface shows a **Final Result** containing:
 * Commit transaction
 * Finalization transaction
 
-Target and execution exposure can differ because the contract size was committed before the final execution price was known.
+Target exposure is the USDC amount entered in the ticket. Previewed Order exposure can be lower because the converted quantity is rounded down to whole `100 plDXY` lots. Execution exposure can then differ from the preview because the committed order quantity is valued at the final execution price.
 
 For a voluntary frozen close, the onchain result also exposes:
 
@@ -551,7 +581,7 @@ After finalization:
 
 * Confirm whether the order executed or failed
 * Check the final execution price
-* Compare target and execution exposure
+* Compare Target exposure, previewed Order exposure and execution exposure
 * Separate released margin from realized profit
 * Review fees, VPI, carry and execution reward separately
 * Review frozen spread assessed, paid and waived, when applicable

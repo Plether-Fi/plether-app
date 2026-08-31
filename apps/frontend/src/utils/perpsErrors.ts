@@ -22,6 +22,7 @@ const PERPS_ERROR_ABI = parseAbi([
   'error MarginClearinghouse__InsufficientBucketMargin()',
 
   'error OrderRouter__ZeroSize()',
+  'error OrderRouter__InvalidSizeQuantum()',
   'error OrderRouter__CommitValidation(uint8 code)',
   'error OrderRouter__InvalidPletherOracle()',
   'error OrderRouter__EmptyPythUpdateData()',
@@ -100,6 +101,8 @@ const PERPS_ERROR_ABI = parseAbi([
   'error CfdEngine__InsufficientCloseOrderBountyBacking()',
 ])
 
+const INVALID_SIZE_QUANTUM_MESSAGE = 'Order size must use 100 plDXY increments. Adjust the exposure and try again.'
+
 const OPEN_REVERT_MESSAGES: Partial<Record<number, string>> = {
   0: 'The order is valid.',
   1: 'You have an opposing position. Close or reduce it before opening this side.',
@@ -109,7 +112,7 @@ const OPEN_REVERT_MESSAGES: Partial<Record<number, string>> = {
   5: 'Fees and price impact would drain the margin for this order.',
   6: 'Initial margin is too low for this order. Lower leverage or reduce size.',
   7: 'The LP pool does not have enough solvency buffer for this order.',
-  8: 'Order size must use 100 plDXY increments. Adjust the exposure and try again.',
+  8: INVALID_SIZE_QUANTUM_MESSAGE,
   9: 'The order margin cannot fund the required liquidation reserve. Lower leverage or reduce size.',
   10: 'The order cannot fully fund the required VPI rebate reserve. Reduce size or try again later.',
 }
@@ -122,15 +125,19 @@ const CLOSE_REVERT_MESSAGES: Partial<Record<number, string>> = {
   0: 'The close order is valid.',
   1: 'Reduce size is larger than the current position.',
   2: 'The remaining position would be too small. Reduce less or close the full position.',
-  3: 'This partial close would leave the position underwater. Reduce less or close the full position.',
+  3: INVALID_SIZE_QUANTUM_MESSAGE,
+  4: 'This partial close would leave the position underwater. Reduce less or close the full position.',
+  5: 'The position\'s required VPI rebate reserve is underfunded. Refresh and try again; contact support if this persists.',
 }
 
 const CLOSE_INVALID_REASON_MESSAGES: Partial<Record<number, string>> = {
   0: 'The close order is valid.',
   1: 'No current position to reduce or close.',
   2: 'Reduce size is invalid for the current position.',
-  3: 'The remaining position would be too small. Reduce less or close the full position.',
-  4: 'This partial close would leave the position underwater. Reduce less or close the full position.',
+  3: 'This partial close would leave the position underwater. Reduce less or close the full position.',
+  4: 'The remaining position would be too small. Reduce less or close the full position.',
+  5: INVALID_SIZE_QUANTUM_MESSAGE,
+  6: 'The position\'s required VPI rebate reserve is underfunded. Refresh and try again; contact support if this persists.',
 }
 
 export const PERPS_ORDER_FAILURE_MESSAGES: Partial<Record<number, string>> = {
@@ -302,6 +309,8 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
       return 'The margin account does not have enough USDC settlement balance.'
     case 'OrderRouter__ZeroSize':
       return 'Order size must be greater than zero.'
+    case 'OrderRouter__InvalidSizeQuantum':
+      return INVALID_SIZE_QUANTUM_MESSAGE
     case 'OrderRouter__CommitValidation': {
       const code = argNumber(args)
       return COMMIT_VALIDATION_MESSAGES[code ?? -1] ?? `Order commit failed validation${codeSuffix(code)}.`
@@ -338,7 +347,7 @@ function messageForDecodedError(name: string | undefined, args: readonly unknown
     case 'CfdEngine__DustPosition':
       return CLOSE_REVERT_MESSAGES[2]
     case 'CfdEngine__PartialCloseUnderwaterCarry':
-      return CLOSE_REVERT_MESSAGES[3]
+      return CLOSE_REVERT_MESSAGES[4]
     case 'CfdEngine__NoOpenPosition':
       return 'There is no open position for this account.'
     case 'CfdEngine__WithdrawBlockedByOpenPosition':

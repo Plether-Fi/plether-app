@@ -6,7 +6,7 @@ import {
   formatDisplayDxyPrice,
   formatPerpsSummaryUsdc,
   formatSignedPerpsSummaryUsdc,
-  notionalUsdcToQuantizedOpenSizeDelta,
+  notionalUsdcToQuantizedSizeDelta,
   oraclePriceToDisplayDxyPrice,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
@@ -51,10 +51,10 @@ describe('DXY display price helpers', () => {
   })
 })
 
-describe('perps open size quantum', () => {
-  it('rounds the requested open exposure down to a 100 plDXY increment', () => {
+describe('perps position size quantum', () => {
+  it('rounds the requested exposure down to a 100 plDXY increment', () => {
     const displayPrice = 101_420_000n
-    const sizeDelta = notionalUsdcToQuantizedOpenSizeDelta(5_000_000_000n, displayPrice)
+    const sizeDelta = notionalUsdcToQuantizedSizeDelta(5_000_000_000n, displayPrice)
 
     expect(sizeDelta).toBe(4_900n * 10n ** 18n)
     expect(sizeDelta % PERPS_POSITION_SIZE_QUANTUM).toBe(0n)

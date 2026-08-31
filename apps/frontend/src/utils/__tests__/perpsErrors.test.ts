@@ -16,6 +16,7 @@ const PERPS_TEST_ERROR_ABI = parseAbi([
   'error MarginClearinghouse__InsufficientUsdcForSettlement()',
 
   'error OrderRouter__ZeroSize()',
+  'error OrderRouter__InvalidSizeQuantum()',
   'error OrderRouter__CommitValidation(uint8 code)',
   'error OrderRouter__PredictableOpenInvalid(uint8 code)',
   'error OrderRouter__CloseWithPositiveMargin()',
@@ -143,6 +144,7 @@ describe('getPerpsErrorMessage', () => {
     ['MarginClearinghouse__InsufficientUsdcForSettlement', [], 'does not have enough USDC settlement'],
 
     ['OrderRouter__ZeroSize', [], 'Order size must be greater than zero'],
+    ['OrderRouter__InvalidSizeQuantum', [], '100 plDXY increments'],
     ['OrderRouter__CommitValidation', [11], 'below the minimum executable size'],
     ['OrderRouter__PredictableOpenInvalid', [4], 'Market skew is too high'],
     ['OrderRouter__PredictableOpenInvalid', [8], '100 plDXY increments'],
@@ -182,7 +184,6 @@ describe('getPerpsErrorMessage', () => {
     ['PletherOracle__ZeroBasketPrice', [], 'invalid basket price', 'execute'],
 
     ['CfdEngine__TypedOrderFailure', [0, 4, false], 'Market skew is too high', 'execute'],
-    ['CfdEngine__TypedOrderFailure', [0, 2, true], 'remaining position would be too small', 'execute'],
     ['CfdEngine__MustCloseOpposingPosition', [], 'opposing position'],
     ['CfdEngine__DegradedMode', [], 'market is degraded'],
     ['CfdEngine__PositionTooSmall', [], 'below the minimum size'],
@@ -205,6 +206,17 @@ describe('getPerpsErrorMessage', () => {
       expect(encodedErrorMessage(errorName, args, action)).toContain(expected)
     }
   )
+
+  it.each([
+    [0, 'close order is valid'],
+    [1, 'larger than the current position'],
+    [2, 'remaining position would be too small'],
+    [3, '100 plDXY increments'],
+    [4, 'partial close would leave the position underwater'],
+    [5, 'VPI rebate reserve is underfunded'],
+  ])('maps deployed close revert code %i', (code, expected) => {
+    expect(encodedErrorMessage('CfdEngine__TypedOrderFailure', [0, code, true], 'execute')).toContain(expected)
+  })
 
   it.each([
     [0, 'order is valid'],
@@ -234,8 +246,10 @@ describe('getPerpsErrorMessage', () => {
     [0, 'close order is valid'],
     [1, 'No current position'],
     [2, 'Reduce size is invalid'],
-    [3, 'remaining position would be too small'],
-    [4, 'partial close would leave the position underwater'],
+    [3, 'partial close would leave the position underwater'],
+    [4, 'remaining position would be too small'],
+    [5, '100 plDXY increments'],
+    [6, 'VPI rebate reserve is underfunded'],
   ])('maps close invalid reason %i', (reason, expected) => {
     expect(getPerpsCloseInvalidReasonMessage(reason)).toContain(expected)
   })
