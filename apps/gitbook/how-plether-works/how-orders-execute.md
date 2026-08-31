@@ -64,7 +64,7 @@ Order exposure
 = Order quantity × current displayed price
 ```
 
-The **Preview** shows both values:
+The ticket keeps **Order quantity** visible in the input and the inline **Preview** shows its derived **Order exposure**. **Commit Preview** confirms both values before submission:
 
 * **Order exposure** — the whole-lot order quantity valued at the current displayed price
 * **Order quantity** — the plDXY quantity that will be committed

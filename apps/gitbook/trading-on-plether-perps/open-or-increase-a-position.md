@@ -78,7 +78,7 @@ The application handles this conversion when building the order.
 
 Enter the plDXY amount to add in the `Order quantity` field. Typed quantities must use `100 plDXY` increments; the interface asks you to correct an unsupported quantity instead of rounding it silently.
 
-The **Preview** shows the entered **Order quantity** and derives **Order exposure** in USDC at the current displayed price:
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission:
 
 ```
 Order exposure

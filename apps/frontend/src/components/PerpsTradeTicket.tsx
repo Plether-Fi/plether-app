@@ -300,7 +300,6 @@ const PREVIEW_UNAVAILABLE_VALUE = 'Unavailable'
 const COMPACT_PREVIEW_ROW_LABELS = new Set([
   'plDXY Perp price',
   'Order exposure',
-  'Order quantity',
   'Required margin',
   'Max slippage',
   'Execution limit',
@@ -3039,6 +3038,7 @@ export function PerpsTradeTicket({
   )
   const sidePanelPreviewRows = useMemo(
     () => previewRows.filter((row) =>
+      row.label !== 'Order quantity' &&
       row.label !== 'Resulting leverage' &&
       row.label !== 'Contract side capacity'
     ),

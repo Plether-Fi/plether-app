@@ -66,7 +66,7 @@ Remaining contract quantity
 = current contract quantity − Order quantity
 ```
 
-The **Preview** shows the entered **Order quantity** in plDXY and derives **Order exposure** in USDC at the current displayed price. The committed Order quantity remains fixed, but both the reduced and remaining displayed exposure can be revalued at the final execution price.
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission. The committed Order quantity remains fixed, but both the reduced and remaining displayed exposure can be revalued at the final execution price.
 
 For a full close with no earlier pending orders, select `Current Position` or `Max`. This fills the exact live position quantity, so the full close does not leave a rounding residual. The action becomes `Review Close`.
 

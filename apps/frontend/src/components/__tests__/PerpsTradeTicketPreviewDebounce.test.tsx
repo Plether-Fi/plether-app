@@ -247,12 +247,10 @@ describe('Perps trade preview debounce', () => {
     expect(previewPanel).not.toBeNull()
     const preview = within(previewPanel!)
     const orderExposureRow = preview.getByText('Order exposure').closest('div')
-    const orderQuantityRow = preview.getByText('Order quantity').closest('div')
 
     expect(within(orderExposureRow!).getByText('4 969.58')).toBeInTheDocument()
     expect(within(orderExposureRow!).getByText('USDC')).toBeInTheDocument()
-    expect(within(orderQuantityRow!).getByText('4 900')).toBeInTheDocument()
-    expect(within(orderQuantityRow!).getByText('plDXY')).toBeInTheDocument()
+    expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
   })
 
   it('blocks a partial close quantity outside the 100 plDXY protocol quantum', () => {
