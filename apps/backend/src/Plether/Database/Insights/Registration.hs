@@ -393,7 +393,9 @@ ensureRegistrationSchema connection = do
     \ x_follow_attempt_id UUID, x_follow_attempt_started_at TIMESTAMPTZ, x_follow_verified_at TIMESTAMPTZ,\
     \ owner_wallet VARCHAR(42), trading_account VARCHAR(42), wallet_verification_block BIGINT,\
     \ wallet_verification_block_hash TEXT, wallet_verified_at TIMESTAMPTZ,\
-    \ rules_version TEXT, privacy_version TEXT, completed_at TIMESTAMPTZ,\
+    \ rules_version TEXT, privacy_version TEXT,\
+    \ promotional_email_consent BOOLEAN NOT NULL DEFAULT FALSE, promotional_email_consent_at TIMESTAMPTZ,\
+    \ completed_at TIMESTAMPTZ,\
     \ created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\
     \ CHECK (status IN ('in_progress', 'completed')),\
     \ CHECK (num_nonnulls(email_key_version,email_nonce,email_ciphertext,email_tag) IN (0,4)\
@@ -408,6 +410,8 @@ ensureRegistrationSchema connection = do
     \   AND (wallet_verification_block IS NULL OR wallet_verification_block >= 0)\
     \   AND (wallet_verification_block_hash IS NULL OR wallet_verification_block_hash ~ '^0x[0-9a-f]{64}$')),\
     \ CHECK (octet_length(turnstile_token_digest)=32 AND (email_digest IS NULL OR octet_length(email_digest)=32) AND (x_user_id_digest IS NULL OR octet_length(x_user_id_digest)=32)),\
+    \ CONSTRAINT insights_registration_applications_promotional_email_consent_check\
+    \ CHECK (promotional_email_consent = (promotional_email_consent_at IS NOT NULL)),\
     \ CHECK (status <> 'completed' OR (completed_at IS NOT NULL AND rules_version IS NOT NULL AND privacy_version IS NOT NULL\
     \   AND email_digest IS NOT NULL AND email_masked IS NOT NULL\
     \   AND num_nonnulls(email_key_version,email_nonce,email_ciphertext,email_tag)=4\
@@ -419,6 +423,20 @@ ensureRegistrationSchema connection = do
     \   AND num_nonnulls(x_user_id_key_version,x_user_id_nonce,x_user_id_ciphertext,x_user_id_tag)=0\
     \   AND num_nonnulls(x_access_key_version,x_access_nonce,x_access_ciphertext,x_access_tag)=0))\
     \ )"
+  _ <- execute_ connection
+    "ALTER TABLE insights_registration_applications\
+    \ ADD COLUMN IF NOT EXISTS promotional_email_consent BOOLEAN NOT NULL DEFAULT FALSE"
+  _ <- execute_ connection
+    "ALTER TABLE insights_registration_applications\
+    \ ADD COLUMN IF NOT EXISTS promotional_email_consent_at TIMESTAMPTZ"
+  _ <- execute_ connection
+    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint\
+    \ WHERE conrelid='insights_registration_applications'::regclass\
+    \ AND conname='insights_registration_applications_promotional_email_consent_check') THEN\
+    \ ALTER TABLE insights_registration_applications\
+    \ ADD CONSTRAINT insights_registration_applications_promotional_email_consent_check\
+    \ CHECK (promotional_email_consent = (promotional_email_consent_at IS NOT NULL));\
+    \ END IF; END $$"
   _ <- execute_ connection
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_insights_registration_email_unique\
     \ ON insights_registration_applications(competition_slug, email_digest) WHERE status = 'completed'"
@@ -1078,12 +1096,13 @@ completeRegistration
   -> Text
   -> Text
   -> Text
+  -> Bool
   -> Text
   -> Text
   -> Integer
   -> Text
   -> IO CompletionResult
-completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRulesVersion acceptedPrivacyVersion expectedOwner expectedAccount completionProofBlock completionProofHash = do
+completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRulesVersion acceptedPrivacyVersion acceptPromotionalEmail expectedOwner expectedAccount completionProofBlock completionProofHash = do
   result <- try @SqlError $ withTransaction connection $ do
     rows <- query connection
       "SELECT a.registration_id::text, a.competition_slug, a.status, a.x_username, a.owner_wallet, a.trading_account,\
@@ -1116,11 +1135,15 @@ completeRegistration connection sessionDigest requiredPrivacyVersion acceptedRul
         , Just account <- maybeAccount -> do
             updated <- execute connection
               "UPDATE insights_registration_applications SET status = 'completed', rules_version = ?,\
-              \ privacy_version = ?, wallet_verification_block=?, wallet_verification_block_hash=?,\
+              \ privacy_version = ?, promotional_email_consent = ?,\
+              \ promotional_email_consent_at = CASE WHEN ? THEN NOW() ELSE NULL END,\
+              \ wallet_verification_block=?, wallet_verification_block_hash=?,\
               \ completed_at = NOW(), updated_at = NOW()\
               \ WHERE registration_id = ?::uuid AND status = 'in_progress'"
               ( acceptedRulesVersion
               , acceptedPrivacyVersion
+              , acceptPromotionalEmail
+              , acceptPromotionalEmail
               , completionProofBlock
               , T.toLower completionProofHash
               , applicationId

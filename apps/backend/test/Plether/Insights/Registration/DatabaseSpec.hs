@@ -67,6 +67,8 @@ spec = do
         , "CREATE TABLE IF NOT EXISTS insights_registration_applications"
         , "CREATE TABLE IF NOT EXISTS insights_registration_sessions"
         , "CREATE TABLE IF NOT EXISTS insights_registration_rate_limits"
+        , "promotional_email_consent BOOLEAN NOT NULL DEFAULT FALSE"
+        , "promotional_email_consent = (promotional_email_consent_at IS NOT NULL)"
         , "status <> 'completed' OR ( completed_at IS NOT NULL AND rules_version IS NOT NULL AND privacy_version IS NOT NULL"
         ]
 

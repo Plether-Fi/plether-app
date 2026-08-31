@@ -15,6 +15,7 @@ import {
   useRegistrationSession,
 } from '../api'
 import { RegistrationWalletStep } from '../components/RegistrationWalletStep'
+import { RegistrationReviewStep } from '../components/RegistrationReviewStep'
 import { TurnstileWidget } from '../components/TurnstileWidget'
 import { ErrorState, LoadingState, Panel } from '../components/ui'
 import { useUtcNow } from '../hooks/useUtcNow'
@@ -205,6 +206,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
   const [actionError, setActionError] = useState<string | null>(null)
   const [acceptRules, setAcceptRules] = useState(false)
   const [acceptPrivacy, setAcceptPrivacy] = useState(false)
+  const [acceptPromotionalEmail, setAcceptPromotionalEmail] = useState(false)
   const [editingWallet, setEditingWallet] = useState(false)
   const registration = sessionQuery.data
   const completed = completedStepCount(registration)
@@ -287,6 +289,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
         registration.csrfToken,
         rulesVersion,
         privacyVersion,
+        acceptPromotionalEmail,
       )
       updateRegistration(completedRegistration)
       await Promise.all([
@@ -386,35 +389,17 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
             </button>
           </div>
         ) : (
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-brand-peach">Step 5 of 5</p>
-            <h2 className="mt-2 text-2xl font-semibold">Review your entry</h2>
-            <dl className="mt-5 grid gap-px bg-brand-border/20 sm:grid-cols-2">
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Public X handle</dt><dd className="mt-1 font-semibold">@{registration.identity?.xHandle.replace(/^@/, '')}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Confirmed email</dt><dd className="mt-1">{registration.identity?.maskedEmail}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Owner wallet (private)</dt><dd className="mt-1 font-mono text-sm" title={registration.wallet?.ownerAddress}>{registration.wallet ? shortAddress(registration.wallet.ownerAddress) : '—'}</dd></div>
-              <div className="bg-app-bg p-4"><dt className="text-xs uppercase tracking-wider text-content-tertiary">Scored Trading Account</dt><dd className="mt-1 font-mono text-sm" title={registration.wallet?.tradingAccount}>{registration.wallet ? shortAddress(registration.wallet.tradingAccount) : '—'}</dd></div>
-            </dl>
-            <div className="mt-5 space-y-3 text-sm leading-6 text-content-secondary">
-              <label className="flex items-start gap-3"><input type="checkbox" checked={acceptRules} onChange={(event) => { setAcceptRules(event.target.checked) }} className="mt-1 h-4 w-4 accent-brand-orange" /><span>I accept the <Link to="/methodology" className="font-semibold text-brand-peach hover:underline">competition rules</Link>, including the one-wallet and integrity-review requirements.</span></label>
-              <div className="flex items-start gap-3">
-                <input id="accept-registration-privacy" type="checkbox" checked={acceptPrivacy} onChange={(event) => { setAcceptPrivacy(event.target.checked) }} aria-describedby="registration-privacy-details" className="mt-1 h-4 w-4 shrink-0 accent-brand-orange" />
-                <div>
-                  <label htmlFor="accept-registration-privacy">I accept the privacy notice:</label>
-                  <ul id="registration-privacy-details" className="mt-1 list-disc space-y-1 pl-5">
-                    <li>My X handle will be public.</li>
-                    <li>My confirmed email is encrypted and may be used for competition integrity, duplicate prevention, and competition-relevant messages.</li>
-                    <li>The private owner-wallet-to-Trading-Account link is protected and retained indefinitely for integrity and scoring audits.</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <div className="mt-5">
-              <button type="button" className={PRIMARY_BUTTON} disabled={!acceptRules || !acceptPrivacy || pendingAction === 'complete'} onClick={() => { void finishRegistration() }}>
-                {pendingAction === 'complete' ? 'Completing registration…' : 'Complete registration'}
-              </button>
-            </div>
-          </div>
+          <RegistrationReviewStep
+            registration={registration}
+            acceptRules={acceptRules}
+            acceptPrivacy={acceptPrivacy}
+            acceptPromotionalEmail={acceptPromotionalEmail}
+            isCompleting={pendingAction === 'complete'}
+            onAcceptRulesChange={setAcceptRules}
+            onAcceptPrivacyChange={setAcceptPrivacy}
+            onAcceptPromotionalEmailChange={setAcceptPromotionalEmail}
+            onComplete={() => { void finishRegistration() }}
+          />
         )}
       </Panel>
 
