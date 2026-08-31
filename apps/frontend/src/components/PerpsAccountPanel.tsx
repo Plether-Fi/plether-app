@@ -4,7 +4,7 @@ import { usePerpsTrading } from '../hooks'
 import { usePerpsIdentity } from '../perps-aa'
 import { PERPS_ARBITRUM_SEPOLIA_CHAIN_ID } from '../contracts/perpsAddresses'
 import { getExplorerTxUrl } from '../utils/explorer'
-import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
+import { formatDisplayDxyPrice, formatPerpsNumber, formatPerpsPositionSize, formatPerpsSummaryUsdc, formatPerpsUsdc, formatSignedPerpsSummaryUsdc, oraclePriceToDisplayDxyPrice, parsePerpsUsdc, perpsSideLabel } from '../utils/perps'
 import { DOCS_LINKS } from '../config/docs'
 import { Button, INFO_TOOLTIP_PANEL_CLASS_NAME, Input, Modal, TokenAmount, TokenLabel, Tooltip, type TooltipDocsLink } from './ui'
 
@@ -19,7 +19,7 @@ interface PositionRow {
   market: string
   side: string
   size: ReactNode
-  entryNotional: ReactNode
+  orderQuantity: ReactNode
   entry: string
   leverage: string
   liquidationPrice: ReactNode
@@ -445,16 +445,16 @@ function PositionView({
   const effectiveAccountLeverage = formatEffectiveAccountLeverage(position, equityUsdc)
   const leverageTooltip = (
     <span>
-      Position leverage is current contract notional divided by the margin assigned to this position.
+      Position leverage is the position&apos;s current protocol accounting value divided by its assigned margin.
       <br />
       <br />
       Effective account leverage includes free USDC through account equity: <strong>{effectiveAccountLeverage}</strong>.
     </span>
   )
-  const entryNotionalTooltip = (
+  const orderQuantityTooltip = (
     <span>
-      Entry notional is the executed order size recorded at entry. It does not move with price; current plDXY Perp
-      exposure does.
+      Order quantity is the number of plDXY Perp contracts held by this position. It changes only when the position is
+      increased or reduced.
     </span>
   )
   const unrealizedPnlTooltip = (
@@ -466,7 +466,7 @@ function PositionView({
     market: 'plDXY Perp',
     side: perpsSideLabel(position.side),
     size: <TokenAmount amount={formatPerpsSummaryUsdc(position.dxyExposureUsdc ?? position.estimatedNotionalUsdc)} wrap />,
-    entryNotional: <TokenAmount amount={formatPerpsSummaryUsdc(position.entryNotionalUsdc)} wrap />,
+    orderQuantity: <TokenAmount amount={formatPerpsPositionSize(position.size)} token="plDXY" wrap />,
     entry: formatDisplayDxyPrice(position.entryPrice),
     leverage: formatPositionLeverage(position),
     liquidationPrice: (
@@ -523,10 +523,10 @@ function PositionView({
       <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,11rem),1fr))] gap-3 sm:gap-4">
         <AccountMetric label="plDXY Perp exposure" value={currentPosition.size} />
         <AccountMetric
-          label="Entry notional"
-          value={currentPosition.entryNotional}
-          tooltip={entryNotionalTooltip}
-          tooltipDocsLink={DOCS_LINKS.entryNotional}
+          label="Order quantity"
+          value={currentPosition.orderQuantity}
+          tooltip={orderQuantityTooltip}
+          tooltipDocsLink={DOCS_LINKS.orderQuantity}
         />
         <AccountMetric label="Entry price" value={currentPosition.entry} />
         <AccountMetric
@@ -557,7 +557,7 @@ function PositionView({
         />
       </div>
       <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-        <span>Entry notional is the executed order size. plDXY Perp exposure is current displayed exposure.</span>
+        <span>Order quantity stays fixed between size-changing trades. plDXY Perp exposure moves with the current price.</span>
         {' '}
         <span>This is a shared-collateral account, so free margin outside the position can still protect it from liquidation.</span>
       </p>

@@ -19,9 +19,9 @@ describe('documentation links', () => {
         href: 'https://docs.plether.com/welcome/understanding-the-plether-dollar-index#why-the-raw-basket-moves-opposite-to-the-dollar',
         title: 'Why the raw basket moves opposite to the dollar',
       },
-      contractNotional: {
-        href: 'https://docs.plether.com/how-plether-works/margin-leverage-and-liquidation#the-notional-used-for-margin',
-        title: 'The notional used for margin',
+      orderQuantity: {
+        href: 'https://docs.plether.com/how-plether-works/how-pnl-is-calculated#exposure-quantity-and-notional-are-different',
+        title: 'Exposure, quantity and notional are different',
       },
       executionLimit: {
         href: 'https://docs.plether.com/how-plether-works/how-orders-execute#acceptable-price-protection',

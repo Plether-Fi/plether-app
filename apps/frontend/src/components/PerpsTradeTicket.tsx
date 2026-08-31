@@ -329,8 +329,6 @@ const FROZEN_CLOSE_SPREAD_TOOLTIP =
   'Oracle-frozen closes/reductions use this fixed LP-owned spread instead of the adverse-confidence price shift to protect LPs from price uncertainty. Wait until the market reopens to avoid this spread.'
 const DIRECTION_TOOLTIP =
   'LONG USD benefits when the displayed price rises; SHORT USD benefits when it falls. The underlying FX basket moves in the opposite direction.'
-const CONTRACT_NOTIONAL_TOOLTIP =
-  'The protocol\'s accounting size, calculated using the raw basket price. It is different from Order exposure and determines margin and fees.'
 const ORDER_EXPOSURE_TOOLTIP =
   'The entered Order quantity valued at the current plDXY Perp price. A full close uses the exact remaining quantity.'
 const REQUIRED_MARGIN_TOOLTIP =
@@ -631,20 +629,24 @@ function formatUsdcRaw(value: bigint | undefined): ReactNode {
   return <TokenAmount amount={formatPreviewUsdcRaw(value)} />
 }
 
+function formatOrderQuantity(value: bigint | undefined): ReactNode {
+  return <TokenAmount amount={formatPerpsPositionSize(value)} token="plDXY" />
+}
+
 function orderDetailRows(
   orderDxyExposureUsdc: bigint | undefined,
   orderSizeDelta: bigint | undefined
 ): PreviewRow[] {
   return [
     {
+      label: 'Order quantity',
+      value: formatOrderQuantity(orderSizeDelta),
+    },
+    {
       label: 'Order exposure',
       value: <TokenAmount amount={formatPerpsUsdc(orderDxyExposureUsdc)} />,
       tooltip: ORDER_EXPOSURE_TOOLTIP,
       tooltipDocsLink: DOCS_LINKS.orderExposure,
-    },
-    {
-      label: 'Order quantity',
-      value: <TokenAmount amount={formatPerpsPositionSize(orderSizeDelta, 0)} token="plDXY" />,
     },
   ]
 }
@@ -2934,7 +2936,6 @@ export function PerpsTradeTicket({
     : executionProtectionsFixture
   const shouldShowExecutionProtections = enableLiveTrading ||
     displayedExecutionProtections !== undefined
-  const previewContractNotionalUsdc = openPreview?.notionalUsdc ?? contractNotionalUsdc
   const previewInitialMarginUsdc = !isReducingCurrentPosition &&
     displayedExecutionProtections !== undefined
     ? displayedExecutionProtections.request.marginDelta
@@ -3061,12 +3062,6 @@ export function PerpsTradeTicket({
       },
       ...orderDetailRows(orderDxyExposureUsdc, orderSizeDelta),
       {
-        label: 'Contract notional',
-        value: formatUsdcRaw(previewContractNotionalUsdc),
-        tooltip: CONTRACT_NOTIONAL_TOOLTIP,
-        tooltipDocsLink: DOCS_LINKS.contractNotional,
-      },
-      {
         label: 'Required margin',
         value: formatUsdcRaw(previewInitialMarginUsdc),
         tooltip: REQUIRED_MARGIN_TOOLTIP,
@@ -3134,7 +3129,6 @@ export function PerpsTradeTicket({
       oraclePublishTime,
       nowSeconds,
       previewPrice,
-      previewContractNotionalUsdc,
       previewExecutionFeeUsdc,
       previewInitialMarginUsdc,
       previewResultingLeverage,
@@ -4308,9 +4302,6 @@ export function PerpsTradeTicket({
               <div className="border border-brand-border/20 bg-app-bg p-4">
                 <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Commit Preview</div>
                 <PreviewRows rows={previewRows} />
-                <p className="mt-4 border-t border-brand-border/20 pt-3 text-sm leading-5 text-content-secondary">
-                  Order quantity is what you enter. Order exposure values that quantity at the current displayed price. Contract notional uses the raw basket price for protocol accounting.
-                </p>
               </div>
 
               {shouldShowExecutionProtections ? (
@@ -4474,7 +4465,6 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
                     ...committedOrderDetailRows,
-                    { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
@@ -4505,7 +4495,6 @@ export function PerpsTradeTicket({
                   rows={[
                     { label: 'Direction', value: directionLabel(direction) },
                     ...committedOrderDetailRows,
-                    { label: 'Contract notional', value: formatUsdcRaw(contractNotionalUsdc) },
                     { label: 'Max slippage', value: formatPercent(committedSlippageNumber) },
                     { label: 'Execution limit', value: formatOptionalPrice(committedExecutionLimit) },
                     { label: 'Estimated protocol execution fee', value: formatUsdcRaw(protocolExecutionFeeRaw) },
@@ -4860,7 +4849,6 @@ export function PerpsTradeTicket({
                         ? <TokenAmount amount={formatPerpsUsdc(displayedCommittedDxyExposureUsdc)} />
                         : formatUsdcRaw(finalExecutedDxyExposureUsdc),
                     },
-                    { label: 'Contract notional', value: finalExecutedNotionalUsdc === undefined ? formatUsdcRaw(contractNotionalUsdc) : formatUsdcRaw(finalExecutedNotionalUsdc) },
                     ...(!finalIsClose
                       ? [{ label: 'Margin posted', value: formatUsdc(marginNumber) }]
                       : []),
@@ -5002,9 +4990,8 @@ export function PerpsTradeTicket({
             <div className="mb-3 text-xs font-medium uppercase text-content-secondary">Current order math</div>
             <div className="space-y-2">
               <AccountSummaryRow label="Selected leverage" value={formatLeverage(activeLeverage)} />
+              <AccountSummaryRow label="Order quantity" value={formatOrderQuantity(orderSizeDelta)} />
               <AccountSummaryRow label="Order exposure" value={formatUsdcRaw(orderDxyExposureUsdc)} />
-              <AccountSummaryRow label="Order quantity" value={`${formatPerpsPositionSize(orderSizeDelta, 0)} plDXY`} />
-              <AccountSummaryRow label="Contract notional" value={formatUsdcRaw(contractNotionalUsdc)} />
               <AccountSummaryRow label="Position margin at selected leverage" value={formatUsdcRaw(marginUsdc)} />
               <AccountSummaryRow label={`Position margin at ${formatLeverage(DEFAULT_MAX_LEVERAGE)}`} value={formatUsdcRaw(defaultMaxLeverageMarginUsdc)} />
               <AccountSummaryRow label={`Position margin at ${formatLeverage(simulatorMaxLeverage)}`} value={formatUsdcRaw(simulatorMaxLeverageMarginUsdc)} />

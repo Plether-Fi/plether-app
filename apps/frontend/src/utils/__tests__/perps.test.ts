@@ -4,6 +4,7 @@ import {
   confidenceAdjustedBasketPrice,
   displayDxyPriceToOraclePrice,
   formatDisplayDxyPrice,
+  formatPerpsPositionSize,
   formatPerpsSummaryUsdc,
   formatSignedPerpsSummaryUsdc,
   notionalUsdcToQuantizedSizeDelta,
@@ -25,6 +26,13 @@ describe('perps summary USDC formatting', () => {
     expect(formatPerpsSummaryUsdc(100_000_490_000n)).toBe('100 000')
     expect(formatPerpsSummaryUsdc(4_073_013_780_000n)).toBe('4 073 014')
     expect(formatSignedPerpsSummaryUsdc(-4_073_013_780_000n)).toBe('-4 073 014')
+  })
+})
+
+describe('perps position quantity formatting', () => {
+  it('formats 18-decimal contract quantities without a currency unit', () => {
+    expect(formatPerpsPositionSize(2_000n * 10n ** 18n)).toBe('2 000')
+    expect(formatPerpsPositionSize(1_234_567_000_000_000_000n)).toBe('1.23')
   })
 })
 
