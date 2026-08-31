@@ -9,17 +9,18 @@ export function SepoliaNoticeBar() {
         Arbitrum Sepolia testnet · Mock funds only
       </span>
       <span className="hidden sm:inline">
-        You are on Arbitrum Sepolia testnet. Try trading with mock funds. Registration for the
-        trading competition is now closed. Check the current standings at{' '}
+        You are on Arbitrum Sepolia testnet. Try trading with mock funds.{' '}
+        <strong className="font-bold">
+          Registration for the September trading competition is now open
+        </strong>.{' '}
         <a
-          href="https://insights.plether.com"
+          href="https://insights.plether.com/competitions/testnet-trading-2026-09/register"
           target="_blank"
           rel="noopener noreferrer"
-          className="underline underline-offset-4"
+          className="font-bold underline underline-offset-4"
         >
-          insights.plether.com
+          Register here
         </a>
-        .
       </span>
       <button
         type="button"
