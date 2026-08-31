@@ -6,6 +6,7 @@ import {
 } from '../abis'
 import { PERPS_SIDE } from '../perpsConstants'
 import {
+  deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
   executionModeMask,
   generatePerpsClientOrderId,
@@ -98,6 +99,61 @@ describe('bounded V2 order identity', () => {
 })
 
 describe('bounded V2 execution protections', () => {
+  it('derives the exact extra margin needed to preserve selected leverage', () => {
+    const positionSize = 50n * 10n ** 20n
+    const prices = [100_000_000n, 100_100_000n]
+    const additionalMargin = deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 1_000_000_000n,
+      prices,
+      capPrice: 200_000_000n,
+      assessments: [
+        assessment({
+          postPositionSize: positionSize,
+          postPositionEquityUsdc: 999_500_000n,
+          postLeverageBps: 50_026n,
+        }),
+        assessment({
+          postPositionSize: positionSize,
+          postPositionEquityUsdc: 999_500_000n,
+          postLeverageBps: 50_076n,
+        }),
+      ],
+    })
+
+    expect(additionalMargin).toBe(1_500_000n)
+  })
+
+  it('adds no leverage margin when every reviewed price already fits', () => {
+    expect(deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 1_000_000_000n,
+      prices: [100_000_000n],
+      capPrice: 200_000_000n,
+      assessments: [assessment({
+        postPositionSize: 50n * 10n ** 20n,
+        postPositionEquityUsdc: 1_000_000_000n,
+        postLeverageBps: 50_000n,
+      })],
+    })).toBe(0n)
+  })
+
+  it('also replaces margin absorbed by positive execution costs', () => {
+    expect(deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: 50_000,
+      marginDelta: 10_000_000n,
+      prices: [100_000_000n],
+      capPrice: 200_000_000n,
+      assessments: [assessment({
+        actionChargeCollectedUsdc: 15_500_000n,
+        carryUsdc: 500_000n,
+        postPositionSize: 50n * 10n ** 20n,
+        postPositionEquityUsdc: 999_500_000n,
+        postLeverageBps: 50_026n,
+      })],
+    })).toBe(5_500_000n)
+  })
+
   it('pins one regime and derives component-wise exact extrema', () => {
     const bounds = derivePerpsExecutionBounds({
       validUntil: 2_000_000_000n,

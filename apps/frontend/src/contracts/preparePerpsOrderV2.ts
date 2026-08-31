@@ -11,6 +11,7 @@ import {
 } from './abis'
 import { PERPS_ARBITRUM_SEPOLIA } from './perpsAddresses'
 import {
+  deriveAdditionalPerpsMarginForLeverage,
   derivePerpsExecutionBounds,
   generatePerpsClientOrderId,
   permissivePerpsExecutionBounds,
@@ -235,19 +236,20 @@ export async function preparePerpsOrderV2(
     expectedConfigHash,
     executionBountyUsdc,
   })
-  const order = {
+  let reviewedMarginDelta = input.marginDelta
+  let order = {
     account: input.account,
     sizeDelta: input.sizeDelta,
-    marginDelta: input.marginDelta,
+    marginDelta: reviewedMarginDelta,
     targetPrice,
     commitTime: block.timestamp,
     commitBlock: block.number,
     orderId: 0n,
     side: input.side,
     isClose: input.isClose,
-  } as const
+  }
   const prices = assessmentPrices(currentPrice, targetPrice)
-  const assessments = await Promise.all(prices.map(async (price) =>
+  const assessAtReviewedPrices = async () => Promise.all(prices.map(async (price) =>
     asAssessment(await client.readContract({
       address: policyEvaluator,
       abi: PERPS_ORDER_POLICY_EVALUATOR_ABI,
@@ -265,6 +267,22 @@ export async function preparePerpsOrderV2(
       blockNumber,
     }))
   ))
+  let assessments = await assessAtReviewedPrices()
+
+  if (!input.isClose) {
+    const additionalMargin = deriveAdditionalPerpsMarginForLeverage({
+      selectedMaxLeverageBps: input.selectedMaxLeverageBps,
+      marginDelta: reviewedMarginDelta,
+      assessments,
+      prices,
+      capPrice,
+    })
+    if (additionalMargin > 0n) {
+      reviewedMarginDelta += additionalMargin
+      order = { ...order, marginDelta: reviewedMarginDelta }
+      assessments = await assessAtReviewedPrices()
+    }
+  }
 
   const bounds = derivePerpsExecutionBounds({
     validUntil,
@@ -277,7 +295,7 @@ export async function preparePerpsOrderV2(
     clientOrderId: input.clientOrderId ?? generatePerpsClientOrderId(),
     side: input.side,
     sizeDelta: input.sizeDelta,
-    marginDelta: input.marginDelta,
+    marginDelta: reviewedMarginDelta,
     targetPrice,
     isClose: input.isClose,
     bounds,

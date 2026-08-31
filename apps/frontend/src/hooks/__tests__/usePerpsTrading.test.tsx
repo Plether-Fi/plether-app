@@ -413,6 +413,46 @@ describe('usePerpsTrading', () => {
     )
   })
 
+  it('commits the exact leverage-buffered margin from final review', async () => {
+    mocks.identityReady = true
+    const reviewed = preparedOrder()
+    reviewed.request.marginDelta = 201_500_000n
+    reviewed.request.bounds.maxPostLeverageBps = 49_999
+    reviewed.protection.maxPostLeverageBps = 49_999
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      ...commitInput(),
+      preparedOrder: reviewed,
+    })).resolves.toMatchObject({ orderId: 42n })
+
+    expect(mocks.simulateContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        args: [expect.objectContaining({
+          marginDelta: 201_500_000n,
+        })],
+      })
+    )
+  })
+
+  it('rejects a reviewed request above the currently selected leverage', async () => {
+    mocks.identityReady = true
+    const reviewed = preparedOrder()
+    reviewed.request.bounds.maxPostLeverageBps = 50_001
+    reviewed.protection.maxPostLeverageBps = 50_001
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      ...commitInput(),
+      preparedOrder: reviewed,
+    })).rejects.toThrow(
+      'The trade changed after final review. Review fresh execution protections before signing.'
+    )
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+  })
+
   it('rejects an OrderCommitted log that belongs to another account', async () => {
     mocks.identityReady = true
     mocks.parseEventLogs.mockReturnValue([{
