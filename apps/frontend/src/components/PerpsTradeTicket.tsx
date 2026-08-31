@@ -555,8 +555,24 @@ function lifecycleOutcomeHistoryRow(
 }
 
 function hasCompleteExecutionEvidence(order: PerpsOrderHistoryRow): boolean {
-  return order.status !== 'Executed'
-    || (order.receiptHash !== undefined && order.executionEconomicsVersion === 2)
+  if (order.status !== 'Executed') return true
+
+  const executionOracleFrozen =
+    order.executionOracleFrozen ?? executionModeOracleFrozen(order.executionMode)
+  const executionPrice = order.executionPriceRaw ?? order.activityPriceRaw
+  if (
+    order.receiptHash === undefined
+    || order.executionEconomicsVersion !== 2
+    || order.vpiUsdcRaw === undefined
+    || executionPrice === undefined
+    || executionOracleFrozen === undefined
+  ) {
+    return false
+  }
+
+  return executionOracleFrozen
+    ? order.frozenCloseSpreadUsdcRaw !== undefined
+    : order.executionOraclePriceRaw !== undefined
 }
 
 function terminalOrderKey(order: PerpsOrderHistoryRow): string {
