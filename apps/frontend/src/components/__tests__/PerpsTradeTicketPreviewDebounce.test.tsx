@@ -253,6 +253,26 @@ describe('Perps trade preview debounce', () => {
     expect(preview.queryByText('Order quantity')).not.toBeInTheDocument()
   })
 
+  it('opens Commit Preview on the dialog without opening the oracle tooltip', () => {
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialOrderQuantity="4900"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        oracleFreshness="fresh"
+        oracleFreshnessTooltip="validated oracle basket updated 18s ago"
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review Long' }))
+
+    expect(screen.getByRole('dialog')).toHaveFocus()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('blocks a partial close quantity outside the 100 plDXY protocol quantum', () => {
     render(
       <PerpsTradeTicket

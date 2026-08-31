@@ -21,6 +21,7 @@ interface ModalProps {
   analyticsProperties?: AnalyticsProperties
   ariaLabel?: string
   inertBackground?: boolean
+  initialFocus?: 'first-focusable' | 'dialog'
 }
 
 const sizeStyles = {
@@ -53,6 +54,7 @@ export function Modal({
   analyticsProperties,
   ariaLabel,
   inertBackground = false,
+  initialFocus = 'first-focusable',
 }: ModalProps) {
   const hasHeader = title !== undefined || headerContent !== undefined
   const placementClass = placementStyles[placement]
@@ -136,10 +138,10 @@ export function Modal({
       const lastElement = focusableElements[focusableElements.length - 1]
       const activeElement = document.activeElement
 
-      if (event.shiftKey && (activeElement === firstElement || !modal.contains(activeElement))) {
+      if (event.shiftKey && (activeElement === modal || activeElement === firstElement || !modal.contains(activeElement))) {
         event.preventDefault()
         lastElement.focus()
-      } else if (!event.shiftKey && (activeElement === lastElement || !modal.contains(activeElement))) {
+      } else if (!event.shiftKey && (activeElement === modal || activeElement === lastElement || !modal.contains(activeElement))) {
         event.preventDefault()
         firstElement.focus()
       }
@@ -176,10 +178,14 @@ export function Modal({
       element.setAttribute('inert', '')
     })
 
-    const firstFocusable = modalRef.current?.querySelector<HTMLElement>(
-      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
-    )
-    ;(firstFocusable ?? modalRef.current)?.focus()
+    if (initialFocus === 'dialog') {
+      modalRef.current?.focus()
+    } else {
+      const firstFocusable = modalRef.current?.querySelector<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      )
+      ;(firstFocusable ?? modalRef.current)?.focus()
+    }
 
     return () => {
       backgroundElements.forEach(({ element, ariaHidden, wasInert }) => {
@@ -200,7 +206,7 @@ export function Modal({
         previousActiveElement.focus()
       }
     }
-  }, [inertBackground, isOpen])
+  }, [inertBackground, initialFocus, isOpen])
 
   if (!isOpen) return null
 

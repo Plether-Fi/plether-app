@@ -130,4 +130,27 @@ describe('Modal analytics', () => {
       expect(screen.getByRole('button', { name: 'Open preview' })).toHaveFocus()
     })
   })
+
+  it('can focus the dialog without weakening the focus trap', async () => {
+    render(
+      <Modal isOpen onClose={vi.fn()} title="Review order" initialFocus="dialog">
+        <button type="button">Confirm order</button>
+      </Modal>
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Review order' })
+    const closeButton = screen.getByRole('button', { name: 'Close dialog' })
+    const confirmButton = screen.getByRole('button', { name: 'Confirm order' })
+
+    await waitFor(() => {
+      expect(dialog).toHaveFocus()
+    })
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true })
+    expect(confirmButton).toHaveFocus()
+
+    dialog.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+    expect(closeButton).toHaveFocus()
+  })
 })

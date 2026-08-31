@@ -4174,6 +4174,7 @@ export function PerpsTradeTicket({
         size="lg"
         analyticsId="trade_review"
         analyticsProperties={commonAnalyticsProperties}
+        initialFocus="dialog"
       >
         <div className="space-y-5">
           {lifecycleState === 'preview' ? (
