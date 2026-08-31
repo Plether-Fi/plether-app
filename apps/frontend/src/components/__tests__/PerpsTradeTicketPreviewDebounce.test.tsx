@@ -289,8 +289,42 @@ describe('Perps trade preview debounce', () => {
     expect(wagmiMocks.useReadContracts.mock.calls.some((call) => (
       (call[0] as ReadContractsOptions).contracts[0]?.functionName === 'previewClose'
     ))).toBe(false)
-    expect(screen.getByText('Order quantity must use 100 plDXY increments.')).toBeInTheDocument()
+    expect(screen.getByText('Order quantity must be a multiple of 100 plDXY.')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+  })
+
+  it('blocks a non-quantized order in fixture mode', () => {
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialOrderQuantity="4950"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        availableToTradeRaw={10_000_000_000n}
+      />
+    )
+
+    expect(screen.getByText('Order quantity must be a multiple of 100 plDXY.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Long' })).toBeDisabled()
+  })
+
+  it('allows an exact non-quantized full close in fixture mode', () => {
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="9550"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        currentPosition={{
+          ...existingLongPosition,
+          size: 9_550n * 10n ** 18n,
+        }}
+      />
+    )
+
+    expect(screen.queryByText('Order quantity must be a multiple of 100 plDXY.')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
   })
 
   it('shows the resulting position VPI balance when increasing an existing position', () => {

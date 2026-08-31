@@ -1265,7 +1265,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         initialDirection="long"
         initialReduceOnly
-        initialOrderQuantity="5070"
+        initialOrderQuantity="4900"
         oraclePriceRaw={98_580_000n}
         currentPosition={{
           exists: true,

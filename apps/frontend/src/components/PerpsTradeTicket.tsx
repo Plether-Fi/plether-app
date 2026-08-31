@@ -2494,6 +2494,9 @@ export function PerpsTradeTicket({
     : 0n
   const isCorrectChain = chainId === PERPS_ARBITRUM_SEPOLIA_CHAIN_ID
   const isZeroSize = orderSizeDelta <= 0n
+  const orderQuantityValidationError = !isZeroSize && !isOrderQuantityAligned
+    ? 'Order quantity must be a multiple of 100 plDXY.'
+    : undefined
   const previewPublishTime = BigInt(oraclePublishTime ?? 0)
   const hasTradePreviewInputs = enableLiveTrading &&
     isConnected &&
@@ -2662,9 +2665,7 @@ export function PerpsTradeTicket({
         ? `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Wait for keeper finalization or cleanup before submitting another reduce order.`
         : `${pendingCloseContext} is already closing the full current position.${pendingCloseExpiryContext} Execute it or clean it up before submitting another reduce order.`
     }
-    if (!isOrderQuantityAligned) {
-      return 'Order quantity must use 100 plDXY increments.'
-    }
+    if (orderQuantityValidationError) return orderQuantityValidationError
     if (
       isOppositePositionDirection &&
       currentPosition.size > 0n &&
@@ -2813,9 +2814,12 @@ export function PerpsTradeTicket({
     prepareOrder,
     slippageNumber,
   ])
-  const displayedValidationError = enableLiveTrading
+  const reviewValidationError = enableLiveTrading
     ? liveValidationError
-    : validationErrorFixture
+    : orderQuantityValidationError
+  const displayedValidationError = reviewValidationError ?? (
+    enableLiveTrading ? undefined : validationErrorFixture
+  )
   const displayedExecutionProtections = enableLiveTrading
     ? preparedOrder
     : executionProtectionsFixture
@@ -3191,7 +3195,7 @@ export function PerpsTradeTicket({
     isConnected &&
     isCorrectChain &&
     (Boolean(liveValidationError) || isTradePreviewPending)
-  ) || (!enableLiveTrading && Boolean(validationErrorFixture))
+  ) || (!enableLiveTrading && Boolean(displayedValidationError))
   const marginActionAmountRaw = parsePerpsUsdc(marginActionAmount)
   const marginActionLabel = marginAction === 'withdraw' ? 'Withdraw' : 'Deposit'
   const ownerWalletBalance = ownerWalletUsdcRaw ?? walletUsdcRaw
@@ -3413,6 +3417,7 @@ export function PerpsTradeTicket({
       address,
       lifecycleState,
       liveValidationError,
+      reviewValidationError,
       direction,
       effectiveOrderDirection,
       isReducingCurrentPosition,
@@ -3423,6 +3428,14 @@ export function PerpsTradeTicket({
       oraclePriceRaw,
       slippageNumber,
     })
+    if (reviewValidationError) {
+      debugPerpsCommit('ticket:blocked-by-validation', {
+        reviewValidationError,
+      })
+      trackPerpsValidationBlocked(validationReasonCategory(reviewValidationError), commonAnalyticsProperties)
+      setFlowError(reviewValidationError)
+      return
+    }
     if (!enableLiveTrading) {
       debugPerpsCommit('ticket:mock-flow')
       trackPerpsOrderLifecycle('commit_started', commonAnalyticsProperties)
@@ -3431,14 +3444,6 @@ export function PerpsTradeTicket({
       setCommittedTargetPrice(executionLimit)
       setCommitExecutionStatus('awaiting-signature')
       setLifecycleState('commitPending')
-      return
-    }
-    if (liveValidationError) {
-      debugPerpsCommit('ticket:blocked-by-validation', {
-        liveValidationError,
-      })
-      trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
-      setFlowError(liveValidationError)
       return
     }
     if (!preparedOrder) {
@@ -4088,9 +4093,9 @@ export function PerpsTradeTicket({
               void switchToArbitrumSepolia()
               return
             }
-            if (liveValidationError) {
-              trackPerpsValidationBlocked(validationReasonCategory(liveValidationError), commonAnalyticsProperties)
-              setFlowError(liveValidationError)
+            if (displayedValidationError) {
+              trackPerpsValidationBlocked(validationReasonCategory(displayedValidationError), commonAnalyticsProperties)
+              setFlowError(displayedValidationError)
               return
             }
             setIsReviewOpen(true)
@@ -4276,9 +4281,9 @@ export function PerpsTradeTicket({
                 </div>
               </div>
 
-              {enableLiveTrading && liveValidationError ? (
+              {reviewValidationError ? (
                 <div className="border border-brand-orange/30 bg-brand-orange/10 p-4 text-sm text-brand-orange">
-                  {liveValidationError}
+                  {reviewValidationError}
                   {!isCorrectChain ? (
                     <>
                       <Button
@@ -4341,12 +4346,11 @@ export function PerpsTradeTicket({
                 <Button
                   className="flex-1"
                   variant={direction === 'short' ? 'danger' : 'primary'}
-                  disabled={enableLiveTrading && (
-                    Boolean(liveValidationError) ||
+                  disabled={Boolean(reviewValidationError) || (enableLiveTrading && (
                     isExecutionProtectionsLoading ||
                     Boolean(executionProtectionsError) ||
                     preparedOrder === undefined
-                  )}
+                  ))}
                   analyticsId="confirm_commit"
                   analyticsProperties={commonAnalyticsProperties}
                   onClick={() => {
