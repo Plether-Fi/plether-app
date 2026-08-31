@@ -1804,7 +1804,7 @@ candleRollupSpec databaseUrl =
           `shouldContain` "Requested range does not contain a full aligned bucket for every canonical interval"
 
     it "uses a release activation minute only after the matching indexer cursor is certified" $
-      withCandleAdminDatabase databaseUrl $ \pool -> do
+      withCandleDatabase databaseUrl $ \pool -> do
         let activationTimestamp = baseTime + 17
             activationMinute = baseTime + 60
             firstEventTimestamp = baseTime + 2 * 86_400 + 5
