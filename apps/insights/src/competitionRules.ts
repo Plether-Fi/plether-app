@@ -4,7 +4,7 @@ interface CompetitionRules {
   minimumProfitUsdc: string
 }
 
-const COMPETITION_RULES: Readonly<Record<string, CompetitionRules>> = {
+const COMPETITION_RULES: Readonly<Partial<Record<string, CompetitionRules>>> = {
   'testnet-trading-2026-09': {
     minimumProfitUsdc: (1n * USDC_SCALE).toString(),
   },
