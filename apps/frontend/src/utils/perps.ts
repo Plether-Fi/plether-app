@@ -35,6 +35,16 @@ export function parsePerpsUsdc(value: string): bigint {
   }
 }
 
+export function parsePerpsPositionSize(value: string): bigint {
+  try {
+    const cleaned = cleanNumericInput(value)
+    if (!cleaned || cleaned === '.') return 0n
+    return parseUnits(cleaned, PERPS_DECIMALS.POSITION_SIZE)
+  } catch {
+    return 0n
+  }
+}
+
 export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 0): string {
   if (!Number.isFinite(value)) return '--'
 
@@ -47,6 +57,14 @@ export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 
 export function formatPerpsUsdc(amount: bigint | undefined, maxDecimals = 2): string {
   if (amount === undefined) return '--'
   return formatPerpsNumber(Number(formatUnits(amount, PERPS_DECIMALS.USDC)), maxDecimals)
+}
+
+export function formatPerpsPositionSize(amount: bigint | undefined, maxDecimals = 2): string {
+  if (amount === undefined) return '--'
+  return formatPerpsNumber(
+    Number(formatUnits(amount, PERPS_DECIMALS.POSITION_SIZE)),
+    maxDecimals
+  )
 }
 
 const PERPS_SUMMARY_WHOLE_USDC_THRESHOLD = 100_000n * 10n ** BigInt(PERPS_DECIMALS.USDC)
@@ -161,7 +179,7 @@ export function quantizePerpsPositionSize(
   return (sizeDelta / PERPS_POSITION_SIZE_QUANTUM) * PERPS_POSITION_SIZE_QUANTUM
 }
 
-export function notionalUsdcToQuantizedOpenSizeDelta(
+export function notionalUsdcToQuantizedSizeDelta(
   notionalUsdc: bigint,
   oraclePrice: bigint,
   rounding: PerpsPositionSizeRounding = 'down'
@@ -202,7 +220,7 @@ export function quantizedDxyExposureFromContractNotional(
     return undefined
   }
 
-  const sizeDelta = notionalUsdcToQuantizedOpenSizeDelta(
+  const sizeDelta = notionalUsdcToQuantizedSizeDelta(
     contractNotionalUsdc,
     rawOraclePrice,
     rounding

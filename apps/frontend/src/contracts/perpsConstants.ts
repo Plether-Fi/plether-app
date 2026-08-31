@@ -28,8 +28,8 @@ export const PERPS_DECIMALS = {
 export const PERPS_POSITION_SIZE_TO_USDC_SCALE =
   10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE + PERPS_DECIMALS.PRICE - PERPS_DECIMALS.USDC)
 
-// CfdEngine requires every open/increase size delta to use this canonical
-// synthetic-token quantum. Close orders intentionally remain exact so an
-// account can always fully exit an existing position.
+// OrderRouter and CfdEngine require every open, increase, reduce, and close
+// size delta to use this canonical synthetic-token quantum. Live position
+// sizes are aligned too, so an exact full close remains executable.
 export const PERPS_POSITION_SIZE_QUANTUM =
   100n * 10n ** BigInt(PERPS_DECIMALS.POSITION_SIZE)

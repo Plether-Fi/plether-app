@@ -135,7 +135,7 @@ const automaticallyFinalizedOrderHistory = [
 const baseModalArgs = {
   initialReviewOpen: true,
   initialDirection: 'long',
-  initialSize: '2116',
+  initialOrderQuantity: '2116',
   initialOrderId: ORDER_ID,
   initialCommitTxHash: COMMIT_TX,
   initialUserOperationHash: USER_OPERATION_HASH,

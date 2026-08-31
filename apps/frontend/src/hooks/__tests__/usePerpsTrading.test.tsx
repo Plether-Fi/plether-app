@@ -297,6 +297,53 @@ describe('usePerpsTrading', () => {
     expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
   })
 
+  it('rejects an unaligned close before simulation or signing', async () => {
+    mocks.identityReady = true
+    const unalignedSizeDelta = 100_000_000_000_000_000_001n
+    const basePreparedOrder = preparedOrder()
+    const closePreparedOrder: PreparedPerpsOrderV2 = {
+      ...basePreparedOrder,
+      request: {
+        ...basePreparedOrder.request,
+        sizeDelta: unalignedSizeDelta,
+        marginDelta: 0n,
+        isClose: true,
+      },
+    }
+
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.commitOrder({
+      ...commitInput(),
+      sizeDelta: unalignedSizeDelta,
+      marginUsdc: 0n,
+      isClose: true,
+      preparedOrder: closePreparedOrder,
+    })).rejects.toThrow('Order size must use 100 plDXY increments')
+
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+    expect(mocks.executeSponsoredPerpsAction).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unaligned explicit close while preparing its protections', async () => {
+    mocks.identityReady = true
+    const { result } = renderHook(() => usePerpsTrading(), { wrapper })
+
+    await expect(result.current.prepareOrder({
+      direction: 'long',
+      notionalUsdc: 1_000_000_000n,
+      sizeDelta: 100_000_000_000_000_000_001n,
+      marginUsdc: 0n,
+      oraclePrice: 98_300_000n,
+      slippagePercent: 0.1,
+      isClose: true,
+      selectedMaxLeverageBps: 50_000,
+    })).rejects.toThrow('Order size must use 100 plDXY increments')
+
+    expect(mocks.getBlock).not.toHaveBeenCalled()
+    expect(mocks.simulateContract).not.toHaveBeenCalled()
+  })
+
   it('keeps manual finalization and cleanup keeper-only', async () => {
     const { result } = renderHook(() => usePerpsTrading(), { wrapper })
 

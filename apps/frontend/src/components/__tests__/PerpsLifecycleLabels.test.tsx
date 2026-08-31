@@ -193,7 +193,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialReviewOpen
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n}
@@ -298,7 +298,7 @@ describe('perps lifecycle labels', () => {
     const baseProps = {
       enableLiveTrading: true,
       initialReviewOpen: true,
-      initialSize: '100',
+      initialOrderQuantity: '100',
       oraclePriceRaw: 100_000_000n,
       oraclePublishTime: Math.floor(Date.now() / 1_000),
       availableToTradeRaw: 1_000_000_000n,
@@ -440,7 +440,7 @@ describe('perps lifecycle labels', () => {
     const baseProps = {
       enableLiveTrading: true,
       initialReviewOpen: true,
-      initialSize: '100',
+      initialOrderQuantity: '100',
       oraclePriceRaw: 100_000_000n,
       oraclePublishTime: Math.floor(Date.now() / 1_000),
       availableToTradeRaw: 1_000_000_000n,
@@ -543,7 +543,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialReviewOpen
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={Math.floor(Date.now() / 1_000)}
         availableToTradeRaw={1_000_000_000n}
@@ -609,7 +609,7 @@ describe('perps lifecycle labels', () => {
           initialLifecycleState="executed"
           initialReviewOpen
           initialDirection="long"
-          initialSize="2 000"
+          initialOrderQuantity="2 000"
         />
         <PerpsAccountPanel
           isConnected
@@ -668,12 +668,12 @@ describe('perps lifecycle labels', () => {
     const finalResult = screen.getByText('Final Result').closest('div')?.parentElement
     expect(finalResult).toBeInTheDocument()
     const finalResultQueries = within(finalResult!)
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Order quantity')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution plDXY Perp exposure')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Margin posted')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Protocol execution fee')).toBeInTheDocument()
     expect(finalResultQueries.getByText('Execution reward')).toBeInTheDocument()
-    expect(finalResultQueries.getByText('Target plDXY Perp exposure is what you submitted. Execution plDXY Perp exposure is the committed size valued with the displayed plDXY Perp price at finalization.')).toBeInTheDocument()
+    expect(finalResultQueries.getByText('Execution plDXY Perp exposure is the committed Order quantity valued at the final displayed price.')).toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated protocol execution fee')).not.toBeInTheDocument()
     expect(finalResultQueries.queryByText('Estimated execution reward')).not.toBeInTheDocument()
 
@@ -687,13 +687,87 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText(/Entry notional is the executed order size\. plDXY Perp exposure is current displayed exposure\./)).toBeInTheDocument()
   })
 
+  it('uses terminal post-position evidence instead of committed full-close intent', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialOrderQuantity="1 014.2"
+        initialOrderId={81n}
+        initialCommittedIsFullClose
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 81n,
+          time: '31 Aug, 00:15',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: (100n * 10n ** 18n).toString(),
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position reduced at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position closed at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Executed reduction exposure')).toBeInTheDocument()
+  })
+
+  it('uses zero terminal post-position evidence to identify an actual full close', () => {
+    render(
+      <PerpsTradeTicket
+        initialLifecycleState="executed"
+        initialReviewOpen
+        initialDirection="short"
+        initialReduceOnly
+        initialOrderQuantity="1 014.2"
+        initialOrderId={82n}
+        initialCommittedIsFullClose={false}
+        initialCommittedSizeDelta={1_000n * 10n ** 18n}
+        initialFinalExecutionPrice={98_300_000n}
+        orderHistory={[{
+          orderId: 82n,
+          time: '31 Aug, 00:16',
+          market: 'plDXY Perp',
+          side: 'Long',
+          type: 'Close',
+          price: '1.0170',
+          size: '1 000',
+          status: 'Executed',
+          account: V2_ACCOUNT,
+          clientOrderId: V2_CLIENT_ORDER_ID,
+          receiptHash: V2_RECEIPT_HASH,
+          receiptEconomics: {
+            postPositionSize: '0',
+          },
+          executionEconomicsVersion: 2,
+        }]}
+      />
+    )
+
+    expect(screen.getByText(/Long plDXY Perp position closed at/)).toBeInTheDocument()
+    expect(screen.queryByText(/Long plDXY Perp position reduced at/)).not.toBeInTheDocument()
+    expect(screen.getByText('Executed close exposure')).toBeInTheDocument()
+  })
+
   it('resets the review modal lifecycle when it closes', () => {
     render(
       <PerpsTradeTicket
         initialLifecycleState="executed"
         initialReviewOpen
         initialDirection="long"
-        initialSize="2 000"
+        initialOrderQuantity="2 000"
       />
     )
 
@@ -853,7 +927,7 @@ describe('perps lifecycle labels', () => {
     expect(screen.getByText('Liquidation reward 0.2')).toBeInTheDocument()
   })
 
-  it('fills current position and max with exact plDXY Perp exposure instead of rounded display value', () => {
+  it('fills current position and max with the exact plDXY order quantity', () => {
     render(
       <PerpsTradeTicket
         initialDirection="short"
@@ -861,7 +935,7 @@ describe('perps lifecycle labels', () => {
           exists: true,
           side: 0,
           direction: 'long',
-          size: 0n,
+          size: 1_500n * 10n ** 18n,
           entryPrice: 98300000n,
           marginUsdc: 300000000n,
           unrealizedPnlUsdc: 0n,
@@ -878,12 +952,12 @@ describe('perps lifecycle labels', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
 
-    expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+    expect(screen.getByRole('textbox')).toHaveValue('1 500')
 
     fireEvent.change(screen.getByRole('textbox'), { target: { value: '0' } })
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
 
-    expect(screen.getByRole('textbox')).toHaveValue('1 553.249999')
+    expect(screen.getByRole('textbox')).toHaveValue('1 500')
   })
 
   it('shows resulting position leverage in the margin action modal', () => {
@@ -1029,7 +1103,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="104"
+        initialOrderQuantity="100"
         oraclePriceRaw={98434897n}
         oraclePublishTime={1781267148}
         minOpenNotionalUsdc={100000000n}
@@ -1048,7 +1122,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
         longOpenCapacityUsdc={0n}
@@ -1071,7 +1145,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_781_267_148}
         longOpenCapacityUsdc={0n}
@@ -1108,7 +1182,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="short"
-        initialSize="1 553.25"
+        initialOrderQuantity="1 553.25"
         oraclePriceRaw={98240000n}
         oraclePublishTime={1781118120}
         currentPosition={{
@@ -1158,7 +1232,7 @@ describe('perps lifecycle labels', () => {
         enableLiveTrading
         initialDirection="long"
         initialReduceOnly
-        initialSize="2 100"
+        initialOrderQuantity="2 100"
         oraclePriceRaw={98_300_000n}
         oraclePublishTime={1_784_705_538}
         currentPosition={{
@@ -1178,9 +1252,160 @@ describe('perps lifecycle labels', () => {
       />
     )
 
-    expect(screen.getByText('Only 2 034 USDC plDXY Perp exposure is available to reduce at the latest plDXY Perp price.')).toBeInTheDocument()
+    expect(screen.getByText('Only 2 000 plDXY is available to reduce.')).toBeInTheDocument()
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Review Close' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+  })
+
+  it('keeps a near-max reduction partial until Max selects the exact full close', () => {
+    const positionSize = 5_000n * 10n ** 18n
+    const positionExposureUsdc = 5_071_000_000n
+
+    render(
+      <PerpsTradeTicket
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="4900"
+        oraclePriceRaw={98_580_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: positionSize,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: positionExposureUsdc,
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('5 000')
+    expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+  })
+
+  it('blocks a floored reduction below the partial minimum but exempts an exact full close', async () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 900n * 10n ** 18n,
+        remainingSize: 4_100n * 10n ** 18n,
+        remainingMargin: 800_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="1000"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 5_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 1_000_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 50_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 4_929_000_000n,
+          entryNotionalUsdc: 4_929_000_000n,
+          dxyExposureUsdc: 5_071_000_000n,
+        }}
+      />
+    )
+
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Use Max to close the full position.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.queryByText(/Minimum partial reduction/)).not.toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
+    })
+  })
+
+  it('does not treat a sub-minimum projected residual behind a pending order as a guaranteed full close', () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: {
+        valid: true,
+        invalidReason: 0,
+        executionPrice: 98_580_000n,
+        sizeDelta: 800n * 10n ** 18n,
+        remainingSize: 1_200n * 10n ** 18n,
+        remainingMargin: 400_000_000n,
+      },
+    }]
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialDirection="long"
+        initialReduceOnly
+        initialOrderQuantity="0"
+        oraclePriceRaw={98_580_000n}
+        oraclePublishTime={1_700_000_000}
+        minNewPositionNotionalUsdc={1_000_000_000n}
+        currentPosition={{
+          exists: true,
+          side: 0,
+          direction: 'long',
+          size: 2_000n * 10n ** 18n,
+          entryPrice: 98_580_000n,
+          marginUsdc: 400_000_000n,
+          unrealizedPnlUsdc: 0n,
+          maintenanceMarginUsdc: 20_000_000n,
+          liquidatable: false,
+          estimatedNotionalUsdc: 1_971_600_000n,
+          entryNotionalUsdc: 1_971_600_000n,
+          dxyExposureUsdc: 2_028_400_000n,
+        }}
+        pendingOrders={[{
+          orderId: 77n,
+          side: 0,
+          direction: 'long',
+          sizeDelta: 1_200n * 10n ** 18n,
+          marginDeltaUsdc: 0n,
+          acceptablePrice: 98_580_000n,
+          isReduceOnly: true,
+          status: 1,
+        }]}
+        pendingOrderCount={1}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /Max:/ }))
+
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('800')
+    expect(screen.getByText(
+      'Minimum partial reduction is 1 115.62 USDC. Finalize or clean up earlier pending orders before closing a smaller projected remainder.'
+    )).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Review Close' })).not.toBeInTheDocument()
   })
 
   it('allows a profitable full close with no free buying power when the close preview is valid', () => {
@@ -1202,7 +1427,7 @@ describe('perps lifecycle labels', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="short"
-        initialSize="3484552.941998"
+        initialOrderQuantity="3 389 329.5585835346486935"
         oraclePriceRaw={97_190_495n}
         oraclePublishTime={1_784_656_207}
         availableToTradeRaw={0n}
@@ -1231,7 +1456,7 @@ describe('perps lifecycle labels', () => {
   it('requires confirmation before enabling the margin call simulator', () => {
     render(
       <PerpsTradeTicket
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         maintenanceMarginBps={100n}
       />
     )
@@ -1420,13 +1645,13 @@ describe('perps lifecycle labels', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog')).toBeInTheDocument()
     })
-    expect(screen.getByRole('textbox')).toHaveValue('2 034')
+    expect(screen.getByRole('textbox')).toHaveValue('2 000')
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
 
     fireEvent.click(screen.getByRole('button', { name: 'Refresh oracle price' }))
 
     await waitFor(() => {
-      expect(screen.getByRole('textbox')).toHaveValue('2 032')
+      expect(screen.getByRole('textbox')).toHaveValue('2 000')
     })
     expect(screen.queryByText(/already reserved by pending close orders/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Review Close' })).toBeEnabled()
@@ -1634,7 +1859,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'long' as const,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       initialOrderId: 58n,
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -1703,7 +1928,7 @@ describe('perps lifecycle labels', () => {
             initialLifecycleState="revealPending"
             initialReviewOpen
             initialDirection="long"
-            initialSize="1 000"
+            initialOrderQuantity="1 000"
             initialOrderId={59n}
             oraclePriceRaw={97_330_315n}
             oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -1839,7 +2064,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'long' as const,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       initialOrderId: 72n,
       oraclePriceRaw: 97_330_315n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -2024,7 +2249,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialDirection: 'short' as const,
-      initialSize: '100 000',
+      initialOrderQuantity: '100 000',
       initialOrderId: 73n,
       oraclePriceRaw: 98_391_482n,
       oraclePublishTime: Math.floor(Date.now() / 1000),
@@ -2117,7 +2342,7 @@ describe('perps lifecycle labels', () => {
       initialLifecycleState: 'revealPending' as const,
       initialReviewOpen: true,
       initialOrderId: 74n,
-      initialSize: '1 000',
+      initialOrderQuantity: '1 000',
       oraclePriceRaw: 98_391_482n,
       availableToTradeRaw: 2_000_000_000n,
       walletUsdcRaw: 2_000_000_000n,
@@ -2202,7 +2427,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="revealPending"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={72n}
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -2252,7 +2477,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="revealPending"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={60n}
         oraclePriceRaw={97_330_315n}
         oraclePublishTime={Math.floor(Date.now() / 1000)}
@@ -2315,7 +2540,7 @@ describe('perps lifecycle labels', () => {
         initialLifecycleState="selfExecuteAvailable"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={63n}
         initialCommitTxHash="0x46cb000000000000000000000000000000001cbb"
         oraclePriceRaw={97_330_315n}

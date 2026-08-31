@@ -57,20 +57,22 @@ Use the Position panel to review the exposure you currently hold, then create th
 
 In the trade ticket, enable `Reduce only`. This ensures the order can only reduce or close the current position; it cannot increase exposure or open a position in the opposite direction.
 
-For a partial reduction, enter the target `plDXY Perp exposure` to remove. The application converts that current-price amount into a contract quantity, and the action becomes `Review Reduce`:
+For a partial reduction, enter the plDXY amount to remove in `Order quantity`. Typed quantities must use `100 plDXY` increments; the interface asks you to correct an unsupported quantity instead of rounding it silently.
+
+The action becomes `Review Reduce`. The remaining position is calculated from the whole-lot Order quantity:
 
 ```
 Remaining contract quantity
-= current contract quantity − reduction contract quantity
+= current contract quantity − Order quantity
 ```
 
-Because displayed exposure is `contract quantity × current displayed price`, both the selected exposure and the remaining displayed exposure can be revalued by the time the order executes.
+The ticket keeps the entered **Order quantity** visible above the **Preview**, which shows the derived **Order exposure** in USDC at the current displayed price. **Commit Preview** confirms both values before submission. The committed Order quantity remains fixed, but both the reduced and remaining displayed exposure can be revalued at the final execution price.
 
-For a full close, select `Current Position` or `Max` to fill the complete contract quantity currently available. The action becomes `Review Close`.
+For a full close with no earlier pending orders, select `Current Position` or `Max`. This fills the exact live position quantity, so the full close does not leave a rounding residual. The action becomes `Review Close`.
 
-Earlier pending reductions count against the amount available to later orders. If the live position is 10,000 units and an earlier order is already reducing 3,000, only the projected remaining 7,000 units are available to a later close.
+Earlier pending reductions count against the amount available to later orders. If the live position is 10,000 units and an earlier order is already reducing 3,000, only the projected remaining 7,000 units are available to a later order. Because the earlier reduction may fail, the later 7,000-unit order is treated as a conditional reduction, not a guaranteed full close. If that remainder is below the minimum partial-reduction size, finalize or clean up the earlier order before trying to close it.
 
-Review the current exposure, the target amount being reduced and the projected remaining amount in the order summary. Treat those USDC exposure amounts as current-price estimates until execution.
+Review the current exposure, Order quantity, Order exposure and the projected remaining amount. Treat the USDC exposure amounts as current-price estimates until execution.
 
 #### Minimum-size rules
 
@@ -119,7 +121,8 @@ The preview estimates the order using the current account, oracle and HousePool 
 The current `Commit Preview` lets you review:
 
 * Position direction and whether the order reduces or closes
-* Selected plDXY Perp exposure
+* Order exposure, meaning the whole-lot Order quantity valued at the current displayed price
+* Order quantity in plDXY
 * Estimated plDXY Perp price and contract notional
 * Resulting leverage, or `Closed` for a complete close
 * Max slippage and execution limit
@@ -463,7 +466,7 @@ If HousePool liquidity cannot cover the fresh `79.04 USDC` payment, the released
 
 After a partial reduction, use the **Position** panel to confirm remaining plDXY Perp exposure, unchanged entry price, updated leverage, liquidation price, unrealized PnL and cost of carry. Open `Edit Position Margin` if you need to inspect the remaining assigned position margin.
 
-The lifecycle window’s **Final Result** records final price, target and execution exposure, contract notional, the execution fee, VPI, confidence or estimated frozen-close spread, execution reward and transaction links. For a frozen close, treat the UI spread amount as an estimate: the executed transaction and onchain `FrozenCloseSpreadSettled` event are authoritative for the assessed, paid and waived amounts. **Transaction History** shows the realized close result. `Available to Trade` and any **Trader claim** are separate account views.
+The lifecycle window’s **Final Result** records final price, Order quantity, execution exposure, contract notional, the execution fee, VPI, confidence or estimated frozen-close spread, execution reward and transaction links. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. For a frozen close, treat the UI spread amount as an estimate: the executed transaction and onchain `FrozenCloseSpreadSettled` event are authoritative for the assessed, paid and waived amounts. **Transaction History** shows the realized close result. `Available to Trade` and any **Trader claim** are separate account views.
 
 After a full close, confirm:
 

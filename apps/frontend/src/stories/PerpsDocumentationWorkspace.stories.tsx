@@ -111,7 +111,7 @@ export const MarketAndAccountReadiness: Story = {
           </div>
           <PerpsTradeTicket
             initialDirection="long"
-            initialSize="2 000"
+            initialOrderQuantity="2 000"
             oraclePriceRaw={98_300_000n}
             oraclePriceDisplay="1.0170"
             oracleFreshness="fresh"
@@ -145,7 +145,7 @@ export const CloseOnlyReduceOnly: Story = {
         <div className="ml-auto max-w-md">
           <PerpsTradeTicket
             initialDirection="short"
-            initialSize="500"
+            initialOrderQuantity="500"
             initialReduceOnly
             oracleFrozen
             oraclePriceRaw={100_000_000n}
