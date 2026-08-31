@@ -127,9 +127,19 @@ describe('pinned bounded-V2 Sepolia release', () => {
       terraformEcs.indexOf('resource "aws_ecs_task_definition" "workers"'),
       terraformEcs.indexOf('resource "aws_ecs_service" "workers"')
     )
+    const perpsIndexerTaskDefinition = terraformEcs.slice(
+      terraformEcs.indexOf('resource "aws_ecs_task_definition" "perps_indexer"'),
+      terraformEcs.indexOf('resource "aws_ecs_service" "perps_indexer"')
+    )
+    const consolidatedPerpsIndexer = consolidatedWorkersTaskDefinition.slice(
+      consolidatedWorkersTaskDefinition.indexOf('name             = "plether-perps-indexer"'),
+      consolidatedWorkersTaskDefinition.indexOf('name             = "plether-insights-worker"')
+    )
     for (const taskDefinition of [
       insightsTaskDefinition,
       consolidatedWorkersTaskDefinition,
+      perpsIndexerTaskDefinition,
+      consolidatedPerpsIndexer,
     ]) {
       expect(taskDefinition).toContain(
         '{ name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book }'
