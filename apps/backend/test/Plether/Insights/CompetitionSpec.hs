@@ -113,7 +113,7 @@ spec = do
 
     it "retains the bankroll and qualification thresholds with the expanded prize pool" $ do
       crStartingBalanceUsdc september2026Competition `shouldBe` 100_000_000_000
-      minimumProfitUsdc september2026Competition `shouldBe` 1_000_000_000
+      minimumProfitUsdc september2026Competition `shouldBe` 1_000_000
       crMinimumActiveDays september2026Competition `shouldBe` 5
       crPrizeUsdc september2026Competition
         `shouldBe` [600_000_000, 500_000_000, 400_000_000, 300_000_000, 200_000_000]
@@ -414,6 +414,12 @@ spec = do
 
     it "does not round a sub-threshold score up to +1%" $ do
       qMeetsProfitRequirement (qualification july2026Competition EligibilityEligible 999_999_999 5)
+        `shouldBe` False
+
+    it "uses the exact +1.00 USDC threshold for September" $ do
+      qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 1_000_000 5)
+        `shouldBe` True
+      qMeetsProfitRequirement (qualification september2026Competition EligibilityEligible 999_999 5)
         `shouldBe` False
 
   describe "FX active sessions" $ do

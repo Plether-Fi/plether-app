@@ -22,7 +22,7 @@ beforeEach(() => {
       tradingCutoffAt: '2026-08-03T16:00:00Z',
       resultsAt: '2026-08-05T12:00:00Z',
       startingBalance: '100000000000',
-      pnlEligibilityThreshold: '1000000000',
+      pnlEligibilityThreshold: '1000000',
       minActiveDays: 5,
       prizes: [
         { place: 1, amount: '600000000' },
@@ -59,7 +59,8 @@ describe('LeaderboardPage', () => {
     expect(screen.getByText('Registered traders').parentElement).toHaveTextContent('358')
     expect(screen.getByText('Prize pool').parentElement).toHaveTextContent('2,000.00 USDC')
     expect(screen.getByText('Starting balance').parentElement).toHaveTextContent('100,000.00 mock USDC')
-    expect(screen.getByText('Prize threshold').parentElement).toHaveTextContent('+1,000.00 mock USDC')
+    expect(screen.getByText('Prize threshold').parentElement).toHaveTextContent('+1.00 mock USDC')
+    expect(screen.getByText('+1.00 mock USDC net P&L or better')).toBeInTheDocument()
     expect(screen.getByText(/600.00 \/ 500.00 \/ 400.00 \/ 300.00 \/ 200.00 USDC/i)).toBeInTheDocument()
     expect(screen.getByText(/for the top 5 eligible traders/i)).toBeInTheDocument()
   })

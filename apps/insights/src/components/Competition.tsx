@@ -216,7 +216,7 @@ export function RulesSummary({ competition }: { competition: Competition }) {
 
   return (
     <Panel className="grid gap-px bg-brand-border/20 sm:grid-cols-3">
-      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at a <strong className="text-content-primary">+1% net return or better</strong> after trading costs and log at least five active FX-session days.</p></div>
+      <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Win condition</p><p className="mt-2 text-sm leading-6 text-content-secondary">Finish at <strong className="text-content-primary">+{formatMockUsdc(competition.pnlEligibilityThreshold)} net P&amp;L or better</strong> after trading costs and log at least {competition.minActiveDays} active FX-session days.</p></div>
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Prizes</p><p className="mt-2 text-sm leading-6 text-content-secondary"><strong className="text-content-primary">{prizeSchedule} USDC</strong> for the top {competition.prizes.length} eligible traders.</p></div>
       <div className="bg-surface-panel p-5"><p className="text-xs font-semibold uppercase tracking-wider text-content-tertiary">Fair play</p><p className="mt-2 text-sm leading-6 text-content-secondary">One wallet per trader. Wash trading, mirrored wallets, and sybil accounts are ineligible.</p></div>
     </Panel>

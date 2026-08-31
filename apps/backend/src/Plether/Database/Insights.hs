@@ -87,7 +87,9 @@ import Plether.Insights.Competition
   , competitionReleaseIsBound
   , competitionReleaseManifestText
   , finalizationBlockers
+  , competitionRulesForSlug
   , july2026CompetitionSlug
+  , minimumProfitUsdc
   , pendingCompetitionReleaseManifestText
   , participantEligibilityText
   , september2026CompetitionSlug
@@ -1114,7 +1116,7 @@ competitionSeedMetadataFor rules chainId releaseRouter usdcAddress marginClearin
     , csmResultsTimestamp = epoch $ crResultsAt rules
     , csmPaymentDeadlineTimestamp = epoch $ crPaymentDeadlineAt rules
     , csmStartingBalanceUsdc = crStartingBalanceUsdc rules
-    , csmMinimumProfitBps = crMinimumProfitBps rules
+    , csmMinimumProfitBps = crLegacyMinimumProfitBps rules
     , csmMinimumActiveDays = crMinimumActiveDays rules
     , csmFxSessionBoundaryUtcMinutes = crFxSessionBoundaryUtcMinutes rules
     , csmRegistrationCloseTimestamp = epoch <$> crRegistrationClosesAt rules
@@ -2151,19 +2153,21 @@ getCompetitionLeaderboard conn slug requestedSearch limitRows offsetRows =
                 <> " WHERE competition_slug = ? AND (wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!')"
                 <> leaderboardOrderBy)
               (slug, pattern, pattern, limitRows, offsetRows)
-    False -> case normalizeLeaderboardSearch requestedSearch of
-      Nothing ->
-        query conn
-          (leaderboardQuery <> leaderboardOrderBy)
-          (slug, limitRows, offsetRows)
-      Just search ->
-        let pattern = leaderboardSearchPattern search
-         in query conn
-              (leaderboardQuery
-                <> " WHERE wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!'\
-                   \"
-                <> leaderboardOrderBy)
-              (slug, pattern, pattern, limitRows, offsetRows)
+    False -> do
+      profitThreshold <- competitionMinimumProfitUsdc slug
+      case normalizeLeaderboardSearch requestedSearch of
+        Nothing ->
+          query conn
+            (leaderboardQuery <> leaderboardOrderBy)
+            (profitThreshold, slug, limitRows, offsetRows)
+        Just search ->
+          let pattern = leaderboardSearchPattern search
+           in query conn
+                (leaderboardQuery
+                  <> " WHERE wallet ILIKE ? ESCAPE '!' OR COALESCE(alias, '') ILIKE ? ESCAPE '!'\
+                     \"
+                  <> leaderboardOrderBy)
+                (profitThreshold, slug, pattern, pattern, limitRows, offsetRows)
 
 getCompetitionWallet :: Connection -> Text -> Text -> IO (Maybe LeaderboardRow)
 getCompetitionWallet conn slug wallet = do
@@ -2172,10 +2176,19 @@ getCompetitionWallet conn slug wallet = do
     then query conn
       (finalizedStandingsSelect <> " WHERE competition_slug = ? AND wallet = ? LIMIT 1")
       (slug, normalizeAddress wallet)
-    else query conn
-      (leaderboardQuery <> " WHERE wallet = ? LIMIT 1")
-      (slug, normalizeAddress wallet)
+    else do
+      profitThreshold <- competitionMinimumProfitUsdc slug
+      query conn
+        (leaderboardQuery <> " WHERE wallet = ? LIMIT 1")
+        (profitThreshold, slug, normalizeAddress wallet)
   pure $ firstRow rows
+
+competitionMinimumProfitUsdc :: Text -> IO Integer
+competitionMinimumProfitUsdc slug =
+  case competitionRulesForSlug slug of
+    Just rules -> pure $ minimumProfitUsdc rules
+    Nothing -> ioError $ userError $
+      "Insights competition rules are not defined in code for slug " <> T.unpack slug
 
 competitionUsesMaterializedStandings :: Connection -> Text -> IO Bool
 competitionUsesMaterializedStandings conn slug = do
@@ -2648,7 +2661,7 @@ competitionSelect =
 leaderboardQuery :: Query
 leaderboardQuery =
   "WITH target AS (\
-  \ SELECT * FROM insights_competitions WHERE slug = ?\
+  \ SELECT c.*, ?::NUMERIC AS code_minimum_profit_usdc FROM insights_competitions c WHERE slug = ?\
   \ ), start_batch AS (\
   \ SELECT b.* FROM insights_snapshot_batches b JOIN target t ON t.slug = b.competition_slug\
   \ JOIN perps_indexer_state i ON i.chain_id = t.chain_id AND i.release_router = t.release_router\
@@ -2727,7 +2740,7 @@ leaderboardQuery =
   \ SELECT p.wallet, p.alias, p.eligibility_status, p.eligibility_reason, p.integrity_flags,\
   \ t.slug AS competition_slug,\
   \ t.starting_balance_usdc AS competition_starting_balance_usdc,\
-  \ t.minimum_profit_bps AS competition_minimum_profit_bps,\
+  \ t.code_minimum_profit_usdc AS competition_minimum_profit_usdc,\
   \ t.minimum_active_days AS competition_minimum_active_days,\
   \ ((t.first_prize_usdc > 0)::INT + (t.second_prize_usdc > 0)::INT + (t.third_prize_usdc > 0)::INT\
   \   + (t.fourth_prize_usdc > 0)::INT + (t.fifth_prize_usdc > 0)::INT) AS competition_prize_places,\
@@ -2766,7 +2779,7 @@ leaderboardQuery =
   \ COUNT(*) OVER (PARTITION BY final_pnl_usdc) AS prize_tie_count\
   \ FROM ranked WHERE final_pnl_usdc IS NOT NULL AND eligibility_status = 'eligible'\
   \ AND jsonb_array_length(integrity_flags) = 0\
-  \ AND final_pnl_usdc >= competition_starting_balance_usdc * competition_minimum_profit_bps / 10000\
+  \ AND final_pnl_usdc >= competition_minimum_profit_usdc\
   \ AND active_days >= competition_minimum_active_days\
   \ ), with_prizes AS (\
   \ SELECT ranked.*, CASE WHEN pc.prize_place <= competition_prize_places THEN pc.prize_place ELSE NULL END AS prize_place,\
@@ -2807,6 +2820,7 @@ materializeFinalizedStandings conn slug = do
       | existingCount == participantCount -> validateComplete participantCount
       | existingCount /= 0 -> pure $ Left "finalized standings are partially materialized"
       | otherwise -> do
+          profitThreshold <- competitionMinimumProfitUsdc slug
           inserted <- execute conn
             ("INSERT INTO insights_finalized_standings (competition_slug, competition_rank, prize_place, prize_tie_count,\
              \ wallet, alias, eligibility_status, eligibility_reason, funding_integrity_clear, final_pnl_usdc, roi_bps,\
@@ -2816,7 +2830,7 @@ materializeFinalizedStandings conn slug = do
              \ position_unrealized_pnl_usdc, position_liquidatable) SELECT ?, standings.* FROM ("
               <> leaderboardQuery
               <> ") standings")
-            (slug, slug)
+            (slug, profitThreshold, slug)
           if toInteger inserted == participantCount
             then validateComplete participantCount >>= \case
               success@(Right _) -> pure success

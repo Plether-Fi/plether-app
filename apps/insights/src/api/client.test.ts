@@ -36,6 +36,20 @@ describe('Insights API client', () => {
     await expect(getCurrentCompetition()).resolves.toEqual(competition)
   })
 
+  it('uses the code-defined September profit threshold over stale API metadata', async () => {
+    const septemberCompetition = {
+      ...competition,
+      slug: 'testnet-trading-2026-09',
+      pnlEligibilityThreshold: '1000000000',
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ competition: septemberCompetition }), { status: 200 })))
+
+    await expect(getCurrentCompetition()).resolves.toMatchObject({
+      slug: septemberCompetition.slug,
+      pnlEligibilityThreshold: '1000000',
+    })
+  })
+
   it('normalizes registration metadata for the current competition', async () => {
     const wireCompetition = {
       ...competition,

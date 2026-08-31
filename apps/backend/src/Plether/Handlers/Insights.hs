@@ -43,7 +43,9 @@ import Plether.Insights.Competition
   , CompetitionRules (..)
   , ParticipantEligibility (..)
   , PrizeAllocation (..)
+  , competitionRulesForSlug
   , competitionRegistrationState
+  , minimumProfitUsdc
   , participantEligibilityFromText
   , prizeAllocation
   )
@@ -188,6 +190,14 @@ withInsightsReadSnapshot =
       , readWriteMode = ReadOnly
       }
 
+competitionMinimumProfitUsdc :: CompetitionRow -> Integer
+competitionMinimumProfitUsdc competition =
+  case competitionRulesForSlug $ icrSlug competition of
+    Just rules -> minimumProfitUsdc rules
+    Nothing -> error $
+      "Insights competition rules are not defined in code for slug "
+        <> T.unpack (icrSlug competition)
+
 competitionRowToJson :: Integer -> Maybe RegistrationConfig -> CompetitionRow -> Value
 competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
   object $
@@ -207,7 +217,7 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , ("scoreCutoffBlock" .=) . show <$> icrScoreCutoffBlock
       , Just $ "startingBalanceUsdc" .= show icrStartingBalanceUsdc
       , Just $ "minimumProfitUsdc" .= show minimumProfit
-      , Just $ "minimumProfitBps" .= icrMinimumProfitBps
+      , Just $ "minimumProfitBps" .= minimumProfitBps
       , Just $ "minimumActiveDays" .= icrMinimumActiveDays
       , Just $ "fxSessionBoundaryUtc" .= formatBoundary icrFxSessionBoundaryUtcMinutes
       , Just $
@@ -223,7 +233,10 @@ competitionRowToJson now _registrationConfig competition@CompetitionRow {..} =
       , ("registration" .=) <$> registrationMetadata
       ]
   where
-    minimumProfit = icrStartingBalanceUsdc * icrMinimumProfitBps `div` 10_000
+    minimumProfit = competitionMinimumProfitUsdc competition
+    minimumProfitBps
+      | icrStartingBalanceUsdc <= 0 = 0
+      | otherwise = minimumProfit * 10_000 `div` icrStartingBalanceUsdc
     competitionPhase
       | icrFinalized = "final" :: Text
       | now < icrStartTimestamp = "upcoming"
@@ -295,7 +308,7 @@ leaderboardRowToJson competition LeaderboardRow {..} =
       , Just $ "scoreAvailable" .= scoreAvailable
       ]
   where
-    minimumProfit = icrStartingBalanceUsdc competition * icrMinimumProfitBps competition `div` 10_000
+    minimumProfit = competitionMinimumProfitUsdc competition
     meetsProfit = maybe False (>= minimumProfit) ilrFinalPnlUsdc
     meetsDays = ilrActiveDays >= icrMinimumActiveDays competition
     mechanicallyQualified = meetsProfit && meetsDays

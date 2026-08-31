@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { Link, Navigate, useParams } from 'react-router-dom'
+import { Navigate, useParams } from 'react-router-dom'
 import {
   completeRegistration,
   confirmXFollow,
@@ -33,6 +33,7 @@ const TURNSTILE_SITE_KEY = configuredTurnstileSiteKey.length > 0
     ? '1x00000000000000000000AA'
     : ''
 const TRADING_APP_URL = 'https://app.sepolia.plether.com'
+const DISCORD_URL = 'https://plether.com/discord'
 const PRIMARY_BUTTON = 'border border-brand-orange bg-brand-orange px-5 py-2.5 text-sm font-semibold text-content-primary transition-colors hover:bg-brand-peach hover:text-app-bg disabled:cursor-not-allowed disabled:opacity-50'
 
 const STEPS = [
@@ -133,7 +134,7 @@ function RegistrationUnavailable({ competition }: { competition: Competition }) 
   return <ErrorState title="Registration is closed" message={`Registration closed ${formatUtc(metadata.closesAt)}.`} />
 }
 
-function Completion({ competition, registration }: { competition: Competition; registration: RegistrationSession }) {
+export function RegistrationConfirmation({ competition, registration }: { competition: Competition; registration: RegistrationSession }) {
   const handle = registration.identity?.xHandle
   const profileUrl = xProfileUrl(handle)
   const now = useUtcNow()
@@ -191,7 +192,14 @@ function Completion({ competition, registration }: { competition: Competition; r
       </div>
       <div className="flex flex-wrap gap-3 px-5 pb-6 sm:px-7">
         <a href={TRADING_APP_URL} className={PRIMARY_BUTTON}>Open Plether testnet ↗</a>
-        <Link to="/" className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold hover:border-brand-peach">View leaderboard</Link>
+        <a
+          href={DISCORD_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="border border-brand-border/40 px-5 py-2.5 text-sm font-semibold hover:border-brand-peach"
+        >
+          Join Discord ↗
+        </a>
       </div>
     </Panel>
   )
@@ -311,7 +319,7 @@ function RegistrationFlow({ slug, competition }: { slug: string; competition: Co
     return (
       <div className="space-y-5">
         <StepRail completed={STEPS.length} />
-        <Completion competition={competition} registration={registration} />
+        <RegistrationConfirmation competition={competition} registration={registration} />
       </div>
     )
   }

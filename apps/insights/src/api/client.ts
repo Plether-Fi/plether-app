@@ -8,6 +8,7 @@ import type {
   WalletChallenge,
   WalletResponse,
 } from './types'
+import { minimumProfitUsdcForSlug } from '../competitionRules'
 
 export const DEFAULT_COMPETITION_SLUG = 'testnet-trading-2026-09'
 const API_ROOT = '/api/insights/v1'
@@ -405,7 +406,10 @@ function normalizeCompetition(raw: WireCompetition): Competition {
     resultsAt: raw.resultsAt,
     startingBalance: raw.startingBalance ?? raw.startingBalanceUsdc ?? '0',
     pnlEligibilityThreshold:
-      raw.pnlEligibilityThreshold ?? raw.minimumProfitUsdc ?? '0',
+      minimumProfitUsdcForSlug(raw.slug)
+      ?? raw.pnlEligibilityThreshold
+      ?? raw.minimumProfitUsdc
+      ?? '0',
     minActiveDays: raw.minActiveDays ?? raw.minimumActiveDays ?? 0,
     prizes: raw.prizes.map((prize) => ({
       place: prize.place,
@@ -437,7 +441,7 @@ function normalizeStanding(raw: WireStanding, competition: WireCompetition): Wal
   const minimumDays = competition.minActiveDays ?? competition.minimumActiveDays ?? 5
   if (raw.scoreAvailable === false) reasons.push('Awaiting a finalized account snapshot')
   if (raw.scoreAvailable !== false && raw.meetsProfitRequirement === false) {
-    reasons.push('Below the +1% net P&L threshold')
+    reasons.push('Below the prize threshold')
   }
   if (raw.meetsActiveDaysRequirement === false) {
     reasons.push(`${String(raw.activeDays)} of ${String(minimumDays)} active days`)
