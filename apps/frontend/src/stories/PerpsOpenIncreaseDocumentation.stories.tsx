@@ -216,7 +216,7 @@ export const MarketAndAccountReadiness: Story = {
           <PerpsTradeTicket
             {...marketArgs}
             initialDirection="long"
-            initialSize="2 000"
+            initialOrderQuantity="2 000"
             currentPositionAmount="0"
             openPreviewFixture={openingPreviewFixture()}
           />
@@ -234,7 +234,7 @@ export const OpeningPreview: Story = {
         initialLifecycleState="preview"
         initialReviewOpen
         initialDirection="long"
-        initialSize="2 000"
+        initialOrderQuantity="2 000"
         currentPositionAmount="0"
         openPreviewFixture={openingPreviewFixture()}
       />

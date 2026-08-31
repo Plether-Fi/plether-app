@@ -53,19 +53,13 @@ This includes:
 * Liquidation price
 * Available side capacity
 
-#### Whole-lot order sizing
+#### Order quantity
 
-The amount entered in `Target plDXY Perp exposure` is a USDC[^usdc] target. It is not the quantity stored in the order. Every committed order quantity is aligned to whole `100 plDXY` lots.
+The value entered in `Order quantity` is the plDXY quantity stored in the order. Typed open, increase and partial-reduction quantities must use whole `100 plDXY` increments. The interface rejects a quantity outside that increment instead of silently changing it.
 
-For a typed open, increase or partial-reduction target, the interface converts the target at the current displayed plDXY Perp price and rounds the result down to a whole `100 plDXY` lot:
+The corresponding USDC[^usdc] value is derived from the quantity:
 
 ```
-Unrounded quantity
-≈ Target exposure ÷ current displayed price
-
-Order quantity
-= floor(Unrounded quantity ÷ 100 plDXY) × 100 plDXY
-
 Order exposure
 = Order quantity × current displayed price
 ```
@@ -75,9 +69,9 @@ The **Preview** shows both values:
 * **Order exposure** — the whole-lot order quantity valued at the current displayed price
 * **Order quantity** — the plDXY quantity that will be committed
 
-Because the conversion rounds down, **Order exposure** can be lower than **Target exposure**. The fixed order quantity does not change after commitment, but its displayed USDC exposure can change when that quantity is valued at the final execution price.
+The fixed Order quantity does not change after commitment, but its displayed USDC exposure can change when that quantity is valued at the final execution price.
 
-An explicit full close with no earlier pending orders is different. Selecting `Current Position` or `Max` uses the exact live position quantity. That quantity is already aligned to the `100 plDXY` lot size, so the interface does not convert the displayed USDC exposure again or leave a rounding residual.
+An explicit full close with no earlier pending orders uses the exact live position quantity. Selecting `Current Position`, `Max` or the Position panel’s close action fills that quantity directly, so the interface does not convert the displayed USDC exposure or leave a rounding residual.
 
 When earlier orders are still pending, `Max` can target only the projected remainder. Because an earlier order may fail, that later order is treated as a conditional reduction rather than a guaranteed full close. Finalize or clean up the earlier orders first if you want the later action to be labelled and protected as a full close.
 
@@ -406,7 +400,6 @@ The order passes its price and risk checks.
 The interface shows a **Final Result** containing:
 
 * Final price
-* Target exposure
 * Order quantity
 * Execution exposure
 * Contract notional
@@ -418,7 +411,7 @@ The interface shows a **Final Result** containing:
 * Commit transaction
 * Finalization transaction
 
-Target exposure is the USDC amount entered in the ticket. Previewed Order exposure can be lower because the converted quantity is rounded down to whole `100 plDXY` lots. Execution exposure can then differ from the preview because the committed order quantity is valued at the final execution price.
+Execution exposure can differ from previewed Order exposure because the committed Order quantity is valued at the final execution price.
 
 For a voluntary frozen close, the onchain result also exposes:
 
@@ -556,7 +549,7 @@ If liquidation happens first, the account’s pending orders fail. Their reserve
 Before committing:
 
 * Correct direction and action
-* Target exposure and contract notional
+* Order quantity, Order exposure and contract notional
 * Assigned margin and resulting leverage
 * Execution-limit direction
 * Adverse confidence spread
@@ -581,7 +574,7 @@ After finalization:
 
 * Confirm whether the order executed or failed
 * Check the final execution price
-* Compare Target exposure, previewed Order exposure and execution exposure
+* Compare the committed Order quantity, previewed Order exposure and execution exposure
 * Separate released margin from realized profit
 * Review fees, VPI, carry and execution reward separately
 * Review frozen spread assessed, paid and waived, when applicable

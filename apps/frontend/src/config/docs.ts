@@ -62,8 +62,8 @@ export const DOCS_LINKS = {
     title: 'The notional used for margin',
   },
   orderExposure: {
-    href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#whole-lot-order-sizing`,
-    title: 'How target exposure becomes order quantity',
+    href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#order-quantity`,
+    title: 'Order quantity and exposure',
   },
   executionLimit: {
     href: `${DOCS_BASE_URL}/how-plether-works/how-orders-execute#acceptable-price-protection`,

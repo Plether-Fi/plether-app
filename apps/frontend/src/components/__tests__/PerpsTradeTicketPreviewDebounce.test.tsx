@@ -149,7 +149,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={1_000_000_000n}
@@ -164,9 +164,9 @@ describe('Perps trade preview debounce', () => {
 
     const callsBeforeEditing = wagmiMocks.useReadContracts.mock.calls.length
     const sizeInput = screen.getByRole('textbox')
-    fireEvent.change(sizeInput, { target: { value: '201' } })
+    fireEvent.change(sizeInput, { target: { value: '200' } })
 
-    expect((sizeInput as HTMLInputElement).value).toBe('201')
+    expect((sizeInput as HTMLInputElement).value).toBe('200')
     expect(latestReadOptions()).toMatchObject({ contracts: [], query: { enabled: false } })
 
     await act(async () => {
@@ -224,12 +224,12 @@ describe('Perps trade preview debounce', () => {
     expect(within(previewPanel!).queryByText('Maximum future VPI credit')).not.toBeInTheDocument()
   })
 
-  it('keeps the target input while previewing the quantized order exposure and quantity', () => {
+  it('keeps the order quantity input while deriving its order exposure', () => {
     render(
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
-        initialSize="5000"
+        initialOrderQuantity="4900"
         oraclePriceRaw={98_580_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={10_000_000_000n}
@@ -239,8 +239,8 @@ describe('Perps trade preview debounce', () => {
     const options = latestReadOptions()
     expect(options.contracts[0]?.functionName).toBe('previewOpen')
     expect(options.contracts[0]?.args?.[2]).toBe(4_900n * 10n ** 18n)
-    expect(screen.getByRole('textbox', { name: 'Target plDXY Perp exposure' }))
-      .toHaveValue('5000')
+    expect(screen.getByRole('textbox', { name: 'Order quantity' }))
+      .toHaveValue('4900')
     expect(screen.queryByText(/^Rounded down to/)).not.toBeInTheDocument()
 
     const previewPanel = screen.getByText('Preview').parentElement
@@ -255,23 +255,24 @@ describe('Perps trade preview debounce', () => {
     expect(within(orderQuantityRow!).getByText('plDXY')).toBeInTheDocument()
   })
 
-  it('rounds a partial close preview down to the 100 plDXY protocol quantum', () => {
+  it('blocks a partial close quantity outside the 100 plDXY protocol quantum', () => {
     render(
       <PerpsTradeTicket
         enableLiveTrading
         initialDirection="long"
         initialReduceOnly
-        initialSize="550"
+        initialOrderQuantity="550"
         oraclePriceRaw={98_580_000n}
         oraclePublishTime={1_700_000_000}
         currentPosition={existingLongPosition}
       />
     )
 
-    const options = latestReadOptions()
-    expect(options.contracts[0]?.functionName).toBe('previewClose')
-    expect(options.contracts[0]?.args?.[1]).toBe(500n * 10n ** 18n)
-    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeEnabled()
+    expect(wagmiMocks.useReadContracts.mock.calls.some((call) => (
+      (call[0] as ReadContractsOptions).contracts[0]?.functionName === 'previewClose'
+    ))).toBe(false)
+    expect(screen.getByText('Order quantity must use 100 plDXY increments.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Review Reduce' })).toBeDisabled()
   })
 
   it('shows the resulting position VPI balance when increasing an existing position', () => {
@@ -286,7 +287,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         initialReviewOpen
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}
         availableToTradeRaw={1_000_000_000n}
@@ -310,7 +311,7 @@ describe('Perps trade preview debounce', () => {
       <PerpsTradeTicket
         initialReviewOpen
         initialDirection="long"
-        initialSize="100"
+        initialOrderQuantity="100"
         currentPositionAmount="0"
         oraclePriceRaw={100_000_000n}
         oraclePublishTime={1_700_000_000}

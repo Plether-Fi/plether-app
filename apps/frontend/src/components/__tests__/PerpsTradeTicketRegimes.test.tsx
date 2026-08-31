@@ -185,7 +185,7 @@ function closeTicket({
       initialLifecycleState={lifecycleState}
       initialDirection="short"
       initialReduceOnly
-      initialSize={size}
+      initialOrderQuantity={size}
       initialOrderId={42n}
       initialCommittedSizeDelta={500n * 10n ** 18n}
       initialCommittedIsFullClose={lifecycleState === 'executed'}
@@ -362,7 +362,7 @@ describe('perps ticket oracle regime matrix', () => {
     expect(finalResult).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Replay celebration confetti' }))
       .toHaveTextContent('Long plDXY Perp position closed')
-    expect(within(finalResult!).getByText('Target close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()
@@ -432,7 +432,7 @@ describe('perps ticket oracle regime matrix', () => {
         initialLifecycleState="selfExecuteAvailable"
         initialReviewOpen
         initialDirection="long"
-        initialSize="1 000"
+        initialOrderQuantity="1 000"
         initialOrderId={42n}
       />
     )
@@ -557,7 +557,7 @@ describe('perps ticket oracle regime matrix', () => {
       .toHaveTextContent('Long plDXY Perp position closed at 1.0000 USDC')
     expect(within(finalResult!).getByText('Position side')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Long plDXY Perp')).toBeInTheDocument()
-    expect(within(finalResult!).getByText('Target close exposure')).toBeInTheDocument()
+    expect(within(finalResult!).getByText('Order quantity')).toBeInTheDocument()
     expect(within(finalResult!).getByText('Executed close exposure')).toBeInTheDocument()
     expect(within(finalResult!).queryByText('Margin posted')).not.toBeInTheDocument()
     expect(within(finalResult!).getByText('Position VPI before close')).toBeInTheDocument()

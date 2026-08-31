@@ -35,6 +35,16 @@ export function parsePerpsUsdc(value: string): bigint {
   }
 }
 
+export function parsePerpsPositionSize(value: string): bigint {
+  try {
+    const cleaned = cleanNumericInput(value)
+    if (!cleaned || cleaned === '.') return 0n
+    return parseUnits(cleaned, PERPS_DECIMALS.POSITION_SIZE)
+  } catch {
+    return 0n
+  }
+}
+
 export function formatPerpsNumber(value: number, maxDecimals = 2, minDecimals = 0): string {
   if (!Number.isFinite(value)) return '--'
 

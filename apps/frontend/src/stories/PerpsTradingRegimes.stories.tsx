@@ -179,7 +179,7 @@ function RegimePanel({ regime }: TradingRegimeStoryProps) {
         />
         <PerpsTradeTicket
           initialDirection="short"
-          initialSize="500"
+          initialOrderQuantity="500"
           oraclePriceRaw={ORACLE_PRICE}
           oraclePriceDisplay="1.0000"
           latestBasket={latestBasket}

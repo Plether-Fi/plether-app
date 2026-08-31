@@ -74,24 +74,16 @@ Where:
 
 The application handles this conversion when building the order.
 
-### 2. Enter the exposure
+### 2. Enter the order quantity
 
-Enter the USDC target amount to add in the `Target plDXY Perp exposure` field. This is a target, not the quantity stored in the order.
+Enter the plDXY amount to add in the `Order quantity` field. Typed quantities must use `100 plDXY` increments; the interface asks you to correct an unsupported quantity instead of rounding it silently.
 
-The application converts the target at the current displayed price, then rounds the result down to a whole `100 plDXY` lot:
+The **Preview** shows the entered **Order quantity** and derives **Order exposure** in USDC at the current displayed price:
 
 ```
-Unrounded added quantity
-≈ Target exposure ÷ Dpreview
-
-Order quantity
-= floor(Unrounded added quantity ÷ 100 plDXY) × 100 plDXY
-
 Order exposure
 = Order quantity × Dpreview
 ```
-
-The **Preview** shows **Order exposure** in USDC and the underlying **Order quantity** in plDXY. Because the quantity is rounded down, Order exposure can be lower than the amount entered as Target exposure.
 
 For a new position, that quantity becomes the initial position. For an increase, it is added to the existing contract quantity:
 
@@ -101,7 +93,7 @@ Resulting contract quantity
 + added contract quantity
 ```
 
-The entered target is an addition, not an intended final position size. The committed Order quantity remains fixed, but displayed exposure is `contract quantity × current D`. Final execution exposure can therefore differ from both Target exposure and previewed Order exposure when the price changes before execution.
+The entered Order quantity is an addition, not an intended final position size. It remains fixed after commitment, but displayed exposure is `contract quantity × current D`. Final execution exposure can therefore differ from previewed Order exposure when the price changes before execution.
 
 The execution price determines the added contract notional[^notional]:
 
@@ -402,7 +394,7 @@ After execution, open the **Position** panel and review its current fields:
 * Unrealized PnL[^pnl]
 * Cost of carry
 
-The lifecycle window’s **Final Result** records Target exposure, Order quantity, execution exposure, contract notional, the execution fee, VPI, oracle confidence spread, execution reward and transaction links. Execution exposure can differ from both the entered Target exposure and previewed Order exposure because the fixed Order quantity is valued at the final execution price. **Order History** records the terminal order status. `Available to Trade` remains a separate trade-ticket value, and assigned position margin is available in `Edit Position Margin`.
+The lifecycle window’s **Final Result** records Order quantity, execution exposure, contract notional, the execution fee, VPI, oracle confidence spread, execution reward and transaction links. Execution exposure can differ from previewed Order exposure because the fixed Order quantity is valued at the final execution price. **Order History** records the terminal order status. `Available to Trade` remains a separate trade-ticket value, and assigned position margin is available in `Edit Position Margin`.
 
 The executed position is the current account record.
 

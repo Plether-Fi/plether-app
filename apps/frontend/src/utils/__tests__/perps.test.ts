@@ -8,6 +8,7 @@ import {
   formatSignedPerpsSummaryUsdc,
   notionalUsdcToQuantizedSizeDelta,
   oraclePriceToDisplayDxyPrice,
+  parsePerpsPositionSize,
   perpsOracleFreshnessFromTimestamp,
   PERPS_DXY_PRICE_CAP,
   quantizePerpsPositionSize,
@@ -52,6 +53,19 @@ describe('DXY display price helpers', () => {
 })
 
 describe('perps position size quantum', () => {
+  it('parses a formatted plDXY quantity at position-size precision', () => {
+    expect(parsePerpsPositionSize('4 900')).toBe(4_900n * 10n ** 18n)
+    expect(parsePerpsPositionSize('3 389 329.5585835346486935')).toBe(
+      3_389_329_558_583_534_648_693_500n
+    )
+  })
+
+  it('treats incomplete or invalid plDXY quantity input as zero', () => {
+    expect(parsePerpsPositionSize('')).toBe(0n)
+    expect(parsePerpsPositionSize('.')).toBe(0n)
+    expect(parsePerpsPositionSize('not a number')).toBe(0n)
+  })
+
   it('rounds the requested exposure down to a 100 plDXY increment', () => {
     const displayPrice = 101_420_000n
     const sizeDelta = notionalUsdcToQuantizedSizeDelta(5_000_000_000n, displayPrice)
