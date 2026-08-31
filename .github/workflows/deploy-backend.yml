@@ -562,6 +562,7 @@ jobs:
               "PERPS_USDC",
               "PERPS_ORDER_ROUTER",
               "PERPS_ORDER_LIFECYCLE_BOOK",
+              "PERPS_HOUSE_POOL",
               "PERPS_PLETHER_ORACLE",
               "PERPS_CFD_ENGINE",
               "PERPS_CFD_ENGINE_SETTLEMENT_SIDECAR",

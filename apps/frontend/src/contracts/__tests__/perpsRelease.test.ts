@@ -119,6 +119,26 @@ describe('pinned bounded-V2 Sepolia release', () => {
     expect(apiTaskDefinition).toContain(
       '{ name = "PERPS_HOUSE_POOL", value = var.perps_house_pool }'
     )
+    const insightsTaskDefinition = terraformEcs.slice(
+      terraformEcs.indexOf('resource "aws_ecs_task_definition" "insights_worker"'),
+      terraformEcs.indexOf('resource "aws_ecs_service" "insights_worker"')
+    )
+    const consolidatedWorkersTaskDefinition = terraformEcs.slice(
+      terraformEcs.indexOf('resource "aws_ecs_task_definition" "workers"'),
+      terraformEcs.indexOf('resource "aws_ecs_service" "workers"')
+    )
+    for (const taskDefinition of [
+      insightsTaskDefinition,
+      consolidatedWorkersTaskDefinition,
+    ]) {
+      expect(taskDefinition).toContain(
+        '{ name = "PERPS_ORDER_LIFECYCLE_BOOK", value = var.perps_order_lifecycle_book }'
+      )
+      expect(taskDefinition).toContain(
+        '{ name = "PERPS_HOUSE_POOL", value = var.perps_house_pool }'
+      )
+    }
+    expect(backendWorkflow).toContain('"PERPS_HOUSE_POOL",')
     expect(backendRelease).toContain(publicManifest.version)
     expect(backendRelease).toContain(
       pinnedRelease.contracts.orderLifecycleBook.address
