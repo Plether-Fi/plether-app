@@ -2060,7 +2060,21 @@ sourceBounds conn runtime kind = do
     VolumeRollup ->
       query
         conn
-        "WITH event_bounds AS ( \
+        "WITH certified_release AS ( \
+        \ SELECT ((epoch.activation_timestamp + 59) / 60) * 60 AS first_timestamp \
+        \ FROM perps_market_release_epochs epoch \
+        \ WHERE epoch.market_id = ? AND epoch.chain_id = ? AND epoch.release_router = ? \
+        \ AND EXISTS ( \
+        \   SELECT 1 FROM perps_indexer_state indexer_state \
+        \   WHERE indexer_state.chain_id = epoch.chain_id \
+        \   AND indexer_state.release_router = epoch.release_router \
+        \   AND indexer_state.indexer_name \
+        \     LIKE 'perps-history-costs-%:' || epoch.release_router \
+        \   AND indexer_state.configured_start_block <= epoch.activation_block \
+        \   AND indexer_state.last_indexed_block >= epoch.activation_block \
+        \   AND indexer_state.last_indexed_block_hash ~ '^0x[0-9a-f]{64}$') \
+        \ LIMIT 1), \
+        \event_bounds AS ( \
         \ SELECT MIN(timestamp) AS first_timestamp, MAX(timestamp) + 1 AS end_timestamp \
         \ FROM perps_events WHERE chain_id = ? AND release_router = ?), \
         \activity_count AS ( \
@@ -2068,9 +2082,17 @@ sourceBounds conn runtime kind = do
         \ WHERE chain_id = ? AND release_router = ? \
         \ AND activity_type IN ('Open', 'Close', 'Liquidated') \
         \ AND size_delta IS NOT NULL AND price IS NOT NULL) \
-        \SELECT first_timestamp, end_timestamp, row_count \
-        \FROM event_bounds CROSS JOIN activity_count"
-        ( arChainId runtime
+        \SELECT CASE \
+        \   WHEN event_bounds.first_timestamp IS NULL THEN NULL \
+        \   WHEN certified_release.first_timestamp IS NULL THEN event_bounds.first_timestamp \
+        \   ELSE LEAST(certified_release.first_timestamp, event_bounds.first_timestamp) END, \
+        \ event_bounds.end_timestamp, activity_count.row_count \
+        \FROM event_bounds CROSS JOIN activity_count \
+        \LEFT JOIN certified_release ON TRUE"
+        ( defaultCandleMarketId
+        , arChainId runtime
+        , arReleaseRouter runtime
+        , arChainId runtime
         , arReleaseRouter runtime
         , arChainId runtime
         , arReleaseRouter runtime
