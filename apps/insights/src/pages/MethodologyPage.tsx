@@ -29,8 +29,8 @@ export function MethodologyPage() {
           <p>Trade-history “realized P&amp;L” and open-position “unrealized P&amp;L” are directional price results before execution fees, VPI, carry, and execution rewards. They can be positive while final net P&amp;L is negative.</p>
         </Rule>
         <Rule number="03" title="Prize eligibility">
-          <p>A trader must finish with at least <strong className="text-positive">+1,000.00 USDC (+1%)</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
-          <p>The threshold is evaluated at full six-decimal USDC precision, not from the rounded percentage shown in the interface.</p>
+          <p>A trader must finish with at least <strong className="text-positive">+1.00 mock USDC</strong> and have activity on at least <strong className="text-content-primary">five distinct FX-session days</strong>.</p>
+          <p>The threshold is evaluated at full six-decimal USDC precision.</p>
         </Rule>
         <Rule number="04" title="What counts as an active day">
           <p>An active day contains at least one successfully executed voluntary open, increase, reduction, or close during an FX session.</p>

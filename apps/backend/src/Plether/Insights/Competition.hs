@@ -60,7 +60,7 @@ import Data.Time
 import Data.Time.Clock.POSIX (posixSecondsToUTCTime)
 
 -- | All monetary values in this module are integer USDC base units (six
--- decimals). Keeping the scoring core integral makes the +1% boundary and ties
+-- decimals). Keeping the scoring core integral makes profit boundaries and ties
 -- exact and reproducible.
 usdcScale :: Integer
 usdcScale = 1_000_000
@@ -86,7 +86,11 @@ data CompetitionRules = CompetitionRules
   , crResultsAt :: UTCTime
   , crPaymentDeadlineAt :: UTCTime
   , crStartingBalanceUsdc :: Integer
-  , crMinimumProfitBps :: Integer
+  -- Canonical prize-qualification threshold. This stays in the code-defined
+  -- rule set because sub-basis-point amounts cannot be represented exactly by
+  -- the legacy persisted percentage metadata below.
+  , crMinimumProfitUsdc :: Integer
+  , crLegacyMinimumProfitBps :: Integer
   , crMinimumActiveDays :: Int
   , crFxSessionBoundaryUtcMinutes :: Int
   , crRegistrationClosesAt :: Maybe UTCTime
@@ -170,7 +174,8 @@ july2026Competition =
     , crResultsAt = utc 2026 8 5 12 0 0
     , crPaymentDeadlineAt = utc 2026 8 10 16 0 0
     , crStartingBalanceUsdc = 100_000 * usdcScale
-    , crMinimumProfitBps = 100
+    , crMinimumProfitUsdc = 1_000 * usdcScale
+    , crLegacyMinimumProfitBps = 100
     , crMinimumActiveDays = 5
     , crFxSessionBoundaryUtcMinutes = 22 * 60
     , crRegistrationClosesAt = Nothing
@@ -195,7 +200,8 @@ september2026Competition =
     , crResultsAt = utc 2026 9 28 12 0 0
     , crPaymentDeadlineAt = utc 2026 10 3 0 0 0
     , crStartingBalanceUsdc = 100_000 * usdcScale
-    , crMinimumProfitBps = 100
+    , crMinimumProfitUsdc = 1 * usdcScale
+    , crLegacyMinimumProfitBps = 100
     , crMinimumActiveDays = 5
     , crFxSessionBoundaryUtcMinutes = 21 * 60
     , crRegistrationClosesAt = Just $ utc 2026 9 20 21 0 0
@@ -513,8 +519,7 @@ calculateScore ScoreInput {..} =
     currentValue = economicAccountValue siCurrentSnapshot
 
 minimumProfitUsdc :: CompetitionRules -> Integer
-minimumProfitUsdc rules =
-  crStartingBalanceUsdc rules * crMinimumProfitBps rules `div` 10_000
+minimumProfitUsdc = crMinimumProfitUsdc
 
 data Qualification = Qualification
   { qMeetsProfitRequirement :: Bool

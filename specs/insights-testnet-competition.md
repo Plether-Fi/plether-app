@@ -80,7 +80,7 @@ the final account snapshot.
 
 A participant is prize-eligible only when all of these are true:
 
-1. Final P&L is at least `1,000.000000` mock USDC (`+1%` of the fixed bankroll).
+1. Final P&L is at least `1.000000` mock USDC.
 2. The account has at least five active FX-session days.
 3. The account satisfies the fixed-bankroll and one-trader/one-account rules.
 4. The post-competition integrity review marks the participant eligible.

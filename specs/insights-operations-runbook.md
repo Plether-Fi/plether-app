@@ -553,7 +553,7 @@ the half-open scoring cutoff.
    fails closed unless boundary blocks, private trader references, reviews, and
    a complete canonical final snapshot batch are present.
 6. Export the eligibility-aware 600/500/400/300/200 USDC prize allocation. Entrants must
-   meet the +1% threshold and five-active-day requirement. Exact P&L ties split
+   meet the +1.00 mock-USDC threshold and five-active-day requirement. Exact P&L ties split
    the occupied prize pool equally at six-decimal USDC precision.
 7. Pay real USDC no later than `2026-10-03T00:00:00Z` and retain transaction
    hashes in the restricted payout record.

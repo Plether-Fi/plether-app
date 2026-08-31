@@ -22,7 +22,7 @@ beforeEach(() => {
       tradingCutoffAt: '2026-08-03T16:00:00Z',
       resultsAt: '2026-08-05T12:00:00Z',
       startingBalance: '100000000000',
-      pnlEligibilityThreshold: '1000000000',
+      pnlEligibilityThreshold: '1000000',
       minActiveDays: 5,
       prizes: [
         { place: 1, amount: '600000000' },
@@ -58,6 +58,7 @@ describe('LeaderboardPage', () => {
 
     expect(screen.getByText('Registered traders').parentElement).toHaveTextContent('358')
     expect(screen.getByText('Prize pool').parentElement).toHaveTextContent('2,000.00 USDC')
+    expect(screen.getByText('Prize threshold').parentElement).toHaveTextContent('+1.00 USDC')
     expect(screen.getByText(/for the top 5 eligible traders/i)).toBeInTheDocument()
   })
 })

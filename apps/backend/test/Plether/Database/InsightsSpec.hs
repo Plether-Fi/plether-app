@@ -34,6 +34,12 @@ spec = do
       queryContains leaderboardQuerySql "pc.prize_place <= competition_prize_places"
       queryContains leaderboardQuerySql "(t.fifth_prize_usdc > 0)::INT"
 
+    it "uses the exact code-defined profit threshold instead of persisted basis points" $ do
+      queryContains leaderboardQuerySql "?::NUMERIC AS code_minimum_profit_usdc"
+      queryContains leaderboardQuerySql "final_pnl_usdc >= competition_minimum_profit_usdc"
+      queryDoesNotContain leaderboardQuerySql
+        "competition_starting_balance_usdc * competition_minimum_profit_bps"
+
     it "preserves July's zero-trade display while ranking every September participant" $ do
       queryContains leaderboardQuerySql
         "competition_slug = 'testnet-trading-2026' AND executed_trades = 0"

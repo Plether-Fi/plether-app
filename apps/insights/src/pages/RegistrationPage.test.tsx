@@ -62,7 +62,7 @@ const competition = {
   tradingCutoffAt: '2026-09-25T21:00:00Z',
   resultsAt: '2026-09-28T12:00:00Z',
   startingBalance: '100000000000',
-  pnlEligibilityThreshold: '1000000000',
+  pnlEligibilityThreshold: '1000000',
   minActiveDays: 5,
   prizes: [],
   latestIndexedBlock: null,
@@ -264,6 +264,8 @@ describe('RegistrationPage', () => {
     expect(screen.queryByText(/pending the standard integrity review/i)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: '@alice ↗' })).toHaveAttribute('href', 'https://x.com/alice')
     expect(screen.getByRole('link', { name: 'Open Plether testnet ↗' })).toHaveAttribute('href', 'https://app.sepolia.plether.com')
+    expect(screen.getByRole('link', { name: 'Join Discord ↗' })).toHaveAttribute('href', 'https://plether.com/discord')
+    expect(screen.queryByRole('link', { name: 'View leaderboard' })).not.toBeInTheDocument()
   })
 
   it('counts down to the competition cutoff after trading starts', () => {
