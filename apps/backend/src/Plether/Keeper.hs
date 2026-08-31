@@ -2,6 +2,7 @@ module Plether.Keeper
   ( KeeperMode (..)
   , LpSettlementDecision (..)
   , FreshPendingOrder (..)
+  , LifecycleRefreshAction (..)
   , runKeeper
   , assessLpSettlementStatus
   , isLpSettlementObservationSafe
@@ -12,6 +13,7 @@ module Plether.Keeper
   , isSameBlockMevGuardError
   , selectBatchCandidates
   , nextV2GasLimit
+  , assessLifecycleRefresh
   , V2PreflightAction (..)
   , assessSingleOrderPreflight
   , assessBatchOrderPreflight
@@ -51,6 +53,8 @@ import Plether.Database.Schema
   , recordPerpsKeeperOrderAttempt
   , recordPerpsKeeperOrderError
   , recordPerpsKeeperOrderImmediateRetryError
+  , reconcilePerpsKeeperOrderExecuted
+  , reconcilePerpsKeeperOrderFailed
   , recordLpSettlementObservation
   , setPerpsKeeperLastIndexedBlock
   , tryPerpsKeeperLock
@@ -117,6 +121,15 @@ data FreshPendingOrder = FreshPendingOrder
   , fpoValidUntil :: Integer
   }
   deriving stock (Show)
+
+data LifecycleRefreshAction
+  = RefreshPendingLifecycle
+  | ReconcileTerminalLifecycle
+  deriving stock (Show, Eq)
+
+data PendingOrderRefresh
+  = RefreshedPendingOrder FreshPendingOrder
+  | RefreshedTerminalOrder Perps.OrderTerminalOutcome
 
 data OrderCallKind
   = SingleOrderCall Integer
@@ -838,7 +851,9 @@ decideExecution cfg conn client dryRun pending headOrder settlementWindow chainN
         [ field "order_id" $ pkorOrderId headOrder
         , field "error" err
         ]
-    Right FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose, fpoValidUntil}
+    Right (RefreshedTerminalOrder outcome) ->
+      reconcileTerminalOrder cfg conn headOrder outcome
+    Right (RefreshedPendingOrder FreshPendingOrder {fpoOrder = freshHead, fpoIsClose = freshHeadIsClose, fpoValidUntil})
       | not (isPastCommitBlock latestBlock freshHead) ->
           logInfoEvery
             300
@@ -996,52 +1011,139 @@ decideExecution cfg conn client dryRun pending headOrder settlementWindow chainN
                       , either (Just . rpcErrorText) (const Nothing) divergenceResult
                       ]
 
-refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text FreshPendingOrder)
+reconcileTerminalOrder
+  :: Config
+  -> Connection
+  -> PerpsKeeperOrderRow
+  -> Perps.OrderTerminalOutcome
+  -> IO ()
+reconcileTerminalOrder cfg conn order outcome = do
+  case Perps.otoLifecycleStatus outcome of
+    2 ->
+      reconcilePerpsKeeperOrderExecuted
+        conn
+        (cfgPerpsOrderRouter cfg)
+        orderId
+        (Perps.otoTerminalBlock outcome)
+        (Perps.otoExecutionPrice outcome)
+    3 ->
+      reconcilePerpsKeeperOrderFailed
+        conn
+        (cfgPerpsOrderRouter cfg)
+        orderId
+        (Perps.otoTerminalBlock outcome)
+        (Perps.otoTerminalReason outcome)
+    _ -> pure ()
+  logInfo
+    "keeper_queue_head_reconciled_terminal"
+    "Keeper reconciled a stale queue head from canonical lifecycle state"
+    [ field "order_id" orderId
+    , field "lifecycle_status" $ Perps.otoLifecycleStatus outcome
+    , field "terminal_reason_code" $ Perps.otoTerminalReason outcome
+    , field "terminal_block" $ Perps.otoTerminalBlock outcome
+    , field "execution_mode" $ Perps.otoExecutionMode outcome
+    , field "failed_constraint_code" $ Perps.otoFailedConstraint outcome
+    , field "receipt_hash" $ "0x" <> TE.decodeUtf8 (B16.encode $ Perps.otoReceiptHash outcome)
+    ]
+  where
+    orderId = pkorOrderId order
+
+refreshPendingOrder :: Config -> EthClient -> PerpsKeeperOrderRow -> IO (Either Text PendingOrderRefresh)
 refreshPendingOrder cfg client order =
   case cfgPerpsOrderLifecycleBook cfg of
     Nothing ->
       pure $ Left "PERPS_ORDER_LIFECYCLE_BOOK is required for bounded V2 keeper execution"
     Just lifecycleBook -> do
-      viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) orderId
-      policyResult <- Perps.pendingPolicyValidUntil client lifecycleBook orderId
-      pure $ case (viewResult, policyResult) of
-        (Right view, Right validUntil)
-          | Perps.povOrderId view /= orderId ->
-              Left $
-                "router returned pending order "
-                  <> T.pack (show $ Perps.povOrderId view)
-                  <> " while re-reading order "
-                  <> T.pack (show orderId)
-          | validUntil == 0 ->
-              Left $
-                "lifecycle book returned a zero validUntil while re-reading order "
-                  <> T.pack (show orderId)
-          | otherwise ->
-              Right
-                FreshPendingOrder
-                  { fpoOrder =
-                      order
-                        { pkorSide = Perps.povSide view
-                        , pkorCommitBlock = Perps.povCommitBlock view
-                        , pkorCommitTime = Perps.povCommitTime view
-                        }
-                  , fpoIsClose = Perps.povIsClose view
-                  , fpoValidUntil = validUntil
-                  }
-        (Left err, _) ->
-          Left $
-            "could not re-read pending order "
-              <> T.pack (show orderId)
-              <> ": "
-              <> rpcErrorText err
-        (_, Left err) ->
-          Left $
-            "could not read immutable pending policy for order "
-              <> T.pack (show orderId)
-              <> ": "
-              <> rpcErrorText err
+      statusResult <- Perps.lifecycleStatus client lifecycleBook orderId
+      case statusResult of
+        Left err -> pure $ Left $ lifecycleReadError err
+        Right status ->
+          case assessLifecycleRefresh status of
+            Left err -> pure $ Left $ orderError err
+            Right RefreshPendingLifecycle -> refreshPending lifecycleBook
+            Right ReconcileTerminalLifecycle -> refreshTerminal lifecycleBook status
   where
     orderId = pkorOrderId order
+
+    refreshPending lifecycleBook = do
+      viewResult <- Perps.getPendingOrderView client (cfgPerpsOrderRouter cfg) orderId
+      policyResult <- Perps.pendingPolicyValidUntil client lifecycleBook orderId
+      case policyResult of
+        Left err ->
+          pure $
+            Left $
+              "could not read immutable pending policy for order "
+                <> T.pack (show orderId)
+                <> ": "
+                <> rpcErrorText err
+        Right 0 -> do
+          -- Another executor may have finalized the order between the status
+          -- and policy reads. Re-read the immutable lifecycle state rather
+          -- than wedging the FIFO queue on the now-cleared pending policy.
+          statusResult <- Perps.lifecycleStatus client lifecycleBook orderId
+          case statusResult of
+            Left err -> pure $ Left $ lifecycleReadError err
+            Right status ->
+              case assessLifecycleRefresh status of
+                Left err -> pure $ Left $ orderError err
+                Right RefreshPendingLifecycle ->
+                  pure $
+                    Left $
+                      "lifecycle book returned a zero validUntil for pending order "
+                        <> T.pack (show orderId)
+                Right ReconcileTerminalLifecycle -> refreshTerminal lifecycleBook status
+        Right validUntil ->
+          pure $ case viewResult of
+            Left err ->
+              Left $
+                "could not re-read pending order "
+                  <> T.pack (show orderId)
+                  <> ": "
+                  <> rpcErrorText err
+            Right view
+              | Perps.povOrderId view /= orderId ->
+                  Left $
+                    "router returned pending order "
+                      <> T.pack (show $ Perps.povOrderId view)
+                      <> " while re-reading order "
+                      <> T.pack (show orderId)
+              | otherwise ->
+                  Right $
+                    RefreshedPendingOrder
+                      FreshPendingOrder
+                        { fpoOrder =
+                            order
+                              { pkorSide = Perps.povSide view
+                              , pkorCommitBlock = Perps.povCommitBlock view
+                              , pkorCommitTime = Perps.povCommitTime view
+                              }
+                        , fpoIsClose = Perps.povIsClose view
+                        , fpoValidUntil = validUntil
+                        }
+
+    refreshTerminal lifecycleBook status = do
+      outcomeResult <- Perps.orderTerminalOutcome client lifecycleBook orderId
+      pure $ case outcomeResult of
+        Left err ->
+          Left $
+            "could not read terminal outcome for order "
+              <> T.pack (show orderId)
+              <> ": "
+              <> rpcErrorText err
+        Right outcome
+          | Perps.otoLifecycleStatus outcome /= status ->
+              Left $
+                "lifecycle outcome status changed while re-reading order "
+                  <> T.pack (show orderId)
+          | otherwise -> Right $ RefreshedTerminalOrder outcome
+
+    lifecycleReadError err =
+      "could not read lifecycle status for order "
+        <> T.pack (show orderId)
+        <> ": "
+        <> rpcErrorText err
+
+    orderError err = err <> " " <> T.pack (show orderId)
 
 refreshContiguousOrders :: Config -> EthClient -> [PerpsKeeperOrderRow] -> IO [FreshPendingOrder]
 refreshContiguousOrders _ _ [] = pure []
@@ -1057,7 +1159,9 @@ refreshContiguousOrders cfg client (order : orders) = do
         , field "error" err
         ]
       pure []
-    Right freshOrder -> (freshOrder :) <$> refreshContiguousOrders cfg client orders
+    Right (RefreshedPendingOrder freshOrder) ->
+      (freshOrder :) <$> refreshContiguousOrders cfg client orders
+    Right (RefreshedTerminalOrder _) -> pure []
 
 submitIntent :: Config -> Connection -> EthClient -> Bool -> ExecutionIntent -> IO ()
 submitIntent cfg conn client dryRun intent = do
@@ -1472,6 +1576,14 @@ decodeHexUpdate value =
   case B16.decode (TE.encodeUtf8 $ T.toLower $ strip0x value) of
     Right bytes -> Right bytes
     Left err -> Left $ "invalid updateData hex: " <> T.pack err
+
+assessLifecycleRefresh :: Integer -> Either Text LifecycleRefreshAction
+assessLifecycleRefresh = \case
+  1 -> Right RefreshPendingLifecycle
+  2 -> Right ReconcileTerminalLifecycle
+  3 -> Right ReconcileTerminalLifecycle
+  0 -> Left "lifecycle book reports that the indexed order is unused"
+  status -> Left $ "lifecycle book returned unsupported status " <> T.pack (show status)
 
 isOrderPastValidUntil :: Integer -> Integer -> Bool
 isOrderPastValidUntil chainNow validUntil =

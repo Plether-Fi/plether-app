@@ -2,6 +2,7 @@ module Plether.Ethereum.Contracts.Perps
   ( PerpsOrderEvent (..)
   , OrderExecutionResult (..)
   , OrderBatchResult (..)
+  , OrderTerminalOutcome (..)
   , LiquidationBatchResult (..)
   , LiquidationBatchItem (..)
   , PendingOrderView (..)
@@ -23,6 +24,9 @@ module Plether.Ethereum.Contracts.Perps
   , decodeLiquidationBatchStoppedIndex
   , getPendingOrderView
   , pendingPolicyValidUntil
+  , lifecycleStatus
+  , orderTerminalOutcome
+  , decodeOrderTerminalOutcome
   , getPositionSize
   , getPositionSizeAtBlock
   , decodePositionSize
@@ -148,6 +152,21 @@ data OrderBatchResult = OrderBatchResult
   }
   deriving stock (Show, Eq)
 
+-- | Canonical immutable terminal state returned by
+-- OrderLifecycleBook.outcome(uint64). Transaction identity deliberately does
+-- not live here: the receipt hash commits to the lifecycle receipt, but is not
+-- an Ethereum transaction hash.
+data OrderTerminalOutcome = OrderTerminalOutcome
+  { otoLifecycleStatus :: Integer
+  , otoTerminalReason :: Integer
+  , otoExecutionMode :: Integer
+  , otoTerminalBlock :: Integer
+  , otoExecutionPrice :: Integer
+  , otoFailedConstraint :: Integer
+  , otoReceiptHash :: ByteString
+  }
+  deriving stock (Show, Eq)
+
 data LiquidationBatchResult
   = LiquidationBatchLiquidated
   | LiquidationBatchSkippedNoPosition
@@ -206,7 +225,7 @@ intentRegisteredTopic =
 orderFinalizedTopic :: ByteString
 orderFinalizedTopic =
   keccak256 $ TE.encodeUtf8
-    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
+    "OrderFinalized(uint64,address,bytes32,bytes32,uint64,uint64,(uint64,address,bytes32,bytes32,bytes32,bytes32,uint8,uint8,uint8,address,uint8,uint256,uint256,uint256,uint64,bool,uint256,address,uint8,(bytes4,uint8,uint8,uint8,uint256,uint256,bytes32),(uint256,int256,int256,int256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,int256,uint256)))"
 
 perpsOrderTopics :: [ByteString]
 perpsOrderTopics =
@@ -350,6 +369,22 @@ pendingPolicyValidUntil client lifecycleBook orderId = do
       client
       (CallParams lifecycleBook $ encodeCall "pendingPolicy(uint64)" [encodeUint256 orderId])
   pure $ result >>= decodePendingPolicyValidUntil
+
+lifecycleStatus :: EthClient -> Text -> Integer -> IO (Either RpcError Integer)
+lifecycleStatus client lifecycleBook orderId = do
+  result <-
+    ethCall
+      client
+      (CallParams lifecycleBook $ encodeCall "lifecycleStatus(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodeLifecycleStatus
+
+orderTerminalOutcome :: EthClient -> Text -> Integer -> IO (Either RpcError OrderTerminalOutcome)
+orderTerminalOutcome client lifecycleBook orderId = do
+  result <-
+    ethCall
+      client
+      (CallParams lifecycleBook $ encodeCall "outcome(uint64)" [encodeUint256 orderId])
+  pure $ result >>= decodeOrderTerminalOutcome
 
 getPositionSize :: EthClient -> Text -> Text -> IO (Either RpcError Integer)
 getPositionSize client cfdEngine account = do
@@ -708,7 +743,7 @@ decodeOrderExecutionResult bytes
       Left $ RpcJsonError "executeOrder returned an invalid ExecutionResult length"
   | orderId > maxUint64 =
       Left $ RpcJsonError "executeOrder returned an out-of-range order ID"
-  | lifecycleStatus > 3 =
+  | resultStatus > 3 =
       Left $ RpcJsonError "executeOrder returned an invalid lifecycle status"
   | terminalReason > 9 =
       Left $ RpcJsonError "executeOrder returned an invalid terminal reason"
@@ -718,14 +753,14 @@ decodeOrderExecutionResult bytes
       Right
         OrderExecutionResult
           { oerOrderId = orderId
-          , oerLifecycleStatus = lifecycleStatus
+          , oerLifecycleStatus = resultStatus
           , oerTerminalReason = terminalReason
           , oerPendingReason = pendingReason
           , oerReceiptHash = wordBytesAt 4 bytes
           }
   where
     orderId = wordAt 0 bytes
-    lifecycleStatus = wordAt 1 bytes
+    resultStatus = wordAt 1 bytes
     terminalReason = wordAt 2 bytes
     pendingReason = wordAt 3 bytes
 
@@ -815,6 +850,52 @@ decodePendingPolicyValidUntil bytes
   | otherwise = Right validUntil
   where
     validUntil = wordAt 0 bytes
+
+decodeLifecycleStatus :: ByteString -> Either RpcError Integer
+decodeLifecycleStatus bytes
+  | BS.length bytes /= 32 =
+      Left $ RpcJsonError "lifecycleStatus(uint64) returned an invalid ABI length"
+  | status > 3 =
+      Left $ RpcJsonError "lifecycleStatus(uint64) returned an invalid lifecycle status"
+  | otherwise = Right status
+  where
+    status = wordAt 0 bytes
+
+decodeOrderTerminalOutcome :: ByteString -> Either RpcError OrderTerminalOutcome
+decodeOrderTerminalOutcome bytes
+  | BS.length bytes /= 23 * 32 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal outcome length"
+  | lifecycleStatus' < 2 || lifecycleStatus' > 3 =
+      Left $ RpcJsonError "outcome(uint64) did not return a terminal lifecycle status"
+  | terminalReason == 0 || terminalReason > 9 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal reason"
+  | executionMode > 3 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid execution mode"
+  | terminalBlock == 0 || terminalBlock > maxUint64 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid terminal block"
+  | failedConstraint > 9 =
+      Left $ RpcJsonError "outcome(uint64) returned an invalid failed constraint"
+  | lifecycleStatus' == 2 && terminalReason /= 1 =
+      Left $ RpcJsonError "outcome(uint64) returned an executed status without an executed reason"
+  | lifecycleStatus' == 3 && terminalReason == 1 =
+      Left $ RpcJsonError "outcome(uint64) returned a failed status with an executed reason"
+  | otherwise =
+      Right
+        OrderTerminalOutcome
+          { otoLifecycleStatus = lifecycleStatus'
+          , otoTerminalReason = terminalReason
+          , otoExecutionMode = executionMode
+          , otoTerminalBlock = terminalBlock
+          , otoExecutionPrice = wordAt 15 bytes
+          , otoFailedConstraint = failedConstraint
+          , otoReceiptHash = wordBytesAt 22 bytes
+          }
+  where
+    lifecycleStatus' = wordAt 5 bytes
+    terminalReason = wordAt 6 bytes
+    executionMode = wordAt 7 bytes
+    terminalBlock = wordAt 10 bytes
+    failedConstraint = wordAt 20 bytes
 
 decodeOrderExecutionPolicy :: ByteString -> OrderExecutionPolicy
 decodeOrderExecutionPolicy bytes =
