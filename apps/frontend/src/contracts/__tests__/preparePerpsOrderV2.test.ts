@@ -3,7 +3,10 @@ import type { Address, Hex, PublicClient } from 'viem'
 import rawManifest from '../../../public/perps-aa-manifest.json'
 import { parsePerpsAaManifest } from '../../perps-aa/manifest'
 import type { PerpsExecutionAssessment } from '../perpsOrderV2'
-import { preparePerpsOrderV2 } from '../preparePerpsOrderV2'
+import {
+  findMaxOpenPerpsOrderV2,
+  preparePerpsOrderV2,
+} from '../preparePerpsOrderV2'
 import { verifyPerpsV2DeploymentBindings } from '../verifyPerpsV2Bindings'
 
 vi.mock('../verifyPerpsV2Bindings', () => ({
@@ -65,6 +68,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
 
   it('reassesses and submits the exact reviewed margin buffer', async () => {
     const assessedMargins: bigint[] = []
+    let freeBuyingPowerUsdc = 10_000_000_000n
     const readContract = vi.fn(async (request: {
       functionName: string
       args?: readonly unknown[]
@@ -83,6 +87,7 @@ describe('preparePerpsOrderV2 leverage margin', () => {
         case 'activePositionProtectionId': return 0n
         case 'getPendingOrders': return []
         case 'maxPendingOrders': return 8n
+        case 'getFreeBuyingPowerUsdc': return freeBuyingPowerUsdc
         case 'assessOrder': {
           const order = request.args?.[1] as { marginDelta: bigint }
           const price = request.args?.[3] as bigint
@@ -135,6 +140,104 @@ describe('preparePerpsOrderV2 leverage margin', () => {
     expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({
       functionName: 'commitOrder',
       args: [expect.objectContaining({ marginDelta: 1_001_500_000n })],
+      blockNumber: block.number,
+    }))
+
+    freeBuyingPowerUsdc = 1_000_000_000n
+    await expect(preparePerpsOrderV2(client, manifest, {
+      account,
+      direction: 'short',
+      side: 1,
+      sizeDelta: 50n * 10n ** 20n,
+      marginDelta: 1_000_000_000n,
+      slippagePercent: 0.1,
+      isClose: false,
+      selectedMaxLeverageBps: 50_000,
+      clientOrderId: `0x${'44'.repeat(32)}`,
+    })).rejects.toMatchObject({
+      name: 'PerpsOrderFundingShortfallError',
+      shortfallUsdc: 1_700_000n,
+    })
+    expect(simulateContract).toHaveBeenCalledTimes(1)
+  })
+
+  it('finds the largest quantized opening order that fits post-cost margin', async () => {
+    const freeBuyingPowerUsdc = 100_000_000n
+    const readContract = vi.fn(async (request: {
+      functionName: string
+      args?: readonly unknown[]
+    }) => {
+      switch (request.functionName) {
+        case 'maxOrderAge': return 60n
+        case 'currentExecutionConfigHash': return configHash
+        case 'openOrderExecutionBountyBps': return 1n
+        case 'minOpenOrderExecutionBountyUsdc': return 10_000n
+        case 'maxOpenOrderExecutionBountyUsdc': return 200_000n
+        case 'closeOrderExecutionBountyUsdc': return 200_000n
+        case 'lastMarkPrice': return 100_000_000n
+        case 'CAP_PRICE': return 200_000_000n
+        case 'totalAssets': return 1_000_000_000_000n
+        case 'getLatestPrice': return 100_000_000n
+        case 'activePositionProtectionId': return 0n
+        case 'getPendingOrders': return []
+        case 'maxPendingOrders': return 8n
+        case 'getFreeBuyingPowerUsdc': return freeBuyingPowerUsdc
+        case 'assessOrder': {
+          const order = request.args?.[1] as {
+            sizeDelta: bigint
+            marginDelta: bigint
+          }
+          const price = request.args?.[3] as bigint
+          const notionalUsdc = order.sizeDelta * price / 10n ** 20n
+          const tradeCostUsdc = notionalUsdc / 100n
+          const requiredEquityUsdc = (notionalUsdc + 9n) / 10n
+          const postPositionEquityUsdc = order.marginDelta - tradeCostUsdc
+          return {
+            ...assessment(price, order.marginDelta),
+            executionNotionalUsdc: notionalUsdc,
+            actionChargeAssessedUsdc: tradeCostUsdc,
+            actionChargeCollectedUsdc: tradeCostUsdc,
+            explicitFeesUsdc: tradeCostUsdc,
+            vpiUsdc: tradeCostUsdc,
+            postPositionSize: order.sizeDelta,
+            postPositionMarginUsdc: order.marginDelta,
+            postPositionEquityUsdc,
+            postLeverageBps: postPositionEquityUsdc >= requiredEquityUsdc
+              ? 100_000n
+              : 100_001n,
+          } satisfies PerpsExecutionAssessment
+        }
+        default: throw new Error(`Unexpected read ${request.functionName}`)
+      }
+    })
+    const simulateContract = vi.fn(async () => ({ request: {} }))
+    const client = {
+      getBlock: vi.fn(async () => block),
+      readContract,
+      simulateContract,
+    } as unknown as PublicClient
+
+    const result = await findMaxOpenPerpsOrderV2(client, manifest, {
+      account,
+      direction: 'long',
+      side: 0,
+      slippagePercent: 0.1,
+      selectedMaxLeverageBps: 100_000,
+      minimumSizeDelta: 100n * 10n ** 18n,
+      maximumSizeDelta: 1_000n * 10n ** 18n,
+    })
+
+    expect(result.sizeDelta).toBe(900n * 10n ** 18n)
+    expect(result.reviewSummary.requiredFundingUsdc).toBeLessThanOrEqual(
+      freeBuyingPowerUsdc
+    )
+    expect(result.reviewSummary.availableFundingUsdc).toBe(freeBuyingPowerUsdc)
+    expect(result.reviewSummary.worstPostLeverageBps).toBeLessThanOrEqual(100_000n)
+    expect(simulateContract).toHaveBeenCalledWith(expect.objectContaining({
+      functionName: 'commitOrder',
+      args: [expect.objectContaining({
+        sizeDelta: 900n * 10n ** 18n,
+      })],
       blockNumber: block.number,
     }))
   })

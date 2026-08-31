@@ -52,6 +52,8 @@ import {
   BundlerRequestError,
   useSponsoredOperationStore,
 } from '../../perps-aa'
+import { PerpsOrderFundingShortfallError } from '../../contracts/preparePerpsOrderV2'
+import type { PerpsExecutionAssessment, PreparedPerpsOrderV2 } from '../../contracts/perpsOrderV2'
 
 const V2_ACCOUNT = '0x5a71a4094Ec81165Ada48AA4c27dA48ec27E0d6B' as const
 const V2_CLIENT_ORDER_ID = `0x${'12'.repeat(32)}` as `0x${string}`
@@ -73,6 +75,7 @@ const perpsTradingMocks = vi.hoisted(() => ({
   depositMargin: vi.fn(),
   withdrawMargin: vi.fn(),
   addPositionMargin: vi.fn(),
+  findMaxOpenOrder: vi.fn(),
   prepareOrder: vi.fn(),
   commitOrder: vi.fn(),
   readOrderLifecycleOutcome: vi.fn(),
@@ -107,6 +110,7 @@ vi.mock('../../hooks', () => ({
     depositMargin: perpsTradingMocks.depositMargin,
     withdrawMargin: perpsTradingMocks.withdrawMargin,
     addPositionMargin: perpsTradingMocks.addPositionMargin,
+    findMaxOpenOrder: perpsTradingMocks.findMaxOpenOrder,
     prepareOrder: perpsTradingMocks.prepareOrder,
     commitOrder: perpsTradingMocks.commitOrder,
     readOrderLifecycleOutcome: perpsTradingMocks.readOrderLifecycleOutcome,
@@ -964,6 +968,137 @@ describe('perps lifecycle labels', () => {
     fireEvent.click(screen.getByRole('button', { name: /Current Position/ }))
 
     expect(screen.getByRole('textbox')).toHaveValue('1 500')
+  })
+
+  it('calculates an executable opening Max before filling the quantity', async () => {
+    mockIsConnected = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    let resolveMaxOrder!: (value: { sizeDelta: bigint }) => void
+    perpsTradingMocks.findMaxOpenOrder.mockReturnValue(
+      new Promise((resolve) => {
+        resolveMaxOrder = resolve
+      }),
+    )
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialOrderQuantity="0"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={100_000_000n}
+        longOpenCapacityUsdc={1_000_000_000n}
+        minOpenNotionalUsdc={100_000_000n}
+        minNewPositionNotionalUsdc={100_000_000n}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate executable Max' }))
+    expect(screen.getByRole('button', { name: 'Calculating executable Max…' })).toBeDisabled()
+
+    await act(async () => {
+      resolveMaxOrder({ sizeDelta: 400n * 10n ** 18n })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: 'Order quantity' })).toHaveValue('400')
+    })
+    expect(screen.getByRole('button', { name: /Max: 400 plDXY/ })).toBeEnabled()
+    expect(perpsTradingMocks.findMaxOpenOrder).toHaveBeenCalledWith(expect.objectContaining({
+      direction: 'long',
+      selectedMaxLeverageBps: 50_000,
+    }))
+  })
+
+  it('shows protected margin and exact shortfall without enabling confirmation', async () => {
+    mockIsConnected = true
+    identityMocks.isAaManifestConfigured = true
+    wagmiMocks.readContractsData = [{
+      status: 'success',
+      result: { valid: true },
+    }]
+    const reviewSummary = {
+      requiredMarginUsdc: 30_000_000n,
+      executionBountyUsdc: 10_000n,
+      requiredFundingUsdc: 30_010_000n,
+      availableFundingUsdc: 20_020_000n,
+      worstPostLeverageBps: 50_000n,
+      reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}` as `0x${string}`,
+      reviewedPrice: 100_000_000n,
+      currentAssessment: {
+        executionFeeUsdc: 40_000n,
+        vpiUsdc: 1_000_000n,
+      } as PerpsExecutionAssessment,
+    }
+    const reviewedPreparedOrder = {
+      account: V2_ACCOUNT,
+      manifestVersion: 'perps-aa-arbitrum-sepolia-v2',
+      orderRouter: '0x1111111111111111111111111111111111111111',
+      orderLifecycleBook: '0x2222222222222222222222222222222222222222',
+      request: {
+        clientOrderId: V2_CLIENT_ORDER_ID,
+        side: 0,
+        sizeDelta: 100n * 10n ** 18n,
+        marginDelta: 30_000_000n,
+        targetPrice: 100_100_000n,
+        isClose: false,
+        bounds: {
+          validUntil: BigInt(Math.floor(Date.now() / 1_000) + 60),
+          allowedExecutionModes: 1,
+          expectedConfigHash: `0x${'34'.repeat(32)}`,
+          maxExecutionBountyUsdc: 10_000n,
+          maxExecutionNotionalUsdc: (1n << 256n) - 1n,
+          maxGrossAccountDebitUsdc: (1n << 256n) - 1n,
+          maxActionChargeUsdc: (1n << 256n) - 1n,
+          maxExplicitFeesUsdc: (1n << 256n) - 1n,
+          maxPostPositionSize: (1n << 256n) - 1n,
+          minPostSettlementBalanceUsdc: 0n,
+          minPostPositionEquityUsdc: 0n,
+          maxPostLeverageBps: 0xffff_ffff,
+        },
+      },
+      executionBountyUsdc: 10_000n,
+      reviewedBlockNumber: 123n,
+      reviewedBlockHash: `0x${'56'.repeat(32)}`,
+      reviewedPrice: 100_000_000n,
+      protection: {
+        validUntil: BigInt(Math.floor(Date.now() / 1_000) + 60),
+        executionMode: 1,
+        executionBountyUsdc: 10_000n,
+      },
+      reviewSummary,
+    } satisfies PreparedPerpsOrderV2
+    perpsTradingMocks.prepareOrder.mockRejectedValueOnce(
+      new PerpsOrderFundingShortfallError(
+        { preparedOrder: reviewedPreparedOrder, reviewSummary },
+        9_990_000n
+      )
+    )
+
+    render(
+      <PerpsTradeTicket
+        enableLiveTrading
+        initialReviewOpen
+        initialOrderQuantity="100"
+        oraclePriceRaw={100_000_000n}
+        oraclePublishTime={Math.floor(Date.now() / 1_000)}
+        availableToTradeRaw={20_020_000n}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog')
+    await waitFor(() => {
+      expect(within(dialog).getByText(/Deposit 9.99 USDC more or reduce the order/)).toBeInTheDocument()
+    })
+    expect(within(dialog).getByText('Required margin').closest('div')).toHaveTextContent('30.0USDC')
+    expect(within(dialog).getByText('Total funding required').closest('div')).toHaveTextContent('30.0USDC')
+    expect(within(dialog).getByText('Available account funding').closest('div')).toHaveTextContent('20.0USDC')
+    expect(within(dialog).getByText('Resulting leverage').closest('div')).toHaveTextContent('5x')
+    expect(within(dialog).getByRole('button', { name: 'Confirm Commit' })).toBeDisabled()
   })
 
   it('shows resulting position leverage in the margin action modal', () => {
