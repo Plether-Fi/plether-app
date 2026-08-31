@@ -18,6 +18,7 @@ import Plether.Database.Schema
   , pendingPerpsExecutionEvidenceSql
   , perpsExecutionEvidenceLaneLimits
   , perpsOrderBaseSelectSql
+  , updatePerpsOrderLifecycleReceiptSql
   )
 import Plether.Handlers.PerpsHistory
   ( orderRowToJson
@@ -43,6 +44,10 @@ spec = do
         `shouldBe` "0x485703d16fe36369c134dee2a61c057733e7830f"
 
   describe "terminal execution evidence" $ do
+    it "hydrates and verifies the account from a standalone lifecycle finalization" $ do
+      queryContains updatePerpsOrderLifecycleReceiptSql "account = COALESCE(perps_orders.account, ?)"
+      queryContains updatePerpsOrderLifecycleReceiptSql "AND (account IS NULL OR account = ?)"
+
     it "reserves two recent evidence slots and three fair-backlog slots" $ do
       perpsExecutionEvidenceLaneLimits 5 `shouldBe` (2, 3)
       queryContains pendingPerpsExecutionEvidenceSql "WHERE execution_evidence_last_attempt_at IS NULL"
