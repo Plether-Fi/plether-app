@@ -125,6 +125,11 @@ import Plether.Database.Schema
   , insertPerpsEvent
   , setPerpsIndexerState
   )
+import Plether.Perps.Release
+  ( perpsV2DeploymentBlock
+  , perpsV2OrderRouter
+  , perpsV2VolumeHistoryStartTimestamp
+  )
 import Plether.Pyth.History (filterTradingViewHistorySamplesForPersistence)
 import System.Environment (getEnvironment)
 import System.Exit (ExitCode (..))
@@ -1811,7 +1816,13 @@ candleRollupSpec databaseUrl =
             firstEventMinute = firstEventTimestamp - 5
             requestedTo = firstEventMinute + 60
         seedCertifiedCandleAdminVolumeSource
-          pool activationTimestamp firstEventTimestamp
+          pool
+          testChainId
+          certifiedVolumeRouter
+          (certifiedVolumeActivationBlock - 1)
+          certifiedVolumeActivationBlock
+          activationTimestamp
+          firstEventTimestamp
 
         (uncertifiedExit, uncertifiedStdout, uncertifiedStderr) <-
           runCandleAdminWithRouter
@@ -1848,6 +1859,45 @@ candleRollupSpec databaseUrl =
         certifiedStderr `shouldBe` ""
         certifiedStdout
           `shouldContain` ("\"from_timestamp\":" <> show activationMinute)
+
+    it "uses the pinned Sepolia deployment minute when activation was recorded later" $
+      withCandleDatabase databaseUrl $ \pool -> do
+        let activationBlock = perpsV2DeploymentBlock + 100
+            activationTimestamp = perpsV2VolumeHistoryStartTimestamp + 2 * 86_400 + 17
+            firstEventTimestamp = activationTimestamp + 2 * 86_400 + 5
+            requestedTo = firstEventTimestamp - 5 + 60
+        seedCertifiedCandleAdminVolumeSource
+          pool
+          421614
+          perpsV2OrderRouter
+          perpsV2DeploymentBlock
+          activationBlock
+          activationTimestamp
+          firstEventTimestamp
+        withDb pool $ \connection ->
+          setPerpsIndexerState
+            connection
+            421614
+            pinnedVolumeIndexerName
+            perpsV2OrderRouter
+            perpsV2DeploymentBlock
+            (activationBlock + 100)
+            (Just $ "0x" <> Text.replicate 64 "d")
+
+        (exitCode, stdout, stderr) <-
+          runCandleAdminWithRelease
+            databaseUrl
+            421614
+            perpsV2OrderRouter
+            [ "estimate"
+            , "--from", show perpsV2VolumeHistoryStartTimestamp
+            , "--to", show requestedTo
+            ]
+        exitCode `shouldBe` ExitSuccess
+        stderr `shouldBe` ""
+        stdout
+          `shouldContain`
+            ("\"from_timestamp\":" <> show perpsV2VolumeHistoryStartTimestamp)
 
     it "uses the exact writer lock and releases it with a read-only transaction" $
       withCandleAdminDatabase databaseUrl $ \pool -> do
@@ -3081,8 +3131,17 @@ seedCandleAdminSources pool rangeStart =
     insertRawEvent
       connection "candle-admin-verification-source-bound" sourceTimestamp 1_100
 
-seedCertifiedCandleAdminVolumeSource :: DbPool -> Integer -> Integer -> IO ()
-seedCertifiedCandleAdminVolumeSource pool activationTimestamp firstEventTimestamp =
+seedCertifiedCandleAdminVolumeSource
+  :: DbPool
+  -> Integer
+  -> Text
+  -> Integer
+  -> Integer
+  -> Integer
+  -> Integer
+  -> IO ()
+seedCertifiedCandleAdminVolumeSource
+  pool chainId releaseRouter deploymentBlock activationBlock activationTimestamp firstEventTimestamp =
   withDb pool $ \connection -> do
     ensureCurrentBasketDefinition connection defaultBasketSeriesId
     void $
@@ -3090,7 +3149,7 @@ seedCertifiedCandleAdminVolumeSource pool activationTimestamp firstEventTimestam
         connection
         "INSERT INTO perps_candle_markets (market_id, chain_id, price_series_id) \
         \VALUES (?, ?, ?)"
-        (defaultCandleMarketId, testChainId, defaultBasketSeriesId)
+        (defaultCandleMarketId, chainId, defaultBasketSeriesId)
     void $
       execute
         connection
@@ -3108,20 +3167,20 @@ seedCertifiedCandleAdminVolumeSource pool activationTimestamp firstEventTimestam
         \'0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', \
         \'certified-volume-source-bound-integration', TRUE)"
         ( defaultCandleMarketId
-        , testChainId
-        , certifiedVolumeRouter
-        , certifiedVolumeActivationBlock - 1
-        , certifiedVolumeActivationBlock
+        , chainId
+        , Text.toLower releaseRouter
+        , deploymentBlock
+        , activationBlock
         , activationTimestamp
         )
     insertPerpsEvent
       connection
-      testChainId
-      certifiedVolumeRouter
+      chainId
+      releaseRouter
       "0x3333333333333333333333333333333333333333"
       "PositionOpened"
       ("0x" <> Text.replicate 64 "e")
-      (certifiedVolumeActivationBlock + 50)
+      (activationBlock + 50)
       ("0x" <> Text.replicate 64 "f")
       0
       0
@@ -3183,11 +3242,16 @@ runCandleAdmin databaseUrl =
   runCandleAdminWithRouter databaseUrl testRouter
 
 runCandleAdminWithRouter :: Text -> Text -> [String] -> IO (ExitCode, String, String)
-runCandleAdminWithRouter databaseUrl releaseRouter arguments = do
+runCandleAdminWithRouter databaseUrl =
+  runCandleAdminWithRelease databaseUrl testChainId
+
+runCandleAdminWithRelease
+  :: Text -> Integer -> Text -> [String] -> IO (ExitCode, String, String)
+runCandleAdminWithRelease databaseUrl chainId releaseRouter arguments = do
   inheritedEnvironment <- getEnvironment
   let overrides =
         [ ("DATABASE_URL", Text.unpack databaseUrl)
-        , ("PERPS_CHAIN_ID", show testChainId)
+        , ("PERPS_CHAIN_ID", show chainId)
         , ("PERPS_ORDER_ROUTER", Text.unpack releaseRouter)
         , ("PERPS_CANDLE_LATENESS_SECONDS", "0")
         , ("PERPS_CANDLE_WRITE_MODE", "dual")
@@ -3277,6 +3341,24 @@ cleanupCandleRows pool =
           "DELETE FROM perps_events \
           \WHERE chain_id = ? AND release_router = ?"
           (testChainId, certifiedVolumeRouter)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_indexer_state \
+          \WHERE chain_id = ? AND release_router = ?"
+          (421614 :: Integer, normalizedPinnedV2Router)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_account_activity \
+          \WHERE chain_id = ? AND release_router = ?"
+          (421614 :: Integer, normalizedPinnedV2Router)
+      void $
+        execute
+          connection
+          "DELETE FROM perps_events \
+          \WHERE chain_id = ? AND release_router = ?"
+          (421614 :: Integer, normalizedPinnedV2Router)
       void $
         execute
           connection
@@ -3642,6 +3724,12 @@ certifiedVolumeRouter = "0x9999999999999999999999999999999999999999"
 
 certifiedVolumeIndexerName :: Text
 certifiedVolumeIndexerName = "perps-history-costs-v2:certified-volume-bound"
+
+pinnedVolumeIndexerName :: Text
+pinnedVolumeIndexerName = "perps-history-costs-v2:finalized-abi3"
+
+normalizedPinnedV2Router :: Text
+normalizedPinnedV2Router = Text.toLower perpsV2OrderRouter
 
 certifiedVolumeActivationBlock :: Integer
 certifiedVolumeActivationBlock = 10_000

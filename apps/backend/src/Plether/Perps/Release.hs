@@ -2,6 +2,7 @@ module Plether.Perps.Release
   ( perpsV2ManifestVersion
   , perpsV2CalldataPolicy
   , perpsV2DeploymentBlock
+  , perpsV2VolumeHistoryStartTimestamp
   , perpsV2OrderRouter
   , perpsV2OrderLifecycleBook
   , perpsV2PolicyEvaluator
@@ -36,6 +37,13 @@ perpsV2CalldataPolicy = "bounded-v2"
 
 perpsV2DeploymentBlock :: Integer
 perpsV2DeploymentBlock = 302257125
+
+-- | First whole minute after the pinned V2 deployment block. The history
+-- indexer starts at the deployment block, so a certified cursor proves the
+-- intervening zero-volume minutes even when the release activation record was
+-- written later.
+perpsV2VolumeHistoryStartTimestamp :: Integer
+perpsV2VolumeHistoryStartTimestamp = 1787759880
 
 perpsV2OrderRouter :: Text
 perpsV2OrderRouter = "0x97A901dE2B267c307E264FD5F71403F8072F73e7"
